@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-adas-orange: #CD4419;
+  --color-adas-orange-light: #f5e8e3;
+  --color-adas-bg: #f5f3f0;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+body {
+  background-color: #f5f3f0;
+  font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  color: #1a1a1a;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
