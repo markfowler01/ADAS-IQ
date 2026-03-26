@@ -10,7 +10,7 @@ export default defineConfig({
     proxy: {
       // Proxy API calls to local Catalyst serve (catalyst serve --except client)
       '/server': {
-        target: 'http://localhost:9000',
+        target: 'http://localhost:3000',
         changeOrigin: true,
       },
     },
