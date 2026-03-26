@@ -1,6 +1,8 @@
-export default function LoginScreen({ authError }) {
+import { API_BASE } from '../App.jsx'
+
+export default function LoginScreen({ authError, authErrMsg }) {
   function handleLogin() {
-    window.location.href = '/auth/zoho'
+    window.location.href = `${API_BASE}/auth/zoho`
   }
 
   return (
@@ -32,9 +34,9 @@ export default function LoginScreen({ authError }) {
           <p className="text-gray-500 text-sm">Sign in with your Zoho account to continue</p>
         </div>
 
-        {authError && (
+        {(authError || authErrMsg) && (
           <div className="w-full bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm text-center">
-            Login failed — please try again
+            {authErrMsg || 'Login failed — please try again'}
           </div>
         )}
 

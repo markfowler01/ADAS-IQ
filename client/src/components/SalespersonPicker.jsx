@@ -1,3 +1,4 @@
+import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState, useEffect, useRef } from 'react'
 
 const ORANGE = '#CD4419'
@@ -13,7 +14,7 @@ export default function SalespersonPicker({ onSelect }) {
   const dropdownRef = useRef(null)
 
   useEffect(() => {
-    fetch('/api/salespersons', { credentials: 'include' })
+    apiFetch(`${API_BASE}/api/salespersons`)
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data)) {
@@ -80,7 +81,10 @@ export default function SalespersonPicker({ onSelect }) {
         }}
       >
         {loading ? (
-          <p className="text-sm" style={{ color: '#aaa' }}>Loading salespersons...</p>
+          <div className="flex flex-col gap-2 animate-pulse">
+            <div className="h-9 rounded-lg" style={{ backgroundColor: '#f0ece8' }} />
+            <div className="h-3 w-1/4 rounded" style={{ backgroundColor: '#f0ece8' }} />
+          </div>
         ) : error ? (
           <p className="text-sm" style={{ color: ORANGE }}>{error}</p>
         ) : (

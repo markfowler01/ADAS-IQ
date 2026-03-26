@@ -1,8 +1,10 @@
+import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState, useRef } from 'react'
+import Navbar from './Navbar'
 
 const ORANGE = '#CD4419'
 
-export default function AuditScreen({ onBack }) {
+export default function AuditScreen({ onBack, user, onLogout, currentScreen, onNavigate }) {
   const [files, setFiles] = useState([])
   const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -30,7 +32,7 @@ export default function AuditScreen({ onBack }) {
     try {
       const form = new FormData()
       files.forEach((f) => form.append('pdfs', f))
-      const res = await fetch('/api/audit', { method: 'POST', body: form, credentials: 'include' })
+      const res = await apiFetch(`${API_BASE}/api/audit`, { method: 'POST', body: form })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`)
       setResult(data)
@@ -47,24 +49,7 @@ export default function AuditScreen({ onBack }) {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
-      {/* Header */}
-      <header
-        className="sticky top-0 z-10 px-4 py-3 flex items-center justify-between"
-        style={{ backgroundColor: 'white', borderBottom: '1px solid #ece8e4', boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}
-      >
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: ORANGE }}>
-            <span className="text-white text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-          </div>
-          <div>
-            <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>ADAS IQ</span>
-            <span className="text-xs ml-2" style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#aaa' }}>Catalog Audit</span>
-          </div>
-        </div>
-        <button onClick={onBack} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ backgroundColor: '#f0ece8', color: '#555' }}>
-          ← Back
-        </button>
-      </header>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
       <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-5">
 

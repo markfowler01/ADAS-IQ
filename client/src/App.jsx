@@ -1,37 +1,102 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { API_BASE, apiFetch, setToken, getToken } from './utils/api.js'
+
+function getTokenExpiry() {
+  try {
+    const token = getToken()
+    if (!token) return null
+    const payload = token.slice(0, token.lastIndexOf('.'))
+    const data = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')))
+    return data.exp || null
+  } catch { return null }
+}
+
+// Keep API_BASE export for components that import it directly
+export { API_BASE }
+
 import LoginScreen from './components/LoginScreen'
 import UploadScreen from './components/UploadScreen'
 import ToggleBoard from './components/ToggleBoard'
 import AuditScreen from './components/AuditScreen'
 import ManualQuoteScreen from './components/ManualQuoteScreen'
 import HistoryScreen from './components/HistoryScreen'
+import KanbanBoard from './components/KanbanBoard'
 
 export default function App() {
   const [user, setUser]   = useState(null)   // null = loading, false = not logged in, object = logged in
   const [loading, setLoading] = useState(true)
+  const [authErrMsg, setAuthErrMsg] = useState(null)
   const [screen,  setScreen]  = useState('upload')
   const [jobData, setJobData] = useState(null)
   const [pdfFile, setPdfFile] = useState(null)
 
-  // Check for auth_error in URL (from failed Zoho callback)
+  const [sessionWarning, setSessionWarning] = useState(false) // < 15 min remaining
+  const warningTimerRef = useRef(null)
+
   const authError = new URLSearchParams(window.location.search).get('auth_error') === '1'
 
-  // On mount, check if we have a session
+  // On mount, check for Zoho OAuth code OR existing session
   useEffect(() => {
-    fetch('/auth/me', { credentials: 'include' })
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        setUser(data || false)
-        setLoading(false)
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const state = params.get('state')
+
+    if (code) {
+      window.history.replaceState({}, '', window.location.pathname)
+      fetch(`${API_BASE}/auth/exchange`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, state }),
       })
-      .catch(() => {
-        setUser(false)
-        setLoading(false)
-      })
+        .then(async r => {
+          const data = await r.json().catch(() => ({}))
+          if (r.ok && data.user) {
+            if (data.token) setToken(data.token)
+            setUser(data.user)
+          } else {
+            setAuthErrMsg(data?.error || `Auth failed (${r.status})`)
+            setUser(false)
+          }
+          setLoading(false)
+        })
+        .catch(e => {
+          setAuthErrMsg(e.message || 'Network error during login')
+          setUser(false)
+          setLoading(false)
+        })
+    } else {
+      // Check existing token / session
+      apiFetch(`${API_BASE}/auth/me`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          setUser(data || false)
+          setLoading(false)
+        })
+        .catch(() => {
+          setUser(false)
+          setLoading(false)
+        })
+    }
   }, [])
 
+  // Session expiry warning — check every minute, warn at < 15 min
+  useEffect(() => {
+    if (!user) return
+    function checkExpiry() {
+      const exp = getTokenExpiry()
+      if (!exp) return
+      const remaining = exp - Date.now()
+      if (remaining > 0 && remaining < 15 * 60 * 1000) setSessionWarning(true)
+      else if (remaining <= 0) { setToken(null); setUser(false) }
+    }
+    checkExpiry()
+    warningTimerRef.current = setInterval(checkExpiry, 60 * 1000)
+    return () => clearInterval(warningTimerRef.current)
+  }, [user])
+
   async function handleLogout() {
-    await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
+    setToken(null)
+    await apiFetch(`${API_BASE}/auth/logout`, { method: 'POST' })
     setUser(false)
   }
 
@@ -47,7 +112,6 @@ export default function App() {
     setScreen('upload')
   }
 
-  // Still checking session
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#f5f3f0' }}>
@@ -61,14 +125,39 @@ export default function App() {
     )
   }
 
-  // Not logged in
   if (!user) {
-    return <LoginScreen authError={authError} />
+    return <LoginScreen authError={authError} authErrMsg={authErrMsg} />
   }
 
-  // Logged in — show the app
+  const navScreen = screen === 'review' ? 'upload' : screen
+
+  function handleNavigate(id) {
+    if (id === 'upload') handleReset()
+    else setScreen(id)
+  }
+
+  const navProps = {
+    user,
+    onLogout: handleLogout,
+    currentScreen: navScreen,
+    onNavigate: handleNavigate,
+  }
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
+      {/* Session expiry warning banner */}
+      {sessionWarning && (
+        <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3 text-sm font-medium"
+          style={{ backgroundColor: '#7a4400', color: 'white' }}>
+          <span>⚠️ Your session expires in less than 15 minutes — save your work and sign in again.</span>
+          <button
+            onClick={handleLogout}
+            className="ml-4 px-3 py-1 rounded-lg text-xs font-semibold"
+            style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+            Sign in again
+          </button>
+        </div>
+      )}
       {screen === 'upload' && (
         <UploadScreen
           user={user}
@@ -76,20 +165,30 @@ export default function App() {
           onAudit={() => setScreen('audit')}
           onManual={() => setScreen('manual')}
           onHistory={() => setScreen('history')}
+          onJobBoard={() => setScreen('kanban')}
           onLogout={handleLogout}
+          {...navProps}
         />
       )}
       {screen === 'review' && (
-        <ToggleBoard jobData={jobData} pdfFile={pdfFile} onReset={handleReset} />
+        <ToggleBoard jobData={jobData} pdfFile={pdfFile} onReset={handleReset} {...navProps} />
       )}
       {screen === 'audit' && (
-        <AuditScreen onBack={() => setScreen('upload')} />
+        <AuditScreen onBack={() => setScreen('upload')} {...navProps} />
       )}
       {screen === 'manual' && (
-        <ManualQuoteScreen onBack={() => setScreen('upload')} />
+        <ManualQuoteScreen onBack={() => setScreen('upload')} {...navProps} />
       )}
       {screen === 'history' && (
-        <HistoryScreen onBack={() => setScreen('upload')} />
+        <HistoryScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'kanban' && (
+        <KanbanBoard
+          user={user}
+          onBack={() => setScreen('upload')}
+          onLogout={handleLogout}
+          {...navProps}
+        />
       )}
     </div>
   )

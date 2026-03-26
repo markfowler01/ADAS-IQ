@@ -1,3 +1,4 @@
+import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState } from 'react'
 import JobCard from './JobCard'
 import CalibrationRow from './CalibrationRow'
@@ -5,19 +6,27 @@ import ManualAddForm from './ManualAddForm'
 import SummaryBar from './SummaryBar'
 import CustomerPicker from './CustomerPicker'
 import SalespersonPicker from './SalespersonPicker'
+import Navbar from './Navbar'
 
 const ORANGE = '#CD4419'
 
-export default function ToggleBoard({ jobData, pdfFile, onReset }) {
-  const [calibrations, setCalibrations] = useState(
-    jobData.calibrations.map((c, i) => ({ ...c, _id: i }))
-  )
+export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout, currentScreen, onNavigate }) {
+  const [calibrations, setCalibrations] = useState(() => {
+    const extracted = jobData.calibrations.map((c, i) => ({ ...c, _id: i }))
+    const nextId = extracted.length
+    return [
+      ...extracted,
+      { _id: nextId,     calibration_name: 'Diagnostic 1', enabled: false, quantity: 1, description: '' },
+      { _id: nextId + 1, calibration_name: 'Mechanical',   enabled: false, quantity: 1, description: '' },
+    ]
+  })
   const [showManualForm, setShowManualForm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [invoiceResult, setInvoiceResult] = useState(null)
   const [invoiceError, setInvoiceError] = useState(null)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
+  const [kanbanWarning, setKanbanWarning] = useState(null)
 
   const selected = calibrations.filter((c) => c.enabled)
   const removed = calibrations.filter((c) => !c.enabled)
@@ -37,11 +46,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
         calibrations: calibrations.map(({ _id, ...rest }) => rest),
         document_links: jobData.document_links || [],
       }
-      const res = await fetch('/api/report', {
+      const res = await apiFetch(`${API_BASE}/api/report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        credentials: 'include',
       })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const blob = await res.blob()
@@ -65,6 +73,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
     )
   }
 
+  function updateCalField(id, field, value) {
+    setCalibrations(prev => prev.map(c => c._id === id ? { ...c, [field]: value } : c))
+  }
+
   function addManual(cal) {
     setCalibrations((prev) => [...prev, { ...cal, _id: Date.now() }])
     setShowManualForm(false)
@@ -81,7 +93,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
       if (pdfFile) {
         pdfBase64 = await new Promise((resolve, reject) => {
           const reader = new FileReader()
-          reader.onload = () => resolve(reader.result.split(',')[1]) // strip data:...;base64,
+          reader.onload = () => {
+            const result = reader.result || ''
+            const base64 = result.includes(',') ? result.split(',')[1] : result
+            if (!base64) { reject(new Error('Could not read PDF file — empty result')); return }
+            resolve(base64)
+          }
           reader.onerror = reject
           reader.readAsDataURL(pdfFile)
         })
@@ -106,28 +123,64 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
         pdfBase64,
         pdfFilename,
       }
-      const res = await fetch('/api/create-invoice', {
+      const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        credentials: 'include',
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`)
-      // Save to localStorage history
-      try {
-        const hist = JSON.parse(localStorage.getItem('adasiq_history') || '[]')
-        hist.unshift({
-          quoteNumber: data.quoteNumber,
-          quoteUrl:    data.quoteUrl,
-          folderUrl:   data.folderUrl,
-          vehicle:     [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '),
-          shop:        selectedCustomer?.name || jobData.shop,
-          createdAt:   new Date().toISOString(),
-        })
-        localStorage.setItem('adasiq_history', JSON.stringify(hist.slice(0, 50)))
-      } catch { /* ignore */ }
       setInvoiceResult(data)
+
+      // Save to server history (fire-and-forget)
+      try {
+        await apiFetch(`${API_BASE}/api/history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop:        selectedCustomer?.name || jobData.shop || '',
+            vehicle:     [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '),
+            roNumber:    jobData.ro_number || '',
+            vin:         jobData.vin || '',
+            calibrations: selected.map(c =>
+              c.calibration_name || c.name || c.description || c.item_name || c.trigger || ''
+            ).filter(Boolean),
+            estimateUrl: data.quoteUrl || '',
+            pdfUrl:      data.shareLink || data.folderUrl || '',
+            technician:  selectedSalesperson?.name || '',
+          }),
+        })
+      } catch (histErr) {
+        console.warn('[history] Failed to save history entry:', histErr.message)
+      }
+
+      // Auto-create Kanban board ticket
+      try {
+        const calList = selected.map((cal, i) => ({
+          name: cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${i + 1}`,
+          mode: cal.cal_type || cal.mode || 'Static',
+        }))
+        await apiFetch(`${API_BASE}/api/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop_name: selectedCustomer?.name || jobData.shop || '',
+            vehicle: [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '),
+            vin: jobData.vin || '',
+            insurer: jobData.insurer || '',
+            technician: selectedSalesperson?.name || '',
+            scheduled_date: new Date().toISOString().split('T')[0],
+            calibrations: JSON.stringify(calList),
+            notes: `RO#: ${jobData.ro_number || ''} | Quote: ${data.quoteNumber || ''}`,
+            report_url: data.quoteUrl || data.folderUrl || '',
+            status: 'need_dispatch',
+          }),
+        })
+      } catch (autoErr) {
+        // Fix #7 — surface the failure instead of silently ignoring it
+        console.warn('[kanban] Auto-ticket failed:', autoErr.message)
+        setKanbanWarning('Quote created, but the Kanban ticket could not be auto-created. Add it manually on the Job Board.')
+      }
     } catch (e) {
       setInvoiceError(e.message || 'Failed to create invoice. Please try again.')
     } finally {
@@ -137,59 +190,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
-      {/* Header */}
-      <header
-        className="sticky top-0 z-10 px-4 py-3 flex items-center justify-between"
-        style={{
-          backgroundColor: 'white',
-          borderBottom: '1px solid #ece8e4',
-          boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
-        }}
-      >
-        <div className="flex items-center gap-2.5">
-          <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ backgroundColor: ORANGE }}
-          >
-            <span className="text-white text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
-              IQ
-            </span>
-          </div>
-          <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>
-            ADAS IQ
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <div
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold"
-            style={{ backgroundColor: '#fdeee8', color: ORANGE }}
-          >
-            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: ORANGE }} />
-            Review Required
-          </div>
-          <button
-            onClick={handleDownloadPDF}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-semibold"
-            style={{ backgroundColor: '#f0ece8', color: '#555' }}
-            title="Download ADAS IQ PDF Report"
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            PDF
-          </button>
-          <button
-            onClick={onReset}
-            className="text-xs px-2 py-1 rounded-lg"
-            style={{ color: '#aaa', backgroundColor: '#f5f3f0' }}
-          >
-            ← New
-          </button>
-        </div>
-      </header>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
       <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-5">
 
@@ -240,9 +241,80 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
           </p>
 
           <div className="flex flex-col gap-3">
-            {calibrations.map((cal) => (
-              <CalibrationRow key={cal._id} cal={cal} onToggle={() => toggleCal(cal._id)} />
-            ))}
+            {calibrations.map((cal) => {
+              const isService = cal.calibration_name === 'Diagnostic 1' || cal.calibration_name === 'Mechanical'
+              if (isService) {
+                return (
+                  <div key={cal._id}
+                    style={{
+                      backgroundColor: 'white',
+                      border: `1.5px solid ${cal.enabled ? '#e8d5ce' : '#e8e8e8'}`,
+                      borderRadius: '12px',
+                      padding: '16px',
+                      opacity: cal.enabled ? 1 : 0.55,
+                      transition: 'all 0.18s ease',
+                    }}
+                  >
+                    {/* Header row: toggle + name + quantity */}
+                    <div className="flex items-center gap-3 mb-3">
+                      <button
+                        onClick={() => toggleCal(cal._id)}
+                        style={{
+                          flexShrink: 0, width: '40px', height: '22px', borderRadius: '11px',
+                          backgroundColor: cal.enabled ? ORANGE : '#d4d4d4', position: 'relative', transition: 'background-color 0.18s',
+                        }}
+                      >
+                        <div style={{
+                          position: 'absolute', top: '3px', left: cal.enabled ? '21px' : '3px',
+                          width: '16px', height: '16px', borderRadius: '50%', backgroundColor: 'white',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.18s',
+                        }} />
+                      </button>
+                      <span className="flex-1 text-sm font-semibold" style={{ color: '#1a1a1a' }}>
+                        {cal.calibration_name}
+                      </span>
+                      {/* Quantity */}
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-medium" style={{ color: '#888' }}>Qty</span>
+                        <button
+                          onClick={() => updateCalField(cal._id, 'quantity', Math.max(1, (cal.quantity || 1) - 1))}
+                          className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
+                          style={{ backgroundColor: '#f0eeec', color: '#555' }}
+                        >−</button>
+                        <span className="w-6 text-center text-sm font-semibold" style={{ color: '#1a1a1a' }}>
+                          {cal.quantity || 1}
+                        </span>
+                        <button
+                          onClick={() => updateCalField(cal._id, 'quantity', Math.min(99, (cal.quantity || 1) + 1))}
+                          className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
+                          style={{ backgroundColor: '#f0eeec', color: '#555' }}
+                        >+</button>
+                      </div>
+                    </div>
+                    {/* Notes textarea */}
+                    <textarea
+                      value={cal.description || ''}
+                      onChange={e => updateCalField(cal._id, 'description', e.target.value)}
+                      onClick={e => e.stopPropagation()}
+                      placeholder={
+                        cal.calibration_name === 'Diagnostic 1'
+                          ? 'What was diagnosed…'
+                          : 'What was done / replaced…'
+                      }
+                      rows={3}
+                      style={{
+                        width: '100%', padding: '8px 10px', borderRadius: '8px', fontSize: '13px',
+                        border: '1px solid #e0dbd6', backgroundColor: '#fafafa', color: '#1a1a1a',
+                        resize: 'vertical', outline: 'none', minHeight: '72px',
+                      }}
+                      onFocus={e => (e.target.style.borderColor = ORANGE)}
+                      onBlur={e  => (e.target.style.borderColor = '#e0dbd6')}
+                    />
+                  </div>
+                )
+              }
+              return <CalibrationRow key={cal._id} cal={cal} onToggle={() => toggleCal(cal._id)} />
+            })}
 
             {showManualForm ? (
               <ManualAddForm onAdd={addManual} onCancel={() => setShowManualForm(false)} />
@@ -272,6 +344,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
             </div>
           )}
 
+          {kanbanWarning && (
+            <div className="text-sm px-4 py-3 rounded-xl" style={{ backgroundColor: '#fffbeb', border: '1px solid #f5c518', color: '#7a6000' }}>
+              ⚠️ {kanbanWarning}
+            </div>
+          )}
+
           {invoiceResult ? (
             <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} />
 
@@ -286,7 +364,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset }) {
                 cursor: selected.length === 0 || submitting ? 'not-allowed' : 'pointer',
               }}
             >
-              {submitting ? 'Creating Quote...' : 'Create Zoho Books Quote'}
+              {submitting ? 'Creating Invoice...' : 'Create Zoho Books Invoice'}
             </button>
           )}
         </div>
@@ -300,14 +378,14 @@ function SuccessCard({ result, job, lineCount, selectedCustomer }) {
     <div className="rounded-xl px-5 py-4 flex flex-col gap-3" style={{ backgroundColor: '#f0faf4', border: '1.5px solid #6fcf97' }}>
       <div className="flex items-center gap-2">
         <span className="text-lg">✓</span>
-        <span className="font-semibold text-sm" style={{ color: '#1a6b3a' }}>Zoho Books Quote Created</span>
+        <span className="font-semibold text-sm" style={{ color: '#1a6b3a' }}>Zoho Books Invoice Created</span>
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-sm">
         <SuccessField label="RO Number" value={job.ro_number} />
         <SuccessField label="Shop" value={selectedCustomer?.name || job.shop} />
         <SuccessField label="Line Items" value={lineCount} />
-        {result.quoteNumber && <SuccessField label="Quote #" value={result.quoteNumber} />}
+        {result.quoteNumber && <SuccessField label="Invoice #" value={result.quoteNumber} />}
       </div>
 
       {/* Links row */}

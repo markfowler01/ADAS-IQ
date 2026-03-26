@@ -4,16 +4,15 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  base: '/app/',
   server: {
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
+      // Proxy all API and auth calls to the Catalyst staging environment
+      '/server': {
+        target: 'https://adas-iq-904191467.development.catalystserverless.com',
         changeOrigin: true,
-      },
-      '/auth': {
-        target: 'http://localhost:3001',
-        changeOrigin: true,
+        secure: true,
       },
     },
   },

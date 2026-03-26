@@ -1,8 +1,10 @@
+import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState, useRef } from 'react'
+import Navbar from './Navbar'
 
 const ORANGE = '#CD4419'
 
-export default function UploadScreen({ onExtracted, onAudit, onManual, onHistory, user, onLogout }) {
+export default function UploadScreen({ onExtracted, onAudit, onManual, onHistory, onJobBoard, user, onLogout, currentScreen, onNavigate }) {
   const [dragging, setDragging]   = useState(false)
   const [loading,  setLoading]    = useState(false)
   const [error,    setError]      = useState(null)
@@ -18,7 +20,7 @@ export default function UploadScreen({ onExtracted, onAudit, onManual, onHistory
     try {
       const formData = new FormData()
       formData.append('pdf', file)
-      const res = await fetch('/api/extract', { method: 'POST', body: formData, credentials: 'include' })
+      const res = await apiFetch(`${API_BASE}/api/extract`, { method: 'POST', body: formData })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error(err.error || `Server error ${res.status}`)
@@ -26,7 +28,15 @@ export default function UploadScreen({ onExtracted, onAudit, onManual, onHistory
       const data = await res.json()
       onExtracted(data, file)
     } catch (e) {
-      setError(e.message || 'Extraction failed. Please try again.')
+      const msg = e.message || ''
+      const friendly = msg.includes('rate limit') || msg.includes('Too many')
+        ? 'Too many requests — wait a few minutes and try again.'
+        : msg.includes('credit') || msg.includes('billing')
+          ? 'AI credits exhausted. Check console.anthropic.com → Billing.'
+          : msg.includes('PDF') || msg.includes('pdf') || msg.includes('empty')
+            ? msg
+            : msg || 'Extraction failed. Check that the file is a valid calibration report PDF and try again.'
+      setError(friendly)
     } finally {
       setLoading(false)
     }
@@ -41,60 +51,7 @@ export default function UploadScreen({ onExtracted, onAudit, onManual, onHistory
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'white' }}>
 
-      {/* ── Navbar ── */}
-      <header style={{ borderBottom: '1px solid #ebebeb' }}>
-        <div className="max-w-5xl mx-auto px-6 py-3 flex items-center justify-between">
-          {/* Logo */}
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: ORANGE }}>
-              <span className="text-white text-xs font-bold" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-            </div>
-            <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>
-              ADAS IQ
-            </span>
-          </div>
-
-          {/* Right side actions */}
-          <div className="flex items-center gap-2">
-            {/* User avatar + logout */}
-            {user && (
-              <div className="flex items-center gap-2 mr-1">
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                  style={{ backgroundColor: ORANGE }}>
-                  {user.name?.charAt(0)?.toUpperCase() || '?'}
-                </div>
-                <span className="text-sm text-gray-600 hidden sm:block">{user.name?.split(' ')[0]}</span>
-                <button onClick={onLogout}
-                  className="text-xs px-2 py-1 rounded-md text-gray-400 hover:text-gray-600 transition-colors">
-                  Sign out
-                </button>
-              </div>
-            )}
-            <button onClick={onHistory}
-              className="text-sm px-3 py-1.5 rounded-lg font-medium transition-colors"
-              style={{ color: '#555', backgroundColor: '#f5f3f0' }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#ebe8e4'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = '#f5f3f0'}>
-              History
-            </button>
-            <button onClick={onManual}
-              className="text-sm px-3 py-1.5 rounded-lg font-medium transition-colors"
-              style={{ color: ORANGE, backgroundColor: '#fdf3ef', border: `1px solid #e8c5b0` }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#fae8df'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = '#fdf3ef'}>
-              ✏️ Manual Quote
-            </button>
-            <button onClick={onAudit}
-              className="text-sm px-3 py-1.5 rounded-lg font-medium"
-              style={{ color: '#555', backgroundColor: '#f5f3f0' }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#ebe8e4'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = '#f5f3f0'}>
-              🔍 Catalog Audit
-            </button>
-          </div>
-        </div>
-      </header>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
       {/* ── Upload area ── */}
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-16">
@@ -131,7 +88,7 @@ export default function UploadScreen({ onExtracted, onAudit, onManual, onHistory
                   Claude is reading your Kinetic report…
                 </p>
                 <p className="text-sm text-center" style={{ color: '#aaa' }}>
-                  This usually takes 10–20 seconds
+                  Usually 10–30 seconds depending on report length
                 </p>
               </div>
             ) : (

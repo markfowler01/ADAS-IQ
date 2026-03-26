@@ -1,6 +1,8 @@
+import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState } from 'react'
 import CustomerPicker from './CustomerPicker'
 import SalespersonPicker from './SalespersonPicker'
+import Navbar from './Navbar'
 
 const ORANGE = '#CD4419'
 const ORANGE_LIGHT = '#fdf3ef'
@@ -105,9 +107,28 @@ function ItemList({ items, onAdd, onRemove, onToggle, inputValue, onInputChange,
   )
 }
 
+// ── Standard calibrations pre-populated in Manual Invoice ─────────────────────
+const STANDARD_CALS = [
+  'Front Camera',
+  'Rear Camera',
+  'Blind Spot / Rear Radar',
+  'Steering Angle Sensor',
+  'Lane Keep Assist',
+  'Front Radar',
+  'Cross Traffic',
+  '360 / Surround View',
+  'Parking Sensors',
+  'Night Vision',
+  'Head-Up Display',
+  'Adaptive Headlights',
+  'Adaptive Cruise Control',
+  'Diagnostic 1',
+  'Mechanical',
+]
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ManualQuoteScreen({ onBack }) {
+export default function ManualQuoteScreen({ onBack, user, onLogout, currentScreen, onNavigate }) {
   // Job fields
   const [roNumber, setRoNumber] = useState('')
   const [insurer,  setInsurer]  = useState('')
@@ -123,13 +144,14 @@ export default function ManualQuoteScreen({ onBack }) {
   const [selectedCustomer,    setSelectedCustomer]    = useState(null)
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
 
-  // Diagnostic items
-  const [diagnosticItems, setDiagnosticItems] = useState([])
-  const [diagInput,       setDiagInput]       = useState('')
+  // Calibrations — pre-populated, all off
+  const [calibrations, setCalibrations] = useState(
+    STANDARD_CALS.map((name, i) => ({ _id: i, calibration_name: name, enabled: false, quantity: 1, description: '' }))
+  )
+  const [customInput, setCustomInput] = useState('')
 
-  // Mechanical items
-  const [mechanicalItems, setMechanicalItems] = useState([])
-  const [mechInput,       setMechInput]       = useState('')
+  // Notes / story field
+  const [notes, setNotes] = useState('')
 
   // Submit state
   const [submitting,   setSubmitting]   = useState(false)
@@ -138,23 +160,23 @@ export default function ManualQuoteScreen({ onBack }) {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  function makeAdder(setItems, setInput, input) {
-    return () => {
-      const name = input.trim()
-      if (!name) return
-      setItems((prev) => [...prev, { _id: Date.now(), calibration_name: name, enabled: true }])
-      setInput('')
-    }
+  function toggleCal(id) {
+    setCalibrations(prev => prev.map(c => c._id === id ? { ...c, enabled: !c.enabled } : c))
   }
 
-  function makeRemover(setItems) {
-    return (id) => setItems((prev) => prev.filter((i) => i._id !== id))
+  function removeCal(id) {
+    setCalibrations(prev => prev.filter(c => c._id !== id))
   }
 
-  function makeToggler(setItems) {
-    return (id) => setItems((prev) =>
-      prev.map((i) => (i._id === id ? { ...i, enabled: !i.enabled } : i))
-    )
+  function updateCalField(id, field, value) {
+    setCalibrations(prev => prev.map(c => c._id === id ? { ...c, [field]: value } : c))
+  }
+
+  function addCustomCal() {
+    const name = customInput.trim()
+    if (!name) return
+    setCalibrations(prev => [...prev, { _id: Date.now(), calibration_name: name, enabled: true, quantity: 1, description: '' }])
+    setCustomInput('')
   }
 
   // ── Submit ────────────────────────────────────────────────────────────────
@@ -167,11 +189,9 @@ export default function ManualQuoteScreen({ onBack }) {
     setSubmitting(true)
     setSubmitError(null)
     try {
-      // Combine all items — backend treats them as line items regardless of category
-      const allItems = [
-        ...diagnosticItems,
-        ...mechanicalItems,
-      ].map(({ _id, ...rest }) => rest)
+      const enabledItems = calibrations
+        .filter(c => c.enabled)
+        .map(({ _id, ...rest }) => rest)
 
       const payload = {
         customerId:      selectedCustomer?.id   || null,
@@ -187,35 +207,45 @@ export default function ManualQuoteScreen({ onBack }) {
         make:            make     || null,
         model:           model    || null,
         vehicle:         [year, make, model].filter(Boolean).join(' ') || null,
-        calibrations:    allItems,
+        calibrations:    enabledItems,
+        notes:           notes.trim() || null,
         pdfBase64:       null,
         pdfFilename:     null,
       }
 
-      const res = await fetch('/api/create-invoice', {
+      const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(payload),
-        credentials: 'include',
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`)
-      // Save to localStorage history
-      try {
-        const hist = JSON.parse(localStorage.getItem('adasiq_history') || '[]')
-        hist.unshift({
-          quoteNumber: data.quoteNumber,
-          quoteUrl:    data.quoteUrl,
-          folderUrl:   data.folderUrl,
-          vehicle:     [year, make, model].filter(Boolean).join(' '),
-          shop:        selectedCustomer?.name || null,
-          createdAt:   new Date().toISOString(),
-        })
-        localStorage.setItem('adasiq_history', JSON.stringify(hist.slice(0, 50)))
-      } catch { /* ignore */ }
       setSubmitResult(data)
+
+      // Save to server history (fire-and-forget)
+      try {
+        await apiFetch(`${API_BASE}/api/history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop:        selectedCustomer?.name || '',
+            vehicle:     [year, make, model].filter(Boolean).join(' '),
+            roNumber:    roNumber || '',
+            vin:         vin || '',
+            calibrations: calibrations
+              .filter(i => i.enabled)
+              .map(i => i.calibration_name)
+              .filter(Boolean),
+            estimateUrl: data.quoteUrl || '',
+            pdfUrl:      data.shareLink || data.folderUrl || '',
+            technician:  selectedSalesperson?.name || '',
+          }),
+        })
+      } catch (histErr) {
+        console.warn('[history] Failed to save history entry:', histErr.message)
+      }
     } catch (e) {
-      setSubmitError(e.message || 'Failed to create quote.')
+      setSubmitError(e.message || 'Failed to create invoice.')
     } finally {
       setSubmitting(false)
     }
@@ -233,7 +263,7 @@ export default function ManualQuoteScreen({ onBack }) {
             style={{ backgroundColor: '#edfaf3' }}>
             <span className="text-2xl">✓</span>
           </div>
-          <h2 className="text-xl font-bold mb-1" style={{ color: DARK }}>Quote Created!</h2>
+          <h2 className="text-xl font-bold mb-1" style={{ color: DARK }}>Invoice Created!</h2>
           <p className="text-sm mb-6" style={{ color: MUTED }}>{submitResult.quoteNumber}</p>
 
           <a href={submitResult.quoteUrl} target="_blank" rel="noopener noreferrer"
@@ -262,25 +292,11 @@ export default function ManualQuoteScreen({ onBack }) {
 
   // ── Form ──────────────────────────────────────────────────────────────────
 
-  const totalItems = diagnosticItems.length + mechanicalItems.length
+  const enabledCount = calibrations.filter(c => c.enabled).length
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
-      {/* Header */}
-      <header className="sticky top-0 z-10 px-4 py-3 flex items-center justify-between"
-        style={{ backgroundColor: 'white', borderBottom: `1px solid ${BORDER}`, boxShadow: '0 1px 6px rgba(0,0,0,0.06)' }}>
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-            style={{ backgroundColor: ORANGE }}>
-            <span className="text-white text-sm font-semibold" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-          </div>
-          <span className="text-base font-bold" style={{ color: DARK }}>Manual Quote</span>
-        </div>
-        <button onClick={onBack} className="text-sm px-3 py-1.5 rounded-lg"
-          style={{ color: MUTED, backgroundColor: '#f0eeec' }}>
-          ← Back
-        </button>
-      </header>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
       <div className="max-w-2xl mx-auto px-4 py-6">
 
@@ -339,37 +355,103 @@ export default function ManualQuoteScreen({ onBack }) {
           </div>
         </Section>
 
-        {/* Diagnostic */}
-        <Section title={`Diagnostic${diagnosticItems.length > 0 ? ` (${diagnosticItems.length})` : ''}`}>
-          <ItemList
-            items={diagnosticItems}
-            inputValue={diagInput}
-            onInputChange={setDiagInput}
-            onAdd={makeAdder(setDiagnosticItems, setDiagInput, diagInput)}
-            onRemove={makeRemover(setDiagnosticItems)}
-            onToggle={makeToggler(setDiagnosticItems)}
-            placeholder="e.g. Diagnostic 1, Scan Report..."
-          />
+        {/* Calibrations */}
+        <Section title={enabledCount > 0 ? `Line Items (${enabledCount} selected)` : 'Line Items — toggle on what you need'}>
+          <div className="flex flex-col gap-2 mb-3">
+            {calibrations.map((item) => (
+              <div key={item._id}
+                style={{
+                  backgroundColor: item.enabled ? ORANGE_LIGHT : '#f4f2f0',
+                  border: `1px solid ${item.enabled ? ORANGE_BORDER : BORDER}`,
+                  borderRadius: '10px',
+                  padding: '10px 12px',
+                  opacity: item.enabled ? 1 : 0.65,
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {/* Row 1: toggle + name + qty + remove */}
+                <div className="flex items-center gap-3 mb-2">
+                  <button
+                    className="flex-shrink-0 w-10 h-5 rounded-full relative transition-colors"
+                    style={{ backgroundColor: item.enabled ? ORANGE : '#ccc' }}
+                    onClick={() => toggleCal(item._id)}
+                  >
+                    <span className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all"
+                      style={{ left: item.enabled ? '22px' : '2px' }} />
+                  </button>
+                  <span className="flex-1 text-sm font-medium" style={{ color: item.enabled ? DARK : '#888' }}>
+                    {item.calibration_name}
+                  </span>
+                  {/* Quantity */}
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs" style={{ color: '#999' }}>Qty</span>
+                    <button onClick={() => updateCalField(item._id, 'quantity', Math.max(1, (item.quantity || 1) - 1))}
+                      className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
+                      style={{ backgroundColor: '#e8e4e0', color: '#555' }}>−</button>
+                    <span className="w-5 text-center text-sm font-semibold" style={{ color: DARK }}>
+                      {item.quantity || 1}
+                    </span>
+                    <button onClick={() => updateCalField(item._id, 'quantity', Math.min(99, (item.quantity || 1) + 1))}
+                      className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
+                      style={{ backgroundColor: '#e8e4e0', color: '#555' }}>+</button>
+                  </div>
+                  {item._id >= STANDARD_CALS.length && (
+                    <button onClick={() => removeCal(item._id)}
+                      className="text-xs px-1.5 py-1 rounded" style={{ color: '#bbb' }}>✕</button>
+                  )}
+                </div>
+                {/* Row 2: description textarea */}
+                <textarea
+                  value={item.description || ''}
+                  onChange={e => updateCalField(item._id, 'description', e.target.value)}
+                  placeholder="Why this was performed / what was found…"
+                  rows={2}
+                  style={{
+                    width: '100%', padding: '6px 10px', borderRadius: '6px', fontSize: '12px',
+                    border: `1px solid ${BORDER}`, backgroundColor: 'white', color: DARK,
+                    resize: 'vertical', outline: 'none',
+                  }}
+                  onFocus={e => (e.target.style.borderColor = ORANGE)}
+                  onBlur={e  => (e.target.style.borderColor = BORDER)}
+                />
+              </div>
+            ))}
+          </div>
+
+          {/* Add custom item */}
+          <div className="flex gap-2 mt-1">
+            <input
+              type="text"
+              value={customInput}
+              onChange={e => setCustomInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addCustomCal()}
+              placeholder="Add custom line item…"
+              className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
+              style={{ border: `1px solid ${BORDER}`, color: DARK }}
+              onFocus={e => (e.target.style.borderColor = ORANGE)}
+              onBlur={e  => (e.target.style.borderColor = BORDER)}
+            />
+            <button onClick={addCustomCal}
+              className="px-4 py-2 rounded-lg text-sm font-semibold"
+              style={{ backgroundColor: ORANGE, color: 'white' }}>
+              Add
+            </button>
+          </div>
         </Section>
 
-        {/* Mechanical */}
-        <Section title={`Mechanical${mechanicalItems.length > 0 ? ` (${mechanicalItems.length})` : ''}`}>
-          <ItemList
-            items={mechanicalItems}
-            inputValue={mechInput}
-            onInputChange={setMechInput}
-            onAdd={makeAdder(setMechanicalItems, setMechInput, mechInput)}
-            onRemove={makeRemover(setMechanicalItems)}
-            onToggle={makeToggler(setMechanicalItems)}
-            placeholder="e.g. TCM Reprogram, Module Programming..."
+        {/* Notes / Story */}
+        <Section title="Notes / Job Description">
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Describe the job, claim details, or any relevant information for this invoice…"
+            rows={5}
+            className="w-full px-3 py-2 rounded-lg text-sm outline-none resize-y"
+            style={{ border: `1px solid ${BORDER}`, backgroundColor: 'white', color: DARK, minHeight: '100px' }}
+            onFocus={e => (e.target.style.borderColor = ORANGE)}
+            onBlur={e  => (e.target.style.borderColor = BORDER)}
           />
         </Section>
-
-        {totalItems === 0 && (
-          <p className="text-xs text-center mb-4" style={{ color: '#bbb' }}>
-            No items added — the 3 fixed line items will still be included on the quote.
-          </p>
-        )}
 
         {/* Error */}
         {submitError && (
@@ -385,7 +467,7 @@ export default function ManualQuoteScreen({ onBack }) {
           disabled={submitting}
           className="w-full py-4 rounded-xl text-white font-bold text-base mb-8"
           style={{ backgroundColor: submitting ? '#d4957a' : ORANGE, cursor: submitting ? 'default' : 'pointer' }}>
-          {submitting ? 'Creating Quote…' : 'Create Zoho Books Quote'}
+          {submitting ? 'Creating Invoice…' : 'Create Zoho Books Invoice'}
         </button>
 
       </div>

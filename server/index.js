@@ -22,6 +22,7 @@ import salespersonsRouter from './routes/salespersons.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
 import historyRouter from './routes/history.js'
+import jobsRouter from './routes/jobs.js'
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -29,6 +30,11 @@ const IS_PROD = process.env.NODE_ENV === 'production'
 
 app.use(cors({ origin: true, credentials: true }))
 app.use(express.json({ limit: '25mb' }))
+
+// Fix #2 — Warn if session secret is using insecure default
+if (!process.env.SESSION_SECRET) {
+  console.warn('⚠️  SESSION_SECRET is not set — using insecure default. Set this env var in production.')
+}
 
 // Session middleware
 app.use(session({
@@ -59,6 +65,7 @@ app.use('/api/salespersons', requireAuth, salespersonsRouter)
 app.use('/api/report', requireAuth, reportRouter)
 app.use('/api/audit', requireAuth, auditRouter)
 app.use('/api/history', requireAuth, historyRouter)
+app.use('/api/jobs', requireAuth, jobsRouter)
 
 // Serve the built React client in production
 const clientDist = path.join(__dirname, '..', 'client', 'dist')

@@ -1,0 +1,492 @@
+import axios from 'axios'
+import { createJobFolder, uploadFileToFolder } from './workdrive.js'
+
+const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
+const ZOHO_API_BASE = 'https://www.zohoapis.com/books/v3'  // Zoho Books
+
+/**
+ * Generate shop initials from a shop name.
+ * e.g. "Avon Body Shop, LLC" → "ABS"
+ *      "L-M Body Shop, Inc." → "LMBS"
+ */
+function getShopInitials(shopName) {
+  if (!shopName) return ''
+  const SKIP = new Set(['inc', 'llc', 'corp', 'ltd', 'co', 'the', 'and', 'llp', 'pc', 'dba'])
+  return shopName
+    .replace(/[,\.]/g, '')                        // strip commas/periods
+    .split(/[\s\-–—]+/)                           // split on spaces and dashes
+    .filter((w) => w.length > 0 && !SKIP.has(w.toLowerCase()))
+    .map((w) => w[0].toUpperCase())
+    .join('')
+}
+
+let cachedToken = null
+let tokenExpiresAt = 0
+
+async function getAccessToken() {
+  const now = Date.now()
+  if (cachedToken && now < tokenExpiresAt - 60_000) return cachedToken
+
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    client_id: process.env.ZOHO_CLIENT_ID,
+    client_secret: process.env.ZOHO_CLIENT_SECRET,
+    refresh_token: process.env.ZOHO_REFRESH_TOKEN,
+  })
+
+  const res = await axios.post(ZOHO_TOKEN_URL, params.toString(), {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 10000,
+  })
+
+  if (!res.data.access_token) {
+    throw new Error(`Zoho token refresh failed: ${JSON.stringify(res.data)}`)
+  }
+
+  cachedToken = res.data.access_token
+  tokenExpiresAt = now + (res.data.expires_in || 3600) * 1000
+  return cachedToken
+}
+
+function zohoHeaders(token) {
+  return {
+    Authorization: `Zoho-oauthtoken ${token}`,
+    'Content-Type': 'application/json',
+  }
+}
+
+function orgParam() {
+  return { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+}
+
+/**
+ * Fetch all customers from Zoho Books.
+ * Returns array of { contact_id, contact_name }
+ */
+export async function listCustomers() {
+  const token = await getAccessToken()
+  let allContacts = []
+  let page = 1
+  let hasMore = true
+
+  while (hasMore) {
+    const res = await axios.get(`${ZOHO_API_BASE}/contacts`, {
+      headers: zohoHeaders(token),
+      params: { ...orgParam(), contact_type: 'customer', per_page: 200, page },
+      timeout: 10000,
+    })
+    const contacts = res.data?.contacts || []
+    allContacts = allContacts.concat(
+      contacts.map((c) => ({ contact_id: c.contact_id, contact_name: c.contact_name }))
+    )
+    hasMore = res.data?.page_context?.has_more_page === true
+    page++
+  }
+
+  allContacts.sort((a, b) => a.contact_name.localeCompare(b.contact_name))
+  return allContacts
+}
+
+// Words that carry no matching weight
+const STOP_WORDS = new Set([
+  'the','a','an','and','or','of','for','with','in','at','to','from',
+  'by','on','is','are','was','be','as','static','dynamic','left','right',
+  'front','rear','module','system','control','after','sensor','level',
+])
+
+/**
+ * Strip vendor prefixes (AS -, SFP -, CP -), parenthetical abbreviations,
+ * punctuation, and extra whitespace, then lowercase.
+ */
+function normalizeItemName(str) {
+  return str
+    .replace(/^(AS|SFP|CP|AS\s*-|SFP\s*-|CP\s*-)\s*/i, '') // strip leading prefixes
+    .replace(/\([^)]*\)/g, '')   // remove (abbreviations)
+    .replace(/[-–—_/]/g, ' ')   // dashes → space
+    .replace(/[^a-z0-9 ]/gi, '') // strip remaining punctuation
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Return significant keywords from a string */
+function keywords(str) {
+  return normalizeItemName(str)
+    .split(' ')
+    .filter(w => w.length > 2 && !STOP_WORDS.has(w))
+}
+
+/**
+ * Score how well calName matches itemName.
+ * Returns 0–1 (1 = perfect). Penalises items whose keywords far exceed the cal's.
+ */
+function matchScore(calName, itemName) {
+  const calWords = keywords(calName)
+  const itemWords = new Set(keywords(itemName))
+  if (calWords.length === 0 || itemWords.size === 0) return 0
+
+  const hits = calWords.filter(w => itemWords.has(w)).length
+  // Jaccard-style: hits / union size — rewards precision AND recall
+  const union = new Set([...calWords, ...itemWords]).size
+  return hits / union
+}
+
+/**
+ * Fetch all items from Zoho Books catalog.
+ * Returns { exactMap, allItems } for both fast exact lookup and fuzzy matching.
+ */
+async function fetchItemCatalog(token) {
+  let allItems = []
+  let page = 1
+  let hasMore = true
+
+  while (hasMore) {
+    const res = await axios.get(`${ZOHO_API_BASE}/items`, {
+      headers: zohoHeaders(token),
+      params: { ...orgParam(), per_page: 200, page },
+      timeout: 10000,
+    })
+    const items = res.data?.items || []
+    allItems = allItems.concat(items.map((i) => ({ item_id: i.item_id, name: i.name })))
+    hasMore = res.data?.page_context?.has_more_page === true
+    page++
+  }
+
+  // Exact-match map (normalized, no prefix strip needed — kept for safety)
+  const exactMap = new Map()
+  for (const item of allItems) {
+    exactMap.set(item.name.trim().toLowerCase(), item.item_id)
+    // Also index the prefix-stripped version
+    exactMap.set(normalizeItemName(item.name), item.item_id)
+  }
+
+  return { exactMap, allItems }
+}
+
+/**
+ * Exported version of fetchItemCatalog for use by the audit route.
+ */
+export async function getItemCatalogForAudit() {
+  const token = await getAccessToken()
+  return fetchItemCatalog(token)
+}
+
+/**
+ * Find the best matching Zoho item_id for a calibration name.
+ * Returns { item_id, matchedName, score } or null if no confident match.
+ * Exported so the audit route can reuse the same logic.
+ */
+export function findBestMatchExported(calName, exactMap, allItems) {
+  return findBestMatch(calName, exactMap, allItems)
+}
+
+function findBestMatch(calName, exactMap, allItems) {
+  // 1. Exact match first
+  const exactKey = calName.trim().toLowerCase()
+  if (exactMap.has(exactKey)) {
+    return { item_id: exactMap.get(exactKey), matchedName: calName, score: 1 }
+  }
+  const normalKey = normalizeItemName(calName)
+  if (exactMap.has(normalKey)) {
+    return { item_id: exactMap.get(normalKey), matchedName: calName, score: 1 }
+  }
+
+  // 2. Fuzzy match — score every catalog item and take the best
+  let bestScore = 0
+  let bestItem = null
+  for (const item of allItems) {
+    const score = matchScore(calName, item.name)
+    if (score > bestScore) {
+      bestScore = score
+      bestItem = item
+    }
+  }
+
+  // Require at least 0.45 overlap to accept a match
+  if (bestItem && bestScore >= 0.45) {
+    return { item_id: bestItem.item_id, matchedName: bestItem.name, score: bestScore }
+  }
+
+  return null
+}
+
+/**
+ * Fetch all salespersons (users) from Zoho Books.
+ * Returns array of { user_id, name, email }
+ */
+export async function listSalespersons() {
+  const token = await getAccessToken()
+  const res = await axios.get(`${ZOHO_API_BASE}/users`, {
+    headers: zohoHeaders(token),
+    params: { ...orgParam(), filter_by: 'Status.Active' },
+    timeout: 10000,
+  })
+  const users = res.data?.users || []
+  return users
+    .map((u) => ({ user_id: u.user_id, name: u.name, email: u.email }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/**
+ * Create a draft quote (estimate) in Zoho Books.
+ * Returns { quoteId, quoteNumber, quoteUrl }
+ */
+export async function createDraftQuote({
+  customerId,
+  customerName,
+  salespersonId,
+  salespersonName,
+  shop,
+  ro_number,
+  vin,
+  vehicle,
+  year,
+  make,
+  model,
+  insurer,
+  claim,
+  calibrations,
+  pdfBase64,
+  pdfFilename,
+  notes: userNotes,
+}) {
+  const token = await getAccessToken()
+
+  // 1. Fetch item catalog and build matched line items
+  let exactMap = new Map()
+  let allItems = []
+  try {
+    ;({ exactMap, allItems } = await fetchItemCatalog(token))
+    console.log(`[zoho] Item catalog loaded: ${allItems.length} items`)
+  } catch (catalogErr) {
+    console.warn('[zoho] Could not load item catalog (non-fatal):', catalogErr.message)
+  }
+
+  // Fixed items — always included on every invoice
+  const fixedNames = [
+    'Calibration Identification Report',
+    'Post Collision Safety Inspection 1 (L-M)',
+    'Post-Scan (L-M)',
+  ]
+  console.log(`[zoho] Fixed items: ${fixedNames.join(', ')}`)
+
+  const unmatchedItems = []
+
+  function buildLineItem(name, description, quantity = 1) {
+    const match = findBestMatch(name, exactMap, allItems)
+    if (match) {
+      console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)})`)
+      return { item_id: match.item_id, description: description || '', quantity }
+    } else {
+      unmatchedItems.push(name)
+      console.warn(`[zoho] ✗ No match for: "${name}" — will appear in quote notes`)
+      return null  // Fix #6 — skip $0 line item, add to notes instead
+    }
+  }
+
+  // Fixed items first, then calibrations
+  const fixedLineItems = fixedNames.map((name) => buildLineItem(name, '')).filter(Boolean)
+  const calLineItems = calibrations.map((cal) => {
+    // If the technician provided a description (e.g. Diagnostic 1 / Mechanical notes), use it directly
+    let description = cal.description || ''
+    if (!description) {
+      const parts = []
+      if (cal.trigger)         parts.push(`Trigger: ${cal.trigger}`)
+      if (cal.line_references) parts.push(`Line Numbers: ${cal.line_references}`)
+      if (cal.cal_type)        parts.push(`Type: ${cal.cal_type}`)
+      if (cal.justification)   parts.push(cal.justification)
+      description = parts.join('\n')
+    }
+    const quantity = cal.quantity || 1
+    return buildLineItem(cal.calibration_name, description, quantity)
+  }).filter(Boolean)
+  const lineItems = [...fixedLineItems, ...calLineItems]
+
+  if (unmatchedItems.length > 0) {
+    console.warn('[zoho] Unmatched items (added to notes):', unmatchedItems)
+  }
+
+  // 3. Notes — user story (manual invoice), then VIN, insurer, claim, plus any unmatched calibrations
+  const notesLines = [
+    userNotes ? userNotes.trim() : null,
+    vin     ? `VIN: ${vin}`         : null,
+    insurer ? `Insurer: ${insurer}` : null,
+    claim   ? `Claim: ${claim}`     : null,
+    unmatchedItems.length > 0
+      ? `Items needing manual pricing:\n${unmatchedItems.map(n => `  - ${n}`).join('\n')}`
+      : null,
+  ].filter(Boolean)
+
+  // 4. Custom fields — Year, Make, Model, RO#, VIN (WorkDrive link added after estimate created)
+  console.log('[zoho] Custom field values — Year:', year, '| Make:', make, '| Model:', model, '| RO#:', ro_number, '| VIN:', vin)
+  const baseCustomFields = [
+    year       ? { label: 'Year',    value: year      } : null,
+    make       ? { label: 'Make',    value: make      } : null,
+    model      ? { label: 'Model',   value: model     } : null,
+    ro_number  ? { label: 'RO#',     value: ro_number } : null,
+    vin        ? { label: 'VIN',     value: vin       } : null,
+    insurer    ? { label: 'Insurer', value: insurer   } : null,
+  ].filter(Boolean)
+
+  // Build estimate number: "{SHOP INITIALS} {RO NUMBER}" e.g. "ABS 20305"
+  const initials = getShopInitials(customerName || shop)
+  const estimateNumber = initials && ro_number
+    ? `${initials} ${ro_number}`
+    : ro_number || ''
+
+  console.log(`[zoho] Estimate number: "${estimateNumber}" (initials="${initials}")`)
+
+  const body = {
+    estimate_number: estimateNumber,
+    reference_number: ro_number || '',
+    notes: notesLines.join('\n'),
+    custom_fields: baseCustomFields,
+    line_items: lineItems,
+    status: 'draft',
+  }
+
+  if (customerId) body.customer_id = customerId
+  if (salespersonName) body.salesperson_name = salespersonName
+
+  // 4. Create the estimate — retry with .1, .2 etc. on duplicate number or unique field conflict
+  let res
+  let attempt = 0
+  const MAX_ATTEMPTS = 10
+  while (attempt < MAX_ATTEMPTS) {
+    const suffix = attempt === 0 ? '' : `.${attempt}`
+    const currentNumber = `${estimateNumber}${suffix}`
+    const currentRO = `${ro_number || ''}${suffix}`
+
+    if (attempt > 0) {
+      console.log(`[zoho] Duplicate detected — retrying with estimate "${currentNumber}", RO# "${currentRO}"`)
+    }
+
+    body.estimate_number = currentNumber
+    // Keep RO# custom field in sync so Zoho's unique constraint doesn't block us
+    body.custom_fields = baseCustomFields.map((cf) =>
+      cf.label === 'RO#' ? { ...cf, value: currentRO } : cf
+    )
+
+    try {
+      res = await axios.post(`${ZOHO_API_BASE}/estimates`, body, {
+        headers: zohoHeaders(token),
+        params: orgParam(),
+        timeout: 15000,
+      })
+    } catch (axiosErr) {
+      const data = axiosErr.response?.data
+      const zohoMsg = (typeof data === 'object' ? data?.message : null) || axiosErr.message
+      const zohoCode = typeof data === 'object' ? data?.code : null
+      console.error('[zoho] Estimate POST failed:', JSON.stringify(data || axiosErr.message))
+
+      // Detect duplicate / unique-constraint error by Zoho code OR message
+      const errMsg = zohoMsg.toLowerCase()
+      const isAxiosDuplicate =
+        zohoCode === 120303 ||                         // Zoho unique field constraint
+        zohoCode === 1004 ||                           // Duplicate estimate number
+        errMsg.includes('added already') ||
+        errMsg.includes('already exists') ||
+        errMsg.includes('already been used') ||
+        errMsg.includes('unique value') ||
+        errMsg.includes('duplicate')
+
+      if (isAxiosDuplicate) {
+        console.log(`[zoho] Duplicate on attempt ${attempt} (code ${zohoCode}) — will retry`)
+        attempt++
+        continue
+      }
+
+      throw new Error(`Zoho Books error: "${zohoMsg}"`)
+    }
+
+    // Success
+    if (res.data?.code === 0) break
+
+    // Duplicate estimate number OR unique custom-field constraint (RO# already used)
+    const resCode = res.data?.code
+    const msg = res.data?.message?.toLowerCase() || ''
+    const isDuplicate =
+      resCode === 120303 ||
+      resCode === 1004 ||
+      msg.includes('added already') ||
+      msg.includes('already exists') ||
+      msg.includes('already been used') ||
+      msg.includes('unique value') ||
+      msg.includes('duplicate')
+
+    if (isDuplicate) {
+      console.log(`[zoho] Duplicate on attempt ${attempt} (code ${resCode}) — will retry`)
+      attempt++
+      continue
+    }
+
+    // Any other error — throw immediately
+    console.error('[zoho] Non-zero code:', JSON.stringify(res.data))
+    throw new Error(res.data?.message || `Zoho Books estimate failed (code ${res.data?.code})`)
+  }
+
+  if (!res || res.data?.code !== 0) {
+    throw new Error(`Could not find a unique estimate number after ${MAX_ATTEMPTS} attempts.`)
+  }
+
+  const estimate = res.data.estimate
+  const estimateId = estimate.estimate_id
+  const orgId = process.env.ZOHO_ORGANIZATION_ID
+
+  // 5. Now that the estimate exists, create the WorkDrive folder (once, guaranteed)
+  const finalRO = estimate.estimate_number?.split(' ').pop() || ro_number // e.g. "24249.1"
+  const folderName = [
+    finalRO,
+    shop,
+    [year, make, model].filter(Boolean).join(' '),
+  ].filter(Boolean).join(' — ')
+
+  let workdriveResult = null
+  try {
+    workdriveResult = await createJobFolder(folderName, token)
+    console.log('[workdrive] Folder created:', workdriveResult.folderUrl)
+  } catch (wdErr) {
+    console.warn('[workdrive] Folder creation failed (non-fatal):', wdErr.message)
+  }
+
+  // Upload the Kinetic PDF into the folder if provided
+  if (workdriveResult?.folderId && pdfBase64) {
+    try {
+      const pdfBuffer = Buffer.from(pdfBase64, 'base64')
+      const uploadName = pdfFilename || `Kinetic-Report-${finalRO}.pdf`
+      await uploadFileToFolder(workdriveResult.folderId, uploadName, pdfBuffer, token)
+      console.log('[workdrive] PDF uploaded:', uploadName)
+    } catch (uploadErr) {
+      console.warn('[workdrive] PDF upload failed (non-fatal):', uploadErr.message)
+    }
+  }
+
+  // 6. If we got a WorkDrive link, update the estimate's custom fields with it
+  if (workdriveResult?.shareLink) {
+    try {
+      const updatedFields = [
+        ...baseCustomFields.map((cf) =>
+          cf.label === 'RO#' ? { ...cf, value: finalRO } : cf
+        ),
+        { label: 'Scan Report and Documentation', value: workdriveResult.shareLink },
+      ]
+      await axios.put(
+        `${ZOHO_API_BASE}/estimates/${estimateId}`,
+        { custom_fields: updatedFields },
+        { headers: zohoHeaders(token), params: orgParam() }
+      )
+      console.log('[zoho] Estimate updated with WorkDrive link')
+    } catch (updateErr) {
+      console.warn('[zoho] Could not update estimate with WorkDrive link (non-fatal):', updateErr.message)
+    }
+  }
+
+  return {
+    quoteId: estimateId,
+    quoteNumber: estimate.estimate_number,
+    quoteUrl: `https://books.zoho.com/app#/estimates/${estimateId}?organization_id=${orgId}`,
+    folderUrl: workdriveResult?.folderUrl || null,
+    shareLink: workdriveResult?.shareLink || null,
+    unmatchedItems: unmatchedItems.length > 0 ? unmatchedItems : null,
+  }
+}

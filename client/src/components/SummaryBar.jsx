@@ -35,7 +35,7 @@ export default function SummaryBar({ selected, removed }) {
         className="text-xs"
         style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#bbb' }}
       >
-        → Zoho Books Quote
+        → Zoho Books Invoice
       </span>
     </div>
   )

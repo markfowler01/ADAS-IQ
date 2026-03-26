@@ -1,16 +1,18 @@
+import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState, useEffect } from 'react'
+import Navbar from './Navbar'
 
 const ORANGE = '#CD4419'
 const MUTED  = '#888'
 
-export default function HistoryScreen({ onBack }) {
+export default function HistoryScreen({ onBack, user, onLogout, currentScreen, onNavigate }) {
   const [entries,  setEntries]  = useState([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState(null)
   const [search,   setSearch]   = useState('')
 
   useEffect(() => {
-    fetch('/api/history', { credentials: 'include' })
+    apiFetch(`${API_BASE}/api/history`)
       .then((r) => r.json())
       .then((data) => {
         if (data.error) throw new Error(data.error)
@@ -20,10 +22,12 @@ export default function HistoryScreen({ onBack }) {
       .finally(() => setLoading(false))
   }, [])
 
-  function formatDate(ms) {
-    if (!ms) return '—'
+  function formatDate(val) {
+    if (!val) return '—'
     try {
-      return new Date(Number(ms)).toLocaleDateString('en-US', {
+      const d = typeof val === 'string' ? new Date(val) : new Date(Number(val))
+      if (isNaN(d)) return '—'
+      return d.toLocaleDateString('en-US', {
         weekday: 'short', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit',
       })
     } catch { return '—' }
@@ -42,24 +46,7 @@ export default function HistoryScreen({ onBack }) {
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'white' }}>
 
-      {/* ── Navbar ── */}
-      <header style={{ borderBottom: '1px solid #ebebeb' }}>
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: ORANGE }}>
-              <span className="text-white text-xs font-bold"
-                style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-            </div>
-            <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>ADAS IQ</span>
-          </div>
-          <button onClick={onBack}
-            className="text-sm px-3 py-1.5 rounded-lg font-medium"
-            style={{ color: MUTED, backgroundColor: '#f5f3f0' }}>
-            ← Back
-          </button>
-        </div>
-      </header>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
       <main className="flex-1 max-w-6xl w-full mx-auto px-6 py-8">
 
@@ -91,7 +78,7 @@ export default function HistoryScreen({ onBack }) {
               <circle cx="12" cy="12" r="10" stroke="#e0dbd6" strokeWidth="3"/>
               <path d="M12 2a10 10 0 0 1 10 10" stroke={ORANGE} strokeWidth="3" strokeLinecap="round"/>
             </svg>
-            <span className="text-sm" style={{ color: MUTED }}>Loading from WorkDrive…</span>
+            <span className="text-sm" style={{ color: MUTED }}>Loading history…</span>
           </div>
         )}
 
@@ -101,7 +88,7 @@ export default function HistoryScreen({ onBack }) {
             style={{ backgroundColor: '#fff0ed', border: '1px solid #e8c5b0', color: ORANGE }}>
             <strong>Could not load history:</strong> {error}
             <p className="mt-1 text-xs" style={{ color: '#a33510' }}>
-              This may require the WorkDrive.files.READ scope on your Zoho token.
+              History will populate automatically after your next estimate is created.
             </p>
           </div>
         )}
@@ -113,12 +100,13 @@ export default function HistoryScreen({ onBack }) {
             <div className="grid gap-4 px-4 pb-2 text-xs font-semibold uppercase tracking-wider"
               style={{
                 color: MUTED,
-                gridTemplateColumns: '2fr 1fr 2fr 2fr 24px',
+                gridTemplateColumns: '2fr 1fr 2fr 1fr 2fr 24px',
                 borderBottom: '1px solid #ebebeb',
               }}>
               <span>Vehicle</span>
               <span>RO #</span>
               <span>Shop</span>
+              <span>Tech</span>
               <span>Date</span>
               <span />
             </div>
@@ -137,12 +125,12 @@ export default function HistoryScreen({ onBack }) {
             {filtered.map((entry, i) => (
               <a
                 key={i}
-                href={entry.folderUrl}
+                href={entry.estimateUrl || entry.pdfUrl || '#'}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="grid gap-4 px-4 py-4 items-center transition-colors"
                 style={{
-                  gridTemplateColumns: '2fr 1fr 2fr 2fr 24px',
+                  gridTemplateColumns: '2fr 1fr 2fr 1fr 2fr 24px',
                   borderBottom: '1px solid #f0eeec',
                   textDecoration: 'none',
                   cursor: 'pointer',
@@ -163,6 +151,11 @@ export default function HistoryScreen({ onBack }) {
                 {/* Shop */}
                 <span className="text-sm" style={{ color: '#444' }}>
                   {entry.shop || '—'}
+                </span>
+
+                {/* Tech */}
+                <span className="text-sm" style={{ color: '#444' }}>
+                  {entry.technician || '—'}
                 </span>
 
                 {/* Date */}

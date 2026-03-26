@@ -1,5 +1,16 @@
 node_modules/
 client/node_modules/
+functions/*/node_modules/
 .env
+.env.local
 *.log
 .DS_Store
+
+# Build output
+client/dist/
+client/assets/
+client/public/assets/
+app-hosting/
+
+# Catalyst artifacts
+*.tgz

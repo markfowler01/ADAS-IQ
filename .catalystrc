@@ -1,0 +1,30 @@
+{
+  "defaults": {
+    "project": 1,
+    "env": 1
+  },
+  "actives": {
+    "project": 1,
+    "env": 1
+  },
+  "projects": [
+    {
+      "idx": 1,
+      "id": "45874000000016010",
+      "name": "ADAS-IQ",
+      "domain": {
+        "id": "10122357570",
+        "name": "adas-iq-904191467.development"
+      },
+      "timezone": "America/Los_Angeles",
+      "env": [
+        {
+          "idx": 1,
+          "id": "904191467",
+          "name": "Development",
+          "type": 3
+        }
+      ]
+    }
+  ]
+}
