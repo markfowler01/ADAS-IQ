@@ -8,11 +8,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Proxy all API and auth calls to the Catalyst staging environment
+      // Proxy API calls to local Catalyst serve (catalyst serve --except client)
       '/server': {
-        target: 'https://adas-iq-904191467.development.catalystserverless.com',
+        target: 'http://localhost:9000',
         changeOrigin: true,
-        secure: true,
       },
     },
   },

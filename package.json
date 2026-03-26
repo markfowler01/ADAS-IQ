@@ -5,10 +5,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "cd client && npm run dev",
+    "dev": "catalyst serve",
+    "dev:ui": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "deploy:staging": "cd client && npm run build && cd .. && ~/.npm-global/bin/catalyst deploy",
-    "deploy:prod": "cd client && npm run build && cd .. && ~/.npm-global/bin/catalyst deploy --env Production",
+    "deploy:staging": "npm run build && catalyst deploy",
+    "deploy:prod": "npm run build && catalyst deploy --env Production",
     "server": "node --watch server/index.js",
     "start": "node server/index.js"
   },
