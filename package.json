@@ -9,7 +9,7 @@
     "dev:ui": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "deploy:staging": "npm run build && catalyst deploy",
-    "deploy:prod": "npm run build && catalyst deploy --env Production",
+    "deploy:prod": "npm run build && catalyst deploy && echo '\\n✅ Build deployed to Development. Go to console.zoho.com/catalyst → DevOps → Deploy to Production to push to Production.'",
     "server": "node --watch server/index.js",
     "start": "node server/index.js"
   },
