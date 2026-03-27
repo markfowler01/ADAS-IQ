@@ -240,6 +240,11 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             Calibration Systems
           </p>
 
+          {/* Service add-ons label */}
+          <p className="text-xs mb-2" style={{ color: '#aaa' }}>
+            Diagnostic 1 and Mechanical appear at the bottom — toggle on if needed.
+          </p>
+
           <div className="flex flex-col gap-3">
             {calibrations.map((cal) => {
               const isService = cal.calibration_name === 'Diagnostic 1' || cal.calibration_name === 'Mechanical'
@@ -248,10 +253,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
                   <div key={cal._id}
                     style={{
                       backgroundColor: 'white',
-                      border: `1.5px solid ${cal.enabled ? '#e8d5ce' : '#e8e8e8'}`,
+                      border: `1.5px solid ${cal.enabled ? '#e8d5ce' : '#d0d0d0'}`,
                       borderRadius: '12px',
                       padding: '16px',
-                      opacity: cal.enabled ? 1 : 0.55,
+                      opacity: cal.enabled ? 1 : 0.85,
                       transition: 'all 0.18s ease',
                     }}
                   >
