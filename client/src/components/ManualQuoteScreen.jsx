@@ -244,6 +244,33 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
       } catch (histErr) {
         console.warn('[history] Failed to save history entry:', histErr.message)
       }
+
+      // Auto-create Kanban board ticket
+      try {
+        const enabledCals = calibrations.filter(c => c.enabled)
+        const calList = enabledCals.map((cal, i) => ({
+          name: cal.calibration_name || `Calibration ${i + 1}`,
+          mode: 'Static',
+        }))
+        await apiFetch(`${API_BASE}/api/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop_name:      selectedCustomer?.name || '',
+            vehicle:        [year, make, model].filter(Boolean).join(' '),
+            vin:            vin || '',
+            insurer:        insurer || '',
+            technician:     selectedSalesperson?.name || '',
+            scheduled_date: new Date().toISOString().split('T')[0],
+            calibrations:   JSON.stringify(calList),
+            notes:          `RO#: ${roNumber || ''} | Quote: ${data.quoteNumber || ''}`,
+            report_url:     data.quoteUrl || '',
+            status:         'need_dispatch',
+          }),
+        })
+      } catch (kanbanErr) {
+        console.warn('[kanban] Manual invoice auto-ticket failed:', kanbanErr.message)
+      }
     } catch (e) {
       setSubmitError(e.message || 'Failed to create invoice.')
     } finally {

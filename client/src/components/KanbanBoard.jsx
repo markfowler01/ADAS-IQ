@@ -513,7 +513,9 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced }) 
 
       {/* Insurer */}
       {job.insurer && (
-        <p className="text-xs text-blue-500 font-medium mb-1 truncate">{job.insurer}</p>
+        <p className="text-xs font-medium mb-1 truncate" style={{ color: '#2563eb' }}>
+          <span style={{ color: '#999', fontWeight: 400 }}>Insurer: </span>{job.insurer}
+        </p>
       )}
 
       {/* Technician */}
