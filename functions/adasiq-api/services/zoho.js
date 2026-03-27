@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { createJobFolder, uploadFileToFolder } from './workdrive.js'
+import { generateADASIQPdf } from './pdf.js'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 const ZOHO_API_BASE = 'https://www.zohoapis.com/books/v3'  // Zoho Books
@@ -481,9 +482,25 @@ export async function createDraftQuote({
       const pdfBuffer = Buffer.from(pdfBase64, 'base64')
       const uploadName = pdfFilename || `Kinetic-Report-${finalRO}.pdf`
       await uploadFileToFolder(workdriveResult.folderId, uploadName, pdfBuffer, token)
-      console.log('[workdrive] PDF uploaded:', uploadName)
+      console.log('[workdrive] Kinetic PDF uploaded:', uploadName)
     } catch (uploadErr) {
-      console.warn('[workdrive] PDF upload failed (non-fatal):', uploadErr.message)
+      console.warn('[workdrive] Kinetic PDF upload failed (non-fatal):', uploadErr.message)
+    }
+  }
+
+  // Generate and upload the ADAS IQ PDF report
+  if (workdriveResult?.folderId) {
+    try {
+      const adasIQPdf = await generateADASIQPdf({
+        shop, ro_number: finalRO, insurer, vin, vehicle, year, make, model, claim,
+        calibrations,
+        document_links: [],
+      })
+      const adasIQName = `ADAS-IQ-Report-${finalRO}.pdf`
+      await uploadFileToFolder(workdriveResult.folderId, adasIQName, adasIQPdf, token)
+      console.log('[workdrive] ADAS IQ PDF uploaded:', adasIQName)
+    } catch (pdfErr) {
+      console.warn('[workdrive] ADAS IQ PDF upload failed (non-fatal):', pdfErr.message)
     }
   }
 
