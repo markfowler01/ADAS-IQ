@@ -333,21 +333,9 @@ export async function createDraftQuote({
     console.warn('[zoho] Unmatched items (added to notes):', unmatchedItems)
   }
 
-  // Check for $0 total before calling Zoho — give a clear actionable error
+  // If nothing matched at all, warn but still try — Zoho will respond with its own error
   if (lineItems.length === 0) {
-    throw new Error(
-      `No line items could be matched in your Zoho Books catalog. ` +
-      `Make sure these items exist in Zoho Books → Items: ${[...fixedNames, ...(calibrations.map(c => c.calibration_name))].join(', ')}`
-    )
-  }
-  if (zeroPriceItems.length > 0 && lineItems.every(li => {
-    const found = allItems.find(i => i.item_id === li.item_id)
-    return !found || !found.rate || found.rate === 0
-  })) {
-    throw new Error(
-      `All matched items have $0 price in Zoho Books. ` +
-      `Go to Zoho Books → Items and set a price for: ${zeroPriceItems.join(', ')}`
-    )
+    console.warn('[zoho] No line items matched catalog — sending empty line items, Zoho will validate')
   }
 
   // 3. Notes — user story (manual invoice), then VIN, insurer, claim, plus any unmatched calibrations
@@ -440,7 +428,10 @@ export async function createDraftQuote({
         continue
       }
 
-      throw new Error(`Zoho Books error: "${zohoMsg}"`)
+      const friendlyMsg = zohoMsg.toLowerCase().includes('greater than zero')
+        ? 'Invoice total is $0 — make sure your Zoho Books items have prices set (Zoho Books → Items → edit each item → set Rate).'
+        : `Zoho Books error: "${zohoMsg}"`
+      throw new Error(friendlyMsg)
     }
 
     // Success
