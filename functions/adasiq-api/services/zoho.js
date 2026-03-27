@@ -147,7 +147,7 @@ async function fetchItemCatalog(token) {
       timeout: 10000,
     })
     const items = res.data?.items || []
-    allItems = allItems.concat(items.map((i) => ({ item_id: i.item_id, name: i.name })))
+    allItems = allItems.concat(items.map((i) => ({ item_id: i.item_id, name: i.name, rate: i.rate || 0 })))
     hasMore = res.data?.page_context?.has_more_page === true
     page++
   }
@@ -184,11 +184,15 @@ function findBestMatch(calName, exactMap, allItems) {
   // 1. Exact match first
   const exactKey = calName.trim().toLowerCase()
   if (exactMap.has(exactKey)) {
-    return { item_id: exactMap.get(exactKey), matchedName: calName, score: 1 }
+    const item_id = exactMap.get(exactKey)
+    const found = allItems.find(i => i.item_id === item_id)
+    return { item_id, matchedName: calName, score: 1, rate: found?.rate || 0 }
   }
   const normalKey = normalizeItemName(calName)
   if (exactMap.has(normalKey)) {
-    return { item_id: exactMap.get(normalKey), matchedName: calName, score: 1 }
+    const item_id = exactMap.get(normalKey)
+    const found = allItems.find(i => i.item_id === item_id)
+    return { item_id, matchedName: calName, score: 1, rate: found?.rate || 0 }
   }
 
   // 2. Fuzzy match — score every catalog item and take the best
@@ -204,7 +208,7 @@ function findBestMatch(calName, exactMap, allItems) {
 
   // Require at least 0.45 overlap to accept a match
   if (bestItem && bestScore >= 0.45) {
-    return { item_id: bestItem.item_id, matchedName: bestItem.name, score: bestScore }
+    return { item_id: bestItem.item_id, matchedName: bestItem.name, score: bestScore, rate: bestItem.rate || 0 }
   }
 
   return null
@@ -271,16 +275,21 @@ export async function createDraftQuote({
   console.log(`[zoho] Fixed items: ${fixedNames.join(', ')}`)
 
   const unmatchedItems = []
+  const zeroPriceItems = []
 
   function buildLineItem(name, description, quantity = 1) {
     const match = findBestMatch(name, exactMap, allItems)
     if (match) {
-      console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)})`)
+      console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)}, rate $${match.rate})`)
+      if (!match.rate || match.rate === 0) {
+        zeroPriceItems.push(match.matchedName || name)
+        console.warn(`[zoho] ⚠ "${name}" matched but has $0 price in Zoho Books`)
+      }
       return { item_id: match.item_id, description: description || '', quantity }
     } else {
       unmatchedItems.push(name)
       console.warn(`[zoho] ✗ No match for: "${name}" — will appear in quote notes`)
-      return null  // Fix #6 — skip $0 line item, add to notes instead
+      return null
     }
   }
 
@@ -304,6 +313,23 @@ export async function createDraftQuote({
 
   if (unmatchedItems.length > 0) {
     console.warn('[zoho] Unmatched items (added to notes):', unmatchedItems)
+  }
+
+  // Check for $0 total before calling Zoho — give a clear actionable error
+  if (lineItems.length === 0) {
+    throw new Error(
+      `No line items could be matched in your Zoho Books catalog. ` +
+      `Make sure these items exist in Zoho Books → Items: ${[...fixedNames, ...(calibrations.map(c => c.calibration_name))].join(', ')}`
+    )
+  }
+  if (zeroPriceItems.length > 0 && lineItems.every(li => {
+    const found = allItems.find(i => i.item_id === li.item_id)
+    return !found || !found.rate || found.rate === 0
+  })) {
+    throw new Error(
+      `All matched items have $0 price in Zoho Books. ` +
+      `Go to Zoho Books → Items and set a price for: ${zeroPriceItems.join(', ')}`
+    )
   }
 
   // 3. Notes — user story (manual invoice), then VIN, insurer, claim, plus any unmatched calibrations
