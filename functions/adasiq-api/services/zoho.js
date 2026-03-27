@@ -88,11 +88,12 @@ export async function listCustomers() {
   return allContacts
 }
 
-// Words that carry no matching weight
+// Words that carry no matching weight — do NOT include directional or technical
+// terms like front/rear/left/right/static/dynamic/sensor — those are critical
+// for distinguishing "Front Camera" from "Rear Camera" etc.
 const STOP_WORDS = new Set([
   'the','a','an','and','or','of','for','with','in','at','to','from',
-  'by','on','is','are','was','be','as','static','dynamic','left','right',
-  'front','rear','module','system','control','after','sensor','level',
+  'by','on','is','are','was','be','as','after',
 ])
 
 /**
@@ -117,19 +118,35 @@ function keywords(str) {
     .filter(w => w.length > 2 && !STOP_WORDS.has(w))
 }
 
+// Directional / type words that must match exactly if present in cal name
+const CRITICAL_WORDS = new Set(['front','rear','left','right','static','dynamic','forward','backup','surround'])
+
 /**
  * Score how well calName matches itemName.
- * Returns 0–1 (1 = perfect). Penalises items whose keywords far exceed the cal's.
+ * Returns 0–1 (1 = perfect).
+ * Critical words (front/rear/left/right etc.) cause a large penalty if they
+ * appear in one name but not the other — prevents "Front Camera" → "Rear Camera".
  */
 function matchScore(calName, itemName) {
-  const calWords = keywords(calName)
+  const calWords  = keywords(calName)
   const itemWords = new Set(keywords(itemName))
   if (calWords.length === 0 || itemWords.size === 0) return 0
 
   const hits = calWords.filter(w => itemWords.has(w)).length
-  // Jaccard-style: hits / union size — rewards precision AND recall
   const union = new Set([...calWords, ...itemWords]).size
-  return hits / union
+  let score = hits / union
+
+  // Heavy penalty if a critical word appears in one name but not the other
+  const calCritical  = calWords.filter(w => CRITICAL_WORDS.has(w))
+  const itemCritical = [...itemWords].filter(w => CRITICAL_WORDS.has(w))
+  for (const cw of calCritical) {
+    if (!itemWords.has(cw)) score *= 0.2   // cal has "front", item doesn't
+  }
+  for (const iw of itemCritical) {
+    if (!calWords.includes(iw)) score *= 0.2  // item has "rear", cal doesn't
+  }
+
+  return score
 }
 
 /**
@@ -207,8 +224,8 @@ function findBestMatch(calName, exactMap, allItems) {
     }
   }
 
-  // Require at least 0.45 overlap to accept a match
-  if (bestItem && bestScore >= 0.45) {
+  // Require at least 0.5 overlap to accept a match
+  if (bestItem && bestScore >= 0.5) {
     return { item_id: bestItem.item_id, matchedName: bestItem.name, score: bestScore, rate: bestItem.rate || 0 }
   }
 
