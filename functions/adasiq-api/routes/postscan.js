@@ -50,19 +50,22 @@ router.get('/debug', async (req, res) => {
       const mid = messages[0].messageId
       steps.first_messageId = mid
       steps.first_messageId_type = typeof mid
+      // Show every field the listing gives us — attachments may already be here
+      steps.first_message_all_fields = messages[0]
 
       const hdrs = { Authorization: `Zoho-oauthtoken ${mailToken}` }
       const probes = [
-        { label: '/messages/{id}/attachments',              url: `${MAIL_API}/accounts/${accountId}/messages/${mid}/attachments` },
-        { label: '/folders/{fid}/messages/{id}',            url: `${MAIL_API}/accounts/${accountId}/folders/${SCAN_REPORTS_FOLDER_ID}/messages/${mid}` },
-        { label: '/messages/{id}?folderId=...',             url: `${MAIL_API}/accounts/${accountId}/messages/${mid}`, params: { folderId: SCAN_REPORTS_FOLDER_ID } },
-        { label: '/messages/view?messageId=...',            url: `${MAIL_API}/accounts/${accountId}/messages/view`, params: { messageId: mid, limit: 1 } },
+        { label: '/folders/{fid}/messages/{id}/attachments', url: `${MAIL_API}/accounts/${accountId}/folders/${SCAN_REPORTS_FOLDER_ID}/messages/${mid}/attachments` },
+        { label: '/messages/{id}/header',                    url: `${MAIL_API}/accounts/${accountId}/messages/${mid}/header` },
+        { label: '/messages/{id}/body',                      url: `${MAIL_API}/accounts/${accountId}/messages/${mid}/body` },
+        { label: '/messages/view (include=all)',             url: `${MAIL_API}/accounts/${accountId}/messages/view`, params: { folderId: SCAN_REPORTS_FOLDER_ID, status: 'unread', include: 'all', limit: 1 } },
+        { label: '/messages/view (fetchAttachments)',        url: `${MAIL_API}/accounts/${accountId}/messages/view`, params: { folderId: SCAN_REPORTS_FOLDER_ID, status: 'unread', fetchAttachments: true, limit: 1 } },
       ]
       steps.probes = []
       for (const p of probes) {
         try {
           const r = await axios.get(p.url, { headers: hdrs, params: p.params, timeout: 10000 })
-          steps.probes.push({ label: p.label, status: r.status, preview: JSON.stringify(r.data).substring(0, 400) })
+          steps.probes.push({ label: p.label, status: r.status, preview: JSON.stringify(r.data).substring(0, 500) })
         } catch (e) {
           steps.probes.push({ label: p.label, status: e.response?.status, error: e.response?.data || e.message })
         }
