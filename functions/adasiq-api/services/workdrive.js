@@ -155,10 +155,12 @@ export async function uploadFileToFolder(folderId, filename, buffer, accessToken
     }
   )
 
-  const fileData = res.data?.data
-  if (!fileData?.id) {
+  // WorkDrive upload returns data as an array: [{attributes: {resource_id, ...}}]
+  const fileData = Array.isArray(res.data?.data) ? res.data.data[0] : res.data?.data
+  const fileId = fileData?.attributes?.resource_id || fileData?.id
+  if (!fileId) {
     throw new Error(`WorkDrive upload failed: ${JSON.stringify(res.data)}`)
   }
 
-  return { fileId: fileData.id }
+  return { fileId }
 }
