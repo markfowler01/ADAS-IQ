@@ -55,7 +55,9 @@ const SCAN_REPORTS_FOLDER_ID = '147686000000057026'
 // We must capture it as a string BEFORE JSON.parse truncates it.
 function safeParseMailResponse(raw) {
   if (typeof raw !== 'string') return JSON.parse(raw)
-  const fixed = raw.replace(/"messageId"\s*:\s*(\d+)/g, '"messageId":"$1"')
+  const fixed = raw
+    .replace(/"messageId"\s*:\s*(\d+)/g, '"messageId":"$1"')
+    .replace(/"attachmentId"\s*:\s*(\d+)/g, '"attachmentId":"$1"')
   return JSON.parse(fixed)
 }
 
@@ -81,10 +83,11 @@ export async function getMessageAttachments(token, accountId, folderId, messageI
       transformResponse: [safeParseMailResponse],
     }
   )
-  // Zoho may return data as array or object — normalise to array
+  // Response shape: [{messageId, attachments: [{attachmentId, attachmentName, attachmentSize}]}]
   const data = res.data?.data
   if (!data) return []
-  return Array.isArray(data) ? data : [data]
+  const items = Array.isArray(data) ? data : [data]
+  return items.flatMap(item => item.attachments || [])
 }
 
 // Download an attachment — returns Buffer.

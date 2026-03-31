@@ -49,12 +49,8 @@ router.get('/debug', async (req, res) => {
 
       try {
         const attachments = await getMessageAttachments(mailToken, accountId, msg.folderId, msg.messageId)
-        steps.attachments_raw = attachments
-        steps.attachments_is_array = Array.isArray(attachments)
-        if (Array.isArray(attachments)) {
-          steps.attachments_count = attachments.length
-          steps.attachment_names = attachments.map(a => a.attachmentName || a.name || JSON.stringify(a))
-        }
+        steps.attachments_count = attachments.length
+        steps.attachment_names = attachments.map(a => a.attachmentName)
       } catch (e) {
         steps.attachments_error = e.message
         steps.attachments_detail = e.response?.data || null
