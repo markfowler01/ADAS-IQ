@@ -865,43 +865,45 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       <main className="flex-1 flex flex-col overflow-hidden" style={{ padding: '1.5rem 1.5rem 0' }}>
         {/* Toolbar — always visible after initial load */}
         {!loading && (
-          <div className="mb-4 flex items-center gap-3" style={{ width: '100%' }}>
-            {!error && (
-              <div className="relative" style={{ width: '260px' }}>
-                <svg
-                  className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                  width="14" height="14" viewBox="0 0 24 24" fill="none"
-                >
-                  <circle cx="11" cy="11" r="8" stroke="#aaa" strokeWidth="2"/>
-                  <path d="M21 21l-4.35-4.35" stroke="#aaa" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-                <input
-                  type="text"
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Search shop, vehicle, tech…"
-                  className="w-full pl-8 pr-3 py-2 rounded-lg text-sm outline-none"
-                  style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', color: '#1a1a1a' }}
-                  onFocus={e => (e.target.style.borderColor = ORANGE)}
-                  onBlur={e => (e.target.style.borderColor = '#e0dbd6')}
-                />
+          <div className="mb-4" style={{ width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                {!error && (
+                  <div className="relative" style={{ width: '260px' }}>
+                    <svg
+                      className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                      width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    >
+                      <circle cx="11" cy="11" r="8" stroke="#aaa" strokeWidth="2"/>
+                      <path d="M21 21l-4.35-4.35" stroke="#aaa" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      placeholder="Search shop, vehicle, tech…"
+                      className="w-full pl-8 pr-3 py-2 rounded-lg text-sm outline-none"
+                      style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', color: '#1a1a1a' }}
+                      onFocus={e => (e.target.style.borderColor = ORANGE)}
+                      onBlur={e => (e.target.style.borderColor = '#e0dbd6')}
+                    />
+                  </div>
+                )}
+                {search && (
+                  <button
+                    onClick={() => setSearch('')}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg"
+                    style={{ color: '#888', backgroundColor: '#f0eeec' }}
+                  >
+                    Clear
+                  </button>
+                )}
+                {search && (
+                  <span className="text-xs" style={{ color: '#aaa' }}>
+                    {visibleJobs.length} of {jobs.length} jobs
+                  </span>
+                )}
               </div>
-            )}
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                className="text-xs font-medium px-3 py-1.5 rounded-lg"
-                style={{ color: '#888', backgroundColor: '#f0eeec' }}
-              >
-                Clear
-              </button>
-            )}
-            {search && (
-              <span className="text-xs" style={{ color: '#aaa' }}>
-                {visibleJobs.length} of {jobs.length} jobs
-              </span>
-            )}
-            <div className="ml-auto">
               <button
                 onClick={async () => {
                   setSyncing(true)
@@ -919,7 +921,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 }}
                 disabled={syncing}
                 className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
-                style={{ color: syncing ? '#aaa' : ORANGE, border: `1px solid ${syncing ? '#e0dbd6' : ORANGE}`, backgroundColor: 'white' }}
+                style={{ color: syncing ? '#aaa' : ORANGE, border: `1px solid ${syncing ? '#e0dbd6' : ORANGE}`, backgroundColor: 'white', flexShrink: 0 }}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
                   style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }}>
