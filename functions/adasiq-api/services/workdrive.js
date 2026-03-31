@@ -74,6 +74,42 @@ export async function createJobFolder(folderName, accessToken) {
 }
 
 /**
+ * Search for a job folder in the parent folder by RO number.
+ * Folder names look like: "24223 — L-M Body Shop, Inc. — 2024 Audi Q8 Premium Plus"
+ * @param {string} roNumber  e.g. "24223"
+ * @param {string} accessToken
+ * @returns {{ folderId: string, folderName: string } | null}
+ */
+export async function findFolderByRO(roNumber, accessToken) {
+  let offset = 0
+  const limit = 100
+
+  while (true) {
+    const res = await axios.get(`${WORKDRIVE_API}/files/${PARENT_FOLDER_ID}/files`, {
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+      },
+      params: { limit, offset },
+      timeout: 15000,
+    })
+
+    const items = res.data?.data || []
+    for (const item of items) {
+      const name = item.attributes?.name || ''
+      if (name.startsWith(roNumber)) {
+        return { folderId: item.id, folderName: name }
+      }
+    }
+
+    // If fewer results than limit, we've reached the end
+    if (items.length < limit) break
+    offset += limit
+  }
+
+  return null
+}
+
+/**
  * Upload a file (Buffer) into a WorkDrive folder.
  * @param {string} folderId  destination folder ID
  * @param {string} filename  e.g. "Kinetic-Report.pdf"

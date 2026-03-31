@@ -24,7 +24,7 @@ function getShopInitials(shopName) {
 let cachedToken = null
 let tokenExpiresAt = 0
 
-async function getAccessToken() {
+export async function getAccessToken() {
   const now = Date.now()
   if (cachedToken && now < tokenExpiresAt - 60_000) return cachedToken
 

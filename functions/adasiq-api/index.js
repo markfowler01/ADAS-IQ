@@ -13,6 +13,7 @@ import historyRouter from './routes/history.js'
 import jobsRouter from './routes/jobs.js'
 import webhookRouter from './routes/webhook.js'
 import feedbackRouter from './routes/feedback.js'
+import postscanRouter from './routes/postscan.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -118,5 +119,8 @@ app.use('/api/feedback', requireAuth, feedbackRouter)
 
 // Webhook routes — no auth required (called by Zoho Books servers)
 app.use('/webhooks', webhookRouter)
+
+// Postscan cron route — protected by X-Cron-Secret header, not user auth
+app.use('/api/postscan', postscanRouter)
 
 export default app
