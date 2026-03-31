@@ -69,23 +69,26 @@ export async function getUnreadPostscanMessages(token, accountId) {
   return res.data?.data || []
 }
 
-// Fetch full message details (includes attachments array)
-export async function getAccountMessage(token, accountId, messageId) {
+// Fetch the attachment list for a message.
+// Correct Zoho Mail API: /accounts/{id}/folders/{fid}/messages/{mid}/attachmentinfo
+// The folderId comes from the message listing (msg.folderId).
+export async function getMessageAttachments(token, accountId, folderId, messageId) {
   const res = await axios.get(
-    `${MAIL_API}/accounts/${accountId}/messages/${messageId}`,
+    `${MAIL_API}/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachmentinfo`,
     {
       headers: mailHeaders(token),
       timeout: 15000,
       transformResponse: [safeParseMailResponse],
     }
   )
-  return res.data?.data
+  return res.data?.data || []
 }
 
-// Download an attachment — returns Buffer
-export async function downloadAccountAttachment(token, accountId, messageId, attachmentId) {
+// Download an attachment — returns Buffer.
+// Correct Zoho Mail API: /accounts/{id}/folders/{fid}/messages/{mid}/attachments/{aid}
+export async function downloadAccountAttachment(token, accountId, folderId, messageId, attachmentId) {
   const res = await axios.get(
-    `${MAIL_API}/accounts/${accountId}/messages/${messageId}/attachments/${attachmentId}`,
+    `${MAIL_API}/accounts/${accountId}/folders/${folderId}/messages/${messageId}/attachments/${attachmentId}`,
     {
       headers: mailHeaders(token),
       responseType: 'arraybuffer',
@@ -95,10 +98,11 @@ export async function downloadAccountAttachment(token, accountId, messageId, att
   return Buffer.from(res.data)
 }
 
-// Mark a message as read
-export async function markAccountMessageRead(token, accountId, messageId) {
+// Mark a message as read.
+// Correct Zoho Mail API: PUT /accounts/{id}/folders/{fid}/messages/{mid}
+export async function markAccountMessageRead(token, accountId, folderId, messageId) {
   await axios.put(
-    `${MAIL_API}/accounts/${accountId}/messages/${messageId}`,
+    `${MAIL_API}/accounts/${accountId}/folders/${folderId}/messages/${messageId}`,
     { isRead: 'true' },
     {
       headers: { ...mailHeaders(token), 'Content-Type': 'application/json' },

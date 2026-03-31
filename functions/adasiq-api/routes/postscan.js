@@ -1,18 +1,14 @@
-import axios from 'axios'
 import { Router } from 'express'
 import {
   getMailAccessToken,
   getMailAccountId,
   getUnreadPostscanMessages,
-  getAccountMessage,
+  getMessageAttachments,
   downloadAccountAttachment,
   markAccountMessageRead,
 } from '../services/mail.js'
 import { findFolderByRO, uploadFileToFolder } from '../services/workdrive.js'
 import { getAccessToken } from '../services/zoho.js'
-
-const MAIL_API = 'https://mail.zoho.com/api'
-const SCAN_REPORTS_FOLDER_ID = '147686000000057026'
 
 const router = Router()
 
@@ -47,28 +43,17 @@ router.get('/debug', async (req, res) => {
     steps.unread_subjects = messages.map(m => m.subject)
 
     if (messages[0]) {
-      const mid = messages[0].messageId
-      steps.first_messageId = mid
-      steps.first_messageId_type = typeof mid
-      // Show every field the listing gives us — attachments may already be here
-      steps.first_message_all_fields = messages[0]
+      const msg = messages[0]
+      steps.first_messageId = msg.messageId
+      steps.first_folderId = msg.folderId
 
-      const hdrs = { Authorization: `Zoho-oauthtoken ${mailToken}` }
-      const probes = [
-        { label: '/folders/{fid}/messages/{id}/attachments', url: `${MAIL_API}/accounts/${accountId}/folders/${SCAN_REPORTS_FOLDER_ID}/messages/${mid}/attachments` },
-        { label: '/messages/{id}/header',                    url: `${MAIL_API}/accounts/${accountId}/messages/${mid}/header` },
-        { label: '/messages/{id}/body',                      url: `${MAIL_API}/accounts/${accountId}/messages/${mid}/body` },
-        { label: '/messages/view (include=all)',             url: `${MAIL_API}/accounts/${accountId}/messages/view`, params: { folderId: SCAN_REPORTS_FOLDER_ID, status: 'unread', include: 'all', limit: 1 } },
-        { label: '/messages/view (fetchAttachments)',        url: `${MAIL_API}/accounts/${accountId}/messages/view`, params: { folderId: SCAN_REPORTS_FOLDER_ID, status: 'unread', fetchAttachments: true, limit: 1 } },
-      ]
-      steps.probes = []
-      for (const p of probes) {
-        try {
-          const r = await axios.get(p.url, { headers: hdrs, params: p.params, timeout: 10000 })
-          steps.probes.push({ label: p.label, status: r.status, preview: JSON.stringify(r.data).substring(0, 500) })
-        } catch (e) {
-          steps.probes.push({ label: p.label, status: e.response?.status, error: e.response?.data || e.message })
-        }
+      try {
+        const attachments = await getMessageAttachments(mailToken, accountId, msg.folderId, msg.messageId)
+        steps.attachments_count = attachments.length
+        steps.attachment_names = attachments.map(a => a.attachmentName || a.name || JSON.stringify(a))
+      } catch (e) {
+        steps.attachments_error = e.message
+        steps.attachments_detail = e.response?.data || null
       }
     }
   } catch (err) {
@@ -110,6 +95,7 @@ router.post('/run', async (req, res) => {
 
     for (const msg of messages) {
       const messageId = msg.messageId
+      const folderId = msg.folderId
       const subject = msg.subject || ''
       const roNumber = extractRO(subject)
 
@@ -129,11 +115,11 @@ router.post('/run', async (req, res) => {
 
       console.log(`[postscan] RO ${roNumber} → folder "${folder.folderName}" (${folder.folderId})`)
 
-      // 4. Fetch full message to get attachments
-      const fullMsg = await getAccountMessage(mailToken, accountId, messageId)
-      const attachments = fullMsg?.attachments || []
+      // 4. Fetch attachment list for this message
+      const attachments = await getMessageAttachments(mailToken, accountId, folderId, messageId)
       const pdfs = attachments.filter(a =>
         a.attachmentName?.toLowerCase().endsWith('.pdf') ||
+        a.name?.toLowerCase().endsWith('.pdf') ||
         a.contentType?.toLowerCase().includes('pdf')
       )
 
@@ -147,10 +133,10 @@ router.post('/run', async (req, res) => {
       let uploadedCount = 0
       for (const pdf of pdfs) {
         const attachmentId = pdf.attachmentId || pdf.aid
-        const filename = pdf.attachmentName || `PostScan-${roNumber}.pdf`
+        const filename = pdf.attachmentName || pdf.name || `PostScan-${roNumber}.pdf`
 
         try {
-          const buffer = await downloadAccountAttachment(mailToken, accountId, messageId, attachmentId)
+          const buffer = await downloadAccountAttachment(mailToken, accountId, folderId, messageId, attachmentId)
           await uploadFileToFolder(folder.folderId, filename, buffer, wdToken)
           console.log(`[postscan] Uploaded "${filename}" to folder "${folder.folderName}"`)
           uploadedCount++
@@ -163,7 +149,7 @@ router.post('/run', async (req, res) => {
       // 6. Mark as read so it won't be reprocessed
       if (uploadedCount > 0) {
         try {
-          await markAccountMessageRead(mailToken, accountId, messageId)
+          await markAccountMessageRead(mailToken, accountId, folderId, messageId)
           console.log(`[postscan] Marked message ${messageId} as read`)
         } catch (markErr) {
           console.warn(`[postscan] Could not mark message as read:`, markErr.message)
