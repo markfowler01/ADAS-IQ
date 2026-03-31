@@ -81,7 +81,10 @@ export async function getMessageAttachments(token, accountId, folderId, messageI
       transformResponse: [safeParseMailResponse],
     }
   )
-  return res.data?.data || []
+  // Zoho may return data as array or object — normalise to array
+  const data = res.data?.data
+  if (!data) return []
+  return Array.isArray(data) ? data : [data]
 }
 
 // Download an attachment — returns Buffer.
