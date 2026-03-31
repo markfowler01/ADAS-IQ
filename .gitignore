@@ -14,3 +14,4 @@ app-hosting/
 
 # Catalyst artifacts
 *.tgz
+client/package-lock.json

@@ -30,14 +30,12 @@ jobs:
           mkdir -p "$HOME/.config/zcatalyst-cli-nodejs"
           echo '${{ secrets.CATALYST_CREDENTIALS }}' > "$HOME/.config/zcatalyst-cli-nodejs/zcatalyst-cli.json"
 
-      - name: Install client dependencies
+      - name: Install client dependencies & build frontend
         run: |
           cd client
           rm -rf node_modules package-lock.json
-          npm install
-
-      - name: Build frontend
-        run: cd client && npm run build
+          npm install --include=optional
+          npm run build
 
       - name: Install function dependencies
         run: cd functions/adasiq-api && npm install
