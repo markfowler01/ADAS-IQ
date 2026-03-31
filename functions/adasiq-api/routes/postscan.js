@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { Router } from 'express'
 import {
   getMailAccessToken,
@@ -9,6 +10,9 @@ import {
 } from '../services/mail.js'
 import { findFolderByRO, uploadFileToFolder } from '../services/workdrive.js'
 import { getAccessToken } from '../services/zoho.js'
+
+const MAIL_API = 'https://mail.zoho.com/api'
+const SCAN_REPORTS_FOLDER_ID = '147686000000057026'
 
 const router = Router()
 
@@ -42,21 +46,26 @@ router.get('/debug', async (req, res) => {
     steps.unread_postscan_count = messages.length
     steps.unread_subjects = messages.map(m => m.subject)
 
-    // Show the messageId type so we can confirm it's a string (not a mangled number)
     if (messages[0]) {
       const mid = messages[0].messageId
       steps.first_messageId = mid
       steps.first_messageId_type = typeof mid
 
-      // Try fetching the full message with the (now correctly preserved) messageId
-      try {
-        const full = await getAccountMessage(mailToken, accountId, mid)
-        steps.full_message_keys = Object.keys(full || {})
-        steps.attachments_count = (full?.attachments || []).length
-        steps.attachment_names = (full?.attachments || []).map(a => a.attachmentName)
-      } catch (e) {
-        steps.full_message_error = e.message
-        steps.full_message_detail = e.response?.data || null
+      const hdrs = { Authorization: `Zoho-oauthtoken ${mailToken}` }
+      const probes = [
+        { label: '/messages/{id}/attachments',              url: `${MAIL_API}/accounts/${accountId}/messages/${mid}/attachments` },
+        { label: '/folders/{fid}/messages/{id}',            url: `${MAIL_API}/accounts/${accountId}/folders/${SCAN_REPORTS_FOLDER_ID}/messages/${mid}` },
+        { label: '/messages/{id}?folderId=...',             url: `${MAIL_API}/accounts/${accountId}/messages/${mid}`, params: { folderId: SCAN_REPORTS_FOLDER_ID } },
+        { label: '/messages/view?messageId=...',            url: `${MAIL_API}/accounts/${accountId}/messages/view`, params: { messageId: mid, limit: 1 } },
+      ]
+      steps.probes = []
+      for (const p of probes) {
+        try {
+          const r = await axios.get(p.url, { headers: hdrs, params: p.params, timeout: 10000 })
+          steps.probes.push({ label: p.label, status: r.status, preview: JSON.stringify(r.data).substring(0, 400) })
+        } catch (e) {
+          steps.probes.push({ label: p.label, status: e.response?.status, error: e.response?.data || e.message })
+        }
       }
     }
   } catch (err) {
