@@ -81,32 +81,21 @@ export async function createJobFolder(folderName, accessToken) {
  * @returns {{ folderId: string, folderName: string } | null}
  */
 export async function findFolderByRO(roNumber, accessToken) {
-  // WorkDrive uses cursor-based pagination — do not send offset
-  let nextCursor = null
+  // WorkDrive listing does not accept limit/offset params (returns F6012).
+  // Fetch default results and search by RO number prefix.
+  const res = await axios.get(`${WORKDRIVE_API}/files/${PARENT_FOLDER_ID}/files`, {
+    headers: {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+    },
+    timeout: 15000,
+  })
 
-  while (true) {
-    const params = { limit: 100 }
-    if (nextCursor) params.next_cursor = nextCursor
-
-    const res = await axios.get(`${WORKDRIVE_API}/files/${PARENT_FOLDER_ID}/files`, {
-      headers: {
-        Authorization: `Zoho-oauthtoken ${accessToken}`,
-      },
-      params,
-      timeout: 15000,
-    })
-
-    const items = res.data?.data || []
-    for (const item of items) {
-      const name = item.attributes?.name || ''
-      if (name.startsWith(roNumber)) {
-        return { folderId: item.id, folderName: name }
-      }
+  const items = res.data?.data || []
+  for (const item of items) {
+    const name = item.attributes?.name || ''
+    if (name.startsWith(roNumber)) {
+      return { folderId: item.id, folderName: name }
     }
-
-    // Check for next page cursor
-    nextCursor = res.data?.info?.next_cursor || null
-    if (!nextCursor || items.length === 0) break
   }
 
   return null
