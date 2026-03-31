@@ -42,34 +42,7 @@ router.get('/debug', async (req, res) => {
     steps.unread_postscan_count = messages.length
     steps.unread_subjects = messages.map(m => m.subject)
 
-    if (messages[0]) {
-      const msg = messages[0]
-      steps.first_messageId = msg.messageId
-      steps.first_folderId = msg.folderId
-
-      try {
-        const attachments = await getMessageAttachments(mailToken, accountId, msg.folderId, msg.messageId)
-        steps.attachments_count = attachments.length
-        steps.attachment_names = attachments.map(a => a.attachmentName)
-      } catch (e) {
-        steps.attachments_error = e.message
-        steps.attachments_detail = e.response?.data || null
-      }
-
-      // Test WorkDrive folder lookup
-      try {
-        const wdToken = await getAccessToken()
-        const roNumber = extractRO(msg.subject)
-        steps.ro_number = roNumber
-        if (roNumber) {
-          const folder = await findFolderByRO(roNumber, wdToken)
-          steps.wd_folder = folder
-        }
-      } catch (e) {
-        steps.wd_error = e.message
-        steps.wd_detail = e.response?.data || null
-      }
-    }
+    steps.unread_count = messages.length
   } catch (err) {
     steps.error = err.message
     steps.detail = err.response?.data ? JSON.stringify(err.response.data) : null
