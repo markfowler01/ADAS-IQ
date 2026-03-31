@@ -6,8 +6,8 @@ on:
   workflow_dispatch: # Allow manual trigger from GitHub UI
 
 jobs:
-  deploy-development:
-    name: Deploy to Development
+  deploy:
+    name: Deploy
     runs-on: ubuntu-latest
 
     steps:
@@ -39,75 +39,5 @@ jobs:
       - name: Install function dependencies
         run: cd functions/adasiq-api && npm install
 
-      - name: Deploy to Development
+      - name: Deploy
         run: catalyst deploy
-
-  deploy-production:
-    name: Promote to Production
-    runs-on: ubuntu-latest
-    needs: deploy-development
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install Catalyst CLI
-        run: npm install -g zcatalyst-cli
-
-      - name: Restore Catalyst credentials
-        run: |
-          mkdir -p "$HOME/.config/configstore"
-          echo '${{ secrets.CATALYST_CREDENTIALS }}' > "$HOME/.config/configstore/zcatalyst-cli.json"
-          mkdir -p "$HOME/.config/zcatalyst-cli-nodejs"
-          echo '${{ secrets.CATALYST_CREDENTIALS }}' > "$HOME/.config/zcatalyst-cli-nodejs/zcatalyst-cli.json"
-
-      - name: Trigger Production Deployment via Catalyst API
-        run: |
-          # Extract credential from the config file to get an access token
-          CREDENTIAL=$(node -e "
-            const fs = require('fs');
-            const config = JSON.parse(fs.readFileSync(process.env.HOME + '/.config/configstore/zcatalyst-cli.json', 'utf8'));
-            console.log(config.com?.credential || '');
-          ")
-
-          # Use the Catalyst CLI to create a deployment
-          # This calls the Catalyst API to promote Development → Production
-          node -e "
-            const https = require('https');
-            const PROJECT_ID = '45874000000016010';
-            const options = {
-              hostname: 'api.catalyst.zoho.com',
-              path: '/baas/v1/project/' + PROJECT_ID + '/environment/deployment',
-              method: 'POST',
-              headers: {
-                'Authorization': 'Catalyst-Cred ${CREDENTIAL}',
-                'Content-Type': 'application/json',
-                'PROJECT-ID': PROJECT_ID,
-              }
-            };
-            const req = https.request(options, (res) => {
-              let data = '';
-              res.on('data', (chunk) => data += chunk);
-              res.on('end', () => {
-                console.log('Status:', res.statusCode);
-                console.log('Response:', data);
-                if (res.statusCode >= 200 && res.statusCode < 300) {
-                  console.log('Production deployment triggered successfully');
-                } else {
-                  console.log('Production deployment API call failed — please trigger manually via Catalyst console');
-                  process.exit(0); // Non-fatal
-                }
-              });
-            });
-            req.on('error', (e) => {
-              console.log('Error:', e.message);
-              console.log('Please trigger Production deployment manually via Catalyst console');
-              process.exit(0); // Non-fatal
-            });
-            req.end();
-          "
