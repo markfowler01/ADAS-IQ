@@ -89,7 +89,7 @@ router.post('/run', async (req, res) => {
     console.log('[postscan] Got mail token, fetching account ID...')
     const accountId = await getMailAccountId(mailToken)
     console.log(`[postscan] Account ID: ${accountId}, finding group...`)
-    const groupId = await findPostscanGroup(mailToken)
+    const groupId = await findPostscanGroup(mailToken, accountId)
     console.log(`[postscan] Using account ${accountId}, group ${groupId}`)
 
     // 2. Get Zoho WorkDrive access token (same client, different refresh token)
@@ -121,7 +121,7 @@ router.post('/run', async (req, res) => {
       console.log(`[postscan] RO ${roNumber} → folder "${folder.folderName}" (${folder.folderId})`)
 
       // 5. Fetch full message to get attachments (list endpoint doesn't include them)
-      const fullMsg = await getGroupMessage(mailToken, groupId, messageId)
+      const fullMsg = await getGroupMessage(mailToken, accountId, groupId, messageId)
       const attachments = fullMsg?.attachments || []
       const pdfs = attachments.filter(a =>
         a.attachmentName?.toLowerCase().endsWith('.pdf') ||
