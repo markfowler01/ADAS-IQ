@@ -2,8 +2,10 @@ import { Router } from 'express'
 import {
   getMailAccessToken,
   getMailAccountId,
+  listAllMailAccounts,
   findPostscanGroup,
   getUnreadGroupMessages,
+  getGroupMessage,
   downloadGroupAttachment,
   markGroupMessageRead,
 } from '../services/mail.js'
@@ -34,6 +36,41 @@ function extractRO(subject) {
  *
  * Protected by X-Cron-Secret header (set POSTSCAN_CRON_SECRET env var).
  */
+// GET /api/postscan/debug — shows which step fails (no secret required, temp diagnostic)
+router.get('/debug', async (req, res) => {
+  const steps = {}
+  try {
+    steps.env_mail_refresh = !!process.env.ZOHO_MAIL_REFRESH_TOKEN
+    steps.env_client_id    = !!process.env.ZOHO_CLIENT_ID
+    steps.env_client_secret = !!process.env.ZOHO_CLIENT_SECRET
+
+    const mailToken = await getMailAccessToken()
+    steps.mail_token = mailToken.substring(0, 20) + '...'
+
+    const allAccounts = await listAllMailAccounts(mailToken)
+    steps.all_accounts = allAccounts  // raw, to see field names
+
+    const accountId = allAccounts[0]?.accountId
+    steps.account_id = accountId
+
+    // List folders to find postscan group folder
+    try {
+      const foldersRes = await (await import('axios')).default.get(
+        `https://mail.zoho.com/api/accounts/${accountId}/folders`,
+        { headers: { Authorization: `Zoho-oauthtoken ${mailToken}` }, timeout: 10000 }
+      )
+      steps.folders = (foldersRes.data?.data || []).map(f => ({ id: f.folderId, name: f.folderName, path: f.folderPath }))
+    } catch (fErr) {
+      steps.folders_error = fErr.message
+      steps.folders_detail = fErr.response?.data ? JSON.stringify(fErr.response.data) : null
+    }
+  } catch (err) {
+    steps.error = err.message
+    steps.detail = err.response?.data ? JSON.stringify(err.response.data) : null
+  }
+  res.json(steps)
+})
+
 router.post('/run', async (req, res) => {
   // Validate cron secret (skip check if env var not set, e.g. during initial setup)
   const cronSecret = process.env.POSTSCAN_CRON_SECRET
@@ -47,9 +84,12 @@ router.post('/run', async (req, res) => {
 
   try {
     // 1. Get Zoho Mail access token
+    console.log('[postscan] Getting mail token...')
     const mailToken = await getMailAccessToken()
+    console.log('[postscan] Got mail token, fetching account ID...')
     const accountId = await getMailAccountId(mailToken)
-    const groupId = await findPostscanGroup(mailToken, accountId)
+    console.log(`[postscan] Account ID: ${accountId}, finding group...`)
+    const groupId = await findPostscanGroup(mailToken)
     console.log(`[postscan] Using account ${accountId}, group ${groupId}`)
 
     // 2. Get Zoho WorkDrive access token (same client, different refresh token)
@@ -80,8 +120,9 @@ router.post('/run', async (req, res) => {
 
       console.log(`[postscan] RO ${roNumber} → folder "${folder.folderName}" (${folder.folderId})`)
 
-      // 5. Find PDF attachments and upload each one
-      const attachments = msg.attachments || []
+      // 5. Fetch full message to get attachments (list endpoint doesn't include them)
+      const fullMsg = await getGroupMessage(mailToken, groupId, messageId)
+      const attachments = fullMsg?.attachments || []
       const pdfs = attachments.filter(a =>
         a.attachmentName?.toLowerCase().endsWith('.pdf') ||
         a.contentType?.toLowerCase().includes('pdf')
@@ -121,8 +162,9 @@ router.post('/run', async (req, res) => {
       }
     }
   } catch (err) {
-    console.error('[postscan] Fatal error:', err.message)
-    return res.status(500).json({ error: err.message, processed, skipped, errors })
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message
+    console.error('[postscan] Fatal error:', detail)
+    return res.status(500).json({ error: err.message, detail, processed, skipped, errors })
   }
 
   res.json({
