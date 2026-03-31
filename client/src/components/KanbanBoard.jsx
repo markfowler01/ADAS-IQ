@@ -79,7 +79,7 @@ function jobToForm(job) {
     calibrations: calArr,
     notes: job.notes || '',
     report_url: job.report_url || '',
-    status: job.status || 'scheduled',
+    status: job.status || 'need_dispatch',
     invoiced: job.invoiced || false,
   }
 }
@@ -658,6 +658,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
   const [search, setSearch] = useState('')
+  const [syncing, setSyncing] = useState(false)
 
   function showToast(msg) {
     setToast(msg)
@@ -862,28 +863,30 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
       {/* Board */}
       <main className="flex-1 p-6">
-        {/* Search bar */}
-        {!loading && !error && (
+        {/* Toolbar — always visible after initial load */}
+        {!loading && (
           <div className="mb-4 flex items-center gap-3">
-            <div className="relative" style={{ width: '260px' }}>
-              <svg
-                className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                width="14" height="14" viewBox="0 0 24 24" fill="none"
-              >
-                <circle cx="11" cy="11" r="8" stroke="#aaa" strokeWidth="2"/>
-                <path d="M21 21l-4.35-4.35" stroke="#aaa" strokeWidth="2" strokeLinecap="round"/>
-              </svg>
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search shop, vehicle, tech…"
-                className="w-full pl-8 pr-3 py-2 rounded-lg text-sm outline-none"
-                style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', color: '#1a1a1a' }}
-                onFocus={e => (e.target.style.borderColor = ORANGE)}
-                onBlur={e => (e.target.style.borderColor = '#e0dbd6')}
-              />
-            </div>
+            {!error && (
+              <div className="relative" style={{ width: '260px' }}>
+                <svg
+                  className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+                  width="14" height="14" viewBox="0 0 24 24" fill="none"
+                >
+                  <circle cx="11" cy="11" r="8" stroke="#aaa" strokeWidth="2"/>
+                  <path d="M21 21l-4.35-4.35" stroke="#aaa" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                <input
+                  type="text"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search shop, vehicle, tech…"
+                  className="w-full pl-8 pr-3 py-2 rounded-lg text-sm outline-none"
+                  style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', color: '#1a1a1a' }}
+                  onFocus={e => (e.target.style.borderColor = ORANGE)}
+                  onBlur={e => (e.target.style.borderColor = '#e0dbd6')}
+                />
+              </div>
+            )}
             {search && (
               <button
                 onClick={() => setSearch('')}
@@ -898,6 +901,34 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 {visibleJobs.length} of {jobs.length} jobs
               </span>
             )}
+            <div className="ml-auto">
+              <button
+                onClick={async () => {
+                  setSyncing(true)
+                  try {
+                    const res = await apiFetch(`${API_BASE}/api/jobs/sync-quotes`, { method: 'POST' })
+                    const data = await res.json()
+                    if (!res.ok) throw new Error(data.error || 'Sync failed')
+                    await fetchJobs()
+                    showToast(`Sync complete — ${data.created} added, ${data.removed} removed`)
+                  } catch (e) {
+                    showToast('Sync failed: ' + e.message)
+                  } finally {
+                    setSyncing(false)
+                  }
+                }}
+                disabled={syncing}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+                style={{ color: syncing ? '#aaa' : ORANGE, border: `1px solid ${syncing ? '#e0dbd6' : ORANGE}`, backgroundColor: 'white' }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }}>
+                  <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
+                  <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+                </svg>
+                {syncing ? 'Syncing…' : 'Sync Quotes'}
+              </button>
+            </div>
           </div>
         )}
 

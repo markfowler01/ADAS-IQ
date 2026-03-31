@@ -256,8 +256,12 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            zoho_estimate_id: data.quoteId || '',
             shop_name:      selectedCustomer?.name || '',
             vehicle:        [year, make, model].filter(Boolean).join(' '),
+            year:           year || '',
+            make:           make || '',
+            model:          model || '',
             vin:            vin || '',
             insurer:        insurer || '',
             technician:     selectedSalesperson?.name || '',

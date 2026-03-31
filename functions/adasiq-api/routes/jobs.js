@@ -1,5 +1,6 @@
 import express from 'express'
 import axios from 'axios'
+import { listAllEstimates } from '../services/zoho.js'
 
 const router = express.Router()
 
@@ -233,6 +234,76 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true })
   } catch (err) {
     console.error('[jobs DELETE]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/jobs/sync-quotes
+// Syncs Zoho Books estimates → Kanban jobs.
+// Creates a job for any estimate that doesn't have one yet.
+// Removes jobs for estimates that have been voided/deleted in Zoho.
+router.post('/sync-quotes', async (req, res) => {
+  try {
+    const [estimates, jobs] = await Promise.all([listAllEstimates(), readJobs()])
+
+    // Safety check — if Zoho returned nothing, refuse to run removal
+    // (prevents wiping the board if Zoho API is down or returns empty)
+    const linkedJobCount = jobs.filter(j => j.zoho_estimate_id).length
+    if (estimates.length === 0 && linkedJobCount > 0) {
+      return res.status(503).json({ error: 'Zoho returned 0 estimates — skipping sync to protect existing jobs. Try again.' })
+    }
+
+    // Build lookup maps
+    const estimateMap = new Map(estimates.map(e => [e.estimate_id, e]))
+    const existingIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
+
+    // 1. Create jobs for new estimates (skip voided/expired)
+    let created = 0
+    const SKIP_STATUSES = new Set(['void', 'expired'])
+    for (const est of estimates) {
+      if (SKIP_STATUSES.has(est.status)) continue
+      if (existingIds.has(est.estimate_id)) continue
+
+      const newJob = {
+        id: `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        zoho_estimate_id: est.estimate_id,
+        shop_name: est.customer_name || '',
+        vehicle: [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' '),
+        year: est.cf_year || '',
+        make: est.cf_make || '',
+        model: est.cf_model || '',
+        vin: est.cf_vin || '',
+        insurer: est.cf_insurer || '',
+        technician: est.salesperson_name || '',
+        scheduled_date: new Date().toISOString().split('T')[0],
+        calibrations: JSON.stringify([]),
+        notes: `Quote: ${est.estimate_number}`,
+        report_url: est.quote_url,
+        status: 'need_dispatch',
+        created_at: new Date().toISOString(),
+      }
+      jobs.push(newJob)
+      created++
+    }
+
+    // 2. Remove jobs for estimates that are now voided/deleted in Zoho
+    // Only runs if Zoho returned a non-empty list (safety guard above ensures this)
+    let removed = 0
+    const filtered = jobs.filter(j => {
+      if (!j.zoho_estimate_id) return true // manual job, keep it
+      const est = estimateMap.get(j.zoho_estimate_id)
+      if (!est || SKIP_STATUSES.has(est.status)) {
+        removed++
+        return false // quote was voided or deleted — remove
+      }
+      return true
+    })
+
+    if (created > 0 || removed > 0) await writeJobs(filtered)
+
+    res.json({ created, removed, total: estimates.length })
+  } catch (err) {
+    console.error('[jobs sync-quotes]', err.message)
     res.status(500).json({ error: err.message })
   }
 })

@@ -190,33 +190,73 @@ export async function getItemCatalogForAudit() {
 }
 
 /**
+ * Detect insurer pricing prefix from insurer name.
+ * State Farm → 'SF'  (items prefixed "SF -" or "SFP -")
+ * Allstate   → 'AS'  (items prefixed "AS -")
+ * Others     → null  (use standard/unprefixed items only)
+ */
+function getInsurerPrefix(insurer) {
+  if (!insurer) return null
+  const ins = insurer.toLowerCase()
+  if (ins.includes('state farm')) return 'SF'
+  if (ins.includes('allstate'))   return 'AS'
+  return null
+}
+
+/**
+ * Filter the item catalog pool based on insurer prefix.
+ * - insurerPrefix 'SF' → only items starting with SF / SFP prefix
+ * - insurerPrefix 'AS' → only items starting with AS prefix
+ * - null              → exclude ALL prefixed items (regular pricing only)
+ * Falls back to standard items if no prefixed items exist for that insurer.
+ */
+function filterItemsByInsurer(allItems, insurerPrefix) {
+  const PREFIXED = /^(SF|SFP|AS|CP)\s*[-\s]/i
+
+  if (insurerPrefix === 'SF') {
+    const sfItems = allItems.filter(i => /^(SF|SFP)\s*[-\s]/i.test(i.name))
+    if (sfItems.length > 0) return sfItems
+    // No SF items in catalog — fall back to standard
+    return allItems.filter(i => !PREFIXED.test(i.name))
+  }
+
+  if (insurerPrefix === 'AS') {
+    const asItems = allItems.filter(i => /^AS\s*[-\s]/i.test(i.name))
+    if (asItems.length > 0) return asItems
+    // No AS items in catalog — fall back to standard
+    return allItems.filter(i => !PREFIXED.test(i.name))
+  }
+
+  // Default: standard pricing — exclude ALL insurer-prefixed items
+  return allItems.filter(i => !PREFIXED.test(i.name))
+}
+
+/**
  * Find the best matching Zoho item_id for a calibration name.
  * Returns { item_id, matchedName, score } or null if no confident match.
  * Exported so the audit route can reuse the same logic.
  */
-export function findBestMatchExported(calName, exactMap, allItems) {
-  return findBestMatch(calName, exactMap, allItems)
+export function findBestMatchExported(calName, exactMap, allItems, insurerPrefix = null) {
+  return findBestMatch(calName, exactMap, allItems, insurerPrefix)
 }
 
-function findBestMatch(calName, exactMap, allItems) {
-  // 1. Exact match first
+function findBestMatch(calName, exactMap, allItems, insurerPrefix = null) {
+  // Filter candidate pool based on insurer (SF/AS/standard)
+  const candidateItems = filterItemsByInsurer(allItems, insurerPrefix)
+
+  // 1. Exact match first (within filtered pool)
   const exactKey = calName.trim().toLowerCase()
-  if (exactMap.has(exactKey)) {
-    const item_id = exactMap.get(exactKey)
-    const found = allItems.find(i => i.item_id === item_id)
-    return { item_id, matchedName: calName, score: 1, rate: found?.rate || 0 }
-  }
   const normalKey = normalizeItemName(calName)
-  if (exactMap.has(normalKey)) {
-    const item_id = exactMap.get(normalKey)
-    const found = allItems.find(i => i.item_id === item_id)
-    return { item_id, matchedName: calName, score: 1, rate: found?.rate || 0 }
+  for (const item of candidateItems) {
+    if (item.name.trim().toLowerCase() === exactKey || normalizeItemName(item.name) === normalKey) {
+      return { item_id: item.item_id, matchedName: item.name, score: 1, rate: item.rate || 0 }
+    }
   }
 
-  // 2. Fuzzy match — score every catalog item and take the best
+  // 2. Fuzzy match — score only within filtered candidate pool
   let bestScore = 0
   let bestItem = null
-  for (const item of allItems) {
+  for (const item of candidateItems) {
     const score = matchScore(calName, item.name)
     if (score > bestScore) {
       bestScore = score
@@ -295,8 +335,12 @@ export async function createDraftQuote({
   const unmatchedItems = []
   const zeroPriceItems = []
 
+  // Determine insurer-based pricing prefix (SF / AS / null)
+  const insurerPrefix = getInsurerPrefix(insurer)
+  console.log(`[zoho] Insurer: "${insurer || 'none'}" → prefix: ${insurerPrefix || 'standard'}`)
+
   function buildLineItem(name, description, quantity = 1) {
-    const match = findBestMatch(name, exactMap, allItems)
+    const match = findBestMatch(name, exactMap, allItems, insurerPrefix)
     if (match) {
       console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)}, rate $${match.rate})`)
       if (!match.rate || match.rate === 0) {
@@ -540,4 +584,47 @@ export async function createDraftQuote({
     shareLink: workdriveResult?.shareLink || null,
     unmatchedItems: unmatchedItems.length > 0 ? unmatchedItems : null,
   }
+}
+
+/**
+ * Fetch all estimates from Zoho Books (all statuses except void).
+ * Returns array of estimate objects with custom fields parsed into cf_* keys.
+ */
+export async function listAllEstimates() {
+  const token = await getAccessToken()
+  const orgId = process.env.ZOHO_ORGANIZATION_ID
+  let all = []
+  let page = 1
+  let hasMore = true
+
+  while (hasMore) {
+    const res = await axios.get(`${ZOHO_API_BASE}/estimates`, {
+      headers: zohoHeaders(token),
+      params: { ...orgParam(), per_page: 200, page },
+      timeout: 15000,
+    })
+    const estimates = res.data?.estimates || []
+    // Parse custom fields into a flat map for easy access
+    const parsed = estimates.map(est => {
+      const cf = {}
+      ;(est.custom_fields || []).forEach(f => {
+        const key = f.label?.toLowerCase().replace(/[^a-z0-9]/g, '_')
+        if (key) cf[`cf_${key}`] = f.value
+      })
+      return {
+        estimate_id: est.estimate_id,
+        estimate_number: est.estimate_number,
+        customer_name: est.customer_name,
+        status: est.status, // draft, sent, accepted, declined, invoiced, void, expired
+        salesperson_name: est.salesperson_name || '',
+        quote_url: `https://books.zoho.com/app#/estimates/${est.estimate_id}?organization_id=${orgId}`,
+        ...cf,
+      }
+    })
+    all = all.concat(parsed)
+    hasMore = res.data?.page_context?.has_more_page === true
+    page++
+  }
+
+  return all
 }
