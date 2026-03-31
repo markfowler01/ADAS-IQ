@@ -123,4 +123,7 @@ app.use('/webhooks', webhookRouter)
 // Postscan cron route — protected by X-Cron-Secret header, not user auth
 app.use('/api/postscan', postscanRouter)
 
+// Deployment version probe
+app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))
+
 export default app
