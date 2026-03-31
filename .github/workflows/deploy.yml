@@ -17,7 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install Catalyst CLI
         run: npm install -g zcatalyst-cli
@@ -26,7 +26,6 @@ jobs:
         run: |
           mkdir -p "$HOME/.config/configstore"
           echo '${{ secrets.CATALYST_CREDENTIALS }}' > "$HOME/.config/configstore/zcatalyst-cli.json"
-          # Also write to the Linux configstore path used by some versions
           mkdir -p "$HOME/.config/zcatalyst-cli-nodejs"
           echo '${{ secrets.CATALYST_CREDENTIALS }}' > "$HOME/.config/zcatalyst-cli-nodejs/zcatalyst-cli.json"
 
@@ -55,7 +54,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
 
       - name: Install Catalyst CLI
         run: npm install -g zcatalyst-cli
