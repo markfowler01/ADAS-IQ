@@ -81,15 +81,18 @@ export async function createJobFolder(folderName, accessToken) {
  * @returns {{ folderId: string, folderName: string } | null}
  */
 export async function findFolderByRO(roNumber, accessToken) {
-  let offset = 0
-  const limit = 100
+  // WorkDrive uses cursor-based pagination — do not send offset
+  let nextCursor = null
 
   while (true) {
+    const params = { limit: 100 }
+    if (nextCursor) params.next_cursor = nextCursor
+
     const res = await axios.get(`${WORKDRIVE_API}/files/${PARENT_FOLDER_ID}/files`, {
       headers: {
         Authorization: `Zoho-oauthtoken ${accessToken}`,
       },
-      params: { limit, offset },
+      params,
       timeout: 15000,
     })
 
@@ -101,9 +104,9 @@ export async function findFolderByRO(roNumber, accessToken) {
       }
     }
 
-    // If fewer results than limit, we've reached the end
-    if (items.length < limit) break
-    offset += limit
+    // Check for next page cursor
+    nextCursor = res.data?.info?.next_cursor || null
+    if (!nextCursor || items.length === 0) break
   }
 
   return null
