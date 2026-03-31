@@ -862,7 +862,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
       {/* Board */}
-      <main className="flex-1 p-6">
+      <main className="flex-1 flex flex-col overflow-hidden" style={{ padding: '1.5rem 1.5rem 0' }}>
         {/* Toolbar — always visible after initial load */}
         {!loading && (
           <div className="mb-4 flex items-center gap-3">
@@ -953,12 +953,12 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
             </div>
           </div>
         ) : (
+          <div className="flex-1 overflow-x-auto pb-4" onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCol(null)
+            }}>
           <div
             className="flex gap-4"
-            style={{ overflowX: 'auto', alignItems: 'flex-start', paddingBottom: '1rem' }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCol(null)
-            }}
+            style={{ alignItems: 'flex-start', minHeight: '100%' }}
           >
             {COLUMNS.map(col => (
               <KanbanColumn
@@ -975,6 +975,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 dragOverCol={dragOverCol}
               />
             ))}
+          </div>
           </div>
         )}
       </main>
