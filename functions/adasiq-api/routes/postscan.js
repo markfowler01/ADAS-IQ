@@ -1,16 +1,18 @@
+import axios from 'axios'
 import { Router } from 'express'
 import {
   getMailAccessToken,
   getMailAccountId,
-  listAllMailAccounts,
-  findPostscanGroup,
-  getUnreadGroupMessages,
-  getGroupMessage,
-  downloadGroupAttachment,
-  markGroupMessageRead,
+  getUnreadPostscanMessages,
+  getAccountMessage,
+  downloadAccountAttachment,
+  markAccountMessageRead,
 } from '../services/mail.js'
 import { findFolderByRO, uploadFileToFolder } from '../services/workdrive.js'
 import { getAccessToken } from '../services/zoho.js'
+
+const MAIL_API = 'https://mail.zoho.com/api'
+const SCAN_REPORTS_FOLDER_ID = '147686000000057026'
 
 const router = Router()
 
@@ -26,72 +28,48 @@ function extractRO(subject) {
   return match ? match[1] : null
 }
 
-/**
- * POST /api/postscan/run
- *
- * Triggered by Catalyst cron job (or manually for testing).
- * Reads unread emails from postscan@absoluteadas.com group inbox,
- * extracts the RO number from each subject, finds the matching WorkDrive folder,
- * uploads any PDF attachments, then marks the email as read.
- *
- * Protected by X-Cron-Secret header (set POSTSCAN_CRON_SECRET env var).
- */
-// GET /api/postscan/debug — shows which step fails (no secret required, temp diagnostic)
+// GET /api/postscan/debug — diagnostic endpoint, no auth required
 router.get('/debug', async (req, res) => {
   const steps = {}
   try {
-    steps.env_mail_refresh = !!process.env.ZOHO_MAIL_REFRESH_TOKEN
-    steps.env_client_id    = !!process.env.ZOHO_CLIENT_ID
+    steps.env_mail_refresh  = !!process.env.ZOHO_MAIL_REFRESH_TOKEN
+    steps.env_client_id     = !!process.env.ZOHO_CLIENT_ID
     steps.env_client_secret = !!process.env.ZOHO_CLIENT_SECRET
 
     const mailToken = await getMailAccessToken()
     steps.mail_token = mailToken.substring(0, 20) + '...'
 
-    const allAccounts = await listAllMailAccounts(mailToken)
-    steps.all_accounts = allAccounts  // raw, to see field names
-
-    const accountId = allAccounts[0]?.accountId
+    const accountId = await getMailAccountId(mailToken)
     steps.account_id = accountId
 
-    const ax = (await import('axios')).default
-    const h = { Authorization: `Zoho-oauthtoken ${mailToken}` }
-    const BASE = 'https://mail.zoho.com/api'
+    const messages = await getUnreadPostscanMessages(mailToken, accountId)
+    steps.unread_postscan_count = messages.length
+    steps.first_message_raw = messages[0] || null
 
-    // Probe 1: account-level groups list
-    try {
-      const r = await ax.get(`${BASE}/accounts/${accountId}/groups`, { headers: h, timeout: 10000 })
-      steps.probe_groups = r.data?.data || r.data
-    } catch (e) {
-      steps.probe_groups_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
-    }
+    // If there's a message, probe different endpoint formats for message details
+    if (messages.length > 0) {
+      const msg = messages[0]
+      const messageId = msg.messageId
+      const hdrs = { Authorization: `Zoho-oauthtoken ${mailToken}` }
+      steps.probe_messageId = messageId
 
-    // Probe 2: fetch messages directly from known postscan group ID (147686000000788004)
-    const KNOWN_GROUP_ID = '147686000000788004'
-    try {
-      const r = await ax.get(`${BASE}/accounts/${accountId}/groups/${KNOWN_GROUP_ID}/messages`, {
-        headers: h, params: { limit: 5 }, timeout: 10000
-      })
-      steps.probe_group_messages = r.data?.data || r.data
-    } catch (e) {
-      steps.probe_group_messages_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
-    }
+      const probes = [
+        { label: 'GET /messages/{id}',              url: `${MAIL_API}/accounts/${accountId}/messages/${messageId}` },
+        { label: 'GET /messages/{id}/content',       url: `${MAIL_API}/accounts/${accountId}/messages/${messageId}/content` },
+        { label: 'GET /messages/{id}/attachments',   url: `${MAIL_API}/accounts/${accountId}/messages/${messageId}/attachments` },
+        { label: 'GET /folders/{fid}/messages/{id}', url: `${MAIL_API}/accounts/${accountId}/folders/${SCAN_REPORTS_FOLDER_ID}/messages/${messageId}` },
+        { label: 'GET /messages/{id}/details',       url: `${MAIL_API}/accounts/${accountId}/messages/${messageId}/details` },
+      ]
 
-    // Probe 3: search messages in primary inbox for postscan address
-    try {
-      const r = await ax.get(`${BASE}/accounts/${accountId}/messages/search`, {
-        headers: h, params: { searchKey: 'postscan@absoluteadas.com', limit: 5 }, timeout: 10000
-      })
-      steps.probe_search = r.data?.data || r.data
-    } catch (e) {
-      steps.probe_search_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
-    }
-
-    // Probe 4: delegation/shared accounts
-    try {
-      const r = await ax.get(`${BASE}/accounts/${accountId}/delegation/accounts`, { headers: h, timeout: 10000 })
-      steps.probe_delegation = r.data?.data || r.data
-    } catch (e) {
-      steps.probe_delegation_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
+      steps.endpoint_probes = []
+      for (const p of probes) {
+        try {
+          const r = await axios.get(p.url, { headers: hdrs, timeout: 10000 })
+          steps.endpoint_probes.push({ label: p.label, status: r.status, keys: Object.keys(r.data || {}), data_preview: JSON.stringify(r.data).substring(0, 300) })
+        } catch (e) {
+          steps.endpoint_probes.push({ label: p.label, status: e.response?.status, error: e.response?.data || e.message })
+        }
+      }
     }
   } catch (err) {
     steps.error = err.message
@@ -100,8 +78,16 @@ router.get('/debug', async (req, res) => {
   res.json(steps)
 })
 
+/**
+ * POST /api/postscan/run
+ *
+ * Reads unread emails from the SCAN REPORTS folder in Mark's mailbox,
+ * extracts the RO number from each subject, finds the matching WorkDrive folder,
+ * uploads any PDF attachments, then marks the email as read.
+ *
+ * Protected by X-Cron-Secret header (set POSTSCAN_CRON_SECRET env var).
+ */
 router.post('/run', async (req, res) => {
-  // Validate cron secret (skip check if env var not set, e.g. during initial setup)
   const cronSecret = process.env.POSTSCAN_CRON_SECRET
   if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
     return res.status(401).json({ error: 'Unauthorized' })
@@ -112,24 +98,18 @@ router.post('/run', async (req, res) => {
   const errors = []
 
   try {
-    // 1. Get Zoho Mail access token
-    console.log('[postscan] Getting mail token...')
+    // 1. Get mail + WorkDrive tokens
+    console.log('[postscan] Getting tokens...')
     const mailToken = await getMailAccessToken()
-    console.log('[postscan] Got mail token, fetching account ID...')
     const accountId = await getMailAccountId(mailToken)
-    console.log(`[postscan] Account ID: ${accountId}, finding group...`)
-    const groupId = await findPostscanGroup(mailToken, accountId)
-    console.log(`[postscan] Using account ${accountId}, group ${groupId}`)
-
-    // 2. Get Zoho WorkDrive access token (same client, different refresh token)
     const wdToken = await getAccessToken()
 
-    // 3. Fetch unread messages
-    const messages = await getUnreadGroupMessages(mailToken, accountId, groupId)
+    // 2. Fetch unread messages from SCAN REPORTS folder
+    const messages = await getUnreadPostscanMessages(mailToken, accountId)
     console.log(`[postscan] ${messages.length} unread message(s)`)
 
     for (const msg of messages) {
-      const messageId = msg.messageId || msg.mid
+      const messageId = msg.messageId
       const subject = msg.subject || ''
       const roNumber = extractRO(subject)
 
@@ -139,7 +119,7 @@ router.post('/run', async (req, res) => {
         continue
       }
 
-      // 4. Find matching WorkDrive folder
+      // 3. Find matching WorkDrive folder
       const folder = await findFolderByRO(roNumber, wdToken)
       if (!folder) {
         console.log(`[postscan] No folder found for RO ${roNumber}`)
@@ -149,8 +129,8 @@ router.post('/run', async (req, res) => {
 
       console.log(`[postscan] RO ${roNumber} → folder "${folder.folderName}" (${folder.folderId})`)
 
-      // 5. Fetch full message to get attachments (list endpoint doesn't include them)
-      const fullMsg = await getGroupMessage(mailToken, accountId, groupId, messageId)
+      // 4. Fetch full message to get attachments
+      const fullMsg = await getAccountMessage(mailToken, accountId, messageId)
       const attachments = fullMsg?.attachments || []
       const pdfs = attachments.filter(a =>
         a.attachmentName?.toLowerCase().endsWith('.pdf') ||
@@ -163,13 +143,14 @@ router.post('/run', async (req, res) => {
         continue
       }
 
+      // 5. Upload each PDF to WorkDrive
       let uploadedCount = 0
       for (const pdf of pdfs) {
         const attachmentId = pdf.attachmentId || pdf.aid
         const filename = pdf.attachmentName || `PostScan-${roNumber}.pdf`
 
         try {
-          const buffer = await downloadGroupAttachment(mailToken, accountId, groupId, messageId, attachmentId)
+          const buffer = await downloadAccountAttachment(mailToken, accountId, messageId, attachmentId)
           await uploadFileToFolder(folder.folderId, filename, buffer, wdToken)
           console.log(`[postscan] Uploaded "${filename}" to folder "${folder.folderName}"`)
           uploadedCount++
@@ -179,10 +160,10 @@ router.post('/run', async (req, res) => {
         }
       }
 
-      // 6. Mark the email as read (even if some uploads failed — don't reprocess)
+      // 6. Mark as read so it won't be reprocessed
       if (uploadedCount > 0) {
         try {
-          await markGroupMessageRead(mailToken, accountId, groupId, messageId)
+          await markAccountMessageRead(mailToken, accountId, messageId)
           console.log(`[postscan] Marked message ${messageId} as read`)
         } catch (markErr) {
           console.warn(`[postscan] Could not mark message as read:`, markErr.message)
