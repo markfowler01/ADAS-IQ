@@ -43,65 +43,49 @@ export async function getMailAccountId(token) {
   })
   const accounts = res.data?.data || []
   if (accounts.length === 0) throw new Error('No Zoho Mail accounts found')
-  console.log(`[mail] Accounts (${accounts.length}): ${accounts.map(a => `${a.accountId}/${a.mailId}/${a.accountType}`).join(', ')}`)
+  console.log(`[mail] Accounts (${accounts.length}): ${accounts.map(a => a.accountId).join(', ')}`)
   return accounts[0].accountId
 }
 
-// Returns all mail accounts (for diagnostics)
-export async function listAllMailAccounts(token) {
-  const res = await axios.get(`${MAIL_API}/accounts`, {
-    headers: mailHeaders(token),
-    timeout: 10000,
-  })
-  return res.data?.data || []
+// Fetch unread messages from the SCAN REPORTS folder (folderId 147686000000057026).
+// All postscan emails land here — directly readable from Mark's primary account.
+const SCAN_REPORTS_FOLDER_ID = '147686000000057026'
+
+// Zoho returns messageId as a bare JSON number > Number.MAX_SAFE_INTEGER.
+// We must capture it as a string BEFORE JSON.parse truncates it.
+function safeParseMailResponse(raw) {
+  if (typeof raw !== 'string') return JSON.parse(raw)
+  const fixed = raw.replace(/"messageId"\s*:\s*(\d+)/g, '"messageId":"$1"')
+  return JSON.parse(fixed)
 }
 
-// Find the postscan group inbox — returns groupId
-export async function findPostscanGroup(token, accountId) {
-  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/groups`, {
+export async function getUnreadPostscanMessages(token, accountId) {
+  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/view`, {
     headers: mailHeaders(token),
-    timeout: 10000,
-  })
-  const groups = res.data?.data || []
-  console.log(`[mail] Groups (${groups.length}): ${groups.map(g => `${g.groupId}/${g.groupMailId || g.mailId}`).join(', ')}`)
-  const group = groups.find(g =>
-    g.groupMailId?.toLowerCase() === 'postscan@absoluteadas.com' ||
-    g.mailId?.toLowerCase() === 'postscan@absoluteadas.com' ||
-    g.groupName?.toLowerCase().includes('postscan') ||
-    g.name?.toLowerCase().includes('postscan')
-  )
-  if (!group) {
-    throw new Error(`postscan group not found. Available: ${JSON.stringify(groups.map(g => ({ id: g.groupId, mail: g.groupMailId || g.mailId, name: g.groupName || g.name })))}`)
-  }
-  return group.groupId
-}
-
-// Fetch unread messages from the group inbox (up to 20)
-export async function getUnreadGroupMessages(token, accountId, groupId) {
-  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/groups/${groupId}/messages`, {
-    headers: mailHeaders(token),
-    params: { isread: false, limit: 20 },
+    params: { folderId: SCAN_REPORTS_FOLDER_ID, status: 'unread', limit: 50 },
     timeout: 15000,
+    transformResponse: [safeParseMailResponse],
   })
   return res.data?.data || []
 }
 
 // Fetch full message details (includes attachments array)
-export async function getGroupMessage(token, accountId, groupId, messageId) {
+export async function getAccountMessage(token, accountId, messageId) {
   const res = await axios.get(
-    `${MAIL_API}/accounts/${accountId}/groups/${groupId}/messages/${messageId}`,
+    `${MAIL_API}/accounts/${accountId}/messages/${messageId}`,
     {
       headers: mailHeaders(token),
       timeout: 15000,
+      transformResponse: [safeParseMailResponse],
     }
   )
   return res.data?.data
 }
 
 // Download an attachment — returns Buffer
-export async function downloadGroupAttachment(token, accountId, groupId, messageId, attachmentId) {
+export async function downloadAccountAttachment(token, accountId, messageId, attachmentId) {
   const res = await axios.get(
-    `${MAIL_API}/accounts/${accountId}/groups/${groupId}/messages/${messageId}/attachments/${attachmentId}`,
+    `${MAIL_API}/accounts/${accountId}/messages/${messageId}/attachments/${attachmentId}`,
     {
       headers: mailHeaders(token),
       responseType: 'arraybuffer',
@@ -111,11 +95,11 @@ export async function downloadGroupAttachment(token, accountId, groupId, message
   return Buffer.from(res.data)
 }
 
-// Mark a group message as read
-export async function markGroupMessageRead(token, accountId, groupId, messageId) {
+// Mark a message as read
+export async function markAccountMessageRead(token, accountId, messageId) {
   await axios.put(
-    `${MAIL_API}/accounts/${accountId}/groups/${groupId}/messages/${messageId}`,
-    { data: { isread: 'true' } },
+    `${MAIL_API}/accounts/${accountId}/messages/${messageId}`,
+    { isRead: 'true' },
     {
       headers: { ...mailHeaders(token), 'Content-Type': 'application/json' },
       timeout: 10000,
