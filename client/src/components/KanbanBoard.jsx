@@ -865,7 +865,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       <main className="flex-1 flex flex-col overflow-hidden" style={{ padding: '1.5rem 1.5rem 0' }}>
         {/* Toolbar — always visible after initial load */}
         {!loading && (
-          <div className="mb-4 flex items-center gap-3">
+          <div className="mb-4 flex items-center gap-3" style={{ width: '100%' }}>
             {!error && (
               <div className="relative" style={{ width: '260px' }}>
                 <svg
