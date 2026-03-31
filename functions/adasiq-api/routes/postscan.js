@@ -56,16 +56,21 @@ router.get('/debug', async (req, res) => {
         steps.attachments_detail = e.response?.data || null
       }
 
-      // Test WorkDrive folder lookup
+      // Test WorkDrive folder lookup — probe with no params to see raw response
       try {
         const wdToken = await getAccessToken()
         steps.wd_token_ok = true
-        const roNumber = extractRO(msg.subject)
-        steps.ro_number = roNumber
-        if (roNumber) {
-          const folder = await findFolderByRO(roNumber, wdToken)
-          steps.wd_folder = folder
-        }
+        const { default: axios2 } = await import('axios')
+        const WORKDRIVE_API = 'https://workdrive.zoho.com/api/v1'
+        const PARENT_FOLDER_ID = '28exmfc33000b044047f18dc7f1617c730889'
+        const r = await axios2.get(`${WORKDRIVE_API}/files/${PARENT_FOLDER_ID}/files`, {
+          headers: { Authorization: `Zoho-oauthtoken ${wdToken}` },
+          timeout: 15000,
+        })
+        steps.wd_no_params_status = r.status
+        steps.wd_no_params_keys = Object.keys(r.data || {})
+        steps.wd_no_params_count = (r.data?.data || []).length
+        steps.wd_first_item = r.data?.data?.[0]?.attributes?.name
       } catch (e) {
         steps.wd_error = e.message
         steps.wd_detail = e.response?.data || null
