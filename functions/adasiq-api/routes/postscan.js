@@ -53,16 +53,45 @@ router.get('/debug', async (req, res) => {
     const accountId = allAccounts[0]?.accountId
     steps.account_id = accountId
 
-    // List folders to find postscan group folder
+    const ax = (await import('axios')).default
+    const h = { Authorization: `Zoho-oauthtoken ${mailToken}` }
+    const BASE = 'https://mail.zoho.com/api'
+
+    // Probe 1: account-level groups list
     try {
-      const foldersRes = await (await import('axios')).default.get(
-        `https://mail.zoho.com/api/accounts/${accountId}/folders`,
-        { headers: { Authorization: `Zoho-oauthtoken ${mailToken}` }, timeout: 10000 }
-      )
-      steps.folders = (foldersRes.data?.data || []).map(f => ({ id: f.folderId, name: f.folderName, path: f.folderPath }))
-    } catch (fErr) {
-      steps.folders_error = fErr.message
-      steps.folders_detail = fErr.response?.data ? JSON.stringify(fErr.response.data) : null
+      const r = await ax.get(`${BASE}/accounts/${accountId}/groups`, { headers: h, timeout: 10000 })
+      steps.probe_groups = r.data?.data || r.data
+    } catch (e) {
+      steps.probe_groups_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
+    }
+
+    // Probe 2: fetch messages directly from known postscan group ID (147686000000788004)
+    const KNOWN_GROUP_ID = '147686000000788004'
+    try {
+      const r = await ax.get(`${BASE}/accounts/${accountId}/groups/${KNOWN_GROUP_ID}/messages`, {
+        headers: h, params: { limit: 5 }, timeout: 10000
+      })
+      steps.probe_group_messages = r.data?.data || r.data
+    } catch (e) {
+      steps.probe_group_messages_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
+    }
+
+    // Probe 3: search messages in primary inbox for postscan address
+    try {
+      const r = await ax.get(`${BASE}/accounts/${accountId}/messages/search`, {
+        headers: h, params: { searchKey: 'postscan@absoluteadas.com', limit: 5 }, timeout: 10000
+      })
+      steps.probe_search = r.data?.data || r.data
+    } catch (e) {
+      steps.probe_search_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
+    }
+
+    // Probe 4: delegation/shared accounts
+    try {
+      const r = await ax.get(`${BASE}/accounts/${accountId}/delegation/accounts`, { headers: h, timeout: 10000 })
+      steps.probe_delegation = r.data?.data || r.data
+    } catch (e) {
+      steps.probe_delegation_error = e.response?.data ? JSON.stringify(e.response.data) : e.message
     }
   } catch (err) {
     steps.error = err.message
