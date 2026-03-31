@@ -55,6 +55,21 @@ router.get('/debug', async (req, res) => {
         steps.attachments_error = e.message
         steps.attachments_detail = e.response?.data || null
       }
+
+      // Test WorkDrive folder lookup
+      try {
+        const wdToken = await getAccessToken()
+        steps.wd_token_ok = true
+        const roNumber = extractRO(msg.subject)
+        steps.ro_number = roNumber
+        if (roNumber) {
+          const folder = await findFolderByRO(roNumber, wdToken)
+          steps.wd_folder = folder
+        }
+      } catch (e) {
+        steps.wd_error = e.message
+        steps.wd_detail = e.response?.data || null
+      }
     }
   } catch (err) {
     steps.error = err.message
