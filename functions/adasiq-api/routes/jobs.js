@@ -1,6 +1,6 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
-import { listAllEstimates } from '../services/zoho.js'
+import { listAllEstimates, getEstimateLineItems } from '../services/zoho.js'
 
 const router = express.Router()
 
@@ -143,6 +143,9 @@ router.post('/sync-quotes', async (req, res) => {
       if (!IMPORT_STATUSES.has(est.status)) continue
       if (existingEstimateIds.has(est.estimate_id)) continue
 
+      // Fetch line items from the full estimate detail
+      const lineItems = await getEstimateLineItems(est.estimate_id)
+
       await insertJob(req, {
         zoho_estimate_id: est.estimate_id,
         shop_name:    est.customer_name || '',
@@ -154,7 +157,7 @@ router.post('/sync-quotes', async (req, res) => {
         insurer:      est.cf_insurer     || '',
         technician:   est.salesperson_name || '',
         scheduled_date: new Date().toISOString().split('T')[0],
-        calibrations: '[]',
+        calibrations: JSON.stringify(lineItems),
         notes:        `Quote: ${est.estimate_number}`,
         report_url:   est.quote_url      || '',
         status:       'need_dispatch',

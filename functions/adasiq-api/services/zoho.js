@@ -628,3 +628,34 @@ export async function listAllEstimates() {
 
   return all
 }
+
+/**
+ * Fetch full estimate details including line items.
+ * Used by sync-quotes to populate calibrations on the job card.
+ */
+export async function getEstimateLineItems(estimateId) {
+  const token = await getAccessToken()
+  const orgId = process.env.ZOHO_ORGANIZATION_ID
+  try {
+    const res = await axios.get(`${ZOHO_API_BASE}/estimates/${estimateId}`, {
+      headers: zohoHeaders(token),
+      params: { organization_id: orgId },
+      timeout: 10000,
+    })
+    const lineItems = res.data?.estimate?.line_items || []
+    // Map to calibrations format: [{ name, mode }]
+    // Skip purely administrative items
+    const SKIP_ITEMS = new Set([
+      'calibration identification report',
+      'post-scan (l-m)',
+      'post scan (l-m)',
+      'post collision safety inspection 1 (l-m)',
+    ])
+    return lineItems
+      .filter(item => item.name && !SKIP_ITEMS.has(item.name.toLowerCase()))
+      .map(item => ({ name: item.name, mode: 'Static' }))
+  } catch (err) {
+    console.warn(`[zoho] Could not fetch line items for estimate ${estimateId}:`, err.message)
+    return []
+  }
+}
