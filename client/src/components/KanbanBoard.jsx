@@ -549,6 +549,13 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </div>
       )}
 
+      {/* Invoice number */}
+      {job.invoice_number && (
+        <p className="text-xs mb-1" style={{ color: '#666' }}>
+          <span style={{ color: '#999' }}>Invoice: </span>{job.invoice_number}
+        </p>
+      )}
+
       {/* Footer row */}
       <div className="flex items-center justify-between mt-1">
         {dateStr ? (
@@ -583,7 +590,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           <button
             onClick={e => { e.stopPropagation(); onDelete(job) }}
             title="Delete job"
-            className="flex-shrink-0 text-gray-300 hover:text-red-400 transition-colors"
+            className="flex-shrink-0 text-gray-400 hover:text-red-500 transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="3 6 5 6 21 6"/>
