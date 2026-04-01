@@ -49,9 +49,8 @@ function getTable(req) {
 
 async function getAllJobs(req) {
   const table = getTable(req)
-  // queryRecords returns all rows
-  const rows = await table.queryRecords(`SELECT * FROM ${JOBS_TABLE_NAME}`)
-  return rows.map(rowToJob)
+  const rows = await table.getAllRows()
+  return (rows || []).map(rowToJob)
 }
 
 async function insertJob(req, jobData) {
