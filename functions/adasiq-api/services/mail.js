@@ -105,11 +105,15 @@ export async function downloadAccountAttachment(token, accountId, folderId, mess
 }
 
 // Mark a message as read.
-// Correct Zoho Mail API: PUT /accounts/{id}/folders/{fid}/messages/{mid}
+// Zoho Mail API uses a dedicated updatemessage endpoint for status changes.
 export async function markAccountMessageRead(token, accountId, folderId, messageId) {
   await axios.put(
-    `${MAIL_API}/accounts/${accountId}/folders/${folderId}/messages/${messageId}`,
-    { isRead: 'true' },
+    `${MAIL_API}/accounts/${accountId}/updatemessage`,
+    {
+      messageId: [messageId],
+      folderId,
+      mode: 'markAsRead',
+    },
     {
       headers: { ...mailHeaders(token), 'Content-Type': 'application/json' },
       timeout: 10000,
