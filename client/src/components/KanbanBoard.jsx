@@ -35,6 +35,7 @@ const EMPTY_JOB = {
   vin: '',
   insurer: '',
   technician: '',
+  region: '',
   scheduled_date: '',
   calibrations: [],
   notes: '',
@@ -75,6 +76,7 @@ function jobToForm(job) {
     vin: job.vin || '',
     insurer: job.insurer || '',
     technician: job.technician || '',
+    region: job.region || '',
     scheduled_date: job.scheduled_date || '',
     calibrations: calArr,
     notes: job.notes || '',
@@ -94,6 +96,7 @@ function formToJobData(form) {
     vin: form.vin,
     insurer: form.insurer,
     technician: form.technician,
+    region: form.region || '',
     scheduled_date: form.scheduled_date,
     calibrations: JSON.stringify(form.calibrations),
     notes: form.notes,
@@ -114,6 +117,7 @@ function jobToPayload(job) {
     vin:              job.vin              || '',
     insurer:          job.insurer          || '',
     technician:       job.technician       || '',
+    region:           job.region           || '',
     scheduled_date:   job.scheduled_date   || '',
     calibrations:     typeof job.calibrations === 'string' ? job.calibrations : JSON.stringify(job.calibrations || []),
     notes:            job.notes            || '',
@@ -329,6 +333,18 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
               value={form.technician}
               onChange={e => setField('technician', e.target.value)}
               placeholder="Tech name"
+            />
+          </div>
+
+          {/* Region */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Region <span className="text-gray-300 font-normal">(optional)</span></label>
+            <input
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+              style={{ borderColor: '#ddd' }}
+              value={form.region}
+              onChange={e => setField('region', e.target.value)}
+              placeholder="e.g. North, South, Atlanta"
             />
           </div>
 
@@ -708,6 +724,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
   const [search, setSearch] = useState('')
+  const [regionFilter, setRegionFilter] = useState('')
+  const [techFilter, setTechFilter] = useState('')
   const [syncing, setSyncing] = useState(false)
 
   function showToast(msg) {
@@ -733,7 +751,18 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
   // Save (create or update)
   async function handleSave(form, originalJob) {
-    const payload = formToJobData(form)
+    const basePayload = formToJobData(form)
+    // Preserve Zoho/system fields that aren't editable in the form
+    const payload = originalJob.id ? {
+      ...basePayload,
+      zoho_estimate_id: originalJob.zoho_estimate_id || '',
+      quote_number:     originalJob.quote_number     || '',
+      quote_url:        originalJob.quote_url        || '',
+      folder_url:       originalJob.folder_url       || '',
+      invoice_number:   originalJob.invoice_number   || '',
+      invoice_status:   originalJob.invoice_status   || '',
+      created_at:       originalJob.created_at       || '',
+    } : basePayload
     if (originalJob.id) {
       // update
       const res = await apiFetch(`${API_BASE}/api/jobs/${originalJob.id}`, {
@@ -823,7 +852,10 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      if (!res.ok) throw new Error('Update failed')
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Update failed (${res.status})`)
+      }
 
       if (colId === 'complete' && previousStatus !== 'complete') {
         checkConfetti(dragJob.technician, jobs, dragJob.id)
@@ -891,20 +923,27 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     setModalJob(job)
   }
 
-  const visibleJobs = search.trim()
-    ? jobs.filter(j => {
-        const q = search.toLowerCase()
-        const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
-        return (
-          vehicle.toLowerCase().includes(q) ||
-          (j.shop_name || '').toLowerCase().includes(q) ||
-          (j.technician || '').toLowerCase().includes(q) ||
-          (j.vin || '').toLowerCase().includes(q) ||
-          (j.insurer || '').toLowerCase().includes(q) ||
-          (j.notes || '').toLowerCase().includes(q)
-        )
-      })
-    : jobs
+  // Derive unique region and technician lists for filter dropdowns
+  const allRegions = [...new Set(jobs.map(j => j.region).filter(Boolean))].sort()
+  const allTechs   = [...new Set(jobs.map(j => j.technician).filter(Boolean))].sort()
+
+  const visibleJobs = jobs.filter(j => {
+    if (regionFilter && j.region !== regionFilter) return false
+    if (techFilter && j.technician !== techFilter) return false
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
+      return (
+        vehicle.toLowerCase().includes(q) ||
+        (j.shop_name || '').toLowerCase().includes(q) ||
+        (j.technician || '').toLowerCase().includes(q) ||
+        (j.vin || '').toLowerCase().includes(q) ||
+        (j.insurer || '').toLowerCase().includes(q) ||
+        (j.notes || '').toLowerCase().includes(q)
+      )
+    }
+    return true
+  })
 
   const jobsByStatus = COLUMNS.reduce((acc, col) => {
     acc[col.id] = visibleJobs.filter(j => j.status === col.id)
@@ -921,9 +960,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
         {!loading && (
           <div className="mb-4" style={{ width: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 {!error && (
-                  <div className="relative" style={{ width: '260px' }}>
+                  <div className="relative" style={{ width: '220px' }}>
                     <svg
                       className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                       width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -943,16 +982,38 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                     />
                   </div>
                 )}
-                {search && (
+                {allRegions.length > 0 && (
+                  <select
+                    value={regionFilter}
+                    onChange={e => setRegionFilter(e.target.value)}
+                    className="text-sm rounded-lg px-2 py-2 outline-none"
+                    style={{ border: `1px solid ${regionFilter ? ORANGE : '#e0dbd6'}`, color: regionFilter ? ORANGE : '#888', backgroundColor: 'white' }}
+                  >
+                    <option value="">All Regions</option>
+                    {allRegions.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                )}
+                {allTechs.length > 0 && (
+                  <select
+                    value={techFilter}
+                    onChange={e => setTechFilter(e.target.value)}
+                    className="text-sm rounded-lg px-2 py-2 outline-none"
+                    style={{ border: `1px solid ${techFilter ? ORANGE : '#e0dbd6'}`, color: techFilter ? '#1a1a1a' : '#888', backgroundColor: 'white' }}
+                  >
+                    <option value="">All Techs</option>
+                    {allTechs.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                )}
+                {(search || regionFilter || techFilter) && (
                   <button
-                    onClick={() => setSearch('')}
+                    onClick={() => { setSearch(''); setRegionFilter(''); setTechFilter('') }}
                     className="text-xs font-medium px-3 py-1.5 rounded-lg"
                     style={{ color: '#888', backgroundColor: '#f0eeec' }}
                   >
                     Clear
                   </button>
                 )}
-                {search && (
+                {(search || regionFilter || techFilter) && (
                   <span className="text-xs" style={{ color: '#aaa' }}>
                     {visibleJobs.length} of {jobs.length} jobs
                   </span>
