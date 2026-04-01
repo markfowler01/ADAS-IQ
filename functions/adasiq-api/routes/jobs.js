@@ -135,11 +135,12 @@ router.post('/sync-quotes', async (req, res) => {
 
     const estimateMap = new Map(estimates.map(e => [e.estimate_id, e]))
     const existingEstimateIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
-    const SKIP_STATUSES = new Set(['void', 'expired'])
+    // Only import saved drafts — not sent, accepted, invoiced, etc.
+    const IMPORT_STATUSES = new Set(['draft'])
 
     let created = 0
     for (const est of estimates) {
-      if (SKIP_STATUSES.has(est.status)) continue
+      if (!IMPORT_STATUSES.has(est.status)) continue
       if (existingEstimateIds.has(est.estimate_id)) continue
 
       await insertJob(req, {
@@ -168,7 +169,7 @@ router.post('/sync-quotes', async (req, res) => {
     for (const job of jobs) {
       if (!job.zoho_estimate_id) continue
       const est = estimateMap.get(job.zoho_estimate_id)
-      if (!est || SKIP_STATUSES.has(est.status)) {
+      if (!est || !IMPORT_STATUSES.has(est.status)) {
         try {
           await deleteJob(req, job.id)
           removed++
