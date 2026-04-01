@@ -442,7 +442,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete }) {
   let calArr = []
   if (job.calibrations) {
     if (typeof job.calibrations === 'string') {
@@ -579,6 +579,19 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced }) 
               Report
             </a>
           )}
+          {/* Delete button */}
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(job) }}
+            title="Delete job"
+            className="flex-shrink-0 text-gray-300 hover:text-red-400 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+              <path d="M10 11v6M14 11v6"/>
+              <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+            </svg>
+          </button>
         </div>
       </div>
     </div>
@@ -586,7 +599,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced }) 
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -636,6 +649,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onDragStart={onDragStart}
             onComplete={onComplete}
             onToggleInvoiced={onToggleInvoiced}
+            onDelete={onDelete}
           />
         ))}
         {jobs.length === 0 && !isOver && (
@@ -974,6 +988,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 onDrop={onDrop}
                 onComplete={handleComplete}
                 onToggleInvoiced={handleToggleInvoiced}
+                onDelete={handleDelete}
                 dragOverCol={dragOverCol}
               />
             ))}
