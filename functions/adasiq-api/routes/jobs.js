@@ -1,10 +1,23 @@
 import express from 'express'
+import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { listAllEstimates, getEstimateLineItems } from '../services/zoho.js'
 
 const router = express.Router()
 
 const JOBS_TABLE_NAME = 'Jobs'
+const PROJECT_ID = '45874000000016010'
+const TABLE_ID   = '45874000000023009'
+const DS_ROW_URL = `https://api.catalyst.zoho.com/baas/v1/project/${PROJECT_ID}/table/${TABLE_ID}/row`
+
+// Get the Catalyst credential token from the request (admin preferred, user fallback)
+function getCatalystToken(req) {
+  return req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''
+}
+
+function dsHeaders(token) {
+  return { Authorization: `Catalyst-Cred-Token ${token}`, 'Content-Type': 'application/json' }
+}
 
 // ─── Row ↔ Job Mapping ────────────────────────────────────────────────────────
 
@@ -62,15 +75,17 @@ async function insertJob(req, jobData) {
 }
 
 async function updateJob(req, rowId, updates) {
-  const table = getTable(req)
+  const token = getCatalystToken(req)
   const row = { ROWID: Number(rowId), ...jobToRow(updates) }
-  const updated = await table.updateRow(row)
+  const res = await axios.put(DS_ROW_URL, [row], { headers: dsHeaders(token), timeout: 15000 })
+  const updated = res.data?.data?.[0]
+  if (!updated) throw new Error('Update returned no data')
   return rowToJob(updated)
 }
 
 async function deleteJob(req, rowId) {
-  const table = getTable(req)
-  await table.deleteRow(Number(rowId))
+  const token = getCatalystToken(req)
+  await axios.delete(`${DS_ROW_URL}/${rowId}`, { headers: dsHeaders(token), timeout: 15000 })
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
