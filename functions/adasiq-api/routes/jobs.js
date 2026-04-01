@@ -1,25 +1,10 @@
 import express from 'express'
-import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { listAllEstimates, getEstimateLineItems } from '../services/zoho.js'
 
 const router = express.Router()
 
 const JOBS_TABLE_NAME = 'Jobs'
-const CATALYST_DS_API = 'https://api.catalyst.zoho.com/baas/v1/project'
-const DEFAULT_PROJECT_ID = '45874000000016010'
-
-// Catalyst injects x-zc-user-cred-token for web requests and x-zc-admin-cred-token for server-to-server calls.
-// For browser-initiated requests the user token is present; admin token may not be.
-function getCatalystAuth(req) {
-  const token = req.headers['x-zc-user-cred-token'] || req.headers['x-zc-admin-cred-token'] || ''
-  const projectId = req.headers['x-zc-projectid'] || DEFAULT_PROJECT_ID
-  return { token, projectId }
-}
-
-function dsAuthHeaders(token) {
-  return { Authorization: `Catalyst-Cred-Token ${token}`, 'Content-Type': 'application/json' }
-}
 
 // ─── Row ↔ Job Mapping ────────────────────────────────────────────────────────
 
@@ -101,21 +86,32 @@ async function insertJob(req, jobData) {
 }
 
 async function updateJob(req, rowId, updates) {
-  // The Catalyst SDK v3.3 uses PATCH for updateRow, but Catalyst's Datastore REST API requires PUT.
-  // Bypass the SDK and call PUT directly. Use the table NAME so we don't rely on a hardcoded table ID.
-  const { token, projectId } = getCatalystAuth(req)
+  // The Catalyst SDK v3.3 uses PATCH for updateRow(), but Catalyst's Datastore REST API requires PUT.
+  // Use table.requester.send() directly with PUT — this reuses the SDK's full auth pipeline
+  // (handles Zoho-oauthtoken, Zoho-ticket, cookies, etc.) while bypassing the broken HTTP method.
+  const table = getTable(req)
   const row = { ROWID: Number(rowId), ...jobToRow(updates) }
-  const url = `${CATALYST_DS_API}/${projectId}/table/${JOBS_TABLE_NAME}/row`
-  const res = await axios.put(url, [row], { headers: dsAuthHeaders(token), timeout: 15000 })
-  const updated = res.data?.data?.[0]
+  const resp = await table.requester.send({
+    method: 'PUT',
+    path: `/table/${JOBS_TABLE_NAME}/row`,
+    data: [row],
+    type: 'json',
+    catalyst: true,
+    track: true,
+  })
+  const updated = resp.data?.data?.[0]
   if (!updated) throw new Error('Update returned no data')
   return rowToJob(updated)
 }
 
 async function deleteJob(req, rowId) {
-  const { token, projectId } = getCatalystAuth(req)
-  const url = `${CATALYST_DS_API}/${projectId}/table/${JOBS_TABLE_NAME}/row/${rowId}`
-  await axios.delete(url, { headers: dsAuthHeaders(token), timeout: 15000 })
+  const table = getTable(req)
+  await table.requester.send({
+    method: 'DELETE',
+    path: `/table/${JOBS_TABLE_NAME}/row/${rowId}`,
+    catalyst: true,
+    track: true,
+  })
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
