@@ -4,187 +4,148 @@ import { listAllEstimates } from '../services/zoho.js'
 
 const router = express.Router()
 
-const WORKDRIVE_API = 'https://workdrive.zoho.com/api/v1'
-const JOBS_FOLDER_ID = process.env.WORKDRIVE_FOLDER_ID || '28exmfc33000b044047f18dc7f1617c730889'
-const JOBS_FILE_NAME = 'kanban-jobs.json'
+// ─── Catalyst Datastore Config ────────────────────────────────────────────────
+const CATALYST_API = 'https://api.catalyst.zoho.com/baas/v1/project'
+const DEFAULT_PROJECT_ID = '45874000000016010'
+const JOBS_TABLE_NAME = 'Jobs'
 
-// ─── Token Management ─────────────────────────────────────────────────────────
-let _cachedToken = null
-let _tokenExpiry = 0
+let _tableId = null
 
-async function getAccessToken() {
-  if (_cachedToken && Date.now() < _tokenExpiry) return _cachedToken
-  const params = new URLSearchParams({
-    grant_type: 'refresh_token',
-    client_id: process.env.ZOHO_CLIENT_ID,
-    client_secret: process.env.ZOHO_CLIENT_SECRET,
-    refresh_token: process.env.ZOHO_REFRESH_TOKEN,
+function getAuth(req) {
+  const token = req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''
+  const projectId = req.headers['x-zc-projectid'] || DEFAULT_PROJECT_ID
+  return { token, projectId }
+}
+
+function dsHeaders(token) {
+  return {
+    Authorization: `Catalyst-Cred-Token ${token}`,
+    'Content-Type': 'application/json',
+  }
+}
+
+async function getTableId(token, projectId) {
+  if (_tableId) return _tableId
+  const res = await axios.get(`${CATALYST_API}/${projectId}/table`, {
+    headers: dsHeaders(token),
+    timeout: 10000,
   })
-  const res = await axios.post('https://accounts.zoho.com/oauth/v2/token', params)
-  if (!res.data?.access_token) throw new Error('Token refresh failed: ' + JSON.stringify(res.data))
-  _cachedToken = res.data.access_token
-  _tokenExpiry = Date.now() + (res.data.expires_in - 60) * 1000
-  return _cachedToken
-}
-
-// ─── File ID Cache ────────────────────────────────────────────────────────────
-let _jobsFileId = process.env.JOBS_FILE_ID || null
-
-async function getJobsFileId(token) {
-  if (_jobsFileId) return _jobsFileId
-  // Search folder for the jobs file — sort newest first so we always get the latest version
-  try {
-    const res = await axios.get(
-      `${WORKDRIVE_API}/files/${JOBS_FOLDER_ID}/files`,
-      {
-        headers: { Authorization: `Zoho-oauthtoken ${token}` },
-        params: { sort_by: 'created_time', sort_order: 'DESC' },
-      }
+  const tables = res.data?.data || []
+  const table = tables.find(t => t.table_name === JOBS_TABLE_NAME)
+  if (!table) {
+    throw new Error(
+      `Catalyst Datastore table "${JOBS_TABLE_NAME}" not found. ` +
+      `Create it in the Catalyst console first (see setup instructions).`
     )
-    const files = res.data?.data || []
-    const found = files.find(f => f.attributes?.name === JOBS_FILE_NAME)
-    if (found) { _jobsFileId = found.id; return found.id }
-  } catch (e) {
-    console.warn('[jobs] folder list failed:', e.response?.data || e.message)
   }
-  return null
+  _tableId = String(table.table_id)
+  console.log(`[jobs] Discovered table "${JOBS_TABLE_NAME}" id=${_tableId}`)
+  return _tableId
 }
 
-// ─── Read Jobs ────────────────────────────────────────────────────────────────
-async function readJobs() {
-  try {
-    const token = await getAccessToken()
-    const fileId = await getJobsFileId(token)
-    if (!fileId) return []
+// ─── Row ↔ Job Mapping ────────────────────────────────────────────────────────
 
-    // Try WorkDrive v1 download endpoint
-    const res = await axios.get(
-      `${WORKDRIVE_API}/download/${fileId}`,
-      {
-        headers: { Authorization: `Zoho-oauthtoken ${token}` },
-        responseType: 'text',
-        timeout: 15000,
-      }
-    )
-    const text = typeof res.data === 'string' ? res.data : JSON.stringify(res.data)
-    return JSON.parse(text)
-  } catch (e) {
-    // If the file no longer exists, clear the cached ID so the next call re-discovers it
-    if (e.response?.status === 404) {
-      console.warn('[jobs] readJobs: file not found (404) — clearing cached file ID')
-      _jobsFileId = null
-    } else {
-      console.error('[jobs] readJobs error:', e.response?.status, e.response?.data || e.message)
-    }
-    return []
+function rowToJob(row) {
+  return {
+    id:               String(row.ROWID),
+    shop_name:        row.shop_name        || '',
+    year:             row.year             || '',
+    make:             row.make             || '',
+    model:            row.model            || '',
+    vehicle:          row.vehicle          || '',
+    vin:              row.vin              || '',
+    insurer:          row.insurer          || '',
+    technician:       row.technician       || '',
+    scheduled_date:   row.scheduled_date   || '',
+    calibrations:     row.calibrations     || '[]',
+    notes:            row.notes            || '',
+    report_url:       row.report_url       || '',
+    status:           row.status           || 'need_dispatch',
+    invoiced:         row.invoiced === 'true',
+    created_at:       row.created_at       || '',
+    zoho_estimate_id: row.zoho_estimate_id || '',
+    quote_number:     row.quote_number     || '',
+    quote_url:        row.quote_url        || '',
+    folder_url:       row.folder_url       || '',
+    invoice_number:   row.invoice_number   || '',
+    invoice_status:   row.invoice_status   || '',
   }
 }
 
-// ─── Write Jobs ───────────────────────────────────────────────────────────────
+function jobToRow(job) {
+  // Strip id — ROWID is managed by Catalyst
+  const { id, invoiced, ...rest } = job
+  return {
+    ...rest,
+    invoiced: String(Boolean(invoiced)),
+  }
+}
 
-// Serialize all writes to prevent concurrent saves from overwriting each other
-let _writeQueue = Promise.resolve()
+// ─── Datastore Operations ─────────────────────────────────────────────────────
 
-// Track which dates we've already backed up (in-process guard)
-const _backedUpDates = new Set()
+async function getAllJobs(token, projectId) {
+  const tableId = await getTableId(token, projectId)
+  let all = []
+  let nextToken = undefined
 
-async function _uploadFile(token, filename, content) {
-  const buffer = Buffer.from(content, 'utf8')
-  const boundary = `----JobsBoundary${Date.now()}`
-  const CRLF = '\r\n'
+  do {
+    const params = { maxRows: 200 }
+    if (nextToken) params.next_token = nextToken
 
-  const preamble = [
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="filename"`,
-    '',
-    filename,
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="parent_id"`,
-    '',
-    JOBS_FOLDER_ID,
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="override-name-exist"`,
-    '',
-    'true',
-    `--${boundary}`,
-    `Content-Disposition: form-data; name="content"; filename="${filename}"`,
-    `Content-Type: application/json`,
-    '',
-    '',
-  ].join(CRLF)
+    const res = await axios.get(`${CATALYST_API}/${projectId}/table/${tableId}/row`, {
+      headers: dsHeaders(token),
+      params,
+      timeout: 15000,
+    })
+    const rows = res.data?.data || []
+    all = all.concat(rows.map(rowToJob))
+    nextToken = res.data?.next_token || null
+  } while (nextToken)
 
-  const epilogue = `${CRLF}--${boundary}--${CRLF}`
-  const body = Buffer.concat([Buffer.from(preamble, 'utf8'), buffer, Buffer.from(epilogue, 'utf8')])
+  return all
+}
 
-  return axios.post(
-    `${WORKDRIVE_API}/upload`,
-    body,
-    {
-      headers: {
-        Authorization: `Zoho-oauthtoken ${token}`,
-        'Content-Type': `multipart/form-data; boundary=${boundary}`,
-        'Content-Length': body.length,
-      },
-      maxBodyLength: Infinity,
-      timeout: 30000,
-    }
+async function insertJob(token, projectId, jobData) {
+  const tableId = await getTableId(token, projectId)
+  const row = jobToRow({ ...jobData, created_at: jobData.created_at || new Date().toISOString() })
+  const res = await axios.post(
+    `${CATALYST_API}/${projectId}/table/${tableId}/row`,
+    [row],
+    { headers: dsHeaders(token), timeout: 15000 }
+  )
+  const inserted = res.data?.data?.[0]
+  if (!inserted) throw new Error('Insert returned no row')
+  return rowToJob(inserted)
+}
+
+async function updateJob(token, projectId, rowId, updates) {
+  const tableId = await getTableId(token, projectId)
+  const row = { ROWID: Number(rowId), ...jobToRow(updates) }
+  const res = await axios.put(
+    `${CATALYST_API}/${projectId}/table/${tableId}/row`,
+    [row],
+    { headers: dsHeaders(token), timeout: 15000 }
+  )
+  const updated = res.data?.data?.[0]
+  if (!updated) throw new Error('Update returned no row')
+  return rowToJob(updated)
+}
+
+async function deleteJob(token, projectId, rowId) {
+  const tableId = await getTableId(token, projectId)
+  await axios.delete(
+    `${CATALYST_API}/${projectId}/table/${tableId}/row/${rowId}`,
+    { headers: dsHeaders(token), timeout: 15000 }
   )
 }
-
-async function _doWrite(jobs) {
-  const token = await getAccessToken()
-  const content = JSON.stringify(jobs, null, 2)
-
-  // Daily backup — non-fatal if it fails
-  const today = new Date().toISOString().slice(0, 10)
-  if (!_backedUpDates.has(today)) {
-    _backedUpDates.add(today)
-    try {
-      await _uploadFile(token, `kanban-jobs-backup-${today}.json`, content)
-      console.log('[jobs] backup written for', today)
-    } catch (e) {
-      _backedUpDates.delete(today) // allow retry on next write
-      console.warn('[jobs] backup failed (non-fatal):', e.message)
-    }
-  }
-
-  // Primary write
-  const res = await _uploadFile(token, JOBS_FILE_NAME, content)
-
-  // Update cached file ID
-  const newFileId = res.data?.data?.[0]?.attributes?.resource_id || res.data?.data?.id
-  _jobsFileId = newFileId || null
-  console.log('[jobs] writeJobs success, count:', jobs.length, 'fileId:', _jobsFileId)
-}
-
-function writeJobs(jobs) {
-  // Chain onto the queue to serialize concurrent writes
-  _writeQueue = _writeQueue.then(() => _doWrite(jobs)).catch(() => _doWrite(jobs))
-  return _writeQueue
-}
-
-// ─── Debug ────────────────────────────────────────────────────────────────────
-router.get('/debug', async (req, res) => {
-  let tokenOk = false, fileId = null, readOk = false, jobCount = 0
-  try {
-    const token = await getAccessToken()
-    tokenOk = true
-    fileId = await getJobsFileId(token)
-    const jobs = await readJobs()
-    readOk = true
-    jobCount = jobs.length
-  } catch (e) {
-    return res.json({ tokenOk, fileId, readOk, error: e.message })
-  }
-  res.json({ tokenOk, fileId, readOk, jobCount })
-})
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // GET /api/jobs
 router.get('/', async (req, res) => {
   try {
-    const jobs = await readJobs()
+    const { token, projectId } = getAuth(req)
+    const jobs = await getAllJobs(token, projectId)
     res.json(jobs)
   } catch (err) {
     console.error('[jobs GET]', err.message)
@@ -195,14 +156,8 @@ router.get('/', async (req, res) => {
 // POST /api/jobs
 router.post('/', async (req, res) => {
   try {
-    const jobs = await readJobs()
-    const newJob = {
-      id: `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      ...req.body,
-      created_at: new Date().toISOString(),
-    }
-    jobs.push(newJob)
-    await writeJobs(jobs)
+    const { token, projectId } = getAuth(req)
+    const newJob = await insertJob(token, projectId, req.body)
     res.status(201).json(newJob)
   } catch (err) {
     console.error('[jobs POST]', err.message)
@@ -213,12 +168,9 @@ router.post('/', async (req, res) => {
 // PUT /api/jobs/:id
 router.put('/:id', async (req, res) => {
   try {
-    const jobs = await readJobs()
-    const idx = jobs.findIndex(j => j.id === req.params.id)
-    if (idx === -1) return res.status(404).json({ error: 'Job not found' })
-    jobs[idx] = { ...jobs[idx], ...req.body, id: req.params.id }
-    await writeJobs(jobs)
-    res.json(jobs[idx])
+    const { token, projectId } = getAuth(req)
+    const updated = await updateJob(token, projectId, req.params.id, req.body)
+    res.json(updated)
   } catch (err) {
     console.error('[jobs PUT]', err.message)
     res.status(500).json({ error: err.message })
@@ -228,9 +180,8 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/jobs/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const jobs = await readJobs()
-    const filtered = jobs.filter(j => j.id !== req.params.id)
-    await writeJobs(filtered)
+    const { token, projectId } = getAuth(req)
+    await deleteJob(token, projectId, req.params.id)
     res.json({ success: true })
   } catch (err) {
     console.error('[jobs DELETE]', err.message)
@@ -239,67 +190,68 @@ router.delete('/:id', async (req, res) => {
 })
 
 // POST /api/jobs/sync-quotes
-// Syncs Zoho Books estimates → Kanban jobs.
-// Creates a job for any estimate that doesn't have one yet.
-// Removes jobs for estimates that have been voided/deleted in Zoho.
 router.post('/sync-quotes', async (req, res) => {
   try {
-    const [estimates, jobs] = await Promise.all([listAllEstimates(), readJobs()])
+    const { token, projectId } = getAuth(req)
+    const [estimates, jobs] = await Promise.all([
+      listAllEstimates(),
+      getAllJobs(token, projectId),
+    ])
 
     // Safety check — if Zoho returned nothing, refuse to run removal
-    // (prevents wiping the board if Zoho API is down or returns empty)
     const linkedJobCount = jobs.filter(j => j.zoho_estimate_id).length
     if (estimates.length === 0 && linkedJobCount > 0) {
-      return res.status(503).json({ error: 'Zoho returned 0 estimates — skipping sync to protect existing jobs. Try again.' })
+      return res.status(503).json({
+        error: 'Zoho returned 0 estimates — skipping sync to protect existing jobs. Try again.',
+      })
     }
 
-    // Build lookup maps
     const estimateMap = new Map(estimates.map(e => [e.estimate_id, e]))
-    const existingIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
-
-    // 1. Create jobs for new estimates (skip voided/expired)
-    let created = 0
+    const existingEstimateIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
     const SKIP_STATUSES = new Set(['void', 'expired'])
+
+    // Create jobs for new estimates
+    let created = 0
     for (const est of estimates) {
       if (SKIP_STATUSES.has(est.status)) continue
-      if (existingIds.has(est.estimate_id)) continue
+      if (existingEstimateIds.has(est.estimate_id)) continue
 
-      const newJob = {
-        id: `job_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      await insertJob(token, projectId, {
         zoho_estimate_id: est.estimate_id,
-        shop_name: est.customer_name || '',
-        vehicle: [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' '),
-        year: est.cf_year || '',
-        make: est.cf_make || '',
-        model: est.cf_model || '',
-        vin: est.cf_vin || '',
-        insurer: est.cf_insurer || '',
-        technician: est.salesperson_name || '',
+        shop_name:    est.customer_name || '',
+        vehicle:      [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' '),
+        year:         est.cf_year        || '',
+        make:         est.cf_make        || '',
+        model:        est.cf_model       || '',
+        vin:          est.cf_vin         || '',
+        insurer:      est.cf_insurer     || '',
+        technician:   est.salesperson_name || '',
         scheduled_date: new Date().toISOString().split('T')[0],
-        calibrations: JSON.stringify([]),
-        notes: `Quote: ${est.estimate_number}`,
-        report_url: est.quote_url,
-        status: 'need_dispatch',
-        created_at: new Date().toISOString(),
-      }
-      jobs.push(newJob)
+        calibrations: '[]',
+        notes:        `Quote: ${est.estimate_number}`,
+        report_url:   est.quote_url      || '',
+        status:       'need_dispatch',
+        quote_number: est.estimate_number || '',
+        quote_url:    est.quote_url       || '',
+        folder_url:   '',
+      })
       created++
     }
 
-    // 2. Remove jobs for estimates that are now voided/deleted in Zoho
-    // Only runs if Zoho returned a non-empty list (safety guard above ensures this)
+    // Remove jobs for voided/deleted estimates
     let removed = 0
-    const filtered = jobs.filter(j => {
-      if (!j.zoho_estimate_id) return true // manual job, keep it
-      const est = estimateMap.get(j.zoho_estimate_id)
+    for (const job of jobs) {
+      if (!job.zoho_estimate_id) continue
+      const est = estimateMap.get(job.zoho_estimate_id)
       if (!est || SKIP_STATUSES.has(est.status)) {
-        removed++
-        return false // quote was voided or deleted — remove
+        try {
+          await deleteJob(token, projectId, job.id)
+          removed++
+        } catch (e) {
+          console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
+        }
       }
-      return true
-    })
-
-    if (created > 0 || removed > 0) await writeJobs(filtered)
+    }
 
     res.json({ created, removed, total: estimates.length })
   } catch (err) {
@@ -308,5 +260,19 @@ router.post('/sync-quotes', async (req, res) => {
   }
 })
 
-export { readJobs as readJobsPublic, writeJobs as writeJobsPublic }
+// ─── Debug ────────────────────────────────────────────────────────────────────
+router.get('/debug', async (req, res) => {
+  try {
+    const { token, projectId } = getAuth(req)
+    const hasToken = !!token
+    const tableId = await getTableId(token, projectId)
+    const jobs = await getAllJobs(token, projectId)
+    res.json({ ok: true, hasToken, projectId, tableId, jobCount: jobs.length })
+  } catch (err) {
+    res.json({ ok: false, error: err.message })
+  }
+})
+
+// ─── Exports for webhook.js ───────────────────────────────────────────────────
+export { getAllJobs as readJobsPublic, updateJob as updateJobPublic }
 export default router
