@@ -43,7 +43,8 @@ function jobToRow(job) {
 // ─── Datastore Helpers ────────────────────────────────────────────────────────
 
 function getTable(req) {
-  const app = catalyst.initialize(req)
+  // Use advancedio type to get admin credentials for full read/write access
+  const app = catalyst.initialize(req, { type: 'advancedio' })
   return app.datastore().table(JOBS_TABLE_NAME)
 }
 
