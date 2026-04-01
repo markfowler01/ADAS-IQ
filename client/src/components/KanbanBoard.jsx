@@ -533,9 +533,16 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </button>
       </div>
 
-      {/* Vehicle */}
+      {/* Year / Make / Model */}
       {vehicle && (
-        <p className="text-sm font-semibold text-gray-800 leading-snug mb-1">{vehicle}</p>
+        <p className="text-sm font-semibold text-gray-800 leading-snug mb-0.5">{vehicle}</p>
+      )}
+
+      {/* VIN */}
+      {job.vin && (
+        <p className="text-xs mb-1 font-mono" style={{ color: '#888' }}>
+          VIN: {job.vin}
+        </p>
       )}
 
       {/* Insurer */}
@@ -616,15 +623,10 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           {/* Delete button */}
           <button
             onClick={e => { e.stopPropagation(); onDelete(job) }}
-            title="Delete job"
-            className="flex-shrink-0 text-gray-400 hover:text-red-500 transition-colors"
+            className="text-xs font-semibold px-2 py-0.5 rounded-full border transition-all"
+            style={{ backgroundColor: 'transparent', color: '#e53e3e', borderColor: '#fed7d7' }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
-              <path d="M10 11v6M14 11v6"/>
-              <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
-            </svg>
+            Delete
           </button>
         </div>
       </div>
@@ -843,14 +845,15 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     setJobs(prev => prev.map(j => j.id === job.id ? updatedJob : j))
 
     try {
-      const payload = jobToPayload(updatedJob)
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ status: newStatus }),
       })
-      if (!res.ok) throw new Error('Update failed')
-
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Update failed')
+      }
       if (newStatus === 'complete') {
         checkConfetti(job.technician, jobs, job.id)
       }
@@ -866,11 +869,14 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     setJobs(prev => prev.map(j => j.id === job.id ? updatedJob : j))
     try {
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(jobToPayload(updatedJob)),
+        body: JSON.stringify({ invoiced: updatedJob.invoiced }),
       })
-      if (!res.ok) throw new Error('Update failed')
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Update failed')
+      }
     } catch (e) {
       setJobs(prev => prev.map(j => j.id === job.id ? job : j))
       showToast(e.message || 'Failed to update invoice status. Changes reverted.')

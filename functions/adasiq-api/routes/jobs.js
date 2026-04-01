@@ -102,8 +102,25 @@ router.put('/:id', async (req, res) => {
     const updated = await updateJob(req, req.params.id, req.body)
     res.json(updated)
   } catch (err) {
-    console.error('[jobs PUT]', err.message, err.stack)
-    res.status(500).json({ error: err.message })
+    const detail = err?.response?.data || err?.data || err.message
+    console.error('[jobs PUT]', JSON.stringify(detail), err.stack)
+    res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) })
+  }
+})
+
+// PATCH /api/jobs/:id — partial update (only fields provided)
+router.patch('/:id', async (req, res) => {
+  try {
+    const table = getTable(req)
+    const currentRow = await table.getRow(Number(req.params.id))
+    const currentJob = rowToJob(currentRow)
+    const merged = { ...currentJob, ...req.body }
+    const updated = await updateJob(req, req.params.id, merged)
+    res.json(updated)
+  } catch (err) {
+    const detail = err?.response?.data || err?.data || err.message
+    console.error('[jobs PATCH]', JSON.stringify(detail), err.stack)
+    res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) })
   }
 })
 
