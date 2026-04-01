@@ -103,6 +103,33 @@ function formToJobData(form) {
   }
 }
 
+// Full job → API payload without lossy form round-trip
+function jobToPayload(job) {
+  return {
+    shop_name:        job.shop_name        || '',
+    vehicle:          job.vehicle          || [job.year, job.make, job.model].filter(Boolean).join(' '),
+    year:             job.year             || '',
+    make:             job.make             || '',
+    model:            job.model            || '',
+    vin:              job.vin              || '',
+    insurer:          job.insurer          || '',
+    technician:       job.technician       || '',
+    scheduled_date:   job.scheduled_date   || '',
+    calibrations:     typeof job.calibrations === 'string' ? job.calibrations : JSON.stringify(job.calibrations || []),
+    notes:            job.notes            || '',
+    report_url:       job.report_url       || '',
+    status:           job.status           || 'need_dispatch',
+    invoiced:         job.invoiced         || false,
+    zoho_estimate_id: job.zoho_estimate_id || '',
+    quote_number:     job.quote_number     || '',
+    quote_url:        job.quote_url        || '',
+    folder_url:       job.folder_url       || '',
+    invoice_number:   job.invoice_number   || '',
+    invoice_status:   job.invoice_status   || '',
+    created_at:       job.created_at       || '',
+  }
+}
+
 async function triggerConfetti() {
   try {
     const confetti = (await import('https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.module.mjs')).default
@@ -788,7 +815,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     setJobs(prev => prev.map(j => j.id === dragJob.id ? updatedJob : j))
 
     try {
-      const payload = formToJobData(jobToForm(updatedJob))
+      const payload = jobToPayload(updatedJob)
       const res = await apiFetch(`${API_BASE}/api/jobs/${dragJob.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -816,7 +843,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     setJobs(prev => prev.map(j => j.id === job.id ? updatedJob : j))
 
     try {
-      const payload = formToJobData(jobToForm(updatedJob))
+      const payload = jobToPayload(updatedJob)
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -841,7 +868,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formToJobData(jobToForm(updatedJob)), invoiced: updatedJob.invoiced }),
+        body: JSON.stringify(jobToPayload(updatedJob)),
       })
       if (!res.ok) throw new Error('Update failed')
     } catch (e) {
