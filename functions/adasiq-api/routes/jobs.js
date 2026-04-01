@@ -1,47 +1,10 @@
 import express from 'express'
-import axios from 'axios'
+import catalyst from 'zcatalyst-sdk-node'
 import { listAllEstimates } from '../services/zoho.js'
 
 const router = express.Router()
 
-// ─── Catalyst Datastore Config ────────────────────────────────────────────────
-const CATALYST_API = 'https://api.catalyst.zoho.com/baas/v1/project'
-const DEFAULT_PROJECT_ID = '45874000000016010'
 const JOBS_TABLE_NAME = 'Jobs'
-
-let _tableId = null
-
-function getAuth(req) {
-  const token = req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''
-  const projectId = req.headers['x-zc-projectid'] || DEFAULT_PROJECT_ID
-  return { token, projectId }
-}
-
-function dsHeaders(token) {
-  return {
-    Authorization: `Catalyst-Cred-Token ${token}`,
-    'Content-Type': 'application/json',
-  }
-}
-
-async function getTableId(token, projectId) {
-  if (_tableId) return _tableId
-  const res = await axios.get(`${CATALYST_API}/${projectId}/table`, {
-    headers: dsHeaders(token),
-    timeout: 10000,
-  })
-  const tables = res.data?.data || []
-  const table = tables.find(t => t.table_name === JOBS_TABLE_NAME)
-  if (!table) {
-    throw new Error(
-      `Catalyst Datastore table "${JOBS_TABLE_NAME}" not found. ` +
-      `Create it in the Catalyst console first (see setup instructions).`
-    )
-  }
-  _tableId = String(table.table_id)
-  console.log(`[jobs] Discovered table "${JOBS_TABLE_NAME}" id=${_tableId}`)
-  return _tableId
-}
 
 // ─── Row ↔ Job Mapping ────────────────────────────────────────────────────────
 
@@ -73,70 +36,41 @@ function rowToJob(row) {
 }
 
 function jobToRow(job) {
-  // Strip id — ROWID is managed by Catalyst
   const { id, invoiced, ...rest } = job
-  return {
-    ...rest,
-    invoiced: String(Boolean(invoiced)),
-  }
+  return { ...rest, invoiced: String(Boolean(invoiced)) }
 }
 
-// ─── Datastore Operations ─────────────────────────────────────────────────────
+// ─── Datastore Helpers ────────────────────────────────────────────────────────
 
-async function getAllJobs(token, projectId) {
-  const tableId = await getTableId(token, projectId)
-  let all = []
-  let nextToken = undefined
-
-  do {
-    const params = { maxRows: 200 }
-    if (nextToken) params.next_token = nextToken
-
-    const res = await axios.get(`${CATALYST_API}/${projectId}/table/${tableId}/row`, {
-      headers: dsHeaders(token),
-      params,
-      timeout: 15000,
-    })
-    const rows = res.data?.data || []
-    all = all.concat(rows.map(rowToJob))
-    nextToken = res.data?.next_token || null
-  } while (nextToken)
-
-  return all
+function getTable(req) {
+  const app = catalyst.initialize(req)
+  return app.datastore().table(JOBS_TABLE_NAME)
 }
 
-async function insertJob(token, projectId, jobData) {
-  const tableId = await getTableId(token, projectId)
+async function getAllJobs(req) {
+  const table = getTable(req)
+  // queryRecords returns all rows
+  const rows = await table.queryRecords(`SELECT * FROM ${JOBS_TABLE_NAME}`)
+  return rows.map(rowToJob)
+}
+
+async function insertJob(req, jobData) {
+  const table = getTable(req)
   const row = jobToRow({ ...jobData, created_at: jobData.created_at || new Date().toISOString() })
-  const res = await axios.post(
-    `${CATALYST_API}/${projectId}/table/${tableId}/row`,
-    [row],
-    { headers: dsHeaders(token), timeout: 15000 }
-  )
-  const inserted = res.data?.data?.[0]
-  if (!inserted) throw new Error('Insert returned no row')
+  const inserted = await table.insertRow(row)
   return rowToJob(inserted)
 }
 
-async function updateJob(token, projectId, rowId, updates) {
-  const tableId = await getTableId(token, projectId)
+async function updateJob(req, rowId, updates) {
+  const table = getTable(req)
   const row = { ROWID: Number(rowId), ...jobToRow(updates) }
-  const res = await axios.put(
-    `${CATALYST_API}/${projectId}/table/${tableId}/row`,
-    [row],
-    { headers: dsHeaders(token), timeout: 15000 }
-  )
-  const updated = res.data?.data?.[0]
-  if (!updated) throw new Error('Update returned no row')
+  const updated = await table.updateRow(row)
   return rowToJob(updated)
 }
 
-async function deleteJob(token, projectId, rowId) {
-  const tableId = await getTableId(token, projectId)
-  await axios.delete(
-    `${CATALYST_API}/${projectId}/table/${tableId}/row/${rowId}`,
-    { headers: dsHeaders(token), timeout: 15000 }
-  )
+async function deleteJob(req, rowId) {
+  const table = getTable(req)
+  await table.deleteRow(Number(rowId))
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -144,11 +78,10 @@ async function deleteJob(token, projectId, rowId) {
 // GET /api/jobs
 router.get('/', async (req, res) => {
   try {
-    const { token, projectId } = getAuth(req)
-    const jobs = await getAllJobs(token, projectId)
+    const jobs = await getAllJobs(req)
     res.json(jobs)
   } catch (err) {
-    console.error('[jobs GET]', err.message)
+    console.error('[jobs GET]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })
@@ -156,11 +89,10 @@ router.get('/', async (req, res) => {
 // POST /api/jobs
 router.post('/', async (req, res) => {
   try {
-    const { token, projectId } = getAuth(req)
-    const newJob = await insertJob(token, projectId, req.body)
+    const newJob = await insertJob(req, req.body)
     res.status(201).json(newJob)
   } catch (err) {
-    console.error('[jobs POST]', err.message)
+    console.error('[jobs POST]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })
@@ -168,11 +100,10 @@ router.post('/', async (req, res) => {
 // PUT /api/jobs/:id
 router.put('/:id', async (req, res) => {
   try {
-    const { token, projectId } = getAuth(req)
-    const updated = await updateJob(token, projectId, req.params.id, req.body)
+    const updated = await updateJob(req, req.params.id, req.body)
     res.json(updated)
   } catch (err) {
-    console.error('[jobs PUT]', err.message)
+    console.error('[jobs PUT]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })
@@ -180,11 +111,10 @@ router.put('/:id', async (req, res) => {
 // DELETE /api/jobs/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const { token, projectId } = getAuth(req)
-    await deleteJob(token, projectId, req.params.id)
+    await deleteJob(req, req.params.id)
     res.json({ success: true })
   } catch (err) {
-    console.error('[jobs DELETE]', err.message)
+    console.error('[jobs DELETE]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })
@@ -192,13 +122,11 @@ router.delete('/:id', async (req, res) => {
 // POST /api/jobs/sync-quotes
 router.post('/sync-quotes', async (req, res) => {
   try {
-    const { token, projectId } = getAuth(req)
     const [estimates, jobs] = await Promise.all([
       listAllEstimates(),
-      getAllJobs(token, projectId),
+      getAllJobs(req),
     ])
 
-    // Safety check — if Zoho returned nothing, refuse to run removal
     const linkedJobCount = jobs.filter(j => j.zoho_estimate_id).length
     if (estimates.length === 0 && linkedJobCount > 0) {
       return res.status(503).json({
@@ -210,13 +138,12 @@ router.post('/sync-quotes', async (req, res) => {
     const existingEstimateIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
     const SKIP_STATUSES = new Set(['void', 'expired'])
 
-    // Create jobs for new estimates
     let created = 0
     for (const est of estimates) {
       if (SKIP_STATUSES.has(est.status)) continue
       if (existingEstimateIds.has(est.estimate_id)) continue
 
-      await insertJob(token, projectId, {
+      await insertJob(req, {
         zoho_estimate_id: est.estimate_id,
         shop_name:    est.customer_name || '',
         vehicle:      [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' '),
@@ -238,14 +165,13 @@ router.post('/sync-quotes', async (req, res) => {
       created++
     }
 
-    // Remove jobs for voided/deleted estimates
     let removed = 0
     for (const job of jobs) {
       if (!job.zoho_estimate_id) continue
       const est = estimateMap.get(job.zoho_estimate_id)
       if (!est || SKIP_STATUSES.has(est.status)) {
         try {
-          await deleteJob(token, projectId, job.id)
+          await deleteJob(req, job.id)
           removed++
         } catch (e) {
           console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
@@ -255,19 +181,16 @@ router.post('/sync-quotes', async (req, res) => {
 
     res.json({ created, removed, total: estimates.length })
   } catch (err) {
-    console.error('[jobs sync-quotes]', err.message)
+    console.error('[jobs sync-quotes]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })
 
-// ─── Debug ────────────────────────────────────────────────────────────────────
+// GET /api/jobs/debug
 router.get('/debug', async (req, res) => {
   try {
-    const { token, projectId } = getAuth(req)
-    const hasToken = !!token
-    const tableId = await getTableId(token, projectId)
-    const jobs = await getAllJobs(token, projectId)
-    res.json({ ok: true, hasToken, projectId, tableId, jobCount: jobs.length })
+    const jobs = await getAllJobs(req)
+    res.json({ ok: true, jobCount: jobs.length })
   } catch (err) {
     res.json({ ok: false, error: err.message })
   }

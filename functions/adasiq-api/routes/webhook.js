@@ -34,11 +34,7 @@ router.post('/zoho-books', async (req, res) => {
       return res.json({ success: true, message: `Status "${status}" does not trigger invoiced flag` })
     }
 
-    // Get Catalyst auth from headers (injected by Catalyst for all incoming requests)
-    const token     = req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''
-    const projectId = req.headers['x-zc-projectid'] || '45874000000016010'
-
-    const jobs = await readJobsPublic(token, projectId)
+    const jobs = await readJobsPublic(req)
     let matchedJob = null
 
     // Match strategy 1: VIN (most reliable)
@@ -78,7 +74,7 @@ router.post('/zoho-books', async (req, res) => {
     }
 
     // Update just this one job row — atomic, no overwrite risk
-    await updateJobPublic(token, projectId, matchedJob.id, {
+    await updateJobPublic(req, matchedJob.id, {
       ...matchedJob,
       invoiced:       true,
       invoice_number: invoiceNumber,
