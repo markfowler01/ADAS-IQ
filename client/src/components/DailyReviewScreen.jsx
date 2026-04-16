@@ -21,17 +21,20 @@ function deltaBadge(pct) {
 export default function DailyReviewScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [data, setData] = useState(null)
   const [trends, setTrends] = useState(null)
+  const [declined, setDeclined] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [d, t] = await Promise.all([
+      const [d, t, dc] = await Promise.all([
         apiFetch(`${API_BASE}/api/analytics/daily-review`).then(r => r.json()),
         apiFetch(`${API_BASE}/api/analytics/trends?period=daily&count=14`).then(r => r.json()),
+        apiFetch(`${API_BASE}/api/declined/report?period=this_month`).then(r => r.json()).catch(() => null),
       ])
       setData(d)
       setTrends(t)
+      setDeclined(dc)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }, [])
@@ -174,6 +177,32 @@ export default function DailyReviewScreen({ user, onLogout, currentScreen, onNav
             )}
           </div>
         </div>
+
+        {/* Declined / Lost Revenue */}
+        {declined && declined.total_declines > 0 && (
+          <div className="rounded-xl border p-5 shadow-sm mb-6" style={{ borderColor: '#f0ece8' }}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>
+                💸 Lost Revenue (MTD)
+              </h3>
+              <span className="text-xs text-gray-500">{declined.total_declines} declined calibrations</span>
+            </div>
+            <p className="text-2xl font-bold mb-3" style={{ color: '#b91c1c' }}>
+              {fmt(declined.total_lost_revenue)}
+            </p>
+            {declined.by_shop?.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">Top shops declining work</p>
+                {declined.by_shop.slice(0, 3).map(s => (
+                  <div key={s.shop} className="flex justify-between text-sm py-1">
+                    <span className="text-gray-700">{s.shop}</span>
+                    <span className="font-semibold" style={{ color: '#b91c1c' }}>{fmt(s.lost_revenue)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="rounded-xl border shadow-sm p-5" style={{ borderColor: '#f0ece8' }}>

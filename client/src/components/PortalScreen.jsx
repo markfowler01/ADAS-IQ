@@ -22,14 +22,20 @@ const TYPE_BADGES = {
 export default function PortalScreen({ shop, onLogout }) {
   const [tab, setTab] = useState('all')
   const [invoices, setInvoices] = useState([])
+  const [myJobs, setMyJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const [payModal, setPayModal] = useState(null)
+  const [submitJobOpen, setSubmitJobOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await portalFetch(`${API_BASE}/api/portal/invoices`).then(r => r.json())
-      setInvoices(Array.isArray(r) ? r : [])
+      const [inv, jobs] = await Promise.all([
+        portalFetch(`${API_BASE}/api/portal/invoices`).then(r => r.json()),
+        portalFetch(`${API_BASE}/api/portal/my-jobs`).then(r => r.json()).catch(() => []),
+      ])
+      setInvoices(Array.isArray(inv) ? inv : [])
+      setMyJobs(Array.isArray(jobs) ? jobs : [])
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }, [])
@@ -109,6 +115,24 @@ export default function PortalScreen({ shop, onLogout }) {
           </div>
         </div>
 
+        {/* Submit new job CTA */}
+        <div className="rounded-xl p-4 mb-6 flex items-center justify-between gap-3 flex-wrap"
+          style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+          <div>
+            <p className="text-sm font-semibold" style={{ color: '#15803d' }}>
+              🚗 Need a calibration?
+            </p>
+            <p className="text-xs text-gray-600 mt-0.5">
+              Submit a job request directly — we'll dispatch and confirm the schedule.
+            </p>
+          </div>
+          <button onClick={() => setSubmitJobOpen(true)}
+            className="text-xs px-4 py-2 rounded-lg font-semibold text-white flex-shrink-0"
+            style={{ backgroundColor: '#16a34a' }}>
+            + Request Job
+          </button>
+        </div>
+
         {/* Quick pay all */}
         {unpaid.length > 0 && (
           <div className="rounded-xl p-4 mb-6 flex items-center justify-between gap-3 flex-wrap"
@@ -132,6 +156,7 @@ export default function PortalScreen({ shop, onLogout }) {
             { id: 'paid', label: `Paid (${paid.length})` },
             { id: 'insurance', label: `Insurance (${insurance.length})` },
             { id: 'shop', label: `Shop (${shopInv.length})` },
+            { id: 'jobs', label: `My Jobs (${myJobs.length})` },
           ].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className="text-xs px-3 py-1.5 rounded-full font-semibold"
@@ -144,9 +169,14 @@ export default function PortalScreen({ shop, onLogout }) {
           ))}
         </div>
 
+        {/* Jobs tab */}
+        {tab === 'jobs' && !loading && (
+          <MyJobsList jobs={myJobs} />
+        )}
+
         {/* Invoice list */}
-        {loading ? (
-          <div className="py-16 text-center text-gray-400 text-sm">Loading invoices…</div>
+        {tab !== 'jobs' && (loading ? (
+          <div className="py-16 text-center text-gray-400 text-sm">Loading…</div>
         ) : shown.length === 0 ? (
           <div className="py-16 text-center">
             <p className="text-5xl mb-2">📄</p>
@@ -218,13 +248,18 @@ export default function PortalScreen({ shop, onLogout }) {
               )
             })}
           </div>
-        )}
+        ))}
       </main>
 
       {payModal && (
         <PayInvoiceModal invoice={payModal}
           onClose={() => setPayModal(null)}
           onPaid={() => { setPayModal(null); load() }} />
+      )}
+      {submitJobOpen && (
+        <SubmitJobModal shop={shop}
+          onClose={() => setSubmitJobOpen(false)}
+          onSubmitted={() => { setSubmitJobOpen(false); load() }} />
       )}
     </div>
   )
@@ -380,6 +415,217 @@ function PayInvoiceModal({ invoice, onClose, onPaid }) {
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
               style={{ backgroundColor: ORANGE, opacity: saving ? 0.6 : 1 }}>
               {saving ? 'Recording…' : `Record ${fmt(Number(amount) || 0)} Payment`}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function MyJobsList({ jobs }) {
+  if (jobs.length === 0) {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-5xl mb-2">🚗</p>
+        <p className="text-gray-400 text-sm">No job requests yet. Click "Request Job" to submit one.</p>
+      </div>
+    )
+  }
+  const statusMap = {
+    needs_dispatch: { bg: '#fef3c7', color: '#b45309', label: 'Pending Dispatch' },
+    dispatched: { bg: '#dbeafe', color: '#1d4ed8', label: 'Dispatched' },
+    in_progress: { bg: '#e0f2fe', color: '#0369a1', label: 'In Progress' },
+    on_hold: { bg: '#f5f3f0', color: '#6b7280', label: 'On Hold' },
+    complete: { bg: '#dcfce7', color: '#15803d', label: 'Complete ✓' },
+    cancelled: { bg: '#fee2e2', color: '#b91c1c', label: 'Cancelled' },
+  }
+  return (
+    <div className="space-y-2">
+      {jobs.map(j => {
+        const st = statusMap[j.status] || statusMap.needs_dispatch
+        return (
+          <div key={j.id} className="rounded-xl bg-white border shadow-sm p-4"
+            style={{ borderColor: '#f0ece8' }}>
+            <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-bold" style={{ color: ORANGE }}>
+                  {j.ro_number ? `RO# ${j.ro_number}` : j.id.slice(-8)}
+                </span>
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full"
+                  style={{ backgroundColor: st.bg, color: st.color }}>
+                  {st.label}
+                </span>
+                {j.submitted_via_portal && (
+                  <span className="text-xs text-gray-400">📱 self-submitted</span>
+                )}
+              </div>
+              <span className="text-xs text-gray-400">
+                {new Date(j.created_at).toLocaleDateString()}
+              </span>
+            </div>
+            <p className="text-sm text-gray-700">
+              {[j.vehicle?.year, j.vehicle?.make, j.vehicle?.model].filter(Boolean).join(' ') || '—'}
+            </p>
+            {Array.isArray(j.calibrations) && j.calibrations.length > 0 && (
+              <p className="text-xs text-gray-500 mt-1">
+                {j.calibrations.map(c => typeof c === 'string' ? c : c.name).join(', ')}
+              </p>
+            )}
+            {j.technician && (
+              <p className="text-xs text-gray-500 mt-1">Tech: {j.technician}</p>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SubmitJobModal({ shop, onClose, onSubmitted }) {
+  const [form, setForm] = useState({
+    year: '', make: '', model: '', vin: '',
+    ro_number: '', insurer: '',
+    calibrations: '',
+    damage_points: '',
+    requested_date: '',
+    requested_by_name: '',
+    requested_by_phone: '',
+    notes: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(e) {
+    e.preventDefault()
+    if (!form.year && !form.make && !form.model && !form.vin) {
+      setError('Please enter at least vehicle info or VIN')
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const r = await portalFetch(`${API_BASE}/api/portal/submit-job`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...form,
+          calibrations: form.calibrations.split(',').map(s => s.trim()).filter(Boolean),
+          damage_points: form.damage_points.split(',').map(s => s.trim()).filter(Boolean),
+        }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || 'Failed')
+      onSubmitted()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[92vh] overflow-y-auto">
+        <div className="px-5 py-4 border-b sticky top-0 bg-white flex justify-between items-center"
+          style={{ borderColor: '#f0ece8' }}>
+          <div>
+            <h2 className="text-lg font-bold">Request a Calibration</h2>
+            <p className="text-xs text-gray-500">From: {shop.shop_name}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400">×</button>
+        </div>
+        <form onSubmit={submit} className="p-5 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Vehicle</label>
+            <div className="grid grid-cols-3 gap-2">
+              <input placeholder="Year" value={form.year}
+                onChange={e => setForm(f => ({ ...f, year: e.target.value }))}
+                className="border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+              <input placeholder="Make" value={form.make}
+                onChange={e => setForm(f => ({ ...f, make: e.target.value }))}
+                className="border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+              <input placeholder="Model" value={form.model}
+                onChange={e => setForm(f => ({ ...f, model: e.target.value }))}
+                className="border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">VIN</label>
+            <input value={form.vin} onChange={e => setForm(f => ({ ...f, vin: e.target.value.toUpperCase() }))}
+              placeholder="17-character VIN" maxLength="17"
+              className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
+              style={{ borderColor: '#e5e7eb' }} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">RO # (your job number)</label>
+              <input value={form.ro_number}
+                onChange={e => setForm(f => ({ ...f, ro_number: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Insurance Carrier</label>
+              <input value={form.insurer} placeholder="e.g. State Farm"
+                onChange={e => setForm(f => ({ ...f, insurer: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Calibrations needed <span className="text-gray-400">(comma-separated, or leave blank)</span>
+            </label>
+            <input value={form.calibrations}
+              onChange={e => setForm(f => ({ ...f, calibrations: e.target.value }))}
+              placeholder="e.g. Front Camera, Blind Spot, Lane Keep"
+              className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Damage points <span className="text-gray-400">(comma-separated)</span>
+            </label>
+            <input value={form.damage_points}
+              onChange={e => setForm(f => ({ ...f, damage_points: e.target.value }))}
+              placeholder="e.g. front bumper, windshield"
+              className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Preferred date</label>
+            <input type="date" value={form.requested_date}
+              onChange={e => setForm(f => ({ ...f, requested_date: e.target.value }))}
+              className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Your Name</label>
+              <input value={form.requested_by_name}
+                onChange={e => setForm(f => ({ ...f, requested_by_name: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Your Phone</label>
+              <input value={form.requested_by_phone}
+                onChange={e => setForm(f => ({ ...f, requested_by_phone: e.target.value }))}
+                className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+            <textarea value={form.notes} rows="2"
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="Anything we should know (special instructions, access, etc.)"
+              className="w-full border rounded-lg px-3 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 rounded-lg text-sm border" style={{ borderColor: '#e5e7eb' }}>
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
+              style={{ backgroundColor: '#16a34a', opacity: saving ? 0.6 : 1 }}>
+              {saving ? 'Submitting…' : 'Submit Request'}
             </button>
           </div>
         </form>

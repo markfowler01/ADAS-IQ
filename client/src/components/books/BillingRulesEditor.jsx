@@ -23,12 +23,16 @@ const DEFAULT_RULES = {
   custom_prices: {},
   default_terms: 'Net 14',
   requires_po: false,
-  auto_invoice: false,
+  auto_invoice: false,           // default OFF — requires explicit opt-in per shop
   invoice_type: 'dual',
   include_photos: true,
   include_postscan: true,
   include_prescan: false,
   skip_postscan_charge: false,
+  // Late fees — default OFF globally, can be opted into per shop
+  late_fees_enabled: false,
+  late_fee_percent: 1.5,          // % per month
+  late_fee_grace_days: 30,        // days past due_date before fee starts accruing
   billing_contact_name: '',
   billing_contact_email: '',
   billing_contact_phone: '',
@@ -261,7 +265,40 @@ export default function BillingRulesEditor({ shop, onSave, onClose }) {
             checked={rules.auto_invoice}
             onChange={v => set('auto_invoice', v)}
             label="Auto-Invoice on Job Complete"
-            hint="Automatically create invoice when job is marked done" />
+            hint="Automatically create invoice when job is marked done (default OFF)" />
+
+          <Checkbox
+            checked={rules.late_fees_enabled}
+            onChange={v => set('late_fees_enabled', v)}
+            label="Charge Late Fees on Overdue Invoices"
+            hint="Applies monthly late fee after grace period (default OFF)" />
+
+          {rules.late_fees_enabled && (
+            <div className="grid grid-cols-2 gap-3 ml-2 pl-3 border-l-2" style={{ borderColor: ORANGE }}>
+              <div>
+                <FieldLabel hint="% per month">Late Fee Rate</FieldLabel>
+                <div className="flex items-center gap-1">
+                  <input type="number" step="0.1" min="0" max="20"
+                    value={rules.late_fee_percent || 1.5}
+                    onChange={e => set('late_fee_percent', Number(e.target.value))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm text-right"
+                    style={{ borderColor: '#e5e7eb' }} />
+                  <span className="text-sm text-gray-500">%/mo</span>
+                </div>
+              </div>
+              <div>
+                <FieldLabel hint="days past due">Grace Period</FieldLabel>
+                <div className="flex items-center gap-1">
+                  <input type="number" step="1" min="0" max="180"
+                    value={rules.late_fee_grace_days ?? 30}
+                    onChange={e => set('late_fee_grace_days', Number(e.target.value))}
+                    className="w-full border rounded-lg px-3 py-2 text-sm text-right"
+                    style={{ borderColor: '#e5e7eb' }} />
+                  <span className="text-sm text-gray-500">days</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

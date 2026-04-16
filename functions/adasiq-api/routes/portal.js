@@ -894,4 +894,130 @@ router.get('/stripe/status', (req, res) => {
   res.json({ configured: stripeConfigured() })
 })
 
+// ── Portal self-dispatch: shops submit new job requests ──────────────────────
+
+// Shop jobs helpers — matches the jobs.js storage pattern
+async function readJobs(req) {
+  const segment = getSegment(req)
+  try {
+    const meta = await cacheGet(segment, 'adas_jobs_meta', null)
+    if (meta && meta.chunks > 0) {
+      const parts = await Promise.all(
+        Array.from({ length: meta.chunks }, (_, i) =>
+          cacheGet(segment, `adas_jobs_chunk_${i}`, [])
+        )
+      )
+      return parts.flat()
+    }
+    return (await cacheGet(segment, 'adas_jobs', [])) || []
+  } catch { return [] }
+}
+
+async function writeJobs(req, jobs) {
+  const segment = getSegment(req)
+  // Jobs aren't always chunked — use the same pattern as existing code.
+  // Write both keys for backward compatibility.
+  const CHUNK_SIZE = 30
+  const chunks = []
+  for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
+    chunks.push(jobs.slice(i, i + CHUNK_SIZE))
+  }
+  if (chunks.length === 0) chunks.push([])
+  for (let i = 0; i < chunks.length; i++) {
+    await cacheSet(segment, `adas_jobs_chunk_${i}`, chunks[i])
+  }
+  await cacheSet(segment, 'adas_jobs_meta', {
+    chunks: chunks.length, total: jobs.length, updated: new Date().toISOString(),
+  })
+}
+
+// List shop's own jobs (for "My Jobs" tab in portal)
+router.get('/my-jobs', requirePortalAuth, async (req, res) => {
+  try {
+    const jobs = await readJobs(req)
+    const shop = req.portalShop
+    const shopName = (shop.shop_name || '').toLowerCase()
+    const mine = jobs.filter(j => {
+      if (j.crm_shop_id === shop.id) return true
+      if ((j.shop_name || '').toLowerCase() === shopName) return true
+      return false
+    })
+    mine.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+    res.json(mine.map(j => ({
+      id: j.id,
+      ro_number: j.ro_number,
+      status: j.status,
+      vehicle: { year: j.year, make: j.make, model: j.model, vin: j.vin },
+      calibrations: j.calibrations || [],
+      scheduled_date: j.scheduled_date,
+      technician: j.technician,
+      notes: j.notes,
+      created_at: j.created_at,
+      completed_at: j.completed_at,
+      submitted_via_portal: j.submitted_via_portal,
+    })))
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Submit a new job request via the portal
+router.post('/submit-job', requirePortalAuth, async (req, res) => {
+  try {
+    const shop = req.portalShop
+    const jobs = await readJobs(req)
+
+    const body = req.body || {}
+    const newJob = {
+      id: `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      shop_name: shop.shop_name,
+      shop_address: shop.address || '',
+      crm_shop_id: shop.id,
+      ro_number: (body.ro_number || '').trim(),
+      year: (body.year || '').trim(),
+      make: (body.make || '').trim(),
+      model: (body.model || '').trim(),
+      vin: (body.vin || '').trim(),
+      insurer: (body.insurer || '').trim(),
+      calibrations: Array.isArray(body.calibrations) ? body.calibrations
+        : typeof body.calibrations === 'string' ? [body.calibrations] : [],
+      damage_points: Array.isArray(body.damage_points) ? body.damage_points : [],
+      notes: (body.notes || '').trim(),
+      requested_by_name: (body.requested_by_name || '').trim(),
+      requested_by_phone: (body.requested_by_phone || '').trim(),
+      requested_date: body.requested_date || '',  // shop's preferred date
+      status: 'needs_dispatch',   // lands in the "Need to Dispatch" column
+      submitted_via_portal: true,
+      technician: '',
+      dispatched: false,
+      created_at: new Date().toISOString(),
+    }
+
+    jobs.unshift(newJob)
+    await writeJobs(req, jobs)
+
+    // Notify admin of new portal request
+    try {
+      const segment = getSegment(req)
+      const notifs = await cacheGet(segment, 'notifications', []) || []
+      notifs.unshift({
+        id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        to: 'admin',
+        type: 'portal_job_submitted',
+        title: `📥 New job from ${shop.shop_name}`,
+        body: `${[newJob.year, newJob.make, newJob.model].filter(Boolean).join(' ')}${newJob.ro_number ? ` · RO# ${newJob.ro_number}` : ''}${newJob.insurer ? ` · ${newJob.insurer}` : ''}`,
+        link: '/app/?screen=kanban',
+        read: false,
+        created_at: new Date().toISOString(),
+      })
+      await cacheSet(segment, 'notifications', notifs.slice(0, 200))
+    } catch (e) { console.warn('[portal] notif write failed:', e.message) }
+
+    res.json({ ok: true, job: newJob })
+  } catch (e) {
+    console.error('[portal] submit-job failed:', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 export default router

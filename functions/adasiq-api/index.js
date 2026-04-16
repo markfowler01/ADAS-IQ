@@ -38,6 +38,8 @@ import projectsRouter from './routes/projects.js'
 import teamRouter from './routes/team.js'
 import portalRouter, { handleStripeWebhook } from './routes/portal.js'
 import zohoImportRouter from './routes/zoho-import.js'
+import quotesRouter from './routes/quotes.js'
+import declinedRouter from './routes/declined.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -189,6 +191,12 @@ app.use('/api/team', requireAuth, teamRouter)
 // Portal routes have their OWN auth (portal session token), not the main app auth
 app.use('/api/portal', portalRouter)
 app.use('/api/zoho-import', requireAuth, zohoImportRouter)
+// Quotes: public subpaths (under /public/*) bypass auth since they verify their own signed tokens
+app.use('/api/quotes', (req, res, next) => {
+  if (req.path.startsWith('/public/')) return next()
+  return requireAuth(req, res, next)
+}, quotesRouter)
+app.use('/api/declined', requireAuth, declinedRouter)
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))

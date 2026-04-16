@@ -11,6 +11,7 @@ const PRIMARY_LINKS = [
   { id: 'kanban',       label: 'Job Board' },
   { id: 'projects',     label: 'Projects' },
   { id: 'crm',          label: 'CRM' },
+  { id: 'quotes',       label: 'Quotes' },
   { id: 'books',        label: 'Books' },
   { id: 'ops',          label: 'Ops Hub', adminOnly: true },
 ]

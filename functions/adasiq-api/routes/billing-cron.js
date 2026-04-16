@@ -288,4 +288,236 @@ router.get('/aging-summary', async (req, res) => {
   }
 })
 
+// ── Stale invoice alert — completed jobs not invoiced within 24 hours ─────────
+
+async function readJobs(req) {
+  const segment = getSegment(req)
+  try {
+    const meta = await cacheGet(segment, 'adas_jobs_meta', null)
+    if (meta && meta.chunks > 0) {
+      const parts = await Promise.all(
+        Array.from({ length: meta.chunks }, (_, i) =>
+          cacheGet(segment, `adas_jobs_chunk_${i}`, [])
+        )
+      )
+      return parts.flat()
+    }
+    return (await cacheGet(segment, 'adas_jobs', [])) || []
+  } catch { return [] }
+}
+
+router.post('/check-stale-invoicing', async (req, res) => {
+  try {
+    const jobs = await readJobs(req)
+    const invoices = await readInvoices(req)
+    const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean))
+
+    const now = Date.now()
+    const staleThresholdMs = 24 * 60 * 60 * 1000  // 24 hours
+
+    const stale = []
+    for (const j of jobs) {
+      if (j.status !== 'complete') continue
+      if (invoicedJobIds.has(j.id)) continue
+      const completedAt = new Date(j.completed_at || j.updated_at || j.created_at).getTime()
+      if (!completedAt) continue
+      const age = now - completedAt
+      if (age < staleThresholdMs) continue
+
+      stale.push({
+        job_id: j.id,
+        shop_name: j.shop_name,
+        ro_number: j.ro_number,
+        completed_at: j.completed_at,
+        hours_stale: Math.round(age / (60 * 60 * 1000)),
+      })
+    }
+
+    // Notify admins if there's a stale list
+    if (stale.length > 0) {
+      await createNotification(req, {
+        to: 'admin',
+        type: 'stale_invoicing_alert',
+        title: `${stale.length} job${stale.length !== 1 ? 's' : ''} need${stale.length === 1 ? 's' : ''} invoicing`,
+        body: `Completed jobs waiting 24+ hours:\n${stale.slice(0, 5).map(s => `• ${s.shop_name} · RO# ${s.ro_number} · ${s.hours_stale}h`).join('\n')}${stale.length > 5 ? `\n…and ${stale.length - 5} more` : ''}`,
+        link: '/app/?screen=books',
+      }).catch(e => console.warn('[billing-cron] notification failed:', e.message))
+    }
+
+    res.json({ stale_count: stale.length, stale })
+  } catch (e) {
+    console.error('[billing-cron stale]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── Auto-invoice sweep — creates invoices for completed jobs that opted in ───
+
+async function readShops(req) {
+  try {
+    const app = catalyst.initialize(req)
+    const tbl = app.datastore().table('CRMShops')
+    const rows = await tbl.getAllRows()
+    return rows.map(r => {
+      const row = r.toJSON ? r.toJSON() : r
+      const shop = { id: row.ROWID, ...row }
+      try { if (typeof shop.billing_rules === 'string') shop.billing_rules = JSON.parse(shop.billing_rules) } catch {}
+      return shop
+    })
+  } catch { return [] }
+}
+
+router.post('/auto-invoice-sweep', async (req, res) => {
+  try {
+    const jobs = await readJobs(req)
+    const invoices = await readInvoices(req)
+    const shops = await readShops(req)
+    const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean))
+
+    const shopsById = new Map(shops.map(s => [s.id, s]))
+    const shopsByName = new Map(shops.map(s => [(s.shop_name || '').toLowerCase(), s]))
+
+    let created = 0
+    let skipped_no_optin = 0
+    let skipped_already_invoiced = 0
+    const errors = []
+
+    for (const j of jobs) {
+      if (j.status !== 'complete') continue
+      if (invoicedJobIds.has(j.id)) { skipped_already_invoiced++; continue }
+
+      // Find the shop + check auto_invoice opt-in
+      const shop = (j.crm_shop_id && shopsById.get(j.crm_shop_id))
+        || shopsByName.get((j.shop_name || '').toLowerCase())
+      if (!shop || !shop.billing_rules?.auto_invoice) {
+        skipped_no_optin++
+        continue
+      }
+
+      // Build a minimal invoice from the job (non-destructive — admin can edit after)
+      try {
+        const invoiceId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+        const now = new Date()
+        const dueDays = (shop.billing_rules?.default_terms || 'Net 30').match(/\d+/)?.[0] || 30
+        const due = new Date(now.getTime() + Number(dueDays) * 24 * 60 * 60 * 1000)
+
+        const lineItems = Array.isArray(j.calibrations)
+          ? j.calibrations.map(c => ({
+              id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              description: typeof c === 'string' ? c : (c.name || c.description || 'Calibration'),
+              qty: 1,
+              rate: typeof c === 'object' ? (Number(c.price) || 0) : 0,
+              amount: typeof c === 'object' ? (Number(c.price) || 0) : 0,
+            }))
+          : []
+
+        const subtotal = lineItems.reduce((s, li) => s + li.amount, 0)
+
+        invoices.push({
+          id: invoiceId,
+          invoice_number: `INV-AUTO-${Date.now().toString().slice(-6)}`,
+          customer_type: 'b2b',
+          invoice_type: shop.billing_rules?.invoice_type === 'single' ? 'standard' : 'shop',
+          customer_name: shop.shop_name,
+          customer_email: shop.billing_rules?.billing_contact_email || shop.email || '',
+          customer_phone: shop.phone || '',
+          customer_address: shop.address || '',
+          customer_contact: shop.billing_rules?.billing_contact_name || '',
+          po_number: j.ro_number || '',
+          date: now.toISOString().slice(0, 10),
+          due_date: due.toISOString().slice(0, 10),
+          terms: shop.billing_rules?.default_terms || 'Net 30',
+          line_items: lineItems,
+          tax_rate: 0, tax_amount: 0,
+          discount: 0, discount_pct: 0,
+          subtotal, total: subtotal,
+          amount_paid: 0, balance_due: subtotal,
+          status: 'draft',
+          job_id: j.id,
+          crm_shop_id: shop.id,
+          notes: 'Auto-generated from completed job — please review before sending.',
+          created_at: now.toISOString(),
+        })
+        created++
+      } catch (err) {
+        errors.push({ job_id: j.id, error: err.message })
+      }
+    }
+
+    if (created > 0) await writeInvoices(req, invoices)
+
+    res.json({ created, skipped_no_optin, skipped_already_invoiced, errors })
+  } catch (e) {
+    console.error('[billing-cron auto-invoice]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── Apply late fees to overdue invoices — only for shops that opted in ───────
+
+router.post('/apply-late-fees', async (req, res) => {
+  try {
+    const invoices = await readInvoices(req)
+    const shops = await readShops(req)
+    const shopsById = new Map(shops.map(s => [s.id, s]))
+    const shopsByName = new Map(shops.map(s => [(s.shop_name || '').toLowerCase(), s]))
+
+    const today = new Date()
+    let applied = 0
+    let skipped_no_optin = 0
+    const details = []
+
+    for (const inv of invoices) {
+      if (!['sent', 'overdue'].includes(inv.status)) continue
+      if (Number(inv.balance_due || 0) <= 0) continue
+      if (!inv.due_date) continue
+
+      const shop = (inv.crm_shop_id && shopsById.get(inv.crm_shop_id))
+        || shopsByName.get((inv.customer_name || '').toLowerCase())
+      const rules = shop?.billing_rules
+      if (!rules?.late_fees_enabled) { skipped_no_optin++; continue }
+
+      const graceDays = Number(rules.late_fee_grace_days ?? 30)
+      const due = new Date(inv.due_date)
+      const graceEnd = new Date(due.getTime() + graceDays * 24 * 60 * 60 * 1000)
+      const daysPastGrace = Math.floor((today - graceEnd) / (24 * 60 * 60 * 1000))
+      if (daysPastGrace < 0) continue
+
+      // Track fees per invoice: one accrual per month past grace
+      inv.late_fees = Array.isArray(inv.late_fees) ? inv.late_fees : []
+      const monthsPastGrace = Math.floor(daysPastGrace / 30) + 1
+      const alreadyApplied = inv.late_fees.length
+
+      if (monthsPastGrace <= alreadyApplied) continue
+
+      const monthlyRate = Number(rules.late_fee_percent ?? 1.5) / 100
+      const feeAmount = Math.round(Number(inv.total) * monthlyRate * 100) / 100
+
+      inv.late_fees.push({
+        id: `lf_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        amount: feeAmount,
+        rate_percent: rules.late_fee_percent,
+        applied_on: today.toISOString(),
+        months_past_grace: monthsPastGrace,
+      })
+      inv.balance_due = Math.max(0, Number(inv.balance_due || 0) + feeAmount)
+      inv.total = Math.round((Number(inv.total) + feeAmount) * 100) / 100
+
+      details.push({
+        invoice_number: inv.invoice_number,
+        customer: inv.customer_name,
+        fee_amount: feeAmount,
+      })
+      applied++
+    }
+
+    if (applied > 0) await writeInvoices(req, invoices)
+
+    res.json({ applied, skipped_no_optin, details })
+  } catch (e) {
+    console.error('[billing-cron late-fees]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 export default router

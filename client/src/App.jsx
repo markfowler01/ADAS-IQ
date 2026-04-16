@@ -41,6 +41,8 @@ import TeamScreen from './components/TeamScreen'
 import ZohoImportScreen from './components/ZohoImportScreen'
 import PortalApp from './components/PortalApp'
 import PayInvoiceScreen from './components/PayInvoiceScreen'
+import QuotesScreen from './components/QuotesScreen'
+import QuoteApprovalScreen from './components/QuoteApprovalScreen'
 
 // Top-level route check: public pay page and customer portal bypass the main auth flow.
 function getTopLevelRoute() {
@@ -48,6 +50,7 @@ function getTopLevelRoute() {
   const path = window.location.pathname || ''
   if (path.endsWith('/pay') || path.includes('/app/pay')) return 'pay'
   if (path.endsWith('/portal') || path.includes('/app/portal')) return 'portal'
+  if (path.endsWith('/quote') || path.includes('/app/quote')) return 'quote'
   return 'app'
 }
 
@@ -55,6 +58,7 @@ export default function App() {
   const topRoute = getTopLevelRoute()
   if (topRoute === 'pay') return <PayInvoiceScreen />
   if (topRoute === 'portal') return <PortalApp />
+  if (topRoute === 'quote') return <QuoteApprovalScreen />
   return <MainApp />
 }
 
@@ -281,6 +285,9 @@ function MainApp() {
       )}
       {screen === 'zoho-import' && (
         <ZohoImportScreen {...navProps} />
+      )}
+      {screen === 'quotes' && (
+        <QuotesScreen {...navProps} />
       )}
     </div>
   )
