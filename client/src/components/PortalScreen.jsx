@@ -238,6 +238,33 @@ function PayInvoiceModal({ invoice, onClose, onPaid }) {
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [stripeOn, setStripeOn] = useState(false)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/portal/stripe/status`)
+      .then(r => r.json())
+      .then(d => setStripeOn(!!d.configured))
+      .catch(() => {})
+  }, [])
+
+  async function startStripe(payMethod) {
+    setSaving(true)
+    setError('')
+    try {
+      const r = await portalFetch(`${API_BASE}/api/portal/invoices/${invoice.id}/stripe-checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method: payMethod }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || 'Failed')
+      window.location.href = data.url
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function submit(e) {
     e.preventDefault()
@@ -275,7 +302,34 @@ function PayInvoiceModal({ invoice, onClose, onPaid }) {
             Balance due: <strong style={{ color: ORANGE }}>{fmt(balance)}</strong>
           </p>
         </div>
+        {stripeOn && (
+          <div className="p-5 space-y-2 border-b" style={{ borderColor: '#f0ece8' }}>
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+              Pay Online — Instant
+            </p>
+            <button onClick={() => startStripe('ach')} disabled={saving}
+              className="w-full py-2.5 rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2"
+              style={{ backgroundColor: '#16a34a' }}>
+              🏦 Pay by Bank (ACH) · {fmt(balance)}
+              <span className="text-xs font-normal opacity-75">· Save ~2%</span>
+            </button>
+            <button onClick={() => startStripe('card')} disabled={saving}
+              className="w-full py-2.5 rounded-lg text-sm font-semibold text-white"
+              style={{ backgroundColor: '#2563eb' }}>
+              💳 Pay by Credit Card · {fmt(balance)}
+            </button>
+            <p className="text-xs text-gray-500 text-center">
+              Secure payment by Stripe
+            </p>
+          </div>
+        )}
+
         <form onSubmit={submit} className="p-5 space-y-3">
+          {stripeOn && (
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 -mb-1">
+              Or Record a Check/Zelle/Other
+            </p>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Payment Method</label>
             <select value={method} onChange={e => setMethod(e.target.value)}

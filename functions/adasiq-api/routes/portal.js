@@ -2,8 +2,24 @@ import express from 'express'
 import crypto from 'crypto'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
+import Stripe from 'stripe'
 
 const router = express.Router()
+
+// ── Stripe initialization (lazy, only if configured) ─────────────────────────
+
+let _stripe = null
+function stripe() {
+  if (_stripe) return _stripe
+  const key = process.env.STRIPE_SECRET_KEY
+  if (!key) return null
+  _stripe = new Stripe(key, { apiVersion: '2024-12-18.acacia' })
+  return _stripe
+}
+
+function stripeConfigured() {
+  return !!process.env.STRIPE_SECRET_KEY
+}
 
 // ── Cache helpers ────────────────────────────────────────────────────────────
 
@@ -638,8 +654,75 @@ router.get('/admin/pay-link/:invoiceId', async (req, res) => {
   }
 })
 
-// Stripe Checkout stub — creates a placeholder session.
-// To go live: npm install stripe, set STRIPE_SECRET_KEY env, un-stub below.
+// ── Stripe Checkout ──────────────────────────────────────────────────────────
+
+// Builds the base URL for success/cancel redirects
+function webBase(req) {
+  return process.env.WEB_BASE_URL
+    || `${req.protocol}://${req.get('host')}/app`
+}
+
+// Create a Stripe Checkout Session for a specific invoice
+// Supports two flows: 'card' or 'us_bank_account' (ACH)
+async function createCheckoutSession(req, inv, { paymentMethod = 'card', payerEmail, returnPath }) {
+  if (!stripeConfigured()) {
+    const err = new Error('Online card/ACH payments are not yet configured. Please use ACH/Check/Zelle via the payment form, or contact us.')
+    err.status = 501
+    throw err
+  }
+
+  const amount = Math.round(Number(inv.balance_due ?? inv.total) * 100)
+  if (amount <= 0) {
+    const err = new Error('Nothing to pay — invoice is already paid in full.')
+    err.status = 400
+    throw err
+  }
+
+  // ACH via us_bank_account. We use the standard checkout flow; Stripe renders Plaid.
+  const methodTypes = paymentMethod === 'ach'
+    ? ['us_bank_account']
+    : ['card']
+
+  const base = webBase(req)
+  const returnBase = returnPath ? `${base}${returnPath}` : `${base}/pay`
+
+  const session = await stripe().checkout.sessions.create({
+    mode: 'payment',
+    payment_method_types: methodTypes,
+    line_items: [{
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: `Invoice ${inv.invoice_number}`,
+          description: inv.customer_name ? `Billed to ${inv.customer_name}` : undefined,
+        },
+        unit_amount: amount,
+      },
+      quantity: 1,
+    }],
+    customer_email: payerEmail || inv.customer_email || undefined,
+    success_url: `${returnBase}?stripe_status=success&i=${encodeURIComponent(inv.id)}&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${returnBase}?stripe_status=cancelled&i=${encodeURIComponent(inv.id)}`,
+    metadata: {
+      invoice_id: inv.id,
+      invoice_number: inv.invoice_number,
+      payment_method: paymentMethod,
+      customer_name: inv.customer_name || '',
+    },
+    // ACH typically delays finalization — we only mark the invoice paid
+    // in the webhook when payment_intent.status === 'succeeded'.
+    payment_intent_data: {
+      metadata: {
+        invoice_id: inv.id,
+        invoice_number: inv.invoice_number,
+      },
+    },
+  })
+
+  return session
+}
+
+// Portal-authed: logged-in customer pays their own invoice
 router.post('/invoices/:id/stripe-checkout', requirePortalAuth, async (req, res) => {
   try {
     const all = await readInvoices(req)
@@ -647,35 +730,168 @@ router.post('/invoices/:id/stripe-checkout', requirePortalAuth, async (req, res)
     const inv = mine.find(i => i.id === req.params.id)
     if (!inv) return res.status(404).json({ error: 'Not found' })
 
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(501).json({
-        error: 'Credit card payments not yet configured. Please use ACH/Check/Zelle via the payment form, or contact us.',
-      })
+    const session = await createCheckoutSession(req, inv, {
+      paymentMethod: req.body?.method === 'ach' ? 'ach' : 'card',
+      payerEmail: req.body?.payer_email,
+      returnPath: '/portal',
+    })
+    res.json({ url: session.url, session_id: session.id })
+  } catch (e) {
+    console.error('[portal] stripe-checkout (authed) failed:', e.message)
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// Public pay-link variant: anyone with the signed invoice token can start checkout
+router.post('/pay/:invoiceId/stripe-checkout', async (req, res) => {
+  try {
+    const token = req.body?.token || req.query.t
+    const data = verifyToken(token)
+    if (!data || data.type !== 'invoice_pay' || data.invoice_id !== req.params.invoiceId) {
+      return res.status(401).json({ error: 'Invalid or expired payment link' })
+    }
+    const all = await readInvoices(req)
+    const inv = all.find(i => i.id === req.params.invoiceId)
+    if (!inv) return res.status(404).json({ error: 'Invoice not found' })
+
+    const session = await createCheckoutSession(req, inv, {
+      paymentMethod: req.body?.method === 'ach' ? 'ach' : 'card',
+      payerEmail: req.body?.payer_email,
+      returnPath: `/pay?i=${encodeURIComponent(inv.id)}&t=${encodeURIComponent(token)}`,
+    })
+    res.json({ url: session.url, session_id: session.id })
+  } catch (e) {
+    console.error('[portal] stripe-checkout (public) failed:', e.message)
+    res.status(e.status || 500).json({ error: e.message })
+  }
+})
+
+// ── Stripe webhook ───────────────────────────────────────────────────────────
+// Mounted in index.js BEFORE express.json() with raw body parser so we can verify signatures.
+// This handler is exported and mounted separately in index.js.
+
+export async function handleStripeWebhook(req, res) {
+  try {
+    if (!stripeConfigured()) return res.status(501).json({ error: 'Stripe not configured' })
+
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+    let event
+    if (webhookSecret) {
+      const sig = req.headers['stripe-signature']
+      try {
+        event = stripe().webhooks.constructEvent(req.body, sig, webhookSecret)
+      } catch (err) {
+        console.error('[portal] webhook signature verification failed:', err.message)
+        return res.status(400).send(`Webhook signature error: ${err.message}`)
+      }
+    } else {
+      // Dev mode: accept unsigned webhooks (never do this in prod)
+      console.warn('[portal] ⚠️  STRIPE_WEBHOOK_SECRET not set — accepting unsigned webhook')
+      event = typeof req.body === 'string' ? JSON.parse(req.body)
+        : Buffer.isBuffer(req.body) ? JSON.parse(req.body.toString())
+        : req.body
     }
 
-    // Production path (uncomment after `npm install stripe`):
-    // const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
-    // const session = await stripe.checkout.sessions.create({
-    //   mode: 'payment',
-    //   payment_method_types: ['card'],
-    //   line_items: [{
-    //     price_data: {
-    //       currency: 'usd',
-    //       product_data: { name: `Invoice ${inv.invoice_number}` },
-    //       unit_amount: Math.round(Number(inv.balance_due || inv.total) * 100),
-    //     },
-    //     quantity: 1,
-    //   }],
-    //   success_url: `${process.env.PORTAL_BASE_URL}?paid=${inv.id}`,
-    //   cancel_url: `${process.env.PORTAL_BASE_URL}?cancelled=${inv.id}`,
-    //   metadata: { invoice_id: inv.id, shop_id: req.portalShop.id },
-    // })
-    // res.json({ url: session.url, session_id: session.id })
+    // Handle relevant events
+    if (event.type === 'checkout.session.completed'
+        || event.type === 'checkout.session.async_payment_succeeded'
+        || event.type === 'payment_intent.succeeded') {
 
-    res.status(501).json({ error: 'Stripe integration pending. Use the manual payment form.' })
+      // Extract invoice reference + amount
+      let invoiceId, amount, paymentMethod, reference, payerEmail
+      if (event.type.startsWith('checkout.session')) {
+        const s = event.data.object
+        invoiceId = s.metadata?.invoice_id
+        amount = Number(s.amount_total) / 100
+        paymentMethod = s.metadata?.payment_method === 'ach' ? 'ACH / Bank Transfer (Stripe)' : 'Credit Card (Stripe)'
+        reference = s.payment_intent || s.id
+        payerEmail = s.customer_details?.email || s.customer_email
+      } else {
+        const pi = event.data.object
+        invoiceId = pi.metadata?.invoice_id
+        amount = Number(pi.amount_received) / 100
+        const types = pi.payment_method_types || []
+        paymentMethod = types.includes('us_bank_account') ? 'ACH / Bank Transfer (Stripe)' : 'Credit Card (Stripe)'
+        reference = pi.id
+        payerEmail = pi.receipt_email
+      }
+
+      if (!invoiceId || amount <= 0) {
+        console.warn('[portal] webhook missing invoice_id or amount:', event.type)
+        return res.json({ received: true })
+      }
+
+      // Load and update the invoice
+      const all = await readInvoices(req)
+      const idx = all.findIndex(i => i.id === invoiceId)
+      if (idx < 0) {
+        console.warn('[portal] webhook: invoice not found:', invoiceId)
+        return res.json({ received: true })
+      }
+      const target = all[idx]
+
+      // Idempotency: skip if we've already recorded this reference
+      const alreadyRecorded = (target.payments || []).some(p => p.reference === reference)
+      if (alreadyRecorded) {
+        console.log('[portal] webhook: already recorded, skipping:', reference)
+        return res.json({ received: true })
+      }
+
+      target.amount_paid = Number(target.amount_paid || 0) + amount
+      target.balance_due = Math.max(0, Number(target.total || 0) - target.amount_paid)
+      target.payments = Array.isArray(target.payments) ? target.payments : []
+      target.payments.push({
+        id: `pay_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        amount,
+        method: paymentMethod,
+        reference,
+        note: 'Automatically recorded via Stripe',
+        payer_email: payerEmail || '',
+        recorded_by: 'stripe_webhook',
+        recorded_at: new Date().toISOString(),
+      })
+
+      if (target.balance_due === 0) {
+        target.status = 'paid'
+        target.paid_at = new Date().toISOString()
+      }
+
+      await writeInvoices(req, all)
+
+      // Auto-record deposit
+      try {
+        const segment = getSegment(req)
+        const deposits = await cacheGet(segment, 'books_deposits', []) || []
+        deposits.unshift({
+          id: `dep_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          date: new Date().toISOString().slice(0, 10),
+          amount,
+          from: target.customer_name,
+          memo: `Stripe ${paymentMethod.includes('ACH') ? 'ACH' : 'card'} — ${reference}`,
+          method: paymentMethod,
+          invoice_id: target.id,
+          invoice_number: target.invoice_number,
+          created_via: 'stripe_webhook',
+          created_at: new Date().toISOString(),
+        })
+        await cacheSet(segment, 'books_deposits', deposits)
+      } catch (e) {
+        console.warn('[portal] deposit write failed in webhook:', e.message)
+      }
+
+      console.log(`[portal] ✓ Webhook recorded $${amount} on ${target.invoice_number}`)
+    }
+
+    res.json({ received: true })
   } catch (e) {
+    console.error('[portal] webhook handler error:', e)
     res.status(500).json({ error: e.message })
   }
+}
+
+// Public endpoint to check Stripe availability (so the UI can show/hide buttons)
+router.get('/stripe/status', (req, res) => {
+  res.json({ configured: stripeConfigured() })
 })
 
 export default router

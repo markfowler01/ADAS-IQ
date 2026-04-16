@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { API_BASE } from '../utils/portal'
+// eslint-disable-next-line no-unused-vars
 
 const ORANGE = '#CD4419'
 
@@ -78,6 +79,51 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(null)
+  const [stripeOn, setStripeOn] = useState(false)
+  const [mode, setMode] = useState('choose')  // choose, stripe_loading, manual
+
+  // Check Stripe availability + handle return from Stripe
+  useEffect(() => {
+    fetch(`${API_BASE}/api/portal/stripe/status`)
+      .then(r => r.json())
+      .then(d => setStripeOn(!!d.configured))
+      .catch(() => {})
+
+    // Handle return-from-Stripe query params
+    const params = new URLSearchParams(window.location.search)
+    const stripeStatus = params.get('stripe_status')
+    if (stripeStatus === 'success') {
+      setSuccess({
+        invoice_number: invoice.invoice_number,
+        paid_amount: balance,
+        new_balance: 0,
+        via_stripe: true,
+      })
+    } else if (stripeStatus === 'cancelled') {
+      setError('Payment was cancelled. No charge was made.')
+    }
+  }, [])
+
+  async function startStripe(payMethod) {
+    setSaving(true)
+    setError('')
+    setMode('stripe_loading')
+    try {
+      const r = await fetch(`${API_BASE}/api/portal/pay/${encodeURIComponent(invoice.id)}/stripe-checkout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, method: payMethod, payer_email: payerEmail }),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error || 'Failed to start checkout')
+      window.location.href = data.url
+    } catch (err) {
+      setError(err.message)
+      setMode('choose')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function submit(e) {
     e.preventDefault()
@@ -110,11 +156,17 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
         <div className="text-center max-w-sm">
           <p className="text-6xl mb-3">🎉</p>
           <p className="text-2xl font-bold mb-2" style={{ color: '#16a34a' }}>
-            Payment Received!
+            {success.via_stripe ? 'Payment Processing' : 'Payment Received!'}
           </p>
           <p className="text-sm text-gray-500 mb-4">
-            {fmt(success.paid_amount)} recorded for invoice {success.invoice_number}.
+            {fmt(success.paid_amount)} {success.via_stripe ? 'submitted for' : 'recorded for'} invoice {success.invoice_number}.
           </p>
+          {success.via_stripe && (
+            <p className="text-xs text-gray-500 mb-3">
+              Card payments confirm instantly. ACH payments take 1–3 business days to clear.
+              You'll receive a receipt from Stripe shortly.
+            </p>
+          )}
           {success.new_balance > 0 ? (
             <p className="text-sm" style={{ color: ORANGE }}>
               Remaining balance: <strong>{fmt(success.new_balance)}</strong>
@@ -125,11 +177,15 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
             </p>
           )}
           <p className="text-xs text-gray-400 mt-6">
-            A confirmation has been recorded in our books. You can close this window.
+            You can close this window.
           </p>
         </div>
       </Center>
     )
+  }
+
+  if (mode === 'stripe_loading') {
+    return <Center><p className="text-sm text-gray-500">Redirecting to secure payment…</p></Center>
   }
 
   return (
@@ -184,11 +240,43 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
           )}
         </div>
 
+        {/* Stripe pay buttons */}
+        {stripeOn && (
+          <div className="rounded-xl bg-white p-5 shadow-sm mb-4 space-y-3"
+            style={{ border: '1px solid #f0ece8' }}>
+            <h2 className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>
+              Pay Online — Instant
+            </h2>
+            <button onClick={() => startStripe('ach')} disabled={saving}
+              className="w-full py-3 rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2"
+              style={{ backgroundColor: '#16a34a' }}>
+              🏦 Pay by Bank (ACH) — {fmt(balance)}
+              <span className="text-xs font-normal opacity-75">· Save ~2%</span>
+            </button>
+            <button onClick={() => startStripe('card')} disabled={saving}
+              className="w-full py-3 rounded-lg text-sm font-semibold text-white"
+              style={{ backgroundColor: '#2563eb' }}>
+              💳 Pay by Credit Card — {fmt(balance)}
+            </button>
+            <p className="text-xs text-gray-500 text-center">
+              Secure payment by Stripe · Your payment info never touches our servers
+            </p>
+          </div>
+        )}
+
+        {stripeOn && (
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex-1 h-px" style={{ backgroundColor: '#e5e7eb' }} />
+            <span className="text-xs text-gray-400">OR RECORD MANUALLY</span>
+            <div className="flex-1 h-px" style={{ backgroundColor: '#e5e7eb' }} />
+          </div>
+        )}
+
         {/* Pay form */}
         <form onSubmit={submit} className="rounded-xl bg-white p-5 shadow-sm space-y-3"
           style={{ border: '1px solid #f0ece8' }}>
           <h2 className="text-sm font-semibold mb-2" style={{ color: '#1a1a1a' }}>
-            Payment Details
+            {stripeOn ? 'Record a Check/Zelle/Other Payment' : 'Payment Details'}
           </h2>
 
           <div className="grid grid-cols-2 gap-3">
@@ -248,11 +336,19 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
               style={{ borderColor: '#e5e7eb' }} />
           </div>
 
-          {method === 'Credit Card' && (
+          {method === 'Credit Card' && !stripeOn && (
             <div className="rounded-lg p-3" style={{ backgroundColor: '#fff7f5', border: `1px solid #fcd5c5` }}>
               <p className="text-xs" style={{ color: ORANGE }}>
                 💡 Online card processing is being set up. Please use ACH, Check, or Zelle for now,
                 or contact us for card payment.
+              </p>
+            </div>
+          )}
+          {method === 'Credit Card' && stripeOn && (
+            <div className="rounded-lg p-3" style={{ backgroundColor: '#eff6ff', border: `1px solid #bfdbfe` }}>
+              <p className="text-xs" style={{ color: '#2563eb' }}>
+                💡 For instant card payments, use the "Pay by Credit Card" button above. This form
+                only records card payments that happened offline (phone, in-person, etc.).
               </p>
             </div>
           )}

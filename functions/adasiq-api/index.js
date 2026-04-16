@@ -36,7 +36,8 @@ import mileageRouter from './routes/mileage.js'
 import analyticsRouter from './routes/analytics.js'
 import projectsRouter from './routes/projects.js'
 import teamRouter from './routes/team.js'
-import portalRouter from './routes/portal.js'
+import portalRouter, { handleStripeWebhook } from './routes/portal.js'
+import zohoImportRouter from './routes/zoho-import.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -47,6 +48,12 @@ const app = express()
 
 app.use(cors({ origin: true, credentials: true }))
 app.options('*', cors({ origin: true, credentials: true })) // handle preflight for all routes
+// Stripe webhook MUST come before express.json() so we can verify with the raw body
+app.post('/api/portal/stripe-webhook',
+  express.raw({ type: 'application/json' }),
+  handleStripeWebhook
+)
+
 app.use(express.json({ limit: '25mb' }))
 
 app.use(cookieSession({
@@ -181,6 +188,7 @@ app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/team', requireAuth, teamRouter)
 // Portal routes have their OWN auth (portal session token), not the main app auth
 app.use('/api/portal', portalRouter)
+app.use('/api/zoho-import', requireAuth, zohoImportRouter)
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))

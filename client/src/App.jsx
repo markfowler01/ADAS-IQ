@@ -38,6 +38,7 @@ import DailyReviewScreen from './components/DailyReviewScreen'
 import ProjectsScreen from './components/ProjectsScreen'
 import BrandingScreen from './components/BrandingScreen'
 import TeamScreen from './components/TeamScreen'
+import ZohoImportScreen from './components/ZohoImportScreen'
 import PortalApp from './components/PortalApp'
 import PayInvoiceScreen from './components/PayInvoiceScreen'
 
@@ -277,6 +278,9 @@ function MainApp() {
       )}
       {screen === 'team' && (
         <TeamScreen {...navProps} />
+      )}
+      {screen === 'zoho-import' && (
+        <ZohoImportScreen {...navProps} />
       )}
     </div>
   )
