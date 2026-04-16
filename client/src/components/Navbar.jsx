@@ -3,37 +3,48 @@ import FeedbackModal from './FeedbackModal'
 
 const ORANGE = '#CD4419'
 
-// Primary nav — always visible
+// Primary nav — everyday workflow, 6 items max
 const PRIMARY_LINKS = [
-  { id: 'planner',      label: 'My Day' },
-  { id: 'daily-review', label: 'Daily Review', adminOnly: true },
-  { id: 'upload',       label: 'Upload' },
-  { id: 'kanban',       label: 'Job Board' },
-  { id: 'projects',     label: 'Projects' },
-  { id: 'crm',          label: 'CRM' },
-  { id: 'quotes',       label: 'Quotes' },
-  { id: 'books',        label: 'Books' },
-  { id: 'disputes',     label: 'Disputes', adminOnly: true },
-  { id: 'ops',          label: 'Ops Hub', adminOnly: true },
+  { id: 'planner', label: 'My Day' },
+  { id: 'kanban',  label: 'Jobs' },
+  { id: 'crm',     label: 'CRM' },
+  { id: 'books',   label: 'Books' },
+  { id: 'projects', label: 'Projects' },
+  { id: 'ops',     label: 'Ops', adminOnly: true },
 ]
 
-// Secondary nav — lives in More dropdown
-const MORE_LINKS = [
-  { id: 'timeclock', label: 'Time Clock' },
-  { id: 'pto',       label: 'Time Off' },
-  { id: 'mileage',   label: 'Mileage' },
-  { id: 'team',      label: 'Team' },
-  { id: 'branding',  label: 'Branding', adminOnly: true },
-  { id: 'intel',     label: 'Intelligence', adminOnly: true },
-  { id: 'cx',        label: 'Customer Experience', adminOnly: true },
-  { id: 'zoho-import', label: 'Import from Zoho', adminOnly: true },
-  { id: 'manual',    label: 'Manual Invoice' },
-  { id: 'estimates', label: 'Repair Estimates' },
-  { id: 'history',   label: 'History' },
-  { id: 'rules',     label: 'Cal Rules' },
-  { id: 'messages',  label: 'Messages' },
+// Secondary nav — grouped by category in a spacious dropdown
+const MORE_GROUPS = [
+  { label: 'Finance', links: [
+    { id: 'quotes',    label: 'Quotes' },
+    { id: 'disputes',  label: 'Disputes', adminOnly: true },
+    { id: 'manual',    label: 'Manual Invoice' },
+    { id: 'estimates', label: 'Repair Estimates' },
+  ]},
+  { label: 'People & Time', links: [
+    { id: 'timeclock', label: 'Time Clock' },
+    { id: 'pto',       label: 'Time Off' },
+    { id: 'mileage',   label: 'Mileage' },
+    { id: 'team',      label: 'Team' },
+  ]},
+  { label: 'Intelligence', links: [
+    { id: 'daily-review', label: 'Daily Review', adminOnly: true },
+    { id: 'intel',        label: 'Business Intelligence', adminOnly: true },
+    { id: 'cx',           label: 'Customer Experience', adminOnly: true },
+    { id: 'history',      label: 'History' },
+  ]},
+  { label: 'Tools', links: [
+    { id: 'upload',    label: 'Upload PDF' },
+    { id: 'rules',     label: 'Calibration Rules' },
+    { id: 'messages',  label: 'Messages' },
+  ]},
+  { label: 'Admin', links: [
+    { id: 'branding',    label: 'Branding', adminOnly: true },
+    { id: 'zoho-import', label: 'Import from Zoho', adminOnly: true },
+  ]},
 ]
 
+const MORE_LINKS = MORE_GROUPS.flatMap(g => g.links)
 const ALL_LINKS = [...PRIMARY_LINKS, ...MORE_LINKS]
 
 export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
@@ -158,19 +169,37 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
               </svg>
             </button>
             {showMore && (
-              <div className="absolute top-full left-0 mt-1 py-1 rounded-xl shadow-lg z-50 min-w-[170px]"
-                style={{ backgroundColor: 'white', border: '1px solid #ebebeb' }}>
-                {MORE_LINKS.map(link => {
-                  const isActive = currentScreen === link.id
+              <div className="absolute top-full left-0 mt-2 py-2 rounded-xl shadow-xl z-50 grid grid-cols-2 gap-1"
+                style={{ backgroundColor: 'white', border: '1px solid #ebebeb', minWidth: 420, maxWidth: 560 }}>
+                {MORE_GROUPS.map(group => {
+                  const visibleLinks = group.links.filter(l => !l.adminOnly || isAdmin)
+                  if (visibleLinks.length === 0) return null
                   return (
-                    <button key={link.id} onClick={() => navigate(link.id)}
-                      className="w-full text-left text-sm px-4 py-2.5 font-medium transition-colors"
-                      style={{
-                        color: isActive ? ORANGE : '#333',
-                        backgroundColor: isActive ? '#fff4f0' : 'transparent',
-                      }}>
-                      {link.label}
-                    </button>
+                    <div key={group.label} className="py-1 px-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider px-2 py-1.5"
+                        style={{ color: '#b8b8b8', letterSpacing: '0.1em' }}>
+                        {group.label}
+                      </p>
+                      {visibleLinks.map(link => {
+                        const isActive = currentScreen === link.id
+                        return (
+                          <button key={link.id} onClick={() => navigate(link.id)}
+                            className="w-full text-left text-sm px-2 py-2 rounded-md font-medium transition-colors"
+                            style={{
+                              color: isActive ? ORANGE : '#1a1a1a',
+                              backgroundColor: isActive ? '#fff7f5' : 'transparent',
+                            }}
+                            onMouseEnter={e => {
+                              if (!isActive) e.currentTarget.style.backgroundColor = '#fafafa'
+                            }}
+                            onMouseLeave={e => {
+                              if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'
+                            }}>
+                            {link.label}
+                          </button>
+                        )
+                      })}
+                    </div>
                   )
                 })}
               </div>
@@ -286,31 +315,54 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
         </div>
       </div>
 
-      {/* Mobile menu dropdown */}
+      {/* Mobile menu dropdown — grouped just like the desktop More dropdown */}
       {showMobileMenu && (
         <div className="md:hidden" style={{ borderTop: '1px solid #ebebeb', backgroundColor: 'white' }}>
-          <nav className="px-4 py-3 flex flex-col gap-1">
-            {visibleAll.map(link => {
+          <nav className="px-4 py-3 flex flex-col gap-0.5">
+            {/* Primary links — styled as featured */}
+            <p className="text-[10px] font-bold uppercase tracking-wider px-1 pt-1 pb-2"
+              style={{ color: '#b8b8b8', letterSpacing: '0.1em' }}>Daily</p>
+            {visiblePrimary.map(link => {
               const isActive = currentScreen === link.id
               return (
                 <button key={link.id} onClick={() => navigate(link.id)}
                   className="text-sm px-3 py-2.5 font-medium text-left rounded-lg transition-colors"
-                  style={{ color: isActive ? ORANGE : '#333', backgroundColor: isActive ? '#fdeee8' : 'transparent' }}>
+                  style={{ color: isActive ? ORANGE : '#1a1a1a', backgroundColor: isActive ? '#fff7f5' : 'transparent' }}>
                   {link.label}
                 </button>
               )
             })}
-            <div className="flex gap-2 mt-2 pt-2 flex-wrap" style={{ borderTop: '1px solid #f0ece8' }}>
+            {MORE_GROUPS.map(group => {
+              const visibleLinks = group.links.filter(l => !l.adminOnly || isAdmin)
+              if (visibleLinks.length === 0) return null
+              return (
+                <div key={group.label}>
+                  <p className="text-[10px] font-bold uppercase tracking-wider px-1 pt-3 pb-2"
+                    style={{ color: '#b8b8b8', letterSpacing: '0.1em' }}>{group.label}</p>
+                  {visibleLinks.map(link => {
+                    const isActive = currentScreen === link.id
+                    return (
+                      <button key={link.id} onClick={() => navigate(link.id)}
+                        className="text-sm px-3 py-2.5 font-medium text-left rounded-lg transition-colors w-full"
+                        style={{ color: isActive ? ORANGE : '#1a1a1a', backgroundColor: isActive ? '#fff7f5' : 'transparent' }}>
+                        {link.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })}
+            <div className="flex gap-2 mt-4 pt-4 flex-wrap" style={{ borderTop: '1px solid #f0ece8' }}>
               {isAdmin && (
                 <button onClick={() => navigate('settings')}
                   className="text-xs px-3 py-2 rounded-lg font-medium flex-1"
-                  style={{ backgroundColor: currentScreen === 'settings' ? '#fdeee8' : '#f5f3f0', color: currentScreen === 'settings' ? ORANGE : '#555' }}>
+                  style={{ backgroundColor: currentScreen === 'settings' ? '#fff7f5' : '#f5f3f0', color: currentScreen === 'settings' ? ORANGE : '#555' }}>
                   Settings
                 </button>
               )}
               <button onClick={() => { setShowFeedback(true); setShowMobileMenu(false) }}
                 className="text-xs px-3 py-2 rounded-lg font-medium flex-1"
-                style={{ backgroundColor: '#f5f3f0', color: ORANGE, border: `1px solid #e8d5ce` }}>
+                style={{ backgroundColor: '#fff7f5', color: ORANGE, border: `1px solid #fcd5c5` }}>
                 Feedback
               </button>
               <button onClick={onLogout}

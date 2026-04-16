@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
-import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
+import { API_BASE, apiFetch, ORANGE, fmt, COLORS, PageHeader, Card, SectionLabel, Button, StatCard, EmptyState } from './books/shared'
 
 function deltaBadge(pct) {
   if (pct === null || pct === undefined) {
@@ -53,70 +53,57 @@ export default function DailyReviewScreen({ user, onLogout, currentScreen, onNav
   if (!data) return null
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
+    <div className="min-h-screen" style={{ backgroundColor: COLORS.surfaceMuted }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold" style={{ color: '#1a1a1a' }}>Daily Review</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {new Date().toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-            </p>
-          </div>
-          <button onClick={load}
-            className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-            style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
-            ↻ Refresh
-          </button>
-        </div>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        <PageHeader
+          title="Daily Review"
+          subtitle={new Date().toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          actions={<Button variant="secondary" size="sm" onClick={load}>↻ Refresh</Button>} />
 
         {/* Sales snapshot */}
-        <div className="mb-6">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Sales</h2>
+        <div className="mb-8">
+          <SectionLabel>Sales</SectionLabel>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="rounded-xl p-4 shadow-sm" style={{ backgroundColor: '#f0fdf4' }}>
+            <div className="rounded-xl p-4 shadow-sm" style={{ backgroundColor: COLORS.successSoft }}>
               <div className="flex items-center justify-between">
-                <p className="text-xs font-medium" style={{ color: '#16a34a' }}>Today</p>
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: COLORS.success }}>Today</p>
                 {deltaBadge(data.sales.day_delta_pct)}
               </div>
-              <p className="text-2xl font-bold mt-1" style={{ color: '#15803d' }}>{fmt(data.sales.today)}</p>
-              <p className="text-xs text-gray-500 mt-1">vs {fmt(data.sales.yesterday)} yesterday</p>
+              <p className="text-2xl lg:text-3xl font-bold mt-1.5" style={{ color: COLORS.success }}>{fmt(data.sales.today)}</p>
+              <p className="text-xs mt-1" style={{ color: COLORS.textMuted }}>vs {fmt(data.sales.yesterday)} yesterday</p>
             </div>
-            <div className="rounded-xl p-4 shadow-sm" style={{ backgroundColor: '#eff6ff' }}>
+            <div className="rounded-xl p-4 shadow-sm" style={{ backgroundColor: COLORS.infoSoft }}>
               <div className="flex items-center justify-between">
-                <p className="text-xs font-medium" style={{ color: '#2563eb' }}>This Week</p>
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: COLORS.info }}>This Week</p>
                 {deltaBadge(data.sales.week_delta_pct)}
               </div>
-              <p className="text-2xl font-bold mt-1" style={{ color: '#1d4ed8' }}>{fmt(data.sales.week)}</p>
-              <p className="text-xs text-gray-500 mt-1">vs {fmt(data.sales.last_week)} last week</p>
+              <p className="text-2xl lg:text-3xl font-bold mt-1.5" style={{ color: COLORS.info }}>{fmt(data.sales.week)}</p>
+              <p className="text-xs mt-1" style={{ color: COLORS.textMuted }}>vs {fmt(data.sales.last_week)} last week</p>
             </div>
-            <div className="rounded-xl p-4 shadow-sm" style={{ backgroundColor: '#fff7f5' }}>
-              <p className="text-xs font-medium" style={{ color: ORANGE }}>Month to Date</p>
-              <p className="text-2xl font-bold mt-1" style={{ color: ORANGE }}>{fmt(data.sales.mtd)}</p>
-              <p className="text-xs text-gray-500 mt-1">Revenue this month</p>
-            </div>
-            <div className="rounded-xl p-4 shadow-sm" style={{ backgroundColor: data.expenses.net_mtd >= 0 ? '#f0fdf4' : '#fef2f2' }}>
-              <p className="text-xs font-medium" style={{ color: data.expenses.net_mtd >= 0 ? '#15803d' : '#b91c1c' }}>Net MTD</p>
-              <p className="text-2xl font-bold mt-1" style={{ color: data.expenses.net_mtd >= 0 ? '#15803d' : '#b91c1c' }}>
-                {fmt(data.expenses.net_mtd)}
-              </p>
-              <p className="text-xs text-gray-500 mt-1">After {fmt(data.expenses.mtd)} expenses</p>
-            </div>
+            <StatCard label="Month to Date" value={fmt(data.sales.mtd)} tone="primary"
+              sublabel="Revenue this month" />
+            <StatCard label="Net MTD" value={fmt(data.expenses.net_mtd)}
+              tone={data.expenses.net_mtd >= 0 ? 'success' : 'danger'}
+              sublabel={`After ${fmt(data.expenses.mtd)} expenses`} />
           </div>
         </div>
 
         {/* Action items */}
-        <div className="mb-6">
-          <h2 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Needs Attention</h2>
+        <div className="mb-8">
+          <SectionLabel>Needs Attention</SectionLabel>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <ActionTile emoji="📋" count={data.jobs.needs_billing} label="Jobs Need Billing" color="#b45309" bg="#fef3c7"
+            <StatCard emoji="📋" label="Jobs Need Billing"
+              value={data.jobs.needs_billing} tone="warning"
               onClick={() => onNavigate('books')} />
-            <ActionTile emoji="📧" count={data.invoices.sent_not_paid} label="Invoices Sent" color="#2563eb" bg="#dbeafe"
+            <StatCard emoji="📧" label="Invoices Sent"
+              value={data.invoices.sent_not_paid} tone="info"
               onClick={() => onNavigate('books')} />
-            <ActionTile emoji="🚨" count={data.invoices.overdue_count} label="Overdue" color="#dc2626" bg="#fee2e2"
+            <StatCard emoji="🚨" label="Overdue"
+              value={data.invoices.overdue_count} tone="danger"
               onClick={() => onNavigate('books')} />
-            <ActionTile emoji="💵" count={fmt(data.invoices.outstanding)} label="Outstanding" color={ORANGE} bg="#fff7f5"
+            <StatCard emoji="💵" label="Outstanding"
+              value={fmt(data.invoices.outstanding)} tone="primary"
               onClick={() => onNavigate('books')} />
           </div>
         </div>

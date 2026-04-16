@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
-import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
+import { API_BASE, apiFetch, ORANGE, fmt, COLORS, PageHeader, SectionLabel, Tabs, StatCard, EmptyState, Card } from './books/shared'
 
 export default function IntelligenceScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [tab, setTab] = useState('forecast')
@@ -34,27 +34,13 @@ export default function IntelligenceScreen({ user, onLogout, currentScreen, onNa
   ]
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
+    <div className="min-h-screen" style={{ backgroundColor: COLORS.surfaceMuted }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold" style={{ color: '#1a1a1a' }}>Business Intelligence</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Forecasting, margin analysis, rebook alerts, competitor intel</p>
-        </div>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        <PageHeader title="Business Intelligence"
+          subtitle="Forecasting, margin analysis, rebook alerts, competitor intel" />
 
-        <div className="flex gap-0 mb-6 border-b overflow-x-auto" style={{ borderColor: '#ebebeb' }}>
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className="text-sm px-4 py-2.5 font-medium transition-colors whitespace-nowrap"
-              style={{
-                color: tab === t.id ? ORANGE : '#666',
-                borderBottom: tab === t.id ? `2px solid ${ORANGE}` : '2px solid transparent',
-                marginBottom: '-1px',
-              }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <Tabs tabs={tabs} active={tab} onChange={setTab} className="mb-6" />
 
         {loading ? (
           <div className="py-16 text-center text-gray-400 text-sm">Loading…</div>
@@ -79,12 +65,12 @@ function ForecastView({ forecast }) {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Card label="MTD Revenue" value={fmt(forecast.mtd_revenue)} bg="#f0fdf4" color="#15803d" />
-        <Card label="Pace Projection" value={fmt(forecast.pace_projection)} bg="#eff6ff" color="#2563eb"
+        <MiniCard label="MTD Revenue" value={fmt(forecast.mtd_revenue)} bg="#f0fdf4" color="#15803d" />
+        <MiniCard label="Pace Projection" value={fmt(forecast.pace_projection)} bg="#eff6ff" color="#2563eb"
           note={`${pacePct}% of avg month`} />
-        <Card label="Composite Forecast" value={fmt(forecast.composite_forecast)} bg="#fff7f5" color={ORANGE}
+        <MiniCard label="Composite Forecast" value={fmt(forecast.composite_forecast)} bg="#fff7f5" color={ORANGE}
           note="blended pace + pipeline" />
-        <Card label="Open Pipeline" value={forecast.open_pipeline_count} bg="#fef3c7" color="#b45309"
+        <MiniCard label="Open Pipeline" value={forecast.open_pipeline_count} bg="#fef3c7" color="#b45309"
           note={`${fmt(forecast.pipeline_value_estimated)} est.`} />
       </div>
 
@@ -254,7 +240,7 @@ function CompetitorsView({ data }) {
   )
 }
 
-function Card({ label, value, bg, color, note }) {
+function MiniCard({ label, value, bg, color, note }) {
   return (
     <div className="rounded-xl p-4 shadow-sm" style={{ backgroundColor: bg }}>
       <p className="text-xs font-medium" style={{ color }}>{label}</p>

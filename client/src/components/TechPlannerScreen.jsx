@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
-import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
+import { API_BASE, apiFetch, ORANGE, fmt, COLORS, Card, SectionLabel, StatCard, EmptyState } from './books/shared'
 
 function greeting() {
   const h = new Date().getHours()
@@ -104,41 +104,55 @@ export default function TechPlannerScreen({ user, onLogout, currentScreen, onNav
   }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#fafafa' }}>
+    <div className="min-h-screen" style={{ backgroundColor: COLORS.surfaceMuted }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
-        {/* Greeting */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold" style={{ color: '#1a1a1a' }}>
-            {greeting()}, {name}! 👋
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+        {/* Hero greeting — subtle tinted background */}
+        <div className="rounded-2xl p-6 mb-6"
+          style={{
+            background: `linear-gradient(135deg, ${COLORS.primarySoft} 0%, #ffffff 100%)`,
+            border: `1px solid ${COLORS.primaryBorder}`,
+          }}>
+          <h1 className="text-3xl font-bold tracking-tight" style={{ color: COLORS.text }}>
+            {greeting()}, {name}. <span className="inline-block">👋</span>
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm mt-1.5" style={{ color: COLORS.textMuted }}>
             {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
           </p>
         </div>
 
         {loading ? (
-          <div className="py-12 text-center text-gray-400 text-sm">Loading your day…</div>
+          <div className="py-16 text-center">
+            <div className="inline-block w-6 h-6 rounded-full animate-pulse" style={{ backgroundColor: COLORS.primary, opacity: 0.4 }} />
+            <p className="text-sm mt-3" style={{ color: COLORS.textMuted }}>Getting your day ready…</p>
+          </div>
         ) : (
           <div className="space-y-5">
 
-            {/* Quick status bar */}
+            {/* Stat tiles */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatusTile emoji="🕐" label={clockStatus ? 'Clocked In' : 'Clocked Out'}
+              <StatCard
+                emoji="🕐"
+                label={clockStatus ? 'Clocked In' : 'Not Clocked In'}
                 value={clockStatus ? new Date(clockStatus.clock_in).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—'}
-                color={clockStatus ? '#16a34a' : '#999'}
-                bg={clockStatus ? '#f0fdf4' : '#fafafa'}
+                tone={clockStatus ? 'success' : 'neutral'}
                 onClick={() => onNavigate('timeclock')} />
-              <StatusTile emoji="✅" label="Jobs Today"
+              <StatCard
+                emoji="✅"
+                label="Jobs Today"
                 value={`${completedToday}/${myJobs.length + completedToday}`}
-                color={ORANGE} bg="#fff7f5" />
-              <StatusTile emoji="💰" label="Bonus MTD"
+                tone="primary" />
+              <StatCard
+                emoji="💰"
+                label="Bonus MTD"
                 value={fmt(bonusData?.bonus_amount || 0)}
-                color="#16a34a" bg="#f0fdf4"
+                tone="success"
                 onClick={() => onNavigate('books')} />
-              <StatusTile emoji="🚗" label="Miles MTD"
-                value={mileageData?.business_miles ? `${mileageData.business_miles.toFixed(0)}` : '—'}
-                color="#2563eb" bg="#eff6ff"
+              <StatCard
+                emoji="🚗"
+                label="Miles MTD"
+                value={mileageData?.business_miles ? mileageData.business_miles.toFixed(0) : '—'}
+                tone="info"
                 onClick={() => onNavigate('mileage')} />
             </div>
 
@@ -152,11 +166,13 @@ export default function TechPlannerScreen({ user, onLogout, currentScreen, onNav
                 </button>
               </div>
               {myJobs.length === 0 ? (
-                <div className="py-10 text-center">
-                  <p className="text-gray-400 text-sm">
-                    {completedToday > 0 ? `🎉 Great work, ${name}! All ${completedToday} jobs done.` : 'No jobs assigned. Check with dispatch.'}
-                  </p>
-                </div>
+                completedToday > 0 ? (
+                  <EmptyState emoji="🎉" title={`Great work, ${name}!`}
+                    subtitle={`All ${completedToday} job${completedToday !== 1 ? 's' : ''} done today.`} />
+                ) : (
+                  <EmptyState emoji="📭" title="No jobs assigned yet"
+                    subtitle="Check with dispatch or come back after new jobs come in." />
+                )
               ) : (
                 <div className="divide-y" style={{ borderColor: '#f7f4f1' }}>
                   {myJobs.slice(0, 6).map(j => (

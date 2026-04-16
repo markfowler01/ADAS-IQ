@@ -33,16 +33,25 @@ export default function PortalLoginScreen({ onLoggedIn }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: '#fafafa' }}>
+    <div className="min-h-screen flex items-center justify-center px-4"
+      style={{
+        background: `linear-gradient(135deg, #fff7f5 0%, #fafafa 50%, #ffffff 100%)`,
+      }}>
       <div className="w-full max-w-md">
-        <div className="rounded-xl shadow-xl bg-white p-8" style={{ border: '1px solid #f0ece8' }}>
+        <div className="rounded-2xl bg-white p-8"
+          style={{
+            border: '1px solid #f0ece8',
+            boxShadow: '0 10px 40px -10px rgba(205, 68, 25, 0.15), 0 4px 20px -8px rgba(0,0,0,0.1)',
+          }}>
           <div className="text-center mb-6">
-            <div className="inline-block px-4 py-2 rounded-xl mb-3"
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl mb-4"
               style={{ backgroundColor: ORANGE }}>
-              <span className="text-white font-bold text-lg">ABSOLUTE ADAS</span>
+              <span className="w-5 h-5 rounded flex items-center justify-center text-white text-[10px] font-bold"
+                style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>IQ</span>
+              <span className="text-white font-bold text-sm tracking-wide">ABSOLUTE ADAS</span>
             </div>
-            <h1 className="text-2xl font-bold" style={{ color: '#1a1a1a' }}>Customer Portal</h1>
-            <p className="text-sm text-gray-500 mt-1">View invoices, make payments, download PDFs</p>
+            <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Customer Portal</h1>
+            <p className="text-sm text-gray-500 mt-1.5">View invoices, make payments, download PDFs</p>
           </div>
 
           {status === 'sent' ? (
