@@ -6,6 +6,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
+import { sendEmail, getBranding } from '../services/comms.js'
 
 const router = express.Router()
 
@@ -226,6 +227,25 @@ router.post('/:id/auto-populate-calibrations', async (req, res) => {
 
 // ── Per-job GPS time tracking ────────────────────────────────────────────────
 
+// Lookup the billing contact email for notifications (prefers billing_rules contact)
+async function getShopEmail(req, job) {
+  if (!job.crm_shop_id && !job.shop_name) return null
+  try {
+    const app = catalyst.initialize(req)
+    const tbl = app.datastore().table('CRMShops')
+    const rows = await tbl.getAllRows()
+    const shops = rows.map(r => {
+      const row = r.toJSON ? r.toJSON() : r
+      try { if (typeof row.billing_rules === 'string') row.billing_rules = JSON.parse(row.billing_rules) } catch {}
+      return row
+    })
+    const shop = (job.crm_shop_id && shops.find(s => s.ROWID === job.crm_shop_id))
+      || shops.find(s => (s.shop_name || '').toLowerCase() === (job.shop_name || '').toLowerCase())
+    if (!shop) return null
+    return shop.billing_rules?.billing_contact_email || shop.email || null
+  } catch { return null }
+}
+
 // Tech arrives on-site
 router.post('/:id/arrive', async (req, res) => {
   try {
@@ -238,6 +258,33 @@ router.post('/:id/arrive', async (req, res) => {
     job.arrived_by = getUserName(req)
     job.status = 'in_progress'
     await writeJobs(req, jobs)
+
+    // Fire-and-forget notification to the shop
+    if (req.body?.notify !== false) {
+      getShopEmail(req, job).then(async email => {
+        if (!email) return
+        const branding = await getBranding(req)
+        const vehicle = [job.year, job.make, job.model].filter(Boolean).join(' ') || 'the vehicle'
+        await sendEmail(req, {
+          to: email,
+          subject: `[${branding.company_name}] Tech arrived — ${vehicle}${job.ro_number ? ` (RO# ${job.ro_number})` : ''}`,
+          category: 'job_status_arrived',
+          related_id: job.id,
+          body: `
+            <div style="font-family:system-ui,sans-serif;max-width:560px;padding:24px;">
+              <div style="background:${branding.primary_color};color:white;padding:14px 20px;border-radius:8px;margin-bottom:16px;">
+                <strong style="font-size:16px;">${branding.company_name}</strong>
+              </div>
+              <p>Hi,</p>
+              <p>Our technician ${job.technician || job.arrived_by} just arrived at <strong>${job.shop_name}</strong>
+                 for ${vehicle}${job.ro_number ? ` (RO# ${job.ro_number})` : ''}.</p>
+              <p>We'll send another update when the calibration is complete.</p>
+              <p style="color:#888;font-size:13px;margin-top:24px;">— ${branding.email_signature}<br>${branding.website}</p>
+            </div>
+          `,
+        }).catch(e => console.warn('[arrive notify] failed:', e.message))
+      })
+    }
     res.json(job)
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -260,8 +307,95 @@ router.post('/:id/depart', async (req, res) => {
     }
 
     await writeJobs(req, jobs)
+
+    // Notify shop that calibration is complete
+    if (req.body?.notify !== false) {
+      getShopEmail(req, job).then(async email => {
+        if (!email) return
+        const branding = await getBranding(req)
+        const vehicle = [job.year, job.make, job.model].filter(Boolean).join(' ') || 'the vehicle'
+        const cals = Array.isArray(job.calibrations)
+          ? job.calibrations.map(c => typeof c === 'string' ? c : c.name).filter(Boolean)
+          : []
+        await sendEmail(req, {
+          to: email,
+          subject: `[${branding.company_name}] Calibration complete — ${vehicle}${job.ro_number ? ` (RO# ${job.ro_number})` : ''}`,
+          category: 'job_status_complete',
+          related_id: job.id,
+          body: `
+            <div style="font-family:system-ui,sans-serif;max-width:560px;padding:24px;">
+              <div style="background:${branding.primary_color};color:white;padding:14px 20px;border-radius:8px;margin-bottom:16px;">
+                <strong style="font-size:16px;">${branding.company_name}</strong>
+              </div>
+              <p>Hi,</p>
+              <p>The calibration on ${vehicle}${job.ro_number ? ` (RO# ${job.ro_number})` : ''}
+                 at <strong>${job.shop_name}</strong> is complete.</p>
+              ${cals.length > 0 ? `<p><strong>Calibrations performed:</strong></p>
+                <ul style="color:#555;">${cals.map(c => `<li>${c}</li>`).join('')}</ul>` : ''}
+              <p>The invoice will follow shortly. Thanks for the work!</p>
+              <p style="color:#888;font-size:13px;margin-top:24px;">— ${branding.email_signature}<br>${branding.website}</p>
+            </div>
+          `,
+        }).catch(e => console.warn('[depart notify] failed:', e.message))
+      })
+    }
     res.json(job)
   } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Send pre-calibration prep sheet (manual, for scheduled future jobs)
+router.post('/:id/send-prep-sheet', async (req, res) => {
+  try {
+    const jobs = await readJobs(req)
+    const job = jobs.find(j => j.id === req.params.id)
+    if (!job) return res.status(404).json({ error: 'Not found' })
+
+    const email = await getShopEmail(req, job)
+    if (!email) return res.status(400).json({ error: 'No shop email on file' })
+
+    const branding = await getBranding(req)
+    const vehicle = [job.year, job.make, job.model].filter(Boolean).join(' ') || 'the vehicle'
+    const cals = Array.isArray(job.calibrations)
+      ? job.calibrations.map(c => typeof c === 'string' ? c : c.name).filter(Boolean)
+      : []
+    const scheduled = job.scheduled_date
+      ? new Date(job.scheduled_date).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })
+      : 'the scheduled date'
+
+    await sendEmail(req, {
+      to: email,
+      subject: `[${branding.company_name}] Prep sheet: ${vehicle} on ${scheduled}`,
+      category: 'prep_sheet',
+      related_id: job.id,
+      body: `
+        <div style="font-family:system-ui,sans-serif;max-width:560px;padding:24px;">
+          <div style="background:${branding.primary_color};color:white;padding:14px 20px;border-radius:8px;margin-bottom:16px;">
+            <strong style="font-size:16px;">${branding.company_name}</strong> — Calibration Prep Sheet
+          </div>
+          <p>Hi,</p>
+          <p>We're scheduled to calibrate <strong>${vehicle}</strong>${job.ro_number ? ` (RO# ${job.ro_number})` : ''}
+             at your shop on ${scheduled}.</p>
+          ${cals.length > 0 ? `<p><strong>Calibrations planned:</strong></p>
+            <ul style="color:#555;">${cals.map(c => `<li>${c}</li>`).join('')}</ul>` : ''}
+          <p><strong>Please ensure before arrival:</strong></p>
+          <ul style="color:#555;">
+            <li>Tire pressure set to placard specification (all 4 tires)</li>
+            <li>Vehicle is at ride height (no weight in cargo areas, fuel at least ¼ tank)</li>
+            <li>Windshield fully installed and cured (if applicable)</li>
+            <li>Clear bay of at least 15' × 25' with no reflective surfaces</li>
+            <li>12V supply available if battery voltage is low</li>
+            <li>Wheel alignment is within spec (critical for radar calibrations)</li>
+          </ul>
+          <p>Unprepared vehicles cost us a dispatch trip and delay your customer — thanks for the prep!</p>
+          <p style="color:#888;font-size:13px;margin-top:24px;">— ${branding.email_signature}<br>${branding.website}</p>
+        </div>
+      `,
+    })
+    res.json({ ok: true, sent_to: email })
+  } catch (e) {
+    console.error('[prep-sheet]', e.message)
     res.status(500).json({ error: e.message })
   }
 })

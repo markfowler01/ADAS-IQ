@@ -44,6 +44,8 @@ import PayInvoiceScreen from './components/PayInvoiceScreen'
 import QuotesScreen from './components/QuotesScreen'
 import QuoteApprovalScreen from './components/QuoteApprovalScreen'
 import DisputesScreen from './components/DisputesScreen'
+import CustomerExperienceScreen from './components/CustomerExperienceScreen'
+import NPSScreen from './components/NPSScreen'
 
 // Top-level route check: public pay page and customer portal bypass the main auth flow.
 function getTopLevelRoute() {
@@ -52,6 +54,7 @@ function getTopLevelRoute() {
   if (path.endsWith('/pay') || path.includes('/app/pay')) return 'pay'
   if (path.endsWith('/portal') || path.includes('/app/portal')) return 'portal'
   if (path.endsWith('/quote') || path.includes('/app/quote')) return 'quote'
+  if (path.endsWith('/nps') || path.includes('/app/nps')) return 'nps'
   return 'app'
 }
 
@@ -60,6 +63,7 @@ export default function App() {
   if (topRoute === 'pay') return <PayInvoiceScreen />
   if (topRoute === 'portal') return <PortalApp />
   if (topRoute === 'quote') return <QuoteApprovalScreen />
+  if (topRoute === 'nps') return <NPSScreen />
   return <MainApp />
 }
 
@@ -292,6 +296,9 @@ function MainApp() {
       )}
       {screen === 'disputes' && (
         <DisputesScreen {...navProps} />
+      )}
+      {screen === 'cx' && (
+        <CustomerExperienceScreen {...navProps} />
       )}
     </div>
   )

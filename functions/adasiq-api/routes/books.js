@@ -1,6 +1,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
+import QRCode from 'qrcode'
 import { buildInvoicePayUrl } from './portal.js'
 
 const router = express.Router()
@@ -649,26 +650,44 @@ router.get('/invoices/:id/pdf', async (req, res) => {
         .text(inv.notes, MARGIN, rowY, { width: CONTENT_WIDTH })
     }
 
-    // ── Pay Online button (only if balance due) ────────────────────────────
+    // ── Pay Online button + QR code (only if balance due) ──────────────────
     if ((inv.balance_due || inv.total || 0) > 0 && inv.status !== 'paid') {
       try {
         const payUrl = buildInvoicePayUrl(req, inv.id)
         rowY += 30
-        const btnX = (PAGE_WIDTH - 220) / 2
-        doc.rect(btnX, rowY, 220, 40).fill(ORANGE)
+
+        // QR code on the left, pay button on the right
+        const qrDataUrl = await QRCode.toDataURL(payUrl, { width: 100, margin: 0 })
+        const qrBuffer = Buffer.from(qrDataUrl.split(',')[1], 'base64')
+        doc.image(qrBuffer, MARGIN, rowY, { width: 65, height: 65 })
+        doc.font('Helvetica').fontSize(7).fillColor('#888888')
+          .text('Scan to pay', MARGIN, rowY + 68, { width: 65, align: 'center' })
+
+        const btnX = MARGIN + 90
+        const btnW = CONTENT_WIDTH - 90
+        doc.rect(btnX, rowY + 5, btnW, 40).fill(ORANGE)
         doc.font('Helvetica-Bold').fontSize(13).fillColor('white')
-          .text('PAY THIS INVOICE ONLINE', btnX, rowY + 8,
-            { width: 220, align: 'center', link: payUrl })
+          .text('PAY THIS INVOICE ONLINE', btnX, rowY + 13,
+            { width: btnW, align: 'center', link: payUrl })
         doc.font('Helvetica').fontSize(8).fillColor('white')
-          .text('Click to pay by card, ACH, or check', btnX, rowY + 25,
-            { width: 220, align: 'center', link: payUrl })
-        rowY += 50
+          .text('Card · ACH · Check · Zelle', btnX, rowY + 30,
+            { width: btnW, align: 'center', link: payUrl })
+        rowY += 85
         doc.font('Helvetica').fontSize(7).fillColor('#999999')
           .text(payUrl, MARGIN, rowY, { width: CONTENT_WIDTH, align: 'center', link: payUrl })
       } catch (e) {
         console.warn('[books PDF] pay link failed:', e.message)
       }
     }
+
+    // ── 90-day warranty notice ─────────────────────────────────────────────
+    rowY += 20
+    doc.font('Helvetica-Bold').fontSize(8).fillColor(ORANGE)
+      .text('90-DAY WORKMANSHIP WARRANTY', MARGIN, rowY, { width: CONTENT_WIDTH, align: 'center' })
+    rowY += 11
+    doc.font('Helvetica').fontSize(7).fillColor('#888888')
+      .text('All calibrations performed per OEM specifications. Contact us within 90 days if any calibrated system requires recalibration due to workmanship.',
+        MARGIN, rowY, { width: CONTENT_WIDTH, align: 'center' })
 
     // ── Footer ─────────────────────────────────────────────────────────────
     const FOOTER_Y = doc.page.height - 45

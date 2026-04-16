@@ -42,6 +42,7 @@ import quotesRouter from './routes/quotes.js'
 import declinedRouter from './routes/declined.js'
 import jobEnhancementsRouter from './routes/job-enhancements.js'
 import disputesRouter from './routes/disputes.js'
+import cxRouter from './routes/customer-experience.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -202,6 +203,11 @@ app.use('/api/declined', requireAuth, declinedRouter)
 // Phase 6 job enhancements mount under /api/jobs to feel native alongside existing routes
 app.use('/api/jobs', requireAuth, jobEnhancementsRouter)
 app.use('/api/disputes', requireAuth, disputesRouter)
+// CX: NPS public endpoints (under /nps/respond + /nps/survey) bypass auth; the rest require admin.
+app.use('/api/cx', (req, res, next) => {
+  if (req.path === '/nps/respond' || req.path === '/nps/survey') return next()
+  return requireAuth(req, res, next)
+}, cxRouter)
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))
