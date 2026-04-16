@@ -40,6 +40,8 @@ import portalRouter, { handleStripeWebhook } from './routes/portal.js'
 import zohoImportRouter from './routes/zoho-import.js'
 import quotesRouter from './routes/quotes.js'
 import declinedRouter from './routes/declined.js'
+import jobEnhancementsRouter from './routes/job-enhancements.js'
+import disputesRouter from './routes/disputes.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -197,6 +199,9 @@ app.use('/api/quotes', (req, res, next) => {
   return requireAuth(req, res, next)
 }, quotesRouter)
 app.use('/api/declined', requireAuth, declinedRouter)
+// Phase 6 job enhancements mount under /api/jobs to feel native alongside existing routes
+app.use('/api/jobs', requireAuth, jobEnhancementsRouter)
+app.use('/api/disputes', requireAuth, disputesRouter)
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))

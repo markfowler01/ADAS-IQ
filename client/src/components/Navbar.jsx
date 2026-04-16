@@ -13,6 +13,7 @@ const PRIMARY_LINKS = [
   { id: 'crm',          label: 'CRM' },
   { id: 'quotes',       label: 'Quotes' },
   { id: 'books',        label: 'Books' },
+  { id: 'disputes',     label: 'Disputes', adminOnly: true },
   { id: 'ops',          label: 'Ops Hub', adminOnly: true },
 ]
 

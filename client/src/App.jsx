@@ -43,6 +43,7 @@ import PortalApp from './components/PortalApp'
 import PayInvoiceScreen from './components/PayInvoiceScreen'
 import QuotesScreen from './components/QuotesScreen'
 import QuoteApprovalScreen from './components/QuoteApprovalScreen'
+import DisputesScreen from './components/DisputesScreen'
 
 // Top-level route check: public pay page and customer portal bypass the main auth flow.
 function getTopLevelRoute() {
@@ -288,6 +289,9 @@ function MainApp() {
       )}
       {screen === 'quotes' && (
         <QuotesScreen {...navProps} />
+      )}
+      {screen === 'disputes' && (
+        <DisputesScreen {...navProps} />
       )}
     </div>
   )

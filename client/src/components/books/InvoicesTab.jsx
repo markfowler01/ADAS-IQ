@@ -131,6 +131,33 @@ export default function InvoicesTab({ invoices, services, onRefresh, loading }) 
                       🔗 Pay
                     </button>
                   )}
+                  {['sent', 'overdue'].includes(inv.status) && (
+                    <button
+                      onClick={async () => {
+                        const reason = prompt('Denial/dispute reason?')
+                        if (!reason) return
+                        const deniedAmt = prompt(`Denied amount (blank = full ${inv.balance_due || inv.total}):`)
+                        try {
+                          await apiFetch(`${API_BASE}/api/disputes/invoices/${inv.id}/dispute`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              reason,
+                              denied_amount: deniedAmt ? Number(deniedAmt) : (inv.balance_due || inv.total),
+                              full_denial: !deniedAmt,
+                              code: 'insurer_denied',
+                            }),
+                          })
+                          alert('Marked disputed. See Disputes screen to manage.')
+                          onRefresh()
+                        } catch (e) { alert('Failed: ' + e.message) }
+                      }}
+                      className="text-xs px-2 py-1 rounded-md font-medium transition-colors"
+                      style={{ color: '#b91c1c', backgroundColor: '#fef2f2' }}
+                      title="Mark this invoice as disputed/denied">
+                      ⚠️
+                    </button>
+                  )}
                   <button onClick={() => handleDelete(inv)}
                     disabled={deleting === inv.id}
                     className="text-xs px-2 py-1 rounded-md font-medium transition-colors"
