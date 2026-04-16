@@ -22,7 +22,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   })
   const [showManualForm, setShowManualForm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [creatingJob, setCreatingJob] = useState(false)
   const [invoiceResult, setInvoiceResult] = useState(null)
+  const [jobResult, setJobResult] = useState(null)
   const [invoiceError, setInvoiceError] = useState(null)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
@@ -189,6 +191,64 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       setInvoiceError(e.message || 'Failed to create invoice. Please try again.')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  // ── Create a Job — writes to ADAS IQ Books (separate from Zoho flow) ─────
+  async function handleCreateJob() {
+    if (selected.length === 0) return
+    setCreatingJob(true)
+    setInvoiceError(null)
+    try {
+      const payload = {
+        customerName: selectedCustomer?.name || null,
+        shop: jobData.shop,
+        ro_number: jobData.ro_number,
+        insurer: jobData.insurer,
+        vin: jobData.vin,
+        vehicle: jobData.vehicle,
+        year: jobData.year,
+        make: jobData.make,
+        model: jobData.model,
+        calibrations: selected.map(({ _id, ...rest }) => rest),
+      }
+      const res = await apiFetch(`${API_BASE}/api/books/from-extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `Server error ${res.status}`)
+      setJobResult(data)
+
+      // Also auto-create a Kanban ticket so the job flows like any other
+      try {
+        const calList = selected.map((cal, i) => ({
+          name: cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${i + 1}`,
+          mode: cal.cal_type || cal.mode || 'Static',
+        }))
+        await apiFetch(`${API_BASE}/api/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            shop_name: selectedCustomer?.name || jobData.shop || '',
+            vehicle: [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '),
+            year: jobData.year || '', make: jobData.make || '', model: jobData.model || '',
+            vin: jobData.vin || '', insurer: jobData.insurer || '',
+            technician: selectedSalesperson?.name || '',
+            scheduled_date: new Date().toISOString().split('T')[0],
+            calibrations: JSON.stringify(calList),
+            notes: `RO#: ${jobData.ro_number || ''} | ADAS IQ Invoice: ${data.invoice?.invoice_number || ''}`,
+            adas_iq_invoice_id: data.invoice?.id || '',
+          }),
+        })
+      } catch (autoErr) {
+        console.warn('[kanban] Auto-ticket from Create-a-Job failed:', autoErr.message)
+      }
+    } catch (e) {
+      setInvoiceError(e.message || 'Failed to create job in Books.')
+    } finally {
+      setCreatingJob(false)
     }
   }
 
@@ -361,20 +421,50 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 
           {invoiceResult ? (
             <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} />
-
+          ) : jobResult ? (
+            <JobSuccessCard result={jobResult} onNavigate={onNavigate} />
           ) : (
-            <button
-              onClick={handleApprove}
-              disabled={selected.length === 0 || submitting}
-              className="w-full py-4 rounded-xl text-base font-bold text-white"
-              style={{
-                backgroundColor: ORANGE,
-                opacity: selected.length === 0 || submitting ? 0.5 : 1,
-                cursor: selected.length === 0 || submitting ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {submitting ? 'Creating Invoice...' : 'Create Zoho Books Invoice'}
-            </button>
+            <div className="flex flex-col gap-3">
+              {/* Primary: existing Zoho flow — unchanged */}
+              <button
+                onClick={handleApprove}
+                disabled={selected.length === 0 || submitting || creatingJob}
+                className="w-full py-4 rounded-xl text-base font-bold text-white"
+                style={{
+                  backgroundColor: ORANGE,
+                  opacity: selected.length === 0 || submitting || creatingJob ? 0.5 : 1,
+                  cursor: selected.length === 0 || submitting || creatingJob ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {submitting ? 'Creating Invoice...' : 'Create Zoho Books Invoice'}
+              </button>
+
+              {/* Divider */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px" style={{ backgroundColor: '#e5e7eb' }} />
+                <span className="text-xs font-medium" style={{ color: '#9ca3af' }}>OR — TEST THE NEW SYSTEM</span>
+                <div className="flex-1 h-px" style={{ backgroundColor: '#e5e7eb' }} />
+              </div>
+
+              {/* Secondary: ADAS IQ Books test flow */}
+              <button
+                onClick={handleCreateJob}
+                disabled={selected.length === 0 || submitting || creatingJob}
+                className="w-full py-3 rounded-xl text-sm font-semibold transition-colors"
+                style={{
+                  backgroundColor: '#eff6ff',
+                  color: '#2563eb',
+                  border: '1.5px solid #bfdbfe',
+                  opacity: selected.length === 0 || submitting || creatingJob ? 0.5 : 1,
+                  cursor: selected.length === 0 || submitting || creatingJob ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {creatingJob ? 'Creating Job in ADAS IQ...' : '🧪 Create a Job (ADAS IQ Books)'}
+              </button>
+              <p className="text-xs text-center" style={{ color: '#9ca3af' }}>
+                Safe to test — creates a draft in ADAS IQ Books only. No Zoho side effects.
+              </p>
+            </div>
           )}
         </div>
       </div>
@@ -451,6 +541,69 @@ function SuccessField({ label, value }) {
     <div>
       <p className="text-xs uppercase tracking-wider" style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#888' }}>{label}</p>
       <p className="font-medium" style={{ color: '#1a1a1a' }}>{value || '—'}</p>
+    </div>
+  )
+}
+
+function JobSuccessCard({ result, onNavigate }) {
+  const inv = result.invoice
+  const shop = result.matched_shop
+  const unmatched = result.unmatched_calibrations || []
+  return (
+    <div className="rounded-xl px-5 py-4 flex flex-col gap-3"
+      style={{ backgroundColor: '#eff6ff', border: '1.5px solid #93c5fd' }}>
+      <div className="flex items-center gap-2">
+        <span className="text-lg">✓</span>
+        <h3 className="font-bold" style={{ color: '#1d4ed8' }}>
+          Job Drafted in ADAS IQ Books
+        </h3>
+      </div>
+      <div className="grid grid-cols-2 gap-3 text-sm">
+        <SuccessField label="Invoice #" value={inv.invoice_number} />
+        <SuccessField label="Total" value={`$${Number(inv.total).toFixed(2)}`} />
+        <SuccessField label="Customer" value={inv.customer_name} />
+        <SuccessField label="Status" value="Draft (not sent)" />
+      </div>
+      {shop && result.applied_billing_rules && (
+        <p className="text-xs" style={{ color: '#1d4ed8' }}>
+          ✓ Matched CRM shop "{shop.shop_name}" — billing rules applied
+          {inv.discount > 0 && ` · ${inv.discount_pct || ''}% discount = $${inv.discount.toFixed(2)}`}
+        </p>
+      )}
+      {shop && !result.applied_billing_rules && (
+        <p className="text-xs" style={{ color: '#6b7280' }}>
+          Matched CRM shop "{shop.shop_name}" · no billing rules configured yet
+        </p>
+      )}
+      {!shop && (
+        <p className="text-xs" style={{ color: '#b45309' }}>
+          ⚠ No CRM shop match — invoice created without billing rules. Add this customer to CRM for auto-discount on next job.
+        </p>
+      )}
+      {unmatched.length > 0 && (
+        <div className="text-xs rounded-lg p-2.5"
+          style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>
+          <strong>Unmatched calibrations (priced at $0):</strong>
+          <ul className="mt-1 ml-4 list-disc">
+            {unmatched.map((u, i) => <li key={i}>{u}</li>)}
+          </ul>
+          <p className="mt-1.5">Add these to your Services catalog in Books so they price correctly next time.</p>
+        </div>
+      )}
+      <div className="flex gap-2 pt-2" style={{ borderTop: '1px solid #bfdbfe' }}>
+        <button
+          onClick={() => onNavigate && onNavigate('books')}
+          className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white"
+          style={{ backgroundColor: '#2563eb' }}>
+          Review in Books →
+        </button>
+        <button
+          onClick={() => onNavigate && onNavigate('kanban')}
+          className="flex-1 py-2.5 rounded-lg text-sm font-semibold"
+          style={{ backgroundColor: 'white', color: '#2563eb', border: '1.5px solid #bfdbfe' }}>
+          View Job Board
+        </button>
+      </div>
     </div>
   )
 }

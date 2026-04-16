@@ -45,6 +45,7 @@ import disputesRouter from './routes/disputes.js'
 import cxRouter from './routes/customer-experience.js'
 import intelligenceRouter from './routes/intelligence.js'
 import operationsRouter from './routes/operations.js'
+import booksFromExtractRouter from './routes/books-from-extract.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -212,6 +213,7 @@ app.use('/api/cx', (req, res, next) => {
 }, cxRouter)
 app.use('/api/intelligence', requireAuth, intelligenceRouter)
 app.use('/api/operations', requireAuth, operationsRouter)
+app.use('/api/books', requireAuth, booksFromExtractRouter)
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))
