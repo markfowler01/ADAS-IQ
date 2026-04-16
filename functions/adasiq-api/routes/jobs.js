@@ -1,10 +1,91 @@
 import express from 'express'
+import multer from 'multer'
+import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
-import { listAllEstimates, getEstimateLineItems } from '../services/zoho.js'
+import { listAllEstimates, getEstimateLineItems, getAccessToken } from '../services/zoho.js'
+import { createNotification } from './notifications.js'
+import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle } from '../services/workdrive.js'
+import { appendHistory } from '../services/history.js'
 
 const router = express.Router()
 
 const JOBS_TABLE_NAME = 'Jobs'
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } })
+
+// ─── Completions Cache ────────────────────────────────────────────────────────
+const COMPLETIONS_KEY = 'tech_completions'
+const CATALYST_API   = 'https://api.catalyst.zoho.com'
+
+function catalystHeaders(req) {
+  const token = req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''
+  return { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }
+}
+function catalystProjectId(req) {
+  return req.headers['x-zc-projectid'] || process.env.CATALYST_PROJECT_ID || ''
+}
+
+async function readCompletions(req) {
+  const url = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache/${COMPLETIONS_KEY}`
+  try {
+    const r = await axios.get(url, { headers: catalystHeaders(req) })
+    const val = r.data?.data?.cache_value
+    return val ? JSON.parse(val) : []
+  } catch (e) {
+    if (e.response?.status === 404) return []
+    throw e
+  }
+}
+
+async function logCompletion(req, job) {
+  let records = []
+  try { records = await readCompletions(req) } catch {}
+
+  records.push({
+    tech:        job.technician || 'Unknown',
+    jobId:       job.id,
+    shop:        job.shop_name || '',
+    vehicle:     job.vehicle   || [job.year, job.make, job.model].filter(Boolean).join(' '),
+    completedAt: new Date().toISOString(),
+  })
+
+  // Keep rolling 90 days
+  const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000
+  records = records.filter(r => new Date(r.completedAt).getTime() > cutoff)
+
+  const projectId = catalystProjectId(req)
+  const baseUrl   = `${CATALYST_API}/baas/v1/project/${projectId}/cache`
+  const headers   = catalystHeaders(req)
+  const body      = { cache_name: COMPLETIONS_KEY, cache_value: JSON.stringify(records), expiry_in_hours: null }
+
+  try {
+    await axios.put(`${baseUrl}/${COMPLETIONS_KEY}`, { cache_value: body.cache_value, expiry_in_hours: null }, { headers })
+  } catch (e) {
+    if (e.response?.status === 404) await axios.post(baseUrl, body, { headers })
+    else throw e
+  }
+}
+
+// ─── History Logging ─────────────────────────────────────────────────────────
+
+function logJobHistory(req, job, trigger) {
+  // Stable dedup ID so re-completing the same job doesn't add duplicate entries
+  const id = `job_${job.id}_${trigger}`
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  appendHistory(req, {
+    id,
+    shop:         job.shop_name   || '',
+    vehicle,
+    roNumber:     job.invoice_number || job.quote_number || '',
+    vin:          job.vin          || '',
+    calibrations: (() => {
+      try { return JSON.parse(job.calibrations || '[]') } catch { return [] }
+    })(),
+    estimateUrl:  job.quote_url    || '',
+    pdfUrl:       job.folder_url   || '',
+    technician:   job.technician   || '',
+    createdAt:    new Date().toISOString(),
+  })
+}
 
 // ─── Row ↔ Job Mapping ────────────────────────────────────────────────────────
 
@@ -86,35 +167,33 @@ async function insertJob(req, jobData) {
 }
 
 async function updateJob(req, rowId, updates) {
-  // The Catalyst SDK v3.3 uses PATCH for updateRow(), but Catalyst's Datastore REST API requires PUT.
-  // Use table.requester.send() directly with PUT — this reuses the SDK's full auth pipeline
-  // (handles Zoho-oauthtoken, Zoho-ticket, cookies, etc.) while bypassing the broken HTTP method.
   const table = getTable(req)
-  const row = { ROWID: Number(rowId), ...jobToRow(updates) }
-  const resp = await table.requester.send({
-    method: 'PUT',
-    path: `/table/${JOBS_TABLE_NAME}/row`,
-    data: [row],
-    type: 'json',
-    catalyst: true,
-    track: true,
-  })
-  const updated = resp.data?.data?.[0]
+  // CRITICAL: keep ROWID as a string — these IDs exceed Number.MAX_SAFE_INTEGER,
+  // so Number(rowId) silently loses precision and Catalyst can't find the row.
+  const row = { ROWID: rowId, ...jobToRow(updates) }
+  const updated = await table.updateRow(row)
   if (!updated) throw new Error('Update returned no data')
   return rowToJob(updated)
 }
 
 async function deleteJob(req, rowId) {
   const table = getTable(req)
-  await table.requester.send({
-    method: 'DELETE',
-    path: `/table/${JOBS_TABLE_NAME}/row/${rowId}`,
-    catalyst: true,
-    track: true,
-  })
+  // Keep rowId as string for the same precision reason
+  await table.deleteRow(rowId)
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
+
+// GET /api/jobs/completions — tech completion log (last 90 days)
+router.get('/completions', async (req, res) => {
+  try {
+    const records = await readCompletions(req)
+    res.json(records)
+  } catch (err) {
+    console.error('[completions GET]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // GET /api/jobs
 router.get('/', async (req, res) => {
@@ -138,15 +217,77 @@ router.post('/', async (req, res) => {
   }
 })
 
+function extractErr(err) {
+  // CatalystAPIError has .data.message; plain errors have .message
+  return err?.data?.message || err?.response?.data?.message || err?.message || 'Unknown error'
+}
+
 // PUT /api/jobs/:id
 router.put('/:id', async (req, res) => {
   try {
+    // Read current status before update so we can detect completion transition
+    let prevStatus = null
+    try {
+      const cur = rowToJob(await getTable(req).getRow(req.params.id))
+      prevStatus = cur.status
+    } catch {}
+
+    // Read previous technician so we can detect assignment changes
+    let prevTech = null
+    try {
+      const cur = rowToJob(await getTable(req).getRow(req.params.id))
+      prevTech = cur.technician
+      if (!prevStatus) prevStatus = cur.status
+    } catch {}
+
     const updated = await updateJob(req, req.params.id, req.body)
+
+    if (req.body.status === 'complete' && prevStatus !== 'complete') {
+      logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
+      logJobHistory(req, updated, 'complete')
+    }
+    if (req.body.invoiced === true || req.body.invoiced === 'true') {
+      logJobHistory(req, updated, 'invoiced')
+    }
+
+    // Notify tech on every job update when a tech is assigned
+    const newTech = updated.technician
+    if (newTech) {
+      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+      const statusChanged = updated.status !== prevStatus
+      const techChanged = newTech !== prevTech
+      const type = techChanged ? 'job_assigned' : 'job_updated'
+      const action = techChanged ? `Job assigned to ${newTech}` : `Job updated for ${newTech}`
+      createNotification(req, {
+        to: newTech,
+        toEmail: req.user?.email || '',
+        type,
+        title: `${action}: ${updated.shop_name || 'New job'}`,
+        body: `${vehicle || 'Vehicle TBD'} — ${updated.shop_name || 'Unknown shop'}${updated.scheduled_date ? ' on ' + updated.scheduled_date : ''}${statusChanged ? ' → ' + (updated.status || '').replace(/_/g, ' ') : ''}`,
+        jobId: updated.id,
+        job: updated,
+      }).catch(e => console.warn('[notifications]', e.message))
+    }
+
+    // Notify Kath when job moves to ready_invoice
+    if (updated.status === 'ready_invoice' && prevStatus !== 'ready_invoice') {
+      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+      createNotification(req, {
+        to: 'Kath',
+        toEmail: 'k.belmonte@absoluteadas.com',
+        type: 'job_status',
+        title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
+        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'} is ready to be invoiced.`,
+        jobId: updated.id,
+        job: updated,
+      }).catch(e => console.warn('[notifications]', e.message))
+    }
+
     res.json(updated)
   } catch (err) {
-    const detail = err?.response?.data || err?.data || err.message
-    console.error('[jobs PUT]', JSON.stringify(detail), err.stack)
-    res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) })
+    const detail = extractErr(err)
+    console.error('[jobs PUT]', detail, err.stack)
+    res.status(500).json({ error: detail })
   }
 })
 
@@ -154,15 +295,57 @@ router.put('/:id', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const table = getTable(req)
-    const currentRow = await table.getRow(Number(req.params.id))
+    const currentRow = await table.getRow(req.params.id)
     const currentJob = rowToJob(currentRow)
     const merged = { ...currentJob, ...req.body }
     const updated = await updateJob(req, req.params.id, merged)
+
+    if (req.body.status === 'complete' && currentJob.status !== 'complete') {
+      logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
+      logJobHistory(req, updated, 'complete')
+    }
+    if (req.body.invoiced === true && !currentJob.invoiced) {
+      logJobHistory(req, updated, 'invoiced')
+    }
+
+    // Notify tech on every job update when a tech is assigned
+    const newTech = updated.technician
+    if (newTech) {
+      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+      const statusChanged = updated.status !== currentJob.status
+      const techChanged = newTech !== currentJob.technician
+      const type = techChanged ? 'job_assigned' : 'job_updated'
+      const action = techChanged ? `Job assigned to ${newTech}` : `Job updated for ${newTech}`
+      createNotification(req, {
+        to: newTech,
+        toEmail: req.user?.email || '',
+        type,
+        title: `${action}: ${updated.shop_name || 'New job'}`,
+        body: `${vehicle || 'Vehicle TBD'} — ${updated.shop_name || 'Unknown shop'}${updated.scheduled_date ? ' on ' + updated.scheduled_date : ''}${statusChanged ? ' → ' + (updated.status || '').replace(/_/g, ' ') : ''}`,
+        jobId: updated.id,
+        job: updated,
+      }).catch(e => console.warn('[notifications]', e.message))
+    }
+
+    // Notify Kath when job moves to ready_invoice
+    if (updated.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
+      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+      createNotification(req, {
+        to: 'Kath',
+        toEmail: 'k.belmonte@absoluteadas.com',
+        type: 'job_status',
+        title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
+        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'} is ready to be invoiced.`,
+        jobId: updated.id,
+        job: updated,
+      }).catch(e => console.warn('[notifications]', e.message))
+    }
+
     res.json(updated)
   } catch (err) {
-    const detail = err?.response?.data || err?.data || err.message
-    console.error('[jobs PATCH]', JSON.stringify(detail), err.stack)
-    res.status(500).json({ error: typeof detail === 'string' ? detail : JSON.stringify(detail) })
+    const detail = extractErr(err)
+    console.error('[jobs PATCH]', detail, err.stack)
+    res.status(500).json({ error: detail })
   }
 })
 
@@ -222,12 +405,13 @@ router.post('/sync-quotes', async (req, res) => {
         status:       'need_dispatch',
         quote_number: est.estimate_number || '',
         quote_url:    est.quote_url       || '',
-        folder_url:   '',
+        folder_url:   est.cf_scan_report_and_documentation || '',
       })
       created++
     }
 
     let removed = 0
+    let folderLinked = 0
     for (const job of jobs) {
       if (!job.zoho_estimate_id) continue
       const est = estimateMap.get(job.zoho_estimate_id)
@@ -238,24 +422,210 @@ router.post('/sync-quotes', async (req, res) => {
         } catch (e) {
           console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
         }
+      } else if (!job.folder_url && est.cf_scan_report_and_documentation) {
+        // Backfill folder_url for existing jobs that are missing it
+        try {
+          await updateJob(req, job.id, { ...job, folder_url: est.cf_scan_report_and_documentation })
+          folderLinked++
+        } catch (e) {
+          console.warn(`[jobs sync] could not backfill folder_url for job ${job.id}:`, e.message)
+        }
       }
     }
 
-    res.json({ created, removed, total: estimates.length })
+    res.json({ created, removed, folderLinked, total: estimates.length })
   } catch (err) {
     console.error('[jobs sync-quotes]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })
 
-// GET /api/jobs/debug
-router.get('/debug', async (req, res) => {
+// GET /api/jobs/:id/workdrive-folder — return the WorkDrive folder URL for a job
+// Checks folder_url first, then searches WorkDrive by RO number and shop/vehicle as fallbacks.
+// When a folder is discovered via search it is persisted back to the job row for future calls.
+router.get('/:id/workdrive-folder', async (req, res) => {
   try {
-    const jobs = await getAllJobs(req)
-    res.json({ ok: true, jobCount: jobs.length })
+    const table = getTable(req)
+    const row = await table.getRow(req.params.id)
+    const job = rowToJob(row)
+
+    // 1. folder_url already stored (share link or direct folder URL)
+    if (job.folder_url) {
+      return res.json({ folderUrl: job.folder_url })
+    }
+
+    const wdToken = await getAccessToken()
+
+    // 2. Search by RO number (invoice_number first, then quote_number)
+    const roNumber = job.invoice_number || job.quote_number
+    if (roNumber) {
+      const found = await findFolderByRO(roNumber, wdToken)
+      if (found) {
+        const folderUrl = `https://workdrive.zoho.com/folder/${found.folderId}`
+        // Persist discovered folder_url so future uploads/lookups skip the search
+        updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
+          console.warn('[jobs workdrive-folder] could not persist folder_url:', e.message)
+        )
+        return res.json({ folderUrl, folderName: found.folderName })
+      }
+    }
+
+    // 3. Search by shop name + vehicle
+    const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+    const found = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken)
+    if (found) {
+      const folderUrl = `https://workdrive.zoho.com/folder/${found.folderId}`
+      // Persist discovered folder_url
+      updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
+        console.warn('[jobs workdrive-folder] could not persist folder_url (shop/vehicle):', e.message)
+      )
+      return res.json({ folderUrl, folderName: found.folderName })
+    }
+
+    res.status(404).json({ error: `No WorkDrive folder found for "${job.shop_name || 'this job'}". Run a sync to link the folder.` })
   } catch (err) {
-    res.json({ ok: false, error: err.message })
+    console.error('[jobs workdrive-folder]', err.message)
+    res.status(500).json({ error: err.message })
   }
+})
+
+// POST /api/jobs/:id/photos — upload one or more photos to the job's WorkDrive folder.
+// Accepts multipart/form-data with field name "photos" (multiple files allowed).
+// If the job has no folder_url, it is looked up via WorkDrive (by RO number or shop/vehicle)
+// and the discovered URL is saved back to the job row so future uploads skip the search.
+router.post('/:id/photos', upload.array('photos', 20), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded. Send files in the "photos" field.' })
+    }
+
+    const table = getTable(req)
+    const row = await table.getRow(req.params.id)
+    const job = rowToJob(row)
+
+    // ── Resolve folder URL ──────────────────────────────────────────────────
+    let folderUrl = job.folder_url
+    let folderId = null
+
+    if (folderUrl) {
+      // Extract folder ID from stored URL (handles both share links and direct folder URLs)
+      const m = folderUrl.match(/\/folder\/([a-z0-9]+)/i)
+      if (m) folderId = m[1]
+    }
+
+    if (!folderId) {
+      // No usable folder stored — search WorkDrive
+      const wdToken = await getAccessToken()
+      const roNumber = job.invoice_number || job.quote_number
+      let found = null
+
+      if (roNumber) {
+        found = await findFolderByRO(roNumber, wdToken)
+      }
+
+      if (!found) {
+        const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+        found = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken)
+      }
+
+      if (!found) {
+        return res.status(404).json({
+          error: `No WorkDrive folder found for this job. Open WorkDrive first to locate and link the folder.`,
+        })
+      }
+
+      folderId = found.folderId
+      folderUrl = `https://workdrive.zoho.com/folder/${folderId}`
+
+      // Persist the discovered folder_url so future uploads are instant
+      updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
+        console.warn('[jobs photos] could not persist folder_url:', e.message)
+      )
+    }
+
+    // ── Upload each file ────────────────────────────────────────────────────
+    const wdToken = await getAccessToken()
+    const uploaded = []
+    const errors = []
+
+    for (const file of req.files) {
+      try {
+        const result = await uploadFileToFolder(folderId, file.originalname, file.buffer, wdToken, file.mimetype)
+        uploaded.push({ filename: file.originalname, fileId: result.fileId })
+      } catch (e) {
+        console.error(`[jobs photos] upload failed for "${file.originalname}":`, e.message)
+        errors.push({ filename: file.originalname, error: e.message })
+      }
+    }
+
+    if (uploaded.length === 0) {
+      return res.status(500).json({ error: 'All uploads failed.', errors })
+    }
+
+    res.json({ uploaded, errors, folderUrl })
+  } catch (err) {
+    console.error('[jobs photos]', err.message, err.stack)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/jobs/:id/upload-photo
+// Uploads a single file to the job's WorkDrive folder (found by RO number or shop/vehicle)
+const uploadSingle = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('file')
+router.post('/:id/upload-photo', (req, res) => {
+  uploadSingle(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message })
+    if (!req.file) return res.status(400).json({ error: 'No file provided' })
+
+    try {
+      const jobId = req.params.id
+      const table = getTable(req)
+      const row = await table.getRow(jobId)
+      if (!row) return res.status(404).json({ error: 'Job not found' })
+      const job = rowToJob(row)
+
+      // ── Resolve folder ─────────────────────────────────────────────────────
+      let folderId = null
+
+      if (job.folder_url) {
+        const m = job.folder_url.match(/\/folder\/([a-z0-9]+)/i)
+        if (m) folderId = m[1]
+      }
+
+      if (!folderId) {
+        const wdToken = await getAccessToken()
+        const roNumber = job.invoice_number || job.quote_number
+        let found = null
+
+        if (roNumber) {
+          found = await findFolderByRO(roNumber, wdToken)
+        }
+        if (!found) {
+          const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+          found = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken)
+        }
+
+        if (!found) {
+          return res.status(404).json({ error: 'Could not find WorkDrive folder for this job. Make sure the RO number matches the folder name.' })
+        }
+
+        folderId = found.folderId
+        const folderUrl = `https://workdrive.zoho.com/folder/${folderId}`
+        updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
+          console.warn('[upload-photo] could not persist folder_url:', e.message)
+        )
+      }
+
+      const wdToken = await getAccessToken()
+      const filename = req.file.originalname || `upload-${Date.now()}`
+      await uploadFileToFolder(folderId, filename, req.file.buffer, wdToken, req.file.mimetype)
+
+      res.json({ ok: true, filename })
+    } catch (e) {
+      console.error('[upload-photo]', e.message)
+      res.status(500).json({ error: e.message })
+    }
+  })
 })
 
 // ─── Exports for webhook.js ───────────────────────────────────────────────────

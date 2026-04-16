@@ -1,0 +1,1968 @@
+[
+  {
+    "file": "Case Studys/Puget_Case_Study.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "Case Studys/Subaru/Camera Adjustment, Inspection - Procedure (Forward Looking Camera) - ALLDATA Collision.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "EyeSight Stereo Camera",
+      "EyeSight Stereo Camera",
+      "EyeSight Stereo Camera"
+    ]
+  },
+  {
+    "file": "Case Studys/Subaru/MC-10243372-0001.pdf",
+    "rules": 9,
+    "status": "ok",
+    "calibrations": [
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System",
+      "EyeSight Stereo Camera System"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Acura/2022-2025 MDX Multi View Camera Aiming.pdf",
+    "rules": 6,
+    "status": "ok",
+    "calibrations": [
+      "Multi View Camera System - Front Camera",
+      "Multi View Camera System - Front Camera",
+      "Multi View Camera System - Rearview Camera",
+      "Multi View Camera System - Rearview Camera",
+      "Multi View Camera System - Side Camera",
+      "Multi View Camera System - Side Camera"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Acura/Battery ECR - SAS - 5795.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Acura/Using_aftermarket_grills.pdf",
+    "rules": 6,
+    "status": "ok",
+    "calibrations": [
+      "Forward Camera System (ACC/CMBS/FCW/LDW/LKAS/RDM)",
+      "Forward Camera System (ACC/CMBS/FCW/LDW/LKAS/RDM)",
+      "Head-Up Display (HUD)",
+      "Head-Up Display (HUD)",
+      "Collision Mitigation Braking System (CMBS) / Front Radar",
+      "Collision Mitigation Braking System (CMBS) / Front Radar"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Alfa /Post Collision Seat Belt Inspection (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Audi/Audi_Glass.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "Adaptive Cruise Control Camera",
+      "Lane Assist Camera",
+      "Heads-Up Display"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Audi/Audi_Painting-Bumper-Cover-Lane-Change-Assist.pdf",
+    "rules": 1,
+    "status": "ok",
+    "calibrations": [
+      "Lane Change Assist / Rear Radar Sensors"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Audi/Audi_Position_Windshield-Glass_Replacement.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "Adaptive Cruise Control Camera/Sensor",
+      "Lane Assist Camera",
+      "Heads-Up Display"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Audi/Peripheral Camera, Calibrating, Before Product Improvement (Side Looking Camera) - ALLDATA Collision.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "Peripheral Camera System / Surround View Cameras",
+      "Peripheral Camera System / Surround View Cameras",
+      "Peripheral Camera System / Surround View Cameras"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Autel Documents/ADASBAT-FactorySpecs.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/BMW/2022 M4 PCSI.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/BMW/BMW After Collision Inspection.pdf",
+    "rules": 14,
+    "status": "ok",
+    "calibrations": [
+      "KAFAS Camera System",
+      "KAFAS Camera System",
+      "Lane Change Warning Sensor / Side Radar Sensor",
+      "Reversing Camera / Rear View Camera",
+      "Front Radar Sensor / ACC Sensor",
+      "Side Radar Sensors (Front and Rear)",
+      "Side Radar Sensors (Front and Rear)",
+      "Park Maneuvering Assistant (PMA) Sensor",
+      "Surround View Camera System",
+      "Head-Up Display",
+      "Night Vision Infrared Camera",
+      "Rain/Light/Solar/Condensation Sensor",
+      "Steering Angle Sensor / DSC System",
+      "Front Camera (Surround View)"
+    ]
+  },
+  {
+    "file": "OEM DOCS/BMW/BMW page 64 After Collision Inspection.pdf",
+    "rules": 13,
+    "status": "ok",
+    "calibrations": [
+      "KAFAS Camera System",
+      "Reversing Camera / Rear View Camera",
+      "Lane Change Warning Sensor / Rear Radar Sensors",
+      "Camera-Based Driver Support Systems / KAFAS",
+      "Lane Change Warning Sensor",
+      "Front Radar Sensor",
+      "Surround View Camera System",
+      "Park Maneuvering Assistant Sensor",
+      "Side Radar Sensors",
+      "Side Radar Sensors",
+      "Night Vision Camera",
+      "Rain/Light/Solar/Condensation Sensor",
+      "Head-Up Display"
+    ]
+  },
+  {
+    "file": "OEM DOCS/BMW/BMW_pre_post_scan.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Blind Spot angles/ADASBAT-FactorySpecs.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/FORD/Collision Reference 1 .pdf",
+    "rules": 17,
+    "status": "ok",
+    "calibrations": [
+      "360 Degree Cameras - Front Camera",
+      "360 Degree Cameras - Rear Camera",
+      "360 Degree Cameras - Side Cameras",
+      "Head Up Display Module",
+      "Image Processing Module A (IPMA) / Lane Keeping Camera",
+      "Image Processing Module A (IPMA)",
+      "Image Processing Module B (IPMB)",
+      "Cruise Control Module (CCM) / Radar Sensor",
+      "Cruise Control Module / Radar Sensor - Collision Repair",
+      "Cruise Control Module / Radar Sensor - Bracket Removal",
+      "Side Obstacle Detection Modules (SODL/SODR)",
+      "Parking Assist Control Module (PAM)",
+      "Parking Aid Sensors",
+      "Active Park Assist Sensors",
+      "ADAS Module",
+      "Anti-Lock Brake System Module",
+      "Head Up Display Module - New Installation"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Collision Reference glass.pdf",
+    "rules": 6,
+    "status": "ok",
+    "calibrations": [
+      "Head Up Display (HUD) - Programmable Module Installation",
+      "Head Up Display (HUD) - HUD Calibration",
+      "Image Processing Module A (IPMA) - Programmable Module Installation",
+      "Image Processing Module A (IPMA) - Camera Alignment",
+      "Lane Keeping Camera - IPMA Camera Alignment",
+      "Lane Keeping Camera - IPMA Camera Alignment"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Collision Reference.pdf",
+    "rules": 13,
+    "status": "ok",
+    "calibrations": [
+      "360 Degree Camera - Front Camera Alignment",
+      "360 Degree Camera - Rear Camera Alignment",
+      "360 Degree Camera - Side Camera Alignment",
+      "Head Up Display (HUD) Calibration",
+      "Image Processing Module A (IPMA) Camera Alignment",
+      "Image Processing Module B - 360 Degree View Camera Alignment",
+      "Cruise Control Module (CCM) Radar Alignment",
+      "Cruise Control Module Installation",
+      "Side Obstacle Detection Module Installation",
+      "Parking Aid Sensors Azimuth Check",
+      "Active Park Assist Sensors Azimuth Check",
+      "Parking Assist Control Module (PAM) Installation",
+      "ADAS Module Installation"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford ADAS.pdf",
+    "rules": 14,
+    "status": "ok",
+    "calibrations": [
+      "360 Degree Camera System - Front Camera Alignment",
+      "360 Degree Camera System - Rear Camera Alignment",
+      "360 Degree Camera System - Side Camera Alignment",
+      "Head Up Display (HUD) Calibration",
+      "Image Processing Module A (IPMA) Camera Alignment",
+      "Lane Keeping Camera Alignment",
+      "Lane Keeping Camera Alignment - Suspension",
+      "Lane Keeping Camera Alignment - Tire Size Change",
+      "Cruise Control Module / Radar Sensor Calibration - Collision",
+      "Cruise Control Module / Radar Sensor Calibration - Removal",
+      "Parking Aid Sensor Calibration",
+      "Active Park Assist Sensor Calibration",
+      "Image Processing Module B - 360 Camera Alignment",
+      "Side Obstacle Detection Module Programming"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford Bumper Fascia Repair with Advanced Driver Assistance Systems (ADAS).pdf",
+    "rules": 8,
+    "status": "ok",
+    "calibrations": [
+      "Pre-Collision Assist with AEB",
+      "BLIS with Cross-Traffic Alert",
+      "Active Park Assist",
+      "Intelligent Adaptive Cruise Control",
+      "Lane-Keeping System",
+      "Evasive Steering Assist",
+      "BLIS with Trailer Coverage",
+      "Pro Trailer Backup Assist"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford-Bumper.pdf",
+    "rules": 9,
+    "status": "ok",
+    "calibrations": [
+      "Pre-Collision Assist with AEB",
+      "BLIS with Cross-Traffic Alert",
+      "Intelligent Adaptive Cruise",
+      "Active Park Assist",
+      "Active Park Assist",
+      "Evasive Steering Assist",
+      "Lane-Keeping System",
+      "BLIS with Trailer Coverage",
+      "Pro Trailer Backup Assist"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford-Bumper1.pdf",
+    "rules": 10,
+    "status": "ok",
+    "calibrations": [
+      "Pre-Collision Assist with AEB",
+      "BLIS with Cross-Traffic Alert",
+      "Intelligent Adaptive Cruise Control",
+      "Lane-Keeping System",
+      "Active Park Assist",
+      "Active Park Assist",
+      "Evasive Steering Assist",
+      "BLIS with Trailer Coverage",
+      "Pro Trailer Backup Assist",
+      "Parking Sensors"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford-Park-Sensor-Elevation-Check.pdf",
+    "rules": 2,
+    "status": "ok",
+    "calibrations": [
+      "Parking Aid Elevation System Check",
+      "Front Parking Aid Elevation System Check"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford-Pre-Post-scan-Pos-Statement.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford-SRS-Position-Statement.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford-Windshield.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "Forward Camera System (Lane-Keeping, Pre-Collision Assist, Evasive Steering Assist, Auto High-Beam Headlamps)",
+      "Head Up Display (HUD) System",
+      "Forward Camera System"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford_Lincon_ADAS Job Aid - Glass Version.pdf",
+    "rules": 6,
+    "status": "ok",
+    "calibrations": [
+      "Head Up Display Module (HUD) - Programmable Module Installation",
+      "Head Up Display Module (HUD) - HUD Calibration",
+      "Image Processing Module A (IPMA) - Programmable Module Installation",
+      "Image Processing Module A (IPMA) - Camera Alignment",
+      "Lane Keeping Camera - IPMA Camera Alignment",
+      "Lane Keeping Camera - IPMA Camera Alignment"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/Ford_Lincon_ADAS_Job_AID.pdf",
+    "rules": 17,
+    "status": "ok",
+    "calibrations": [
+      "360 Degree Camera - Front Camera Alignment",
+      "360 Degree Camera - Rear Camera Alignment",
+      "360 Degree Camera - Side Camera Alignment",
+      "Head Up Display (HUD) Calibration",
+      "Image Processing Module A (IPMA) Camera Alignment",
+      "Image Processing Module B - 360 Degree View Camera Alignment",
+      "Lane Keeping Camera / IPMA Camera Alignment",
+      "Lane Keeping Camera / IPMA Camera Alignment - Tire Size Change",
+      "Lane Keeping Camera / IPMA Camera Alignment - Suspension",
+      "Cruise Control Module (CCM) - Radar Alignment",
+      "Cruise Control Module / Radar Sensor - Collision Calibration",
+      "Cruise Control Module / Radar Sensor - Bracket Removal",
+      "Parking Aid Sensors - Azimuth System Check",
+      "Active Park Assist Sensors - Azimuth System Check",
+      "Side Obstacle Detection Modules (SODL/SODR) - Module Installation",
+      "Parking Assist Control Module (PAM) - Module Installation",
+      "Anti-Lock Brake System Module Calibration"
+    ]
+  },
+  {
+    "file": "OEM DOCS/FORD/PRE- AND POST-DIAGNOSTIC SCANNING DURING A COLLISION REPAIR.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/FORD/Seatbelt Procedure After A Collision (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/FORD/USE OF NON-OEM GLASS ON FORD MOTOR COMPANY VEHICLES.pdf",
+    "rules": 4,
+    "status": "ok",
+    "calibrations": [
+      "Forward Camera System (Lane-Keeping, Pre-Collision Assist, Evasive Steering Assist, Auto High-Beam Headlamps)",
+      "Forward Camera System (Lane-Keeping, Pre-Collision Assist, Evasive Steering Assist, Auto High-Beam Headlamps)",
+      "Head-Up Display (HUD)",
+      "Forward Camera System"
+    ]
+  },
+  {
+    "file": "OEM DOCS/GM/Bumper_Fascia Replacement with Advanced Driver Assistance Systems (ADAS).pdf",
+    "rules": 6,
+    "status": "ok",
+    "calibrations": [
+      "Ultrasonic Blind Spot Detection",
+      "Rear Cross-Traffic Alert",
+      "Rear Emergency Braking",
+      "Automatic Collision Preparation",
+      "Integrated Brake Assist",
+      "Adaptive Cruise Control"
+    ]
+  },
+  {
+    "file": "OEM DOCS/GM/Driver Assistance Systems Configuration Reference.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/GM Steering Column Inspection.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/GM-ADAS-Aftermarket-bumper-parts.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/GM-SRS-repairs-and-inspections-required-after-collision-Position-Statement.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/GM-Service-Info-on-Restraint-Systems.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/GM-Use-of-Salvaged-Airbag-Components-POS-Statement.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/GM-Wheel-Alignment-Requirements-Statement.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/GM_Global_Electrical_Systems_Do_Not_Swap_Modules.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/Important Advanced Driver Assistance Systems Considerations.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/Important Advanced Driver Assistance Systems Considerations1.pdf",
+    "rules": 9,
+    "status": "ok",
+    "calibrations": [
+      "Forward Collision Alert / Adaptive Cruise Control / Front Radar",
+      "Forward Collision Alert / Lane Departure Warning / Front Camera",
+      "Rear Cross Traffic Alert / Rear Parking Assist",
+      "Side Blind Zone Alert",
+      "Lane Change on Demand / Lane Departure Warning / Lane Keep Assist",
+      "Surround Vision",
+      "Head Up Display",
+      "Automatic High Beam / Glare Free High Beam / Night Vision",
+      "ADAS Systems - Wheel/Suspension Modification"
+    ]
+  },
+  {
+    "file": "OEM DOCS/GM/LKAS/2022-Silverado-GMC-LKAS-TSB.pdf",
+    "rules": 4,
+    "status": "ok",
+    "calibrations": [
+      "Front View Camera Relearn",
+      "Front View Camera Relearn",
+      "Front View Camera Relearn",
+      "Front View Camera Relearn"
+    ]
+  },
+  {
+    "file": "OEM DOCS/GM/PCSI .pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/Parking-Sensor-Dynamic-Req-CAL.pdf",
+    "rules": 5,
+    "status": "ok",
+    "calibrations": [
+      "Rear Parking Assist System",
+      "Rear Parking Assist System",
+      "Front Parking Assist System",
+      "Rear Parking Assist System",
+      "Parking Assist Control Module (K182)"
+    ]
+  },
+  {
+    "file": "OEM DOCS/GM/Pre and post scan/GM-Pre-Post.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/Pre- and Post-Scan of Collision Vehicles.pdf",
+    "rules": 5,
+    "status": "ok",
+    "calibrations": [
+      "Pre-Repair Diagnostic Scan",
+      "Post-Repair Diagnostic Scan",
+      "Safety-Related Component Calibration/Learn",
+      "Electrical System Verification",
+      "Windshield Camera System Calibration"
+    ]
+  },
+  {
+    "file": "OEM DOCS/GM/TSB-on-2013-Chevy-Malibu-SDM-Programming.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/WINDSHIELD REPLACEMENT POSITION STATEMENT.pdf",
+    "rules": 4,
+    "status": "ok",
+    "calibrations": [
+      "Front View Camera Calibration",
+      "Front View Camera Calibration",
+      "Front View Camera Calibration",
+      "Front View Camera Calibration"
+    ]
+  },
+  {
+    "file": "OEM DOCS/GM/gm after accident requirements for adas.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/GM/gm-driver-assistance-systems-aid.pdf",
+    "rules": 10,
+    "status": "ok",
+    "calibrations": [
+      "Frontview Camera - Windshield Calibration",
+      "Long Range Radar Sensor Module Calibration",
+      "Curb View Camera - Analog Calibration",
+      "Surround Vision Camera - Analog Calibration",
+      "Night Vision Camera Calibration",
+      "Park Assist Sensor Calibration",
+      "Park Assist Sensor Calibration",
+      "Park Assist Sensor Calibration",
+      "Park Assist Sensor Calibration",
+      "Park Assist Sensor Calibration"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Genesis/Genesis_Pos_HV-Battery-Inspection-Replace(3-24).pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "ETIMEDOUT: connection timed out, read"
+  },
+  {
+    "file": "OEM DOCS/Genesis/Genesis_pre_post_scan.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "ETIMEDOUT: connection timed out, read"
+  },
+  {
+    "file": "OEM DOCS/Genesis/Pre-Repair and Post-Repair System Scanning.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "ETIMEDOUT: connection timed out, read"
+  },
+  {
+    "file": "OEM DOCS/Honda/2013-Honda-Pilot-OEM-Restraints-System-Part-Replacement.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/2016-2021-Civic-Multipurpose-Camera-Aiming-17-18-5-door-1.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "Multipurpose Camera / LKAS / ACC",
+      "Multipurpose Camera / LKAS / ACC",
+      "Multipurpose Camera / LKAS / ACC"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/2019-Honda-Pilot-Power-Mirrors-Diagram.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/2021-Honda-Truck-Odyssey-Electrical.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/2021-Honda-Truck-Odyssey-Electrical1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/23-25CRV park aid reset.pdf",
+    "rules": 2,
+    "status": "ok",
+    "calibrations": [
+      "Parking and Back-Up Sensor Control Unit Reset",
+      "Parking and Back-Up Sensor Control Unit Reset"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/23crvbsireset.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "Blind Spot Information (BSI) System Learning Value Reset",
+      "Blind Spot Information (BSI) System Learning Value Reset",
+      "Blind Spot Information (BSI) System Learning Value Reset"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/ASP04485-1 (1).pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Accord-1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/DRIVER ASSIST SAFETY SYSTEMS MAY FAIL UNLESS OE PARTS.pdf",
+    "rules": 7,
+    "status": "ok",
+    "calibrations": [
+      "Forward Camera System (ACC/CMBS/FCW/LDW/LKAS/RDM)",
+      "Forward Camera System (ACC/CMBS/FCW/LDW/LKAS/RDM)",
+      "Head-Up Display (HUD) System",
+      "Head-Up Display (HUD) System",
+      "Collision Mitigation Braking System (CMBS) Front Radar",
+      "Collision Mitigation Braking System (CMBS) Front Radar",
+      "Collision Mitigation Braking System (CMBS) Front Radar"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/ECR 2017 Honda Accord - (Power Window Control Module) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/HONDA Front Passenger's Weight Sensor Output Check After a Vehicle Collision.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda ADAS Aiming requirements after collision.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda Post Collision Scanning.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda When to calibrate Job Aid June 2021.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-22-Civic-BSM-Mounting-Area-Check-1.pdf",
+    "rules": 4,
+    "status": "ok",
+    "calibrations": [
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-Acura-BSM-1.pdf",
+    "rules": 3,
+    "status": "ok",
+    "calibrations": [
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-Aiming-Driving-Support-System-Doc.-1-1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-Aiming-Driving-Support-System-Doc.-1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-OE-part-Requirements-for-ADAS-1.pdf",
+    "rules": 6,
+    "status": "ok",
+    "calibrations": [
+      "Forward Collision Warning / Lane Departure Warning / Lane Keeping Assist Camera",
+      "Forward Collision Warning / Lane Departure Warning / Lane Keeping Assist Camera",
+      "Head-Up Display",
+      "Head-Up Display",
+      "Collision Mitigation Braking System / Front Radar",
+      "Collision Mitigation Braking System / Front Radar"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-Replacement-of-Structural-Parts-Statement-1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-SRS-Replacement-Statement-1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda-Windshield-Position-Statement-1.pdf",
+    "rules": 2,
+    "status": "ok",
+    "calibrations": [
+      "Honda Sensing Front Camera",
+      "Honda Sensing Front Radar"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda.Acura-Diagnostic-Calibration-Requirements-SAS-1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda.Acura-Salvaged-and-used-airbag-components-statement-1.pdf",
+    "rules": 0,
+    "status": "no_rules"
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda_CRV_BSM.pdf",
+    "rules": 4,
+    "status": "ok",
+    "calibrations": [
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming",
+      "Blind Spot Information (BSI) Radar Unit Aiming"
+    ]
+  },
+  {
+    "file": "OEM DOCS/Honda/Honda_Pos_Diagnostic-Scans_Revised_FINAL11-20.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfP78WcjvC3NtUCRWU3W\"}"
+  },
+  {
+    "file": "OEM DOCS/Honda/Post Collision Diagnostic Scan and Calibration Requirements for Honda Vehicles.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfP7jubzvuYjf8PF5rsr\"}"
+  },
+  {
+    "file": "OEM DOCS/Honda/Preliminary Supplement 23 with Summary.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfP83UmvAVrKVNpUUssE\"}"
+  },
+  {
+    "file": "OEM DOCS/Honda/Steering Gearbox Removal and Installation (w_o SH-AWD) (Steering Gear) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfP8gWjh2dcmeNV61ugH\"}"
+  },
+  {
+    "file": "OEM DOCS/Honda/Wheel Alignment (Alignment) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfP8y785vTZCAMwAEBdE\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/2017-elantra-srs-module.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfP9KUUsj5GGXzyeBje3\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/Front Radar Unit (ADAS) - Repair Procedures (Distance Sensor) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPAFQSNnPc67QC1Q6v1\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/Hyundai-Aftermarket-Repairs-Postition-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPAYUbmPo7eYxUN5EhR\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/Hyundai-Elantra-BSM-Repair-Specs.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPAveMJRSKRvrmEUop1\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/Hyundai_Pos_HV-Battery-Inspection-Replace(3-24).pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPBH9dmmeSPfin1VDP8\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/MC-10174793-0001.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPCJTJGeZwyQvpf9pVB\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/OCS-Description.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPCmeuwp7JsB9VsoXoY\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/OSC-Reset-Procedure.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPDM2cAmaUPHKHEdKWV\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/Pre-Repair and Post-Repair System Scanning Hyundai.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPDgSuZnkYFtQfFpQVp\"}"
+  },
+  {
+    "file": "OEM DOCS/Hyundai/Rear Corner Radar (ADAS) - Adjustment (Collision Avoidance Sensor) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPEHv72Rey6iRBsuAkX\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/2015-Infiniti-QX50-AVM-CAL.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPFEBuChn2rasUpYkQT\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Bumper Fascia Replacement with Sonar.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPGLwUtBhJLxYzk6ASQ\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Bumper Fascia Replacement with Sonar1.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPGY6wmsPZZ2EiMFT8j\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-360-Calibration-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPGsEdQXgZUsw7BmDSH\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-Airbag-Component-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPHTjJ2K1hoDSv3rG5J\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-BSM-bumper-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPHeA6qENeKZy5agp1E\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-BSM-bumper-Position-Statement1.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPHv4pPf88CGZs4tTqS\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-Front-Radar-Calibration-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPJ7NDeY1ci7gNzELCo\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-July2019.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPJUr38coNSbDKQgBXq\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-OEM-Repair-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPJeopWerUWWTpoQMXk\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-Parking-Sensor-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPJprpEQHuK3MaeErhj\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-Pre-Post-Postion-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPK1UXsFAKqNmq4AMpQ\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Infiniti-SAS-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPKS5srPxCkdhvfnTdh\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Inifiniti-Non-OEM-Parts-Position-statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPKeVWAwnvi1WphPavw\"}"
+  },
+  {
+    "file": "OEM DOCS/Infiniti/Steering Angle Sensor (SAS) Reset Infiniti.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPL29k4j2qeVUXpKL2A\"}"
+  },
+  {
+    "file": "OEM DOCS/Jaguar/Battery Electric Vehicle and Plug in Hybrid.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPLQFmqVLWUxcrVTeYG\"}"
+  },
+  {
+    "file": "OEM DOCS/Jaguar/Pre & Post Scanning.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPMxG8ymHs9u5yg4kNn\"}"
+  },
+  {
+    "file": "OEM DOCS/Jaguar/Safety Restraint Systems (SRS) Salvage.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPNwDAe5YckgaE1xkrz\"}"
+  },
+  {
+    "file": "OEM DOCS/Kia/KIA-19-22-LKAS-TSB.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPPrCZZnsSXi37UDJYd\"}"
+  },
+  {
+    "file": "OEM DOCS/Kia/KIA-Pre-Post-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPQBcciQKww617izknM\"}"
+  },
+  {
+    "file": "OEM DOCS/Kia/KIA-Restraint-System-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPQSGBd5pjXYt7M5atP\"}"
+  },
+  {
+    "file": "OEM DOCS/Kia/KIA-Sportage-LKAS-TSB.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPRHPuskjMvDQC3VF3N\"}"
+  },
+  {
+    "file": "OEM DOCS/Kia/KIA-Use-Of-Aftermarket-Parts-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPRYiQZ345a2tj3MifN\"}"
+  },
+  {
+    "file": "OEM DOCS/Kia/KIAC.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPRrh8xp3LdR5WdAwbg\"}"
+  },
+  {
+    "file": "OEM DOCS/Lincoln/Lincoln Bumper Fascia Repair with Advanced Driver Assistance Systems (ADAS).pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPS4TZxAzocfd3LvdPt\"}"
+  },
+  {
+    "file": "OEM DOCS/Lincoln/Lincoln-Bumper-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPSUhLU3eQ2fZb3PEUo\"}"
+  },
+  {
+    "file": "OEM DOCS/Lincoln/Lincoln-Pre-and-Post-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPSktAeEckgrKnLoxde\"}"
+  },
+  {
+    "file": "OEM DOCS/Lincoln/Lincoln-Structural-Repairs.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPT2rMYvubiNFC9ktNw\"}"
+  },
+  {
+    "file": "OEM DOCS/Lincoln/Lincoln-Use-of-Non-OEM-Glass-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPTCfxLUHRbMSpMJqHw\"}"
+  },
+  {
+    "file": "OEM DOCS/Lincoln/Lincoln-Use-of-Non-OEM-Parts-Postion-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPTUoZjmEfwtZGKcbZr\"}"
+  },
+  {
+    "file": "OEM DOCS/Lincoln/Lincoln-Use-of-Salvaged-SRS-Components.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPTgT3SQ7CXoXvB2o3c\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/AUTHENTIC MOPAR GLASS REPLACEMENT.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPTtRdKLqUANk6noDAa\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Adaptive Cruise Control Module Sensor Estimating.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPUMY2yy1onbQMSGJ5r\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mercedes-Use-of-Aftermarket-or-Recycled-Parts-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPUhngoTe3KJFpiQjeN\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Glass-Replacement-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPUv6cGTqau6XiHHowq\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Opt-OE-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPVGbu9M5S92C6YHLSX\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Repair-Parts-for-Structural-Repairs-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPVpp9HRyaSxLWS9eK9\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Scan-Tool-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPWCDFrHjYp2Yyebnix\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Sept2019.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPWP9KzB7dikZ5PEp1q\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Steering-System-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPWivxPwA7y87YNLfwM\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Use-of-Aftermarket-Parts-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPX3mnH93t3tVp9TEHf\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar-Use-of-Salvaged-SRS-Component-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPXarZP2JNs5QwFYF5A\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Mopar_pre_post_scan.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPXy7m7PFT6k6JAS5nt\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/Right Blind Spot Sensor (RBSS) - Right Blind Spot Sensor - Alignment or Adjustment Incorrect (ALL Diagnostic Trouble Codes ( DTC )) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPYMhKCPat3rjw4xyS6\"}"
+  },
+  {
+    "file": "OEM DOCS/MOPAR/SCAN TOOL POSITION STATEMENT.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPYig8Rbaqbkh9GNZm6\"}"
+  },
+  {
+    "file": "OEM DOCS/Mazda/Collision Reference pre:post .pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPZ6jSDnbxr7UH3m8ju\"}"
+  },
+  {
+    "file": "OEM DOCS/Mazda/Front Radar Sensor Aiming (Collision Avoidance Sensor) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPZXm5gbfXDcdXEnMy3\"}"
+  },
+  {
+    "file": "OEM DOCS/Mazda/Front Radar when to calibrate .pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPZiPo5ZFS5gq9CP6xh\"}"
+  },
+  {
+    "file": "OEM DOCS/Mazda/Genuine Mazda Parts Recommendation.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPaAZtjdRnZuecnogSQ\"}"
+  },
+  {
+    "file": "OEM DOCS/Mazda/Occupant Classification Sensor Calibration (Two-Step Deployment Control System - US_Canada Spec.) (Seat Occupant Sensor) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPaZmQgV1jTWemPEhEY\"}"
+  },
+  {
+    "file": "OEM DOCS/Mazda/PCSI - Air Bag System Service Warnings (Two-Step Deployment Control System - US_Canada Spec.) (Seat Belt Systems) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPaxabsVGUb3bh85qGt\"}"
+  },
+  {
+    "file": "OEM DOCS/Mazda/Pre- and Post-Repair Scanning.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPbqYDZ7b6xTGTuTw12\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/2013-12_Fahrerassistenzsysteme_EN.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPcjB1KvhKPqeg3uZVm\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Assessment of Airbag and Belt Tensioner Units In Accident Vehicles [AH91.00-P-0006-01B] (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPdAnd1a8GPK9zVngky\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Diagnostic Repairs Following a Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPdua7P1cgjwWKQYV6S\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Highlighted_Post_Collision_Safety_Inspection.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPeHCMzsr6VfS5Ge15E\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/MERC SCAN Collision Reference.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPedq6MHgDN6wMTZUjB\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Mercedes ADAS.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPfA7zVgkeAbmshWfH4\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Mercedes-Pre-Post-Postion-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPfMFUVRkqRxF3vLMWB\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Mercedes-Replacement-of-Glass-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPfXoyAio1SEcpCq1qq\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Mercedes-Suspension-and-Steering-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPfhugyKDrAYdbZGBgD\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Mercedes-Use-of-Aftermarket-or-Recycled-Parts-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPg4Jn3iG95dzyKja1V\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Mercedes_SBI.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPgPHnUtfNpSTwjchzs\"}"
+  },
+  {
+    "file": "OEM DOCS/Mercedes/Replacement Glass & Glazing.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPgfrwVkftaNQ4Qt6C3\"}"
+  },
+  {
+    "file": "OEM DOCS/Mini/2025 Mini Cooper Hardtop HB - Post Collision Saftey inspection .pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPgtYvndiGskiWV9vTp\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/2014-Nissan-Datsun-Truck-Work-procedure.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPhNPzEDKMvF5gpYGRx\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/2014-Nissan-Datsun-truck-Distance-Sensor-Adjustment.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPhmGu6pnqfgxLGFfWA\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Blind Spot Warning Precautions.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPi8a4qcuvz6uuvzWda\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-360-Calibration-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPiSP89nHDeP5J51NLZ\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-BSM-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPiguVcEcvNfg5xMzbo\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-Front-Rear-Bumper-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPixUNWubTY6JhPa5a7\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-OEM-Repair-Procedures-and-Guidelines-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPjNTWbe5RDwEMLPcG9\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-Pre-Post-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPjkhyJEiSUaDvnCmJX\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-Radar-Recalibration-after-Repairs-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPkDtr4Sqto79MN7LmJ\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-SAS-Postion-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPkSgnbYe1MMPEW7URa\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-Seatbelt-Replacement-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPkrN53tD6A2qSLAyYk\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-Use-of-NON-OEM-Parts-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPmDTLCT6josKCoG5zj\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-Use-of-Salvaged-Airbag-Components-after-Repairs-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPmhu7Weh1iPVFjaEsz\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan-Windsheild-and-Glass-Replacement-Postions-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPn7e7oUm1uCEXZSJgS\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan_Front_Radar.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPnVsahjaerEZTK1i6j\"}"
+  },
+  {
+    "file": "OEM DOCS/Nissan/Nissan_SAS_Cal.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPnhekvniSubxNEtbes\"}"
+  },
+  {
+    "file": "OEM DOCS/OEM Tips and Tricks /Subaru /eyesight_calibration.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPo6QyFSawAnPazrC1S\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar FLC.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPoYxtvUiMMytrL1NJs\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar Radar front.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPoxQYUx7VPw3KYYS5v\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar Seat belt inspection.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPpJqcckHphuhhnwckr\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar after deployment.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPpjecnYQefxBQ8vgiQ\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar front 360 camera.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPq7FdXRFQmWi3hPfMW\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar height sensor.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPqJpQDTTDBsYWEWNw2\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar rear camera 360.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPqdnuxVFHh41TwH3PJ\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/Polestar windshield.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPr61VsgxoFoeQ2FLBD\"}"
+  },
+  {
+    "file": "OEM DOCS/Polestar/polestar side camera.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPs3vWqMAJNEWwK2PNx\"}"
+  },
+  {
+    "file": "OEM DOCS/Porshe/Porshe_Windshield_cals.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPsKNSqGjAGfc997Xdq\"}"
+  },
+  {
+    "file": "OEM DOCS/Porshe/Porshe_front_bumper_ADAS.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPsVjnkh3KwmH9wDSyD\"}"
+  },
+  {
+    "file": "OEM DOCS/Porshe/Prohibition of Porsche Rim Repairs.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPsnemsxcAMFDvcJfEj\"}"
+  },
+  {
+    "file": "OEM DOCS/Price Sheets/scan.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPuuJgTzvwCKVJ5na7J\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Collision Reference Totota.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPwDWLNYww4FfaYYQTQ\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Drive Unit Replacement due to Impact.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPwptaVJm2uGaVjA7fW\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Driver+ Calibration Requirements and Best Practices, EDV.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPxeyYqkmG5n6CRE2r2\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Driver+ Calibration Requirements and Best Practices, R1T and R1S.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPyFFpBnKvCRxkuaq1A\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Fascia, Front, Upper Repair.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPySTkvh7ZF3fQzmmt4\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/General Repair Guidelines.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPzDCZyZ5eet1joNTUQ\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Pre and Post Repair Scan Requirements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfPzhoGZRJkEGV8kRbzF\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/RCI-86-22-002-4_ Driver+ Calibration Requirements and Best Practices, EDV.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ131RfAPyqhWpRPFuC\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Rivian Repair Standards.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ1ESFz289FRt72QHMc\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Rivian-diagnostic-tool-quest-guide-en-us-20230926.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ1ynyaj5pf811LQN4b\"}"
+  },
+  {
+    "file": "OEM DOCS/Rivian/Windshield and Glass Replacement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ2NaBUzSPWZS1XCvqB\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/2018-Subaru-Crosstrek-Camera-adjustment-inspection-procedure.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ7Hi8C1ekUUg3TqQrQ\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Calibration Research Tips_ Subaru EyeSight - UPDATE.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ7vnZTrASrQ1prZRiG\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru Eyesight after collision (1).pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ8EMFPPPhm6dYDuf2N\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru PCSI.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ8ezKZ8u9SsKoGvvsT\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru eyesight Icar.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ8rvv2CXxhdNpdpdfZ\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-Aftermarket-Parts-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ9B1rAzKLi1tkNRvbd\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-EyeSight.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQ9XvCmDGg4UCYFe6FC\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-Key-Immobilizer-Programming-codes.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQD5kTghnNnsmytTZoA\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-Legacy-Blind-Spot-Detectin-Rear-Cross-Traffic-alert.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQDQUb1YDiMUYrRsaVA\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-Pre-Post-Scanning-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQDnJ19VUraThs19m7A\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-Salvaged-Airbag-Components-Position-Statements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQDzXDTRDQiQZ5gDiKM\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-Windshield-Glass-for-Eyesight-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQEJ8sKvYSjDH9zR2ze\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/Subaru-Windshield-Glass-for-Eyesight-Position-Statement1.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQEcB5RSkAVhJwzS8df\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/SubaruSRS-Airbag-system-GD.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQF55pwkDCfM8NTb7D1\"}"
+  },
+  {
+    "file": "OEM DOCS/Subaru/VDC Control Module and Hydraulic Control Unit (VDCCM&H_U) - Adjustment (Hydraulic Assembly) - ALLDATA Repair.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQFNZJgcGPPuaciWMCU\"}"
+  },
+  {
+    "file": "OEM DOCS/Tesla/Model Y.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQG9Mq4xEkMTndtEJxT\"}"
+  },
+  {
+    "file": "OEM DOCS/Tesla/SRS Inspection and Component Replacement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQGYVNg6sNWr11938pt\"}"
+  },
+  {
+    "file": "OEM DOCS/Tesla/oem_technical_information_matrix.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQGimG3wmTAKoQWmhrh\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/2015-Toyota-Sienna-BSM-Calibration-Specs.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQHP9puCiZ71oV1Z2Jm\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/2019-2_CP-a5.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQJA5JNujoepnRDp3FP\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Alignment-Front-Radar-Req-Cal-TOYOTA.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQKFF8FyHS8ZfKfNuC3\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Blind Spot Monitor Sensor - Installation [03_2012 - ] (Blind Spot Module) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQKhaAAvtgHg2Z2oG83\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Blind-2022-Toyota-BSM-Calibration.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQLHJvbjThfis5MagXc\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/CRIB # 169 Body Electrical Diagnosis and Repair.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQLogYZjQSaezwPRVeP\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/CRIB # 191 Scanning for Electrical Faults.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQMGMubg9GMbrrpprBb\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Collision Reference.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQMtV3gVNHqMy8ByNDD\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Front Seat Outer Belt Assembly - On-Vehicle Inspection [11_2015 - ] (Seat Belt) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQNXRYioifHxvz5Bzia\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Front-Radar-CAL-REQ.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQNyt1oLr46LWH7Mbw2\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Lexus Headlamp .pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQPfQ3kGDNCPMEokEQy\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Rear camera Calibration .pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQQLDAJrcHP5pPgP1v7\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Rear_park_sensors_Rear Bumper - Installation [12_2022 - ] (Rear Bumper) -.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQR3uukARFvzkSAEAxT\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Rear_parking_sensor_calibration_procudure.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQVQNakoNEx5M9ufL5i\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/TIS - TOYOTA_OE_Position_parking_sensor_calibration 2023-2024 Prius Prius Prime Repair Manual (RM41D0U).pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQVit4vNLpF65zCFDkP\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/TOYOTA-2021-ECU-Security-Key-Writing.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQWNpqoCN7qNFLTaGn1\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Body-Sectioning.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQWx289EUQAp5RQsBhp\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Bumper-Refinishing.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQX9E4dWBrZNXWVMgLE\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Collision-Damage-Repair-Precautions.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQXMzmJmgcEhAxZzn5Y\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-NOT-A-POSITION-STATEMENT-Precautions-for-Blindspot-System.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQXeTxqsSQNqRy6b5zj\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-OSC-Initialization.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQY4MPyB9c3No9dKDzT\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Post-Repair-Initialization-and-Calibration-Requirements.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQefBKTqd6EPnyKxBE8\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Pre-Post-Scanning-July-2021.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQf47xMeKd7zFsudNXz\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Quarter-Panel-Sectioning.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQfTm1R1zFmadXTMbij\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-SRS-Precautions.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQfjQr6Bsc2Qy1kBhPn\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Use-of-Non-OEM-Parts-POS-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQg4zpQChYDdta4Ty2z\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Use-of-Salvaged-Parts-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQgTVfChneYWoF75YUb\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota-Windshield-Replacement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQgixau3GEGNA5SALBb\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/ToyotaBSM.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQhAaCvnMYQHfMb9BHF\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota_Lexus_Front_Radar.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQhR9JU7wZenhgxHms2\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota/Toyota_SBI.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQhm2PEoxbxjV2tjsrG\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/2016 Lexus GS350_GS450H PCSI.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQi7fMofy8XzMvp3KNJ\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/Blind Spot Monitor Sensor - Installation [03_2012 - ] (Collision Avoidance Sensor) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQiUU19qBxhqypEDdoF\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/Blind Spot Monitor System - Precaution [07_2012 - ] (Collision Avoidance and Parking Assist Systems) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQiiB1x6w5Qwf8KcZFi\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/Collision Reference.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQj7hd2t7RFw5PgTiKX\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/Post scan and pre scan .pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQk2UsEHzt2cHLQCGcX\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/SAS after Battery .pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQkMFEFgmgY3KZdWMa1\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/Scanning for Electrical Faults.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQkm1j6oaw9D9gAABSv\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/Toyota floor comp.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQm6NJjRAa6XJfkFMmz\"}"
+  },
+  {
+    "file": "OEM DOCS/Toyota-Lexus/Toyota_Lexus_Front_Radar.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQmQD6xxNeSn9n7FEWq\"}"
+  },
+  {
+    "file": "OEM DOCS/VW/Preparing for Calibration (Blind Spot Module) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQmt7tGKuXEUv4RxhQR\"}"
+  },
+  {
+    "file": "OEM DOCS/VW/SRS Wiring Harness.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQnF2ERY4yWDczKf6ge\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Advanced Driver Assistance Systems (ADAS).pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQo6ssYh9o4hnUQ93no\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Pre_Post Scanning.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQoWXR9jtFjUBN6a1K1\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Replacement of Windshields.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQp6XZcwLDKeDcbmcSW\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo-ADAS-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQpRLuFC1K1RAEFM6w6\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo-Pre-Post-Scanning.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQpbtQqvArzyCmzffEo\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo-Replacement-of-Wheels-and-Tires.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQpwTe2m52e7kVSN5eM\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo-Replacement-of-Windshields.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQq7QvUuAJujQ8AaoMU\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo-SRS-Position-Statement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQqRPf3F38Lvc6zh4ua\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo-Steering-Rack.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQqjS7NnoaKqzRPBYc7\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo-Use-of-Aftermarket-Parts.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQr1ieiSzoyJygDDKXN\"}"
+  },
+  {
+    "file": "OEM DOCS/Volvo/Volvo_Position_EV-Battery-Handling(10-24).pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQrEXpxC6rnGmU9pYCh\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/GM/Supplemental Restraints - Repairs and Inspections Required After a Collision (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQrYcGP9di4eYnojptz\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Honda/Post collision inspection with airbags deplayed/SRS Component Replacement_Inspection After Deployment (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQrrEAhC59ae29mHnUj\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Honda/PrescanPostscan/Honda Collision Reference.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQspW1ukSu14GSmYgzE\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Honda/SRS Component Replacement_Inspection After Deployment (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQti8p2XGBTu2A26bG5\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Nissan/Collision Reference.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQtxvJfvquPqV7d7WHh\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Nissan/Nissan_post_collision_SBI.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQuHw4CCdZpaoLf4YY5\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Subaru/Alldata procudures/Airbag System Inspection Locations After A Collision - Inspection (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQugjFeZg5mBLzwPEtG\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Tesla/Model S SRS Inspection and Component Replacement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQvJy5x46UKBLmeq4VA\"}"
+  },
+  {
+    "file": "OEM Post collision Inspection/Tesla/Model Y SRS Inspection and Component Replacement.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQvWthGZo9Hs4sPa3ZJ\"}"
+  },
+  {
+    "file": "Pigtail Pics/Maaco Supp1.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQvgbba6KErFcJ18csr\"}"
+  },
+  {
+    "file": "SOP/Post collision/Steering Column Accident Damage Inspection (w_ N33) (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQwRCv6y57tfVo8k5yC\"}"
+  },
+  {
+    "file": "SOP/Post collision/Steering Column Accident Damage Inspection (w_ N38) (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQweXrRuEbruaQXPhua\"}"
+  },
+  {
+    "file": "SOP/Post collision/Supplemental Inflatable Restraints (Repairs and Inspections Required After a Collision) - ALLDATA Collision.pdf",
+    "rules": 0,
+    "status": "error",
+    "error": "400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.\"},\"request_id\":\"req_011CZfQx4evcpawJbY7NrvKt\"}"
+  }
+]

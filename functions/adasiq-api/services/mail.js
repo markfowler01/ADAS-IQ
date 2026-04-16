@@ -120,3 +120,49 @@ export async function markAccountMessageRead(token, accountId, folderId, message
     }
   )
 }
+
+// Send an email from Mark's account.
+export async function sendMail(token, accountId, { to, subject, body }) {
+  const res = await axios.post(
+    `${MAIL_API}/accounts/${accountId}/messages`,
+    {
+      fromAddress: 'mf@absoluteadas.com',
+      toAddress:   to,
+      subject,
+      content:     body,
+      mailFormat:  'html',
+    },
+    {
+      headers: { ...mailHeaders(token), 'Content-Type': 'application/json' },
+      timeout: 10000,
+    }
+  )
+
+  // Zoho sometimes marks internal emails as read on delivery.
+  // Grab the sent message ID and immediately mark it unread in the recipient account.
+  try {
+    const sentMsgId = res.data?.data?.messageId || res.data?.data?.message_id
+    if (sentMsgId) {
+      // Find the account ID for the recipient address
+      const accountsRes = await axios.get(`${MAIL_API}/accounts`, {
+        headers: mailHeaders(token),
+        timeout: 10000,
+      })
+      const accounts = accountsRes.data?.data || []
+      const recipientAccount = accounts.find(a =>
+        (a.emailAddress || []).some(e => e.mailId?.toLowerCase() === to.toLowerCase()) ||
+        a.incomingUserName?.toLowerCase() === to.toLowerCase()
+      )
+      if (recipientAccount) {
+        await axios.put(
+          `${MAIL_API}/accounts/${recipientAccount.accountId}/updatemessage`,
+          { messageId: [String(sentMsgId)], mode: 'markAsUnread' },
+          { headers: { ...mailHeaders(token), 'Content-Type': 'application/json' }, timeout: 10000 }
+        )
+        console.log(`[mail] Marked sent message as unread in ${to}`)
+      }
+    }
+  } catch (markErr) {
+    console.warn('[mail] Could not mark sent message as unread (non-fatal):', markErr.message)
+  }
+}

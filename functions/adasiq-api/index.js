@@ -3,6 +3,7 @@ import cors from 'cors'
 import cookieSession from 'cookie-session'
 import rateLimit from 'express-rate-limit'
 import authRouter, { verifyToken } from './routes/auth.js'
+import demoRouter from './routes/demo.js'
 import extractRouter from './routes/extract.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
@@ -14,6 +15,28 @@ import jobsRouter from './routes/jobs.js'
 import webhookRouter from './routes/webhook.js'
 import feedbackRouter from './routes/feedback.js'
 import postscanRouter from './routes/postscan.js'
+import estimatesRouter from './routes/estimates.js'
+import calibrationRulesRouter from './routes/calibrationRules.js'
+import shopsRouter from './routes/shops.js'
+import booksRouter from './routes/books.js'
+import crmReminderRouter from './routes/crmReminder.js'
+import backupRouter from './routes/backup.js'
+import calendarRouter from './routes/calendar.js'
+import expensesRouter from './routes/expenses.js'
+import notificationsRouter from './routes/notifications.js'
+import crmSyncRouter from './routes/crmSync.js'
+import plannerBackupRouter from './routes/plannerBackup.js'
+import settingsRouter from './routes/settings.js'
+import brandingRouter from './routes/branding.js'
+import billingCronRouter from './routes/billing-cron.js'
+import ptoRouter from './routes/pto.js'
+import timeclockRouter from './routes/timeclock.js'
+import bonusesRouter from './routes/bonuses.js'
+import mileageRouter from './routes/mileage.js'
+import analyticsRouter from './routes/analytics.js'
+import projectsRouter from './routes/projects.js'
+import teamRouter from './routes/team.js'
+import portalRouter from './routes/portal.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -23,6 +46,7 @@ if (!process.env.SESSION_SECRET) {
 const app = express()
 
 app.use(cors({ origin: true, credentials: true }))
+app.options('*', cors({ origin: true, credentials: true })) // handle preflight for all routes
 app.use(express.json({ limit: '25mb' }))
 
 app.use(cookieSession({
@@ -61,6 +85,7 @@ app.get('/ping', (req, res) => res.json({
 
 // Auth routes
 app.use('/auth', authRouter)
+app.use('/auth/demo', demoRouter)
 
 // Auth middleware — X-Auth-Token header (primary) or session cookie (fallback)
 function requireAuth(req, res, next) {
@@ -116,12 +141,46 @@ app.use('/api/history', requireAuth, historyRouter)
 app.use('/api/jobs', requireAuth, jobsRouter)
 
 app.use('/api/feedback', requireAuth, feedbackRouter)
+app.use('/api/estimates', requireAuth, estimatesRouter)
+app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
+app.use('/api/shops', requireAuth, shopsRouter)
+app.use('/api/books', requireAuth, booksRouter)
 
 // Webhook routes — no auth required (called by Zoho Books servers)
 app.use('/webhooks', webhookRouter)
 
 // Postscan cron route — protected by X-Cron-Secret header, not user auth
 app.use('/api/postscan', postscanRouter)
+
+// CRM sync cron — no user auth, protected by cron secret
+app.use('/api/crm-sync-cron', crmSyncRouter)
+
+// CRM reminder cron route — protected by X-Cron-Secret (CRM_CRON_SECRET env var)
+app.use('/api/crm-reminder', crmReminderRouter)
+
+// Backup cron route — protected by X-Cron-Secret (BACKUP_CRON_SECRET env var)
+app.use('/api/backup', backupRouter)
+
+// Billing cron route — protected by X-Cron-Secret (BILLING_CRON_SECRET env var)
+app.use('/api/billing-cron', billingCronRouter)
+
+// Calendar route — public (called from 5:30 planner)
+app.use('/api/calendar', calendarRouter)
+app.use('/api/planner-backup', plannerBackupRouter) // no auth — planner is a separate app
+app.use('/api/expenses', requireAuth, expensesRouter)
+app.use('/api/notifications', requireAuth, notificationsRouter)
+app.use('/api/crm-sync', requireAuth, crmSyncRouter)
+app.use('/api/settings', requireAuth, settingsRouter)
+app.use('/api/branding', requireAuth, brandingRouter)
+app.use('/api/pto', requireAuth, ptoRouter)
+app.use('/api/timeclock', requireAuth, timeclockRouter)
+app.use('/api/bonuses', requireAuth, bonusesRouter)
+app.use('/api/mileage', requireAuth, mileageRouter)
+app.use('/api/analytics', requireAuth, analyticsRouter)
+app.use('/api/projects', requireAuth, projectsRouter)
+app.use('/api/team', requireAuth, teamRouter)
+// Portal routes have their OWN auth (portal session token), not the main app auth
+app.use('/api/portal', portalRouter)
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))

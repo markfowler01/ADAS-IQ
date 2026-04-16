@@ -15,14 +15,49 @@ function getTokenExpiry() {
 export { API_BASE }
 
 import LoginScreen from './components/LoginScreen'
+import DemoLandingScreen from './components/DemoLandingScreen'
+import BodyShopDemoScreen from './components/BodyShopDemoScreen'
 import UploadScreen from './components/UploadScreen'
 import ToggleBoard from './components/ToggleBoard'
 import AuditScreen from './components/AuditScreen'
 import ManualQuoteScreen from './components/ManualQuoteScreen'
 import HistoryScreen from './components/HistoryScreen'
 import KanbanBoard from './components/KanbanBoard'
+import RepairEstimateScreen from './components/RepairEstimateScreen'
+import CalibrationRulesScreen from './components/CalibrationRulesScreen'
+import CRMScreen from './components/CRMScreen'
+import BooksScreen from './components/BooksScreen'
+import OpsHub from './components/OpsHub'
+import MessageCenter from './components/MessageCenter'
+import SettingsScreen from './components/SettingsScreen'
+import PTOScreen from './components/PTOScreen'
+import TimeClockScreen from './components/TimeClockScreen'
+import TechPlannerScreen from './components/TechPlannerScreen'
+import MileageScreen from './components/MileageScreen'
+import DailyReviewScreen from './components/DailyReviewScreen'
+import ProjectsScreen from './components/ProjectsScreen'
+import BrandingScreen from './components/BrandingScreen'
+import TeamScreen from './components/TeamScreen'
+import PortalApp from './components/PortalApp'
+import PayInvoiceScreen from './components/PayInvoiceScreen'
+
+// Top-level route check: public pay page and customer portal bypass the main auth flow.
+function getTopLevelRoute() {
+  if (typeof window === 'undefined') return 'app'
+  const path = window.location.pathname || ''
+  if (path.endsWith('/pay') || path.includes('/app/pay')) return 'pay'
+  if (path.endsWith('/portal') || path.includes('/app/portal')) return 'portal'
+  return 'app'
+}
 
 export default function App() {
+  const topRoute = getTopLevelRoute()
+  if (topRoute === 'pay') return <PayInvoiceScreen />
+  if (topRoute === 'portal') return <PortalApp />
+  return <MainApp />
+}
+
+function MainApp() {
   const [user, setUser]   = useState(null)   // null = loading, false = not logged in, object = logged in
   const [loading, setLoading] = useState(true)
   const [authErrMsg, setAuthErrMsg] = useState(null)
@@ -34,6 +69,8 @@ export default function App() {
   const warningTimerRef = useRef(null)
 
   const authError = new URLSearchParams(window.location.search).get('auth_error') === '1'
+  const isDemo = window.location.hostname.includes('demo.adas-iq') ||
+                 new URLSearchParams(window.location.search).get('demo') === '1'
 
   // On mount, check for Zoho OAuth code OR existing session
   useEffect(() => {
@@ -126,7 +163,13 @@ export default function App() {
   }
 
   if (!user) {
+    if (isDemo) return <DemoLandingScreen onLogin={(u) => { setUser(u); setLoading(false) }} />
     return <LoginScreen authError={authError} authErrMsg={authErrMsg} />
+  }
+
+  // Body shop demo — simplified view
+  if (user?.demoType === 'bodyshop') {
+    return <BodyShopDemoScreen user={user} onLogout={() => { setToken(null); setUser(false) }} />
   }
 
   const navScreen = screen === 'review' ? 'upload' : screen
@@ -189,6 +232,51 @@ export default function App() {
           onLogout={handleLogout}
           {...navProps}
         />
+      )}
+      {screen === 'estimates' && (
+        <RepairEstimateScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'rules' && (
+        <CalibrationRulesScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'crm' && (
+        <CRMScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'books' && (
+        <BooksScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'ops' && (
+        <OpsHub {...navProps} />
+      )}
+      {screen === 'messages' && (
+        <MessageCenter {...navProps} />
+      )}
+      {screen === 'settings' && (
+        <SettingsScreen {...navProps} />
+      )}
+      {screen === 'pto' && (
+        <PTOScreen {...navProps} />
+      )}
+      {screen === 'timeclock' && (
+        <TimeClockScreen {...navProps} />
+      )}
+      {screen === 'planner' && (
+        <TechPlannerScreen {...navProps} />
+      )}
+      {screen === 'mileage' && (
+        <MileageScreen {...navProps} />
+      )}
+      {screen === 'daily-review' && (
+        <DailyReviewScreen {...navProps} />
+      )}
+      {screen === 'projects' && (
+        <ProjectsScreen {...navProps} />
+      )}
+      {screen === 'branding' && (
+        <BrandingScreen {...navProps} />
+      )}
+      {screen === 'team' && (
+        <TeamScreen {...navProps} />
       )}
     </div>
   )

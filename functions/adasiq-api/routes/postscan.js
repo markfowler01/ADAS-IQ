@@ -6,6 +6,7 @@ import {
   getMessageAttachments,
   downloadAccountAttachment,
   markAccountMessageRead,
+  sendMail,
 } from '../services/mail.js'
 import { findFolderByRO, uploadFileToFolder } from '../services/workdrive.js'
 import { getAccessToken } from '../services/zoho.js'
@@ -41,13 +42,117 @@ router.get('/debug', async (req, res) => {
     const messages = await getUnreadPostscanMessages(mailToken, accountId)
     steps.unread_postscan_count = messages.length
     steps.unread_subjects = messages.map(m => m.subject)
-
     steps.unread_count = messages.length
+
+    // Show first 50 WorkDrive folder names so we can verify naming
+    const { getAccessToken } = await import('../services/zoho.js')
+    const axios = (await import('axios')).default
+    const wdToken = await getAccessToken()
+    const PARENT_FOLDER_ID = '28exmfc33000b044047f18dc7f1617c730889'
+    const wdRes = await axios.get(`https://workdrive.zoho.com/api/v1/files/${PARENT_FOLDER_ID}/files`, {
+      headers: { Authorization: `Zoho-oauthtoken ${wdToken}` },
+      timeout: 15000,
+    })
+    const folders = (wdRes.data?.data || []).map(f => f.attributes?.name).filter(Boolean)
+    steps.workdrive_folder_count = folders.length
+    steps.workdrive_folder_names = folders.slice(0, 50)
   } catch (err) {
     steps.error = err.message
     steps.detail = err.response?.data ? JSON.stringify(err.response.data) : null
   }
   res.json(steps)
+})
+
+/**
+ * GET /api/postscan/test-email — sends a test notification to techs@absoluteadas.com
+ * Protected by X-Cron-Secret.
+ */
+router.get('/test-email', async (req, res) => {
+  const cronSecret = process.env.POSTSCAN_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const mailToken = await getMailAccessToken()
+    const accountId = await getMailAccountId(mailToken)
+    const to = req.query.to || 'techs@absoluteadas.com'
+    const roNumber = '225916'
+    const matchedRO = '255916'
+    const folderName = 'TWF 255916 — Example Body Shop — 2022 Toyota RAV4'
+    const subject = 'twf 225916'
+    await sendMail(mailToken, accountId, {
+      to,
+      subject: `📎 PostScan Uploaded — Scan #${roNumber} matched to Work Order #${matchedRO}`,
+      body: `
+        <p>Hey there,</p>
+        <p>We matched Post Scan Report <strong>#${roNumber}</strong> to WorkDrive folder <strong>#${matchedRO}</strong>. It wasn't an exact match, but it was close enough to run with — so we went ahead and uploaded the PDF.</p>
+        <p>Feel free to move it if it landed in the wrong folder.</p>
+        <p style="color:#888;font-size:13px;margin-top:16px;">Folder: ${folderName}<br>Email subject: ${subject}</p>
+        <p style="color:#bbb;font-size:12px;margin-top:24px;">— ADAS IQ PostScan Automation</p>
+      `,
+    })
+    res.json({ ok: true, message: `Test email sent to ${to}` })
+  } catch (err) {
+    const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message
+    res.status(500).json({ ok: false, error: detail })
+  }
+})
+
+/**
+ * POST /api/postscan/mark-unread
+ * Re-marks all read messages in Scan Reports as unread so the cron will reprocess them.
+ * Protected by X-Cron-Secret.
+ */
+router.post('/mark-unread', async (req, res) => {
+  const cronSecret = process.env.POSTSCAN_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+
+  try {
+    const axios = (await import('axios')).default
+    const mailToken = await getMailAccessToken()
+    const accountId = await getMailAccountId(mailToken)
+    const SCAN_REPORTS_FOLDER_ID = '147686000000057026'
+    const MAIL_API = 'https://mail.zoho.com/api'
+
+    function safeParseMailResponse(raw) {
+      const fixed = raw
+        .replace(/"messageId"\s*:\s*(\d+)/g, '"messageId":"$1"')
+        .replace(/"attachmentId"\s*:\s*(\d+)/g, '"attachmentId":"$1"')
+      return JSON.parse(fixed)
+    }
+
+    // Fetch all messages (read + unread)
+    const listRes = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/view`, {
+      headers: { Authorization: `Zoho-oauthtoken ${mailToken}` },
+      params: { folderId: SCAN_REPORTS_FOLDER_ID, limit: 50 },
+      timeout: 15000,
+      transformResponse: [safeParseMailResponse],
+    })
+
+    const messages = listRes.data?.data || []
+    const readMessages = messages.filter(m => m.status === 'read' || m.isRead === true || m.read === true || m.status !== 'unread')
+    console.log(`[postscan/mark-unread] ${messages.length} total, ${readMessages.length} to mark unread`)
+
+    const marked = []
+    for (const msg of messages) {
+      try {
+        await axios.put(
+          `${MAIL_API}/accounts/${accountId}/updatemessage`,
+          { messageId: [msg.messageId], folderId: SCAN_REPORTS_FOLDER_ID, mode: 'markAsUnread' },
+          { headers: { Authorization: `Zoho-oauthtoken ${mailToken}`, 'Content-Type': 'application/json' }, timeout: 10000 }
+        )
+        marked.push(msg.subject)
+      } catch (e) {
+        console.warn(`[postscan/mark-unread] Failed for "${msg.subject}":`, e.message)
+      }
+    }
+
+    res.json({ ok: true, marked })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 /**
@@ -101,6 +206,29 @@ router.post('/run', async (req, res) => {
       }
 
       console.log(`[postscan] RO ${roNumber} → folder "${folder.folderName}" (${folder.folderId})`)
+
+      // 3a. Fuzzy match — upload anyway but notify Mark
+      if (folder.fuzzyMatch) {
+        console.warn(`[postscan] ⚠ Fuzzy match used: email RO "${roNumber}" → folder RO "${folder.matchedRO}" (distance ${folder.fuzzyDistance})`)
+        try {
+          await sendMail(mailToken, accountId, {
+            to: 'techs@absoluteadas.com',
+            subject: `📎 PostScan Uploaded — Scan #${roNumber} matched to Work Order #${folder.matchedRO}`,
+            body: `
+              <p>Hey there,</p>
+              <p>We matched Post Scan Report <strong>#${roNumber}</strong> to WorkDrive folder <strong>#${folder.matchedRO}</strong>. It wasn't an exact match, but it was close enough to run with — so we went ahead and uploaded the PDF.</p>
+              <p>Feel free to move it if it landed in the wrong folder.</p>
+              <p style="color:#888;font-size:13px;margin-top:16px;">Folder: ${folder.folderName}<br>Email subject: ${subject}</p>
+              <p style="color:#bbb;font-size:12px;margin-top:24px;">— ADAS IQ PostScan Automation</p>
+            `,
+          })
+          console.log('[postscan] Fuzzy match notification sent to techs@absoluteadas.com')
+        } catch (notifyErr) {
+          const notifyDetail = notifyErr.response?.data ? JSON.stringify(notifyErr.response.data) : notifyErr.message
+          console.warn('[postscan] Could not send fuzzy match notification:', notifyDetail)
+          errors.push({ subject, roNumber, type: 'notify_failed', error: notifyDetail })
+        }
+      }
 
       // 4. Fetch attachment list for this message
       const attachments = await getMessageAttachments(mailToken, accountId, folderId, messageId)

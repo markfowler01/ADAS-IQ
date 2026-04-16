@@ -4,15 +4,15 @@ import { generateADASIQPdf } from '../services/pdf.js'
 const router = express.Router()
 
 router.post('/', async (req, res) => {
-  const { ro_number } = req.body
+  const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links } = req.body
   try {
-    const buffer = await generateADASIQPdf(req.body)
+    const buffer = await generateADASIQPdf({ shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links })
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Content-Disposition', `attachment; filename="ADAS-IQ-${ro_number || 'report'}.pdf"`)
     res.send(buffer)
   } catch (err) {
-    console.error('[report]', err.message)
-    res.status(500).json({ error: 'PDF generation failed: ' + err.message })
+    console.error('[report] PDF generation failed:', err.message)
+    res.status(500).json({ error: 'PDF generation failed.' })
   }
 })
 

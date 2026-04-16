@@ -1,6 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
+import CreateInvoicesModal from './CreateInvoicesModal.jsx'
+
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [])
+  return isMobile
+}
 
 const ORANGE = '#CD4419'
 
@@ -12,6 +23,16 @@ const COLUMNS = [
   { id: 'ready_invoice',    label: 'Ready to Invoice' },
   { id: 'complete',         label: 'Completed' },
 ]
+
+// Status badge colors for mobile card list
+const STATUS_INFO = {
+  need_dispatch:    { color: '#b45309', bg: '#fef3c7' },
+  dispatched_jaden: { color: '#1d4ed8', bg: '#dbeafe' },
+  dispatched_mark:  { color: '#7c3aed', bg: '#ede9fe' },
+  pending_parts:    { color: '#c2410c', bg: '#fff7ed' },
+  ready_invoice:    { color: '#0e7490', bg: '#cffafe' },
+  complete:         { color: '#15803d', bg: '#dcfce7' },
+}
 
 const CALIBRATION_TYPES = [
   'Front Radar',
@@ -29,6 +50,7 @@ const CALIBRATION_TYPES = [
 
 const EMPTY_JOB = {
   shop_name: '',
+  ro_number: '',
   year: '',
   make: '',
   model: '',
@@ -70,6 +92,7 @@ function jobToForm(job) {
 
   return {
     shop_name: job.shop_name || '',
+    ro_number: job.ro_number || '',
     year,
     make,
     model,
@@ -89,6 +112,7 @@ function jobToForm(job) {
 function formToJobData(form) {
   return {
     shop_name: form.shop_name,
+    ro_number: form.ro_number || '',
     vehicle: [form.year, form.make, form.model].filter(Boolean).join(' '),
     year: form.year,
     make: form.make,
@@ -110,6 +134,7 @@ function formToJobData(form) {
 function jobToPayload(job) {
   return {
     shop_name:        job.shop_name        || '',
+    ro_number:        job.ro_number        || '',
     vehicle:          job.vehicle          || [job.year, job.make, job.model].filter(Boolean).join(' '),
     year:             job.year             || '',
     make:             job.make             || '',
@@ -260,16 +285,30 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
 
-          {/* Shop name */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Shop Name</label>
-            <input
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2"
-              style={{ borderColor: '#ddd', focusRingColor: ORANGE }}
-              value={form.shop_name}
-              onChange={e => setField('shop_name', e.target.value)}
-              placeholder="e.g. Smith Auto Body"
-            />
+          {/* Shop name + RO# */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Shop Name</label>
+              <input
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                style={{ borderColor: '#ddd' }}
+                value={form.shop_name}
+                onChange={e => setField('shop_name', e.target.value)}
+                placeholder="e.g. Smith Auto Body"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">
+                RO # <span className="text-gray-300 font-normal">(Repair Order)</span>
+              </label>
+              <input
+                className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                style={{ borderColor: '#ddd' }}
+                value={form.ro_number}
+                onChange={e => setField('ro_number', e.target.value)}
+                placeholder="e.g. 12345"
+              />
+            </div>
           </div>
 
           {/* Vehicle */}
@@ -485,7 +524,19 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onCreateInvoices }) {
+  const [finding, setFinding] = useState(false)
+
+  async function handleOpenWorkDrive(e) {
+    e.stopPropagation()
+    if (job.folder_url) {
+      window.open(job.folder_url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    setFinding(true)
+    await onOpenWorkDrive(job)
+    setFinding(false)
+  }
   let calArr = []
   if (job.calibrations) {
     if (typeof job.calibrations === 'string') {
@@ -531,22 +582,34 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             </p>
           )}
         </div>
-        {/* Complete toggle button */}
-        <button
-          onClick={(e) => { e.stopPropagation(); onComplete(job) }}
-          title={isComplete ? 'Mark as Scheduled' : 'Mark Complete'}
-          className="flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all hover:scale-110"
-          style={{
-            borderColor: isComplete ? '#28a745' : '#ccc',
-            backgroundColor: isComplete ? '#28a745' : 'transparent',
-          }}
-        >
-          {isComplete && (
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {/* Delete button */}
+          <button
+            onClick={(e) => { e.stopPropagation(); if (window.confirm('Delete this job?')) onDelete(job) }}
+            title="Delete job"
+            className="w-6 h-6 rounded flex items-center justify-center text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
-          )}
-        </button>
+          </button>
+          {/* Complete toggle button */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onComplete(job) }}
+            title={isComplete ? 'Mark as Scheduled' : 'Mark Complete'}
+            className="flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all hover:scale-110"
+            style={{
+              borderColor: isComplete ? '#28a745' : '#ccc',
+              backgroundColor: isComplete ? '#28a745' : 'transparent',
+            }}
+          >
+            {isComplete && (
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2 6l3 3 5-5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Year / Make / Model */}
@@ -558,6 +621,21 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       {job.vin && (
         <p className="text-xs mb-1 font-mono" style={{ color: '#888' }}>
           VIN: {job.vin}
+        </p>
+      )}
+
+      {/* RO # */}
+      {job.ro_number && (
+        <p className="text-xs font-bold mb-1 font-mono" style={{ color: '#1a1a1a' }}>
+          <span className="font-normal" style={{ color: '#999' }}>RO# </span>{job.ro_number}
+        </p>
+      )}
+
+      {/* Job number (Zoho) */}
+      {(job.invoice_number || job.quote_number) && (
+        <p className="text-xs font-medium mb-1" style={{ color: '#6b7280' }}>
+          <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
+          {job.invoice_number || job.quote_number}
         </p>
       )}
 
@@ -579,35 +657,29 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </div>
       )}
 
-      {/* Calibrations chips */}
-      {calArr.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-2">
-          {calArr.map((c, i) => {
-            const label = c.name || c.type || ''
-            const modeLabel = c.mode && c.mode.toLowerCase() !== 'static' ? ` (${c.mode})` : ''
-            if (!label) return null
-            return (
-              <span
-                key={i}
-                className="text-xs px-1.5 py-0.5 rounded-md font-medium"
-                style={{ backgroundColor: '#fdf3ef', color: ORANGE }}
-              >
-                {label}{modeLabel}
-              </span>
-            )
-          })}
-        </div>
-      )}
+      {/* Calibrations chips + fixed PCSI & POST */}
+      <div className="flex flex-wrap gap-1 mb-2">
+        {calArr.map((c, i) => {
+          const label = c.name || c.type || ''
+          const modeLabel = c.mode && c.mode.toLowerCase() !== 'static' ? ` (${c.mode})` : ''
+          if (!label) return null
+          return (
+            <span
+              key={i}
+              className="text-xs px-1.5 py-0.5 rounded-md font-medium"
+              style={{ backgroundColor: '#fdf3ef', color: ORANGE }}
+            >
+              {label}{modeLabel}
+            </span>
+          )
+        })}
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
+      </div>
 
-      {/* Invoice number */}
-      {job.invoice_number && (
-        <p className="text-xs mb-1" style={{ color: '#666' }}>
-          <span style={{ color: '#999' }}>Invoice: </span>{job.invoice_number}
-        </p>
-      )}
 
       {/* Footer row */}
-      <div className="flex items-center justify-between mt-1">
+      <div className="flex items-center justify-between mt-1 mb-2">
         {dateStr ? (
           <span className="text-xs text-gray-400">{dateStr}</span>
         ) : <span />}
@@ -624,34 +696,68 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >
             {job.invoiced ? '✓ Invoiced' : 'Invoice'}
           </button>
-          {job.report_url && (
-            <a
-              href={job.report_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              className="text-xs font-medium underline"
-              style={{ color: ORANGE }}
-            >
-              Report
-            </a>
-          )}
-          {/* Delete button */}
-          <button
-            onClick={e => { e.stopPropagation(); onDelete(job) }}
-            className="text-xs font-semibold px-2 py-0.5 rounded-full border transition-all"
-            style={{ backgroundColor: 'transparent', color: '#e53e3e', borderColor: '#fed7d7' }}
-          >
-            Delete
-          </button>
+          <UploadButton job={job} />
         </div>
       </div>
+
+      {/* WorkDrive button — full-width iOS-style */}
+      <button
+        onClick={e => { e.stopPropagation(); handleOpenWorkDrive(e) }}
+        disabled={finding}
+        className="w-full flex items-center justify-center gap-2 rounded-xl transition-all"
+        style={{
+          backgroundColor: finding ? '#f5f5f7' : '#fff4f0',
+          border: `1.5px solid ${finding ? '#e8e8ed' : '#f5cfc3'}`,
+          padding: '10px 0',
+          minHeight: '44px',
+          opacity: finding ? 0.6 : 1,
+        }}
+      >
+        {finding ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={{ animation: 'spin 1s linear infinite' }}>
+            <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+            <circle cx="12" cy="13" r="4"/>
+          </svg>
+        )}
+        <span className="text-sm font-semibold" style={{ color: finding ? '#aaa' : ORANGE }}>
+          {finding ? 'Finding folder…' : 'Open in WorkDrive'}
+        </span>
+      </button>
+
+      {/* Create Invoices button — only on ready_invoice or complete */}
+      {job.invoiced ? (
+        <div className="w-full flex items-center justify-center gap-2 rounded-xl mt-2"
+          style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0', padding: '10px 0', minHeight: '44px' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span className="text-sm font-semibold" style={{ color: '#16a34a' }}>Invoiced</span>
+        </div>
+      ) : (job.status === 'ready_invoice' || job.status === 'complete') ? (
+        <button
+          onClick={e => { e.stopPropagation(); onCreateInvoices && onCreateInvoices(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl transition-all mt-2"
+          style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0', padding: '10px 0', minHeight: '44px' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span className="text-sm font-semibold" style={{ color: '#16a34a' }}>Create Invoices</span>
+        </button>
+      ) : (
+        <div className="w-full flex items-center justify-center gap-2 rounded-xl mt-2"
+          style={{ backgroundColor: '#fafafa', border: '1.5px solid #e5e7eb', padding: '10px 0', minHeight: '44px', opacity: 0.5 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="#aaa" strokeWidth="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span className="text-xs font-medium text-gray-400">Move to Ready to Invoice first</span>
+        </div>
+      )}
     </div>
   )
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onCreateInvoices, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -702,6 +808,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onComplete={onComplete}
             onToggleInvoiced={onToggleInvoiced}
             onDelete={onDelete}
+            onOpenWorkDrive={onOpenWorkDrive}
+            onCreateInvoices={onCreateInvoices}
           />
         ))}
         {jobs.length === 0 && !isOver && (
@@ -716,6 +824,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
 
 // ─── Main Kanban Board ─────────────────────────────────────────────────────────
 export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onNavigate }) {
+  const isMobile = useIsMobile()
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -723,10 +832,13 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragJob, setDragJob] = useState(null)
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
+  const [invoicingJob, setInvoicingJob] = useState(null)
   const [search, setSearch] = useState('')
   const [regionFilter, setRegionFilter] = useState('')
   const [techFilter, setTechFilter] = useState('')
   const [syncing, setSyncing] = useState(false)
+  const [completions, setCompletions] = useState([])
+  const [getSome, setGetSome] = useState(false)
 
   function showToast(msg) {
     setToast(msg)
@@ -748,6 +860,13 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   }, [])
 
   useEffect(() => { fetchJobs() }, [fetchJobs])
+
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/jobs/completions`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setCompletions(Array.isArray(data) ? data : []))
+      .catch(() => {})
+  }, [])
 
   // Save (create or update)
   async function handleSave(form, originalJob) {
@@ -859,6 +978,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
       if (colId === 'complete' && previousStatus !== 'complete') {
         checkConfetti(dragJob.technician, jobs, dragJob.id)
+        setGetSome(true); setTimeout(() => setGetSome(false), 3000)
+        apiFetch(`${API_BASE}/api/jobs/completions`).then(r => r.ok ? r.json() : null).then(d => d && setCompletions(d)).catch(() => {})
       }
       await fetchJobs()
     } catch (e) {
@@ -888,6 +1009,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       }
       if (newStatus === 'complete') {
         checkConfetti(job.technician, jobs, job.id)
+        setGetSome(true); setTimeout(() => setGetSome(false), 3000)
+        // Refresh completion stats
+        apiFetch(`${API_BASE}/api/jobs/completions`).then(r => r.ok ? r.json() : null).then(d => d && setCompletions(d)).catch(() => {})
       }
     } catch (e) {
       setJobs(prev => prev.map(j => j.id === job.id ? job : j))
@@ -915,6 +1039,23 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     }
   }
 
+  async function handleOpenWorkDrive(job) {
+    // If folder_url is already on the job, open it immediately without an API call
+    if (job.folder_url) {
+      window.open(job.folder_url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    // Otherwise ask the backend to find the folder
+    try {
+      const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}/workdrive-folder`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Folder not found')
+      window.open(data.folderUrl, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      showToast('WorkDrive: ' + e.message)
+    }
+  }
+
   function openNewJob(defaultStatus) {
     setModalJob({ defaultStatus })
   }
@@ -923,13 +1064,19 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     setModalJob(job)
   }
 
+  // Role-based auto-filter: technicians only see their own jobs
+  const isTechnician = user?.role === 'technician'
+  const myTechName   = user?.techName || ''
+
   // Derive unique region and technician lists for filter dropdowns
   const allRegions = [...new Set(jobs.map(j => j.region).filter(Boolean))].sort()
   const allTechs   = [...new Set(jobs.map(j => j.technician).filter(Boolean))].sort()
 
   const visibleJobs = jobs.filter(j => {
-    if (regionFilter && j.region !== regionFilter) return false
-    if (techFilter && j.technician !== techFilter) return false
+    // Technicians are locked to their own jobs regardless of other filters
+    if (isTechnician && (j.technician || '').toLowerCase() !== myTechName.toLowerCase()) return false
+    if (!isTechnician && regionFilter && j.region !== regionFilter) return false
+    if (!isTechnician && techFilter && j.technician !== techFilter) return false
     if (search.trim()) {
       const q = search.toLowerCase()
       const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
@@ -955,14 +1102,14 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
       {/* Board */}
-      <main className="flex-1 flex flex-col overflow-hidden" style={{ padding: '1.5rem 1.5rem 0' }}>
+      <main className="flex-1 flex flex-col overflow-hidden mx-auto w-full" style={{ padding: isMobile ? '1rem' : '1.5rem 2.5rem', maxWidth: '1440px', margin: isMobile ? '0 auto' : '16px auto' }}>
         {/* Toolbar — always visible after initial load */}
         {!loading && (
           <div className="mb-4" style={{ width: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 {!error && (
-                  <div className="relative" style={{ width: '220px' }}>
+                  <div className="relative" style={{ width: isMobile ? '100%' : '220px' }}>
                     <svg
                       className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
                       width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -993,7 +1140,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                     {allRegions.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                 )}
-                {allTechs.length > 0 && (
+                {allTechs.length > 0 && !isTechnician && (
                   <select
                     value={techFilter}
                     onChange={e => setTechFilter(e.target.value)}
@@ -1006,14 +1153,14 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 )}
                 {(search || regionFilter || techFilter) && (
                   <button
-                    onClick={() => { setSearch(''); setRegionFilter(''); setTechFilter('') }}
+                    onClick={() => { setSearch(''); setRegionFilter(''); if (!isTechnician) setTechFilter('') }}
                     className="text-xs font-medium px-3 py-1.5 rounded-lg"
                     style={{ color: '#888', backgroundColor: '#f0eeec' }}
                   >
                     Clear
                   </button>
                 )}
-                {(search || regionFilter || techFilter) && (
+                {(search || regionFilter || techFilter || isTechnician) && (
                   <span className="text-xs" style={{ color: '#aaa' }}>
                     {visibleJobs.length} of {jobs.length} jobs
                   </span>
@@ -1035,7 +1182,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   }
                 }}
                 disabled={syncing}
-                className="text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1.5"
+                className="hidden md:flex text-xs font-medium px-3 py-1.5 rounded-lg items-center gap-1.5"
                 style={{ color: syncing ? '#aaa' : ORANGE, border: `1px solid ${syncing ? '#e0dbd6' : ORANGE}`, backgroundColor: 'white', flexShrink: 0 }}
               >
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
@@ -1043,11 +1190,59 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
                   <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
                 </svg>
-                {syncing ? 'Syncing…' : 'Sync Quotes'}
+                {syncing ? 'Syncing…' : 'Sync Insurance Invoice Drafts'}
               </button>
             </div>
           </div>
         )}
+
+        {/* ── Tech Completion Stats ── */}
+        {(() => {
+          const today = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
+          const last7 = Array.from({ length: 7 }, (_, i) => {
+            const d = new Date(); d.setDate(d.getDate() - i)
+            return d.toLocaleDateString('en-CA')
+          })
+          // Group by tech + date
+          const byTechDate = {}
+          for (const c of completions) {
+            const date = new Date(c.completedAt).toLocaleDateString('en-CA')
+            if (!last7.includes(date)) continue
+            const tech = c.tech || 'Unknown'
+            if (!byTechDate[tech]) byTechDate[tech] = {}
+            byTechDate[tech][date] = (byTechDate[tech][date] || 0) + 1
+          }
+          const techs = Object.keys(byTechDate).sort()
+          if (techs.length === 0) return null
+          return (
+            <div className="mb-3 flex flex-wrap gap-3">
+              {techs.map(tech => {
+                const todayCount = byTechDate[tech][today] || 0
+                const weekTotal  = Object.values(byTechDate[tech]).reduce((a, b) => a + b, 0)
+                return (
+                  <div
+                    key={tech}
+                    className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm"
+                    style={{ backgroundColor: '#f9f8f7', border: '1px solid #ebebeb' }}
+                  >
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                      style={{ backgroundColor: ORANGE }}>
+                      {tech.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="font-semibold" style={{ color: '#1a1a1a' }}>{tech}</span>
+                    <span className="font-bold text-base" style={{ color: ORANGE }}>{todayCount}</span>
+                    <span className="text-xs" style={{ color: '#aaa' }}>today</span>
+                    {weekTotal > todayCount && (
+                      <span className="text-xs px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f0ece8', color: '#888' }}>
+                        {weekTotal} this week
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })()}
 
         {loading ? (
           <div className="flex items-center justify-center h-64">
@@ -1070,31 +1265,49 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-x-auto pb-4" onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCol(null)
-            }}>
-          <div
-            className="flex gap-4"
-            style={{ alignItems: 'flex-start', minHeight: '100%' }}
-          >
-            {COLUMNS.map(col => (
-              <KanbanColumn
-                key={col.id}
-                column={col}
-                jobs={jobsByStatus[col.id] || []}
-                onEdit={openEdit}
-                onNewJob={openNewJob}
-                onDragStart={onDragStart}
-                onDragOver={onDragOver}
-                onDrop={onDrop}
-                onComplete={handleComplete}
-                onToggleInvoiced={handleToggleInvoiced}
-                onDelete={handleDelete}
-                dragOverCol={dragOverCol}
-              />
-            ))}
-          </div>
-          </div>
+          <>
+            {/* ── Mobile: flat scrollable card list ── */}
+            <div className="md:hidden flex-1 overflow-y-auto">
+              <div className="flex flex-col gap-3 pb-6">
+                {visibleJobs.length === 0 ? (
+                  <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs found</p>
+                ) : (
+                  visibleJobs.map(job => (
+                    <MobileJobCard key={job.ROWID || job.id} job={job} onEdit={openEdit} />
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* ── Desktop: horizontal Kanban columns ── */}
+            <div className="hidden md:flex flex-1 overflow-x-auto pb-4" onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCol(null)
+              }}>
+            <div
+              className="flex gap-4"
+              style={{ alignItems: 'flex-start', minHeight: '100%' }}
+            >
+              {COLUMNS.map(col => (
+                <KanbanColumn
+                  key={col.id}
+                  column={col}
+                  jobs={jobsByStatus[col.id] || []}
+                  onEdit={openEdit}
+                  onNewJob={openNewJob}
+                  onDragStart={onDragStart}
+                  onDragOver={onDragOver}
+                  onDrop={onDrop}
+                  onComplete={handleComplete}
+                  onToggleInvoiced={handleToggleInvoiced}
+                  onDelete={handleDelete}
+                  onOpenWorkDrive={handleOpenWorkDrive}
+                  onCreateInvoices={setInvoicingJob}
+                  dragOverCol={dragOverCol}
+                />
+              ))}
+            </div>
+            </div>
+          </>
         )}
       </main>
 
@@ -1109,6 +1322,48 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
         />
       )}
 
+      {/* Create Invoices Modal */}
+      {invoicingJob && (
+        <CreateInvoicesModal
+          job={invoicingJob}
+          onClose={() => setInvoicingJob(null)}
+          onCreated={async (invoiceNums) => {
+            // Auto-mark the job as invoiced + complete
+            try {
+              const patch = { invoiced: true, status: 'complete' }
+              if (invoiceNums) {
+                // Store the generated invoice numbers on the job for reference
+                const nums = [invoiceNums.insurance, invoiceNums.shop].filter(Boolean).join(', ')
+                if (nums) patch.invoice_number = nums
+              }
+              await apiFetch(`${API_BASE}/api/jobs/${invoicingJob.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(patch),
+              })
+            } catch (e) {
+              console.warn('Could not auto-mark job invoiced:', e.message)
+            }
+            setInvoicingJob(null)
+            showToast('✅ Invoices created — job marked complete & invoiced!')
+            fetchJobs()
+          }}
+        />
+      )}
+
+      {/* "Get some!" celebration pop */}
+      {getSome && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl"
+          style={{ backgroundColor: '#1a1a1a', border: `2px solid ${ORANGE}`, animation: 'fadeInUp 0.3s ease' }}
+        >
+          <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0"
+            style={{ backgroundColor: ORANGE }}>M</div>
+          <span className="text-white font-bold text-base">Get some!</span>
+          <span className="text-2xl">💪</span>
+        </div>
+      )}
+
       {/* Error toast */}
       {toast && (
         <div
@@ -1118,6 +1373,133 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           {toast}
         </div>
       )}
+    </div>
+  )
+}
+
+function UploadButton({ job }) {
+  const [uploading, setUploading] = useState(false)
+  const [done, setDone] = useState(false)
+  const inputRef = useRef(null)
+
+  async function handleFiles(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setUploading(true)
+    try {
+      for (const file of files) {
+        const formData = new FormData()
+        formData.append('file', file)
+        const jobId = String(job.ROWID || job.id || '')
+        const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}/upload-photo`, {
+          method: 'POST',
+          body: formData,
+        })
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          throw new Error(d.error || 'Upload failed')
+        }
+      }
+      setDone(true)
+      setTimeout(() => setDone(false), 3000)
+    } catch (err) {
+      alert('Upload failed: ' + err.message)
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleFiles}
+      />
+      <button
+        onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}
+        disabled={uploading}
+        className="text-xs font-medium px-2 py-1 rounded-md flex items-center gap-1"
+        style={{
+          backgroundColor: done ? '#edfaf3' : '#f5f3f0',
+          color: done ? '#166534' : '#CD4419',
+          border: `1px solid ${done ? '#bbf7d0' : '#e8d5ce'}`,
+          opacity: uploading ? 0.6 : 1,
+        }}
+        title="Upload photos or files to WorkDrive"
+      >
+        {uploading ? '⏳' : done ? '✓' : '📷'} {uploading ? 'Uploading…' : done ? 'Uploaded!' : 'Upload'}
+      </button>
+    </>
+  )
+}
+
+function MobileJobCard({ job, onEdit }) {
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const statusLabel = COLUMNS.find(c => c.id === job.status)?.label || job.status
+
+  const statusColors = {
+    need_dispatch:    { bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
+    dispatched_jaden: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+    dispatched_mark:  { bg: '#f0fdf4', color: '#15803d', border: '#bbf7d0' },
+    pending_parts:    { bg: '#fefce8', color: '#a16207', border: '#fde68a' },
+    ready_invoice:    { bg: '#fdf4ff', color: '#7e22ce', border: '#e9d5ff' },
+    complete:         { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0' },
+  }
+  const sc = statusColors[job.status] || { bg: '#f5f3f0', color: '#555', border: '#e0dbd6' }
+
+  let cals = []
+  if (job.calibrations) {
+    try {
+      cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : job.calibrations
+    } catch { cals = [] }
+  }
+
+  return (
+    <div
+      onClick={() => onEdit(job)}
+      className="rounded-xl p-4 active:opacity-80"
+      style={{ backgroundColor: 'white', border: '1px solid #e8e4e0', cursor: 'pointer' }}
+    >
+      {/* Top row: shop + status badge */}
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <span className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>{job.shop_name || 'No shop'}</span>
+        <span className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
+          style={{ backgroundColor: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}>
+          {statusLabel}
+        </span>
+      </div>
+
+      {/* Vehicle */}
+      <p className="text-sm mb-1" style={{ color: '#555' }}>{vehicle || 'Unknown vehicle'}</p>
+
+      {/* Technician + date row */}
+      <div className="flex items-center gap-3 text-xs mb-2" style={{ color: '#aaa' }}>
+        {job.technician && <span>👤 {job.technician}</span>}
+        {job.scheduled_date && <span>📅 {job.scheduled_date}</span>}
+        {job.insurer && <span>🏢 {job.insurer}</span>}
+      </div>
+
+      {/* Calibrations + fixed items (PCSI & POST always show) */}
+      <div className="flex flex-wrap gap-1">
+        {cals.slice(0, 4).map((c, i) => (
+          <span key={i} className="text-xs px-1.5 py-0.5 rounded-md"
+            style={{ backgroundColor: '#f5f3f0', color: '#888' }}>
+            {c.name || c.calibration_name || c}
+          </span>
+        ))}
+        {cals.length > 4 && (
+          <span className="text-xs px-1.5 py-0.5 rounded-md" style={{ backgroundColor: '#f5f3f0', color: '#aaa' }}>
+            +{cals.length - 4} more
+          </span>
+        )}
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
+      </div>
     </div>
   )
 }

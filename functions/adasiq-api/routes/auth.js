@@ -17,6 +17,14 @@ if (!LOGIN_CLIENT_ID || !LOGIN_CLIENT_SECRET) {
   console.error('❌ ZOHO_LOGIN_CLIENT_ID and ZOHO_LOGIN_CLIENT_SECRET must be set as environment variables.')
 }
 
+// Role map — keyed by lowercase email. Unrecognised users get admin by default.
+const USER_ROLES = {
+  'jaden@absoluteadas.com': { role: 'technician', techName: 'Jaden' },
+}
+function applyRole(email) {
+  return USER_ROLES[(email || '').toLowerCase()] || { role: 'admin' }
+}
+
 // ── Token helpers (stateless JWT-like, no library needed) ─────────────────────
 
 function makeToken(user) {
@@ -105,6 +113,7 @@ router.post('/exchange', async (req, res) => {
       name:    profile.name || profile.display_name || profile.email || 'Team Member',
       email:   profile.email || '',
       picture: profile.picture || null,
+      ...applyRole(profile.email),
     }
 
     req.session.user = user
@@ -117,10 +126,15 @@ router.post('/exchange', async (req, res) => {
   }
 })
 
-// GET /auth/me — session cookie only (Fix #3)
+// GET /auth/me — check token first (includes role), fall back to session cookie
 router.get('/me', (req, res) => {
   if (process.env.SKIP_AUTH === 'true') {
-    return res.json({ name: 'Test User', email: 'test@absoluteadas.com', picture: null })
+    return res.json({ name: 'Test User', email: 'test@absoluteadas.com', picture: null, role: 'admin' })
+  }
+  const headerToken = req.headers['x-auth-token']
+  if (headerToken) {
+    const user = verifyToken(headerToken)
+    if (user) return res.json(user)
   }
   if (req.session?.user) return res.json(req.session.user)
   res.status(401).json({ error: 'Not authenticated' })

@@ -5,6 +5,7 @@
     "type": "advancedio"
   },
   "execution": {
-    "main": "index.js"
+    "main": "index.js",
+    "timeout": 540
   }
 }

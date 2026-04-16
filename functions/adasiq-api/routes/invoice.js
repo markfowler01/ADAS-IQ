@@ -2,6 +2,7 @@ import express from 'express'
 import axios from 'axios'
 import Anthropic from '@anthropic-ai/sdk'
 import { createDraftQuote } from '../services/zoho.js'
+import { saveCalibrationAsRule } from '../services/calibrationRulesService.js'
 
 // Clean up technician notes into professional line item descriptions (single batched call)
 async function cleanDescriptions(calibrations) {
@@ -95,6 +96,18 @@ async function appendHistory(entry, req) {
 router.post('/', async (req, res) => {
   const { customerId, customerName, salespersonId, salespersonName, shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, pdfBase64, pdfFilename, notes } = req.body
 
+  // Demo mode — return a realistic-looking fake invoice without hitting Zoho Books
+  if (req.user?.demo) {
+    const demoEstimateNum = `EST-DEMO-${String(Math.floor(Math.random() * 9000) + 1000)}`
+    return res.json({
+      estimate_id: `demo-${Date.now()}`,
+      estimate_number: demoEstimateNum,
+      estimate_url: '#',
+      workdrive_url: 'https://workdrive.zohoexternal.com/demo',
+      _demo: true,
+    })
+  }
+
   try {
     // Clean up technician notes before sending to Zoho Books
     const cleanedCalibrations = calibrations?.length
@@ -120,6 +133,14 @@ router.post('/', async (req, res) => {
       pdfFilename: pdfFilename || null,
       notes: notes || null,
     })
+
+    // Auto-save enabled calibrations as rules to grow the DB over time (non-blocking)
+    if (make && year && cleanedCalibrations?.length) {
+      const enabledCals = cleanedCalibrations.filter(c => c.enabled !== false)
+      for (const cal of enabledCals) {
+        saveCalibrationAsRule(req, { make, model, year, calibration: cal }).catch(() => {})
+      }
+    }
 
     // History is written by the client (ToggleBoard / ManualQuoteScreen) after this response,
     // so we do NOT write it here — that would create duplicate history entries.

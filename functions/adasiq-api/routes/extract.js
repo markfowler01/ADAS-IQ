@@ -1,6 +1,7 @@
 import express from 'express'
 import multer from 'multer'
 import { extractFromPdf } from '../services/claude.js'
+import { crossReferenceRules, saveCalibrationAsRule } from '../services/calibrationRulesService.js'
 
 const router = express.Router()
 
@@ -138,6 +139,45 @@ router.post('/', (req, res, next) => {
 
   try {
     const data = await extractFromPdf(req.file.buffer)
+
+    // Fallback: if no RO number found, use last 8 digits of VIN
+    if (!data.ro_number && data.vin && data.vin.length >= 8) {
+      const vinLast8 = data.vin.slice(-8)
+      data.ro_number = vinLast8
+      data._ro_from_vin = true
+      console.log(`[extract] No RO number found — using last 8 of VIN: ${vinLast8}`)
+    }
+
+    // For CCC estimates, cross-reference against the rules DB to catch anything the AI missed
+    if (data._pdfType === 'CCC') {
+      const repairText = (data._repairText || '') + ' ' +
+        (data.calibrations || []).map(c => c.trigger || '').join(' ')
+      const vehicleEquipment = (data._vehicleEquipment || '') + ' ' +
+        (data.calibrations || []).map(c => c.calibration_name || '').join(' ')
+
+      const additional = await crossReferenceRules(req, data, repairText, vehicleEquipment)
+      if (additional.length > 0) {
+        console.log(`[extract] Rules DB added ${additional.length} additional calibration(s)`)
+        data.calibrations = [...(data.calibrations || []), ...additional]
+      }
+    }
+
+    // Auto-learn: save all detected calibrations as rules (non-blocking, runs after response)
+    // Applies to every PDF type — CCC, Kinetic, and any future formats
+    if (!data._demo && data.make && data.year && data.calibrations?.length) {
+      setImmediate(() => {
+        for (const cal of data.calibrations) {
+          saveCalibrationAsRule(req, {
+            make: data.make,
+            model: data.model || '',
+            year: data.year,
+            calibration: cal,
+          }).catch(() => {})
+        }
+        console.log(`[extract] Auto-learned ${data.calibrations.length} calibration(s) for ${data.year} ${data.make} ${data.model}`)
+      })
+    }
+
     res.json(data)
   } catch (err) {
     console.error('[extract] ERROR:', err.message)

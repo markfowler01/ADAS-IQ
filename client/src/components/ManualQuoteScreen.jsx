@@ -335,14 +335,14 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
         <Section title="Customer">
           <CustomerPicker
             shopName=""
-            onSelect={(c) => setSelectedCustomer(c ? { id: c.contact_id, name: c.contact_name } : null)}
+            onSelect={(c) => setSelectedCustomer(c || null)}
           />
         </Section>
 
         {/* Salesperson */}
         <Section title="Salesperson">
           <SalespersonPicker
-            onSelect={(s) => setSelectedSalesperson(s ? { id: s.user_id, name: s.name } : null)}
+            onSelect={(s) => setSelectedSalesperson(s || null)}
           />
         </Section>
 

@@ -3,9 +3,15 @@
   "configurations": [
     {
       "name": "adas-iq-client",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "client"],
+      "runtimeExecutable": "/usr/local/bin/npm",
+      "runtimeArgs": ["run", "dev"],
       "port": 5173
+    },
+    {
+      "name": "signature-preview",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-p", "5200", "."],
+      "port": 5200
     }
   ]
 }

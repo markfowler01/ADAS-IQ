@@ -4,6 +4,7 @@ import { generateADASIQPdf } from './pdf.js'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 const ZOHO_API_BASE = 'https://www.zohoapis.com/books/v3'  // Zoho Books
+const ZOHO_EXPENSE_API = 'https://www.zohoapis.com/expense/v1'  // Zoho Expense
 
 /**
  * Generate shop initials from a shop name.
@@ -62,7 +63,7 @@ function orgParam() {
 
 /**
  * Fetch all customers from Zoho Books.
- * Returns array of { contact_id, contact_name }
+ * Returns array of { contact_id, contact_name, company_name, email, phone, mobile, billing_address }
  */
 export async function listCustomers() {
   const token = await getAccessToken()
@@ -77,9 +78,16 @@ export async function listCustomers() {
       timeout: 10000,
     })
     const contacts = res.data?.contacts || []
-    allContacts = allContacts.concat(
-      contacts.map((c) => ({ contact_id: c.contact_id, contact_name: c.contact_name }))
-    )
+    allContacts = allContacts.concat(contacts.map((c) => ({
+      contact_id:      c.contact_id,
+      contact_name:    c.contact_name,
+      company_name:    c.company_name    || '',
+      email:           c.email           || '',
+      phone:           c.phone           || '',
+      mobile:          c.mobile          || '',
+      status:          c.status          || 'active',
+      billing_address: c.billing_address || {},
+    })))
     hasMore = res.data?.page_context?.has_more_page === true
     page++
   }
@@ -630,6 +638,143 @@ export async function listAllEstimates() {
 }
 
 /**
+ * Create a draft repair estimate in Zoho Books.
+ * Uses raw line items (parts + labor) — no catalog matching needed.
+ */
+export async function createRepairDraftQuote({
+  customerId, customerName, salespersonId, salespersonName,
+  shop, ro_number, vin, vehicle, year, make, model, insurer, claim,
+  parts, laborLines, laborRate, notes,
+}) {
+  const token = await getAccessToken()
+
+  // Build line items from parts
+  const lineItems = []
+  for (const part of (parts || [])) {
+    if (!part.name) continue
+    const cost = parseFloat(part.cost) || 0
+    const mult = parseFloat(part.multiplier) || 1
+    const price = parseFloat(part.customerPrice) || cost * mult
+    lineItems.push({
+      name:     part.name,
+      rate:     Math.round(price * 100) / 100,
+      quantity: 1,
+    })
+  }
+
+  // Labor line items (one per labor line)
+  for (const line of (laborLines || [])) {
+    const hrs = parseFloat(line.hours) || 0
+    if (!hrs) continue
+    lineItems.push({
+      name:        line.description || 'Labor',
+      description: `${hrs} flat rate ${hrs === 1 ? 'hour' : 'hours'} @ $${laborRate}/hr`,
+      rate:        Math.round(hrs * laborRate * 100) / 100,
+      quantity:    1,
+    })
+  }
+
+  // Notes
+  const notesLines = [
+    notes   ? notes.trim()       : null,
+    vin     ? `VIN: ${vin}`      : null,
+    insurer ? `Insurer: ${insurer}` : null,
+    claim   ? `Claim: ${claim}`  : null,
+  ].filter(Boolean)
+
+  // Custom fields
+  const baseCustomFields = [
+    year      ? { label: 'Year',    value: year      } : null,
+    make      ? { label: 'Make',    value: make      } : null,
+    model     ? { label: 'Model',   value: model     } : null,
+    ro_number ? { label: 'RO#',     value: ro_number } : null,
+    vin       ? { label: 'VIN',     value: vin       } : null,
+    insurer   ? { label: 'Insurer', value: insurer   } : null,
+  ].filter(Boolean)
+
+  const initials      = getShopInitials(customerName || shop)
+  const estimateNumber = initials && ro_number ? `${initials} ${ro_number}` : ro_number || ''
+
+  const body = {
+    estimate_number:  estimateNumber,
+    reference_number: ro_number || '',
+    notes:            notesLines.join('\n'),
+    custom_fields:    baseCustomFields,
+    line_items:       lineItems,
+    status:           'draft',
+  }
+  if (customerId)      body.customer_id      = customerId
+  if (salespersonName) body.salesperson_name = salespersonName
+
+  // Create with retry on duplicate number
+  let res
+  let attempt = 0
+  const MAX_ATTEMPTS = 10
+
+  while (attempt < MAX_ATTEMPTS) {
+    const suffix        = attempt === 0 ? '' : `.${attempt}`
+    const currentNumber = `${estimateNumber}${suffix}`
+    const currentRO     = `${ro_number || ''}${suffix}`
+
+    if (attempt > 0) {
+      console.log(`[repair-estimate] Duplicate — retrying with "${currentNumber}"`)
+    }
+
+    body.estimate_number = currentNumber
+    body.custom_fields   = baseCustomFields.map(cf =>
+      cf.label === 'RO#' ? { ...cf, value: currentRO } : cf
+    )
+
+    try {
+      res = await axios.post(`${ZOHO_API_BASE}/estimates`, body, {
+        headers: zohoHeaders(token),
+        params:  orgParam(),
+        timeout: 15000,
+      })
+    } catch (axiosErr) {
+      const data     = axiosErr.response?.data
+      const zohoMsg  = (typeof data === 'object' ? data?.message : null) || axiosErr.message
+      const zohoCode = typeof data === 'object' ? data?.code : null
+      const errMsg   = zohoMsg.toLowerCase()
+      const isDup    =
+        zohoCode === 120303 || zohoCode === 1004 ||
+        errMsg.includes('added already') || errMsg.includes('already exists') ||
+        errMsg.includes('already been used') || errMsg.includes('unique value') ||
+        errMsg.includes('duplicate')
+      if (isDup) { attempt++; continue }
+      throw new Error(`Zoho Books error: "${zohoMsg}"`)
+    }
+
+    if (res.data?.code === 0) break
+
+    const resCode  = res.data?.code
+    const msg      = res.data?.message?.toLowerCase() || ''
+    const isDup    =
+      resCode === 120303 || resCode === 1004 ||
+      msg.includes('added already') || msg.includes('already exists') ||
+      msg.includes('already been used') || msg.includes('unique value') ||
+      msg.includes('duplicate')
+    if (isDup) { attempt++; continue }
+
+    throw new Error(res.data?.message || `Zoho Books estimate failed (code ${res.data?.code})`)
+  }
+
+  if (!res || res.data?.code !== 0) {
+    throw new Error(`Could not find a unique estimate number after ${MAX_ATTEMPTS} attempts.`)
+  }
+
+  const estimate  = res.data.estimate
+  const estimateId = estimate.estimate_id
+  const orgId     = process.env.ZOHO_ORGANIZATION_ID
+
+  return {
+    quoteId:     estimateId,
+    quoteNumber: estimate.estimate_number,
+    quoteUrl:    `https://books.zoho.com/app#/estimates/${estimateId}?organization_id=${orgId}`,
+  }
+}
+
+/**
  * Fetch full estimate details including line items.
  * Used by sync-quotes to populate calibrations on the job card.
  */
@@ -657,5 +802,147 @@ export async function getEstimateLineItems(estimateId) {
   } catch (err) {
     console.warn(`[zoho] Could not fetch line items for estimate ${estimateId}:`, err.message)
     return []
+  }
+}
+
+// ── Vehicle Expense helpers ─────────────────────────────────────────────────
+
+/**
+ * Fetch expense accounts from Zoho Books (Chart of Accounts filtered to Expense type).
+ * Returns [{ account_id, account_name }]
+ */
+export async function getExpenseAccounts() {
+  const token = await getAccessToken()
+  const res = await axios.get(`${ZOHO_API_BASE}/chartofaccounts`, {
+    headers: zohoHeaders(token),
+    params: { ...orgParam(), account_type: 'expense', filter_by: 'Status.Active' },
+    timeout: 15000,
+  })
+  return (res.data?.chartofaccounts || []).map(a => ({
+    account_id: a.account_id,
+    account_name: a.account_name,
+  }))
+}
+
+/**
+ * Create an expense in Zoho Books.
+ * @param {{ account_id, date, amount, description, reference_number, vehicle_name }} data
+ * @returns {{ expense_id, expense_number }}
+ */
+export async function createExpense({ account_id, date, amount, description, reference_number, vehicle_name }) {
+  const token = await getAccessToken()
+  const body = {
+    account_id,
+    date,
+    amount: Number(amount),
+    description: description || '',
+    reference_number: reference_number || '',
+    is_billable: false,
+  }
+  // Add vehicle name as custom field or in description
+  if (vehicle_name) {
+    body.description = `[${vehicle_name}] ${body.description}`.trim()
+  }
+
+  const res = await axios.post(`${ZOHO_API_BASE}/expenses`, body, {
+    headers: zohoHeaders(token),
+    params: orgParam(),
+    timeout: 15000,
+  })
+
+  const expense = res.data?.expense
+  if (!expense?.expense_id) {
+    console.error('[zoho] Create expense response:', JSON.stringify(res.data))
+    throw new Error('Failed to create expense in Zoho Books')
+  }
+
+  console.log(`[zoho] Created expense ${expense.expense_id} — $${amount} for ${vehicle_name}`)
+  return { expense_id: expense.expense_id, expense_number: expense.expense_number || '' }
+}
+
+// ── Zoho Expense — Mileage ──────────────────────────────────────────────────
+
+/**
+ * Fetch mileage expense reports from Zoho Expense.
+ * Uses the Trip/Mileage endpoint: GET /trips or GET /expensereports with category filter.
+ * @param {{ page, per_page }} opts
+ * @returns {{ trips: Array, has_more: boolean }}
+ */
+export async function getMileageTrips({ page = 1, per_page = 50 } = {}) {
+  const token = await getAccessToken()
+  try {
+    // Try the trips/mileage endpoint first
+    const res = await axios.get(`${ZOHO_EXPENSE_API}/trips`, {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+      params: {
+        organization_id: process.env.ZOHO_ORGANIZATION_ID,
+        page,
+        per_page,
+        sort_column: 'start_date',
+        sort_order: 'D',
+      },
+      timeout: 15000,
+    })
+    const trips = res.data?.trips || []
+    const pageContext = res.data?.page_context || {}
+    console.log(`[zoho-expense] Fetched ${trips.length} trips (page ${page})`)
+    return {
+      trips: trips.map(t => ({
+        trip_id: t.trip_id,
+        trip_number: t.trip_number,
+        start_date: t.start_date,
+        end_date: t.end_date,
+        destination: t.destination_place || t.destination || '',
+        source: t.source_place || t.source || '',
+        distance: t.distance || 0,
+        unit: t.unit || 'mi',
+        amount: t.total || t.amount || 0,
+        status: t.status || '',
+        description: t.description || '',
+      })),
+      has_more: pageContext.has_more_page || false,
+    }
+  } catch (err) {
+    // If trips endpoint fails, try expense_reports with mileage filter
+    console.warn('[zoho-expense] Trips endpoint failed, trying expense reports:', err.response?.status, err.response?.data?.message || err.message)
+
+    try {
+      const res = await axios.get(`${ZOHO_EXPENSE_API}/expensereports`, {
+        headers: { Authorization: `Zoho-oauthtoken ${token}` },
+        params: {
+          organization_id: process.env.ZOHO_ORGANIZATION_ID,
+          page,
+          per_page,
+          sort_column: 'created_time',
+          sort_order: 'D',
+        },
+        timeout: 15000,
+      })
+      const reports = res.data?.expense_reports || []
+      console.log(`[zoho-expense] Fetched ${reports.length} expense reports`)
+      return {
+        trips: reports.map(r => ({
+          trip_id: r.report_id,
+          trip_number: r.report_number,
+          start_date: r.start_date || r.created_date,
+          end_date: r.end_date || '',
+          destination: r.report_name || '',
+          source: '',
+          distance: r.mileage || 0,
+          unit: 'mi',
+          amount: r.total || 0,
+          status: r.status || '',
+          description: r.description || '',
+        })),
+        has_more: (res.data?.page_context?.has_more_page) || false,
+      }
+    } catch (err2) {
+      console.error('[zoho-expense] Both endpoints failed:', err2.response?.status, err2.response?.data || err2.message)
+      throw new Error(
+        err2.response?.status === 401 || err2.response?.status === 403
+          ? 'Zoho Expense access not authorized. Add ZohoExpense scopes to the OAuth client in api-console.zoho.com.'
+          : `Failed to fetch mileage data: ${err2.response?.data?.message || err2.message}`
+      )
+    }
   }
 }
