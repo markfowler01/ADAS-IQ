@@ -3,12 +3,12 @@ import { API_BASE, apiFetch, ORANGE, fmt } from './shared'
 
 export default function ServicesTab({ services, onRefresh }) {
   const [editSvc, setEditSvc] = useState(null)   // null=none, false=new, object=edit
-  const [form, setForm] = useState({ name: '', category: 'Calibration', unit_price: 0, active: true })
+  const [form, setForm] = useState({ name: '', category: 'Calibration', unit_price: 0, cost_of_goods: 0, active: true })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
   function openNew() {
-    setForm({ name: '', category: 'Calibration', unit_price: 0, active: true })
+    setForm({ name: '', category: 'Calibration', unit_price: 0, cost_of_goods: 0, active: true })
     setEditSvc(false)
   }
 
@@ -111,6 +111,17 @@ export default function ServicesTab({ services, onRefresh }) {
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
                   style={{ borderColor: '#e5e7eb' }}
                   value={form.unit_price} onChange={e => setForm(f => ({ ...f, unit_price: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">
+                  Cost of Goods ($) <span className="font-normal text-gray-400">— consumables, tool wear per calibration</span>
+                </label>
+                <input type="number" min="0" step="0.01"
+                  placeholder="e.g. 15"
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                  style={{ borderColor: '#e5e7eb' }}
+                  value={form.cost_of_goods || 0}
+                  onChange={e => setForm(f => ({ ...f, cost_of_goods: e.target.value }))} />
               </div>
             </div>
             <div className="flex items-center gap-2 mb-4">

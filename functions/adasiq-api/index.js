@@ -43,6 +43,8 @@ import declinedRouter from './routes/declined.js'
 import jobEnhancementsRouter from './routes/job-enhancements.js'
 import disputesRouter from './routes/disputes.js'
 import cxRouter from './routes/customer-experience.js'
+import intelligenceRouter from './routes/intelligence.js'
+import operationsRouter from './routes/operations.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -208,6 +210,8 @@ app.use('/api/cx', (req, res, next) => {
   if (req.path === '/nps/respond' || req.path === '/nps/survey') return next()
   return requireAuth(req, res, next)
 }, cxRouter)
+app.use('/api/intelligence', requireAuth, intelligenceRouter)
+app.use('/api/operations', requireAuth, operationsRouter)
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))

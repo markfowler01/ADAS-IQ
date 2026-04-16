@@ -33,6 +33,9 @@ const DEFAULT_RULES = {
   late_fees_enabled: false,
   late_fee_percent: 1.5,          // % per month
   late_fee_grace_days: 30,        // days past due_date before fee starts accruing
+  // Monthly rollup — default OFF. When ON, monthly cron generates one invoice per month
+  // instead of per-job. Good for high-volume shops that prefer consolidated billing.
+  monthly_rollup: false,
   billing_contact_name: '',
   billing_contact_email: '',
   billing_contact_phone: '',
@@ -272,6 +275,12 @@ export default function BillingRulesEditor({ shop, onSave, onClose }) {
             onChange={v => set('late_fees_enabled', v)}
             label="Charge Late Fees on Overdue Invoices"
             hint="Applies monthly late fee after grace period (default OFF)" />
+
+          <Checkbox
+            checked={rules.monthly_rollup}
+            onChange={v => set('monthly_rollup', v)}
+            label="Monthly Rollup Invoicing"
+            hint="Generate one consolidated invoice per month instead of per-job (default OFF)" />
 
           {rules.late_fees_enabled && (
             <div className="grid grid-cols-2 gap-3 ml-2 pl-3 border-l-2" style={{ borderColor: ORANGE }}>

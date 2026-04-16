@@ -46,6 +46,7 @@ import QuoteApprovalScreen from './components/QuoteApprovalScreen'
 import DisputesScreen from './components/DisputesScreen'
 import CustomerExperienceScreen from './components/CustomerExperienceScreen'
 import NPSScreen from './components/NPSScreen'
+import IntelligenceScreen from './components/IntelligenceScreen'
 
 // Top-level route check: public pay page and customer portal bypass the main auth flow.
 function getTopLevelRoute() {
@@ -299,6 +300,9 @@ function MainApp() {
       )}
       {screen === 'cx' && (
         <CustomerExperienceScreen {...navProps} />
+      )}
+      {screen === 'intel' && (
+        <IntelligenceScreen {...navProps} />
       )}
     </div>
   )

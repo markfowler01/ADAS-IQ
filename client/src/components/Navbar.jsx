@@ -24,6 +24,7 @@ const MORE_LINKS = [
   { id: 'mileage',   label: 'Mileage' },
   { id: 'team',      label: 'Team' },
   { id: 'branding',  label: 'Branding', adminOnly: true },
+  { id: 'intel',     label: 'Intelligence', adminOnly: true },
   { id: 'cx',        label: 'Customer Experience', adminOnly: true },
   { id: 'zoho-import', label: 'Import from Zoho', adminOnly: true },
   { id: 'manual',    label: 'Manual Invoice' },
