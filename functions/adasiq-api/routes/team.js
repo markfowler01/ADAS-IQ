@@ -120,6 +120,14 @@ router.post('/members', async (req, res) => {
       avatar_color: req.body.avatar_color || colors[members.length % colors.length],
       notes: req.body.notes || '',
       emergency_contact: req.body.emergency_contact || { name: '', phone: '', relationship: '' },
+      // Payroll defaults
+      payroll_type: req.body.payroll_type || 'w2_zoho',
+      salary_annual: Number(req.body.salary_annual) || 0,
+      period_bonus: 0,
+      filing_status: req.body.filing_status || 'single',
+      wise_email: req.body.wise_email || '',
+      wise_currency: req.body.wise_currency || 'USD',
+      zoho_payroll_employee_id: req.body.zoho_payroll_employee_id || '',
       created_at: new Date().toISOString(),
     }
     members.push(member)
@@ -147,7 +155,10 @@ router.put('/members/:id', async (req, res) => {
     // Non-admins can only edit a few fields
     const allowedForUser = ['phone', 'emergency_contact', 'avatar_color']
     const allowedForAdmin = [...allowedForUser, 'user_id', 'name', 'email', 'role', 'title',
-      'department', 'hire_date', 'region', 'hourly_rate', 'active', 'notes']
+      'department', 'hire_date', 'region', 'hourly_rate', 'active', 'notes',
+      // Payroll fields (admin-only)
+      'payroll_type', 'salary_annual', 'period_bonus', 'filing_status',
+      'wise_email', 'wise_currency', 'zoho_payroll_employee_id']
     const allowed = isAdmin(req) ? allowedForAdmin : allowedForUser
 
     for (const f of allowed) {
