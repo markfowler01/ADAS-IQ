@@ -181,6 +181,11 @@ app.use('/api/backup', backupRouter)
 // Billing cron route — protected by X-Cron-Secret (BILLING_CRON_SECRET env var)
 app.use('/api/billing-cron', billingCronRouter)
 
+// TEMP: hardcoded deploy-sanity-check endpoint (remove once verified)
+app.get('/api/deploy-sanity-check', (req, res) => {
+  res.json({ ok: true, ts: Date.now(), commit: '9bcd34b' })
+})
+
 // Calendar route — public (called from 5:30 planner)
 app.use('/api/calendar', calendarRouter)
 app.use('/api/planner-backup', plannerBackupRouter) // no auth — planner is a separate app
