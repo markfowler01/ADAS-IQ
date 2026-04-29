@@ -26,7 +26,7 @@ async function cacheGet(segment, key, fallback = null) {
 }
 
 async function cacheSet(segment, key, value) {
-  const str = typeof value === 'string' ? value : JSON.stringify(value)
+  const str = JSON.stringify(value)
   try { await segment.update(key, str) }
   catch { await segment.put(key, str) }
 }
@@ -58,7 +58,7 @@ async function fetchGarminData(dateStr) {
   const result = { date: dateStr, sleep: null, activity: null, errors: [] }
 
   try {
-    const sleep = await client.getSleepData(dateStr)
+    const sleep = await client.getSleepData(date)
     result.sleep = {
       totalSeconds: sleep?.dailySleepDTO?.sleepTimeSeconds ?? null,
       deepSeconds: sleep?.dailySleepDTO?.deepSleepSeconds ?? null,
