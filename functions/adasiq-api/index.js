@@ -22,6 +22,7 @@ import booksRouter from './routes/books.js'
 import crmReminderRouter from './routes/crmReminder.js'
 import backupRouter from './routes/backup.js'
 import calendarRouter from './routes/calendar.js'
+import garminRouter from './routes/garmin.js'
 import expensesRouter from './routes/expenses.js'
 import notificationsRouter from './routes/notifications.js'
 import crmSyncRouter from './routes/crmSync.js'
@@ -183,6 +184,8 @@ app.use('/api/billing-cron', billingCronRouter)
 // Calendar route — public (called from 5:30 planner)
 app.use('/api/calendar', calendarRouter)
 app.use('/api/planner-backup', plannerBackupRouter) // no auth — planner is a separate app
+// Garmin sync — /sync is cron-protected (GARMIN_CRON_SECRET); /today and /debug are public for the planner
+app.use('/api/garmin', garminRouter)
 app.use('/api/expenses', requireAuth, expensesRouter)
 app.use('/api/notifications', requireAuth, notificationsRouter)
 app.use('/api/crm-sync', requireAuth, crmSyncRouter)
