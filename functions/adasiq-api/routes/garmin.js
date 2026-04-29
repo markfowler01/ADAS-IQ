@@ -1,9 +1,11 @@
 import { Router } from 'express'
 import catalyst from 'zcatalyst-sdk-node'
-import { GarminConnect } from 'garmin-connect'
+import garminPkg from 'garmin-connect'
 import Anthropic from '@anthropic-ai/sdk'
 
+const { GarminConnect } = garminPkg
 const router = Router()
+console.log('[garmin] route module loaded; GarminConnect type:', typeof GarminConnect)
 
 const SUGGESTION_SYSTEM = `You are Mark's personal performance coach. Mark owns an automotive ADAS calibration shop and wakes at 4:30 AM to run his schedule.
 
