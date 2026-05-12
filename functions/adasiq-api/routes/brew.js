@@ -1142,39 +1142,29 @@ async function sendIssueViaResend(req, preFetched = null) {
     })
   }
 
-  // Truly fire-and-forget side-effects below — Catalyst's HTTP gateway has a
-  // ~30s request cap; awaiting LinkedIn + GitHub archive blew past it. These
-  // are bonus tasks, not part of the core "subscribers receive the email"
-  // contract. They may complete or get torn down with the worker; either is OK.
+  // Stash everything /run-bonus needs to do LinkedIn + archive in its own
+  // 30s budget (separate cron, fires ~3 min later). Just the digest JSON +
+  // metadata — small and safe for Cache. The bonus endpoint re-renders the
+  // HTML from the digest, so we don't have to cache the (much larger) HTML.
+  const segmentForStash = getSegment(req)
+  await cacheSet(segmentForStash, 'brew_pending_bonus', {
+    digest: built.digest,
+    issueNumber: built.issueNumber,
+    subject: built.rendered.subject,
+    dateISO: new Date().toISOString().slice(0, 10),
+    createdAt: new Date().toISOString(),
+  }).catch(e => console.warn('[brew pending-bonus stash]', e.message))
+
+  // emailLinkedInToCrossPoster is fast (just sends a notification email),
+  // keep it inline as fire-and-forget — it's already non-blocking.
   emailLinkedInToCrossPoster({ digest: built.digest, issueNumber: built.issueNumber })
     .catch(e => console.warn('[brew linkedin-notify]', e.message))
-
-  publishIssueToArchive(req, {
-    issueNumber: built.issueNumber,
-    dateISO: new Date().toISOString().slice(0, 10),
-    subject: built.rendered.subject,
-    html: built.rendered.html,
-  }).catch(e => console.warn('[brew archive-publish]', e.message))
-
-  ;(async () => {
-    try {
-      const postText = await digestToLinkedInPost(built.digest)
-      const li = await postToLinkedIn({ text: postText })
-      if (li?.ok && li.id) {
-        const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`
-        await commentOnLinkedInPost(li.id, commentText)
-      }
-    } catch (e) {
-      console.warn('[brew linkedin-post]', e.message)
-    }
-  })()
 
   return {
     issueNumber: built.issueNumber,
     itemsConsidered: built.itemsConsidered,
     send: result,
-    linkedin: { deferred: true },
-    archive: { deferred: true },
+    bonus: { queued: true },
   }
 }
 
@@ -1286,9 +1276,10 @@ cronRouter.post('/run', async (req, res) => {
         return res.json({ skipped: true, reason: `${day} PT not in allowed list [${allowed.join(', ')}]` })
       }
     }
-    // Core path awaited (fetch + digest + Resend + bookkeeping); the LinkedIn
-    // post + archive publish are fire-and-forget inside sendIssueViaResend
-    // so we don't blow Catalyst's HTTP gateway timeout (~30s).
+    // Core path awaited (fetch + digest + Resend + bookkeeping); LinkedIn +
+    // archive are handled by the separate /run-bonus cron, scheduled to fire
+    // a few minutes after this one. Keeps both endpoints under Catalyst's
+    // ~30s HTTP gateway cap.
     const fetched = await fetchAndTrim()
     const out = await sendIssueViaResend(req, { items: fetched.items, status: fetched.status })
     if (out?.send?.status === 'error') {
@@ -1302,6 +1293,85 @@ cronRouter.post('/run', async (req, res) => {
   } catch (e) {
     console.error('[brew cron run]', e.message, e.stack)
     alertCronFailure('cron threw', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Bonus tasks for the most recently sent issue — runs as a separate Catalyst
+// cron a few minutes after /run so LinkedIn + archive get their own 30s budget
+// instead of competing with the send path. Reads the digest stashed by /run
+// (under cache key `brew_pending_bonus`), re-renders HTML, publishes archive,
+// posts to LinkedIn + comment, then clears the stash so we don't reprocess.
+//
+// Schedule via a second Catalyst Cron: e.g. daily 6:03 AM PT, POST to
+// /api/cron/brew/run-bonus, header X-Cron-Secret: BREW_CRON_SECRET.
+cronRouter.post('/run-bonus', async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const pending = await cacheGet(segment, 'brew_pending_bonus', null)
+    if (!pending || !pending.digest || !pending.issueNumber) {
+      return res.json({ skipped: true, reason: 'no pending bonus' })
+    }
+
+    // Stale guard — don't process a stash older than 6h. Avoids retrying
+    // yesterday's bonus when today's /run hasn't fired yet (e.g. weekend).
+    const ageMs = Date.now() - new Date(pending.createdAt || 0).getTime()
+    if (!Number.isFinite(ageMs) || ageMs > 6 * 60 * 60 * 1000) {
+      await cacheSet(segment, 'brew_pending_bonus', null).catch(() => {})
+      return res.json({ skipped: true, reason: 'pending bonus is stale (>6h)' })
+    }
+
+    const { digest, issueNumber, subject, dateISO } = pending
+    const rendered = renderDigest(digest, {
+      issueNumber: String(issueNumber),
+      dateISO: dateISO || new Date().toISOString().slice(0, 10),
+    })
+
+    // 1. Archive — commits rendered HTML to GitHub Pages
+    let archiveResult
+    try {
+      archiveResult = await publishIssueToArchive(req, {
+        issueNumber,
+        dateISO: dateISO || new Date().toISOString().slice(0, 10),
+        subject: subject || rendered.subject,
+        html: rendered.html,
+      })
+    } catch (e) {
+      console.warn('[brew run-bonus archive]', e.message)
+      archiveResult = { ok: false, error: e.message }
+    }
+
+    // 2. LinkedIn post + first-comment with signup link
+    let liResult
+    try {
+      const postText = await digestToLinkedInPost(digest)
+      liResult = await postToLinkedIn({ text: postText })
+      if (liResult?.ok && liResult.id) {
+        const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`
+        const cr = await commentOnLinkedInPost(liResult.id, commentText)
+        liResult.comment = cr
+      }
+    } catch (e) {
+      console.warn('[brew run-bonus linkedin]', e.message)
+      liResult = { ok: false, error: e.message }
+    }
+
+    // Clear the stash so the next /run-bonus call no-ops until /run queues again
+    await cacheSet(segment, 'brew_pending_bonus', null).catch(() => {})
+
+    const archiveFailed = archiveResult && archiveResult.ok === false
+    const liFailed = liResult && liResult.ok === false
+    if (archiveFailed || liFailed) {
+      const parts = []
+      if (archiveFailed) parts.push(`archive: ${archiveResult.error || 'failed'}`)
+      if (liFailed) parts.push(`linkedin: ${liResult.error || 'failed'}`)
+      alertCronFailure('bonus partial', `issue #${issueNumber} — ${parts.join('; ')}`)
+    }
+
+    res.json({ issueNumber, archive: archiveResult, linkedin: liResult })
+  } catch (e) {
+    console.error('[brew cron run-bonus]', e.message, e.stack)
+    alertCronFailure('run-bonus threw', e.message)
     res.status(500).json({ error: e.message })
   }
 })
