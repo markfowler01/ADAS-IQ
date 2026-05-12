@@ -770,13 +770,15 @@ cronRouter.post('/_prep-bonus', requireCronSecretFlex, async (req, res) => {
     const fetched = await fetchAndTrim()
     const built = await buildIssue(req, { items: fetched.items, status: fetched.status })
     const segment = getSegment(req)
-    await cacheSet(segment, 'brew_pending_bonus', {
+    const stash = {
       digest: built.digest,
       issueNumber: built.issueNumber,
       subject: built.rendered.subject,
       dateISO: new Date().toISOString().slice(0, 10),
       createdAt: new Date().toISOString(),
-    })
+    }
+    await cacheSet(segment, 'brew_pending_bonus', stash)
+    await cacheSet(segment, 'brew_today_digest', stash)
     res.json({
       ok: true,
       issueNumber: built.issueNumber,

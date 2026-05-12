@@ -88,47 +88,34 @@ export async function generateCoverImage({ issueNumber, dateISO, headline }) {
   }
 }
 
-// Absolute ADAS calibration-tip post — dramatic photo-style background with a
-// bold red-orange headline overlay and a white card listing the bullets, plus
-// an Absolute ADAS footer band. Matches the Zoho Social example post.
-const TIP_STYLE_PROMPT = `Square social-media post image, 1080x1080.
-Composition top-to-bottom in three bands:
+// Absolute ADAS calibration-tip post — Nano Banana generates ONLY the
+// photographic background. The headline, bullet card, and logo footer are
+// composited in code (see services/tipImageComposite.js) for pixel-perfect
+// brand consistency. The AI is allowed to interpret the photo but is told
+// explicitly NOT to render any text, logos, or graphics.
+const TIP_STYLE_PROMPT = `Square photographic image, 1080x1080.
 
-1. TOP 55% — Dramatic moody photographic close-up of a modern car's front-end (headlight, sensor cluster, grille, or windshield) with ADAS hardware visible. Cinematic low-key lighting, dark blues / blacks / grays, subtle teal-blue highlights on the metal/glass. Shallow depth of field.
+Subject: a dramatic moody close-up of a modern vehicle's front-end. Could be a headlight cluster, ADAS sensor housing, grille, windshield camera region, or front quarter-panel — whichever makes for the most cinematic shot. ADAS hardware (cameras, radar, sensors) should be visible or implied.
 
-   Layered over this image: a bold blocky display-typography headline in bright red-orange (#CD4419), heavy slanted condensed sans-serif (like a sports/automotive poster), reading exactly: "{HEADLINE}". Multi-line if needed, tight line spacing, generous tracking. Slight drop-shadow or subtle outer glow so the text reads cleanly over the photo.
+Lighting: cinematic low-key. Dark blues, blacks, and gunmetal grays dominate. Subtle teal-blue highlights catch the metal and glass edges. Shallow depth of field. Photo-realistic, professional automotive editorial photography quality.
 
-2. MIDDLE 35% — A clean white card with rounded corners (12-16px radius), 80px horizontal margins from image edge, vertical center positioned. Inside the card, a vertical bulleted list of these items, each prefixed with a small filled orange #CD4419 dot followed by a single space, then the text in dark gray (#374151) sans-serif (Inter or similar), 28-36px font-size, comfortable 1.5 line-spacing:
+The TOP portion (upper 45%) of the photo should have darker, less-detailed areas (sky, shadow, or out-of-focus background) so headline text can be cleanly overlaid later. The MIDDLE 35% can have the main subject. The BOTTOM 10% will be covered by a graphic footer — keep it visually quiet there too.
 
-{BULLETS_BLOCK}
-
-3. BOTTOM 10% — Dark slate footer band (#0d0d0d). Centered horizontally: a small orange (#CD4419) icon of a car silhouette with two short signal-wave arcs above it, followed by the wordmark "Absolute ADAS" in white bold sans-serif. Below that, in smaller white text: "Driving safety forward, one calibration at a time."
-
-Style: professional automotive-shop aesthetic. High contrast. Photo-realistic top half, crisp graphic-design bottom two-thirds. No people in the photo. No additional text or watermarks beyond what's specified above.`
+CRITICAL: NO TEXT, NO LOGOS, NO WATERMARKS, NO GRAPHICS, NO BORDERS. Just the photograph. Do not add any words, captions, headlines, or branding of any kind to the image — text and branding will be added later in code.`
 
 /**
- * Generate the daily Absolute ADAS tip card image.
+ * Generate the photographic background for the daily Absolute ADAS tip card.
+ * Headline, bullets, and logo are composited on top in code afterward.
  *
- * @param {Object} args
- * @param {string} args.headline — short punchy headline (4-9 words)
- * @param {string[]} args.bullets — 5-6 short bullet items
  * @returns {Promise<{ok: true, buffer: Buffer, mimeType: string, prompt: string} | {ok: false, error: string}>}
  */
-export async function generateTipCardImage({ headline, bullets }) {
+export async function generateTipCardImage(/* headline + bullets unused now — composed in code */) {
   if (!nanoBananaConfigured()) {
     return { ok: false, error: 'GEMINI_API_KEY not set' }
   }
   const { apiKey, model } = envBundle()
 
-  const safeHeadline = String(headline || '').trim().slice(0, 120)
-  const bulletItems = (Array.isArray(bullets) ? bullets : [])
-    .map(b => String(b).trim())
-    .filter(Boolean)
-    .slice(0, 6)
-  const bulletsBlock = bulletItems.map(b => `• ${b}`).join('\n')
   const prompt = TIP_STYLE_PROMPT
-    .replace('{HEADLINE}', safeHeadline)
-    .replace('{BULLETS_BLOCK}', bulletsBlock)
 
   try {
     const res = await axios.post(

@@ -13,6 +13,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { assembleTipCard } from '../services/tipsAssembly.js'
 import { generateTipCardImage } from '../services/nanoBanana.js'
+import { composeTipImage } from '../services/tipImageComposite.js'
 import { commitBinaryFile } from '../services/brewArchive.js'
 import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured } from '../services/metaPosting.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
@@ -158,12 +159,15 @@ async function alertTipsFailure(label, detail) {
 }
 
 // ─── Main cron handler ──────────────────────────────────────────────────────
+// Add ?dry_run=1 to skip FB+IG posting and just return the image URL +
+// generated headline/bullets/caption — useful for previewing the look.
 tipsRouter.post('/run', requireCronSecret, async (req, res) => {
+  const dryRun = req.query.dry_run === '1' || req.query.dry_run === 'true'
   try {
     // 1. Try the manual queue first
     const queue = await readQueue(req)
     let manualTip = null
-    if (queue.length > 0) {
+    if (queue.length > 0 && !dryRun) {
       manualTip = queue.shift() // take oldest
     }
 
@@ -192,23 +196,41 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       source = 'brew-synthesis'
     }
 
-    // 3. Generate the image via Nano Banana
-    const img = await generateTipCardImage({ headline: card.headline, bullets: card.bullets })
-    if (!img.ok) {
-      // Manual tip didn't get used — put it back at the front of the queue
+    // 3. Generate the PHOTO background via Nano Banana (no text/logo — AI only does the photo)
+    const photo = await generateTipCardImage()
+    if (!photo.ok) {
       if (manualTip) {
         const q = await readQueue(req)
         q.unshift(manualTip)
         await writeQueue(req, q)
       }
-      alertTipsFailure('image gen failed', img.error)
-      return res.status(500).json({ error: `image gen: ${img.error}`, restoredQueue: !!manualTip })
+      alertTipsFailure('image gen failed', photo.error)
+      return res.status(500).json({ error: `image gen: ${photo.error}`, restoredQueue: !!manualTip })
     }
 
-    // 4. Upload image to GitHub for a public URL
+    // 3b. Composite headline + bullets + logo footer ON TOP of the photo, in code,
+    // so the brand color is exactly #CD4419 and the logo is your actual PNG.
+    let finalBuffer
+    try {
+      finalBuffer = await composeTipImage({
+        photoBuffer: photo.buffer,
+        headline: card.headline,
+        bullets: card.bullets,
+      })
+    } catch (e) {
+      if (manualTip) {
+        const q = await readQueue(req)
+        q.unshift(manualTip)
+        await writeQueue(req, q)
+      }
+      alertTipsFailure('compose failed', e.message)
+      return res.status(500).json({ error: `compose: ${e.message}`, restoredQueue: !!manualTip })
+    }
+
+    // 4. Upload the composited image to GitHub for a public URL
     const imageCommit = await commitBinaryFile({
       path: `brew/images/tip-${new Date().toISOString().slice(0, 10)}-${Date.now()}.png`,
-      buffer: img.buffer,
+      buffer: finalBuffer,
       message: `Daily Absolute ADAS tip card: ${card.headline}`,
     })
     if (!imageCommit.ok) {
@@ -219,6 +241,19 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       }
       alertTipsFailure('image upload failed', imageCommit.error)
       return res.status(500).json({ error: `image upload: ${imageCommit.error}`, restoredQueue: !!manualTip })
+    }
+
+    // Dry-run exit — return the image + tip card without consuming the queue
+    // or posting to FB/IG. Useful for previewing the daily output.
+    if (dryRun) {
+      return res.json({
+        dryRun: true,
+        source,
+        headline: card.headline,
+        bullets: card.bullets,
+        caption: card.caption,
+        image: { ok: true, url: imageCommit.rawUrl },
+      })
     }
 
     // 5. Commit queue write — already consumed manualTip via shift(); persist
