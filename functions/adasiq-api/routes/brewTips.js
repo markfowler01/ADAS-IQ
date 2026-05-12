@@ -149,12 +149,13 @@ tipsRouter.delete('/queue/:id', requireCronSecretFlex, async (req, res) => {
 })
 
 // ─── Failure alert (mirrors brew.js pattern) ────────────────────────────────
+// The daily tip-post pipeline is named "Marketing" internally — see Cliq DMs.
 async function alertTipsFailure(label, detail) {
   try {
-    const msg = `🚨 ADAS Tips — ${label}\n${detail}`.slice(0, 2000)
+    const msg = `🚨 Marketing — ${label}\n${detail}`.slice(0, 2000)
     await postToCliqUser(TECH_CLIQ_IDS.Mark, msg)
   } catch (e) {
-    console.warn('[tips cliq alert failed]', e.message)
+    console.warn('[Marketing cliq alert failed]', e.message)
   }
 }
 
