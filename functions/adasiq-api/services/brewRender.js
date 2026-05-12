@@ -112,7 +112,7 @@ export function renderDigest(digest, opts = {}) {
 
   const forwardBlock = `<div style="margin:28px 0 18px;padding:18px 20px;background:#fff8f4;border-left:3px solid #CD4419;border-radius:8px"><p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#CD4419;letter-spacing:.02em">📤 Know a shop that should read this?</p><p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#374151">One forward could save them three hours of denial fights this month.</p><div style="font-size:13px"><a href="${mailtoUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#CD4419;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">Forward by email</a><a href="${liShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#0a66c2;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">LinkedIn</a><a href="${fbShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#1877f2;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">Facebook</a><a href="${xShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#000;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">X</a></div></div>`
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div></div>${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${forwardBlock}<p class="byline">Built by Mark Fowler — owner of Absolute ADAS, where this stuff actually gets tested. Powered by ADAS IQ — the software that runs it.</p><div class="foot">ADAS Brew · brew@adas-iq.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div></div>${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${forwardBlock}<p class="byline">From Absolute ADAS — mobile ADAS calibration in Western Washington. Mark Fowler, owner. We also build ADAS IQ, the software we run our shop on.</p><div class="foot">ADAS Brew · brew@adas-iq.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
 
   // Plain-text alternative
   const text = [
@@ -130,7 +130,7 @@ export function renderDigest(digest, opts = {}) {
     cta.text || '',
     cta.button_url ? `→ ${cta.button_url}` : '',
     '',
-    'Built by Mark Fowler. Powered by ADAS IQ.',
+    'From Absolute ADAS — mobile ADAS calibration, Western Washington. Mark Fowler, owner. We also build ADAS IQ.',
     `Unsubscribe: ${unsubscribeUrl}`,
   ].filter(Boolean).join('\n')
 
@@ -190,7 +190,7 @@ export function renderLinkedIn(digest) {
 
   lines.push('━━━━━━━━━━━━━━━━━')
   lines.push('')
-  lines.push(`Built by Mark Fowler — owner of Absolute ADAS, where this stuff actually gets tested. Powered by ADAS IQ.`)
+  lines.push(`From Absolute ADAS — mobile ADAS calibration, Western Washington. Mark Fowler, owner. We also build ADAS IQ.`)
   lines.push('')
   lines.push('#ADAS #CollisionRepair #ADASCalibration #BodyShop #AutomotiveIndustry #InsuranceClaims #VehicleSafety #AutoRepair')
 

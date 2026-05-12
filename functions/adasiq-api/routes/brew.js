@@ -1383,7 +1383,7 @@ function buildSocialCaption(digest) {
   if (subject) lines.push(subject)
   if (intro) lines.push('', intro)
   lines.push('', '5 stories every weekday morning. Free.', 'Subscribe → adas-iq.com/brew')
-  lines.push('', 'ADAS Brew is published by ADAS IQ — software we\'re building for collision shops handling ADAS calibration. Built from what we see on the floor at Absolute ADAS (mobile calibration, Western Washington).')
+  lines.push('', 'ADAS Brew is published by Absolute ADAS — mobile ADAS calibration in Western Washington. We also build ADAS IQ, the software we run our shop on, now available to other shops.')
   lines.push('', '#ADAS #CollisionRepair #AutoBodyShop #Calibration #ADASCalibration #InsuranceClaims #OEMRepair')
   return lines.join('\n').slice(0, 2100) // IG cap is 2200, leave headroom
 }
