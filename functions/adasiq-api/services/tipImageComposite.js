@@ -104,16 +104,23 @@ function esc(s) {
 }
 
 function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBoldB64, interRegularB64, logoB64 }) {
-  // Layout knobs — tightened so the photo breathes and the card isn't cavernous
+  // Layout knobs
   const headlineBandY = 0
   const headlineBandH = 480
   const cardX = 60
   const cardY = 560
   const cardW = CANVAS - 120
-  const cardH = 280 // tighter — 3 bullets fit snugly, no dead space
-  const ctaY = cardY + cardH + 14
+  const cardH = 280
   const footerH = 130
   const footerY = CANVAS - footerH
+  // CTA now lives INSIDE the card (bottom-right), so the card looks fully
+  // utilized instead of having dead white space below the bullets.
+  const ctaH = 38
+  const ctaPadInsideCard = 18
+  const ctaY = cardY + cardH - ctaH - ctaPadInsideCard
+  // Bullets vertical area excludes the CTA strip at the bottom of the card.
+  const bulletReservedBottom = ctaH + ctaPadInsideCard + 8 // space CTA takes up
+  const bulletsAreaH = cardH - bulletReservedBottom
 
   // ── Eyebrow (small all-caps label above headline)
   const eyebrowText = String(eyebrow || '').toUpperCase().trim()
@@ -146,31 +153,44 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
   const headlineStartY = headlineBlockTop + Math.round((availableH - headlineBlockH) / 2) + Math.round(headlineFontSize * 0.78)
 
   // If Claude provided a headline_emphasis phrase, color that span orange.
-  // The phrase is matched against the uppercase headline; if it spans across
-  // a line break it only gets highlighted on the line where it appears.
+  // Trailing punctuation (.,!?;:) stays in the original headline color so the
+  // orange doesn't bleed onto a period or question mark — typographic nicety.
   const emphasisUpper = String(headlineEmphasis || '').toUpperCase().trim()
   const renderHeadlineLineContent = (line) => {
     if (!emphasisUpper) return esc(line)
     const idx = line.indexOf(emphasisUpper)
     if (idx < 0) return esc(line)
+    let matchLen = emphasisUpper.length
+    // Walk backward from end of match; strip trailing punctuation from the span
+    let match = line.slice(idx, idx + matchLen)
+    const trailingPuncRe = /[.,!?;:\s]+$/
+    const trail = match.match(trailingPuncRe)
+    if (trail) {
+      match = match.slice(0, match.length - trail[0].length)
+      matchLen = match.length
+    }
     const before = line.slice(0, idx)
-    const match = line.slice(idx, idx + emphasisUpper.length)
-    const after = line.slice(idx + emphasisUpper.length)
+    const after = line.slice(idx + matchLen)
     return `${esc(before)}<tspan fill="${BRAND_ORANGE}">${esc(match)}</tspan>${esc(after)}`
   }
   const headlineSvgLines = headlineLines.map((line, i) =>
     `<text x="${CANVAS / 2}" y="${headlineStartY + i * headlineLineHeight}" class="headline">${renderHeadlineLineContent(line)}</text>`
   ).join('\n  ')
 
-  // ── Bullets (exactly 3, larger, more breathing room)
+  // ── Bullets (exactly 3, vertically centered within the bullets area —
+  // the area excludes the bottom strip reserved for the CTA)
   const bulletItems = (Array.isArray(bullets) ? bullets : []).slice(0, 3)
   const bulletFontSize = 32
-  const bulletLineGap = Math.round(cardH / (bulletItems.length + 0.5))
+  const bulletLineGap = bulletItems.length > 1
+    ? Math.round((bulletsAreaH - 40) / (bulletItems.length - 1))
+    : 0
+  const totalBulletBlockH = bulletLineGap * (bulletItems.length - 1) + bulletFontSize
   const bulletDotR = 10
   const bulletPadLeft = 60
   const bulletDotX = cardX + bulletPadLeft + 22
   const bulletTextX = bulletDotX + 26
-  const firstBulletY = cardY + Math.round((cardH - bulletLineGap * (bulletItems.length - 1)) / 2)
+  // Center the bullet block in the bullets area (cardY → cardY + bulletsAreaH)
+  const firstBulletY = cardY + Math.round((bulletsAreaH - totalBulletBlockH) / 2) + bulletFontSize - 4
 
   const bulletsSvg = bulletItems.map((b, i) => {
     const y = firstBulletY + i * bulletLineGap
@@ -179,15 +199,22 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
   <text x="${bulletTextX}" y="${y}" class="bullet">${esc(b)}</text>`
   }).join('')
 
-  // ── CTA ribbon (small orange pill, bottom-right of bullet card area)
+  // ── CTA ribbon — small orange pill INSIDE the bottom-right of the card so
+  // it reads as a "read more" button, not a floating afterthought
   const ctaText = '→ Daily at adas-iq.com/brew'
   const ctaApproxW = Math.round(ctaText.length * 20 * 0.6) + 36
-  const ctaH = 38
-  const ctaX = cardX + cardW - ctaApproxW
+  const ctaPadRight = 22
+  const ctaX = cardX + cardW - ctaApproxW - ctaPadRight
   const ctaTextY = ctaY + Math.round(ctaH * 0.66)
   const ctaSvg = `
   <rect x="${ctaX}" y="${ctaY}" width="${ctaApproxW}" height="${ctaH}" rx="${ctaH / 2}" ry="${ctaH / 2}" fill="${BRAND_ORANGE}"/>
   <text x="${ctaX + ctaApproxW / 2}" y="${ctaTextY}" class="cta">${esc(ctaText)}</text>`
+
+  // ── Date stamp top-right corner — gives the daily-cadence signal
+  const dateStr = new Date().toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Los_Angeles',
+  }).toUpperCase()
+  const dateSvg = `<text x="${CANVAS - 50}" y="58" class="datestamp">${esc(dateStr)}</text>`
 
   // ── Footer (logo + split-color wordmark, matches absoluteadas.com brand)
   // "Absolute" in white + "ADAS" in orange, both Inter Bold, single line.
@@ -195,7 +222,9 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
   const wordmarkWhite = 'Absolute'
   const wordmarkOrange = 'ADAS'
   const wordmarkFontSize = 40
-  const tagline = 'Driving safety forward, one calibration at a time.'
+  // Tagline rewritten for the shop-owner audience — operational rather than
+  // consumer-safety messaging. Mark's actual market.
+  const tagline = 'Mobile ADAS calibration · Western Washington'
   // Approximate widths for centering — Inter Bold ≈ 0.58× font size per char,
   // plus a single space between the two words.
   const wordmarkApproxW = Math.round((wordmarkWhite.length + 1 + wordmarkOrange.length) * wordmarkFontSize * 0.58)
@@ -268,10 +297,20 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
         fill: rgba(255,255,255,0.85);
         letter-spacing: 0;
       }
+      .datestamp {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 16px;
+        fill: rgba(255,255,255,0.55);
+        text-anchor: end;
+        letter-spacing: 0.18em;
+      }
     </style>
   </defs>
   <!-- Headline darken band — lighter so the photo shows through more -->
   <rect x="0" y="${headlineBandY}" width="${CANVAS}" height="${headlineBandH}" fill="rgba(0,0,0,0.42)"/>
+  <!-- Date stamp (top-right, masthead-style) -->
+  ${dateSvg}
   <!-- Eyebrow -->
   ${eyebrowSvg}
   <!-- Headline -->
