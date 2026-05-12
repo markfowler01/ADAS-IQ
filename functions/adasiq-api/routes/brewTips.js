@@ -15,7 +15,7 @@ import { assembleTipCard } from '../services/tipsAssembly.js'
 import { generateTipCardImage } from '../services/nanoBanana.js'
 import { composeTipImage } from '../services/tipImageComposite.js'
 import { commitBinaryFile } from '../services/brewArchive.js'
-import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured } from '../services/metaPosting.js'
+import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia, readFacebookPostComments, listFacebookPagePosts } from '../services/metaPosting.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 
 // ─── Cache helpers (same shape as brew.js) ──────────────────────────────────
@@ -147,6 +147,22 @@ tipsRouter.delete('/queue/:id', requireCronSecretFlex, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message })
   }
 })
+
+// ─── Godfather Offer comment (Sabri-Suby style direct-response CTA) ─────────
+// Posted as the first comment on every Marketing post on FB and IG. Direct,
+// risk-reversed, scarcity-tagged. The phone is the alt-path for shops that
+// don't want to comment publicly.
+function buildOfferComment() {
+  return [
+    '👉 Stuck on a calibration denial or short-pay?',
+    '',
+    'Reply "AUDIT" below or text 1-844-FIX-ADAS (844-349-2327).',
+    'I\'ll write the OEM-cited rebuttal that flips it — free, 24h turnaround, no pitch.',
+    'I take 2-3 shops a week.',
+    '',
+    '— Mark Fowler, Absolute ADAS',
+  ].join('\n')
+}
 
 // ─── Failure alert (mirrors brew.js pattern) ────────────────────────────────
 // The daily tip-post pipeline is named "Marketing" internally — see Cliq DMs.
@@ -291,7 +307,22 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       ? igSettled.value
       : { ok: false, error: igSettled.reason?.message || 'ig failed' }
 
-    // 7. Failure alerts
+    // 7. Auto-post a "Godfather Offer" comment on each successful post.
+    // FB allows author comments via Graph API; IG requires instagram_manage_comments
+    // permission and may fail silently — treated as non-fatal.
+    const offerComment = buildOfferComment()
+    let fbComment = null
+    let igComment = null
+    if (fbResult?.ok && fbResult.id) {
+      fbComment = await commentOnFacebookPost({ postId: fbResult.id, message: offerComment })
+        .catch(e => ({ ok: false, error: e.message }))
+    }
+    if (igResult?.ok && igResult.id) {
+      igComment = await commentOnInstagramMedia({ mediaId: igResult.id, message: offerComment })
+        .catch(e => ({ ok: false, error: e.message }))
+    }
+
+    // 8. Failure alerts
     const failures = []
     if (fbResult?.ok === false && !fbResult.skipped) failures.push(`facebook: ${fbResult.error}`)
     if (igResult?.ok === false && !igResult.skipped) failures.push(`instagram: ${igResult.error}`)
@@ -305,12 +336,92 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       bullets: card.bullets,
       image: { ok: true, url: imageCommit.rawUrl },
       facebook: fbResult,
+      facebookComment: fbComment,
       instagram: igResult,
+      instagramComment: igComment,
       caption,
     })
   } catch (e) {
     console.error('[tips run]', e.message, e.stack)
     alertTipsFailure('cron threw', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ─── Comment watcher: poll FB Page posts for "AUDIT" replies ────────────────
+// Runs as its own cron (separate from the daily /run); scans recent Page
+// posts, finds new "AUDIT" comments, and DMs Mark via Cliq. Already-notified
+// comment IDs are tracked in cache so each lead pings only once.
+//
+// Cron suggestion: every 30 min, POST /api/cron/brew-tips/watch-comments
+const NOTIFIED_KEY = 'marketing_notified_comments'
+const AUDIT_KEYWORDS = ['audit', 'a u d i t', 'auditt', 'auidt'] // tolerate typos
+
+tipsRouter.post('/watch-comments', requireCronSecret, async (req, res) => {
+  try {
+    const postsRes = await listFacebookPagePosts({ limit: 12 })
+    if (!postsRes.ok) {
+      return res.status(500).json({ error: `list posts: ${postsRes.error}` })
+    }
+    const seg = getSegment(req)
+    const notified = new Set(await cacheGet(seg, NOTIFIED_KEY, []) || [])
+    const newLeads = []
+    for (const post of postsRes.posts) {
+      const c = await readFacebookPostComments({ postId: post.id, limit: 50 })
+      if (!c.ok) continue
+      for (const comment of c.comments) {
+        if (notified.has(comment.id)) continue
+        const lower = String(comment.message || '').toLowerCase()
+        const isAudit = AUDIT_KEYWORDS.some(k => lower.includes(k))
+        if (!isAudit) continue
+        newLeads.push({
+          commentId: comment.id,
+          from: comment.from?.name || 'Unknown',
+          fromId: comment.from?.id || '',
+          message: comment.message || '',
+          createdTime: comment.created_time,
+          postId: post.id,
+          postSnippet: String(post.message || '').slice(0, 120),
+        })
+        notified.add(comment.id)
+      }
+    }
+
+    // DM Mark for each new lead (one Cliq message per lead so each gets attention)
+    for (const lead of newLeads) {
+      const msg = [
+        '🎯 New AUDIT lead — Marketing',
+        '',
+        `From: ${lead.from}`,
+        `Comment: "${lead.message.slice(0, 400)}"`,
+        `Time: ${lead.createdTime}`,
+        '',
+        `On post: ${lead.postSnippet}…`,
+        `https://www.facebook.com/${lead.postId.replace('_', '/posts/')}`,
+      ].join('\n')
+      try {
+        await postToCliqUser(TECH_CLIQ_IDS.Mark, msg.slice(0, 2000))
+      } catch (e) {
+        console.warn('[Marketing watch cliq]', e.message)
+      }
+    }
+
+    // Cap notified set at 500 entries — drop the oldest if larger
+    let notifiedArr = Array.from(notified)
+    if (notifiedArr.length > 500) {
+      notifiedArr = notifiedArr.slice(-500)
+    }
+    await cacheSet(seg, NOTIFIED_KEY, notifiedArr)
+
+    res.json({
+      ok: true,
+      postsScanned: postsRes.posts.length,
+      newLeads: newLeads.length,
+      leads: newLeads,
+    })
+  } catch (e) {
+    console.error('[Marketing watch-comments]', e.message, e.stack)
+    alertTipsFailure('watch-comments threw', e.message)
     res.status(500).json({ error: e.message })
   }
 })

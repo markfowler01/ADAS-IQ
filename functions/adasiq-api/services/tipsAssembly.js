@@ -21,7 +21,13 @@ CARD RULES:
 - "headline": 5–9 words. Punchy. Imperative or noun-phrase. NEVER restate the eyebrow. Example: "State Farm pushes back. Document or eat it." or "Three line items adjusters always deny first."
 - "headline_emphasis": 1–3 words from inside the headline (verbatim, same case as in the headline) that you want highlighted in orange to draw the eye. Pick the strongest verb or pain word — the part that drives the punch. Examples: from "State Farm pushes back. Document or eat it." → "Document or eat it". From "Three line items adjusters always deny first." → "always deny". MUST appear character-for-character inside the headline string. Avoid generic words ("the", "a", "is").
 - "bullets": EXACTLY 3 items. Each MAX 40 characters, ideally 4–6 words. No periods at end. NO commas (cut to a single phrase). Concrete, specific actions or facts the reader can use TODAY. NEVER generic ("be careful", "stay informed"). NEVER full sentences. Pick the 3 strongest — quality over quantity. If a bullet runs long, cut words until it fits.
-- "caption": 2–4 short paragraphs, 400–800 chars total. Practitioner voice. Sets up the tip, gives one concrete why-it-matters, ends with a single soft mention of ADAS Brew or adas-iq.com/brew. NEVER hype words ("game-changer", "unlock", "leverage"). NO em dashes.
+- "caption": Practitioner voice. 3 short paragraphs, ~600–900 chars total. NEVER hype words ("game-changer", "unlock", "leverage"). NO em dashes.
+  Structure (mandatory):
+    Paragraph 1: The pain — name the problem the tip addresses. Specific. No hedging.
+    Paragraph 2: The play — concrete what-to-do that builds on the bullets, with one why-it-matters detail.
+    Paragraph 3 (THE GODFATHER OFFER — verbatim ending, do not paraphrase):
+      "Got a calibration that got short-paid or denied? Comment 'AUDIT' below or text 1-844-FIX-ADAS. I'll write the OEM-cited rebuttal that flips it — free, 24h turnaround, no pitch. I take 2-3 shops a week."
+  After the offer, no further text. Do not mention adas-iq.com/brew in the caption (the post image already has the soft CTA).
 - "photo_subject": one phrase describing what a dramatic photo for this tip should depict. Pick something thematically tied to the tip's content. Examples:
     - documentation tip → "RO paperwork, OEM repair procedure printout, ballpoint pen on clipboard, shop counter lighting"
     - sensor / hardware tip → "ADAS forward-facing radar module behind grille, close-up, low light"
