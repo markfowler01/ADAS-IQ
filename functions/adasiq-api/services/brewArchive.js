@@ -85,6 +85,43 @@ export async function commitFile({ path, content, message }) {
   }
 }
 
+/**
+ * Commit a Buffer of binary content (e.g. PNG). Same shape as commitFile but
+ * preserves bytes. Returns { ok, rawUrl } where rawUrl is the public raw URL
+ * suitable for handing to FB/IG Graph API (which fetch the image themselves).
+ */
+export async function commitBinaryFile({ path, buffer, message }) {
+  if (!isConfigured()) {
+    return { ok: false, error: 'GITHUB_TOKEN not set', dryRun: true }
+  }
+  if (!Buffer.isBuffer(buffer)) {
+    return { ok: false, error: 'buffer arg must be a Buffer' }
+  }
+  const e = envBundle()
+  const sha = await getFileSha({ ...e, path, token: e.token })
+  const body = {
+    message: String(message || `update ${path}`).slice(0, 200),
+    content: buffer.toString('base64'),
+    branch: e.branch,
+  }
+  if (sha) body.sha = sha
+
+  try {
+    const res = await axios.put(
+      `${GH_API}/repos/${e.owner}/${e.repo}/contents/${encodeURIPath(path)}`,
+      body,
+      { headers: ghHeaders(e.token), timeout: 30000, validateStatus: s => s < 500 }
+    )
+    if (res.status >= 200 && res.status < 300) {
+      const rawUrl = `https://raw.githubusercontent.com/${e.owner}/${e.repo}/${e.branch}/${encodeURIPath(path)}`
+      return { ok: true, sha: res.data?.content?.sha, rawUrl }
+    }
+    return { ok: false, error: `GitHub ${res.status}: ${JSON.stringify(res.data).slice(0, 400)}` }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
+
 // ─── Page chrome / templating ────────────────────────────────────────────────
 
 const SUBSCRIBE_BANNER = `<div style="background:#CD4419;color:#fff;padding:12px 20px;text-align:center;font-family:-apple-system,Helvetica,Arial,sans-serif;font-size:14px"><a href="/brew" style="color:#fff;text-decoration:none;font-weight:700">☕ ADAS Brew · Free, Every Weekday Morning · Subscribe →</a></div>`

@@ -16,8 +16,10 @@ import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
 import { postToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost } from '../services/brewLinkedIn.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
-import { commitFile, deleteFile, wrapIssueHtmlForArchive, renderArchiveIndex, githubConfigured } from '../services/brewArchive.js'
+import { commitFile, commitBinaryFile, deleteFile, wrapIssueHtmlForArchive, renderArchiveIndex, githubConfigured } from '../services/brewArchive.js'
 import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
+import { generateCoverImage, nanoBananaConfigured } from '../services/nanoBanana.js'
+import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured } from '../services/metaPosting.js'
 
 const router = express.Router()
 
@@ -1297,11 +1299,24 @@ cronRouter.post('/run', async (req, res) => {
   }
 })
 
+// Build the caption for Facebook + Instagram posts from the digest.
+function buildSocialCaption(digest) {
+  const subject = String(digest?.subject || '').trim()
+  const intro = String(digest?.intro || '').trim()
+  const lines = []
+  if (subject) lines.push(subject)
+  if (intro) lines.push('', intro)
+  lines.push('', '5 stories every weekday morning. Free.', 'Subscribe → adas-iq.com/brew')
+  lines.push('', '#ADAS #CollisionRepair #AutoBodyShop #Calibration #ADASCalibration #InsuranceClaims #OEMRepair')
+  return lines.join('\n').slice(0, 2100) // IG cap is 2200, leave headroom
+}
+
 // Bonus tasks for the most recently sent issue — runs as a separate Catalyst
-// cron a few minutes after /run so LinkedIn + archive get their own 30s budget
-// instead of competing with the send path. Reads the digest stashed by /run
-// (under cache key `brew_pending_bonus`), re-renders HTML, publishes archive,
-// posts to LinkedIn + comment, then clears the stash so we don't reprocess.
+// cron a few minutes after /run so the slow tasks (image gen, GitHub commits,
+// LinkedIn + FB + IG posts) get their own 30s budget instead of competing
+// with the send path. Reads the digest stashed by /run (cache key
+// `brew_pending_bonus`), generates the cover image, publishes archive, posts
+// to LinkedIn + Facebook Page + Instagram, then clears the stash.
 //
 // Schedule via a second Catalyst Cron: e.g. daily 6:03 AM PT, POST to
 // /api/cron/brew/run-bonus, header X-Cron-Secret: BREW_CRON_SECRET.
@@ -1322,53 +1337,119 @@ cronRouter.post('/run-bonus', async (req, res) => {
     }
 
     const { digest, issueNumber, subject, dateISO } = pending
+    const isoDate = dateISO || new Date().toISOString().slice(0, 10)
     const rendered = renderDigest(digest, {
       issueNumber: String(issueNumber),
-      dateISO: dateISO || new Date().toISOString().slice(0, 10),
+      dateISO: isoDate,
     })
+    const caption = buildSocialCaption(digest)
+    const headline = subject || rendered.subject
 
-    // 1. Archive — commits rendered HTML to GitHub Pages
-    let archiveResult
-    try {
-      archiveResult = await publishIssueToArchive(req, {
+    // Run the three independent slow tasks in parallel: archive HTML commit,
+    // Nano Banana image generation, LinkedIn text generation. Each can fail
+    // independently — we report which.
+    const [archiveSettled, imageSettled, liTextSettled] = await Promise.allSettled([
+      publishIssueToArchive(req, {
         issueNumber,
-        dateISO: dateISO || new Date().toISOString().slice(0, 10),
-        subject: subject || rendered.subject,
+        dateISO: isoDate,
+        subject: headline,
         html: rendered.html,
-      })
-    } catch (e) {
-      console.warn('[brew run-bonus archive]', e.message)
-      archiveResult = { ok: false, error: e.message }
+      }),
+      generateCoverImage({ issueNumber, dateISO: isoDate, headline }),
+      digestToLinkedInPost(digest).catch(e => ({ _liTextError: e.message || 'failed' })),
+    ])
+
+    const archiveResult = archiveSettled.status === 'fulfilled'
+      ? archiveSettled.value
+      : { ok: false, error: archiveSettled.reason?.message || 'archive failed' }
+
+    const imageResult = imageSettled.status === 'fulfilled'
+      ? imageSettled.value
+      : { ok: false, error: imageSettled.reason?.message || 'image gen failed' }
+
+    // Upload the generated image to the public archive repo so FB/IG can fetch it.
+    let imageUrl = null
+    let imageCommitResult = null
+    if (imageResult?.ok && imageResult.buffer) {
+      try {
+        imageCommitResult = await commitBinaryFile({
+          path: `brew/images/issue-${issueNumber}.png`,
+          buffer: imageResult.buffer,
+          message: `Cover image for ADAS Brew Issue #${issueNumber}`,
+        })
+        if (imageCommitResult.ok) {
+          imageUrl = imageCommitResult.rawUrl
+        }
+      } catch (e) {
+        imageCommitResult = { ok: false, error: e.message }
+      }
     }
 
-    // 2. LinkedIn post + first-comment with signup link
+    // LinkedIn post — uses pre-generated text from the parallel step.
     let liResult
-    try {
-      const postText = await digestToLinkedInPost(digest)
-      liResult = await postToLinkedIn({ text: postText })
-      if (liResult?.ok && liResult.id) {
-        const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`
-        const cr = await commentOnLinkedInPost(liResult.id, commentText)
-        liResult.comment = cr
+    if (liTextSettled.status === 'fulfilled' && liTextSettled.value && !liTextSettled.value._liTextError) {
+      try {
+        liResult = await postToLinkedIn({ text: liTextSettled.value })
+        if (liResult?.ok && liResult.id) {
+          const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`
+          const cr = await commentOnLinkedInPost(liResult.id, commentText)
+          liResult.comment = cr
+        }
+      } catch (e) {
+        liResult = { ok: false, error: e.message }
       }
-    } catch (e) {
-      console.warn('[brew run-bonus linkedin]', e.message)
-      liResult = { ok: false, error: e.message }
+    } else {
+      const err = liTextSettled.status === 'fulfilled'
+        ? liTextSettled.value._liTextError
+        : liTextSettled.reason?.message || 'linkedin text failed'
+      liResult = { ok: false, error: `linkedin-text: ${err}` }
+    }
+
+    // FB Page + IG posts — both need the public image URL.
+    let fbResult = null
+    let igResult = null
+    if (imageUrl) {
+      const [fbSettled, igSettled] = await Promise.allSettled([
+        postToFacebookPage({ imageUrl, caption }),
+        postToInstagram({ imageUrl, caption }),
+      ])
+      fbResult = fbSettled.status === 'fulfilled'
+        ? fbSettled.value
+        : { ok: false, error: fbSettled.reason?.message || 'fb failed' }
+      igResult = igSettled.status === 'fulfilled'
+        ? igSettled.value
+        : { ok: false, error: igSettled.reason?.message || 'ig failed' }
+    } else {
+      const reason = imageResult?.ok === false
+        ? `image gen failed: ${imageResult.error}`
+        : imageCommitResult?.ok === false
+        ? `image upload failed: ${imageCommitResult.error}`
+        : 'no image url'
+      fbResult = { ok: false, error: reason, skipped: true }
+      igResult = { ok: false, error: reason, skipped: true }
     }
 
     // Clear the stash so the next /run-bonus call no-ops until /run queues again
     await cacheSet(segment, 'brew_pending_bonus', null).catch(() => {})
 
-    const archiveFailed = archiveResult && archiveResult.ok === false
-    const liFailed = liResult && liResult.ok === false
-    if (archiveFailed || liFailed) {
-      const parts = []
-      if (archiveFailed) parts.push(`archive: ${archiveResult.error || 'failed'}`)
-      if (liFailed) parts.push(`linkedin: ${liResult.error || 'failed'}`)
-      alertCronFailure('bonus partial', `issue #${issueNumber} — ${parts.join('; ')}`)
+    const failures = []
+    if (archiveResult?.ok === false) failures.push(`archive: ${archiveResult.error || 'failed'}`)
+    if (liResult?.ok === false) failures.push(`linkedin: ${liResult.error || 'failed'}`)
+    if (fbResult?.ok === false && !fbResult.skipped) failures.push(`facebook: ${fbResult.error || 'failed'}`)
+    if (igResult?.ok === false && !igResult.skipped) failures.push(`instagram: ${igResult.error || 'failed'}`)
+    if (imageResult?.ok === false) failures.push(`image: ${imageResult.error || 'failed'}`)
+    if (failures.length) {
+      alertCronFailure('bonus partial', `issue #${issueNumber} — ${failures.join('; ')}`)
     }
 
-    res.json({ issueNumber, archive: archiveResult, linkedin: liResult })
+    res.json({
+      issueNumber,
+      archive: archiveResult,
+      image: imageResult?.ok ? { ok: true, url: imageUrl } : imageResult,
+      linkedin: liResult,
+      facebook: fbResult,
+      instagram: igResult,
+    })
   } catch (e) {
     console.error('[brew cron run-bonus]', e.message, e.stack)
     alertCronFailure('run-bonus threw', e.message)
