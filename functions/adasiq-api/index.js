@@ -15,6 +15,7 @@ import historyRouter from './routes/history.js'
 import jobsRouter, { performSyncQuotes } from './routes/jobs.js'
 import brewRouter, { cronRouter as brewCronRouter } from './routes/brew.js'
 import { tipsRouter as brewTipsRouter } from './routes/brewTips.js'
+import { auditRouter as auditToolRouter } from './routes/auditTool.js'
 import webhookRouter from './routes/webhook.js'
 import feedbackRouter from './routes/feedback.js'
 import postscanRouter from './routes/postscan.js'
@@ -220,6 +221,11 @@ app.use('/api/cron/brew', brewCronRouter)
 // the next manually-queued tip first, falls back to synthesizing one from
 // today's brew digest. Shared BREW_CRON_SECRET.
 app.use('/api/cron/brew-tips', brewTipsRouter)
+
+// Public AUDIT tool — Sabri Godfather Offer delivered at scale.
+// /generate is public (no auth) so the form at adas-iq.com/audit can call it
+// directly. /submissions is cron-secret protected for Mark's review.
+app.use('/api/audit-tool', auditToolRouter)
 
 // Calendar route — public (called from 5:30 planner)
 app.use('/api/calendar', calendarRouter)
