@@ -1212,13 +1212,20 @@ async function sendIssueViaResend(req, preFetched = null) {
   // metadata — small and safe for Cache. The bonus endpoint re-renders the
   // HTML from the digest, so we don't have to cache the (much larger) HTML.
   const segmentForStash = getSegment(req)
-  await cacheSet(segmentForStash, 'brew_pending_bonus', {
+  const todayStash = {
     digest: built.digest,
     issueNumber: built.issueNumber,
     subject: built.rendered.subject,
     dateISO: new Date().toISOString().slice(0, 10),
     createdAt: new Date().toISOString(),
-  }).catch(e => console.warn('[brew pending-bonus stash]', e.message))
+  }
+  await cacheSet(segmentForStash, 'brew_pending_bonus', todayStash)
+    .catch(e => console.warn('[brew pending-bonus stash]', e.message))
+  // Persistent copy that survives /run-bonus clearing the bonus stash.
+  // Used by the tips pipeline later in the day to synthesize a tip card
+  // from the current issue's stories.
+  await cacheSet(segmentForStash, 'brew_today_digest', todayStash)
+    .catch(e => console.warn('[brew today-digest stash]', e.message))
 
   // emailLinkedInToCrossPoster is fast (just sends a notification email),
   // keep it inline as fire-and-forget — it's already non-blocking.

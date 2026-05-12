@@ -88,6 +88,80 @@ export async function generateCoverImage({ issueNumber, dateISO, headline }) {
   }
 }
 
+// Absolute ADAS calibration-tip post — dramatic photo-style background with a
+// bold red-orange headline overlay and a white card listing the bullets, plus
+// an Absolute ADAS footer band. Matches the Zoho Social example post.
+const TIP_STYLE_PROMPT = `Square social-media post image, 1080x1080.
+Composition top-to-bottom in three bands:
+
+1. TOP 55% — Dramatic moody photographic close-up of a modern car's front-end (headlight, sensor cluster, grille, or windshield) with ADAS hardware visible. Cinematic low-key lighting, dark blues / blacks / grays, subtle teal-blue highlights on the metal/glass. Shallow depth of field.
+
+   Layered over this image: a bold blocky display-typography headline in bright red-orange (#CD4419), heavy slanted condensed sans-serif (like a sports/automotive poster), reading exactly: "{HEADLINE}". Multi-line if needed, tight line spacing, generous tracking. Slight drop-shadow or subtle outer glow so the text reads cleanly over the photo.
+
+2. MIDDLE 35% — A clean white card with rounded corners (12-16px radius), 80px horizontal margins from image edge, vertical center positioned. Inside the card, a vertical bulleted list of these items, each prefixed with a small filled orange #CD4419 dot followed by a single space, then the text in dark gray (#374151) sans-serif (Inter or similar), 28-36px font-size, comfortable 1.5 line-spacing:
+
+{BULLETS_BLOCK}
+
+3. BOTTOM 10% — Dark slate footer band (#0d0d0d). Centered horizontally: a small orange (#CD4419) icon of a car silhouette with two short signal-wave arcs above it, followed by the wordmark "Absolute ADAS" in white bold sans-serif. Below that, in smaller white text: "Driving safety forward, one calibration at a time."
+
+Style: professional automotive-shop aesthetic. High contrast. Photo-realistic top half, crisp graphic-design bottom two-thirds. No people in the photo. No additional text or watermarks beyond what's specified above.`
+
+/**
+ * Generate the daily Absolute ADAS tip card image.
+ *
+ * @param {Object} args
+ * @param {string} args.headline — short punchy headline (4-9 words)
+ * @param {string[]} args.bullets — 5-6 short bullet items
+ * @returns {Promise<{ok: true, buffer: Buffer, mimeType: string, prompt: string} | {ok: false, error: string}>}
+ */
+export async function generateTipCardImage({ headline, bullets }) {
+  if (!nanoBananaConfigured()) {
+    return { ok: false, error: 'GEMINI_API_KEY not set' }
+  }
+  const { apiKey, model } = envBundle()
+
+  const safeHeadline = String(headline || '').trim().slice(0, 120)
+  const bulletItems = (Array.isArray(bullets) ? bullets : [])
+    .map(b => String(b).trim())
+    .filter(Boolean)
+    .slice(0, 6)
+  const bulletsBlock = bulletItems.map(b => `• ${b}`).join('\n')
+  const prompt = TIP_STYLE_PROMPT
+    .replace('{HEADLINE}', safeHeadline)
+    .replace('{BULLETS_BLOCK}', bulletsBlock)
+
+  try {
+    const res = await axios.post(
+      `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseModalities: ['IMAGE'] },
+      },
+      {
+        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+        timeout: 30000,
+        validateStatus: s => s < 500,
+      }
+    )
+    if (res.status >= 400) {
+      return { ok: false, error: res.data?.error?.message || `HTTP ${res.status}` }
+    }
+    const parts = res.data?.candidates?.[0]?.content?.parts || []
+    const imagePart = parts.find(p => p.inlineData?.data)
+    if (!imagePart) {
+      return { ok: false, error: 'no image in response' }
+    }
+    return {
+      ok: true,
+      buffer: Buffer.from(imagePart.inlineData.data, 'base64'),
+      mimeType: imagePart.inlineData.mimeType || 'image/png',
+      prompt,
+    }
+  } catch (e) {
+    return { ok: false, error: e.message || 'request failed' }
+  }
+}
+
 function formatIssueLine(issueNumber, dateISO) {
   let dateLabel = ''
   if (dateISO) {

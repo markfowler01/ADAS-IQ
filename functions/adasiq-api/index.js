@@ -5,13 +5,16 @@ import rateLimit from 'express-rate-limit'
 import authRouter, { verifyToken } from './routes/auth.js'
 import demoRouter from './routes/demo.js'
 import extractRouter from './routes/extract.js'
+import extractRoImageRouter from './routes/extract-ro-image.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
 import salespersonsRouter from './routes/salespersons.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
 import historyRouter from './routes/history.js'
-import jobsRouter from './routes/jobs.js'
+import jobsRouter, { performSyncQuotes } from './routes/jobs.js'
+import brewRouter, { cronRouter as brewCronRouter } from './routes/brew.js'
+import { tipsRouter as brewTipsRouter } from './routes/brewTips.js'
 import webhookRouter from './routes/webhook.js'
 import feedbackRouter from './routes/feedback.js'
 import postscanRouter from './routes/postscan.js'
@@ -23,6 +26,8 @@ import crmReminderRouter from './routes/crmReminder.js'
 import backupRouter from './routes/backup.js'
 import calendarRouter from './routes/calendar.js'
 import garminRouter from './routes/garmin.js'
+import mailAgentRouter from './routes/mail-agent.js'
+import plannerBrainDumpRouter from './routes/planner-brain-dump.js'
 import expensesRouter from './routes/expenses.js'
 import notificationsRouter from './routes/notifications.js'
 import crmSyncRouter from './routes/crmSync.js'
@@ -30,6 +35,7 @@ import plannerBackupRouter from './routes/plannerBackup.js'
 import settingsRouter from './routes/settings.js'
 import brandingRouter from './routes/branding.js'
 import billingCronRouter from './routes/billing-cron.js'
+import cleanupCompletedRouter from './routes/cleanup-completed.js'
 import ptoRouter from './routes/pto.js'
 import timeclockRouter from './routes/timeclock.js'
 import bonusesRouter from './routes/bonuses.js'
@@ -149,6 +155,7 @@ app.get('/debug/cache', requireAuth, async (req, res) => {
 
 // Protected API routes (rate limiters applied to AI-heavy endpoints)
 app.use('/api/extract', requireAuth, extractLimiter, extractRouter)
+app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)
 app.use('/api/create-invoice', requireAuth, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
 app.use('/api/salespersons', requireAuth, salespersonsRouter)
@@ -156,6 +163,7 @@ app.use('/api/report', requireAuth, reportRouter)
 app.use('/api/audit', requireAuth, auditLimiter, auditRouter)
 app.use('/api/history', requireAuth, historyRouter)
 app.use('/api/jobs', requireAuth, jobsRouter)
+app.use('/api/brew', requireAuth, brewRouter)
 
 app.use('/api/feedback', requireAuth, feedbackRouter)
 app.use('/api/estimates', requireAuth, estimatesRouter)
@@ -181,11 +189,47 @@ app.use('/api/backup', backupRouter)
 // Billing cron route — protected by X-Cron-Secret (BILLING_CRON_SECRET env var)
 app.use('/api/billing-cron', billingCronRouter)
 
+// Cleanup cron — removes completed+invoiced jobs older than 24 h
+// Protected by X-Cron-Secret (CLEANUP_CRON_SECRET env var)
+app.use('/api/cleanup-completed', cleanupCompletedRouter)
+
+// Sync-quotes cron — pulls Zoho Books drafts onto the kanban and merges any
+// matching "Job Requested" cards by RO# so duplicates don't appear.
+// Protected by X-Cron-Secret (SYNC_QUOTES_CRON_SECRET env var).
+app.post('/api/cron/sync-quotes', async (req, res) => {
+  const cronSecret = (process.env.SYNC_QUOTES_CRON_SECRET || '').trim().replace(/^["']|["']$/g, '')
+  const provided = (req.headers['x_cron_secret'] || req.headers['x-cron-secret'] || '').trim()
+  if (cronSecret && provided !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const result = await performSyncQuotes(req)
+    res.json(result)
+  } catch (err) {
+    console.error('[cron sync-quotes]', err.message, err.stack)
+    res.status(err.status || 500).json({ error: err.message })
+  }
+})
+
+// ADAS Brew cron — fetches industry feeds, assembles digest, sends via Zoho Campaigns.
+// Protected by X-Cron-Secret (BREW_CRON_SECRET env var).
+app.use('/api/cron/brew', brewCronRouter)
+
+// Absolute ADAS daily tip card cron — separate post stream from the brew
+// newsletter. Posts to FB + IG with a dramatic calibration-tip image. Picks
+// the next manually-queued tip first, falls back to synthesizing one from
+// today's brew digest. Shared BREW_CRON_SECRET.
+app.use('/api/cron/brew-tips', brewTipsRouter)
+
 // Calendar route — public (called from 5:30 planner)
 app.use('/api/calendar', calendarRouter)
 app.use('/api/planner-backup', plannerBackupRouter) // no auth — planner is a separate app
 // Garmin sync — /sync is cron-protected (GARMIN_CRON_SECRET); /today and /debug are public for the planner
 app.use('/api/garmin', garminRouter)
+// Mail agent — /run is cron-protected (MAIL_AGENT_CRON_SECRET), drafts replies via Claude into Zoho Mail
+app.use('/api/mail-agent', mailAgentRouter)
+// Planner brain-dump — public (planner is a separate app); takes free text, returns structured planner draft
+app.use('/api/planner', plannerBrainDumpRouter)
 app.use('/api/expenses', requireAuth, expensesRouter)
 app.use('/api/notifications', requireAuth, notificationsRouter)
 app.use('/api/crm-sync', requireAuth, crmSyncRouter)
