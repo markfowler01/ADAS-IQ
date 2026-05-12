@@ -156,9 +156,11 @@ function buildOfferComment() {
   return [
     '👉 Stuck on a calibration denial or short-pay?',
     '',
-    'Reply "AUDIT" below or text 1-844-FIX-ADAS (844-349-2327).',
-    'I\'ll write the OEM-cited rebuttal that flips it — free, 24h turnaround, no pitch.',
-    'I take 2-3 shops a week.',
+    '📩 Tap to DM me: https://m.me/715304948324709',
+    '📞 Call or text: 1-844-FIX-ADAS (1-844-349-2327)',
+    '💬 Or reply "AUDIT" below — I\'ll reach out',
+    '',
+    'I\'ll write the OEM-cited rebuttal that flips your denial — free, 24h turnaround, no pitch. I take 2-3 shops a week.',
     '',
     '— Mark Fowler, Absolute ADAS',
   ].join('\n')
