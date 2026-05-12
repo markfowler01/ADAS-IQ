@@ -13,7 +13,7 @@ const API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 function envBundle() {
   return {
     apiKey: process.env.GEMINI_API_KEY || '',
-    model: process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image-preview',
+    model: process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image',
   }
 }
 
@@ -26,11 +26,11 @@ export function nanoBananaConfigured() {
 // look (single source of truth, not per-call).
 const STYLE_PROMPT = `Editorial newsletter cover, square 1080x1080.
 Cream background (#f5f3f0). Bold orange accent (#CD4419).
-At the top: small monospace caps reading "ADAS BREW" with a thin orange underline rule.
+At the top, horizontally arranged: a small minimalist line-drawing icon of a steaming coffee cup (one or two thin steam squiggles, in the same orange #CD4419 as the wordmark, simple line art, no fill) immediately followed by small monospace caps reading "ADAS BREW". A thin orange underline rule below the wordmark.
 Below the rule, smaller monospace caps in dark gray reading "{ISSUE_LINE}".
 Center of the image: large bold serif typography in near-black (#1a1a1a) reading "{HEADLINE}". Multi-line if needed, generous line spacing.
 Bottom: small monospace text in gray reading "adas-iq.com/brew".
-Magazine-quality editorial layout. Clean, minimal, lots of negative space. No people, no illustrations, no photographs — just type on cream with the orange accent. High-end print design feel.`
+Magazine-quality editorial layout. Clean, minimal, lots of negative space. No people, no photographs — only the small line-art coffee cup as illustration, otherwise just type on cream with the orange accent. High-end print design feel.`
 
 /**
  * Generate the daily cover image.

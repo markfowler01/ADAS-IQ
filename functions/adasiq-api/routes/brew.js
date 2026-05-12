@@ -726,6 +726,69 @@ cronRouter.get('/preview', requireCronSecretFlex, async (req, res) => {
   }
 })
 
+// GET /api/cron/brew/_test-image?secret=...&headline=...&issue=...&date=...
+// Renders a Nano Banana cover image inline so you can preview the brand look
+// without affecting any sends or social posts. Defaults plug in plausible values.
+// Add &commit=1 to also push it to GitHub at brew/images/test-{timestamp}.png and
+// return JSON with the public URL instead of the image bytes.
+cronRouter.get('/_test-image', requireCronSecretFlex, async (req, res) => {
+  try {
+    const issueNumber = req.query.issue || '999'
+    const dateISO = req.query.date || new Date().toISOString().slice(0, 10)
+    const headline = String(req.query.headline || 'OEM parts spike, alternative hits 40%')
+
+    const img = await generateCoverImage({ issueNumber, dateISO, headline })
+    if (!img.ok) {
+      return res.status(500).type('text/plain').send(`Image gen failed: ${img.error}`)
+    }
+
+    if (req.query.commit === '1') {
+      const commitResult = await commitBinaryFile({
+        path: `brew/images/test-${Date.now()}.png`,
+        buffer: img.buffer,
+        message: 'Nano Banana test image',
+      })
+      return res.json({ ok: true, prompt: img.prompt, ...commitResult })
+    }
+
+    res.set('Content-Type', img.mimeType || 'image/png')
+    res.set('Content-Disposition', 'inline; filename="brew-test.png"')
+    res.set('Cache-Control', 'no-store')
+    return res.send(img.buffer)
+  } catch (e) {
+    console.error('[brew test-image]', e.message, e.stack)
+    return res.status(500).type('text/plain').send(e.message)
+  }
+})
+
+// POST /api/cron/brew/_prep-bonus?secret=... — builds today's digest fresh
+// and stashes it for /run-bonus to pick up, WITHOUT sending email. Use this
+// to test the social pipeline against real content without duplicating sends.
+// Does not advance the issue counter (no recordIssueSent call here).
+cronRouter.post('/_prep-bonus', requireCronSecretFlex, async (req, res) => {
+  try {
+    const fetched = await fetchAndTrim()
+    const built = await buildIssue(req, { items: fetched.items, status: fetched.status })
+    const segment = getSegment(req)
+    await cacheSet(segment, 'brew_pending_bonus', {
+      digest: built.digest,
+      issueNumber: built.issueNumber,
+      subject: built.rendered.subject,
+      dateISO: new Date().toISOString().slice(0, 10),
+      createdAt: new Date().toISOString(),
+    })
+    res.json({
+      ok: true,
+      issueNumber: built.issueNumber,
+      subject: built.rendered.subject,
+      itemsConsidered: built.itemsConsidered,
+    })
+  } catch (e) {
+    console.error('[brew _prep-bonus]', e.message, e.stack)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 cronRouter.use(requireCronSecret)
 
 cronRouter.post('/fetch', async (req, res) => {
@@ -1300,6 +1363,9 @@ cronRouter.post('/run', async (req, res) => {
 })
 
 // Build the caption for Facebook + Instagram posts from the digest.
+// Includes a one-line brand bridge so Absolute ADAS followers understand
+// the relationship between Absolute ADAS (Mark's mobile calibration service),
+// ADAS IQ (the software/newsletter brand), and ADAS Brew (this newsletter).
 function buildSocialCaption(digest) {
   const subject = String(digest?.subject || '').trim()
   const intro = String(digest?.intro || '').trim()
@@ -1307,6 +1373,7 @@ function buildSocialCaption(digest) {
   if (subject) lines.push(subject)
   if (intro) lines.push('', intro)
   lines.push('', '5 stories every weekday morning. Free.', 'Subscribe → adas-iq.com/brew')
+  lines.push('', 'ADAS Brew is published by ADAS IQ — software we\'re building for collision shops handling ADAS calibration. Built from what we see on the floor at Absolute ADAS (mobile calibration, Western Washington).')
   lines.push('', '#ADAS #CollisionRepair #AutoBodyShop #Calibration #ADASCalibration #InsuranceClaims #OEMRepair')
   return lines.join('\n').slice(0, 2100) // IG cap is 2200, leave headroom
 }
