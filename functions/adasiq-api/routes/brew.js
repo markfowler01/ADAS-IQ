@@ -1278,35 +1278,38 @@ async function alertCronFailure(label, detail) {
 }
 
 cronRouter.post('/run', async (req, res) => {
-  try {
-    // Server-side day filter — keeps the Catalyst cron simple (fires daily)
-    // while restricting actual sends to allowed days. Default: Mon–Fri.
-    // Override via BREW_SEND_DAYS env var (e.g. "Mon,Tue,Wed,Thu,Fri").
-    // Manual test send any day with ?force=1 query param.
-    const force = req.query.force === '1' || req.query.force === 'true'
-    if (!force) {
-      const today = dayOfWeekPT()
-      const allowed = allowedDays()
-      if (!allowed.includes(today)) {
-        const day = new Date().toLocaleString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' })
-        return res.json({ skipped: true, reason: `${day} PT not in allowed list [${allowed.join(', ')}]` })
-      }
+  // Server-side day filter — keeps the Catalyst cron simple (fires daily)
+  // while restricting actual sends to allowed days. Default: Mon–Fri.
+  // Override via BREW_SEND_DAYS env var (e.g. "Mon,Tue,Wed,Thu,Fri").
+  // Manual test send any day with ?force=1 query param.
+  const force = req.query.force === '1' || req.query.force === 'true'
+  if (!force) {
+    const today = dayOfWeekPT()
+    const allowed = allowedDays()
+    if (!allowed.includes(today)) {
+      const day = new Date().toLocaleString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' })
+      return res.json({ skipped: true, reason: `${day} PT not in allowed list [${allowed.join(', ')}]` })
     }
-    // Fetch in memory, pass straight to the send pipeline — avoids the Catalyst
-    // cache per-value cap that was breaking /run when the blob crept over the limit.
-    const fetched = await fetchAndTrim()
-    const out = await sendIssueViaResend(req, { items: fetched.items, status: fetched.status })
-    if (out?.send?.status === 'error') {
-      alertCronFailure('send failed', `issue #${out.issueNumber}: ${out.send.error || 'unknown'}`)
-    }
-    res.json({
-      fetched: fetched.fetched,
-      sources: fetched.status,
-      ...out,
-    })
-  } catch (e) {
-    console.error('[brew cron run]', e.message, e.stack)
-    alertCronFailure('cron threw', e.message)
-    res.status(500).json({ error: e.message })
   }
+
+  // ACK immediately. The full pipeline (fetch + Claude digest + Resend +
+  // archive + LinkedIn) routinely runs 35–60s, past Catalyst's HTTP gateway
+  // request cap (~30s). Function execution cap is 540s, so the work finishes
+  // in the background after the response is sent. Failures DM Mark via Cliq.
+  res.json({ accepted: true, startedAt: new Date().toISOString() })
+
+  ;(async () => {
+    try {
+      const fetched = await fetchAndTrim()
+      const out = await sendIssueViaResend(req, { items: fetched.items, status: fetched.status })
+      if (out?.send?.status === 'error') {
+        alertCronFailure('send failed', `issue #${out.issueNumber}: ${out.send.error || 'unknown'}`)
+      } else {
+        console.log('[brew cron run] done', { issueNumber: out.issueNumber, send: out.send?.status })
+      }
+    } catch (e) {
+      console.error('[brew cron run bg]', e.message, e.stack)
+      alertCronFailure('cron threw (bg)', e.message)
+    }
+  })()
 })
