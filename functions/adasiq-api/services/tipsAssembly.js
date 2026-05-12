@@ -14,18 +14,28 @@ function getClient() {
 
 const TIP_SYSTEM_PROMPT = `You're writing for Absolute ADAS — a mobile ADAS calibration service in Western Washington run by Mark Fowler. Audience: collision shop owners, body shop production managers, and calibration techs. Voice: blue-collar practitioner, direct, no fluff, no corporate hedge-words.
 
-Your job: produce ONE calibration-tip card for today's social post. Output is structured for an image overlay (headline + bullet list) plus a longer caption for the post body.
+Your job: produce ONE calibration-tip card for today's social post. Output is structured for an editorial image (eyebrow label + main headline + 3 bullets) plus a longer caption for the post body, plus a photo subject hint for the AI background.
 
 CARD RULES:
-- "headline": 4–9 words. Punchy. Imperative or noun-phrase. Example: "What technicians check before calibration starts" or "Five line items insurance always denies".
-- "bullets": exactly 5–6 items. Each 3–7 words. No periods at end. Concrete, specific actions or facts. NEVER generic ("be careful", "stay informed"). NEVER full sentences.
-- "caption": 2–4 short paragraphs, 400–800 chars total. Practitioner voice. Sets up the tip, gives one concrete why-it-matters, and a single soft mention of ADAS Brew or adas-iq.com/brew at the end. NEVER hype words ("game-changer", "unlock", "leverage"). NO em dashes.
+- "eyebrow": 2–3 words, ALL CAPS, a category label. Example: "INSURANCE INTEL", "DOCUMENTATION DRILL", "CALIBRATION TIP", "OEM ALERT", "TECH CHECK".
+- "headline": 5–9 words. Punchy. Imperative or noun-phrase. NEVER restate the eyebrow. Example: "State Farm pushes back. Document or eat it." or "Three line items adjusters always deny first."
+- "bullets": EXACTLY 3 items. Each MAX 40 characters, ideally 4–6 words. No periods at end. NO commas (cut to a single phrase). Concrete, specific actions or facts the reader can use TODAY. NEVER generic ("be careful", "stay informed"). NEVER full sentences. Pick the 3 strongest — quality over quantity. If a bullet runs long, cut words until it fits.
+- "caption": 2–4 short paragraphs, 400–800 chars total. Practitioner voice. Sets up the tip, gives one concrete why-it-matters, ends with a single soft mention of ADAS Brew or adas-iq.com/brew. NEVER hype words ("game-changer", "unlock", "leverage"). NO em dashes.
+- "photo_subject": one phrase describing what a dramatic photo for this tip should depict. Pick something thematically tied to the tip's content. Examples:
+    - documentation tip → "RO paperwork, OEM repair procedure printout, ballpoint pen on clipboard, shop counter lighting"
+    - sensor / hardware tip → "ADAS forward-facing radar module behind grille, close-up, low light"
+    - insurance / denial tip → "claim denial letter on desk, partial estimate visible, dim office lighting"
+    - calibration procedure tip → "Hunter or Autel calibration target set up in front of vehicle, scan tool screen visible"
+    - tech / training tip → "technician hands holding scan tool with calibration menu on screen"
+  Keep it short (under 30 words). Mention "automotive shop interior" or "vehicle close-up" so the AI stays on-brand.
 
 OUTPUT: raw JSON only, no markdown:
 {
+  "eyebrow": "string",
   "headline": "string",
-  "bullets": ["string", "string", ...],
-  "caption": "string"
+  "bullets": ["string", "string", "string"],
+  "caption": "string",
+  "photo_subject": "string"
 }`
 
 /**
@@ -80,11 +90,13 @@ Generate the tip card.`
   try {
     const parsed = JSON.parse(cleaned)
     return {
+      eyebrow: String(parsed.eyebrow || '').toUpperCase().slice(0, 30),
       headline: String(parsed.headline || '').slice(0, 120),
       bullets: Array.isArray(parsed.bullets)
-        ? parsed.bullets.map(b => String(b).slice(0, 80)).slice(0, 6)
+        ? parsed.bullets.map(b => String(b).slice(0, 80)).slice(0, 3)
         : [],
       caption: String(parsed.caption || '').slice(0, 1800),
+      photoSubject: String(parsed.photo_subject || '').slice(0, 250),
     }
   } catch (e) {
     throw new Error(`tip card JSON parse failed: ${e.message} — raw: ${cleaned.slice(0, 200)}`)

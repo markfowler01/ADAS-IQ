@@ -196,8 +196,9 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       source = 'brew-synthesis'
     }
 
-    // 3. Generate the PHOTO background via Nano Banana (no text/logo — AI only does the photo)
-    const photo = await generateTipCardImage()
+    // 3. Generate the PHOTO background via Nano Banana — Claude picked a
+    // thematic photo subject that matches the tip's topic
+    const photo = await generateTipCardImage({ photoSubject: card.photoSubject })
     if (!photo.ok) {
       if (manualTip) {
         const q = await readQueue(req)
@@ -208,12 +209,13 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       return res.status(500).json({ error: `image gen: ${photo.error}`, restoredQueue: !!manualTip })
     }
 
-    // 3b. Composite headline + bullets + logo footer ON TOP of the photo, in code,
-    // so the brand color is exactly #CD4419 and the logo is your actual PNG.
+    // 3b. Composite eyebrow + headline + 3 bullets + CTA + logo footer ON TOP
+    // of the photo, in code, so brand color, typography, and logo are exact.
     let finalBuffer
     try {
       finalBuffer = await composeTipImage({
         photoBuffer: photo.buffer,
+        eyebrow: card.eyebrow,
         headline: card.headline,
         bullets: card.bullets,
       })
@@ -249,8 +251,10 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       return res.json({
         dryRun: true,
         source,
+        eyebrow: card.eyebrow,
         headline: card.headline,
         bullets: card.bullets,
+        photoSubject: card.photoSubject,
         caption: card.caption,
         image: { ok: true, url: imageCommit.rawUrl },
       })

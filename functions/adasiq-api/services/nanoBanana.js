@@ -95,27 +95,34 @@ export async function generateCoverImage({ issueNumber, dateISO, headline }) {
 // explicitly NOT to render any text, logos, or graphics.
 const TIP_STYLE_PROMPT = `Square photographic image, 1080x1080.
 
-Subject: a dramatic moody close-up of a modern vehicle's front-end. Could be a headlight cluster, ADAS sensor housing, grille, windshield camera region, or front quarter-panel — whichever makes for the most cinematic shot. ADAS hardware (cameras, radar, sensors) should be visible or implied.
+Subject: {PHOTO_SUBJECT}
 
-Lighting: cinematic low-key. Dark blues, blacks, and gunmetal grays dominate. Subtle teal-blue highlights catch the metal and glass edges. Shallow depth of field. Photo-realistic, professional automotive editorial photography quality.
+Lighting: cinematic low-key. Dark blues, blacks, and gunmetal grays dominate. Subtle teal-blue highlights catch metal, glass, or paper edges. Shallow depth of field. Photo-realistic, professional automotive editorial photography quality. The whole frame should read as moody and considered, not stock-photo bright.
 
-The TOP portion (upper 45%) of the photo should have darker, less-detailed areas (sky, shadow, or out-of-focus background) so headline text can be cleanly overlaid later. The MIDDLE 35% can have the main subject. The BOTTOM 10% will be covered by a graphic footer — keep it visually quiet there too.
+The TOP portion (upper 45%) of the photo should have darker, less-detailed areas (sky, shadow, out-of-focus background, dark wall, or paper margins) so headline text can be cleanly overlaid later. The MIDDLE 35% can have the main subject. The BOTTOM 10% will be covered by a graphic footer — keep it visually quiet there too.
 
 CRITICAL: NO TEXT, NO LOGOS, NO WATERMARKS, NO GRAPHICS, NO BORDERS. Just the photograph. Do not add any words, captions, headlines, or branding of any kind to the image — text and branding will be added later in code.`
+
+const DEFAULT_PHOTO_SUBJECT = 'A dramatic moody close-up of a modern vehicle\'s front-end — headlight cluster, ADAS sensor housing, grille, or windshield camera region. ADAS hardware visible or implied. Automotive editorial photography.'
 
 /**
  * Generate the photographic background for the daily Absolute ADAS tip card.
  * Headline, bullets, and logo are composited on top in code afterward.
  *
+ * @param {Object} [args]
+ * @param {string} [args.photoSubject] — optional thematic subject description
+ *   (e.g. "RO paperwork on clipboard, ballpoint pen, shop counter lighting").
+ *   Falls back to a generic vehicle close-up if omitted.
  * @returns {Promise<{ok: true, buffer: Buffer, mimeType: string, prompt: string} | {ok: false, error: string}>}
  */
-export async function generateTipCardImage(/* headline + bullets unused now — composed in code */) {
+export async function generateTipCardImage({ photoSubject } = {}) {
   if (!nanoBananaConfigured()) {
     return { ok: false, error: 'GEMINI_API_KEY not set' }
   }
   const { apiKey, model } = envBundle()
 
-  const prompt = TIP_STYLE_PROMPT
+  const subject = String(photoSubject || '').trim() || DEFAULT_PHOTO_SUBJECT
+  const prompt = TIP_STYLE_PROMPT.replace('{PHOTO_SUBJECT}', subject)
 
   try {
     const res = await axios.post(

@@ -39,8 +39,7 @@ async function loadAssets() {
   return { interBoldB64: _interBoldB64, interRegularB64: _interRegularB64, logoB64: _logoB64 }
 }
 
-// Greedy word-wrap. Returns array of lines. Uses an approximate char-width
-// (~0.55x the pixel font size for Inter Bold), then verifies via line count.
+// Greedy word-wrap. Returns array of lines.
 function wrapLines(text, maxCharsPerLine) {
   const words = String(text || '').split(/\s+/).filter(Boolean)
   const lines = []
@@ -58,6 +57,42 @@ function wrapLines(text, maxCharsPerLine) {
   return lines
 }
 
+// Smart headline split — prefer natural breaks at periods, em-dashes, semicolons,
+// or colons before falling back to word-wrap. Always returns 1, 2, or 3 lines
+// (never truncates content). Used to lay out the editorial headline.
+function splitHeadline(text, targetMaxCharsPerLine = 22) {
+  const clean = String(text || '').trim()
+  if (!clean) return []
+
+  // Try splitting at sentence-level delimiters first
+  const sentenceBreak = clean.match(/^(.+?[.!?:;])\s+(.+)$/)
+  if (sentenceBreak) {
+    const a = sentenceBreak[1].trim()
+    const b = sentenceBreak[2].trim()
+    // If each half fits roughly within target, use them as-is
+    if (a.length <= targetMaxCharsPerLine + 6 && b.length <= targetMaxCharsPerLine + 6) {
+      return [a, b]
+    }
+    // Otherwise word-wrap each half and stitch
+    const aLines = wrapLines(a, targetMaxCharsPerLine)
+    const bLines = wrapLines(b, targetMaxCharsPerLine)
+    return [...aLines, ...bLines].slice(0, 3)
+  }
+
+  // Try em-dash
+  const dashBreak = clean.match(/^(.+?)\s*[—–-]\s*(.+)$/)
+  if (dashBreak) {
+    const a = dashBreak[1].trim()
+    const b = dashBreak[2].trim()
+    if (a.length <= targetMaxCharsPerLine + 6 && b.length <= targetMaxCharsPerLine + 6) {
+      return [a, b]
+    }
+  }
+
+  // Fallback to greedy word-wrap, allow up to 3 lines
+  return wrapLines(clean, targetMaxCharsPerLine).slice(0, 3)
+}
+
 // XML-escape a string for safe inclusion in SVG.
 function esc(s) {
   return String(s ?? '')
@@ -68,51 +103,80 @@ function esc(s) {
     .replace(/'/g, '&apos;')
 }
 
-function buildSvgOverlay({ headline, bullets, interBoldB64, interRegularB64, logoB64 }) {
+function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegularB64, logoB64 }) {
   // Layout knobs
   const headlineBandY = 0
-  const headlineBandH = 480
+  const headlineBandH = 460
   const cardX = 60
-  const cardY = 530
+  const cardY = 510
   const cardW = CANVAS - 120
-  const cardH = 420
+  const cardH = 360
+  const ctaY = cardY + cardH + 14 // CTA ribbon sits just below the card
   const footerH = 130
   const footerY = CANVAS - footerH
 
-  // Headline: split into up to 3 lines depending on length
+  // ── Eyebrow (small all-caps label above headline)
+  const eyebrowText = String(eyebrow || '').toUpperCase().trim()
+  const eyebrowY = 110
+  const eyebrowSvg = eyebrowText
+    ? `<text x="${CANVAS / 2}" y="${eyebrowY}" class="eyebrow">${esc(eyebrowText)}</text>
+       <line x1="${CANVAS / 2 - 32}" y1="${eyebrowY + 12}" x2="${CANVAS / 2 + 32}" y2="${eyebrowY + 12}" stroke="${BRAND_ORANGE}" stroke-width="3" stroke-linecap="round"/>`
+    : ''
+
+  // ── Headline — smart split at natural breaks, then dynamically size the
+  // font so the longest line fits within the canvas width minus padding.
   const headlineUpper = String(headline || '').toUpperCase().trim()
-  const headlineLines = wrapLines(headlineUpper, headlineUpper.length > 36 ? 22 : 26).slice(0, 3)
+  const headlineLines = splitHeadline(headlineUpper, 22)
   const headlineLineCount = headlineLines.length
-  // Pick a font size that fits comfortably for the line count
-  const headlineFontSize = headlineLineCount >= 3 ? 70 : headlineLineCount === 2 ? 84 : 100
-  const headlineLineHeight = Math.round(headlineFontSize * 1.06)
+  // Inter Bold uppercase average char width ≈ 0.58× the font size in pixels.
+  // Available width = canvas - 120px padding (60 each side).
+  const HEADLINE_AVAIL_W = CANVAS - 120
+  const CHAR_WIDTH_FACTOR = 0.58
+  const longestLineChars = Math.max(...headlineLines.map(l => l.length))
+  // Cap font by line count, then shrink further if longest line wouldn't fit
+  const fontByLineCount = headlineLineCount >= 3 ? 64 : headlineLineCount === 2 ? 86 : 108
+  const maxFontForWidth = Math.floor(HEADLINE_AVAIL_W / (longestLineChars * CHAR_WIDTH_FACTOR))
+  const headlineFontSize = Math.min(fontByLineCount, maxFontForWidth)
+  const headlineLineHeight = Math.round(headlineFontSize * 1.05)
   const headlineBlockH = headlineLineHeight * headlineLineCount
-  const headlineStartY = Math.round((headlineBandH - headlineBlockH) / 2) + Math.round(headlineFontSize * 0.78)
+  // Center the headline block below the eyebrow within the remaining headline band
+  const headlineBlockTop = eyebrowY + 50
+  const availableH = headlineBandH - headlineBlockTop
+  const headlineStartY = headlineBlockTop + Math.round((availableH - headlineBlockH) / 2) + Math.round(headlineFontSize * 0.78)
 
   const headlineSvgLines = headlineLines.map((line, i) =>
     `<text x="${CANVAS / 2}" y="${headlineStartY + i * headlineLineHeight}" class="headline">${esc(line)}</text>`
   ).join('\n  ')
 
-  // Bullets — vertical stack inside the white card
-  const bulletItems = (Array.isArray(bullets) ? bullets : []).slice(0, 6)
-  const bulletFontSize = bulletItems.length >= 6 ? 28 : 32
-  const bulletLineGap = Math.round((cardH - 60) / bulletItems.length)
-  const bulletDotR = 8
-  const bulletPadLeft = 50
-  const bulletTextX = cardX + bulletPadLeft + 22 + 16
+  // ── Bullets (exactly 3, larger, more breathing room)
+  const bulletItems = (Array.isArray(bullets) ? bullets : []).slice(0, 3)
+  const bulletFontSize = 32
+  const bulletLineGap = Math.round(cardH / (bulletItems.length + 0.5))
+  const bulletDotR = 10
+  const bulletPadLeft = 60
   const bulletDotX = cardX + bulletPadLeft + 22
-  const bulletStartY = cardY + 40
+  const bulletTextX = bulletDotX + 26
+  const firstBulletY = cardY + Math.round((cardH - bulletLineGap * (bulletItems.length - 1)) / 2)
 
   const bulletsSvg = bulletItems.map((b, i) => {
-    const y = bulletStartY + i * bulletLineGap
+    const y = firstBulletY + i * bulletLineGap
     return `
-  <circle cx="${bulletDotX}" cy="${y + bulletFontSize / 2 - 8}" r="${bulletDotR}" fill="${BRAND_ORANGE}"/>
-  <text x="${bulletTextX}" y="${y + bulletFontSize - 6}" class="bullet">${esc(b)}</text>`
+  <circle cx="${bulletDotX}" cy="${y - bulletFontSize / 2 + 8}" r="${bulletDotR}" fill="${BRAND_ORANGE}"/>
+  <text x="${bulletTextX}" y="${y}" class="bullet">${esc(b)}</text>`
   }).join('')
 
-  // Footer — logo + wordmark + tagline, horizontally centered as a block
+  // ── CTA ribbon (small orange pill, bottom-right of bullet card area)
+  const ctaText = '→ Daily at adas-iq.com/brew'
+  const ctaApproxW = Math.round(ctaText.length * 20 * 0.6) + 36
+  const ctaH = 38
+  const ctaX = cardX + cardW - ctaApproxW
+  const ctaTextY = ctaY + Math.round(ctaH * 0.66)
+  const ctaSvg = `
+  <rect x="${ctaX}" y="${ctaY}" width="${ctaApproxW}" height="${ctaH}" rx="${ctaH / 2}" ry="${ctaH / 2}" fill="${BRAND_ORANGE}"/>
+  <text x="${ctaX + ctaApproxW / 2}" y="${ctaTextY}" class="cta">${esc(ctaText)}</text>`
+
+  // ── Footer (logo + wordmark + tagline centered)
   const logoSize = 70
-  // Approximate wordmark width at 36px Inter Bold ≈ 0.55 * 36 * char count
   const wordmark = 'Absolute ADAS'
   const tagline = 'Driving safety forward, one calibration at a time.'
   const wordmarkApproxW = Math.round(wordmark.length * 36 * 0.55)
@@ -128,16 +192,24 @@ function buildSvgOverlay({ headline, bullets, interBoldB64, interRegularB64, log
     <style type="text/css">
       @font-face { font-family: 'Inter'; src: url(data:font/ttf;base64,${interBoldB64}) format('truetype'); font-weight: 700; }
       @font-face { font-family: 'Inter'; src: url(data:font/ttf;base64,${interRegularB64}) format('truetype'); font-weight: 400; }
+      .eyebrow {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 22px;
+        fill: ${BRAND_ORANGE};
+        text-anchor: middle;
+        letter-spacing: 0.22em;
+      }
       .headline {
         font-family: 'Inter', sans-serif;
         font-weight: 700;
         font-size: ${headlineFontSize}px;
-        fill: ${BRAND_ORANGE};
+        fill: #ffffff;
         text-anchor: middle;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.015em;
         paint-order: stroke;
-        stroke: rgba(0,0,0,0.35);
-        stroke-width: 4px;
+        stroke: rgba(0,0,0,0.45);
+        stroke-width: 3px;
       }
       .bullet {
         font-family: 'Inter', sans-serif;
@@ -145,6 +217,14 @@ function buildSvgOverlay({ headline, bullets, interBoldB64, interRegularB64, log
         font-size: ${bulletFontSize}px;
         fill: ${BULLET_DARK};
         letter-spacing: -0.005em;
+      }
+      .cta {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 18px;
+        fill: #ffffff;
+        text-anchor: middle;
+        letter-spacing: 0.02em;
       }
       .wordmark {
         font-family: 'Inter', sans-serif;
@@ -162,14 +242,18 @@ function buildSvgOverlay({ headline, bullets, interBoldB64, interRegularB64, log
       }
     </style>
   </defs>
-  <!-- Headline darken band -->
-  <rect x="0" y="${headlineBandY}" width="${CANVAS}" height="${headlineBandH}" fill="rgba(0,0,0,0.55)"/>
+  <!-- Headline darken band with subtle gradient -->
+  <rect x="0" y="${headlineBandY}" width="${CANVAS}" height="${headlineBandH}" fill="rgba(0,0,0,0.58)"/>
+  <!-- Eyebrow -->
+  ${eyebrowSvg}
   <!-- Headline -->
   ${headlineSvgLines}
-  <!-- White bullet card -->
+  <!-- Bullet card -->
   <rect x="${cardX - 4}" y="${cardY - 4 + 8}" width="${cardW + 8}" height="${cardH + 8}" rx="22" ry="22" fill="rgba(0,0,0,0.25)"/>
   <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="18" ry="18" fill="${CARD_WHITE}"/>
   ${bulletsSvg}
+  <!-- CTA ribbon -->
+  ${ctaSvg}
   <!-- Footer band -->
   <rect x="0" y="${footerY}" width="${CANVAS}" height="${footerH}" fill="${BRAND_DARK}"/>
   <image href="data:image/png;base64,${logoB64}" x="${blockStartX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}"/>
@@ -187,7 +271,7 @@ function buildSvgOverlay({ headline, bullets, interBoldB64, interRegularB64, log
  * @param {string[]} args.bullets   — 5–6 short bullet items
  * @returns {Promise<Buffer>} composited PNG (1080x1080)
  */
-export async function composeTipImage({ photoBuffer, headline, bullets }) {
+export async function composeTipImage({ photoBuffer, eyebrow, headline, bullets }) {
   const { interBoldB64, interRegularB64, logoB64 } = await loadAssets()
 
   // Photo → 1080x1080 cover
@@ -195,7 +279,7 @@ export async function composeTipImage({ photoBuffer, headline, bullets }) {
     .resize(CANVAS, CANVAS, { fit: 'cover', position: 'center' })
     .toBuffer()
 
-  const svg = buildSvgOverlay({ headline, bullets, interBoldB64, interRegularB64, logoB64 })
+  const svg = buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegularB64, logoB64 })
 
   // Composite SVG overlay on photo, output PNG
   const final = await sharp(photo)
