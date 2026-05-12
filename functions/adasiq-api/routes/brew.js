@@ -119,12 +119,12 @@ async function runFetch(req) {
 }
 
 async function buildIssue(req, preFetched = null) {
+  const segment = getSegment(req)
   let items, sourceStatus
   if (preFetched?.items?.length) {
     items = preFetched.items
     sourceStatus = preFetched.status
   } else {
-    const segment = getSegment(req)
     const cached = await cacheGet(segment, 'brew_feed_items', null)
     if (cached?.items?.length && (Date.now() - new Date(cached.fetched_at).getTime() < 12 * 60 * 60 * 1000)) {
       items = cached.items
@@ -1121,41 +1121,8 @@ async function sendIssueViaResend(req, preFetched = null) {
     text: built.rendered.text,
   })
 
-  // Fire-and-forget LinkedIn cross-poster notification — never blocks main send
-  emailLinkedInToCrossPoster({ digest: built.digest, issueNumber: built.issueNumber })
-    .catch(e => console.warn('[brew linkedin-notify]', e.message))
-
-  // Fire-and-forget archive publish — pushes the issue to GitHub Pages
-  let archiveResult = null
-  try {
-    archiveResult = await publishIssueToArchive(req, {
-      issueNumber: built.issueNumber,
-      dateISO: new Date().toISOString().slice(0, 10),
-      subject: built.rendered.subject,
-      html: built.rendered.html,
-    })
-  } catch (e) {
-    console.warn('[brew archive-publish]', e.message)
-    archiveResult = { ok: false, error: e.message }
-  }
-
-  // Fire-and-forget LinkedIn auto-post — never blocks main send
-  let liResult = null
-  try {
-    const postText = await digestToLinkedInPost(built.digest)
-    liResult = await postToLinkedIn({ text: postText })
-
-    // After successful post, drop the newsletter signup link in the first comment.
-    // LinkedIn de-prioritizes posts with body URLs; comments are exempt.
-    if (liResult?.ok && liResult.id) {
-      const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`
-      const cr = await commentOnLinkedInPost(liResult.id, commentText)
-      liResult.comment = cr
-    }
-  } catch (e) {
-    console.warn('[brew linkedin-post]', e.message)
-    liResult = { ok: false, error: e.message }
-  }
+  // Bookkeeping FIRST — so the issue counter + datastore record are durable
+  // even if the function is torn down before the side-effects below finish.
   if (result.status === 'sent' || result.status === 'partial' || result.status === 'queued') {
     const segment = getSegment(req)
     await recordIssueSent(segment, built.issueNumber, {
@@ -1166,7 +1133,6 @@ async function sendIssueViaResend(req, preFetched = null) {
       total: result.total,
       dryRun: Boolean(result.dryRun),
     })
-    // Track per-issue subject performance (opens/clicks via webhook)
     const successIds = (result.results || []).filter(r => r.ok && r.id).map(r => r.id)
     await recordIssueSent_v2(req, {
       issueNumber: built.issueNumber,
@@ -1175,12 +1141,40 @@ async function sendIssueViaResend(req, preFetched = null) {
       emailIds: successIds,
     })
   }
+
+  // Truly fire-and-forget side-effects below — Catalyst's HTTP gateway has a
+  // ~30s request cap; awaiting LinkedIn + GitHub archive blew past it. These
+  // are bonus tasks, not part of the core "subscribers receive the email"
+  // contract. They may complete or get torn down with the worker; either is OK.
+  emailLinkedInToCrossPoster({ digest: built.digest, issueNumber: built.issueNumber })
+    .catch(e => console.warn('[brew linkedin-notify]', e.message))
+
+  publishIssueToArchive(req, {
+    issueNumber: built.issueNumber,
+    dateISO: new Date().toISOString().slice(0, 10),
+    subject: built.rendered.subject,
+    html: built.rendered.html,
+  }).catch(e => console.warn('[brew archive-publish]', e.message))
+
+  ;(async () => {
+    try {
+      const postText = await digestToLinkedInPost(built.digest)
+      const li = await postToLinkedIn({ text: postText })
+      if (li?.ok && li.id) {
+        const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`
+        await commentOnLinkedInPost(li.id, commentText)
+      }
+    } catch (e) {
+      console.warn('[brew linkedin-post]', e.message)
+    }
+  })()
+
   return {
     issueNumber: built.issueNumber,
     itemsConsidered: built.itemsConsidered,
     send: result,
-    linkedin: liResult,
-    archive: archiveResult,
+    linkedin: { deferred: true },
+    archive: { deferred: true },
   }
 }
 
@@ -1278,38 +1272,36 @@ async function alertCronFailure(label, detail) {
 }
 
 cronRouter.post('/run', async (req, res) => {
-  // Server-side day filter — keeps the Catalyst cron simple (fires daily)
-  // while restricting actual sends to allowed days. Default: Mon–Fri.
-  // Override via BREW_SEND_DAYS env var (e.g. "Mon,Tue,Wed,Thu,Fri").
-  // Manual test send any day with ?force=1 query param.
-  const force = req.query.force === '1' || req.query.force === 'true'
-  if (!force) {
-    const today = dayOfWeekPT()
-    const allowed = allowedDays()
-    if (!allowed.includes(today)) {
-      const day = new Date().toLocaleString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' })
-      return res.json({ skipped: true, reason: `${day} PT not in allowed list [${allowed.join(', ')}]` })
-    }
-  }
-
-  // ACK immediately. The full pipeline (fetch + Claude digest + Resend +
-  // archive + LinkedIn) routinely runs 35–60s, past Catalyst's HTTP gateway
-  // request cap (~30s). Function execution cap is 540s, so the work finishes
-  // in the background after the response is sent. Failures DM Mark via Cliq.
-  res.json({ accepted: true, startedAt: new Date().toISOString() })
-
-  ;(async () => {
-    try {
-      const fetched = await fetchAndTrim()
-      const out = await sendIssueViaResend(req, { items: fetched.items, status: fetched.status })
-      if (out?.send?.status === 'error') {
-        alertCronFailure('send failed', `issue #${out.issueNumber}: ${out.send.error || 'unknown'}`)
-      } else {
-        console.log('[brew cron run] done', { issueNumber: out.issueNumber, send: out.send?.status })
+  try {
+    // Server-side day filter — keeps the Catalyst cron simple (fires daily)
+    // while restricting actual sends to allowed days. Default: Mon–Fri.
+    // Override via BREW_SEND_DAYS env var (e.g. "Mon,Tue,Wed,Thu,Fri").
+    // Manual test send any day with ?force=1 query param.
+    const force = req.query.force === '1' || req.query.force === 'true'
+    if (!force) {
+      const today = dayOfWeekPT()
+      const allowed = allowedDays()
+      if (!allowed.includes(today)) {
+        const day = new Date().toLocaleString('en-US', { weekday: 'long', timeZone: 'America/Los_Angeles' })
+        return res.json({ skipped: true, reason: `${day} PT not in allowed list [${allowed.join(', ')}]` })
       }
-    } catch (e) {
-      console.error('[brew cron run bg]', e.message, e.stack)
-      alertCronFailure('cron threw (bg)', e.message)
     }
-  })()
+    // Core path awaited (fetch + digest + Resend + bookkeeping); the LinkedIn
+    // post + archive publish are fire-and-forget inside sendIssueViaResend
+    // so we don't blow Catalyst's HTTP gateway timeout (~30s).
+    const fetched = await fetchAndTrim()
+    const out = await sendIssueViaResend(req, { items: fetched.items, status: fetched.status })
+    if (out?.send?.status === 'error') {
+      alertCronFailure('send failed', `issue #${out.issueNumber}: ${out.send.error || 'unknown'}`)
+    }
+    res.json({
+      fetched: fetched.fetched,
+      sources: fetched.status,
+      ...out,
+    })
+  } catch (e) {
+    console.error('[brew cron run]', e.message, e.stack)
+    alertCronFailure('cron threw', e.message)
+    res.status(500).json({ error: e.message })
+  }
 })
