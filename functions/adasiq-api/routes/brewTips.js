@@ -217,6 +217,7 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
         photoBuffer: photo.buffer,
         eyebrow: card.eyebrow,
         headline: card.headline,
+        headlineEmphasis: card.headlineEmphasis,
         bullets: card.bullets,
       })
     } catch (e) {
@@ -253,6 +254,7 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
         source,
         eyebrow: card.eyebrow,
         headline: card.headline,
+        headlineEmphasis: card.headlineEmphasis,
         bullets: card.bullets,
         photoSubject: card.photoSubject,
         caption: card.caption,

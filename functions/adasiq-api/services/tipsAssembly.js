@@ -19,6 +19,7 @@ Your job: produce ONE calibration-tip card for today's social post. Output is st
 CARD RULES:
 - "eyebrow": 2–3 words, ALL CAPS, a category label. Example: "INSURANCE INTEL", "DOCUMENTATION DRILL", "CALIBRATION TIP", "OEM ALERT", "TECH CHECK".
 - "headline": 5–9 words. Punchy. Imperative or noun-phrase. NEVER restate the eyebrow. Example: "State Farm pushes back. Document or eat it." or "Three line items adjusters always deny first."
+- "headline_emphasis": 1–3 words from inside the headline (verbatim, same case as in the headline) that you want highlighted in orange to draw the eye. Pick the strongest verb or pain word — the part that drives the punch. Examples: from "State Farm pushes back. Document or eat it." → "Document or eat it". From "Three line items adjusters always deny first." → "always deny". MUST appear character-for-character inside the headline string. Avoid generic words ("the", "a", "is").
 - "bullets": EXACTLY 3 items. Each MAX 40 characters, ideally 4–6 words. No periods at end. NO commas (cut to a single phrase). Concrete, specific actions or facts the reader can use TODAY. NEVER generic ("be careful", "stay informed"). NEVER full sentences. Pick the 3 strongest — quality over quantity. If a bullet runs long, cut words until it fits.
 - "caption": 2–4 short paragraphs, 400–800 chars total. Practitioner voice. Sets up the tip, gives one concrete why-it-matters, ends with a single soft mention of ADAS Brew or adas-iq.com/brew. NEVER hype words ("game-changer", "unlock", "leverage"). NO em dashes.
 - "photo_subject": one phrase describing what a dramatic photo for this tip should depict. Pick something thematically tied to the tip's content. Examples:
@@ -33,6 +34,7 @@ OUTPUT: raw JSON only, no markdown:
 {
   "eyebrow": "string",
   "headline": "string",
+  "headline_emphasis": "string",
   "bullets": ["string", "string", "string"],
   "caption": "string",
   "photo_subject": "string"
@@ -92,6 +94,7 @@ Generate the tip card.`
     return {
       eyebrow: String(parsed.eyebrow || '').toUpperCase().slice(0, 30),
       headline: String(parsed.headline || '').slice(0, 120),
+      headlineEmphasis: String(parsed.headline_emphasis || '').slice(0, 40),
       bullets: Array.isArray(parsed.bullets)
         ? parsed.bullets.map(b => String(b).slice(0, 80)).slice(0, 3)
         : [],

@@ -103,15 +103,15 @@ function esc(s) {
     .replace(/'/g, '&apos;')
 }
 
-function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegularB64, logoB64 }) {
-  // Layout knobs
+function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBoldB64, interRegularB64, logoB64 }) {
+  // Layout knobs — tightened so the photo breathes and the card isn't cavernous
   const headlineBandY = 0
-  const headlineBandH = 460
+  const headlineBandH = 480
   const cardX = 60
-  const cardY = 510
+  const cardY = 560
   const cardW = CANVAS - 120
-  const cardH = 360
-  const ctaY = cardY + cardH + 14 // CTA ribbon sits just below the card
+  const cardH = 280 // tighter — 3 bullets fit snugly, no dead space
+  const ctaY = cardY + cardH + 14
   const footerH = 130
   const footerY = CANVAS - footerH
 
@@ -128,10 +128,11 @@ function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegula
   const headlineUpper = String(headline || '').toUpperCase().trim()
   const headlineLines = splitHeadline(headlineUpper, 22)
   const headlineLineCount = headlineLines.length
-  // Inter Bold uppercase average char width ≈ 0.58× the font size in pixels.
-  // Available width = canvas - 120px padding (60 each side).
-  const HEADLINE_AVAIL_W = CANVAS - 120
-  const CHAR_WIDTH_FACTOR = 0.58
+  // Inter Bold uppercase average char width ≈ 0.62× the font size in pixels
+  // (raised from 0.58 — the previous estimate was overconfident and let the
+  // text bleed past the canvas edges).
+  const HEADLINE_AVAIL_W = CANVAS - 140
+  const CHAR_WIDTH_FACTOR = 0.62
   const longestLineChars = Math.max(...headlineLines.map(l => l.length))
   // Cap font by line count, then shrink further if longest line wouldn't fit
   const fontByLineCount = headlineLineCount >= 3 ? 64 : headlineLineCount === 2 ? 86 : 108
@@ -144,8 +145,21 @@ function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegula
   const availableH = headlineBandH - headlineBlockTop
   const headlineStartY = headlineBlockTop + Math.round((availableH - headlineBlockH) / 2) + Math.round(headlineFontSize * 0.78)
 
+  // If Claude provided a headline_emphasis phrase, color that span orange.
+  // The phrase is matched against the uppercase headline; if it spans across
+  // a line break it only gets highlighted on the line where it appears.
+  const emphasisUpper = String(headlineEmphasis || '').toUpperCase().trim()
+  const renderHeadlineLineContent = (line) => {
+    if (!emphasisUpper) return esc(line)
+    const idx = line.indexOf(emphasisUpper)
+    if (idx < 0) return esc(line)
+    const before = line.slice(0, idx)
+    const match = line.slice(idx, idx + emphasisUpper.length)
+    const after = line.slice(idx + emphasisUpper.length)
+    return `${esc(before)}<tspan fill="${BRAND_ORANGE}">${esc(match)}</tspan>${esc(after)}`
+  }
   const headlineSvgLines = headlineLines.map((line, i) =>
-    `<text x="${CANVAS / 2}" y="${headlineStartY + i * headlineLineHeight}" class="headline">${esc(line)}</text>`
+    `<text x="${CANVAS / 2}" y="${headlineStartY + i * headlineLineHeight}" class="headline">${renderHeadlineLineContent(line)}</text>`
   ).join('\n  ')
 
   // ── Bullets (exactly 3, larger, more breathing room)
@@ -175,17 +189,24 @@ function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegula
   <rect x="${ctaX}" y="${ctaY}" width="${ctaApproxW}" height="${ctaH}" rx="${ctaH / 2}" ry="${ctaH / 2}" fill="${BRAND_ORANGE}"/>
   <text x="${ctaX + ctaApproxW / 2}" y="${ctaTextY}" class="cta">${esc(ctaText)}</text>`
 
-  // ── Footer (logo + wordmark + tagline centered)
-  const logoSize = 70
-  const wordmark = 'Absolute ADAS'
+  // ── Footer (logo + split-color wordmark, matches absoluteadas.com brand)
+  // "Absolute" in white + "ADAS" in orange, both Inter Bold, single line.
+  const logoSize = 76
+  const wordmarkWhite = 'Absolute'
+  const wordmarkOrange = 'ADAS'
+  const wordmarkFontSize = 40
   const tagline = 'Driving safety forward, one calibration at a time.'
-  const wordmarkApproxW = Math.round(wordmark.length * 36 * 0.55)
+  // Approximate widths for centering — Inter Bold ≈ 0.58× font size per char,
+  // plus a single space between the two words.
+  const wordmarkApproxW = Math.round((wordmarkWhite.length + 1 + wordmarkOrange.length) * wordmarkFontSize * 0.58)
   const taglineApproxW = Math.round(tagline.length * 16 * 0.55)
   const textBlockW = Math.max(wordmarkApproxW, taglineApproxW)
-  const totalBlockW = logoSize + 18 + textBlockW
+  const totalBlockW = logoSize + 20 + textBlockW
   const blockStartX = Math.round((CANVAS - totalBlockW) / 2)
   const footerLogoY = footerY + Math.round((footerH - logoSize) / 2)
-  const footerTextX = blockStartX + logoSize + 18
+  const footerTextX = blockStartX + logoSize + 20
+  const wordmarkWhiteApproxW = Math.round(wordmarkWhite.length * wordmarkFontSize * 0.58)
+  const wordmarkOrangeX = footerTextX + wordmarkWhiteApproxW + Math.round(wordmarkFontSize * 0.30)
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS}" height="${CANVAS}" viewBox="0 0 ${CANVAS} ${CANVAS}">
   <defs>
@@ -226,24 +247,31 @@ function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegula
         text-anchor: middle;
         letter-spacing: 0.02em;
       }
-      .wordmark {
+      .wordmark-white {
         font-family: 'Inter', sans-serif;
         font-weight: 700;
-        font-size: 36px;
+        font-size: ${wordmarkFontSize}px;
         fill: #ffffff;
-        letter-spacing: -0.01em;
+        letter-spacing: -0.015em;
+      }
+      .wordmark-orange {
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: ${wordmarkFontSize}px;
+        fill: ${BRAND_ORANGE};
+        letter-spacing: -0.015em;
       }
       .tagline {
         font-family: 'Inter', sans-serif;
         font-weight: 400;
-        font-size: 16px;
-        fill: rgba(255,255,255,0.78);
+        font-size: 18px;
+        fill: rgba(255,255,255,0.85);
         letter-spacing: 0;
       }
     </style>
   </defs>
-  <!-- Headline darken band with subtle gradient -->
-  <rect x="0" y="${headlineBandY}" width="${CANVAS}" height="${headlineBandH}" fill="rgba(0,0,0,0.58)"/>
+  <!-- Headline darken band — lighter so the photo shows through more -->
+  <rect x="0" y="${headlineBandY}" width="${CANVAS}" height="${headlineBandH}" fill="rgba(0,0,0,0.42)"/>
   <!-- Eyebrow -->
   ${eyebrowSvg}
   <!-- Headline -->
@@ -257,8 +285,9 @@ function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegula
   <!-- Footer band -->
   <rect x="0" y="${footerY}" width="${CANVAS}" height="${footerH}" fill="${BRAND_DARK}"/>
   <image href="data:image/png;base64,${logoB64}" x="${blockStartX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}"/>
-  <text x="${footerTextX}" y="${footerY + 56}" class="wordmark">${esc(wordmark)}</text>
-  <text x="${footerTextX}" y="${footerY + 86}" class="tagline">${esc(tagline)}</text>
+  <text x="${footerTextX}" y="${footerY + 58}" class="wordmark-white">${esc(wordmarkWhite)}</text>
+  <text x="${wordmarkOrangeX}" y="${footerY + 58}" class="wordmark-orange">${esc(wordmarkOrange)}</text>
+  <text x="${footerTextX}" y="${footerY + 96}" class="tagline">${esc(tagline)}</text>
 </svg>`
 }
 
@@ -271,7 +300,7 @@ function buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegula
  * @param {string[]} args.bullets   — 5–6 short bullet items
  * @returns {Promise<Buffer>} composited PNG (1080x1080)
  */
-export async function composeTipImage({ photoBuffer, eyebrow, headline, bullets }) {
+export async function composeTipImage({ photoBuffer, eyebrow, headline, headlineEmphasis, bullets }) {
   const { interBoldB64, interRegularB64, logoB64 } = await loadAssets()
 
   // Photo → 1080x1080 cover
@@ -279,7 +308,7 @@ export async function composeTipImage({ photoBuffer, eyebrow, headline, bullets 
     .resize(CANVAS, CANVAS, { fit: 'cover', position: 'center' })
     .toBuffer()
 
-  const svg = buildSvgOverlay({ eyebrow, headline, bullets, interBoldB64, interRegularB64, logoB64 })
+  const svg = buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBoldB64, interRegularB64, logoB64 })
 
   // Composite SVG overlay on photo, output PNG
   const final = await sharp(photo)
