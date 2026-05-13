@@ -201,7 +201,7 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
 
   // ── CTA ribbon — small orange pill INSIDE the bottom-right of the card so
   // it reads as a "read more" button, not a floating afterthought
-  const ctaText = '→ Daily at adas-iq.com/brew'
+  const ctaText = '→ Daily at absoluteadas.com/brew'
   const ctaApproxW = Math.round(ctaText.length * 20 * 0.6) + 36
   const ctaPadRight = 22
   const ctaX = cardX + cardW - ctaApproxW - ctaPadRight

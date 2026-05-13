@@ -419,7 +419,7 @@ async function notifyMarkOfSignup({ email, name, shop, location, role, total }) 
 
 async function sendWelcomeEmail({ email, name }) {
   const greeting = name ? `Hey ${name}` : 'Hey there'
-  const cheatSheetUrl = 'https://adas-iq.com/brew/oem-cheat-sheet'
+  const cheatSheetUrl = 'https://absoluteadas.com/brew/oem-cheat-sheet'
   const html = `<!doctype html><html><body style="margin:0;padding:0;background:#f5f3f0;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a"><table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3f0"><tr><td align="center" style="padding:32px 16px"><table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:14px;border-top:4px solid #CD4419"><tr><td style="padding:32px 28px"><div style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.16em;color:#CD4419;text-transform:uppercase;margin-bottom:6px">ADAS Brew</div><h1 style="font-size:24px;margin:0 0 14px;font-weight:800;line-height:1.2">You're in. Welcome to ADAS Brew.</h1><p style="font-size:16px;line-height:1.55;margin:0 0 14px">${greeting} —</p><p style="font-size:16px;line-height:1.55;margin:0 0 18px">Thanks for subscribing. Before anything else — here's your welcome gift:</p><table width="100%" cellpadding="0" cellspacing="0" style="background:#fff8f4;border:1px solid #CD4419;border-radius:10px;margin:0 0 24px"><tr><td style="padding:20px 22px"><div style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.18em;color:#CD4419;text-transform:uppercase;margin:0 0 8px">🎁 Free Bonus · Your Welcome Gift</div><div style="font-size:18px;font-weight:800;color:#1a1a1a;margin:0 0 8px;line-height:1.25">The OEM Position Statement Cheat Sheet</div><p style="font-size:14px;line-height:1.55;color:#374151;margin:0 0 14px">Curated links to every major OEM's body-repair portal — Honda, Toyota, Ford, GM, Subaru, BMW and more — plus the I-CAR position-statement database. The documentation that flips denied calibration claims.</p><div style="margin:0"><a href="${cheatSheetUrl}" style="display:inline-block;background:#CD4419;color:#fff;font-size:14px;font-weight:700;padding:11px 22px;border-radius:6px;text-decoration:none;letter-spacing:.01em">Open the Cheat Sheet →</a></div><p style="font-size:12px;color:#6b7280;margin:14px 0 0">Bookmark it. Reply to any issue if you spot a dead link.</p></td></tr></table><p style="font-size:16px;line-height:1.55;margin:0 0 14px"><strong>Then, here's what to expect from the newsletter itself:</strong></p><ul style="font-size:15px;line-height:1.6;color:#374151;padding-left:22px;margin:0 0 18px"><li><strong>Every weekday (Mon–Fri)</strong> at 6am Pacific</li><li>The 5 most important calibration / collision / insurance industry stories from the last 24 hours</li><li>Curated, not aggregated. ~5 min read.</li></ul><p style="font-size:16px;line-height:1.55;margin:0 0 14px">If you ever want to reply with what you're seeing in your shop — what insurance is denying, what OEM bulletin is driving you nuts, what calibration is killing your margins — I read every reply. The newsletter gets better when readers tell me where to dig.</p><p style="font-size:16px;line-height:1.55;margin:0 0 14px">First issue lands the next weekday at 6am Pacific.</p><p style="font-size:16px;line-height:1.55;margin:0 0 0">— Mark<br><span style="color:#6b7280;font-size:14px">Owner, Absolute ADAS · Builder, ADAS IQ<br>📞 1-844-FIX-ADAS (1-844-349-2327)</span></p></td></tr><tr><td style="padding:18px 28px 28px;border-top:1px solid #ececec"><p style="font-size:12px;color:#6b7280;margin:0">ADAS Brew · brew@adas-iq.com — to unsubscribe, just reply with "unsub".</p></td></tr></table></td></tr></table></body></html>`
   const text = `${greeting} —\n\nYou're in. Welcome to ADAS Brew.\n\n🎁 YOUR WELCOME GIFT — The OEM Position Statement Cheat Sheet:\nCurated links to every major OEM's body-repair portal (Honda, Toyota, Ford, GM, Subaru, BMW, more) plus the I-CAR position-statement database. The documentation that flips denied calibration claims.\n\nOpen it here: ${cheatSheetUrl}\n(Bookmark it.)\n\nThen, here's what to expect from the newsletter itself:\n- Every weekday (Mon–Fri) at 6am Pacific\n- The 5 most important calibration / collision / insurance industry stories\n- Curated, not aggregated. ~5 min read.\n\nReply anytime with what you're seeing in your shop. I read every reply.\n\nFirst issue lands the next weekday at 6am Pacific.\n\n— Mark\nOwner, Absolute ADAS · Builder, ADAS IQ\n📞 1-844-FIX-ADAS (1-844-349-2327)`
   return sendBroadcast({
@@ -460,7 +460,7 @@ cronRouter.get('/_send-all-emails', requireCronSecretFlex, async (req, res) => {
 // TEMP — test the LinkedIn comment feature on an existing post URN
 cronRouter.get('/_test-linkedin-comment', requireCronSecretFlex, async (req, res) => {
   const urn = String(req.query.urn || '').trim()
-  const text = String(req.query.text || `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`).trim()
+  const text = String(req.query.text || `If you want a 5-min version of this in your inbox every weekday morning, free → absoluteadas.com/brew`).trim()
   if (!urn) return res.status(400).json({ error: 'pass ?urn=urn:li:share:...' })
   try {
     const r = await commentOnLinkedInPost(urn, text)
@@ -945,7 +945,7 @@ async function writeIssuesManifest(req, manifest) {
 }
 
 /**
- * Publish a rendered issue to the GitHub-hosted archive (adas-iq.com/brew/...).
+ * Publish a rendered issue to the GitHub-hosted archive (absoluteadas.com/brew/...).
  * Commits the issue HTML + regenerates the archive index. Updates the manifest.
  * Fire-and-forget safe — returns { ok, ... } and never throws.
  */
@@ -985,8 +985,8 @@ async function publishIssueToArchive(req, { issueNumber, dateISO, subject, html 
   return {
     ok: true,
     issueNumber,
-    issueUrl: `https://adas-iq.com/brew/issues/${issueNumber}`,
-    archiveUrl: `https://adas-iq.com/brew/archive`,
+    issueUrl: `https://absoluteadas.com/brew/issues/${issueNumber}`,
+    archiveUrl: `https://absoluteadas.com/brew/archive`,
     issueCommit: issueResult.url,
     indexOk: indexResult.ok,
     indexError: indexResult.error || null,
@@ -1382,7 +1382,7 @@ function buildSocialCaption(digest) {
   const lines = []
   if (subject) lines.push(subject)
   if (intro) lines.push('', intro)
-  lines.push('', '5 stories every weekday morning. Free.', 'Subscribe → adas-iq.com/brew')
+  lines.push('', '5 stories every weekday morning. Free.', 'Subscribe → absoluteadas.com/brew')
   lines.push('', 'ADAS Brew is published by Absolute ADAS — mobile ADAS calibration in Western Washington. We also build ADAS IQ, the software we run our shop on, now available to other shops.')
   lines.push('', '#ADAS #CollisionRepair #AutoBodyShop #Calibration #ADASCalibration #InsuranceClaims #OEMRepair')
   return lines.join('\n').slice(0, 2100) // IG cap is 2200, leave headroom
@@ -1468,7 +1468,7 @@ cronRouter.post('/run-bonus', async (req, res) => {
       try {
         liResult = await postToLinkedIn({ text: liTextSettled.value })
         if (liResult?.ok && liResult.id) {
-          const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → adas-iq.com/brew`
+          const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → absoluteadas.com/brew`
           const cr = await commentOnLinkedInPost(liResult.id, commentText)
           liResult.comment = cr
         }

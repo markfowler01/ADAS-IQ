@@ -1,12 +1,13 @@
 // ADAS Brew archive — auto-publishes each issue to GitHub Pages
-// (markfowler01/adas-iq-landing) so it's served from adas-iq.com/brew/issues/N
-// and an archive index at adas-iq.com/brew/archive.
+// (markfowler01/markfowler01.github.io) so it's served from
+// absoluteadas.com/brew/issues/N and an archive index at
+// absoluteadas.com/brew/archive.
 //
 // Required env vars:
 //   GITHUB_TOKEN          — Personal Access Token with `repo` scope
 // Optional env vars:
 //   GITHUB_REPO_OWNER     — default: markfowler01
-//   GITHUB_REPO_NAME      — default: adas-iq-landing
+//   GITHUB_REPO_NAME      — default: markfowler01.github.io (Absolute ADAS site)
 //   GITHUB_BRANCH         — default: main
 
 import axios from 'axios'
@@ -17,7 +18,7 @@ function envBundle() {
   return {
     token: process.env.GITHUB_TOKEN || '',
     owner: process.env.GITHUB_REPO_OWNER || 'markfowler01',
-    repo: process.env.GITHUB_REPO_NAME || 'adas-iq-landing',
+    repo: process.env.GITHUB_REPO_NAME || 'markfowler01.github.io',
     branch: process.env.GITHUB_BRANCH || 'main',
   }
 }
@@ -135,8 +136,8 @@ const ARCHIVE_FOOTER = `<div style="max-width:640px;margin:0 auto;padding:32px 2
 export function wrapIssueHtmlForArchive({ html, subject, issueNumber, dateISO }) {
   const safeSubject = String(subject || `ADAS Brew — Issue #${issueNumber}`).replace(/[<>"]/g, '')
   const dateLabel = new Date(dateISO).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
-  const issueUrl = `https://adas-iq.com/brew/issues/${issueNumber}`
-  const coverImageUrl = `https://raw.githubusercontent.com/markfowler01/adas-iq-landing/main/brew/images/issue-${issueNumber}.png`
+  const issueUrl = `https://absoluteadas.com/brew/issues/${issueNumber}`
+  const coverImageUrl = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/brew/images/issue-${issueNumber}.png`
   // Publishing timestamp — use noon UTC on the issue date for stable ordering.
   const publishedISO = `${dateISO}T18:00:00Z`
 
@@ -165,15 +166,15 @@ export function wrapIssueHtmlForArchive({ html, subject, issueNumber, dateISO })
     author: {
       '@type': 'Person',
       name: 'Mark Fowler',
-      url: 'https://adas-iq.com/about',
+      url: 'https://absoluteadas.com/about',
     },
     publisher: {
       '@type': 'Organization',
       name: 'Absolute ADAS',
-      url: 'https://adas-iq.com/',
+      url: 'https://absoluteadas.com/',
       logo: {
         '@type': 'ImageObject',
-        url: 'https://raw.githubusercontent.com/markfowler01/adas-iq-landing/main/brew/images/issue-1.png',
+        url: 'https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/brew/images/issue-1.png',
       },
     },
     image: coverImageUrl,
@@ -241,7 +242,7 @@ export function renderArchiveIndex(issues) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ADAS Brew · Archive</title>
 <meta name="description" content="Past issues of ADAS Brew — the calibration and body shop industry digest.">
-<link rel="canonical" href="https://adas-iq.com/brew/archive">
+<link rel="canonical" href="https://absoluteadas.com/brew/archive">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, 'Inter', Helvetica, Arial, sans-serif; background: #0d0d0d; color: #fff; min-height: 100vh; padding: 56px 24px; line-height: 1.5; }

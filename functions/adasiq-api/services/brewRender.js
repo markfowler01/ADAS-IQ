@@ -74,7 +74,7 @@ export function renderDigest(digest, opts = {}) {
   const issueNumber    = opts.issueNumber || ''
   const dateISO        = opts.dateISO || new Date().toISOString().slice(0, 10)
   const dateLabel      = new Date(dateISO).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
-  const unsubscribeUrl = opts.unsubscribeUrl || 'https://adas-iq.com/unsubscribe'
+  const unsubscribeUrl = opts.unsubscribeUrl || 'https://absoluteadas.com/unsubscribe'
 
   const subject      = digest.subject || 'ADAS Brew — Today\'s top stories'
   const previewText  = digest.preview_text || ''
@@ -85,9 +85,10 @@ export function renderDigest(digest, opts = {}) {
   // URLs but lets Friday Field Notes mode point at Mark's LinkedIn for the
   // "DM me 'audit'" CTA.
   const ALLOWED_CTA_URLS = [
-    'https://adas-iq.com/',
-    'https://adas-iq.com',
-    'https://adas-iq.com/brew',
+    'https://absoluteadas.com/',
+    'https://absoluteadas.com',
+    'https://absoluteadas.com/brew',
+    'https://absoluteadas.com/audit',
     'https://www.linkedin.com/in/mark-fowler-764611a7',
     'https://linkedin.com/in/mark-fowler-764611a7',
   ]
@@ -95,16 +96,16 @@ export function renderDigest(digest, opts = {}) {
   const cta = {
     text: digest.cta?.text || 'See how ADAS IQ helps shops run faster, get paid quicker, and stop losing supplements.',
     button_text: digest.cta?.button_text || 'Explore ADAS IQ',
-    button_url: ALLOWED_CTA_URLS.includes(wantedUrl) ? wantedUrl : 'https://adas-iq.com/',
+    button_url: ALLOWED_CTA_URLS.includes(wantedUrl) ? wantedUrl : 'https://absoluteadas.com/',
   }
 
   const storiesHtml = stories.map((s, i) => renderStory(s, i + 1)).join('')
 
   // Pre-built share links for the forward block — mailto opens a new email
   // with subject + issue link pre-filled, X / LinkedIn share with the issue URL.
-  const issueUrl = `https://adas-iq.com/brew/issues/${encodeURIComponent(issueNumber)}`
+  const issueUrl = `https://absoluteadas.com/brew/issues/${encodeURIComponent(issueNumber)}`
   const shareSubject = encodeURIComponent(`Read this ADAS Brew issue: ${subject}`)
-  const shareBody = encodeURIComponent(`Saw this and thought of you — calibration / collision intel for body shops.\n\n${subject}\n${issueUrl}\n\nSubscribe free: https://adas-iq.com/brew`)
+  const shareBody = encodeURIComponent(`Saw this and thought of you — calibration / collision intel for body shops.\n\n${subject}\n${issueUrl}\n\nSubscribe free: https://absoluteadas.com/brew`)
   const mailtoUrl = `mailto:?subject=${shareSubject}&body=${shareBody}`
   const liShareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(issueUrl)}`
   const fbShareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(issueUrl)}`

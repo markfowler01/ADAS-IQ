@@ -3,7 +3,7 @@
 // generates an OEM-cited rebuttal. The shop gets the rebuttal on-screen
 // AND via email; Mark gets a Cliq DM with each submission as a hot lead.
 //
-//   GET  /api/audit-tool/form         — HTML form (also hosted at adas-iq.com/audit)
+//   GET  /api/audit-tool/form         — HTML form (also hosted at absoluteadas.com/audit)
 //   POST /api/audit-tool/generate     — accepts inputs, returns rebuttal + emails it
 //
 // No auth — public-facing. Rate limiting by IP via in-memory map (modest
@@ -72,7 +72,7 @@ async function recordSubmission(req, payload) {
 // ─── HTML form (also embedded in the public landing page) ───────────────────
 auditRouter.get('/form', (req, res) => {
   res.set('Content-Type', 'text/html; charset=utf-8')
-  res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Free Calibration Denial Audit · ADAS Brew</title></head><body><h1>Free Calibration Denial Audit</h1><p>Public form lives at <a href="https://adas-iq.com/audit">adas-iq.com/audit</a>.</p></body></html>`)
+  res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Free Calibration Denial Audit · ADAS Brew</title></head><body><h1>Free Calibration Denial Audit</h1><p>Public form lives at <a href="https://absoluteadas.com/audit">absoluteadas.com/audit</a>.</p></body></html>`)
 })
 
 // ─── POST /generate — accepts inputs, runs Claude, emails + DMs Mark ────────
@@ -173,7 +173,7 @@ function renderRebuttalEmail({ shopName, rebuttal, carrier, vehicle, deniedItem 
     ${lines}
   </div>
   <p style="font-size:15px;line-height:1.55;margin:0 0 14px"><strong>If it lands you the line item</strong> — text me at <a href="tel:+18443492327" style="color:#CD4419;font-weight:700;text-decoration:none">1-844-FIX-ADAS</a> and let me know. Patterns help me sharpen the next one.</p>
-  <p style="font-size:15px;line-height:1.55;margin:0 0 14px"><strong>If you need more help fighting denials</strong> — subscribe to <a href="https://adas-iq.com/brew" style="color:#CD4419;font-weight:700;text-decoration:none">ADAS Brew</a>. 5-minute daily read for shops doing real calibration volume. Free.</p>
+  <p style="font-size:15px;line-height:1.55;margin:0 0 14px"><strong>If you need more help fighting denials</strong> — subscribe to <a href="https://absoluteadas.com/brew" style="color:#CD4419;font-weight:700;text-decoration:none">ADAS Brew</a>. 5-minute daily read for shops doing real calibration volume. Free.</p>
   <p style="font-size:15px;line-height:1.55;margin:0">— Mark Fowler<br><span style="color:#6b7280;font-size:13px">Owner, Absolute ADAS · 1-844-FIX-ADAS</span></p>
 </td></tr>
 <tr><td style="padding:18px 28px 28px;border-top:1px solid #ececec">
@@ -193,7 +193,7 @@ function renderRebuttalText({ shopName, rebuttal, carrier, vehicle, deniedItem }
     '---',
     '',
     `If it lands you the line item, text me at 1-844-FIX-ADAS so I can learn from the pattern.`,
-    `For more like this, subscribe to ADAS Brew: https://adas-iq.com/brew`,
+    `For more like this, subscribe to ADAS Brew: https://absoluteadas.com/brew`,
     '',
     '— Mark Fowler, Owner, Absolute ADAS',
   ].join('\n')

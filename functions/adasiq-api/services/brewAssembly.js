@@ -48,7 +48,7 @@ OUTPUT: Return ONLY a raw JSON object matching this schema. No markdown, no prea
   "cta": {
     "text": "string — 1-2 sentence soft CTA tied to ADAS IQ",
     "button_text": "string — under 30 chars",
-    "button_url": "string — link, e.g. https://adas-iq.com/demo"
+    "button_url": "string — link, e.g. https://absoluteadas.com/demo"
   }
 }
 
@@ -111,14 +111,14 @@ const FALLBACK_DIGEST = {
       headline: 'The 30-second post-scan filename trick',
       body: 'Adjusters open clean filenames and ignore "scan_final_v2.pdf." Tag every post-scan as RO_VIN_DATE_PRESCAN.pdf before you save. Same scan, faster pay. Try it on the next 5 jobs.',
       source_label: 'ADAS Brew',
-      source_url: 'https://adas-iq.com',
+      source_url: 'https://absoluteadas.com',
       tag: 'INSURANCE',
     },
   ],
   cta: {
     text: 'ADAS IQ tags your post-scans automatically and tracks every supplement until it\'s paid. Worth a 15-min look.',
     button_text: 'Book a demo',
-    button_url: 'https://adas-iq.com/demo',
+    button_url: 'https://absoluteadas.com/demo',
   },
 }
 

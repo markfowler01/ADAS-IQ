@@ -27,7 +27,7 @@ CARD RULES:
     Paragraph 2: The play — concrete what-to-do that builds on the bullets, with one why-it-matters detail.
     Paragraph 3 (THE GODFATHER OFFER — verbatim ending, do not paraphrase):
       "Got a calibration that got short-paid or denied? Comment 'AUDIT' below or text 1-844-FIX-ADAS. I'll write the OEM-cited rebuttal that flips it — free, 24h turnaround, no pitch. I take 2-3 shops a week."
-  After the offer, no further text. Do not mention adas-iq.com/brew in the caption (the post image already has the soft CTA).
+  After the offer, no further text. Do not mention absoluteadas.com/brew in the caption (the post image already has the soft CTA).
 - "photo_subject": one phrase describing what a dramatic photo for this tip should depict. Pick something thematically tied to the tip's content. Examples:
     - documentation tip → "RO paperwork, OEM repair procedure printout, ballpoint pen on clipboard, shop counter lighting"
     - sensor / hardware tip → "ADAS forward-facing radar module behind grille, close-up, low light"
