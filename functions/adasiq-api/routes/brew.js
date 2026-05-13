@@ -27,6 +27,14 @@ const router = express.Router()
 function getSegment(req) {
   return catalyst.initialize(req).cache().segment()
 }
+// Explicit named segment for cross-cron handoffs. The default segment can
+// scope inconsistently across cron-triggered vs HTTP-triggered calls — an
+// explicit named segment is shared by every caller. Used for the brew
+// pending-bonus + today-digest stashes that /run-bonus and /brew-tips
+// need to read back.
+function getHandoffSegment(req) {
+  return catalyst.initialize(req).cache().segment('brew_handoff')
+}
 function isNotFound(e) {
   return e?.statusCode === 404 || e?.errorInfo?.statusCode === 404
 }
@@ -770,7 +778,7 @@ cronRouter.post('/_prep-bonus', requireCronSecretFlex, async (req, res) => {
   try {
     const fetched = await fetchAndTrim()
     const built = await buildIssue(req, { items: fetched.items, status: fetched.status })
-    const segment = getSegment(req)
+    const segment = getHandoffSegment(req)
     const stash = {
       digest: built.digest,
       issueNumber: built.issueNumber,
@@ -1214,7 +1222,9 @@ async function sendIssueViaResend(req, preFetched = null) {
   // 30s budget (separate cron, fires ~3 min later). Just the digest JSON +
   // metadata — small and safe for Cache. The bonus endpoint re-renders the
   // HTML from the digest, so we don't have to cache the (much larger) HTML.
-  const segmentForStash = getSegment(req)
+  // Use the named "brew_handoff" segment — default segment scoping behaves
+  // inconsistently across cron-triggered calls and caused silent dropouts.
+  const segmentForStash = getHandoffSegment(req)
   const todayStash = {
     digest: built.digest,
     issueNumber: built.issueNumber,
@@ -1222,13 +1232,10 @@ async function sendIssueViaResend(req, preFetched = null) {
     dateISO: new Date().toISOString().slice(0, 10),
     createdAt: new Date().toISOString(),
   }
+  // No silent .catch — if the cache write fails the outer /run try/catch
+  // will fire alertCronFailure with the actual error.
   await cacheSet(segmentForStash, 'brew_pending_bonus', todayStash)
-    .catch(e => console.warn('[brew pending-bonus stash]', e.message))
-  // Persistent copy that survives /run-bonus clearing the bonus stash.
-  // Used by the tips pipeline later in the day to synthesize a tip card
-  // from the current issue's stories.
   await cacheSet(segmentForStash, 'brew_today_digest', todayStash)
-    .catch(e => console.warn('[brew today-digest stash]', e.message))
 
   // emailLinkedInToCrossPoster is fast (just sends a notification email),
   // keep it inline as fire-and-forget — it's already non-blocking.
@@ -1399,10 +1406,18 @@ function buildSocialCaption(digest) {
 // /api/cron/brew/run-bonus, header X-Cron-Secret: BREW_CRON_SECRET.
 cronRouter.post('/run-bonus', async (req, res) => {
   try {
-    const segment = getSegment(req)
+    const segment = getHandoffSegment(req)
     const pending = await cacheGet(segment, 'brew_pending_bonus', null)
     if (!pending || !pending.digest || !pending.issueNumber) {
-      return res.json({ skipped: true, reason: 'no pending bonus' })
+      // On a weekday this is a bug — /run should have stashed the digest
+      // a few minutes earlier. Alert Mark so we don't silently miss social
+      // posts again (this is exactly how the 2026-05-13 outage happened).
+      const dow = new Date().getUTCDay() // 0=Sun, 6=Sat (UTC ≈ PT-7, weekday check is fine)
+      const isWeekday = dow >= 1 && dow <= 5
+      if (isWeekday) {
+        alertCronFailure('run-bonus skipped on weekday', 'cache read returned no pending bonus — /run cache write likely failed silently')
+      }
+      return res.json({ skipped: true, reason: 'no pending bonus', segmentName: 'brew_handoff' })
     }
 
     // Stale guard — don't process a stash older than 6h. Avoids retrying

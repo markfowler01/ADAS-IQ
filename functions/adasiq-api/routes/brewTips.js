@@ -22,6 +22,11 @@ import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 function getSegment(req) {
   return catalyst.initialize(req).cache().segment()
 }
+// Named handoff segment shared with brew.js. Must match getHandoffSegment()
+// in brew.js or brew_today_digest reads will return null.
+function getHandoffSegment(req) {
+  return catalyst.initialize(req).cache().segment('brew_handoff')
+}
 function isNotFound(e) {
   return e?.statusCode === 404 || e?.errorInfo?.statusCode === 404
 }
@@ -197,8 +202,9 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       card = await assembleTipCard({ manualTip })
       source = 'manual'
     } else {
-      // Fall back to today's brew digest
-      const seg = getSegment(req)
+      // Fall back to today's brew digest (read from the named handoff segment
+      // that brew.js /run writes to — default segment scoping was unreliable)
+      const seg = getHandoffSegment(req)
       const today = await cacheGet(seg, 'brew_today_digest', null)
       if (!today || !today.digest) {
         return res.json({
