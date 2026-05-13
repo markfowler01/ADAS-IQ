@@ -269,6 +269,7 @@ h1 { font-size: clamp(34px, 5vw, 44px); font-weight: 900; line-height: 1.1; marg
   <h1>Past issues</h1>
   <p class="lede">A weekday digest for collision shop owners, production managers, and calibration techs. Free, every weekday at 6am Pacific.</p>
   <a class="subscribe" href="/brew">Subscribe to ADAS Brew →</a>
+  <p style="text-align:center;margin:-20px 0 28px;font-size:14px;color:#999;">Looking for evergreen long-form? <a href="/brew/articles/" style="color:#CD4419;font-weight:600;text-decoration:none;">Browse Field Notes articles →</a></p>
   <div class="list">
     ${sorted.length ? rows : '<div class="empty">No issues yet. The first one lands the next weekday at 6am Pacific.</div>'}
   </div>
