@@ -46,9 +46,9 @@ OUTPUT: Return ONLY a raw JSON object matching this schema. No markdown, no prea
     }
   ],
   "cta": {
-    "text": "string — 1-2 sentence soft CTA tied to ADAS IQ",
-    "button_text": "string — under 30 chars",
-    "button_url": "string — link, e.g. https://absoluteadas.com/demo"
+    "text": "string — 1-2 sentence soft CTA pointing readers to the free Calibration Denial Audit at /audit (they reply with a denied claim and get an OEM-cited rebuttal in 60 seconds, free, no pitch). Useful tone, not salesy. NEVER mention 'ADAS IQ' — this is published by Absolute ADAS, not ADAS IQ.",
+    "button_text": "string — under 30 chars, action-oriented (e.g. 'Get a free audit', 'Flip a denied claim')",
+    "button_url": "string — must be https://absoluteadas.com/audit (or https://absoluteadas.com/brew for self-referencing share)"
   }
 }
 
@@ -116,9 +116,9 @@ const FALLBACK_DIGEST = {
     },
   ],
   cta: {
-    text: 'ADAS IQ tags your post-scans automatically and tracks every supplement until it\'s paid. Worth a 15-min look.',
-    button_text: 'Book a demo',
-    button_url: 'https://absoluteadas.com/demo',
+    text: 'Got a denied calibration on your desk? I\'ll write you the OEM-cited rebuttal in 60 seconds. Free.',
+    button_text: 'Get a free audit',
+    button_url: 'https://absoluteadas.com/audit',
   },
 }
 
