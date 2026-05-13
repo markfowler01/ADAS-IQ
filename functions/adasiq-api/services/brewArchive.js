@@ -135,6 +135,10 @@ const ARCHIVE_FOOTER = `<div style="max-width:640px;margin:0 auto;padding:32px 2
 export function wrapIssueHtmlForArchive({ html, subject, issueNumber, dateISO }) {
   const safeSubject = String(subject || `ADAS Brew — Issue #${issueNumber}`).replace(/[<>"]/g, '')
   const dateLabel = new Date(dateISO).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  const issueUrl = `https://adas-iq.com/brew/issues/${issueNumber}`
+  const coverImageUrl = `https://raw.githubusercontent.com/markfowler01/adas-iq-landing/main/brew/images/issue-${issueNumber}.png`
+  // Publishing timestamp — use noon UTC on the issue date for stable ordering.
+  const publishedISO = `${dateISO}T18:00:00Z`
 
   // Inject the banner right after <body> and the footer right before </body>.
   // The email HTML is self-contained; we're just adding chrome.
@@ -142,14 +146,78 @@ export function wrapIssueHtmlForArchive({ html, subject, issueNumber, dateISO })
     .replace(/<body([^>]*)>/i, `<body$1>${SUBSCRIBE_BANNER}`)
     .replace(/<\/body>/i, `${ARCHIVE_FOOTER}</body>`)
 
-  // Also tweak the <title> to include the issue subject + number.
+  // Tweak the <title> to include the issue subject + number for SEO + tab UX.
   const withTitle = withBanner.replace(
     /<title>[^<]*<\/title>/i,
     `<title>${safeSubject} · ADAS Brew #${issueNumber} · ${dateLabel}</title>`
   )
 
-  // Add canonical + meta description for SEO
-  const meta = `<link rel="canonical" href="https://adas-iq.com/brew/issues/${issueNumber}"><meta name="description" content="ADAS Brew Issue #${issueNumber} — ${safeSubject}"><meta property="og:title" content="${safeSubject}"><meta property="og:description" content="ADAS Brew · ${dateLabel}"><meta property="og:type" content="article">`
+  // Structured data (JSON-LD) tells Google this is an Article belonging to
+  // the ADAS Brew publication with Mark Fowler as the author — useful for
+  // article rich-result eligibility and entity-graph attribution.
+  const jsonLd = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'NewsArticle',
+    headline: safeSubject,
+    description: `ADAS Brew Issue #${issueNumber} — calibration and body shop industry intel for ${dateLabel}.`,
+    datePublished: publishedISO,
+    dateModified: publishedISO,
+    author: {
+      '@type': 'Person',
+      name: 'Mark Fowler',
+      url: 'https://adas-iq.com/about',
+    },
+    publisher: {
+      '@type': 'Organization',
+      name: 'Absolute ADAS',
+      url: 'https://adas-iq.com/',
+      logo: {
+        '@type': 'ImageObject',
+        url: 'https://raw.githubusercontent.com/markfowler01/adas-iq-landing/main/brew/images/issue-1.png',
+      },
+    },
+    image: coverImageUrl,
+    url: issueUrl,
+    mainEntityOfPage: {
+      '@type': 'WebPage',
+      '@id': issueUrl,
+    },
+    isPartOf: {
+      '@type': 'Periodical',
+      name: 'ADAS Brew',
+      issn: undefined, // intentional — no ISSN yet
+    },
+    keywords: 'ADAS calibration, body shop, insurance denials, OEM repair procedures, collision repair',
+  })
+
+  // Comprehensive meta block: canonical, description, OG (Facebook/LinkedIn),
+  // Twitter card, article-specific OG tags, robots, JSON-LD structured data.
+  const meta = [
+    `<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1">`,
+    `<meta name="description" content="ADAS Brew Issue #${issueNumber} — ${safeSubject}. Daily calibration, OEM, and insurance intel for body shops.">`,
+    `<meta name="keywords" content="ADAS calibration, ${safeSubject}, body shop, insurance denial, OEM, collision repair, ADAS Brew">`,
+    `<meta name="author" content="Mark Fowler">`,
+    `<link rel="canonical" href="${issueUrl}">`,
+    `<meta property="og:type" content="article">`,
+    `<meta property="og:site_name" content="ADAS Brew · Absolute ADAS">`,
+    `<meta property="og:url" content="${issueUrl}">`,
+    `<meta property="og:title" content="${safeSubject}">`,
+    `<meta property="og:description" content="ADAS Brew Issue #${issueNumber} · ${dateLabel} · Calibration and body shop industry intel.">`,
+    `<meta property="og:image" content="${coverImageUrl}">`,
+    `<meta property="og:image:alt" content="ADAS Brew Issue #${issueNumber} cover — ${safeSubject}">`,
+    `<meta property="article:published_time" content="${publishedISO}">`,
+    `<meta property="article:author" content="Mark Fowler">`,
+    `<meta property="article:section" content="Calibration Industry">`,
+    `<meta property="article:tag" content="ADAS calibration">`,
+    `<meta property="article:tag" content="body shop">`,
+    `<meta property="article:tag" content="insurance denial">`,
+    `<meta name="twitter:card" content="summary_large_image">`,
+    `<meta name="twitter:title" content="${safeSubject}">`,
+    `<meta name="twitter:description" content="ADAS Brew #${issueNumber} · ${dateLabel}">`,
+    `<meta name="twitter:image" content="${coverImageUrl}">`,
+    `<script type="application/ld+json">${jsonLd}</script>`,
+  ].join('')
+
   return withTitle.replace(/<\/head>/i, `${meta}</head>`)
 }
 
