@@ -479,6 +479,117 @@ cronRouter.get('/_test-linkedin-comment', requireCronSecretFlex, async (req, res
   }
 })
 
+// Use Node 18+ built-in fetch with AbortSignal.timeout — actually cancels the request.
+async function fetchWithTimeout(url, opts = {}, timeoutMs = 10000) {
+  const startedAt = Date.now()
+  try {
+    const r = await fetch(url, { ...opts, signal: AbortSignal.timeout(timeoutMs) })
+    const body = await r.text()
+    return { ok: r.ok, status: r.status, body: body.slice(0, 300), elapsedMs: Date.now() - startedAt }
+  } catch (e) {
+    return {
+      ok: false,
+      error: e.name === 'TimeoutError' || e.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : e.message,
+      errorName: e.name,
+      elapsedMs: Date.now() - startedAt,
+    }
+  }
+}
+
+cronRouter.get('/_token-li', requireCronSecretFlex, async (req, res) => {
+  const liToken = process.env.LINKEDIN_ACCESS_TOKEN || ''
+  if (!liToken) return res.json({ ok: false, error: 'LINKEDIN_ACCESS_TOKEN not set' })
+  const r = await fetchWithTimeout('https://api.linkedin.com/v2/userinfo', {
+    headers: { Authorization: `Bearer ${liToken}` },
+  })
+  res.json(r)
+})
+
+cronRouter.get('/_token-meta', requireCronSecretFlex, async (req, res) => {
+  const fbToken = process.env.FB_PAGE_ACCESS_TOKEN || ''
+  if (!fbToken) return res.json({ ok: false, error: 'FB_PAGE_ACCESS_TOKEN not set' })
+  const r = await fetchWithTimeout(
+    `https://graph.facebook.com/v18.0/me?fields=id,name&access_token=${encodeURIComponent(fbToken)}`
+  )
+  res.json(r)
+})
+
+// Send a real test DM to Mark on Cliq — captures full Axios response on error
+cronRouter.get('/_test-cliq-dm', requireCronSecretFlex, async (req, res) => {
+  try {
+    const r = await postToCliqUser(TECH_CLIQ_IDS.Mark, `🧪 Cliq DM test from /_test-cliq-dm at ${new Date().toISOString()}`)
+    res.json({ ok: true, result: r })
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: e.message,
+      cliqResponseStatus: e.response?.status,
+      cliqResponseBody: e.response?.data,
+      cliqResponseHeaders: e.response?.headers,
+      requestUrl: e.config?.url,
+      requestMethod: e.config?.method,
+      requestBody: e.config?.data,
+    })
+  }
+})
+
+// Attempt a real LinkedIn post — short text, user can delete after
+cronRouter.get('/_test-li-post', requireCronSecretFlex, async (req, res) => {
+  try {
+    const r = await postToLinkedIn({
+      text: `🧪 ADAS Brew diagnostic post — ${new Date().toISOString().slice(0,16)}. Will be deleted.`,
+    })
+    res.json({ ok: true, result: r })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, stack: e.stack?.split('\n').slice(0, 6) })
+  }
+})
+
+// Attempt a real FB Page post — pulls an existing brew image so we don't need to gen
+cronRouter.get('/_test-fb-post', requireCronSecretFlex, async (req, res) => {
+  try {
+    const r = await postToFacebookPage({
+      imageUrl: 'https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/brew/images/issue-8.png',
+      caption: `🧪 ADAS Brew diagnostic post — ${new Date().toISOString().slice(0,16)}. Will be deleted.`,
+    })
+    res.json({ ok: true, result: r })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, stack: e.stack?.split('\n').slice(0, 6) })
+  }
+})
+
+// Attempt a real Instagram post — same image as FB test
+cronRouter.get('/_test-ig-post', requireCronSecretFlex, async (req, res) => {
+  try {
+    const r = await postToInstagram({
+      imageUrl: 'https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/brew/images/issue-8.png',
+      caption: `🧪 ADAS Brew diagnostic post — ${new Date().toISOString().slice(0,16)}. Will be deleted.`,
+    })
+    res.json({ ok: true, result: r })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, stack: e.stack?.split('\n').slice(0, 6) })
+  }
+})
+
+cronRouter.get('/_token-cliq', requireCronSecretFlex, async (req, res) => {
+  const refreshToken = process.env.ZOHO_CLIQ_REFRESH_TOKEN || process.env.ZOHO_TASKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN
+  const clientId = process.env.ZOHO_CLIENT_ID
+  const clientSecret = process.env.ZOHO_CLIENT_SECRET
+  if (!refreshToken || !clientId || !clientSecret) return res.json({ ok: false, error: 'Cliq env vars missing' })
+  const params = new URLSearchParams({
+    refresh_token: refreshToken,
+    client_id: clientId,
+    client_secret: clientSecret,
+    grant_type: 'refresh_token',
+  })
+  const r = await fetchWithTimeout('https://accounts.zoho.com/oauth/v2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  })
+  res.json({ ...r, hasAccessToken: r.body?.includes('access_token') })
+})
+
 // Diagnostic — write to + read from the named brew_handoff segment.
 // Fast (< 1s) so it fits within the 30s HTTP gateway cap. Verifies that
 // the segment switch from Plan B works without needing a full cron run.
@@ -1388,12 +1499,14 @@ function allowedDays() {
   return env.split(',').map(s => s.trim()).filter(Boolean)
 }
 
-// Fire-and-forget Cliq DM to Mark on /run failure (thrown error OR send.status === 'error').
-// Never throws; logs and moves on if Cliq is unreachable.
+// Fire-and-forget Cliq message on /run failure (thrown error OR send.status === 'error').
+// Posts to the #adasbrew channel — DMing the token owner returns 400
+// ("buddies_self_message_restricted") so we channel-post instead. Never throws.
 async function alertCronFailure(label, detail) {
   try {
     const msg = `🚨 ADAS Brew — ${label}\n${detail}`.slice(0, 2000)
-    await postToCliqUser(TECH_CLIQ_IDS.Mark, msg)
+    const channel = process.env.BREW_ALERT_CLIQ_CHANNEL || process.env.BREW_SIGNUP_CLIQ_CHANNEL || 'adasbrew'
+    await postToCliqChannel(channel, msg)
   } catch (e) {
     console.warn('[brew cliq alert failed]', e.message)
   }

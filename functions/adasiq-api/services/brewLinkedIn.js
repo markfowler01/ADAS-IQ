@@ -260,6 +260,106 @@ function mechanicalFallback(digest) {
 export const linkedInConfigured = isConfigured
 
 /**
+ * Post an image + caption to LinkedIn (member feed).
+ * Uses the v2 Assets API: register upload → PUT bytes → create UGC post w/ image.
+ *
+ * @param {{ imageUrl: string, text: string }} payload
+ * @returns {Promise<{ ok: boolean, id?: string, error?: string, dryRun?: boolean }>}
+ */
+export async function postImageToLinkedIn({ imageUrl, text }) {
+  if (!isConfigured()) {
+    console.log(`[brew linkedin image] DRY RUN — LinkedIn not configured.`)
+    return { ok: true, dryRun: true }
+  }
+  if (!imageUrl) return { ok: false, error: 'imageUrl required' }
+
+  let token
+  try {
+    token = await getAccessToken()
+  } catch (err) {
+    return { ok: false, error: `oauth: ${err.message}` }
+  }
+
+  const e = envBundle()
+
+  try {
+    // 1. Register the upload — get a one-shot URL we can PUT bytes to
+    const regBody = {
+      registerUploadRequest: {
+        recipes: ['urn:li:digitalmediaRecipe:feedshare-image'],
+        owner: e.userUrn,
+        serviceRelationships: [{
+          relationshipType: 'OWNER',
+          identifier: 'urn:li:userGeneratedContent',
+        }],
+      },
+    }
+    const regRes = await axios.post(`${LI_API}/v2/assets?action=registerUpload`, regBody, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      timeout: 15000,
+      validateStatus: s => s < 500,
+    })
+    if (regRes.status >= 300) {
+      return { ok: false, error: `register: LinkedIn ${regRes.status}: ${JSON.stringify(regRes.data).slice(0, 300)}` }
+    }
+    const uploadUrl = regRes.data?.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl
+    const assetUrn = regRes.data?.value?.asset
+    if (!uploadUrl || !assetUrn) {
+      return { ok: false, error: 'register: no uploadUrl/asset in response' }
+    }
+
+    // 2. Download the image bytes (LinkedIn won't fetch from URL itself)
+    const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 20000 })
+
+    // 3. PUT bytes to the upload URL
+    const upRes = await axios.put(uploadUrl, Buffer.from(imgRes.data), {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'image/png' },
+      timeout: 30000,
+      validateStatus: s => s < 500,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+    })
+    if (upRes.status >= 300) {
+      return { ok: false, error: `upload: LinkedIn ${upRes.status}` }
+    }
+
+    // 4. Create the UGC post referencing the uploaded image
+    const postBody = {
+      author: e.userUrn,
+      lifecycleState: 'PUBLISHED',
+      specificContent: {
+        'com.linkedin.ugc.ShareContent': {
+          shareCommentary: { text: String(text || '').slice(0, 3000) },
+          shareMediaCategory: 'IMAGE',
+          media: [{
+            status: 'READY',
+            description: { text: '' },
+            media: assetUrn,
+            title: { text: '' },
+          }],
+        },
+      },
+      visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
+    }
+    const postRes = await axios.post(`${LI_API}/v2/ugcPosts`, postBody, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'X-Restli-Protocol-Version': '2.0.0',
+      },
+      timeout: 15000,
+      validateStatus: s => s < 500,
+    })
+    if (postRes.status >= 300 || !postRes.data?.id) {
+      return { ok: false, error: `post: LinkedIn ${postRes.status}: ${JSON.stringify(postRes.data).slice(0, 300)}` }
+    }
+    return { ok: true, id: postRes.data.id }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
+
+/**
  * Add a comment to an existing LinkedIn post (UGC share URN).
  * Used to drop a newsletter-signup link in the first comment after auto-posting,
  * since LinkedIn de-prioritizes posts with external links in the body but not comments.

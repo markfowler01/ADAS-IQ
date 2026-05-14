@@ -16,7 +16,8 @@ import { generateTipCardImage } from '../services/nanoBanana.js'
 import { composeTipImage } from '../services/tipImageComposite.js'
 import { commitBinaryFile } from '../services/brewArchive.js'
 import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia, readFacebookPostComments, listFacebookPagePosts } from '../services/metaPosting.js'
-import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
+import { postImageToLinkedIn, commentOnLinkedInPost, linkedInConfigured } from '../services/brewLinkedIn.js'
+import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
 
 // ─── Cache helpers (same shape as brew.js) ──────────────────────────────────
 function getSegment(req) {
@@ -172,11 +173,13 @@ function buildOfferComment() {
 }
 
 // ─── Failure alert (mirrors brew.js pattern) ────────────────────────────────
-// The daily tip-post pipeline is named "Marketing" internally — see Cliq DMs.
+// Posts to #adasbrew channel — DMing the token owner returns 400
+// ("buddies_self_message_restricted") so we channel-post instead.
 async function alertTipsFailure(label, detail) {
   try {
     const msg = `🚨 Marketing — ${label}\n${detail}`.slice(0, 2000)
-    await postToCliqUser(TECH_CLIQ_IDS.Mark, msg)
+    const channel = process.env.BREW_ALERT_CLIQ_CHANNEL || process.env.BREW_SIGNUP_CLIQ_CHANNEL || 'adasbrew'
+    await postToCliqChannel(channel, msg)
   } catch (e) {
     console.warn('[Marketing cliq alert failed]', e.message)
   }
@@ -298,15 +301,19 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       }
     }
 
-    // 6. Post to FB + IG in parallel
+    // 6. Post to FB + IG + LinkedIn in parallel — all three carry the same
+    // tip card image and caption so the brand reads consistent across surfaces.
     const caption = card.caption || ''
-    const [fbSettled, igSettled] = await Promise.allSettled([
+    const [fbSettled, igSettled, liSettled] = await Promise.allSettled([
       facebookConfigured()
         ? postToFacebookPage({ imageUrl: imageCommit.rawUrl, caption })
         : Promise.resolve({ ok: false, error: 'FB not configured', skipped: true }),
       instagramConfigured()
         ? postToInstagram({ imageUrl: imageCommit.rawUrl, caption })
         : Promise.resolve({ ok: false, error: 'IG not configured', skipped: true }),
+      linkedInConfigured()
+        ? postImageToLinkedIn({ imageUrl: imageCommit.rawUrl, text: caption })
+        : Promise.resolve({ ok: false, error: 'LinkedIn not configured', skipped: true }),
     ])
     const fbResult = fbSettled.status === 'fulfilled'
       ? fbSettled.value
@@ -314,13 +321,18 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
     const igResult = igSettled.status === 'fulfilled'
       ? igSettled.value
       : { ok: false, error: igSettled.reason?.message || 'ig failed' }
+    const liResult = liSettled.status === 'fulfilled'
+      ? liSettled.value
+      : { ok: false, error: liSettled.reason?.message || 'linkedin failed' }
 
     // 7. Auto-post a "Godfather Offer" comment on each successful post.
     // FB allows author comments via Graph API; IG requires instagram_manage_comments
-    // permission and may fail silently — treated as non-fatal.
+    // (often silently denied — treated as non-fatal). LinkedIn supports comments via
+    // the socialActions endpoint.
     const offerComment = buildOfferComment()
     let fbComment = null
     let igComment = null
+    let liComment = null
     if (fbResult?.ok && fbResult.id) {
       fbComment = await commentOnFacebookPost({ postId: fbResult.id, message: offerComment })
         .catch(e => ({ ok: false, error: e.message }))
@@ -329,11 +341,16 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       igComment = await commentOnInstagramMedia({ mediaId: igResult.id, message: offerComment })
         .catch(e => ({ ok: false, error: e.message }))
     }
+    if (liResult?.ok && liResult.id) {
+      liComment = await commentOnLinkedInPost(liResult.id, offerComment)
+        .catch(e => ({ ok: false, error: e.message }))
+    }
 
     // 8. Failure alerts
     const failures = []
     if (fbResult?.ok === false && !fbResult.skipped) failures.push(`facebook: ${fbResult.error}`)
     if (igResult?.ok === false && !igResult.skipped) failures.push(`instagram: ${igResult.error}`)
+    if (liResult?.ok === false && !liResult.skipped) failures.push(`linkedin: ${liResult.error}`)
     if (failures.length) {
       alertTipsFailure('post partial', `${card.headline} — ${failures.join('; ')}`)
     }
@@ -347,6 +364,8 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       facebookComment: fbComment,
       instagram: igResult,
       instagramComment: igComment,
+      linkedin: liResult,
+      linkedinComment: liComment,
       caption,
     })
   } catch (e) {
@@ -408,7 +427,8 @@ tipsRouter.post('/watch-comments', requireCronSecret, async (req, res) => {
         `https://www.facebook.com/${lead.postId.replace('_', '/posts/')}`,
       ].join('\n')
       try {
-        await postToCliqUser(TECH_CLIQ_IDS.Mark, msg.slice(0, 2000))
+        const channel = process.env.BREW_ALERT_CLIQ_CHANNEL || process.env.BREW_SIGNUP_CLIQ_CHANNEL || 'adasbrew'
+        await postToCliqChannel(channel, msg.slice(0, 2000))
       } catch (e) {
         console.warn('[Marketing watch cliq]', e.message)
       }

@@ -199,16 +199,18 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
   <text x="${bulletTextX}" y="${y}" class="bullet">${esc(b)}</text>`
   }).join('')
 
-  // ── CTA ribbon — small orange pill INSIDE the bottom-right of the card so
-  // it reads as a "read more" button, not a floating afterthought
-  const ctaText = '→ Daily at absoluteadas.com/brew'
-  const ctaApproxW = Math.round(ctaText.length * 20 * 0.6) + 36
-  const ctaPadRight = 22
-  const ctaX = cardX + cardW - ctaApproxW - ctaPadRight
-  const ctaTextY = ctaY + Math.round(ctaH * 0.66)
+  // ── CTA ribbon — bigger orange pill, more prominent signup invitation.
+  // Centered at the bottom of the card area for visual weight.
+  const ctaText = '→ Subscribe free at absoluteadas.com/brew'
+  const ctaFontSize = 22
+  const ctaHBig = 48
+  const ctaApproxW = Math.round(ctaText.length * ctaFontSize * 0.58) + 44
+  const ctaXCentered = Math.round((CANVAS - ctaApproxW) / 2)
+  const ctaYCentered = cardY + cardH - ctaHBig - ctaPadInsideCard
+  const ctaTextYBig = ctaYCentered + Math.round(ctaHBig * 0.66)
   const ctaSvg = `
-  <rect x="${ctaX}" y="${ctaY}" width="${ctaApproxW}" height="${ctaH}" rx="${ctaH / 2}" ry="${ctaH / 2}" fill="${BRAND_ORANGE}"/>
-  <text x="${ctaX + ctaApproxW / 2}" y="${ctaTextY}" class="cta">${esc(ctaText)}</text>`
+  <rect x="${ctaXCentered}" y="${ctaYCentered}" width="${ctaApproxW}" height="${ctaHBig}" rx="${ctaHBig / 2}" ry="${ctaHBig / 2}" fill="${BRAND_ORANGE}"/>
+  <text x="${ctaXCentered + ctaApproxW / 2}" y="${ctaTextYBig}" class="cta">${esc(ctaText)}</text>`
 
   // ── Date stamp top-right corner — gives the daily-cadence signal
   const dateStr = new Date().toLocaleDateString('en-US', {
@@ -263,18 +265,21 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
       }
       .bullet {
         font-family: 'Inter', sans-serif;
-        font-weight: 400;
+        font-weight: 600;
         font-size: ${bulletFontSize}px;
-        fill: ${BULLET_DARK};
+        fill: #ffffff;
         letter-spacing: -0.005em;
+        paint-order: stroke;
+        stroke: rgba(0,0,0,0.55);
+        stroke-width: 2.5px;
       }
       .cta {
         font-family: 'Inter', sans-serif;
         font-weight: 700;
-        font-size: 18px;
+        font-size: 22px;
         fill: #ffffff;
         text-anchor: middle;
-        letter-spacing: 0.02em;
+        letter-spacing: 0.01em;
       }
       .wordmark-white {
         font-family: 'Inter', sans-serif;
@@ -315,9 +320,8 @@ function buildSvgOverlay({ eyebrow, headline, headlineEmphasis, bullets, interBo
   ${eyebrowSvg}
   <!-- Headline -->
   ${headlineSvgLines}
-  <!-- Bullet card -->
-  <rect x="${cardX - 4}" y="${cardY - 4 + 8}" width="${cardW + 8}" height="${cardH + 8}" rx="22" ry="22" fill="rgba(0,0,0,0.25)"/>
-  <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="18" ry="18" fill="${CARD_WHITE}"/>
+  <!-- Bullet area — subtle dark scrim instead of white card; photo shows through -->
+  <rect x="${cardX}" y="${cardY}" width="${cardW}" height="${cardH}" rx="18" ry="18" fill="rgba(0,0,0,0.45)"/>
   ${bulletsSvg}
   <!-- CTA ribbon -->
   ${ctaSvg}
