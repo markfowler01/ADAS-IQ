@@ -6,8 +6,32 @@ const PARENT_FOLDER_ID = '28exmfc33000b044047f18dc7f1617c730889'
 const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
 
 /**
+ * List existing external share links for a WorkDrive folder.
+ * Correct endpoint: GET /files/{folderId}/links
+ * Returns the first zohoexternal.com URL found, or null.
+ */
+async function getExistingShareLink(folderId, accessToken) {
+  const listRes = await axios.get(
+    `${WORKDRIVE_API}/files/${folderId}/links`,
+    {
+      headers: {
+        Authorization: `Zoho-oauthtoken ${accessToken}`,
+        'Accept':      'application/vnd.api+json',
+      },
+      timeout: 10000,
+    }
+  )
+  const links = listRes.data?.data || []
+  // Prefer zohoexternal.com links (public viewer), then any link
+  const extLink = links.find(l => l.attributes?.link?.includes('zohoexternal.com'))
+    || links.find(l => l.attributes?.roleId === 34 || l.attributes?.role_id === 34)
+    || links[0]
+  return extLink?.attributes?.link || null
+}
+
+/**
  * Create an external (no-login) public share link for an existing WorkDrive folder.
- * role_id 6 = External viewer — generates a workdrive.zohoexternal.com URL.
+ * role_id 34 = Viewer (folder) — generates a workdrive.zohoexternal.com URL.
  * If a link already exists for the folder, returns the existing one.
  * Throws if the API call fails so callers can decide how to handle it.
  * @param {string} folderId
@@ -16,13 +40,25 @@ const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
  * @returns {string} public URL (zohoexternal.com)
  */
 export async function createShareLink(folderId, folderName, accessToken) {
-  // Sanitize link_name — WorkDrive rejects names with em-dashes or special chars
+  // Check for an existing link first — avoids duplicate-creation 400s
+  try {
+    const existing = await getExistingShareLink(folderId, accessToken)
+    if (existing) {
+      console.log('[workdrive] Using existing share link for', folderId, ':', existing)
+      return existing
+    }
+  } catch (listErr) {
+    // Not fatal — proceed to create a new link
+    console.warn('[workdrive] Could not check existing links (will try create):', listErr.message)
+  }
+
+  // Sanitize link_name — WorkDrive rejects em-dashes and other special chars
   const safeName = folderName
-    .replace(/—/g, '-')   // em-dash → hyphen
-    .replace(/–/g, '-')   // en-dash → hyphen
-    .replace(/[^\w\s\-.,()]/g, '') // strip remaining non-ASCII / special chars
+    .replace(/—/g, '-')              // em-dash → hyphen
+    .replace(/–/g, '-')              // en-dash → hyphen
+    .replace(/[^\w\s\-.,()]/g, '')   // strip remaining non-ASCII / special chars
     .trim()
-    .slice(0, 100)             // cap length
+    .slice(0, 100)
 
   let shareRes
   try {
@@ -31,9 +67,11 @@ export async function createShareLink(folderId, folderName, accessToken) {
       {
         data: {
           attributes: {
-            resource_id: folderId,
-            link_name:   safeName || 'Job Folder',
-            role_id:     '6',
+            resource_id:       folderId,
+            link_name:         safeName || 'Job Folder',
+            role_id:           34,          // 34 = Viewer for folders (not 6, which is View & Comment for Zoho Docs only)
+            request_user_data: false,
+            allow_download:    true,
           },
           type: 'links',
         },
@@ -52,42 +90,24 @@ export async function createShareLink(folderId, folderName, accessToken) {
     const errBody = JSON.stringify(postErr.response?.data || {})
     console.error(`[workdrive] createShareLink POST failed (${status}):`, errBody)
 
-    // 400 often means a link already exists — try to fetch existing links
+    // On 400/409 a link may have just been created by a concurrent request — try listing again
     if (status === 400 || status === 409) {
-      console.log('[workdrive] Checking for existing share links on folder:', folderId)
       try {
-        const listRes = await axios.get(
-          `${WORKDRIVE_API}/links`,
-          {
-            params: { resource_id: folderId },
-            headers: {
-              Authorization: `Zoho-oauthtoken ${accessToken}`,
-              'Accept':      'application/vnd.api+json',
-            },
-            timeout: 10000,
-          }
-        )
-        const links = listRes.data?.data || []
-        // Prefer external (zohoexternal.com) links, role_id 6
-        const extLink = links.find(l => l.attributes?.link?.includes('zohoexternal.com'))
-          || links.find(l => l.attributes?.role_id === '6' || l.attributes?.role_id === 6)
-          || links[0]
-        const existingUrl = extLink?.attributes?.link
-        if (existingUrl) {
-          console.log('[workdrive] Returning existing share link:', existingUrl)
-          return existingUrl
+        const existing = await getExistingShareLink(folderId, accessToken)
+        if (existing) {
+          console.log('[workdrive] Recovered: returning existing share link after 400:', existing)
+          return existing
         }
       } catch (listErr) {
-        console.warn('[workdrive] Could not list existing links:', listErr.message)
+        console.warn('[workdrive] Could not list existing links after 400:', listErr.message)
       }
     }
 
-    // Re-throw original error if we couldn't recover
-    throw new Error(`Request failed with status code ${status}`)
+    throw new Error(`WorkDrive share link failed (${status}): ${errBody}`)
   }
 
   const link = shareRes.data?.data?.attributes?.link
-  console.log('[workdrive] createShareLink response:', JSON.stringify(shareRes.data?.data?.attributes))
+  console.log('[workdrive] createShareLink created:', JSON.stringify(shareRes.data?.data?.attributes))
   if (!link) throw new Error('WorkDrive returned no link URL in response')
   return link
 }
