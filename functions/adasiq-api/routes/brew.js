@@ -1606,9 +1606,9 @@ cronRouter.post('/run-bonus', async (req, res) => {
     const caption = buildSocialCaption(digest)
     const headline = subject || rendered.subject
 
-    // Run the three independent slow tasks in parallel: archive HTML commit,
-    // Nano Banana image generation, LinkedIn text generation. Each can fail
-    // independently — we report which.
+    // Run three independent slow tasks in parallel: archive HTML commit,
+    // Nano Banana cover image gen, and Claude-written LinkedIn-optimized
+    // summary post. The full newsletter body is rendered synchronously below.
     const [archiveSettled, imageSettled, liTextSettled] = await Promise.allSettled([
       publishIssueToArchive(req, {
         issueNumber,
@@ -1619,6 +1619,11 @@ cronRouter.post('/run-bonus', async (req, res) => {
       generateCoverImage({ issueNumber, dateISO: isoDate, headline }),
       digestToLinkedInPost(digest).catch(e => ({ _liTextError: e.message || 'failed' })),
     ])
+
+    // Full newsletter body for the long-form LinkedIn post — all 5 stories,
+    // intro, CTA, hashtags. Synchronous string render (no Claude call).
+    // LinkedIn's UGC text limit is 3000 chars; postToLinkedIn slices safely.
+    const liFullText = renderLinkedIn(digest).body
 
     const archiveResult = archiveSettled.status === 'fulfilled'
       ? archiveSettled.value
@@ -1646,14 +1651,20 @@ cronRouter.post('/run-bonus', async (req, res) => {
       }
     }
 
-    // LinkedIn post — uses pre-generated text from the parallel step.
+    // LinkedIn — TWO posts per issue:
+    //   1. AI-summarized LinkedIn-optimized post (single-story focus, ~150-220 words)
+    //   2. Full newsletter long-form post (renderLinkedIn output, all 5 stories)
+    // Posted sequentially (not parallel) to avoid LinkedIn rate-limit / anti-spam
+    // flags from two simultaneous identical-author posts.
+    const subscribeComment = `Subscribe to ADAS Brew (free, every weekday morning) → absoluteadas.com/brew`
+
+    // Post 1: AI summary
     let liResult
     if (liTextSettled.status === 'fulfilled' && liTextSettled.value && !liTextSettled.value._liTextError) {
       try {
         liResult = await postToLinkedIn({ text: liTextSettled.value })
         if (liResult?.ok && liResult.id) {
-          const commentText = `If you want a 5-min version of this in your inbox every weekday morning, free → absoluteadas.com/brew`
-          const cr = await commentOnLinkedInPost(liResult.id, commentText)
+          const cr = await commentOnLinkedInPost(liResult.id, subscribeComment)
           liResult.comment = cr
         }
       } catch (e) {
@@ -1664,6 +1675,18 @@ cronRouter.post('/run-bonus', async (req, res) => {
         ? liTextSettled.value._liTextError
         : liTextSettled.reason?.message || 'linkedin text failed'
       liResult = { ok: false, error: `linkedin-text: ${err}` }
+    }
+
+    // Post 2: Full newsletter — fires regardless of whether AI summary succeeded
+    let liFullResult
+    try {
+      liFullResult = await postToLinkedIn({ text: liFullText })
+      if (liFullResult?.ok && liFullResult.id) {
+        const cr = await commentOnLinkedInPost(liFullResult.id, subscribeComment)
+        liFullResult.comment = cr
+      }
+    } catch (e) {
+      liFullResult = { ok: false, error: e.message }
     }
 
     // FB Page + IG posts — both need the public image URL.
@@ -1695,7 +1718,8 @@ cronRouter.post('/run-bonus', async (req, res) => {
 
     const failures = []
     if (archiveResult?.ok === false) failures.push(`archive: ${archiveResult.error || 'failed'}`)
-    if (liResult?.ok === false) failures.push(`linkedin: ${liResult.error || 'failed'}`)
+    if (liResult?.ok === false) failures.push(`linkedin (summary): ${liResult.error || 'failed'}`)
+    if (liFullResult?.ok === false) failures.push(`linkedin (full): ${liFullResult.error || 'failed'}`)
     if (fbResult?.ok === false && !fbResult.skipped) failures.push(`facebook: ${fbResult.error || 'failed'}`)
     if (igResult?.ok === false && !igResult.skipped) failures.push(`instagram: ${igResult.error || 'failed'}`)
     if (imageResult?.ok === false) failures.push(`image: ${imageResult.error || 'failed'}`)
@@ -1707,7 +1731,8 @@ cronRouter.post('/run-bonus', async (req, res) => {
       issueNumber,
       archive: archiveResult,
       image: imageResult?.ok ? { ok: true, url: imageUrl } : imageResult,
-      linkedin: liResult,
+      linkedinSummary: liResult,
+      linkedinFull: liFullResult,
       facebook: fbResult,
       instagram: igResult,
     })
