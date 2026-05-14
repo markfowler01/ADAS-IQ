@@ -43,9 +43,10 @@ async function saveNotifications(req, notifications) {
 
 // Status label + color map matching the Kanban board
 const STATUS_MAP = {
-  new:              { label: 'New',            bg: '#f0f9ff', color: '#0369a1', border: '#bae6fd' },
-  scheduled:        { label: 'Scheduled',      bg: '#fffbeb', color: '#92400e', border: '#fde68a' },
-  in_progress:      { label: 'In Progress',    bg: '#fefce8', color: '#854d0e', border: '#fef08a' },
+  job_requested:    { label: 'Job Requested',   bg: '#e0f2fe', color: '#0369a1', border: '#bae6fd' },
+  need_dispatch:    { label: 'Need to Dispatch', bg: '#fef3c7', color: '#92400e', border: '#fde68a' },
+  dispatched_jaden: { label: 'Dispatched to Jaden', bg: '#dbeafe', color: '#1e40af', border: '#bfdbfe' },
+  dispatched_mark:  { label: 'Dispatched to Mark',  bg: '#ede9fe', color: '#6d28d9', border: '#ddd6fe' },
   pending_parts:    { label: 'Pending Parts',  bg: '#fff7ed', color: '#9a3412', border: '#fed7aa' },
   ready_invoice:    { label: 'Ready to Invoice',bg: '#fdf4ff', color: '#7e22ce', border: '#e9d5ff' },
   complete:         { label: 'Complete',        bg: '#f0fdf4', color: '#166534', border: '#bbf7d0' },
@@ -191,20 +192,21 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
     console.error('[notifications] Failed to save notifications:', e.message)
   }
 
-  // Fire email to the recipient
-  setImmediate(async () => {
+  // Fire email to the recipient — start NOW (not via setImmediate) so Catalyst
+  // doesn't drop it after the response is sent. Not awaited so it doesn't block.
+  ;(async () => {
     try {
       // 1. Look up tech email from Settings → fallback to hardcoded map
       let emailAddr = await getTechEmail(req, to)
       if (!emailAddr) emailAddr = FALLBACK_EMAILS[to?.toLowerCase().trim()] || null
       // 2. If still no match, use toEmail as direct address (e.g. Kath's ready-to-invoice)
       if (!emailAddr && toEmail && toEmail.includes('@')) emailAddr = toEmail
-      if (emailAddr) emailNotify(emailAddr, title, body, job)
+      if (emailAddr) await emailNotify(emailAddr, title, body, job)
       else console.log(`[notifications] No email found for "${to}" — configure in Settings`)
     } catch (e) {
       console.warn('[notifications] Email lookup failed:', e.message)
     }
-  })
+  })()
 
   return notif
 }

@@ -429,7 +429,12 @@ export async function createDraftQuote({
     status: 'draft',
   }
 
-  if (customerId) body.customer_id = customerId
+  // Never create a new Zoho Books customer — always require an existing contact_id.
+  // If no customer is selected the caller must provide one; reject rather than auto-create.
+  if (!customerId) {
+    throw new Error('Please select a Zoho Books customer before creating an estimate. Creating new customers from the app is disabled.')
+  }
+  body.customer_id = customerId
   if (salespersonName) body.salesperson_name = salespersonName
 
   // 4. Create the estimate — retry with .1, .2 etc. on duplicate number or unique field conflict
@@ -595,6 +600,20 @@ export async function createDraftQuote({
 }
 
 /**
+ * Update the "Scan Report and Documentation" custom field on a Zoho Books estimate.
+ * Used by the refresh-share-link endpoint to fix broken WorkDrive links without
+ * re-creating the whole estimate.
+ */
+export async function updateEstimateShareLink(estimateId, shareLink) {
+  const token = await getAccessToken()
+  await axios.put(
+    `${ZOHO_API_BASE}/estimates/${estimateId}`,
+    { custom_fields: [{ label: 'Scan Report and Documentation', value: shareLink }] },
+    { headers: zohoHeaders(token), params: orgParam() }
+  )
+}
+
+/**
  * Fetch all estimates from Zoho Books (all statuses except void).
  * Returns array of estimate objects with custom fields parsed into cf_* keys.
  */
@@ -703,7 +722,11 @@ export async function createRepairDraftQuote({
     line_items:       lineItems,
     status:           'draft',
   }
-  if (customerId)      body.customer_id      = customerId
+  // Never create a new Zoho Books customer — require an existing contact_id.
+  if (!customerId) {
+    throw new Error('Please select a Zoho Books customer before creating an estimate. Creating new customers from the app is disabled.')
+  }
+  body.customer_id = customerId
   if (salespersonName) body.salesperson_name = salespersonName
 
   // Create with retry on duplicate number

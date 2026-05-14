@@ -296,10 +296,11 @@ cronRouter.post('/subscribe', express.json(), express.urlencoded({ extended: fal
     syncNewsletterSubscriberToCrm({ email, name, shop, source: 'ADAS Brew Newsletter' })
       .catch(e => console.warn('[brew crm-sync]', e.message))
 
-    // Fire-and-forget Cliq DM to Mark — instant signup notification (count is approximate, fetched async)
-    readSubscribers(req).then(allSubs => {
-      return notifyMarkOfSignup({ email, name, shop, location, role, total: allSubs.length })
-    }).catch(e => console.warn('[brew cliq-notify]', e.message))
+    // Await Cliq notify before responding — Catalyst drops fire-and-forget after response
+    try {
+      const allSubs = await readSubscribers(req)
+      await notifyMarkOfSignup({ email, name, shop, location, role, total: allSubs.length })
+    } catch (e) { console.warn('[brew cliq-notify]', e.message) }
 
     res.json({ ok: true })
   } catch (e) {
@@ -406,7 +407,7 @@ async function notifyMarkOfSignup({ email, name, shop, location, role, total }) 
   if (role) cliqLines.push(`*Role:* ${role}`)
   cliqLines.push('')
   cliqLines.push(`_Total subscribers: ${total}_`)
-  postToCliqChannel(channel, cliqLines.join('\n'))
+  await postToCliqChannel(channel, cliqLines.join('\n'))
     .catch(e => console.warn('[brew cliq-channel]', e.message))
 
   // 2. Email notification — backup channel + paper trail
@@ -475,6 +476,61 @@ cronRouter.get('/_test-linkedin-comment', requireCronSecretFlex, async (req, res
     res.json(r)
   } catch (e) {
     res.json({ ok: false, error: e.message })
+  }
+})
+
+// Diagnostic — write to + read from the named brew_handoff segment.
+// Fast (< 1s) so it fits within the 30s HTTP gateway cap. Verifies that
+// the segment switch from Plan B works without needing a full cron run.
+cronRouter.get('/_cache-diag', requireCronSecretFlex, async (req, res) => {
+  try {
+    const handoff = getHandoffSegment(req)
+    const def = getSegment(req)
+
+    const testKey = '__cache_diag__'
+    const testValue = { stamp: new Date().toISOString(), random: Math.random() }
+    await cacheSet(handoff, testKey, testValue)
+    const readBack = await cacheGet(handoff, testKey, null)
+    const defRead = await cacheGet(def, testKey, null)
+
+    // Also peek at what's actually stashed for the bonus pipeline
+    const pendingHandoff = await cacheGet(handoff, 'brew_pending_bonus', null)
+    const pendingDefault = await cacheGet(def, 'brew_pending_bonus', null)
+    const todayHandoff = await cacheGet(handoff, 'brew_today_digest', null)
+    const todayDefault = await cacheGet(def, 'brew_today_digest', null)
+
+    res.json({
+      ok: true,
+      handoffSegmentRoundtrip: {
+        wrote: testValue,
+        readBack,
+        matches: readBack?.stamp === testValue.stamp,
+      },
+      defaultSegmentDoesNotSeeIt: {
+        readFromDefault: defRead,
+        isolatedAsExpected: defRead === null,
+      },
+      pendingBonus: {
+        inHandoffSegment: pendingHandoff ? {
+          issueNumber: pendingHandoff.issueNumber,
+          subject: pendingHandoff.subject,
+          createdAt: pendingHandoff.createdAt,
+          digestSize: JSON.stringify(pendingHandoff.digest || {}).length,
+        } : null,
+        inDefaultSegment: pendingDefault ? {
+          issueNumber: pendingDefault.issueNumber,
+          subject: pendingDefault.subject,
+          createdAt: pendingDefault.createdAt,
+          digestSize: JSON.stringify(pendingDefault.digest || {}).length,
+        } : null,
+      },
+      todayDigest: {
+        inHandoffSegment: todayHandoff ? { issueNumber: todayHandoff.issueNumber, createdAt: todayHandoff.createdAt } : null,
+        inDefaultSegment: todayDefault ? { issueNumber: todayDefault.issueNumber, createdAt: todayDefault.createdAt } : null,
+      },
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.message, stack: e.stack?.split('\n').slice(0, 5) })
   }
 })
 

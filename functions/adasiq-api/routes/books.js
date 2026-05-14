@@ -106,7 +106,12 @@ async function getOrSeedServices(req) {
   let services = await readServices(req)
   if (!services) {
     services = DEFAULT_SERVICES
-    await writeServices(req, services)
+    try {
+      await writeServices(req, services)
+    } catch (e) {
+      console.warn('[books] Could not seed services cache:', e.message)
+      // Return defaults anyway — don't block invoice creation over a cache write
+    }
   }
   return services
 }

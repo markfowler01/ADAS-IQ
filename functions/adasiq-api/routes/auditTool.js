@@ -144,7 +144,7 @@ auditRouter.post('/generate', express.json({ limit: '64kb' }), async (req, res) 
       '',
       'Rebuttal already emailed to them. Follow up to land the sublet.',
     ].join('\n').slice(0, 2000)
-    postToCliqUser(TECH_CLIQ_IDS.Mark, cliqMsg).catch(e => console.warn('[audit-tool cliq]', e.message))
+    await postToCliqUser(TECH_CLIQ_IDS.Mark, cliqMsg).catch(e => console.warn('[audit-tool cliq]', e.message))
 
     res.json({ ok: true, rebuttal: audit.rebuttal })
   } catch (e) {

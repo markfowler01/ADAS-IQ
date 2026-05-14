@@ -73,7 +73,7 @@ function MainApp() {
   const [user, setUser]   = useState(null)   // null = loading, false = not logged in, object = logged in
   const [loading, setLoading] = useState(true)
   const [authErrMsg, setAuthErrMsg] = useState(null)
-  const [screen,  setScreen]  = useState('upload')
+  const [screen,  setScreen]  = useState('kanban')
   const [jobData, setJobData] = useState(null)
   const [pdfFile, setPdfFile] = useState(null)
 
@@ -158,7 +158,7 @@ function MainApp() {
   function handleReset() {
     setJobData(null)
     setPdfFile(null)
-    setScreen('upload')
+    setScreen('kanban')
   }
 
   if (loading) {
@@ -242,6 +242,7 @@ function MainApp() {
           user={user}
           onBack={() => setScreen('upload')}
           onLogout={handleLogout}
+          onExtracted={handleExtracted}
           {...navProps}
         />
       )}

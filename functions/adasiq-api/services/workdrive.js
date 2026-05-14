@@ -1,7 +1,48 @@
 import axios from 'axios'
+import { postToCliqChannelById } from './cliq.js'
 
 const WORKDRIVE_API = 'https://workdrive.zoho.com/api/v1'
 const PARENT_FOLDER_ID = '28exmfc33000b044047f18dc7f1617c730889'
+const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
+
+/**
+ * Create an external (no-login) public share link for an existing WorkDrive folder.
+ * role_id 6 = External viewer — generates a workdrive.zohoexternal.com URL.
+ * Throws if the API call fails so callers can decide how to handle it.
+ * @param {string} folderId
+ * @param {string} folderName  used as the link label in WorkDrive
+ * @param {string} accessToken
+ * @returns {string} public URL (zohoexternal.com)
+ */
+export async function createShareLink(folderId, folderName, accessToken) {
+  const shareRes = await axios.post(
+    `${WORKDRIVE_API}/links`,
+    {
+      data: {
+        attributes: {
+          resource_id:       folderId,
+          link_name:         folderName,
+          role_id:           '6',
+          request_user_data: false,
+          allow_download:    true,
+        },
+        type: 'links',
+      },
+    },
+    {
+      headers: {
+        Authorization:  `Zoho-oauthtoken ${accessToken}`,
+        'Content-Type': 'application/vnd.api+json',
+        'Accept':       'application/vnd.api+json',
+      },
+      timeout: 15000,
+    }
+  )
+  const link = shareRes.data?.data?.attributes?.link
+  console.log('[workdrive] createShareLink response:', JSON.stringify(shareRes.data?.data?.attributes))
+  if (!link) throw new Error('WorkDrive returned no link URL in response')
+  return link
+}
 
 /**
  * Create a folder in Zoho WorkDrive and return a shareable link.
@@ -43,34 +84,13 @@ export async function createJobFolder(folderName, accessToken) {
   // 2. Create an external share link (no Zoho login required, view-only)
   let shareLink = folderUrl // fallback to direct URL if share creation fails
   try {
-    const shareRes = await axios.post(
-      `${WORKDRIVE_API}/links`,
-      {
-        data: {
-          attributes: {
-            resource_id:        folderId,
-            link_name:          folderName,
-            role_id:            '6',   // external view-only (no Zoho login required)
-            request_user_data:  false,
-            allow_download:     true,
-          },
-          type: 'links',
-        },
-      },
-      {
-        headers: {
-          Authorization:  `Zoho-oauthtoken ${accessToken}`,
-          'Content-Type': 'application/vnd.api+json',
-          'Accept':       'application/vnd.api+json',
-        },
-        timeout: 15000,
-      }
-    )
-    const link = shareRes.data?.data?.attributes?.link
-    console.log('[workdrive] Share link response:', JSON.stringify(shareRes.data?.data?.attributes))
+    const link = await createShareLink(folderId, folderName, accessToken)
     if (link) shareLink = link
   } catch (shareErr) {
-    console.warn('[workdrive] Share link creation failed (non-fatal):', shareErr.response?.data || shareErr.message)
+    const errMsg = `⚠️ WorkDrive share link failed for "${folderName}" (folder ${folderId}). Link on invoice will be internal-only. Error: ${shareErr.message}`
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, errMsg).catch(e =>
+      console.warn('[workdrive] Cliq alert failed:', e.message)
+    )
   }
 
   return { folderId, folderUrl, shareLink }

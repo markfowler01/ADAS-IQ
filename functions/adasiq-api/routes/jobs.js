@@ -2,9 +2,9 @@ import express from 'express'
 import multer from 'multer'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
-import { listAllEstimates, getEstimateLineItems, getAccessToken } from '../services/zoho.js'
+import { listAllEstimates, getEstimateLineItems, getAccessToken, updateEstimateShareLink } from '../services/zoho.js'
 import { createNotification } from './notifications.js'
-import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle } from '../services/workdrive.js'
+import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from '../services/workdrive.js'
 import { appendHistory } from '../services/history.js'
 
 const router = express.Router()
@@ -210,6 +210,21 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const newJob = await insertJob(req, req.body)
+
+    // Notify Kat when this is a manual job request (via_request flag from JobRequestModal)
+    if (req.body.via_request) {
+      const vehicle = newJob.vehicle || [newJob.year, newJob.make, newJob.model].filter(Boolean).join(' ')
+      await createNotification(req, {
+        to: 'Kath',
+        toEmail: 'k.belmonte@absoluteadas.com',
+        type: 'job_requested',
+        title: `New job request: ${newJob.shop_name || 'Unknown shop'}`,
+        body: `${vehicle || 'Vehicle TBD'}${newJob.technician ? ' · Requested by ' + newJob.technician : ''}${newJob.quote_number ? ' · RO# ' + newJob.quote_number : ''}`,
+        jobId: newJob.id,
+        job: newJob,
+      }).catch(e => console.warn('[notifications job request]', e.message))
+    }
+
     res.status(201).json(newJob)
   } catch (err) {
     console.error('[jobs POST]', err.message, err.stack)
@@ -248,6 +263,16 @@ router.put('/:id', async (req, res) => {
     }
     if (req.body.invoiced === true || req.body.invoiced === 'true') {
       logJobHistory(req, updated, 'invoiced')
+      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+      await createNotification(req, {
+        to: 'Mark',
+        toEmail: 'mf@absoluteadas.com',
+        type: 'job_invoiced',
+        title: `Job invoiced: ${updated.shop_name || 'Job'}`,
+        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'}${updated.invoice_number ? ' · Invoice #' + updated.invoice_number : ''}`,
+        jobId: updated.id,
+        job: updated,
+      }).catch(e => console.warn('[notifications invoiced]', e.message))
     }
 
     // Notify tech on every job update when a tech is assigned
@@ -258,7 +283,7 @@ router.put('/:id', async (req, res) => {
       const techChanged = newTech !== prevTech
       const type = techChanged ? 'job_assigned' : 'job_updated'
       const action = techChanged ? `Job assigned to ${newTech}` : `Job updated for ${newTech}`
-      createNotification(req, {
+      await createNotification(req, {
         to: newTech,
         toEmail: req.user?.email || '',
         type,
@@ -272,7 +297,7 @@ router.put('/:id', async (req, res) => {
     // Notify Kath when job moves to ready_invoice
     if (updated.status === 'ready_invoice' && prevStatus !== 'ready_invoice') {
       const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
-      createNotification(req, {
+      await createNotification(req, {
         to: 'Kath',
         toEmail: 'k.belmonte@absoluteadas.com',
         type: 'job_status',
@@ -306,6 +331,16 @@ router.patch('/:id', async (req, res) => {
     }
     if (req.body.invoiced === true && !currentJob.invoiced) {
       logJobHistory(req, updated, 'invoiced')
+      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+      await createNotification(req, {
+        to: 'Mark',
+        toEmail: 'mf@absoluteadas.com',
+        type: 'job_invoiced',
+        title: `Job invoiced: ${updated.shop_name || 'Job'}`,
+        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'}${updated.invoice_number ? ' · Invoice #' + updated.invoice_number : ''}`,
+        jobId: updated.id,
+        job: updated,
+      }).catch(e => console.warn('[notifications invoiced]', e.message))
     }
 
     // Notify tech on every job update when a tech is assigned
@@ -316,7 +351,7 @@ router.patch('/:id', async (req, res) => {
       const techChanged = newTech !== currentJob.technician
       const type = techChanged ? 'job_assigned' : 'job_updated'
       const action = techChanged ? `Job assigned to ${newTech}` : `Job updated for ${newTech}`
-      createNotification(req, {
+      await createNotification(req, {
         to: newTech,
         toEmail: req.user?.email || '',
         type,
@@ -330,7 +365,7 @@ router.patch('/:id', async (req, res) => {
     // Notify Kath when job moves to ready_invoice
     if (updated.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
       const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
-      createNotification(req, {
+      await createNotification(req, {
         to: 'Kath',
         toEmail: 'k.belmonte@absoluteadas.com',
         type: 'job_status',
@@ -361,82 +396,87 @@ router.delete('/:id', async (req, res) => {
 })
 
 // POST /api/jobs/sync-quotes
-router.post('/sync-quotes', async (req, res) => {
-  try {
-    const [estimates, jobs] = await Promise.all([
-      listAllEstimates(),
-      getAllJobs(req),
-    ])
+export async function performSyncQuotes(req) {
+  const [estimates, jobs] = await Promise.all([
+    listAllEstimates(),
+    getAllJobs(req),
+  ])
 
-    const linkedJobCount = jobs.filter(j => j.zoho_estimate_id).length
-    if (estimates.length === 0 && linkedJobCount > 0) {
-      return res.status(503).json({
-        error: 'Zoho returned 0 estimates — skipping sync to protect existing jobs. Try again.',
-      })
-    }
+  const linkedJobCount = jobs.filter(j => j.zoho_estimate_id).length
+  if (estimates.length === 0 && linkedJobCount > 0) {
+    const err = new Error('Zoho returned 0 estimates — skipping sync to protect existing jobs. Try again.')
+    err.status = 503
+    throw err
+  }
 
-    const estimateMap = new Map(estimates.map(e => [e.estimate_id, e]))
-    const existingEstimateIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
-    // Only import saved drafts — not sent, accepted, invoiced, etc.
-    const IMPORT_STATUSES = new Set(['draft'])
+  const estimateMap = new Map(estimates.map(e => [e.estimate_id, e]))
+  const existingEstimateIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
+  // Only import saved drafts — not sent, accepted, invoiced, etc.
+  const IMPORT_STATUSES = new Set(['draft'])
 
-    let created = 0
-    for (const est of estimates) {
-      if (!IMPORT_STATUSES.has(est.status)) continue
-      if (existingEstimateIds.has(est.estimate_id)) continue
+  let created = 0
+  for (const est of estimates) {
+    if (!IMPORT_STATUSES.has(est.status)) continue
+    if (existingEstimateIds.has(est.estimate_id)) continue
 
-      // Fetch line items from the full estimate detail
-      const lineItems = await getEstimateLineItems(est.estimate_id)
+    // Fetch line items from the full estimate detail
+    const lineItems = await getEstimateLineItems(est.estimate_id)
 
-      await insertJob(req, {
-        zoho_estimate_id: est.estimate_id,
-        shop_name:    est.customer_name || '',
-        vehicle:      [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' '),
-        year:         est.cf_year        || '',
-        make:         est.cf_make        || '',
-        model:        est.cf_model       || '',
-        vin:          est.cf_vin         || '',
-        insurer:      est.cf_insurer     || '',
-        technician:   est.salesperson_name || '',
-        scheduled_date: new Date().toISOString().split('T')[0],
-        calibrations: JSON.stringify(lineItems),
-        notes:        `Quote: ${est.estimate_number}`,
-        report_url:   est.quote_url      || '',
-        status:       'need_dispatch',
-        quote_number: est.estimate_number || '',
-        quote_url:    est.quote_url       || '',
-        folder_url:   est.cf_scan_report_and_documentation || '',
-      })
-      created++
-    }
+    await insertJob(req, {
+      zoho_estimate_id: est.estimate_id,
+      shop_name:    est.customer_name || '',
+      vehicle:      [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' '),
+      year:         est.cf_year        || '',
+      make:         est.cf_make        || '',
+      model:        est.cf_model       || '',
+      vin:          est.cf_vin         || '',
+      insurer:      est.cf_insurer     || '',
+      technician:   est.salesperson_name || '',
+      scheduled_date: new Date().toISOString().split('T')[0],
+      calibrations: JSON.stringify(lineItems),
+      notes:        `Quote: ${est.estimate_number}`,
+      report_url:   est.quote_url      || '',
+      status:       'need_dispatch',
+      quote_number: est.estimate_number || '',
+      quote_url:    est.quote_url       || '',
+      folder_url:   est.cf_scan_report_and_documentation || '',
+    })
+    created++
+  }
 
-    let removed = 0
-    let folderLinked = 0
-    for (const job of jobs) {
-      if (!job.zoho_estimate_id) continue
-      const est = estimateMap.get(job.zoho_estimate_id)
-      if (!est || !IMPORT_STATUSES.has(est.status)) {
-        try {
-          await deleteJob(req, job.id)
-          removed++
-        } catch (e) {
-          console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
-        }
-      } else if (!job.folder_url && est.cf_scan_report_and_documentation) {
-        // Backfill folder_url for existing jobs that are missing it
-        try {
-          await updateJob(req, job.id, { ...job, folder_url: est.cf_scan_report_and_documentation })
-          folderLinked++
-        } catch (e) {
-          console.warn(`[jobs sync] could not backfill folder_url for job ${job.id}:`, e.message)
-        }
+  let removed = 0
+  let folderLinked = 0
+  for (const job of jobs) {
+    if (!job.zoho_estimate_id) continue
+    const est = estimateMap.get(job.zoho_estimate_id)
+    if (!est || !IMPORT_STATUSES.has(est.status)) {
+      try {
+        await deleteJob(req, job.id)
+        removed++
+      } catch (e) {
+        console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
+      }
+    } else if (!job.folder_url && est.cf_scan_report_and_documentation) {
+      // Backfill folder_url for existing jobs that are missing it
+      try {
+        await updateJob(req, job.id, { ...job, folder_url: est.cf_scan_report_and_documentation })
+        folderLinked++
+      } catch (e) {
+        console.warn(`[jobs sync] could not backfill folder_url for job ${job.id}:`, e.message)
       }
     }
+  }
 
-    res.json({ created, removed, folderLinked, total: estimates.length })
+  return { created, removed, folderLinked, total: estimates.length }
+}
+
+router.post('/sync-quotes', async (req, res) => {
+  try {
+    const result = await performSyncQuotes(req)
+    res.json(result)
   } catch (err) {
     console.error('[jobs sync-quotes]', err.message, err.stack)
-    res.status(500).json({ error: err.message })
+    res.status(err.status || 500).json({ error: err.message })
   }
 })
 
@@ -626,6 +666,53 @@ router.post('/:id/upload-photo', (req, res) => {
       res.status(500).json({ error: e.message })
     }
   })
+})
+
+// POST /api/jobs/:id/refresh-share-link
+// Generates a fresh public WorkDrive share link for an existing folder and updates
+// both the job record AND the linked Zoho Books estimate custom field.
+router.post('/:id/refresh-share-link', async (req, res) => {
+  try {
+    const table = getTable(req)
+    const row = await table.getRow(req.params.id)
+    const job = rowToJob(row)
+
+    // Extract the WorkDrive folder ID from whatever URL we have stored
+    const folderIdMatch = (job.folder_url || '').match(/\/(?:folder|f)\/([a-z0-9]+)/i)
+    if (!folderIdMatch) {
+      return res.status(400).json({
+        error: 'No WorkDrive folder ID found on this job. The folder may not have been created yet — create a new estimate to generate one.',
+      })
+    }
+    const folderId = folderIdMatch[1]
+
+    // Build a folder label from job data (same pattern as createDraftQuote)
+    const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+    const folderLabel = [job.invoice_number || job.quote_number, job.shop_name, vehicle]
+      .filter(Boolean).join(' — ') || `Job ${job.id}`
+
+    // Generate a fresh external share link
+    const token = await getAccessToken()
+    const shareLink = await createShareLink(folderId, folderLabel, token)
+
+    // Persist the new public URL on the job
+    const updated = await updateJob(req, job.id, { ...job, folder_url: shareLink })
+
+    // Also update the Zoho Books estimate custom field if we have one
+    if (job.zoho_estimate_id) {
+      try {
+        await updateEstimateShareLink(job.zoho_estimate_id, shareLink)
+        console.log(`[refresh-share-link] Updated estimate ${job.zoho_estimate_id} with new link`)
+      } catch (e) {
+        console.warn('[refresh-share-link] Could not update Zoho Books estimate (non-fatal):', e.message)
+      }
+    }
+
+    res.json({ ok: true, shareLink, job: updated })
+  } catch (err) {
+    console.error('[refresh-share-link]', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ─── Exports for webhook.js ───────────────────────────────────────────────────

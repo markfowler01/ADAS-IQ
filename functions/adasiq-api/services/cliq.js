@@ -21,7 +21,7 @@ let accessExpiresAt = 0
 async function getAccessToken() {
   const now = Date.now()
   if (cachedAccessToken && now < accessExpiresAt - 60000) return cachedAccessToken
-  const refreshToken = process.env.ZOHO_CLIQ_REFRESH_TOKEN || process.env.ZOHO_TASKS_REFRESH_TOKEN
+  const refreshToken = process.env.ZOHO_CLIQ_REFRESH_TOKEN || process.env.ZOHO_TASKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN
   if (!refreshToken) throw new Error('No Zoho refresh token for Cliq')
   const params = new URLSearchParams({
     grant_type: 'refresh_token',
@@ -53,6 +53,15 @@ export async function postToCliqUser(userIdOrEmail, text) {
   const target = encodeURIComponent(String(userIdOrEmail))
   await axios.post(
     `${CLIQ_BASE}/buddies/${target}/message`,
+    { text },
+    { headers: { 'Content-Type': 'application/json', Authorization: `Zoho-oauthtoken ${token}` }, timeout: 8000 }
+  )
+}
+
+export async function postToCliqChannelById(channelId, text) {
+  const token = await getAccessToken()
+  await axios.post(
+    `${CLIQ_BASE}/channels/${channelId}/message`,
     { text },
     { headers: { 'Content-Type': 'application/json', Authorization: `Zoho-oauthtoken ${token}` }, timeout: 8000 }
   )

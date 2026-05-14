@@ -260,3 +260,61 @@ export async function deleteTask(taskId) {
   })
   console.log(`[zohoCrm] Deleted task: ${taskId}`)
 }
+
+/**
+ * Sync a newsletter / audit-form subscriber to Zoho CRM as a Lead.
+ * Creates the lead if it doesn't already exist (matched by email or company name).
+ * Silently skips if ZOHO_CRM_REFRESH_TOKEN is not configured.
+ * Called fire-and-forget from brew.js and auditTool.js.
+ * @param {{ email?: string, name?: string, shop?: string, source?: string }} params
+ */
+export async function syncNewsletterSubscriberToCrm({ email, name, shop, source } = {}) {
+  if (!email && !shop) return
+
+  const token = await getCrmAccessToken()
+
+  // 1. Search by email first
+  let existing = null
+  if (email) {
+    try {
+      const res = await axios.get(`${CRM_API}/Leads/search`, {
+        headers: crmHeaders(token),
+        params: { criteria: `(Email:equals:${email})`, fields: 'id,Company,Email,Lead_Status' },
+        timeout: 10000,
+      })
+      existing = res.data?.data?.[0] || null
+    } catch (e) {
+      if (![204, 400, 404].includes(e.response?.status)) {
+        console.warn('[zohoCrm] Email search error:', e.message)
+      }
+    }
+  }
+
+  // 2. Fall back to company name search
+  if (!existing && shop) {
+    existing = await findLeadByName(shop)
+  }
+
+  if (existing) {
+    console.log(`[zohoCrm] Subscriber already in CRM: ${email || shop} (Lead ${existing.id})`)
+    return
+  }
+
+  // 3. Create a minimal Lead for the new subscriber
+  const [firstName, ...lastParts] = (name || shop || email || 'Unknown').split(' ')
+  const lead = {
+    Company:     shop || email || 'Unknown',
+    First_Name:  firstName || '',
+    Last_Name:   lastParts.join(' ') || (shop || email || 'Subscriber'),
+    Email:       email || '',
+    Lead_Source: source || 'Newsletter',
+    Lead_Status: 'Not Contacted',
+    Description: `Auto-synced from: ${source || 'newsletter subscription'}`,
+  }
+
+  const res = await axios.post(`${CRM_API}/Leads`, { data: [lead] }, {
+    headers: crmHeaders(token), timeout: 10000,
+  })
+  const created = res.data?.data?.[0]
+  console.log(`[zohoCrm] Created CRM lead for subscriber: ${email || shop} → ${created?.code}`)
+}

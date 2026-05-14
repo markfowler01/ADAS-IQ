@@ -121,6 +121,82 @@ export async function markAccountMessageRead(token, accountId, folderId, message
   )
 }
 
+/**
+ * Return all Zoho Mail accounts (primary + group inboxes like info@, postscan@, etc.)
+ */
+export async function getAllMailAccounts(token) {
+  const res = await axios.get(`${MAIL_API}/accounts`, {
+    headers: mailHeaders(token),
+    timeout: 10000,
+  })
+  return res.data?.data || []
+}
+
+/**
+ * Get unread inbox messages for an account (used by mail-agent.js).
+ */
+export async function getUnreadInboxMessages(token, accountId) {
+  // folderId 0 = Inbox in Zoho Mail API
+  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/view`, {
+    headers: mailHeaders(token),
+    params: { folderId: '0', status: 'unread', limit: 50 },
+    timeout: 15000,
+    transformResponse: [safeParseMailResponse],
+  })
+  return res.data?.data || []
+}
+
+/**
+ * Get recent sent messages for voice profile building.
+ */
+export async function getRecentSentMessages(token, accountId, limit = 25) {
+  // folderId 1 = Sent in Zoho Mail API
+  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/view`, {
+    headers: mailHeaders(token),
+    params: { folderId: '1', limit },
+    timeout: 15000,
+    transformResponse: [safeParseMailResponse],
+  })
+  return res.data?.data || []
+}
+
+/**
+ * Fetch the full content/body of a message.
+ */
+export async function getMessageContent(token, accountId, folderId, messageId) {
+  const res = await axios.get(
+    `${MAIL_API}/accounts/${accountId}/folders/${folderId}/messages/${messageId}/content`,
+    {
+      headers: mailHeaders(token),
+      timeout: 15000,
+      transformResponse: [safeParseMailResponse],
+    }
+  )
+  return res.data?.data || res.data || {}
+}
+
+/**
+ * Save a draft reply in the specified account.
+ */
+export async function saveDraftReply(token, accountId, { to, subject, body, inReplyTo }) {
+  const payload = {
+    toAddress:  to,
+    subject,
+    content:    body,
+    mailFormat: 'html',
+    ...(inReplyTo ? { inReplyTo } : {}),
+  }
+  const res = await axios.post(
+    `${MAIL_API}/accounts/${accountId}/messages?mode=draft`,
+    payload,
+    {
+      headers: { ...mailHeaders(token), 'Content-Type': 'application/json' },
+      timeout: 15000,
+    }
+  )
+  return res.data?.data || res.data || {}
+}
+
 // Send an email from Mark's account.
 export async function sendMail(token, accountId, { to, subject, body }) {
   const res = await axios.post(

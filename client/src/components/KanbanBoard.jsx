@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
+import JobRequestModal from './JobRequestModal.jsx'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -16,6 +17,7 @@ function useIsMobile() {
 const ORANGE = '#CD4419'
 
 const COLUMNS = [
+  { id: 'job_requested',    label: 'Job Requested' },
   { id: 'need_dispatch',    label: 'Need to Dispatch' },
   { id: 'dispatched_jaden', label: 'Dispatched to Jaden' },
   { id: 'dispatched_mark',  label: 'Dispatched to Mark' },
@@ -26,6 +28,7 @@ const COLUMNS = [
 
 // Status badge colors for mobile card list
 const STATUS_INFO = {
+  job_requested:    { color: '#0369a1', bg: '#e0f2fe' },
   need_dispatch:    { color: '#b45309', bg: '#fef3c7' },
   dispatched_jaden: { color: '#1d4ed8', bg: '#dbeafe' },
   dispatched_mark:  { color: '#7c3aed', bg: '#ede9fe' },
@@ -524,8 +527,12 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onCreateInvoices }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices }) {
   const [finding, setFinding] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // Detect internal-only URL — any folder_url that isn't a public zohoexternal.com link
+  const hasInternalLink = job.folder_url && !job.folder_url.includes('zohoexternal.com')
 
   async function handleOpenWorkDrive(e) {
     e.stopPropagation()
@@ -536,6 +543,13 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
     setFinding(true)
     await onOpenWorkDrive(job)
     setFinding(false)
+  }
+
+  async function handleRefreshLink(e) {
+    e.stopPropagation()
+    setRefreshing(true)
+    await onRefreshShareLink(job)
+    setRefreshing(false)
   }
   let calArr = []
   if (job.calibrations) {
@@ -729,6 +743,37 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </span>
       </button>
 
+      {/* Fix Link button — only shown when the stored URL is internal-only (broken public access) */}
+      {hasInternalLink && (
+        <button
+          onClick={handleRefreshLink}
+          disabled={refreshing}
+          className="w-full flex items-center justify-center gap-2 rounded-xl transition-all mt-1"
+          style={{
+            backgroundColor: refreshing ? '#f5f5f7' : '#fffbeb',
+            border: '1.5px solid #fde68a',
+            padding: '8px 0',
+            minHeight: '38px',
+            opacity: refreshing ? 0.6 : 1,
+          }}
+        >
+          {refreshing ? (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              style={{ animation: 'spin 1s linear infinite' }}>
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#92400e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          )}
+          <span className="text-xs font-semibold" style={{ color: refreshing ? '#aaa' : '#92400e' }}>
+            {refreshing ? 'Fixing link…' : '⚠️ Fix public link'}
+          </span>
+        </button>
+      )}
+
       {/* Create Invoices button — only on ready_invoice or complete */}
       {job.invoiced ? (
         <div className="w-full flex items-center justify-center gap-2 rounded-xl mt-2"
@@ -757,7 +802,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onCreateInvoices, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -791,6 +836,17 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
         </button>
       </div>
 
+      {/* "Request Job" button pinned at top of the Job Requested column */}
+      {column.id === 'job_requested' && (
+        <button
+          onClick={() => onNewJob(column.id)}
+          className="w-full mb-2 py-3 rounded-xl font-bold text-white text-sm tracking-wide transition-opacity hover:opacity-90 active:opacity-80"
+          style={{ backgroundColor: '#CD4419' }}
+        >
+          + Request Job
+        </button>
+      )}
+
       {/* Cards drop zone */}
       <div
         className="flex-1 rounded-xl p-2 space-y-2 transition-colors min-h-32"
@@ -809,6 +865,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onToggleInvoiced={onToggleInvoiced}
             onDelete={onDelete}
             onOpenWorkDrive={onOpenWorkDrive}
+            onRefreshShareLink={onRefreshShareLink}
             onCreateInvoices={onCreateInvoices}
           />
         ))}
@@ -823,7 +880,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
 }
 
 // ─── Main Kanban Board ─────────────────────────────────────────────────────────
-export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onNavigate }) {
+export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onNavigate, onExtracted }) {
   const isMobile = useIsMobile()
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -839,6 +896,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [syncing, setSyncing] = useState(false)
   const [completions, setCompletions] = useState([])
   const [getSome, setGetSome] = useState(false)
+  const [showRequestModal, setShowRequestModal] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const uploadInputRef = useRef(null)
 
   function showToast(msg) {
     setToast(msg)
@@ -1056,8 +1116,88 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     }
   }
 
+  async function handleRefreshShareLink(job) {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}/refresh-share-link`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Refresh failed')
+      // Update the job in local state with the new public URL
+      setJobs(prev => prev.map(j => j.id === job.id ? { ...j, folder_url: data.shareLink } : j))
+      showToast('✅ WorkDrive link fixed! Opening folder…')
+      window.open(data.shareLink, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      showToast('Fix link failed: ' + e.message)
+    }
+  }
+
+  async function handleUploadReport(file) {
+    if (!file || file.type !== 'application/pdf') {
+      showToast('Please choose a PDF file.')
+      return
+    }
+    if (!onExtracted) { showToast('Upload not available here.'); return }
+    setUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('pdf', file)
+      const res = await apiFetch(`${API_BASE}/api/extract`, { method: 'POST', body: formData })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        const msg = err.error || `Server error ${res.status}`
+        const friendly = msg.includes('rate limit') || msg.includes('Too many')
+          ? 'Too many requests — wait a few minutes and try again.'
+          : msg.includes('credit') || msg.includes('billing')
+            ? 'AI credits exhausted. Check console.anthropic.com → Billing.'
+            : msg || 'Extraction failed.'
+        showToast(friendly)
+        return
+      }
+      const data = await res.json()
+      onExtracted(data, file)
+    } catch (e) {
+      showToast(e.message || 'Upload failed — check your connection and try again.')
+    } finally {
+      setUploading(false)
+      if (uploadInputRef.current) uploadInputRef.current.value = ''
+    }
+  }
+
   function openNewJob(defaultStatus) {
-    setModalJob({ defaultStatus })
+    if (defaultStatus === 'need_dispatch' || defaultStatus === 'job_requested') {
+      setShowRequestModal(true)
+    } else {
+      setModalJob({ defaultStatus })
+    }
+  }
+
+  // Handle job request modal submission
+  async function handleJobRequest(data) {
+    const notes = [data.ro_number ? `RO# ${data.ro_number}` : '', data.notes].filter(Boolean).join('\n')
+    const payload = {
+      shop_name:    data.shop_name   || '',
+      year:         data.year        || '',
+      make:         data.make        || '',
+      model:        data.model       || '',
+      vehicle:      [data.year, data.make, data.model].filter(Boolean).join(' '),
+      vin:          data.vin         || '',
+      technician:   data.technician  || '',
+      notes,
+      quote_number: data.ro_number   || '',
+      status:       'job_requested',
+      calibrations: '[]',
+      via_request:  true,
+    }
+    const res = await apiFetch(`${API_BASE}/api/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Failed to create job')
+    }
+    await fetchJobs()
+    showToast('✅ Job requested — Kat has been notified!')
   }
 
   function openEdit(job) {
@@ -1108,6 +1248,38 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           <div className="mb-4" style={{ width: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                {/* Hidden file input for PDF upload */}
+                <input
+                  ref={uploadInputRef}
+                  type="file"
+                  accept="application/pdf"
+                  style={{ display: 'none' }}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleUploadReport(f) }}
+                />
+                {/* Upload Report button — left side of toolbar */}
+                {onExtracted && (
+                  <button
+                    onClick={() => uploadInputRef.current?.click()}
+                    disabled={uploading}
+                    className="flex text-xs font-medium px-3 py-1.5 rounded-lg items-center gap-1.5"
+                    style={{ color: uploading ? '#aaa' : 'white', border: `1px solid ${uploading ? '#e0dbd6' : ORANGE}`, backgroundColor: uploading ? '#f5f3f0' : ORANGE, flexShrink: 0 }}
+                    title="Upload a calibration report PDF"
+                  >
+                    {uploading ? (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                        style={{ animation: 'spin 1s linear infinite' }}>
+                        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+                      </svg>
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                    )}
+                    {uploading ? 'Extracting…' : 'Upload Report'}
+                  </button>
+                )}
                 {!error && (
                   <div className="relative" style={{ width: isMobile ? '100%' : '220px' }}>
                     <svg
@@ -1166,32 +1338,35 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   </span>
                 )}
               </div>
-              <button
-                onClick={async () => {
-                  setSyncing(true)
-                  try {
-                    const res = await apiFetch(`${API_BASE}/api/jobs/sync-quotes`, { method: 'POST' })
-                    const data = await res.json()
-                    if (!res.ok) throw new Error(data.error || 'Sync failed')
-                    await fetchJobs()
-                    showToast(`Sync complete — ${data.created} added, ${data.removed} removed`)
-                  } catch (e) {
-                    showToast('Sync failed: ' + e.message)
-                  } finally {
-                    setSyncing(false)
-                  }
-                }}
-                disabled={syncing}
-                className="hidden md:flex text-xs font-medium px-3 py-1.5 rounded-lg items-center gap-1.5"
-                style={{ color: syncing ? '#aaa' : ORANGE, border: `1px solid ${syncing ? '#e0dbd6' : ORANGE}`, backgroundColor: 'white', flexShrink: 0 }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }}>
-                  <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
-                  <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-                </svg>
-                {syncing ? 'Syncing…' : 'Sync Insurance Invoice Drafts'}
-              </button>
+              {/* ── Right-side toolbar buttons ── */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <button
+                  onClick={async () => {
+                    setSyncing(true)
+                    try {
+                      const res = await apiFetch(`${API_BASE}/api/jobs/sync-quotes`, { method: 'POST' })
+                      const data = await res.json()
+                      if (!res.ok) throw new Error(data.error || 'Sync failed')
+                      await fetchJobs()
+                      showToast(`Sync complete — ${data.created} added, ${data.removed} removed`)
+                    } catch (e) {
+                      showToast('Sync failed: ' + e.message)
+                    } finally {
+                      setSyncing(false)
+                    }
+                  }}
+                  disabled={syncing}
+                  className="hidden md:flex text-xs font-medium px-3 py-1.5 rounded-lg items-center gap-1.5"
+                  style={{ color: syncing ? '#aaa' : ORANGE, border: `1px solid ${syncing ? '#e0dbd6' : ORANGE}`, backgroundColor: 'white', flexShrink: 0 }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+                    style={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }}>
+                    <polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/>
+                    <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
+                  </svg>
+                  {syncing ? 'Syncing…' : 'Sync Invoice Drafts'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1268,6 +1443,17 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           <>
             {/* ── Mobile: flat scrollable card list ── */}
             <div className="md:hidden flex-1 overflow-y-auto">
+              {/* Big "Request a Job" button — sticky at top on mobile */}
+              <div className="sticky top-0 z-10 pb-2" style={{ backgroundColor: 'white' }}>
+                <button
+                  onClick={() => setShowRequestModal(true)}
+                  className="w-full py-4 rounded-2xl font-extrabold text-white text-base tracking-wide shadow-md transition-opacity hover:opacity-90 active:opacity-80"
+                  style={{ backgroundColor: '#CD4419', letterSpacing: '0.04em' }}
+                >
+                  📋 Request a Job
+                </button>
+              </div>
+
               <div className="flex flex-col gap-3 pb-6">
                 {visibleJobs.length === 0 ? (
                   <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs found</p>
@@ -1301,6 +1487,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onToggleInvoiced={handleToggleInvoiced}
                   onDelete={handleDelete}
                   onOpenWorkDrive={handleOpenWorkDrive}
+                  onRefreshShareLink={handleRefreshShareLink}
                   onCreateInvoices={setInvoicingJob}
                   dragOverCol={dragOverCol}
                 />
@@ -1310,6 +1497,14 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           </>
         )}
       </main>
+
+      {/* Job Request Modal — opened via "+" on the Need to Dispatch column */}
+      {showRequestModal && (
+        <JobRequestModal
+          onClose={() => setShowRequestModal(false)}
+          onSubmit={handleJobRequest}
+        />
+      )}
 
       {/* Modal */}
       {modalJob !== null && (

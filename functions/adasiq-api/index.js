@@ -12,7 +12,7 @@ import salespersonsRouter from './routes/salespersons.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
 import historyRouter from './routes/history.js'
-import jobsRouter, { performSyncQuotes } from './routes/jobs.js'
+import jobsRouter, { performSyncQuotes, readJobsPublic } from './routes/jobs.js'
 import brewRouter, { cronRouter as brewCronRouter } from './routes/brew.js'
 import { tipsRouter as brewTipsRouter } from './routes/brewTips.js'
 import { auditRouter as auditToolRouter } from './routes/auditTool.js'
@@ -209,6 +209,51 @@ app.post('/api/cron/sync-quotes', async (req, res) => {
   } catch (err) {
     console.error('[cron sync-quotes]', err.message, err.stack)
     res.status(err.status || 500).json({ error: err.message })
+  }
+})
+
+// WorkDrive health check cron — scans all jobs for internal-only folder URLs
+// (workdrive.zoho.com/folder/...) that should have been public share links.
+// Alerts Mark via Cliq if any are found so they can be fixed with one click.
+// Protected by BILLING_CRON_SECRET (reuses existing billing secret).
+app.post('/api/cron/workdrive-health', async (req, res) => {
+  const cronSecret = process.env.BILLING_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { postToCliqUser, TECH_CLIQ_IDS } = await import('./services/cliq.js')
+    const jobs = await readJobsPublic(req)
+
+    // Jobs with internal WorkDrive URLs — public link was never created or failed
+    const broken = jobs.filter(j =>
+      j.folder_url &&
+      j.folder_url.includes('workdrive.zoho.com/folder/') &&
+      !j.folder_url.includes('zohoexternal.com')
+    )
+
+    if (broken.length > 0) {
+      const lines = broken.slice(0, 10).map(j => {
+        const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
+        return `• ${j.shop_name || 'Unknown'} — ${vehicle} (RO# ${j.invoice_number || j.quote_number || j.id})`
+      })
+      const msg = [
+        `⚠️ WorkDrive health check: ${broken.length} job${broken.length > 1 ? 's' : ''} have internal-only links (no public access).`,
+        '',
+        ...lines,
+        '',
+        'Open each job card in ADAS IQ and tap "Fix Link" to regenerate the public URL.',
+      ].join('\n')
+      await postToCliqUser(TECH_CLIQ_IDS.Mark, msg)
+      console.log(`[workdrive-health] Found ${broken.length} jobs with broken share links — Cliq alert sent`)
+    } else {
+      console.log('[workdrive-health] All job WorkDrive links look healthy ✅')
+    }
+
+    res.json({ ok: true, broken: broken.length })
+  } catch (err) {
+    console.error('[workdrive-health]', err.message)
+    res.status(500).json({ error: err.message })
   }
 })
 
