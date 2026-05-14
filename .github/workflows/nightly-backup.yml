@@ -1,0 +1,42 @@
+name: Nightly Backup
+
+on:
+  schedule:
+    # Runs at 2:00 AM UTC every night (9 PM Central / 10 PM Eastern)
+    - cron: '0 2 * * *'
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create nightly backup tag
+        run: |
+          DATE=$(date -u '+%Y-%m-%d')
+          TAG="backup/${DATE}"
+
+          # Check if tag already exists
+          if git tag -l "$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists — skipping"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Nightly backup snapshot — ${DATE}"
+            git push origin "$TAG"
+            echo "✅ Created tag: $TAG"
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Nightly Backup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** develop" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** backup/$(date -u '+%Y-%m-%d')" >> $GITHUB_STEP_SUMMARY
