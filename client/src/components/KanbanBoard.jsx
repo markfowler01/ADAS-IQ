@@ -529,27 +529,23 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
 function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices }) {
   const [finding, setFinding] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-
-  // Detect internal-only URL — any folder_url that isn't a public zohoexternal.com link
-  const hasInternalLink = job.folder_url && !job.folder_url.includes('zohoexternal.com')
 
   async function handleOpenWorkDrive(e) {
     e.stopPropagation()
-    if (job.folder_url) {
+    // Already a public link — open immediately
+    if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       window.open(job.folder_url, '_blank', 'noopener,noreferrer')
       return
     }
     setFinding(true)
-    await onOpenWorkDrive(job)
+    if (job.folder_url) {
+      // Internal Zoho URL — silently convert to public share link, then open
+      await onRefreshShareLink(job)
+    } else {
+      // No URL yet — find/create the folder
+      await onOpenWorkDrive(job)
+    }
     setFinding(false)
-  }
-
-  async function handleRefreshLink(e) {
-    e.stopPropagation()
-    setRefreshing(true)
-    await onRefreshShareLink(job)
-    setRefreshing(false)
   }
   let calArr = []
   if (job.calibrations) {
@@ -739,40 +735,11 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           </svg>
         )}
         <span className="text-sm font-semibold" style={{ color: finding ? '#aaa' : ORANGE }}>
-          {finding ? 'Finding folder…' : 'Open in WorkDrive'}
+          {finding
+            ? (job.folder_url && !job.folder_url.includes('zohoexternal.com') ? 'Getting public link…' : 'Finding folder…')
+            : 'Open in WorkDrive'}
         </span>
       </button>
-
-      {/* Fix Link button — only shown when the stored URL is internal-only (broken public access) */}
-      {hasInternalLink && (
-        <button
-          onClick={handleRefreshLink}
-          disabled={refreshing}
-          className="w-full flex items-center justify-center gap-2 rounded-xl transition-all mt-1"
-          style={{
-            backgroundColor: refreshing ? '#f5f5f7' : '#fffbeb',
-            border: '1.5px solid #fde68a',
-            padding: '8px 0',
-            minHeight: '38px',
-            opacity: refreshing ? 0.6 : 1,
-          }}
-        >
-          {refreshing ? (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-              style={{ animation: 'spin 1s linear infinite' }}>
-              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-            </svg>
-          ) : (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#92400e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-            </svg>
-          )}
-          <span className="text-xs font-semibold" style={{ color: refreshing ? '#aaa' : '#92400e' }}>
-            {refreshing ? 'Fixing link…' : '⚠️ Fix public link'}
-          </span>
-        </button>
-      )}
 
       {/* Create Invoices button — only on ready_invoice or complete */}
       {job.invoiced ? (
@@ -1100,12 +1067,17 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   }
 
   async function handleOpenWorkDrive(job) {
-    // If folder_url is already on the job, open it immediately without an API call
-    if (job.folder_url) {
+    // Public link — open immediately
+    if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       window.open(job.folder_url, '_blank', 'noopener,noreferrer')
       return
     }
-    // Otherwise ask the backend to find the folder
+    // Internal URL — silently convert to public, then open
+    if (job.folder_url) {
+      await handleRefreshShareLink(job)
+      return
+    }
+    // No URL at all — find/create the folder via API
     try {
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}/workdrive-folder`)
       const data = await res.json()
