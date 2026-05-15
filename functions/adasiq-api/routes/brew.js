@@ -19,7 +19,7 @@ import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { commitFile, commitBinaryFile, deleteFile, wrapIssueHtmlForArchive, renderArchiveIndex, githubConfigured, getMaxArchivedIssueNumber } from '../services/brewArchive.js'
 import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { generateCoverImage, nanoBananaConfigured } from '../services/nanoBanana.js'
-import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured } from '../services/metaPosting.js'
+import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia } from '../services/metaPosting.js'
 
 const router = express.Router()
 
@@ -1621,12 +1621,16 @@ async function executeDailyPipeline(req) {
 
   // 1. Get or build the digest. Cache stash from a prior call is the fast
   //    path; rebuilding from sources costs ~15s of Claude time.
+  //    Stale guard: only reuse the stash if it's from TODAY (otherwise we'd
+  //    re-send Friday's content on Monday with the wrong issue number — this
+  //    is exactly what bit us on 2026-05-15).
   let stash = await cacheGet(segment, 'brew_today_digest', null)
+  const stashIsToday = stash && stash.dateISO === dateISO
   let digest, issueNumber, rendered, isoDate
-  if (stash && stash.digest && stash.issueNumber) {
+  if (stashIsToday && stash.digest && stash.issueNumber) {
     digest = stash.digest
     issueNumber = stash.issueNumber
-    isoDate = stash.dateISO || dateISO
+    isoDate = stash.dateISO
     rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate })
   } else {
     const fetched = await fetchAndTrim()
