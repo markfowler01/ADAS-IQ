@@ -197,47 +197,49 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
     console.error('[notifications] Failed to save notifications:', e.message)
   }
 
-  // Fire email + Cliq DM — start NOW (not via setImmediate) so Catalyst
-  // doesn't drop it after the response is sent. Not awaited so it doesn't block.
-  ;(async () => {
-    // ── Email ──────────────────────────────────────────────────────────────────
-    try {
-      let emailAddr = await getTechEmail(req, to)
-      if (!emailAddr) emailAddr = FALLBACK_EMAILS[to?.toLowerCase().trim()] || null
-      if (!emailAddr && toEmail && toEmail.includes('@')) emailAddr = toEmail
-      if (emailAddr) await emailNotify(emailAddr, title, body, job)
-      else console.log(`[notifications] No email found for "${to}" — configure in Settings`)
-    } catch (e) {
-      console.warn('[notifications] Email failed:', e.message)
-    }
-
-    // ── Cliq DM ────────────────────────────────────────────────────────────────
-    try {
-      const vehicle = job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' ') || ''
-      const shop = job?.shop_name || ''
-      const date = job?.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
-      const cliqMsg = [
-        `🔔 *${title}*`,
-        body || '',
-        vehicle && shop ? `${vehicle} @ ${shop}${date}` : (vehicle || shop || ''),
-      ].filter(Boolean).join('\n')
-
-      const nameKey = to?.toLowerCase().trim()
-      if (nameKey === 'mark') {
-        // Can't DM yourself — post to Mark's alert channel instead
-        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg)
-      } else {
-        const cliqId = TECH_CLIQ_IDS[to] || TECH_CLIQ_IDS[
-          Object.keys(TECH_CLIQ_IDS).find(k => k.toLowerCase() === nameKey)
-        ]
-        if (cliqId) await postToCliqUser(cliqId, cliqMsg)
-        else console.log(`[notifications] No Cliq ID for "${to}" — skipping DM`)
+  // Send email + Cliq DM in parallel. Awaited so they actually complete before
+  // the route handler responds — Catalyst kills the function instance once the
+  // response is sent, so fire-and-forget promises silently drop.
+  await Promise.all([
+    (async () => {
+      try {
+        let emailAddr = await getTechEmail(req, to)
+        if (!emailAddr) emailAddr = FALLBACK_EMAILS[to?.toLowerCase().trim()] || null
+        if (!emailAddr && toEmail && toEmail.includes('@')) emailAddr = toEmail
+        if (emailAddr) await emailNotify(emailAddr, title, body, job)
+        else console.log(`[notifications] No email found for "${to}" — configure in Settings`)
+      } catch (e) {
+        console.warn('[notifications] Email failed:', e.message)
       }
-      console.log(`[notifications] Cliq sent to "${to}"`)
-    } catch (e) {
-      console.warn(`[notifications] Cliq to "${to}" failed:`, e.message)
-    }
-  })()
+    })(),
+    (async () => {
+      try {
+        const vehicle = job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' ') || ''
+        const shop = job?.shop_name || ''
+        const date = job?.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
+        const cliqMsg = [
+          `🔔 *${title}*`,
+          body || '',
+          vehicle && shop ? `${vehicle} @ ${shop}${date}` : (vehicle || shop || ''),
+        ].filter(Boolean).join('\n')
+
+        const nameKey = to?.toLowerCase().trim()
+        if (nameKey === 'mark') {
+          // Can't DM yourself — post to Mark's alert channel instead
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg)
+        } else {
+          const cliqId = TECH_CLIQ_IDS[to] || TECH_CLIQ_IDS[
+            Object.keys(TECH_CLIQ_IDS).find(k => k.toLowerCase() === nameKey)
+          ]
+          if (cliqId) await postToCliqUser(cliqId, cliqMsg)
+          else console.log(`[notifications] No Cliq ID for "${to}" — skipping DM`)
+        }
+        console.log(`[notifications] Cliq sent to "${to}"`)
+      } catch (e) {
+        console.warn(`[notifications] Cliq to "${to}" failed:`, e.message)
+      }
+    })(),
+  ])
 
   return notif
 }

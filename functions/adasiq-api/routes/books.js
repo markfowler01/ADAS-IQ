@@ -3,6 +3,7 @@ import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
 import QRCode from 'qrcode'
 import { buildInvoicePayUrl } from './portal.js'
+import { createNotification } from './notifications.js'
 
 const router = express.Router()
 
@@ -279,6 +280,17 @@ router.post('/invoices', async (req, res) => {
     const invoices = await readInvoices(req)
     invoices.push(invoice)
     await writeInvoices(req, invoices)
+
+    await createNotification(req, {
+      to: 'Mark',
+      toEmail: 'mf@absoluteadas.com',
+      type: 'invoice_created',
+      title: `Invoice created: ${invoice.invoice_number}`,
+      body: `${invoice.customer_name || 'Customer'} · $${Number(invoice.total || 0).toFixed(2)}`,
+      jobId: invoice.id,
+      job: { shop_name: invoice.customer_name, vehicle: '' },
+    }).catch(e => console.warn('[notifications invoice_created]', e.message))
+
     res.status(201).json(invoice)
   } catch (err) {
     console.error('[books POST invoice]', err.message)
@@ -1055,6 +1067,20 @@ router.post('/invoices/from-job', async (req, res) => {
     // Respond with the created invoices — maintain backwards-compatible shape
     const insuranceInvoice = createdInvoices.find(i => i.invoice_type === 'insurance') || null
     const shopInvoice = createdInvoices.find(i => i.invoice_type === 'shop' || i.invoice_type === 'single') || null
+
+    const vehicleStr = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+    const invoiceNums = createdInvoices.map(i => i.invoice_number).join(' + ')
+    const totalSum = createdInvoices.reduce((s, i) => s + Number(i.total || 0), 0)
+    await createNotification(req, {
+      to: 'Mark',
+      toEmail: 'mf@absoluteadas.com',
+      type: 'invoice_created',
+      title: `Invoice${createdInvoices.length > 1 ? 's' : ''} created: ${invoiceNums}`,
+      body: `${job.shop_name || 'Job'}${vehicleStr ? ' · ' + vehicleStr : ''} · $${totalSum.toFixed(2)}`,
+      jobId: job.id || '',
+      job,
+    }).catch(e => console.warn('[notifications invoice_created]', e.message))
+
     res.status(201).json({ insurance: insuranceInvoice, shop: shopInvoice })
   } catch (err) {
     console.error('[books from-job]', err.message)

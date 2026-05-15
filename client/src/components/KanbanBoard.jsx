@@ -1452,7 +1452,13 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs found</p>
                 ) : (
                   visibleJobs.map(job => (
-                    <MobileJobCard key={job.ROWID || job.id} job={job} onEdit={openEdit} />
+                    <MobileJobCard
+                      key={job.ROWID || job.id}
+                      job={job}
+                      onEdit={openEdit}
+                      onMoveToReadyInvoice={handleMoveToReadyInvoice}
+                      onCreateInvoices={setInvoicingJob}
+                    />
                   ))
                 )}
               </div>
@@ -1627,7 +1633,7 @@ function UploadButton({ job }) {
   )
 }
 
-function MobileJobCard({ job, onEdit }) {
+function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices }) {
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const statusLabel = COLUMNS.find(c => c.id === job.status)?.label || job.status
 
@@ -1648,14 +1654,16 @@ function MobileJobCard({ job, onEdit }) {
     } catch { cals = [] }
   }
 
+  const canInvoice = job.status === 'ready_invoice' || job.status === 'complete'
+
   return (
     <div
-      onClick={() => onEdit(job)}
-      className="rounded-xl p-4 active:opacity-80"
-      style={{ backgroundColor: 'white', border: '1px solid #e8e4e0', cursor: 'pointer' }}
+      className="rounded-xl p-4"
+      style={{ backgroundColor: 'white', border: '1px solid #e8e4e0' }}
     >
-      {/* Top row: shop + status badge */}
-      <div className="flex items-start justify-between gap-2 mb-1.5">
+      {/* Top row: shop + status badge — tapping here opens edit */}
+      <div className="flex items-start justify-between gap-2 mb-1.5 cursor-pointer active:opacity-70"
+        onClick={() => onEdit(job)}>
         <span className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>{job.shop_name || 'No shop'}</span>
         <span className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
           style={{ backgroundColor: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}>
@@ -1664,7 +1672,9 @@ function MobileJobCard({ job, onEdit }) {
       </div>
 
       {/* Vehicle */}
-      <p className="text-sm mb-1" style={{ color: '#555' }}>{vehicle || 'Unknown vehicle'}</p>
+      <p className="text-sm mb-1 cursor-pointer" style={{ color: '#555' }} onClick={() => onEdit(job)}>
+        {vehicle || 'Unknown vehicle'}
+      </p>
 
       {/* Technician + date row */}
       <div className="flex items-center gap-3 text-xs mb-2" style={{ color: '#aaa' }}>
@@ -1673,8 +1683,8 @@ function MobileJobCard({ job, onEdit }) {
         {job.insurer && <span>🏢 {job.insurer}</span>}
       </div>
 
-      {/* Calibrations + fixed items (PCSI & POST always show) */}
-      <div className="flex flex-wrap gap-1">
+      {/* Calibrations */}
+      <div className="flex flex-wrap gap-1 mb-3">
         {cals.slice(0, 4).map((c, i) => (
           <span key={i} className="text-xs px-1.5 py-0.5 rounded-md"
             style={{ backgroundColor: '#f5f3f0', color: '#888' }}>
@@ -1689,6 +1699,29 @@ function MobileJobCard({ job, onEdit }) {
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
+
+      {/* Action button — Create Invoices if ready, else Ready to Invoice */}
+      {!job.invoiced && (
+        canInvoice ? (
+          <button
+            onClick={e => { e.stopPropagation(); onCreateInvoices && onCreateInvoices(job) }}
+            className="w-full flex items-center justify-center gap-2 rounded-xl transition-all active:opacity-60"
+            style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0', padding: '10px 0', minHeight: '44px' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <span className="text-sm font-semibold" style={{ color: '#16a34a' }}>Create Invoices</span>
+          </button>
+        ) : (
+          <button
+            onClick={e => { e.stopPropagation(); onMoveToReadyInvoice && onMoveToReadyInvoice(job) }}
+            className="w-full flex items-center justify-center gap-2 rounded-xl transition-all active:opacity-60"
+            style={{ backgroundColor: '#fdf4ff', border: '1.5px solid #e9d5ff', padding: '10px 0', minHeight: '44px' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
+          </button>
+        )
+      )}
     </div>
   )
 }

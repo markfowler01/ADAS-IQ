@@ -2,6 +2,7 @@ import express from 'express'
 import crypto from 'crypto'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
+import { createNotification } from './notifications.js'
 
 const router = express.Router()
 
@@ -198,6 +199,23 @@ router.post('/', async (req, res) => {
     computeQuoteTotals(q)
     quotes.push(q)
     await writeQuotes(req, quotes)
+
+    const veh = q.vehicle || {}
+    const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(' ')
+    await createNotification(req, {
+      to: 'Mark',
+      toEmail: 'mf@absoluteadas.com',
+      type: 'quote_created',
+      title: `New quote: ${q.quote_number}`,
+      body: `${q.customer_name || 'Customer'}${vehicleStr ? ' · ' + vehicleStr : ''} · $${Number(q.total || 0).toFixed(2)}`,
+      jobId: q.id,
+      job: {
+        shop_name: q.customer_name,
+        vehicle: vehicleStr,
+        year: veh.year, make: veh.make, model: veh.model,
+      },
+    }).catch(e => console.warn('[notifications quote_created]', e.message))
+
     res.json(q)
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -335,6 +353,22 @@ router.post('/:id/convert-to-invoice', async (req, res) => {
     q.converted_to_invoice_id = invoiceId
     q.converted_at = new Date().toISOString()
     await writeQuotes(req, quotes)
+
+    const veh = q.vehicle || {}
+    const vehicleStr = [veh.year, veh.make, veh.model].filter(Boolean).join(' ')
+    await createNotification(req, {
+      to: 'Mark',
+      toEmail: 'mf@absoluteadas.com',
+      type: 'invoice_created',
+      title: `Invoice created: ${inv.invoice_number}`,
+      body: `${q.customer_name || 'Customer'}${vehicleStr ? ' · ' + vehicleStr : ''} · $${Number(inv.total || q.total || 0).toFixed(2)} (from quote ${q.quote_number})`,
+      jobId: invoiceId,
+      job: {
+        shop_name: q.customer_name,
+        vehicle: vehicleStr,
+        year: veh.year, make: veh.make, model: veh.model,
+      },
+    }).catch(e => console.warn('[notifications invoice_created]', e.message))
 
     res.json({ ok: true, invoice: inv, quote: q })
   } catch (e) {
