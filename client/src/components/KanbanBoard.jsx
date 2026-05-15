@@ -527,7 +527,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice }) {
   const [finding, setFinding] = useState(false)
 
   async function handleOpenWorkDrive(e) {
@@ -758,18 +758,21 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           <span className="text-sm font-semibold" style={{ color: '#16a34a' }}>Create Invoices</span>
         </button>
       ) : (
-        <div className="w-full flex items-center justify-center gap-2 rounded-xl mt-2"
-          style={{ backgroundColor: '#fafafa', border: '1.5px solid #e5e7eb', padding: '10px 0', minHeight: '44px', opacity: 0.5 }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="#aaa" strokeWidth="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="#aaa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          <span className="text-xs font-medium text-gray-400">Move to Ready to Invoice first</span>
-        </div>
+        <button
+          onClick={e => { e.stopPropagation(); onMoveToReadyInvoice && onMoveToReadyInvoice(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
+          style={{ backgroundColor: '#fdf4ff', border: '1.5px solid #e9d5ff', padding: '10px 0', minHeight: '44px' }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
+        </button>
       )}
     </div>
   )
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -834,6 +837,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onOpenWorkDrive={onOpenWorkDrive}
             onRefreshShareLink={onRefreshShareLink}
             onCreateInvoices={onCreateInvoices}
+            onMoveToReadyInvoice={onMoveToReadyInvoice}
           />
         ))}
         {jobs.length === 0 && !isOver && (
@@ -1014,6 +1018,26 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       showToast(e.message || 'Failed to move job. Changes reverted.')
     }
     setDragJob(null)
+  }
+
+  // Move job to Ready to Invoice column
+  async function handleMoveToReadyInvoice(job) {
+    const updatedJob = { ...job, status: 'ready_invoice' }
+    setJobs(prev => prev.map(j => j.id === job.id ? updatedJob : j))
+    try {
+      const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'ready_invoice' }),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Update failed')
+      }
+    } catch (e) {
+      setJobs(prev => prev.map(j => j.id === job.id ? job : j))
+      showToast(e.message || 'Failed to move job. Try again.')
+    }
   }
 
   // Quick complete toggle — marks complete or reverts to need_dispatch
@@ -1458,6 +1482,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onOpenWorkDrive={handleOpenWorkDrive}
                   onRefreshShareLink={handleRefreshShareLink}
                   onCreateInvoices={setInvoicingJob}
+                  onMoveToReadyInvoice={handleMoveToReadyInvoice}
                   dragOverCol={dragOverCol}
                 />
               ))}
