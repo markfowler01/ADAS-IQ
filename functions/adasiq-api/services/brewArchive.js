@@ -56,6 +56,36 @@ function encodeURIPath(path) {
 }
 
 /**
+ * Query GitHub for the highest existing issue-N.html file in /brew/issues/.
+ * Returns 0 if the folder is empty or unreachable.
+ *
+ * Source of truth for issue numbering. Replaces the brittle cache-based counter
+ * (which got out of sync 2026-05-15 and overwrote issue-2.html with today's content).
+ */
+export async function getMaxArchivedIssueNumber() {
+  if (!isConfigured()) return 0
+  const e = envBundle()
+  try {
+    const res = await axios.get(
+      `${GH_API}/repos/${e.owner}/${e.repo}/contents/brew/issues`,
+      { headers: ghHeaders(e.token), params: { ref: e.branch }, timeout: 12000, validateStatus: s => s < 500 }
+    )
+    if (res.status !== 200 || !Array.isArray(res.data)) return 0
+    let max = 0
+    for (const item of res.data) {
+      const m = String(item?.name || '').match(/^(\d+)\.html$/)
+      if (m) {
+        const n = parseInt(m[1], 10)
+        if (n > max) max = n
+      }
+    }
+    return max
+  } catch {
+    return 0
+  }
+}
+
+/**
  * Create or update a file in the repo. Returns { ok, sha, url } or { ok:false, error }.
  */
 export async function commitFile({ path, content, message }) {

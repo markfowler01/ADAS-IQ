@@ -16,7 +16,7 @@ import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
 import { postToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost } from '../services/brewLinkedIn.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
-import { commitFile, commitBinaryFile, deleteFile, wrapIssueHtmlForArchive, renderArchiveIndex, githubConfigured } from '../services/brewArchive.js'
+import { commitFile, commitBinaryFile, deleteFile, wrapIssueHtmlForArchive, renderArchiveIndex, githubConfigured, getMaxArchivedIssueNumber } from '../services/brewArchive.js'
 import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { generateCoverImage, nanoBananaConfigured } from '../services/nanoBanana.js'
 import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured } from '../services/metaPosting.js'
@@ -71,9 +71,15 @@ export function requireCronSecret(req, res, next) {
 
 // ─── Issue numbering ────────────────────────────────────────────────────────
 async function nextIssueNumber(segment) {
+  // Source of truth: GitHub archive folder. Querying the actual files in
+  // /brew/issues/ prevents cache drift from overwriting historical issues
+  // (the 2026-05-15 bug — cache returned 1 so /run-bonus overwrote issue-2.html).
+  const githubMax = await getMaxArchivedIssueNumber()
+  // Fall back to cache only if GitHub query failed (returned 0 unexpectedly).
   const meta = (await cacheGet(segment, 'brew_meta', {})) || {}
-  const next = (Number(meta.last_issue_number) || 0) + 1
-  return next
+  const cacheMax = Number(meta.last_issue_number) || 0
+  const max = Math.max(githubMax, cacheMax)
+  return max + 1
 }
 async function recordIssueSent(segment, issueNumber, info) {
   const meta = (await cacheGet(segment, 'brew_meta', {})) || {}
@@ -1576,7 +1582,17 @@ function buildSocialCaption(digest) {
 cronRouter.post('/run-bonus', async (req, res) => {
   try {
     const segment = getHandoffSegment(req)
-    const pending = await cacheGet(segment, 'brew_pending_bonus', null)
+    let pending = await cacheGet(segment, 'brew_pending_bonus', null)
+
+    // Race-condition retry — if /run-bonus fires slightly before /run's cache
+    // write lands (we saw this on 2026-05-15), wait 45s and try again before
+    // giving up. /run typically completes within 30-60s of its 6:00 AM trigger.
+    if (!pending || !pending.digest || !pending.issueNumber) {
+      console.log('[run-bonus] no pending on first read, sleeping 45s for /run to finish writing')
+      await new Promise(r => setTimeout(r, 45000))
+      pending = await cacheGet(segment, 'brew_pending_bonus', null)
+    }
+
     if (!pending || !pending.digest || !pending.issueNumber) {
       // On a weekday this is a bug — /run should have stashed the digest
       // a few minutes earlier. Alert Mark so we don't silently miss social
@@ -1584,9 +1600,9 @@ cronRouter.post('/run-bonus', async (req, res) => {
       const dow = new Date().getUTCDay() // 0=Sun, 6=Sat (UTC ≈ PT-7, weekday check is fine)
       const isWeekday = dow >= 1 && dow <= 5
       if (isWeekday) {
-        alertCronFailure('run-bonus skipped on weekday', 'cache read returned no pending bonus — /run cache write likely failed silently')
+        alertCronFailure('run-bonus skipped on weekday', 'cache read returned no pending bonus after 45s retry — /run cache write likely failed silently')
       }
-      return res.json({ skipped: true, reason: 'no pending bonus', segmentName: 'brew_handoff' })
+      return res.json({ skipped: true, reason: 'no pending bonus (after retry)', segmentName: 'brew_handoff' })
     }
 
     // Stale guard — don't process a stash older than 6h. Avoids retrying
