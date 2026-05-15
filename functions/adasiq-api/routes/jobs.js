@@ -510,7 +510,7 @@ router.get('/:id/workdrive-folder', async (req, res) => {
 
     // 2. Have an internal folder URL — extract ID and create a public share link
     if (job.folder_url) {
-      const m = job.folder_url.match(/\/(?:folder|f)\/([a-z0-9]+)/i)
+      const m = job.folder_url.match(/\/folders?\/([a-z0-9]+)/i)
       if (m) {
         const shareLink = await resolvePublicLink(m[1], null)
         return res.json({ folderUrl: shareLink })
@@ -565,7 +565,7 @@ router.post('/:id/photos', upload.array('photos', 20), async (req, res) => {
 
     if (folderUrl) {
       // Internal URL — folder ID is embedded
-      const m = folderUrl.match(/\/(?:folder|f)\/([a-z0-9]+)/i)
+      const m = folderUrl.match(/\/folders?\/([a-z0-9]+)/i)
       if (m) folderId = m[1]
       // zohoexternal.com share link — no folder ID in URL, must search
     }
@@ -642,7 +642,7 @@ router.post('/:id/upload-photo', (req, res) => {
       let folderId = null
 
       if (job.folder_url) {
-        const m = job.folder_url.match(/\/folder\/([a-z0-9]+)/i)
+        const m = job.folder_url.match(/\/folders?\/([a-z0-9]+)/i)
         if (m) folderId = m[1]
       }
 
@@ -692,7 +692,7 @@ router.post('/:id/refresh-share-link', async (req, res) => {
     const job = rowToJob(row)
 
     // Extract the WorkDrive folder ID from whatever URL we have stored
-    const folderIdMatch = (job.folder_url || '').match(/\/(?:folder|f)\/([a-z0-9]+)/i)
+    const folderIdMatch = (job.folder_url || '').match(/\/folders?\/([a-z0-9]+)/i)
     if (!folderIdMatch) {
       return res.status(400).json({
         error: 'No WorkDrive folder ID found on this job. The folder may not have been created yet — create a new estimate to generate one.',
