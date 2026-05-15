@@ -1067,21 +1067,18 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   }
 
   async function handleOpenWorkDrive(job) {
-    // Public link — open immediately
+    // Public link — open immediately, no API call needed
     if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       window.open(job.folder_url, '_blank', 'noopener,noreferrer')
       return
     }
-    // Internal URL — silently convert to public, then open
-    if (job.folder_url) {
-      await handleRefreshShareLink(job)
-      return
-    }
-    // No URL at all — find/create the folder via API
+    // Internal URL or no URL — server resolves it to a public share link
     try {
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}/workdrive-folder`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Folder not found')
+      // Always update local state with the public URL the server returns
+      setJobs(prev => prev.map(j => j.id === job.id ? { ...j, folder_url: data.folderUrl } : j))
       window.open(data.folderUrl, '_blank', 'noopener,noreferrer')
     } catch (e) {
       showToast('WorkDrive: ' + e.message)

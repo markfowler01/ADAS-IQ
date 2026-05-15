@@ -480,49 +480,62 @@ router.post('/sync-quotes', async (req, res) => {
   }
 })
 
-// GET /api/jobs/:id/workdrive-folder — return the WorkDrive folder URL for a job
-// Checks folder_url first, then searches WorkDrive by RO number and shop/vehicle as fallbacks.
-// When a folder is discovered via search it is persisted back to the job row for future calls.
+// GET /api/jobs/:id/workdrive-folder — return the WorkDrive folder URL for a job.
+// Always returns a public zohoexternal.com share link — never an internal URL.
+// Searches WorkDrive by RO number or shop/vehicle if no folder is linked yet.
 router.get('/:id/workdrive-folder', async (req, res) => {
   try {
     const table = getTable(req)
     const row = await table.getRow(req.params.id)
     const job = rowToJob(row)
 
-    // 1. folder_url already stored (share link or direct folder URL)
-    if (job.folder_url) {
+    const wdToken = await getAccessToken()
+
+    // Helper: given a folderId + folderName, create a public share link, persist it, and return it.
+    async function resolvePublicLink(folderId, folderName) {
+      const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+      const label = folderName || [job.invoice_number || job.quote_number, job.shop_name, vehicle]
+        .filter(Boolean).join(' — ') || `Job ${job.id}`
+      const shareLink = await createShareLink(folderId, label, wdToken)
+      updateJob(req, job.id, { ...job, folder_url: shareLink }).catch(e =>
+        console.warn('[jobs workdrive-folder] could not persist share link:', e.message)
+      )
+      return shareLink
+    }
+
+    // 1. Already have a public share link — return it immediately
+    if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       return res.json({ folderUrl: job.folder_url })
     }
 
-    const wdToken = await getAccessToken()
+    // 2. Have an internal folder URL — extract ID and create a public share link
+    if (job.folder_url) {
+      const m = job.folder_url.match(/\/(?:folder|f)\/([a-z0-9]+)/i)
+      if (m) {
+        const shareLink = await resolvePublicLink(m[1], null)
+        return res.json({ folderUrl: shareLink })
+      }
+    }
 
-    // 2. Search by RO number (invoice_number first, then quote_number)
+    // 3. No URL — search WorkDrive by RO number
     const roNumber = job.invoice_number || job.quote_number
     if (roNumber) {
       const found = await findFolderByRO(roNumber, wdToken)
       if (found) {
-        const folderUrl = `https://workdrive.zoho.com/folder/${found.folderId}`
-        // Persist discovered folder_url so future uploads/lookups skip the search
-        updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
-          console.warn('[jobs workdrive-folder] could not persist folder_url:', e.message)
-        )
-        return res.json({ folderUrl, folderName: found.folderName })
+        const shareLink = await resolvePublicLink(found.folderId, found.folderName)
+        return res.json({ folderUrl: shareLink, folderName: found.folderName })
       }
     }
 
-    // 3. Search by shop name + vehicle
+    // 4. Fallback — search by shop name + vehicle
     const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
     const found = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken)
     if (found) {
-      const folderUrl = `https://workdrive.zoho.com/folder/${found.folderId}`
-      // Persist discovered folder_url
-      updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
-        console.warn('[jobs workdrive-folder] could not persist folder_url (shop/vehicle):', e.message)
-      )
-      return res.json({ folderUrl, folderName: found.folderName })
+      const shareLink = await resolvePublicLink(found.folderId, found.folderName)
+      return res.json({ folderUrl: shareLink, folderName: found.folderName })
     }
 
-    res.status(404).json({ error: `No WorkDrive folder found for "${job.shop_name || 'this job'}". Run a sync to link the folder.` })
+    res.status(404).json({ error: `No WorkDrive folder found for "${job.shop_name || 'this job'}". The folder may not have been created yet.` })
   } catch (err) {
     console.error('[jobs workdrive-folder]', err.message)
     res.status(500).json({ error: err.message })
@@ -543,26 +556,26 @@ router.post('/:id/photos', upload.array('photos', 20), async (req, res) => {
     const row = await table.getRow(req.params.id)
     const job = rowToJob(row)
 
-    // ── Resolve folder URL ──────────────────────────────────────────────────
+    // ── Resolve folder ID ───────────────────────────────────────────────────
+    // folder_url may be a zohoexternal.com share link (no folder ID in URL)
+    // or an internal workdrive.zoho.com/folder/xxx URL (has folder ID).
+    // Always need the actual folder ID to upload files.
     let folderUrl = job.folder_url
     let folderId = null
 
     if (folderUrl) {
-      // Extract folder ID from stored URL (handles both share links and direct folder URLs)
-      const m = folderUrl.match(/\/folder\/([a-z0-9]+)/i)
+      // Internal URL — folder ID is embedded
+      const m = folderUrl.match(/\/(?:folder|f)\/([a-z0-9]+)/i)
       if (m) folderId = m[1]
+      // zohoexternal.com share link — no folder ID in URL, must search
     }
 
     if (!folderId) {
-      // No usable folder stored — search WorkDrive
       const wdToken = await getAccessToken()
       const roNumber = job.invoice_number || job.quote_number
       let found = null
 
-      if (roNumber) {
-        found = await findFolderByRO(roNumber, wdToken)
-      }
-
+      if (roNumber) found = await findFolderByRO(roNumber, wdToken)
       if (!found) {
         const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
         found = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken)
@@ -575,12 +588,13 @@ router.post('/:id/photos', upload.array('photos', 20), async (req, res) => {
       }
 
       folderId = found.folderId
-      folderUrl = `https://workdrive.zoho.com/folder/${folderId}`
-
-      // Persist the discovered folder_url so future uploads are instant
-      updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
-        console.warn('[jobs photos] could not persist folder_url:', e.message)
-      )
+      // Only overwrite folder_url if we don't already have a public share link
+      if (!folderUrl || !folderUrl.includes('zohoexternal.com')) {
+        folderUrl = `https://workdrive.zoho.com/folder/${folderId}`
+        updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
+          console.warn('[jobs photos] could not persist folder_url:', e.message)
+        )
+      }
     }
 
     // ── Upload each file ────────────────────────────────────────────────────
