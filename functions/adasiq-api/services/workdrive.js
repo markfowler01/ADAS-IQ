@@ -52,13 +52,18 @@ export async function createShareLink(folderId, folderName, accessToken) {
     console.warn('[workdrive] Could not check existing links (will try create):', listErr.message)
   }
 
-  // Sanitize link_name — WorkDrive rejects em-dashes and other special chars
-  const safeName = folderName
-    .replace(/—/g, '-')              // em-dash → hyphen
-    .replace(/–/g, '-')              // en-dash → hyphen
-    .replace(/[^\w\s\-.,()]/g, '')   // strip remaining non-ASCII / special chars
-    .trim()
-    .slice(0, 100)
+  // Sanitize link_name — WorkDrive error F6005 if > ~50 chars or special chars present
+  // Just use the RO/job number (first token) so it's always short and unique
+  const roToken = folderName.match(/^\d+/)?.[0]  // e.g. "24381"
+  const safeName = (roToken
+    ? `Job ${roToken}`
+    : folderName
+        .replace(/—/g, '-')
+        .replace(/–/g, '-')
+        .replace(/[^\w\s\-.]/g, '')
+        .trim()
+        .slice(0, 40)
+  ) || 'Job Folder'
 
   let shareRes
   try {
