@@ -2,6 +2,11 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { getMailAccessToken, getMailAccountId, sendMail } from '../services/mail.js'
 import { getTechEmail } from './settings.js'
+import { postToCliqUser, postToCliqChannelById, TECH_CLIQ_IDS } from '../services/cliq.js'
+
+// Mark's personal alert channel — used instead of DM since the token belongs to Mark
+// and Zoho blocks self-DMs (buddies_self_message_restricted).
+const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
 
 const router = express.Router()
 const CACHE_KEY = 'adas_iq_notifications'
@@ -192,19 +197,45 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
     console.error('[notifications] Failed to save notifications:', e.message)
   }
 
-  // Fire email to the recipient — start NOW (not via setImmediate) so Catalyst
+  // Fire email + Cliq DM — start NOW (not via setImmediate) so Catalyst
   // doesn't drop it after the response is sent. Not awaited so it doesn't block.
   ;(async () => {
+    // ── Email ──────────────────────────────────────────────────────────────────
     try {
-      // 1. Look up tech email from Settings → fallback to hardcoded map
       let emailAddr = await getTechEmail(req, to)
       if (!emailAddr) emailAddr = FALLBACK_EMAILS[to?.toLowerCase().trim()] || null
-      // 2. If still no match, use toEmail as direct address (e.g. Kath's ready-to-invoice)
       if (!emailAddr && toEmail && toEmail.includes('@')) emailAddr = toEmail
       if (emailAddr) await emailNotify(emailAddr, title, body, job)
       else console.log(`[notifications] No email found for "${to}" — configure in Settings`)
     } catch (e) {
-      console.warn('[notifications] Email lookup failed:', e.message)
+      console.warn('[notifications] Email failed:', e.message)
+    }
+
+    // ── Cliq DM ────────────────────────────────────────────────────────────────
+    try {
+      const vehicle = job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' ') || ''
+      const shop = job?.shop_name || ''
+      const date = job?.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
+      const cliqMsg = [
+        `🔔 *${title}*`,
+        body || '',
+        vehicle && shop ? `${vehicle} @ ${shop}${date}` : (vehicle || shop || ''),
+      ].filter(Boolean).join('\n')
+
+      const nameKey = to?.toLowerCase().trim()
+      if (nameKey === 'mark') {
+        // Can't DM yourself — post to Mark's alert channel instead
+        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg)
+      } else {
+        const cliqId = TECH_CLIQ_IDS[to] || TECH_CLIQ_IDS[
+          Object.keys(TECH_CLIQ_IDS).find(k => k.toLowerCase() === nameKey)
+        ]
+        if (cliqId) await postToCliqUser(cliqId, cliqMsg)
+        else console.log(`[notifications] No Cliq ID for "${to}" — skipping DM`)
+      }
+      console.log(`[notifications] Cliq sent to "${to}"`)
+    } catch (e) {
+      console.warn(`[notifications] Cliq to "${to}" failed:`, e.message)
     }
   })()
 
