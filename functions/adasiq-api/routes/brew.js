@@ -1057,6 +1057,96 @@ async function dsUpsertIssue(req, issue) {
   return rowToIssue(await table.insertRow(issueToRow(issue)))
 }
 
+// ─── brew_run_status Data Store helpers ───────────────────────────────────
+// Per-day idempotency record. /run writes a row at start of day, updates each
+// column ("ok" / "failed:reason") as each step completes. /run-bonus reads
+// the same row and only retries the steps that aren't ok yet.
+//
+// Strong consistency via Data Store (not cache) so the marker survives across
+// cron invocations and Catalyst worker recycles. Created manually via Catalyst
+// console: table `brew_run_status` with columns dateISO, issueNumber, email,
+// image, image_commit, archive, linkedin, facebook, instagram, started_at,
+// completed_at (see project notes for full schema).
+
+function getRunStatusTable(req) {
+  return catalyst.initialize(req, { type: 'advancedio' }).datastore().table('brew_run_status')
+}
+
+function safeStatusVal(s) {
+  return String(s || '').slice(0, 250)
+}
+
+async function readRunStatus(req, dateISO) {
+  try {
+    const app = catalyst.initialize(req)
+    const dateStr = String(dateISO || '').replace(/'/g, '')
+    const result = await app.zcql().executeZCQLQuery(`SELECT * FROM brew_run_status WHERE dateISO = '${dateStr}'`)
+    if (!result || result.length === 0) return null
+    const row = result[0].brew_run_status
+    return {
+      rowid: String(row.ROWID),
+      dateISO: row.dateISO || '',
+      issueNumber: Number(row.issueNumber || 0),
+      email: row.email || null,
+      image: row.image || null,
+      image_commit: row.image_commit || null,
+      archive: row.archive || null,
+      linkedin: row.linkedin || null,
+      facebook: row.facebook || null,
+      instagram: row.instagram || null,
+      started_at: row.started_at || null,
+      completed_at: row.completed_at || null,
+    }
+  } catch (e) {
+    console.warn('[brew_run_status read]', e.message)
+    return null
+  }
+}
+
+async function initRunStatus(req, { dateISO, issueNumber }) {
+  try {
+    const existing = await readRunStatus(req, dateISO)
+    if (existing) return existing
+    const table = getRunStatusTable(req)
+    const row = await table.insertRow({
+      dateISO: String(dateISO).slice(0, 10),
+      issueNumber: Number(issueNumber || 0),
+      started_at: new Date().toISOString(),
+    })
+    return { rowid: String(row.ROWID), dateISO, issueNumber, email: null, image: null, image_commit: null, archive: null, linkedin: null, facebook: null, instagram: null, started_at: row.started_at, completed_at: null }
+  } catch (e) {
+    console.warn('[brew_run_status init]', e.message)
+    return null
+  }
+}
+
+async function updateRunStatus(req, dateISO, patch) {
+  try {
+    const existing = await readRunStatus(req, dateISO)
+    if (!existing) return null
+    const table = getRunStatusTable(req)
+    const cleanPatch = {}
+    for (const [k, v] of Object.entries(patch || {})) {
+      cleanPatch[k] = safeStatusVal(v)
+    }
+    await table.updateRow({ ROWID: existing.rowid, ...cleanPatch })
+    return { ...existing, ...patch }
+  } catch (e) {
+    console.warn('[brew_run_status update]', e.message)
+    return null
+  }
+}
+
+function isStepOk(val) {
+  return String(val || '').toLowerCase() === 'ok'
+}
+
+function allStepsOk(status) {
+  if (!status) return false
+  const required = ['email', 'image', 'image_commit', 'archive', 'linkedin', 'facebook', 'instagram']
+  return required.every(k => isStepOk(status[k]))
+}
+
 // ─── Compatibility shims (so existing call sites don't change) ────────────
 //
 // readPerformance / readIssuesManifest both now pull from the same BrewIssues
@@ -1518,6 +1608,216 @@ async function alertCronFailure(label, detail) {
   }
 }
 
+// ─── The unified daily pipeline ───────────────────────────────────────────
+//
+// Single function that runs all 7 newsletter steps (email, image gen, image
+// commit, archive commit, LinkedIn, Facebook, Instagram). Idempotent against
+// the brew_run_status Data Store row — each step checks its column for "ok"
+// and skips if already done. /run and /run-bonus both call this; the second
+// call only does what the first missed.
+async function executeDailyPipeline(req) {
+  const dateISO = new Date().toISOString().slice(0, 10)
+  const segment = getHandoffSegment(req)
+
+  // 1. Get or build the digest. Cache stash from a prior call is the fast
+  //    path; rebuilding from sources costs ~15s of Claude time.
+  let stash = await cacheGet(segment, 'brew_today_digest', null)
+  let digest, issueNumber, rendered, isoDate
+  if (stash && stash.digest && stash.issueNumber) {
+    digest = stash.digest
+    issueNumber = stash.issueNumber
+    isoDate = stash.dateISO || dateISO
+    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate })
+  } else {
+    const fetched = await fetchAndTrim()
+    const built = await buildIssue(req, { items: fetched.items, status: fetched.status })
+    digest = built.digest
+    issueNumber = built.issueNumber
+    rendered = built.rendered
+    isoDate = dateISO
+    stash = { digest, issueNumber, subject: rendered.subject, dateISO: isoDate, createdAt: new Date().toISOString() }
+    await cacheSet(segment, 'brew_today_digest', stash).catch(() => {})
+    await cacheSet(segment, 'brew_pending_bonus', stash).catch(() => {})
+  }
+
+  // 2. Initialize today's status row (no-op if already exists)
+  let status = await readRunStatus(req, dateISO)
+  if (!status) {
+    status = await initRunStatus(req, { dateISO, issueNumber }) || {
+      dateISO, issueNumber, email: null, image: null, image_commit: null,
+      archive: null, linkedin: null, facebook: null, instagram: null,
+    }
+  }
+
+  // 3. EMAIL — sequential, must succeed before continuing
+  if (!isStepOk(status.email)) {
+    try {
+      const subs = await readSubscribers(req)
+      const recipients = subs.map(s => s.email).filter(Boolean)
+      if (recipients.length === 0) throw new Error('No subscribers')
+      const sendResult = await sendBroadcast({
+        recipients,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+      })
+      if (sendResult.status === 'sent' || sendResult.status === 'partial' || sendResult.status === 'queued') {
+        await updateRunStatus(req, dateISO, { email: 'ok' })
+        status.email = 'ok'
+        // Bookkeeping (records in BrewIssues table for stats)
+        try {
+          const seg2 = getSegment(req)
+          await recordIssueSent(seg2, issueNumber, {
+            subject: rendered.subject, status: sendResult.status,
+            sent: sendResult.sent, failed: sendResult.failed, total: sendResult.total,
+          })
+          const successIds = (sendResult.results || []).filter(r => r.ok && r.id).map(r => r.id)
+          await recordIssueSent_v2(req, {
+            issueNumber, subject: rendered.subject,
+            sentAt: new Date().toISOString(), emailIds: successIds,
+          })
+        } catch (e) { console.warn('[pipeline bookkeeping]', e.message) }
+      } else {
+        await updateRunStatus(req, dateISO, { email: `failed:${sendResult.error || 'send error'}` })
+        status.email = `failed:${sendResult.error || 'send error'}`
+      }
+    } catch (e) {
+      await updateRunStatus(req, dateISO, { email: `failed:${e.message}` })
+      status.email = `failed:${e.message}`
+    }
+  }
+
+  // 4. PARALLEL STAGE A: image gen + LinkedIn post (LinkedIn doesn't need image)
+  const imageGenPromise = !isStepOk(status.image)
+    ? generateCoverImage({ issueNumber, dateISO: isoDate, headline: rendered.subject }).catch(e => ({ ok: false, error: e.message }))
+    : Promise.resolve(null)
+
+  const liPromise = !isStepOk(status.linkedin)
+    ? (async () => {
+        try {
+          const liText = renderLinkedIn(digest).body
+          const r = await postToLinkedIn({ text: liText })
+          if (r?.ok && r.id) {
+            await commentOnLinkedInPost(r.id, 'Sign up for ADAS Brew → absoluteadas.com/brew').catch(() => {})
+            return { ok: true, id: r.id }
+          }
+          return { ok: false, error: r?.error || 'unknown' }
+        } catch (e) { return { ok: false, error: e.message } }
+      })()
+    : Promise.resolve(null)
+
+  const [imageGenResult, liResult] = await Promise.all([imageGenPromise, liPromise])
+
+  let imageBuffer = null
+  if (imageGenResult !== null) {
+    if (imageGenResult.ok && imageGenResult.buffer) {
+      imageBuffer = imageGenResult.buffer
+      await updateRunStatus(req, dateISO, { image: 'ok' })
+      status.image = 'ok'
+    } else {
+      await updateRunStatus(req, dateISO, { image: `failed:${imageGenResult.error || 'unknown'}` })
+      status.image = `failed:${imageGenResult.error || 'unknown'}`
+    }
+  }
+  if (liResult !== null) {
+    await updateRunStatus(req, dateISO, { linkedin: liResult.ok ? 'ok' : `failed:${liResult.error}` })
+    status.linkedin = liResult.ok ? 'ok' : `failed:${liResult.error}`
+  }
+
+  // 5. IMAGE COMMIT (depends on image buffer; reconstruct URL on retry)
+  let imageUrl = null
+  if (isStepOk(status.image_commit)) {
+    imageUrl = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/brew/images/issue-${issueNumber}.png`
+  } else if (imageBuffer) {
+    try {
+      const r = await commitBinaryFile({
+        path: `brew/images/issue-${issueNumber}.png`,
+        buffer: imageBuffer,
+        message: `Cover image for ADAS Brew Issue #${issueNumber}`,
+      })
+      if (r.ok) {
+        imageUrl = r.rawUrl
+        await updateRunStatus(req, dateISO, { image_commit: 'ok' })
+        status.image_commit = 'ok'
+      } else {
+        await updateRunStatus(req, dateISO, { image_commit: `failed:${r.error}` })
+        status.image_commit = `failed:${r.error}`
+      }
+    } catch (e) {
+      await updateRunStatus(req, dateISO, { image_commit: `failed:${e.message}` })
+      status.image_commit = `failed:${e.message}`
+    }
+  }
+
+  // 6. PARALLEL STAGE B: archive HTML commit + FB post + IG post
+  const archivePromise = !isStepOk(status.archive)
+    ? publishIssueToArchive(req, { issueNumber, dateISO: isoDate, subject: rendered.subject, html: rendered.html })
+        .catch(e => ({ ok: false, error: e.message }))
+    : Promise.resolve(null)
+
+  const caption = buildSocialCaption(digest)
+  const signupComment = 'Sign up for ADAS Brew → absoluteadas.com/brew'
+
+  const fbPromise = (!isStepOk(status.facebook) && imageUrl)
+    ? (async () => {
+        try {
+          const r = await postToFacebookPage({ imageUrl, caption })
+          if (r?.ok && r.id) {
+            await commentOnFacebookPost({ postId: r.id, message: signupComment }).catch(() => {})
+            return { ok: true, id: r.id }
+          }
+          return { ok: false, error: r?.error || 'unknown' }
+        } catch (e) { return { ok: false, error: e.message } }
+      })()
+    : (isStepOk(status.facebook) ? Promise.resolve(null) : Promise.resolve({ ok: false, error: 'no image url' }))
+
+  const igPromise = (!isStepOk(status.instagram) && imageUrl)
+    ? (async () => {
+        try {
+          const r = await postToInstagram({ imageUrl, caption })
+          if (r?.ok && r.id) {
+            await commentOnInstagramMedia({ mediaId: r.id, message: signupComment }).catch(() => {})
+            return { ok: true, id: r.id }
+          }
+          return { ok: false, error: r?.error || 'unknown' }
+        } catch (e) { return { ok: false, error: e.message } }
+      })()
+    : (isStepOk(status.instagram) ? Promise.resolve(null) : Promise.resolve({ ok: false, error: 'no image url' }))
+
+  const [archiveResult, fbResult, igResult] = await Promise.all([archivePromise, fbPromise, igPromise])
+
+  if (archiveResult !== null) {
+    await updateRunStatus(req, dateISO, { archive: archiveResult.ok ? 'ok' : `failed:${archiveResult.error}` })
+    status.archive = archiveResult.ok ? 'ok' : `failed:${archiveResult.error}`
+  }
+  if (fbResult !== null) {
+    await updateRunStatus(req, dateISO, { facebook: fbResult.ok ? 'ok' : `failed:${fbResult.error}` })
+    status.facebook = fbResult.ok ? 'ok' : `failed:${fbResult.error}`
+  }
+  if (igResult !== null) {
+    await updateRunStatus(req, dateISO, { instagram: igResult.ok ? 'ok' : `failed:${igResult.error}` })
+    status.instagram = igResult.ok ? 'ok' : `failed:${igResult.error}`
+  }
+
+  // 7. Mark complete if everything is ok
+  if (allStepsOk(status)) {
+    await updateRunStatus(req, dateISO, { completed_at: new Date().toISOString() })
+    // Clear the pending bonus stash so the next /run-bonus call no-ops cleanly
+    await cacheSet(segment, 'brew_pending_bonus', null).catch(() => {})
+  } else {
+    // Collect failures for alert
+    const failures = []
+    for (const k of ['email', 'image', 'image_commit', 'archive', 'linkedin', 'facebook', 'instagram']) {
+      if (!isStepOk(status[k])) failures.push(`${k}: ${status[k] || 'pending'}`)
+    }
+    if (failures.length > 0) {
+      alertCronFailure('pipeline partial', `issue #${issueNumber} — ${failures.join('; ')}`)
+    }
+  }
+
+  return { dateISO, issueNumber, status }
+}
+
 cronRouter.post('/run', async (req, res) => {
   try {
     // Server-side day filter — keeps the Catalyst cron simple (fires daily)
@@ -1533,20 +1833,11 @@ cronRouter.post('/run', async (req, res) => {
         return res.json({ skipped: true, reason: `${day} PT not in allowed list [${allowed.join(', ')}]` })
       }
     }
-    // Core path awaited (fetch + digest + Resend + bookkeeping); LinkedIn +
-    // archive are handled by the separate /run-bonus cron, scheduled to fire
-    // a few minutes after this one. Keeps both endpoints under Catalyst's
-    // ~30s HTTP gateway cap.
-    const fetched = await fetchAndTrim()
-    const out = await sendIssueViaResend(req, { items: fetched.items, status: fetched.status })
-    if (out?.send?.status === 'error') {
-      alertCronFailure('send failed', `issue #${out.issueNumber}: ${out.send.error || 'unknown'}`)
-    }
-    res.json({
-      fetched: fetched.fetched,
-      sources: fetched.status,
-      ...out,
-    })
+    // Run the full pipeline: digest, email, image, archive, LinkedIn, FB, IG.
+    // Each step is idempotent against the brew_run_status Data Store row.
+    // /run-bonus at 6:03 reads the same status row and only retries failures.
+    const result = await executeDailyPipeline(req)
+    res.json(result)
   } catch (e) {
     console.error('[brew cron run]', e.message, e.stack)
     alertCronFailure('cron threw', e.message)
@@ -1579,179 +1870,28 @@ function buildSocialCaption(digest) {
 //
 // Schedule via a second Catalyst Cron: e.g. daily 6:03 AM PT, POST to
 // /api/cron/brew/run-bonus, header X-Cron-Secret: BREW_CRON_SECRET.
+// /run-bonus — safety net. Reads today's brew_run_status row. If everything
+// is "ok" already, exits immediately. Otherwise calls executeDailyPipeline
+// which is idempotent against the status row and only retries failed steps.
 cronRouter.post('/run-bonus', async (req, res) => {
   try {
-    const segment = getHandoffSegment(req)
-    let pending = await cacheGet(segment, 'brew_pending_bonus', null)
+    const dateISO = new Date().toISOString().slice(0, 10)
+    const status = await readRunStatus(req, dateISO)
 
-    // Race-condition retry — if /run-bonus fires slightly before /run's cache
-    // write lands (we saw this on 2026-05-15), wait 45s and try again before
-    // giving up. /run typically completes within 30-60s of its 6:00 AM trigger.
-    if (!pending || !pending.digest || !pending.issueNumber) {
-      console.log('[run-bonus] no pending on first read, sleeping 45s for /run to finish writing')
-      await new Promise(r => setTimeout(r, 45000))
-      pending = await cacheGet(segment, 'brew_pending_bonus', null)
+    // Fast path: everything succeeded in /run, nothing to do
+    if (status && allStepsOk(status)) {
+      return res.json({
+        skipped: true,
+        reason: 'all steps already ok',
+        dateISO,
+        issueNumber: status.issueNumber,
+      })
     }
 
-    if (!pending || !pending.digest || !pending.issueNumber) {
-      // On a weekday this is a bug — /run should have stashed the digest
-      // a few minutes earlier. Alert Mark so we don't silently miss social
-      // posts again (this is exactly how the 2026-05-13 outage happened).
-      const dow = new Date().getUTCDay() // 0=Sun, 6=Sat (UTC ≈ PT-7, weekday check is fine)
-      const isWeekday = dow >= 1 && dow <= 5
-      if (isWeekday) {
-        alertCronFailure('run-bonus skipped on weekday', 'cache read returned no pending bonus after 45s retry — /run cache write likely failed silently')
-      }
-      return res.json({ skipped: true, reason: 'no pending bonus (after retry)', segmentName: 'brew_handoff' })
-    }
-
-    // Stale guard — don't process a stash older than 6h. Avoids retrying
-    // yesterday's bonus when today's /run hasn't fired yet (e.g. weekend).
-    const ageMs = Date.now() - new Date(pending.createdAt || 0).getTime()
-    if (!Number.isFinite(ageMs) || ageMs > 6 * 60 * 60 * 1000) {
-      await cacheSet(segment, 'brew_pending_bonus', null).catch(() => {})
-      return res.json({ skipped: true, reason: 'pending bonus is stale (>6h)' })
-    }
-
-    const { digest, issueNumber, subject, dateISO } = pending
-    const isoDate = dateISO || new Date().toISOString().slice(0, 10)
-    const rendered = renderDigest(digest, {
-      issueNumber: String(issueNumber),
-      dateISO: isoDate,
-    })
-    const caption = buildSocialCaption(digest)
-    const headline = subject || rendered.subject
-
-    // Run three independent slow tasks in parallel: archive HTML commit,
-    // Nano Banana cover image gen, and Claude-written LinkedIn-optimized
-    // summary post. The full newsletter body is rendered synchronously below.
-    const [archiveSettled, imageSettled, liTextSettled] = await Promise.allSettled([
-      publishIssueToArchive(req, {
-        issueNumber,
-        dateISO: isoDate,
-        subject: headline,
-        html: rendered.html,
-      }),
-      generateCoverImage({ issueNumber, dateISO: isoDate, headline }),
-      digestToLinkedInPost(digest).catch(e => ({ _liTextError: e.message || 'failed' })),
-    ])
-
-    // Full newsletter body for the long-form LinkedIn post — all 5 stories,
-    // intro, CTA, hashtags. Synchronous string render (no Claude call).
-    // LinkedIn's UGC text limit is 3000 chars; postToLinkedIn slices safely.
-    const liFullText = renderLinkedIn(digest).body
-
-    const archiveResult = archiveSettled.status === 'fulfilled'
-      ? archiveSettled.value
-      : { ok: false, error: archiveSettled.reason?.message || 'archive failed' }
-
-    const imageResult = imageSettled.status === 'fulfilled'
-      ? imageSettled.value
-      : { ok: false, error: imageSettled.reason?.message || 'image gen failed' }
-
-    // Upload the generated image to the public archive repo so FB/IG can fetch it.
-    let imageUrl = null
-    let imageCommitResult = null
-    if (imageResult?.ok && imageResult.buffer) {
-      try {
-        imageCommitResult = await commitBinaryFile({
-          path: `brew/images/issue-${issueNumber}.png`,
-          buffer: imageResult.buffer,
-          message: `Cover image for ADAS Brew Issue #${issueNumber}`,
-        })
-        if (imageCommitResult.ok) {
-          imageUrl = imageCommitResult.rawUrl
-        }
-      } catch (e) {
-        imageCommitResult = { ok: false, error: e.message }
-      }
-    }
-
-    // LinkedIn — TWO posts per issue:
-    //   1. AI-summarized LinkedIn-optimized post (single-story focus, ~150-220 words)
-    //   2. Full newsletter long-form post (renderLinkedIn output, all 5 stories)
-    // Posted sequentially (not parallel) to avoid LinkedIn rate-limit / anti-spam
-    // flags from two simultaneous identical-author posts.
-    const subscribeComment = `Subscribe to ADAS Brew (free, every weekday morning) → absoluteadas.com/brew`
-
-    // Post 1: AI summary
-    let liResult
-    if (liTextSettled.status === 'fulfilled' && liTextSettled.value && !liTextSettled.value._liTextError) {
-      try {
-        liResult = await postToLinkedIn({ text: liTextSettled.value })
-        if (liResult?.ok && liResult.id) {
-          const cr = await commentOnLinkedInPost(liResult.id, subscribeComment)
-          liResult.comment = cr
-        }
-      } catch (e) {
-        liResult = { ok: false, error: e.message }
-      }
-    } else {
-      const err = liTextSettled.status === 'fulfilled'
-        ? liTextSettled.value._liTextError
-        : liTextSettled.reason?.message || 'linkedin text failed'
-      liResult = { ok: false, error: `linkedin-text: ${err}` }
-    }
-
-    // Post 2: Full newsletter — fires regardless of whether AI summary succeeded
-    let liFullResult
-    try {
-      liFullResult = await postToLinkedIn({ text: liFullText })
-      if (liFullResult?.ok && liFullResult.id) {
-        const cr = await commentOnLinkedInPost(liFullResult.id, subscribeComment)
-        liFullResult.comment = cr
-      }
-    } catch (e) {
-      liFullResult = { ok: false, error: e.message }
-    }
-
-    // FB Page + IG posts — both need the public image URL.
-    let fbResult = null
-    let igResult = null
-    if (imageUrl) {
-      const [fbSettled, igSettled] = await Promise.allSettled([
-        postToFacebookPage({ imageUrl, caption }),
-        postToInstagram({ imageUrl, caption }),
-      ])
-      fbResult = fbSettled.status === 'fulfilled'
-        ? fbSettled.value
-        : { ok: false, error: fbSettled.reason?.message || 'fb failed' }
-      igResult = igSettled.status === 'fulfilled'
-        ? igSettled.value
-        : { ok: false, error: igSettled.reason?.message || 'ig failed' }
-    } else {
-      const reason = imageResult?.ok === false
-        ? `image gen failed: ${imageResult.error}`
-        : imageCommitResult?.ok === false
-        ? `image upload failed: ${imageCommitResult.error}`
-        : 'no image url'
-      fbResult = { ok: false, error: reason, skipped: true }
-      igResult = { ok: false, error: reason, skipped: true }
-    }
-
-    // Clear the stash so the next /run-bonus call no-ops until /run queues again
-    await cacheSet(segment, 'brew_pending_bonus', null).catch(() => {})
-
-    const failures = []
-    if (archiveResult?.ok === false) failures.push(`archive: ${archiveResult.error || 'failed'}`)
-    if (liResult?.ok === false) failures.push(`linkedin (summary): ${liResult.error || 'failed'}`)
-    if (liFullResult?.ok === false) failures.push(`linkedin (full): ${liFullResult.error || 'failed'}`)
-    if (fbResult?.ok === false && !fbResult.skipped) failures.push(`facebook: ${fbResult.error || 'failed'}`)
-    if (igResult?.ok === false && !igResult.skipped) failures.push(`instagram: ${igResult.error || 'failed'}`)
-    if (imageResult?.ok === false) failures.push(`image: ${imageResult.error || 'failed'}`)
-    if (failures.length) {
-      alertCronFailure('bonus partial', `issue #${issueNumber} — ${failures.join('; ')}`)
-    }
-
-    res.json({
-      issueNumber,
-      archive: archiveResult,
-      image: imageResult?.ok ? { ok: true, url: imageUrl } : imageResult,
-      linkedinSummary: liResult,
-      linkedinFull: liFullResult,
-      facebook: fbResult,
-      instagram: igResult,
-    })
+    // /run either never ran today, or partially failed. Run the pipeline.
+    // It's idempotent — only retries steps that aren't already ok.
+    const result = await executeDailyPipeline(req)
+    res.json({ retry: true, ...result })
   } catch (e) {
     console.error('[brew cron run-bonus]', e.message, e.stack)
     alertCronFailure('run-bonus threw', e.message)
