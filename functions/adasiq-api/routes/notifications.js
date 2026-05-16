@@ -224,7 +224,7 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
             hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Los_Angeles',
           })
           const booksLink = job.quote_url || job.report_url || ''
-          const jobBoardUrl = 'https://app.adas-iq.com/app/index.html'
+          const jobBoardUrl = 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html'
 
           const lines = [
             `🟢 *Ready to Invoice: ${job.shop_name || 'Job'}*`,
@@ -258,7 +258,7 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
             .replace(/\|?\s*Quote[:\s]*\S+/i, '')
             .trim()
 
-          const jobBoardUrl = 'https://app.adas-iq.com/app/index.html'
+          const jobBoardUrl = 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html'
 
           const lines = [
             `🔔 *${title}*`,
@@ -283,7 +283,7 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
           cliqMsg = lines.filter(l => l !== null).join('\n')
         } else {
           // Simple message for non-dispatch notifications
-          const jobBoardUrl = 'https://app.adas-iq.com/app/index.html'
+          const jobBoardUrl = 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html'
           const date = job?.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
           cliqMsg = [
             `🔔 *${title}*`,

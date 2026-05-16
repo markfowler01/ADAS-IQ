@@ -12,7 +12,7 @@ Internal operations tool for Absolute ADAS: job board (Kanban), invoicing, CRM, 
 - **Frontend**: React + Tailwind → `client/src/`
 - **Deploy command**: `npm run deploy:staging` (from repo root — runs build + `catalyst deploy`)
 - **Dev URL**: `https://adas-iq-904191467.development.catalystserverless.com/app/index.html`
-- **Prod URL**: `https://app.adas-iq.com/app/index.html` — requires manual "Create Deployment" in Catalyst console
+- **Prod URL**: `https://adas-iq-904191467.development.catalystserverless.com/app/index.html` — requires manual "Create Deployment" in Catalyst console
 
 ---
 
