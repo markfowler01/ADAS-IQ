@@ -422,10 +422,11 @@ export async function performSyncQuotes(req) {
     // Fetch line items from the full estimate detail
     const lineItems = await getEstimateLineItems(est.estimate_id)
 
-    await insertJob(req, {
+    const vehicle = [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' ')
+    const newJob = await insertJob(req, {
       zoho_estimate_id: est.estimate_id,
       shop_name:    est.customer_name || '',
-      vehicle:      [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' '),
+      vehicle,
       year:         est.cf_year        || '',
       make:         est.cf_make        || '',
       model:        est.cf_model       || '',
@@ -442,6 +443,40 @@ export async function performSyncQuotes(req) {
       folder_url:   est.cf_scan_report_and_documentation || '',
     })
     created++
+
+    // Notify Mark + assigned salesperson that a new job is ready to dispatch
+    try {
+      const notifTitle = `New job: ${est.customer_name || 'Unknown shop'}`
+      const notifBody = [vehicle, est.estimate_number ? `Quote #${est.estimate_number}` : ''].filter(Boolean).join(' · ')
+      const jobData = { ...newJob, vehicle }
+
+      // Always notify Mark (dispatcher)
+      await createNotification(req, {
+        to: 'Mark',
+        toEmail: 'mf@absoluteadas.com',
+        type: 'job_created',
+        title: notifTitle,
+        body: notifBody,
+        jobId: newJob.id || '',
+        job: jobData,
+      })
+
+      // Also notify the salesperson from Zoho if they're not Mark
+      const salesperson = (est.salesperson_name || '').trim()
+      if (salesperson && salesperson.toLowerCase() !== 'mark') {
+        await createNotification(req, {
+          to: salesperson,
+          toEmail: null,
+          type: 'job_created',
+          title: notifTitle,
+          body: notifBody,
+          jobId: newJob.id || '',
+          job: jobData,
+        })
+      }
+    } catch (notifErr) {
+      console.warn('[jobs sync] notification failed:', notifErr.message)
+    }
   }
 
   let removed = 0
