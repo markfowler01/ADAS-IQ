@@ -226,6 +226,15 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
           })
           calLines.push('• PCSI', '• POST')
 
+          // Extract RO# from notes (e.g. "RO#: 20463 | Quote: ABS 20463.1" → "20463")
+          const roMatch = (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)
+          const roNum = roMatch?.[1] || ''
+          // Extra notes = anything that isn't the RO# or Quote segment
+          const extraNotes = (job.notes || '')
+            .replace(/RO#[:\s]*[^\s|,]+/i, '')
+            .replace(/\|?\s*Quote[:\s]*\S+/i, '')
+            .trim()
+
           const lines = [
             `🔔 *${title}*`,
             '',
@@ -234,10 +243,12 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
             job.insurer ? `🏦 ${job.insurer}` : null,
             job.scheduled_date ? `📅 ${job.scheduled_date}` : null,
             '',
-            '📋 Calibrations:',
+            // RO# + vehicle above calibrations
+            roNum ? `📋 RO#: ${roNum} · ${[job.year, job.make, job.model].filter(Boolean).join(' ') || vehicle}` : null,
+            '',
+            'Calibrations:',
             ...calLines,
-            job.notes ? `\n📝 ${job.notes}` : null,
-            job.quote_number ? `\n📄 Quote #${job.quote_number}` : null,
+            extraNotes ? `\n📝 ${extraNotes}` : null,
             (job.folder_url || job.report_url) ? '\n' + [
               job.folder_url ? `📁 WorkDrive: ${job.folder_url}` : null,
               job.report_url ? `📄 Report: ${job.report_url}` : null,
