@@ -235,6 +235,8 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
             .replace(/\|?\s*Quote[:\s]*\S+/i, '')
             .trim()
 
+          const jobBoardUrl = 'https://app.adas-iq.com/app/index.html'
+
           const lines = [
             `🔔 *${title}*`,
             '',
@@ -249,19 +251,22 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
             'Calibrations:',
             ...calLines,
             extraNotes ? `\n📝 ${extraNotes}` : null,
-            (job.folder_url || job.report_url) ? '\n' + [
+            '\n' + [
               job.folder_url ? `📁 WorkDrive: ${job.folder_url}` : null,
               job.report_url ? `📄 Report: ${job.report_url}` : null,
-            ].filter(Boolean).join('\n') : null,
+              `🗂 Job Board: ${jobBoardUrl}`,
+            ].filter(Boolean).join('\n'),
           ]
           cliqMsg = lines.filter(l => l !== null).join('\n')
         } else {
           // Simple message for non-dispatch notifications
+          const jobBoardUrl = 'https://app.adas-iq.com/app/index.html'
           const date = job?.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
           cliqMsg = [
             `🔔 *${title}*`,
             body || '',
             vehicle && shop ? `${vehicle} @ ${shop}${date}` : (vehicle || shop || ''),
+            `\n🗂 Job Board: ${jobBoardUrl}`,
           ].filter(Boolean).join('\n')
         }
 
