@@ -106,20 +106,29 @@ Internal operations tool for Absolute ADAS: job board (Kanban), invoicing, CRM, 
 
 ### TECH_CLIQ_IDS
 ```js
-Mark: 858216366       // use channel instead of DM (self-DM blocked)
-Kat/Kath: 914153354
-Jaden/Jayden: 'jayden@absoluteadas.com'
+Mark:   858216366          // use channel instead of DM (self-DM blocked)
+Kat:    914153354
+Kath:   914153354
+Jaden:  'jayden@absoluteadas.com'
+Jayden: 'jayden@absoluteadas.com'
 ```
 
+### Channels
+```
+#technicians  — name: 'technicians', Channel ID: O6015142000000681005, Chat ID: CT_1423989185010509377_883116359
+Mark alerts   — Channel ID: P6015142000000718001  (MARK_ALERT_CHANNEL_ID constant)
+```
+Both exported from `services/cliq.js` as `TECHNICIANS_CHANNEL` and `MARK_ALERT_CHANNEL_ID`.
+
 ### When notifications fire
-| Trigger | Who gets notified |
-|---------|-------------------|
-| Job assigned/reassigned | Tech (DM) + `#technicians` channel |
-| Job → ready_invoice | Kat (DM) |
-| New quote synced from Zoho | Mark (channel) + salesperson if not Mark |
-| Invoice created (books.js) | Mark |
-| Billing reminders sent | Kat |
-| Zoho Books invoice webhook | Mark's alert channel |
+| Trigger | Who gets notified | Message style |
+|---------|-------------------|---------------|
+| Job assigned/reassigned | Tech (DM) + `#technicians` channel | Rich: shop, vehicle, VIN, insurer, date, full cal list, notes, quote#, WorkDrive/report URLs |
+| Job → ready_invoice | Kat (DM) | Simple |
+| New quote synced from Zoho | Mark (channel) + salesperson if not Mark | Simple |
+| Invoice created (books.js) | Mark | Simple |
+| Billing reminders sent | Kat | Simple |
+| Zoho Books invoice webhook | Mark's alert channel | Simple |
 
 ---
 

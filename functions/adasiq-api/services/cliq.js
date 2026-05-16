@@ -15,6 +15,13 @@ export const TECH_CLIQ_IDS = {
   Jayden: 'jayden@absoluteadas.com',
 }
 
+// Channels
+// #technicians: Channel ID O6015142000000681005, Chat ID CT_1423989185010509377_883116359
+export const TECHNICIANS_CHANNEL = 'technicians'
+// Mark's personal alert channel (used instead of DM — self-DM blocked)
+// Channel ID P6015142000000718001
+export const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
+
 let cachedAccessToken = null
 let accessExpiresAt = 0
 

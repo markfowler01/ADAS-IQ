@@ -2,11 +2,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { getMailAccessToken, getMailAccountId, sendMail } from '../services/mail.js'
 import { getTechEmail } from './settings.js'
-import { postToCliqUser, postToCliqChannelById, TECH_CLIQ_IDS } from '../services/cliq.js'
-
-// Mark's personal alert channel — used instead of DM since the token belongs to Mark
-// and Zoho blocks self-DMs (buddies_self_message_restricted).
-const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
+import { postToCliqUser, postToCliqChannelById, postToCliqChannel, TECH_CLIQ_IDS, TECHNICIANS_CHANNEL, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 
 const router = express.Router()
 const CACHE_KEY = 'adas_iq_notifications'
@@ -216,16 +212,50 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
       try {
         const vehicle = job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' ') || ''
         const shop = job?.shop_name || ''
-        const date = job?.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
-        const cliqMsg = [
-          `🔔 *${title}*`,
-          body || '',
-          vehicle && shop ? `${vehicle} @ ${shop}${date}` : (vehicle || shop || ''),
-        ].filter(Boolean).join('\n')
+        const isDispatch = type === 'job_assigned' || type === 'job_updated'
+
+        let cliqMsg
+        if (isDispatch && job) {
+          // Rich dispatch message — full job details
+          let cals = []
+          try { cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : (job.calibrations || []) } catch {}
+          const calLines = cals.map(c => {
+            const name = c.name || c.calibration_name || c
+            const mode = c.mode && c.mode.toLowerCase() !== 'static' ? ` (${c.mode})` : ''
+            return `• ${name}${mode}`
+          })
+          calLines.push('• PCSI', '• POST')
+
+          const lines = [
+            `🔔 *${title}*`,
+            '',
+            `🏢 ${shop || 'No shop'}`,
+            vehicle ? `🚗 ${vehicle}${job.vin ? ' · VIN: ' + job.vin : ''}` : null,
+            job.insurer ? `🏦 ${job.insurer}` : null,
+            job.scheduled_date ? `📅 ${job.scheduled_date}` : null,
+            '',
+            '📋 Calibrations:',
+            ...calLines,
+            job.notes ? `\n📝 ${job.notes}` : null,
+            job.quote_number ? `\n📄 Quote #${job.quote_number}` : null,
+            (job.folder_url || job.report_url) ? '\n' + [
+              job.folder_url ? `📁 WorkDrive: ${job.folder_url}` : null,
+              job.report_url ? `📄 Report: ${job.report_url}` : null,
+            ].filter(Boolean).join('\n') : null,
+          ]
+          cliqMsg = lines.filter(l => l !== null).join('\n')
+        } else {
+          // Simple message for non-dispatch notifications
+          const date = job?.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
+          cliqMsg = [
+            `🔔 *${title}*`,
+            body || '',
+            vehicle && shop ? `${vehicle} @ ${shop}${date}` : (vehicle || shop || ''),
+          ].filter(Boolean).join('\n')
+        }
 
         const nameKey = to?.toLowerCase().trim()
         if (nameKey === 'mark') {
-          // Can't DM yourself — post to Mark's alert channel instead
           await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg)
         } else {
           const cliqId = TECH_CLIQ_IDS[to] || TECH_CLIQ_IDS[
@@ -234,7 +264,13 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
           if (cliqId) await postToCliqUser(cliqId, cliqMsg)
           else console.log(`[notifications] No Cliq ID for "${to}" — skipping DM`)
         }
-        console.log(`[notifications] Cliq sent to "${to}"`)
+
+        // Also post to #technicians channel for dispatch events
+        if (isDispatch) {
+          await postToCliqChannel(TECHNICIANS_CHANNEL, cliqMsg)
+        }
+
+        console.log(`[notifications] Cliq sent to "${to}"${isDispatch ? ' + #technicians' : ''}`)
       } catch (e) {
         console.warn(`[notifications] Cliq to "${to}" failed:`, e.message)
       }
