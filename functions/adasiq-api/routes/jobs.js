@@ -510,6 +510,31 @@ export async function performSyncQuotes(req) {
   return { created, removed, folderLinked, total: estimates.length }
 }
 
+// GET /api/jobs/top-calibrations — top 10 cal names from historical job data
+router.get('/top-calibrations', async (req, res) => {
+  try {
+    const jobs = await getAllJobs(req)
+    const counts = {}
+    for (const job of jobs) {
+      let cals = []
+      try { cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : (job.calibrations || []) } catch {}
+      for (const c of cals) {
+        const name = (c.name || c.calibration_name || (typeof c === 'string' ? c : '')).trim()
+        if (name && name !== 'PCSI' && name !== 'POST') {
+          counts[name] = (counts[name] || 0) + 1
+        }
+      }
+    }
+    const top = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([name, count]) => ({ name, count }))
+    res.json({ ok: true, calibrations: top })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.post('/sync-quotes', async (req, res) => {
   try {
     const result = await performSyncQuotes(req)

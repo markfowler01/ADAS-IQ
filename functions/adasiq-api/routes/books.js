@@ -4,10 +4,143 @@ import PDFDocument from 'pdfkit'
 import QRCode from 'qrcode'
 import { buildInvoicePayUrl } from './portal.js'
 import { createNotification } from './notifications.js'
+import { generateADASIQPdf } from '../services/pdf.js'
+import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder } from '../services/workdrive.js'
+import { getAccessToken as getWdToken } from '../services/zoho.js'
+import { getAllRules } from '../services/calibrationRulesService.js'
+import { readJobsPublic, updateJobPublic } from './jobs.js'
 
 const router = express.Router()
 
 const CHUNK_SIZE = 30
+
+// ── ADAS IQ Report — generated post-invoice ──────────────────────────────────
+/**
+ * Generate the ADAS IQ calibration assessment PDF from the invoice's
+ * actual line items and upload it to the job's WorkDrive folder.
+ * Called after from-job invoice creation succeeds.
+ */
+async function generateAndUploadReport(req, { job, invoices }) {
+  try {
+    const token = await getWdToken()
+
+    // 1. Resolve WorkDrive folder — use existing or search for one
+    let folderId = null
+    let folderUrl = job.folder_url || ''
+
+    if (folderUrl && folderUrl.includes('zohoexternal.com')) {
+      // Already a public link — can't extract folder ID from it easily,
+      // fall through to search by RO#
+    }
+
+    const roMatch = (job.notes || job.quote_number || '').match(/\d{4,}/)?.[0] || ''
+
+    if (!folderId && roMatch) {
+      try {
+        const f = await findFolderByRO(roMatch, token)
+        if (f) folderId = f.id
+      } catch {}
+    }
+    if (!folderId) {
+      const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+      try {
+        const f = await findFolderByShopVehicle(job.shop_name, vehicle, token)
+        if (f) folderId = f.id
+      } catch {}
+    }
+    if (!folderId) {
+      // Create a new folder
+      const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+      const folderName = `${roMatch || 'Job'} — ${job.shop_name || ''} — ${vehicle}`.slice(0, 80)
+      try {
+        const f = await createJobFolder(folderName, token)
+        if (f?.folderId) folderId = f.folderId
+      } catch {}
+    }
+    if (!folderId) {
+      console.warn('[report] Could not resolve WorkDrive folder — skipping PDF upload')
+      return
+    }
+
+    // 2. Collect all invoice line items (insurance + shop) as the source of truth
+    const allLineItems = invoices.flatMap(inv => inv.line_items || [])
+    const calNames = new Set()
+    const finalCals = []
+    for (const li of allLineItems) {
+      const name = (li.description || li.name || '').replace(/\s*\(.*?\)\s*$/, '').trim()
+      if (!name || calNames.has(name.toLowerCase())) continue
+      calNames.add(name.toLowerCase())
+      finalCals.push({ name, description: li.description || name, qty: li.qty, rate: li.rate })
+    }
+
+    // 3. Load calibration rules and enrich each line item with justification + cal_type
+    let rules = []
+    try { rules = await getAllRules(req) } catch {}
+
+    const make = (job.make || '').toLowerCase()
+    const model = (job.model || '').toLowerCase()
+
+    function findRule(calName) {
+      const lc = calName.toLowerCase()
+      return rules.find(r => {
+        const rName = r.calibration_name.toLowerCase()
+        return rName === lc || rName.includes(lc) || lc.includes(rName)
+      })
+    }
+
+    const enrichedCals = finalCals.map(cal => {
+      const rule = findRule(cal.name)
+      const justification = rule?.justification_template
+        ? rule.justification_template.replace(/\{make\}/gi, job.make || 'OEM').replace(/\{model\}/gi, job.model || 'vehicle')
+        : ''
+      return {
+        calibration_name: cal.description || cal.name,
+        enabled: true,           // everything on the invoice is REQUIRED
+        cal_type: rule?.cal_type || '',
+        trigger: rule?.trigger_category?.replace(/_/g, ' ') || '',
+        line_references: '',
+        justification,
+        links: [],
+      }
+    })
+
+    // 4. Build invoice number string for the report filename
+    const invoiceNum = invoices.map(i => i.invoice_number).filter(Boolean).join('-') || roMatch || 'Invoice'
+    const roNum = roMatch || invoiceNum
+
+    // 5. Generate the PDF
+    const pdfBuffer = await generateADASIQPdf({
+      shop:     job.shop_name || '',
+      ro_number: roNum,
+      insurer:  job.insurer || '',
+      vin:      job.vin || '',
+      vehicle:  job.vehicle || '',
+      year:     job.year || '',
+      make:     job.make || '',
+      model:    job.model || '',
+      claim:    job.claim_number || '',
+      calibrations: enrichedCals,
+      document_links: [],
+    })
+
+    // 6. Upload to WorkDrive
+    const filename = `ADAS-IQ-Report-${roNum}.pdf`
+    await uploadFileToFolder(folderId, filename, pdfBuffer, token)
+    console.log(`[report] ADAS IQ PDF uploaded: ${filename}`)
+
+    // 7. Save public share link back to job if we don't already have one
+    if (!job.folder_url || !job.folder_url.includes('zohoexternal.com')) {
+      try {
+        const shareLink = await createShareLink(folderId, filename, token)
+        if (shareLink) {
+          await updateJobPublic(req, job.id, { ...job, folder_url: shareLink })
+        }
+      } catch {}
+    }
+  } catch (err) {
+    console.error('[report] generateAndUploadReport failed (non-fatal):', err.message)
+  }
+}
 
 // ── Cache helpers ────────────────────────────────────────────────────────────
 
@@ -1063,6 +1196,10 @@ router.post('/invoices/from-job', async (req, res) => {
     const invoices = await readInvoices(req)
     invoices.push(...createdInvoices)
     await writeInvoices(req, invoices)
+
+    // Generate + upload ADAS IQ calibration report (non-blocking — don't delay response)
+    generateAndUploadReport(req, { job, invoices: createdInvoices })
+      .catch(e => console.warn('[report] background upload failed:', e.message))
 
     // Respond with the created invoices — maintain backwards-compatible shape
     const insuranceInvoice = createdInvoices.find(i => i.invoice_type === 'insurance') || null

@@ -553,21 +553,8 @@ export async function createDraftQuote({
     }
   }
 
-  // Generate and upload the ADAS IQ PDF report
-  if (workdriveResult?.folderId) {
-    try {
-      const adasIQPdf = await generateADASIQPdf({
-        shop, ro_number: finalRO, insurer, vin, vehicle, year, make, model, claim,
-        calibrations,
-        document_links: [],
-      })
-      const adasIQName = `ADAS-IQ-Report-${finalRO}.pdf`
-      await uploadFileToFolder(workdriveResult.folderId, adasIQName, adasIQPdf, token)
-      console.log('[workdrive] ADAS IQ PDF uploaded:', adasIQName)
-    } catch (pdfErr) {
-      console.warn('[workdrive] ADAS IQ PDF upload failed (non-fatal):', pdfErr.message)
-    }
-  }
+  // NOTE: ADAS IQ PDF report is now generated AFTER invoice creation (books.js from-job endpoint)
+  // so it reflects the exact final invoice line items. Removed from here 2026-05-16.
 
   // 6. If we got a WorkDrive link, update the estimate's custom fields with it
   if (workdriveResult?.shareLink) {

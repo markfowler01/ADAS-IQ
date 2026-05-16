@@ -3,6 +3,7 @@ import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
+import CalibrationReviewModal from './CalibrationReviewModal.jsx'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -861,6 +862,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
   const [invoicingJob, setInvoicingJob] = useState(null)
+  const [calReviewJob, setCalReviewJob] = useState(null)
   const [search, setSearch] = useState('')
   const [regionFilter, setRegionFilter] = useState('')
   const [techFilter, setTechFilter] = useState('')
@@ -1020,15 +1022,29 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     setDragJob(null)
   }
 
-  // Move job to Ready to Invoice column
-  async function handleMoveToReadyInvoice(job) {
-    const updatedJob = { ...job, status: 'ready_invoice' }
+  // Opens the calibration review modal — actual status change happens after confirmation
+  function handleMoveToReadyInvoice(job) {
+    setCalReviewJob(job)
+  }
+
+  // Called by CalibrationReviewModal "Done" button with the final calibration list
+  async function handleCalReviewConfirm(updatedCals) {
+    const job = calReviewJob
+    if (!job) return
+    setCalReviewJob(null)
+
+    // Optimistic update — show new cals + ready_invoice immediately
+    const updatedJob = { ...job, calibrations: JSON.stringify(updatedCals), status: 'ready_invoice' }
     setJobs(prev => prev.map(j => j.id === job.id ? updatedJob : j))
+
     try {
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'ready_invoice' }),
+        body: JSON.stringify({
+          calibrations: JSON.stringify(updatedCals),
+          status: 'ready_invoice',
+        }),
       })
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
@@ -1497,6 +1513,15 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           </>
         )}
       </main>
+
+      {/* Calibration Review Modal — intercepts "Ready to Invoice" click */}
+      {calReviewJob && (
+        <CalibrationReviewModal
+          job={calReviewJob}
+          onConfirm={handleCalReviewConfirm}
+          onClose={() => setCalReviewJob(null)}
+        />
+      )}
 
       {/* Job Request Modal — opened via "+" on the Need to Dispatch column */}
       {showRequestModal && (

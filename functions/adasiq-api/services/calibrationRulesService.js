@@ -41,7 +41,7 @@ function getAliasedMakes(make, model) {
 /**
  * Fetch all enabled rules from the AdasCalibrationRules table.
  */
-async function getAllRules(req) {
+export async function getAllRules(req) {
   const sdk = catalyst.initialize(req, { type: 'advancedio' })
   const table = sdk.datastore().table(TABLE)
   const rows = await table.getAllRows()
