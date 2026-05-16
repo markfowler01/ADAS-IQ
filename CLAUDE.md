@@ -29,7 +29,7 @@ Internal operations tool for Absolute ADAS: job board (Kanban), invoicing, CRM, 
 
 - **Login**: Zoho OAuth → HMAC-signed JWT stored in `sessionStorage`, sent as `X-Auth-Token` header
 - **Protected routes**: `requireAuth` middleware on all `/api/*` routes except webhooks, cron, postscan
-- **Role map** (`auth.js`): `jaden@absoluteadas.com` → `{ role: 'technician', techName: 'Jaden' }`. All others → `role: admin`.
+- **Role map** (`auth.js`): `jayden@absoluteadas.com` → `{ role: 'technician', techName: 'Jaden' }`. All others → `role: admin`.
 - **Cron auth**: `x-cron-secret` header checked against env var — no session required
 
 ---

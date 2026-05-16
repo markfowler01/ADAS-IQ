@@ -154,7 +154,7 @@ async function emailNotify(toEmail, title, body, job) {
 
 // Fallback hardcoded map (used if settings haven't been configured yet)
 const FALLBACK_EMAILS = {
-  'jaden':  'jaden@absoluteadas.com',
+  'jaden':  'jayden@absoluteadas.com',
   'mark':   'mf@absoluteadas.com',
   'kath':   'k.belmonte@absoluteadas.com',
 }

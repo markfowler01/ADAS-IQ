@@ -19,7 +19,7 @@ if (!LOGIN_CLIENT_ID || !LOGIN_CLIENT_SECRET) {
 
 // Role map — keyed by lowercase email. Unrecognised users get admin by default.
 const USER_ROLES = {
-  'jaden@absoluteadas.com': { role: 'technician', techName: 'Jaden' },
+  'jayden@absoluteadas.com': { role: 'technician', techName: 'Jaden' },
 }
 function applyRole(email) {
   return USER_ROLES[(email || '').toLowerCase()] || { role: 'admin' }
