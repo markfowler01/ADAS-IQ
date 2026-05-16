@@ -1,5 +1,5 @@
 import express from 'express'
-import { readJobsPublic, updateJobPublic } from './jobs.js'
+import { readJobsPublic, updateJobPublic, performSyncQuotes } from './jobs.js'
 
 const router = express.Router()
 
@@ -86,6 +86,31 @@ router.post('/zoho-books', async (req, res) => {
 
   } catch (err) {
     console.error('[webhook] Error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /webhooks/zoho-books-estimate
+// Called by Zoho Books when a quote/estimate is created or updated.
+// Triggers a sync so the new quote immediately appears in Need to Dispatch.
+router.post('/zoho-books-estimate', async (req, res) => {
+  try {
+    const webhookSecret = process.env.WEBHOOK_SECRET
+    if (webhookSecret) {
+      const incomingSecret = req.headers['x-webhook-secret'] || req.query.secret || ''
+      if (incomingSecret !== webhookSecret) {
+        return res.status(401).json({ error: 'Unauthorized' })
+      }
+    }
+
+    const payload = req.body
+    console.log('[webhook estimate] Zoho Books estimate payload:', JSON.stringify(payload).slice(0, 500))
+
+    const result = await performSyncQuotes(req)
+    console.log(`[webhook estimate] Sync complete — created: ${result.created}, removed: ${result.removed}`)
+    res.json({ success: true, ...result })
+  } catch (err) {
+    console.error('[webhook estimate] Error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

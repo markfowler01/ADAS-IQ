@@ -411,8 +411,8 @@ export async function performSyncQuotes(req) {
 
   const estimateMap = new Map(estimates.map(e => [e.estimate_id, e]))
   const existingEstimateIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
-  // Only import saved drafts — not sent, accepted, invoiced, etc.
-  const IMPORT_STATUSES = new Set(['draft'])
+  // Import draft + sent + accepted quotes — these are all "active" estimates that should be in the app
+  const IMPORT_STATUSES = new Set(['draft', 'sent', 'accepted'])
 
   let created = 0
   for (const est of estimates) {
@@ -450,11 +450,18 @@ export async function performSyncQuotes(req) {
     if (!job.zoho_estimate_id) continue
     const est = estimateMap.get(job.zoho_estimate_id)
     if (!est || !IMPORT_STATUSES.has(est.status)) {
-      try {
-        await deleteJob(req, job.id)
-        removed++
-      } catch (e) {
-        console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
+      // Only auto-remove if the job is still sitting in Need to Dispatch
+      // (hasn't been dispatched or worked on). Progressed jobs stay even if
+      // the estimate was voided/declined in Zoho.
+      if (job.status === 'need_dispatch') {
+        try {
+          await deleteJob(req, job.id)
+          removed++
+        } catch (e) {
+          console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
+        }
+      } else {
+        console.log(`[jobs sync] estimate ${job.zoho_estimate_id} no longer active but job ${job.id} is in "${job.status}" — keeping`)
       }
     } else if (!job.folder_url && est.cf_scan_report_and_documentation) {
       // Backfill folder_url for existing jobs that are missing it
