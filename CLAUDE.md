@@ -199,6 +199,40 @@ Hourly cron reads `postscan@absoluteadas.com` inbox → extracts RO# from subjec
 
 ---
 
+## Calibration Review Modal (added 2026-05-16)
+
+`client/src/components/CalibrationReviewModal.jsx` — mobile-first bottom sheet
+
+- Intercepts "Ready to Invoice" click everywhere (sets `calReviewJob` state instead of immediately PATCHing)
+- Shows current job calibrations with ✕ remove buttons (min 52px tap targets)
+- Top 10 quick-add chips from `GET /api/jobs/top-calibrations` (historical frequency)
+- "+ More" caret → searchable dropdown from `GET /api/calibration-rules`
+- Added cals store `{ name, cal_type, rule_id }` — rule_id used for report enrichment
+- "Done" button: PATCH calibrations + PATCH status → ready_invoice in one call
+- PCSI and POST shown as always-included badges (not editable — they're standard)
+
+## ADAS IQ Calibration Report (updated 2026-05-16)
+
+Report generation MOVED from quote creation to post-invoice.
+
+**Before (wrong):** Generated in `services/zoho.js createDraftQuote()` when Kinetic report uploaded — reflected original quote, not final work done.
+
+**After (correct):** Generated in `routes/books.js generateAndUploadReport()` called after `POST /api/books/invoices/from-job` succeeds.
+
+- Source of truth: actual invoice line items (guaranteed to match the bill)
+- All calibrations are `enabled: true` / REQUIRED (if billed, it was required)
+- Enriched with OEM justification text from `AdasCalibrationRules.justification_template`
+- `{make}` and `{model}` placeholders filled in from job data
+- Uploaded to WorkDrive folder (creates one if missing), share link saved to job
+- Non-blocking — fires after `res.json()` so it doesn't delay invoicing response
+- Purpose: insurance defense document — justifies every billed calibration with OEM language
+
+**`generateADASIQPdf` signature** (`services/pdf.js`):
+```js
+{ shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links }
+// calibrations: [{ calibration_name, enabled, cal_type, trigger, justification, links }]
+```
+
 ## Known Quirks & Past Bug Fixes
 
 - **WorkDrive role_id**: must be `34` (integer) for folder Viewer. `'6'` or `6` = Zoho Docs only, always 400 on folders.
