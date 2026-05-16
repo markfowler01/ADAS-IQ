@@ -294,15 +294,14 @@ router.put('/:id', async (req, res) => {
       }).catch(e => console.warn('[notifications]', e.message))
     }
 
-    // Notify Kath when job moves to ready_invoice
+    // Notify Kath + #technicians when job moves to ready_invoice
     if (updated.status === 'ready_invoice' && prevStatus !== 'ready_invoice') {
-      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
       await createNotification(req, {
         to: 'Kath',
         toEmail: 'k.belmonte@absoluteadas.com',
-        type: 'job_status',
+        type: 'job_ready_invoice',
         title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
-        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'} is ready to be invoiced.`,
+        body: '',
         jobId: updated.id,
         job: updated,
       }).catch(e => console.warn('[notifications]', e.message))
@@ -362,15 +361,14 @@ router.patch('/:id', async (req, res) => {
       }).catch(e => console.warn('[notifications]', e.message))
     }
 
-    // Notify Kath when job moves to ready_invoice
+    // Notify Kath + #technicians when job moves to ready_invoice
     if (updated.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
-      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
       await createNotification(req, {
         to: 'Kath',
         toEmail: 'k.belmonte@absoluteadas.com',
-        type: 'job_status',
+        type: 'job_ready_invoice',
         title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
-        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'} is ready to be invoiced.`,
+        body: '',
         jobId: updated.id,
         job: updated,
       }).catch(e => console.warn('[notifications]', e.message))

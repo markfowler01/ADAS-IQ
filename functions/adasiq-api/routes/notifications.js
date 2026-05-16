@@ -213,9 +213,32 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
         const vehicle = job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' ') || ''
         const shop = job?.shop_name || ''
         const isDispatch = type === 'job_assigned' || type === 'job_updated'
+        const isReadyInvoice = type === 'job_ready_invoice'
 
         let cliqMsg
-        if (isDispatch && job) {
+        if (isReadyInvoice && job) {
+          const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ') || ''
+          const roMatch = (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)
+          const roNum = roMatch?.[1] || ''
+          const timeStr = new Date().toLocaleTimeString('en-US', {
+            hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Los_Angeles',
+          })
+          const booksLink = job.quote_url || job.report_url || ''
+          const jobBoardUrl = 'https://app.adas-iq.com/app/index.html'
+
+          const lines = [
+            `🟢 *Ready to Invoice: ${job.shop_name || 'Job'}*`,
+            '',
+            vehicle ? `🚗 ${vehicle}` : null,
+            roNum ? `📋 RO#: ${roNum}` : null,
+            job.technician ? `👤 Tech: ${job.technician}` : null,
+            `⏰ ${timeStr}`,
+            '',
+            booksLink ? `📗 Open in Zoho Books:\n${booksLink}` : null,
+            `🗂 Job Board: ${jobBoardUrl}`,
+          ]
+          cliqMsg = lines.filter(l => l !== null).join('\n')
+        } else if (isDispatch && job) {
           // Rich dispatch message — full job details
           let cals = []
           try { cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : (job.calibrations || []) } catch {}
@@ -281,12 +304,12 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
           else console.log(`[notifications] No Cliq ID for "${to}" — skipping DM`)
         }
 
-        // Also post to #technicians channel for dispatch events
-        if (isDispatch) {
+        // Also post to #technicians channel for dispatch + ready_invoice events
+        if (isDispatch || isReadyInvoice) {
           await postToCliqChannel(TECHNICIANS_CHANNEL, cliqMsg)
         }
 
-        console.log(`[notifications] Cliq sent to "${to}"${isDispatch ? ' + #technicians' : ''}`)
+        console.log(`[notifications] Cliq sent to "${to}"${(isDispatch || isReadyInvoice) ? ' + #technicians' : ''}`)
       } catch (e) {
         console.warn(`[notifications] Cliq to "${to}" failed:`, e.message)
       }
