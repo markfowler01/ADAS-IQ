@@ -16,6 +16,7 @@ import { fetchTopStocks } from '../services/stockTicker.js'
 import { assembleMarketsCommentary } from '../services/marketsCommentary.js'
 import { generateReplyPrompt } from '../services/replyPrompt.js'
 import { generateTomorrowWatching } from '../services/tomorrowWatching.js'
+import { buildAndPublishVoiceMemo } from '../services/voiceMemo.js'
 import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
 import { postToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost } from '../services/brewLinkedIn.js'
@@ -171,21 +172,24 @@ async function buildIssue(req, preFetched = null) {
   const digest = await assembleDigest(recent, subjectHistory, { mode })
   const issueNumber = await nextIssueNumber(segment)
   // Fetch ADAS-relevant tickers (~1s for 5 parallel Yahoo calls), then run
-  // 3 independent Claude calls in parallel: markets commentary, reply prompt,
-  // tomorrow stinger. All fail-soft to empty string.
+  // 3 independent Claude calls + voice memo (Friday only) in parallel.
+  // All fail-soft to empty so the email still ships if any single one breaks.
   const stocks = await fetchTopStocks().catch(() => [])
-  const [marketsCommentary, replyPrompt, tomorrowStinger] = await Promise.all([
+  const dateISO = new Date().toISOString().slice(0, 10)
+  const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo] = await Promise.all([
     stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
     generateReplyPrompt(digest).catch(() => ''),
     generateTomorrowWatching(digest).catch(() => ''),
+    buildAndPublishVoiceMemo(digest, dateISO).catch(() => null),
   ])
   const rendered = renderDigest(digest, {
     issueNumber: String(issueNumber),
-    dateISO: new Date().toISOString().slice(0, 10),
+    dateISO,
     stocks,
     marketsCommentary,
     replyPrompt,
     tomorrowStinger,
+    audioUrl: voiceMemo?.url || '',
   })
   return { digest, rendered, issueNumber, sourceStatus, itemsConsidered: recent.length }
 }
@@ -913,14 +917,24 @@ cronRouter.get('/linkedin-post-preview', requireCronSecretFlex, async (req, res)
   }
 })
 
-// GET /api/cron/brew/preview?secret=... — open in browser to see today's email
+// GET /api/cron/brew/preview?secret=...&name=Mark&audio=demo
 // Preview substitutes {{firstName}} with a demo name so the placeholder doesn't
 // show literally. In real sends, sendBroadcast does this per-recipient.
+// ?audio=demo injects a placeholder audio block so layout is visible on
+// non-Friday previews (real audio only renders on Fridays).
 cronRouter.get('/preview', requireCronSecretFlex, async (req, res) => {
   try {
     const built = await buildIssue(req)
     const demoName = String(req.query.name || 'Mark')
-    const html = String(built.rendered.html || '').replace(/\{\{\s*firstName\s*\}\}/g, demoName)
+    let html = String(built.rendered.html || '').replace(/\{\{\s*firstName\s*\}\}/g, demoName)
+    // Optional: inject placeholder audio block for layout-only preview
+    if (String(req.query.audio || '') === 'demo' && !html.includes('class="audio"')) {
+      const dateISO = new Date().toISOString().slice(0, 10)
+      const demoUrl = `https://absoluteadas.com/audio/${dateISO}.mp3`
+      const demoBlock = `<div class="audio"><div class="audio-eyebrow">🎙️ Mark's Voice Memo</div><div class="audio-title">60 seconds on this week's biggest signal</div><audio class="audio-player" controls preload="none"><source src="${demoUrl}" type="audio/mpeg"></audio><div class="audio-fallback">Inbox player not showing? <a href="${demoUrl}">Listen on the web →</a></div></div>`
+      // Inject after the </div></div><div... that closes the head — easier: replace markets opener
+      html = html.replace('<div class="markets">', demoBlock + '<div class="markets">')
+    }
     res.set('Content-Type', 'text/html; charset=utf-8')
     res.send(html)
   } catch (e) {
@@ -1654,14 +1668,16 @@ async function executeDailyPipeline(req) {
     issueNumber = stash.issueNumber
     isoDate = stash.dateISO
     // Re-fetch stocks for cache-hit path too — prices move during the day.
-    // Also refresh reply prompt + tomorrow stinger (cheap; ensures freshness).
+    // Voice memo is idempotent on the date filename so re-running it is safe
+    // (overwrites today's MP3 with the same content; cheap).
     const stocks = await fetchTopStocks().catch(() => [])
-    const [marketsCommentary, replyPrompt, tomorrowStinger] = await Promise.all([
+    const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo] = await Promise.all([
       stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
       generateReplyPrompt(digest).catch(() => ''),
       generateTomorrowWatching(digest).catch(() => ''),
+      buildAndPublishVoiceMemo(digest, isoDate).catch(() => null),
     ])
-    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary, replyPrompt, tomorrowStinger })
+    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary, replyPrompt, tomorrowStinger, audioUrl: voiceMemo?.url || '' })
   } else {
     const fetched = await fetchAndTrim()
     const built = await buildIssue(req, { items: fetched.items, status: fetched.status })

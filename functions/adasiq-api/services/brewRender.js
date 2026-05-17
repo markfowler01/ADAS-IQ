@@ -84,6 +84,12 @@ p{font-size:15px;line-height:1.55;margin:0 0 10px}
 .cta p{margin:0 0 14px}
 .btn{display:inline-block;background:${ORANGE};color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:11px 22px;border-radius:8px}
 .readtime{font-size:11px;color:#9ca3af;font-family:monospace;letter-spacing:.04em;margin-top:4px}
+.audio{margin:20px 28px 0;padding:18px 22px;background:linear-gradient(135deg,#1a1208 0%,#0d0d0d 100%);border:1px solid rgba(205,68,25,.4);border-radius:12px;color:#e5e7eb}
+.audio-eyebrow{font-family:monospace;font-size:11px;font-weight:700;letter-spacing:.18em;color:${ORANGE};text-transform:uppercase;margin-bottom:8px}
+.audio-title{font-size:16px;font-weight:700;color:#fff;margin-bottom:10px;line-height:1.3}
+.audio-player{width:100%;border-radius:6px}
+.audio-fallback{font-size:13px;color:#fbbf24;margin-top:10px}
+.audio-fallback a{color:#fbbf24;font-weight:700;text-decoration:underline}
 .greet{padding:20px 28px 0;font-size:16px;font-weight:600;color:#1a1a1a}
 .reply{margin:20px 28px 8px;padding:14px 18px;background:#fff8f4;border-left:3px solid ${ORANGE};border-radius:8px;font-size:14px;line-height:1.5;color:#374151}
 .reply strong{color:${ORANGE}}
@@ -160,10 +166,18 @@ export function renderDigest(digest, opts = {}) {
   const marketsHtml       = renderMarketsBlock(stocks, marketsCommentary)
   const replyPrompt       = String(opts.replyPrompt || '')
   const tomorrowStinger   = String(opts.tomorrowStinger || '')
+  const audioUrl          = String(opts.audioUrl || '')
   const readMin           = estimateReadingMin(intro, stories, marketsCommentary)
   // Per-recipient personalization marker — sendBroadcast does .replace per email.
   // Falls back to "Good morning." with no name if substitution didn't happen.
   const greetingHtml = `<div class="greet">Good morning, {{firstName}}.</div>`
+
+  // Audio block (Friday voice memo) — only renders if voiceMemo service published
+  // an MP3. Native <audio> tag for clients that support it (Apple Mail, modern
+  // webmail) + a "Listen on the web" link for clients that strip it (Gmail, Outlook).
+  const audioHtml = audioUrl
+    ? `<div class="audio"><div class="audio-eyebrow">🎙️ Mark's Voice Memo</div><div class="audio-title">60 seconds on this week's biggest signal</div><audio class="audio-player" controls preload="none"><source src="${safeUrl(audioUrl)}" type="audio/mpeg"></audio><div class="audio-fallback">Inbox player not showing? <a href="${safeUrl(audioUrl)}">Listen on the web →</a></div></div>`
+    : ''
   // Pin CTA destination to one of a small allowlist — prevents AI from inventing
   // URLs but lets Friday Field Notes mode point at Mark's LinkedIn for the
   // "DM me 'audit'" CTA.
@@ -203,7 +217,7 @@ export function renderDigest(digest, opts = {}) {
     ? `<div class="tomorrow"><strong>👀 ${esc(tomorrowStinger)}</strong></div>`
     : ''
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div><div class="readtime">~${readMin} min read</div></div>${marketsHtml}${greetingHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${replyBlock}${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner. Mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p>${tomorrowBlock}<div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div><div class="readtime">~${readMin} min read</div></div>${audioHtml}${marketsHtml}${greetingHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${replyBlock}${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner. Mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p>${tomorrowBlock}<div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
 
   // Plain-text alternative
   const stocksText = stocks.length
