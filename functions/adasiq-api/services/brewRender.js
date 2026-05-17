@@ -55,13 +55,19 @@ const STYLES = `body{margin:0;padding:0;background:#f5f3f0;font-family:-apple-sy
 .ma{width:18px;text-align:center;font-size:14px;font-weight:700}
 .ma.up{color:#16a34a}
 .ma.down{color:#dc2626}
-.mn{font-weight:700;color:#1a1a1a;padding-left:6px}
-.mp{text-align:right;color:#1a1a1a;padding-right:10px}
-.mc{text-align:right;font-weight:700;font-size:12px;white-space:nowrap}
-.mc span{padding:3px 8px;border-radius:6px;display:inline-block}
+.mn{padding-left:6px}
+.mn a{font-weight:700;color:#1a1a1a;text-decoration:none}
+.mn a:hover{color:${ORANGE}}
+.mp{text-align:right;color:#1a1a1a;padding-right:10px;font-variant-numeric:tabular-nums}
+.mc{text-align:right;font-weight:700;font-size:12px;white-space:nowrap;padding-right:6px}
+.mc span{padding:3px 8px;border-radius:6px;display:inline-block;font-variant-numeric:tabular-nums}
 .mc.up span{background:#dcfce7;color:#166534}
 .mc.down span{background:#fee2e2;color:#b91c1c}
-.mf{font-size:11px;color:#9ca3af;margin-top:8px;text-align:right}
+.my{text-align:right;font-weight:600;font-size:11px;white-space:nowrap;color:#6b7280;font-variant-numeric:tabular-nums}
+.my.up{color:#16a34a}
+.my.down{color:#dc2626}
+.mco{margin-top:10px;padding-top:8px;border-top:1px solid #ececec;font-size:13px;font-style:italic;color:#374151;line-height:1.45}
+.mf{font-size:11px;color:#9ca3af;margin-top:6px;text-align:right}
 .intro{padding:24px 28px 0;font-size:16px;line-height:1.55}
 .story{padding:24px 28px 0;border-bottom:1px solid #ececec}
 .story:last-of-type{border-bottom:0}
@@ -92,14 +98,22 @@ function fmtPct(n) {
   return `${sign}${n.toFixed(2)}%`
 }
 
-function renderMarketsBlock(stocks) {
+function renderMarketsBlock(stocks, commentary) {
   if (!stocks || stocks.length === 0) return ''
   const rows = stocks.map(s => {
     const dir = s.direction || (s.changeAbs >= 0 ? 'up' : 'down')
     const arrow = dir === 'up' ? '▲' : '▼'
-    return `<tr><td class="ma ${dir}">${arrow}</td><td class="mn">${esc(s.name)}</td><td class="mp">$${fmtPrice(s.price)}</td><td class="mc ${dir}"><span>${esc(fmtPct(s.changePct))}</span></td></tr>`
+    const url = s.url || `https://finance.yahoo.com/quote/${encodeURIComponent(s.symbol)}`
+    const ytdDir = Number.isFinite(s.ytdPct) ? (s.ytdPct >= 0 ? 'up' : 'down') : ''
+    const ytdCell = Number.isFinite(s.ytdPct)
+      ? `<td class="my ${ytdDir}">YTD ${esc(fmtPct(s.ytdPct))}</td>`
+      : `<td class="my"></td>`
+    return `<tr><td class="ma ${dir}">${arrow}</td><td class="mn"><a href="${url}" target="_blank" rel="noopener">${esc(s.name)}</a></td><td class="mp">$${fmtPrice(s.price)}</td><td class="mc ${dir}"><span>${esc(fmtPct(s.changePct))}</span></td>${ytdCell}</tr>`
   }).join('')
-  return `<div class="markets"><div class="mh">Markets</div><table class="mt">${rows}</table><div class="mf">Data via Yahoo Finance</div></div>`
+  const commentaryBlock = commentary
+    ? `<div class="mco">${esc(commentary)}</div>`
+    : ''
+  return `<div class="markets"><div class="mh">Markets</div><table class="mt">${rows}</table>${commentaryBlock}<div class="mf">Data via Yahoo Finance</div></div>`
 }
 
 /**
@@ -119,8 +133,9 @@ export function renderDigest(digest, opts = {}) {
   const tagline      = digest.tagline || 'Today\'s brew'
   const intro        = digest.intro || ''
   const stories      = Array.isArray(digest.stories) ? digest.stories : []
-  const stocks       = Array.isArray(opts.stocks) ? opts.stocks : []
-  const marketsHtml  = renderMarketsBlock(stocks)
+  const stocks            = Array.isArray(opts.stocks) ? opts.stocks : []
+  const marketsCommentary = String(opts.marketsCommentary || '')
+  const marketsHtml       = renderMarketsBlock(stocks, marketsCommentary)
   // Pin CTA destination to one of a small allowlist — prevents AI from inventing
   // URLs but lets Friday Field Notes mode point at Mark's LinkedIn for the
   // "DM me 'audit'" CTA.

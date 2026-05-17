@@ -22,24 +22,37 @@ export const TICKERS = [
 ]
 
 async function fetchOne({ symbol, name }) {
+  const headers = { 'User-Agent': 'Mozilla/5.0 (compatible; ADAS-Brew/1.0)' }
+  const baseUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`
+
+  // Two parallel calls per ticker:
+  //   - default range: meta.previousClose = ACTUAL prior trading day close → day change
+  //   - range=ytd:     meta.chartPreviousClose = Dec 31 close → YTD baseline
+  // Yahoo strips previousClose when `range` is set, so one call can't do both.
   try {
-    const res = await axios.get(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`,
-      {
-        // Yahoo blocks requests without a UA
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ADAS-Brew/1.0)' },
-        timeout: 7000,
-        validateStatus: s => s < 500,
-      }
-    )
-    const result = res.data?.chart?.result?.[0]
-    if (!result) return null
-    const meta = result.meta || {}
-    const price = Number(meta.regularMarketPrice)
-    const prevClose = Number(meta.chartPreviousClose ?? meta.previousClose)
+    const [dayRes, ytdRes] = await Promise.all([
+      axios.get(baseUrl, { headers, timeout: 7000, validateStatus: s => s < 500 }).catch(() => null),
+      axios.get(`${baseUrl}?range=ytd&interval=1d`, { headers, timeout: 7000, validateStatus: s => s < 500 }).catch(() => null),
+    ])
+
+    const dayMeta = dayRes?.data?.chart?.result?.[0]?.meta
+    if (!dayMeta) return null
+
+    const price = Number(dayMeta.regularMarketPrice)
+    const prevClose = Number(dayMeta.previousClose ?? dayMeta.chartPreviousClose)
     if (!Number.isFinite(price) || !Number.isFinite(prevClose) || prevClose === 0) return null
+
     const changeAbs = price - prevClose
     const changePct = (changeAbs / prevClose) * 100
+
+    // YTD baseline from the second call's chartPreviousClose
+    let ytdPct = null
+    const ytdMeta = ytdRes?.data?.chart?.result?.[0]?.meta
+    const yearStart = Number(ytdMeta?.chartPreviousClose)
+    if (Number.isFinite(yearStart) && yearStart > 0) {
+      ytdPct = ((price - yearStart) / yearStart) * 100
+    }
+
     return {
       symbol,
       name,
@@ -47,7 +60,9 @@ async function fetchOne({ symbol, name }) {
       prevClose,
       changeAbs,
       changePct,
+      ytdPct,
       direction: changeAbs >= 0 ? 'up' : 'down',
+      url: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
     }
   } catch (e) {
     return null
