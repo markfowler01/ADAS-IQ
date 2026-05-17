@@ -11,12 +11,14 @@
 
 import axios from 'axios'
 
+// 5-ticker cap (per Mark): keep above-the-fold real estate tight.
+// Blend: 4 ADAS-tech tickers + 1 collision-industry ticker.
 export const TICKERS = [
   { symbol: 'MBLY',  name: 'Mobileye' },
   { symbol: 'APTV',  name: 'Aptiv' },
   { symbol: 'TSLA',  name: 'Tesla' },
   { symbol: 'NVDA',  name: 'Nvidia' },
-  { symbol: 'LKQ',   name: 'LKQ Corp' },  // collision parts giant — most shop-relevant ticker
+  { symbol: 'LKQ',   name: 'LKQ Corp' },  // collision parts giant — only collision-industry pick
 ]
 
 async function fetchOne({ symbol, name }) {
