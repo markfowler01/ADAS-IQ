@@ -173,7 +173,7 @@ async function buildIssue(req, preFetched = null) {
   const digest = await assembleDigest(recent, subjectHistory, { mode })
   const issueNumber = await nextIssueNumber(segment)
   // Fetch ADAS-relevant tickers (~1s for 5 parallel Yahoo calls), then run
-  // 3 independent Claude calls + voice memo (Friday only) in parallel.
+  // 3 independent Claude calls + voice memo (Mon-Fri) + carrier deep-dive (Wed) in parallel.
   // All fail-soft to empty so the email still ships if any single one breaks.
   const stocks = await fetchTopStocks().catch(() => [])
   const dateISO = new Date().toISOString().slice(0, 10)
@@ -630,7 +630,7 @@ cronRouter.get('/_test-voice-memo', requireCronSecretFlex, async (req, res) => {
   try {
     const built = await buildIssue(req)
     const dateISO = new Date().toISOString().slice(0, 10)
-    const memo = await buildAndPublishVoiceMemo(built.digest, dateISO, { daily: true })
+    const memo = await buildAndPublishVoiceMemo(built.digest, dateISO, { always: true })
     if (!memo) {
       return res.status(500).json({
         ok: false,

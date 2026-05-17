@@ -18,8 +18,9 @@
 //   - GitHub commit:      returns null
 // Email ships either way.
 //
-// Default cadence: Friday only (matches the Field Notes / personal-POV pairing).
-// Override via opts.daily = true.
+// Default cadence: every weekday (Mon-Fri Pacific) — pairs with daily newsletter.
+// Skips Sat/Sun so we don't burn TTS budget on days the newsletter doesn't ship.
+// Override via opts.always = true (forces gen regardless of day, used by /_test-voice-memo).
 
 import Anthropic from '@anthropic-ai/sdk'
 import axios from 'axios'
@@ -137,13 +138,15 @@ async function scriptToMp3(script) {
  * @param {Object} digest
  * @param {string} dateISO — YYYY-MM-DD, used as filename
  * @param {Object} [opts]
- * @param {boolean} [opts.daily] — if true, runs every weekday; default Friday-only
+ * @param {boolean} [opts.always] — if true, bypasses the weekday gate (used by /_test-voice-memo)
  * @returns {Promise<{url:string, script:string}|null>}
  */
 export async function buildAndPublishVoiceMemo(digest, dateISO, opts = {}) {
-  // Friday-only by default — pairs with Field Notes / personal POV cadence
-  const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
-  if (!opts.daily && dayPT !== 'Fri') return null
+  // Mon-Fri Pacific only — newsletter doesn't ship on weekends.
+  if (!opts.always) {
+    const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+    if (dayPT === 'Sat' || dayPT === 'Sun') return null
+  }
 
   // Skip if no TTS key — fail-soft so the email still ships
   if (!process.env.OPENAI_API_KEY) {
