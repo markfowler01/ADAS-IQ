@@ -100,6 +100,16 @@ p{font-size:15px;line-height:1.55;margin:0 0 10px}
 .reply strong{color:${ORANGE}}
 .tomorrow{margin:18px 28px 0;padding:12px 16px;background:#0f172a;color:#e5e7eb;border-radius:8px;font-size:13px;line-height:1.5;font-style:italic}
 .tomorrow strong{color:#fbbf24}
+.cow{margin:20px 28px 0;padding:20px 22px;background:linear-gradient(180deg,#fff7f3 0%,#ffffff 100%);border:2px solid ${ORANGE};border-radius:12px}
+.cow-eyebrow{font-family:monospace;font-size:11px;font-weight:700;letter-spacing:.18em;color:${ORANGE};text-transform:uppercase;margin-bottom:6px}
+.cow-carrier{font-size:13px;font-weight:700;color:#1a1a1a;margin-bottom:8px;letter-spacing:.02em}
+.cow-headline{font-size:19px;line-height:1.25;font-weight:800;color:#1a1a1a;margin:0 0 14px}
+.cow-section{font-size:14px;line-height:1.55;color:#1a1a1a;margin:10px 0 0}
+.cow-label{display:inline-block;font-family:monospace;font-size:10px;font-weight:700;letter-spacing:.12em;color:${ORANGE};text-transform:uppercase;margin-bottom:4px}
+.cow-list{margin:4px 0 0;padding:0 0 0 18px;font-size:14px;line-height:1.55;color:#1a1a1a}
+.cow-list li{margin:0 0 4px}
+.cow-play{margin:14px 0 0;padding:10px 14px;background:#1a1a1a;color:#fff;border-radius:8px;font-size:14px;line-height:1.5}
+.cow-play strong{color:#fbbf24;font-family:monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;display:block;margin-bottom:4px}
 .byline{padding:32px 28px 8px;font-size:13px;line-height:1.55;color:#6b7280;font-style:italic;margin:0}
 .foot{padding:24px 28px 28px;border-top:1px solid #ececec;font-size:12px;color:#6b7280}
 .foot a{color:#6b7280}`.replace(/\s*\n\s*/g, '')
@@ -122,6 +132,21 @@ function fmtPct(n) {
   if (!Number.isFinite(n)) return '—'
   const sign = n >= 0 ? '+' : ''
   return `${sign}${n.toFixed(2)}%`
+}
+
+function renderCarrierBlock(cow) {
+  if (!cow || !cow.carrier || !cow.headline) return ''
+  const patterns = Array.isArray(cow.patterns) ? cow.patterns.filter(Boolean) : []
+  const patternsHtml = patterns.length
+    ? `<div class="cow-section"><span class="cow-label">What they're cutting</span><ul class="cow-list">${patterns.map(p => `<li>${esc(stripEmDashes(p))}</li>`).join('')}</ul></div>`
+    : ''
+  const rebuttalHtml = cow.rebuttal
+    ? `<div class="cow-section"><span class="cow-label">Rebuttal that's flipping it</span><div>${esc(stripEmDashes(cow.rebuttal))}</div></div>`
+    : ''
+  const playHtml = cow.play_this_week
+    ? `<div class="cow-play"><strong>▶ Play this week</strong>${esc(stripEmDashes(cow.play_this_week))}</div>`
+    : ''
+  return `<div class="cow"><div class="cow-eyebrow">🎯 Carrier of the Week</div><div class="cow-carrier">${esc(cow.carrier)}</div><h2 class="cow-headline">${esc(stripEmDashes(cow.headline))}</h2>${patternsHtml}${rebuttalHtml}${playHtml}</div>`
 }
 
 function renderMarketsBlock(stocks, commentary) {
@@ -172,6 +197,8 @@ export function renderDigest(digest, opts = {}) {
   const replyPrompt       = String(opts.replyPrompt || '')
   const tomorrowStinger   = String(opts.tomorrowStinger || '')
   const audioUrl          = String(opts.audioUrl || '')
+  const carrierOfWeek     = opts.carrierOfWeek || null
+  const carrierHtml       = renderCarrierBlock(carrierOfWeek)
   const readMin           = estimateReadingMin(intro, stories, marketsCommentary)
   // Per-recipient personalization marker — sendBroadcast does .replace per email.
   // Falls back to "Good morning." with no name if substitution didn't happen.
@@ -222,7 +249,7 @@ export function renderDigest(digest, opts = {}) {
     ? `<div class="tomorrow"><strong>👀 ${esc(tomorrowStinger)}</strong></div>`
     : ''
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div><div class="readtime">~${readMin} min read</div></div>${audioHtml}${marketsHtml}${greetingHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${replyBlock}${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner. Mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p>${tomorrowBlock}<div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div><div class="readtime">~${readMin} min read</div></div>${audioHtml}${marketsHtml}${carrierHtml}${greetingHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${replyBlock}${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner. Mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p>${tomorrowBlock}<div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
 
   // Plain-text alternative
   const stocksText = stocks.length
@@ -236,10 +263,25 @@ export function renderDigest(digest, opts = {}) {
         '',
       ].join('\n')
     : ''
+  const carrierText = carrierOfWeek && carrierOfWeek.carrier && carrierOfWeek.headline
+    ? [
+        '🎯 CARRIER OF THE WEEK',
+        carrierOfWeek.carrier,
+        stripEmDashes(carrierOfWeek.headline),
+        '',
+        ...(Array.isArray(carrierOfWeek.patterns) && carrierOfWeek.patterns.length
+          ? ['What they\'re cutting:', ...carrierOfWeek.patterns.map(p => `  - ${stripEmDashes(p)}`)]
+          : []),
+        carrierOfWeek.rebuttal ? `\nRebuttal that\'s flipping it: ${stripEmDashes(carrierOfWeek.rebuttal)}` : '',
+        carrierOfWeek.play_this_week ? `\n▶ Play this week: ${stripEmDashes(carrierOfWeek.play_this_week)}` : '',
+        '',
+      ].filter(Boolean).join('\n')
+    : ''
   const text = [
     `ADAS BREW — ${dateLabel}${issueNumber ? ` · Issue #${issueNumber}` : ''} · ~${readMin} min read`,
     '',
     stocksText,
+    carrierText,
     `Good morning, {{firstName}}.`,
     '',
     intro,

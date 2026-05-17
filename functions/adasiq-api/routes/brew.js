@@ -17,6 +17,7 @@ import { assembleMarketsCommentary } from '../services/marketsCommentary.js'
 import { generateReplyPrompt } from '../services/replyPrompt.js'
 import { generateTomorrowWatching } from '../services/tomorrowWatching.js'
 import { buildAndPublishVoiceMemo } from '../services/voiceMemo.js'
+import { generateCarrierOfWeek } from '../services/carrierOfWeek.js'
 import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
 import { postToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost } from '../services/brewLinkedIn.js'
@@ -176,11 +177,15 @@ async function buildIssue(req, preFetched = null) {
   // All fail-soft to empty so the email still ships if any single one breaks.
   const stocks = await fetchTopStocks().catch(() => [])
   const dateISO = new Date().toISOString().slice(0, 10)
-  const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo] = await Promise.all([
+  // `?carrier=1` forces the Wednesday-only Carrier of the Week block to render
+  // any day — for previewing the layout before Wednesday hits.
+  const forceCarrier = req.query?.carrier === '1' || req.query?.carrier === 'true'
+  const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo, carrierOfWeek] = await Promise.all([
     stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
     generateReplyPrompt(digest).catch(() => ''),
     generateTomorrowWatching(digest).catch(() => ''),
     buildAndPublishVoiceMemo(digest, dateISO).catch(() => null),
+    generateCarrierOfWeek(digest, { always: forceCarrier }).catch(() => null),
   ])
   const rendered = renderDigest(digest, {
     issueNumber: String(issueNumber),
@@ -190,6 +195,7 @@ async function buildIssue(req, preFetched = null) {
     replyPrompt,
     tomorrowStinger,
     audioUrl: voiceMemo?.url || '',
+    carrierOfWeek,
   })
   return { digest, rendered, issueNumber, sourceStatus, itemsConsidered: recent.length }
 }
@@ -1698,13 +1704,14 @@ async function executeDailyPipeline(req) {
     // Voice memo is idempotent on the date filename so re-running it is safe
     // (overwrites today's MP3 with the same content; cheap).
     const stocks = await fetchTopStocks().catch(() => [])
-    const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo] = await Promise.all([
+    const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo, carrierOfWeek] = await Promise.all([
       stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
       generateReplyPrompt(digest).catch(() => ''),
       generateTomorrowWatching(digest).catch(() => ''),
       buildAndPublishVoiceMemo(digest, isoDate).catch(() => null),
+      generateCarrierOfWeek(digest).catch(() => null),
     ])
-    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary, replyPrompt, tomorrowStinger, audioUrl: voiceMemo?.url || '' })
+    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary, replyPrompt, tomorrowStinger, audioUrl: voiceMemo?.url || '', carrierOfWeek })
   } else {
     const fetched = await fetchAndTrim()
     const built = await buildIssue(req, { items: fetched.items, status: fetched.status })
