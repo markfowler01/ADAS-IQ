@@ -617,6 +617,33 @@ cronRouter.get('/_token-cliq', requireCronSecretFlex, async (req, res) => {
   res.json({ ...r, hasAccessToken: r.body?.includes('access_token') })
 })
 
+// Test endpoint — generate today's voice memo end-to-end on demand (bypasses
+// the Friday-only gate). Builds digest if needed, generates spoken script,
+// converts to MP3 via OpenAI TTS, commits to GitHub, returns the public URL.
+cronRouter.get('/_test-voice-memo', requireCronSecretFlex, async (req, res) => {
+  try {
+    const built = await buildIssue(req)
+    const dateISO = new Date().toISOString().slice(0, 10)
+    const memo = await buildAndPublishVoiceMemo(built.digest, dateISO, { daily: true })
+    if (!memo) {
+      return res.status(500).json({
+        ok: false,
+        error: 'voice memo build returned null — check OPENAI_API_KEY and Catalyst logs',
+      })
+    }
+    res.json({
+      ok: true,
+      url: memo.url,
+      rawUrl: memo.rawUrl,
+      scriptPreview: String(memo.script || '').slice(0, 500),
+      scriptCharCount: String(memo.script || '').length,
+    })
+  } catch (e) {
+    console.error('[_test-voice-memo]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, stack: e.stack?.split('\n').slice(0, 6) })
+  }
+})
+
 // Diagnostic — write to + read from the named brew_handoff segment.
 // Fast (< 1s) so it fits within the 30s HTTP gateway cap. Verifies that
 // the segment switch from Plan B works without needing a full cron run.
