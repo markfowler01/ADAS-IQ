@@ -14,6 +14,8 @@ import { assembleDigest } from '../services/brewAssembly.js'
 import { renderDigest, renderLinkedIn } from '../services/brewRender.js'
 import { fetchTopStocks } from '../services/stockTicker.js'
 import { assembleMarketsCommentary } from '../services/marketsCommentary.js'
+import { generateReplyPrompt } from '../services/replyPrompt.js'
+import { generateTomorrowWatching } from '../services/tomorrowWatching.js'
 import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
 import { postToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost } from '../services/brewLinkedIn.js'
@@ -168,18 +170,22 @@ async function buildIssue(req, preFetched = null) {
   const mode = overrideMode === 'friday' ? 'friday' : (todayPT === 'Fri' ? 'friday' : 'standard')
   const digest = await assembleDigest(recent, subjectHistory, { mode })
   const issueNumber = await nextIssueNumber(segment)
-  // Fetch ADAS-relevant tickers (~1s for 5 parallel Yahoo calls). Once we
-  // have prices, ask Claude for a 1-sentence "why" line. Both fail-soft to
-  // empty so the email still ships if either upstream is down.
+  // Fetch ADAS-relevant tickers (~1s for 5 parallel Yahoo calls), then run
+  // 3 independent Claude calls in parallel: markets commentary, reply prompt,
+  // tomorrow stinger. All fail-soft to empty string.
   const stocks = await fetchTopStocks().catch(() => [])
-  const marketsCommentary = stocks.length
-    ? await assembleMarketsCommentary(stocks).catch(() => '')
-    : ''
+  const [marketsCommentary, replyPrompt, tomorrowStinger] = await Promise.all([
+    stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
+    generateReplyPrompt(digest).catch(() => ''),
+    generateTomorrowWatching(digest).catch(() => ''),
+  ])
   const rendered = renderDigest(digest, {
     issueNumber: String(issueNumber),
     dateISO: new Date().toISOString().slice(0, 10),
     stocks,
     marketsCommentary,
+    replyPrompt,
+    tomorrowStinger,
   })
   return { digest, rendered, issueNumber, sourceStatus, itemsConsidered: recent.length }
 }
@@ -908,11 +914,15 @@ cronRouter.get('/linkedin-post-preview', requireCronSecretFlex, async (req, res)
 })
 
 // GET /api/cron/brew/preview?secret=... — open in browser to see today's email
+// Preview substitutes {{firstName}} with a demo name so the placeholder doesn't
+// show literally. In real sends, sendBroadcast does this per-recipient.
 cronRouter.get('/preview', requireCronSecretFlex, async (req, res) => {
   try {
     const built = await buildIssue(req)
+    const demoName = String(req.query.name || 'Mark')
+    const html = String(built.rendered.html || '').replace(/\{\{\s*firstName\s*\}\}/g, demoName)
     res.set('Content-Type', 'text/html; charset=utf-8')
-    res.send(built.rendered.html)
+    res.send(html)
   } catch (e) {
     console.error('[brew public preview]', e.message, e.stack)
     res.status(500).type('text/plain').send(`Preview failed: ${e.message}`)
@@ -1456,16 +1466,17 @@ async function emailLinkedInToCrossPoster({ digest, issueNumber }) {
 async function sendIssueViaResend(req, preFetched = null) {
   const built = await buildIssue(req, preFetched)
   const subs = await readSubscribers(req)
-  const recipients = subs.map(s => s.email).filter(Boolean)
-  if (recipients.length === 0) {
+  const validSubs = (subs || []).filter(s => s && s.email)
+  if (validSubs.length === 0) {
     return {
       issueNumber: built.issueNumber,
       itemsConsidered: built.itemsConsidered,
       send: { status: 'error', error: 'No subscribers — add at least one via POST /api/cron/brew/subscribers' },
     }
   }
+  // Pass subscriber objects so {{firstName}} substitution fires per recipient.
   const result = await sendBroadcast({
-    recipients,
+    subscribers: validSubs,
     subject: built.rendered.subject,
     html: built.rendered.html,
     text: built.rendered.text,
@@ -1642,12 +1653,15 @@ async function executeDailyPipeline(req) {
     digest = stash.digest
     issueNumber = stash.issueNumber
     isoDate = stash.dateISO
-    // Re-fetch stocks for cache-hit path too — prices move during the day
+    // Re-fetch stocks for cache-hit path too — prices move during the day.
+    // Also refresh reply prompt + tomorrow stinger (cheap; ensures freshness).
     const stocks = await fetchTopStocks().catch(() => [])
-    const marketsCommentary = stocks.length
-      ? await assembleMarketsCommentary(stocks).catch(() => '')
-      : ''
-    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary })
+    const [marketsCommentary, replyPrompt, tomorrowStinger] = await Promise.all([
+      stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
+      generateReplyPrompt(digest).catch(() => ''),
+      generateTomorrowWatching(digest).catch(() => ''),
+    ])
+    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary, replyPrompt, tomorrowStinger })
   } else {
     const fetched = await fetchAndTrim()
     const built = await buildIssue(req, { items: fetched.items, status: fetched.status })
@@ -1673,10 +1687,12 @@ async function executeDailyPipeline(req) {
   if (!isStepOk(status.email)) {
     try {
       const subs = await readSubscribers(req)
-      const recipients = subs.map(s => s.email).filter(Boolean)
-      if (recipients.length === 0) throw new Error('No subscribers')
+      const validSubs = (subs || []).filter(s => s && s.email)
+      if (validSubs.length === 0) throw new Error('No subscribers')
+      // Pass subscriber objects (not just emails) so sendBroadcast can
+      // substitute {{firstName}} placeholder per recipient.
       const sendResult = await sendBroadcast({
-        recipients,
+        subscribers: validSubs,
         subject: rendered.subject,
         html: rendered.html,
         text: rendered.text,

@@ -56,32 +56,52 @@ async function sendOne({ to, subject, html, text }) {
 }
 
 /**
- * Send to a list of recipients. Returns aggregate result + per-recipient detail.
- * Throttles to ~5 req/sec to stay well under Resend's 10/sec rate limit.
- * @param {{ recipients: string[], subject: string, html: string, text?: string }} payload
+ * Substitute personalization placeholders in HTML/text per recipient.
+ * Currently supports {{firstName}} — falls back to "there" if no name.
  */
-export async function sendBroadcast({ recipients, subject, html, text }) {
+function personalize(body, sub) {
+  const first = String(sub?.name || '').trim().split(/\s+/)[0] || 'there'
+  return String(body || '').replace(/\{\{\s*firstName\s*\}\}/g, first)
+}
+
+/**
+ * Send to a list of recipients. Accepts EITHER:
+ *   - recipients: string[] (email addresses — no personalization)
+ *   - subscribers: [{ email, name, ... }] (preferred — enables {{firstName}})
+ *
+ * Returns aggregate result + per-recipient detail.
+ * Throttles to ~5 req/sec to stay well under Resend's 10/sec rate limit.
+ */
+export async function sendBroadcast({ recipients, subscribers, subject, html, text }) {
+  // Normalize to subscriber objects so personalization always runs
+  const subs = Array.isArray(subscribers) && subscribers.length
+    ? subscribers
+    : (recipients || []).map(email => ({ email }))
+
   if (!isConfigured()) {
-    console.log(`[brew] DRY RUN — Resend not configured. Would send "${subject}" to ${recipients.length} recipient(s).`)
-    return { status: 'queued', dryRun: true, sent: 0, failed: 0, total: recipients.length, results: [] }
+    console.log(`[brew] DRY RUN — Resend not configured. Would send "${subject}" to ${subs.length} recipient(s).`)
+    return { status: 'queued', dryRun: true, sent: 0, failed: 0, total: subs.length, results: [] }
   }
 
   const results = []
   let sent = 0
   let failed = 0
 
-  for (let i = 0; i < recipients.length; i++) {
-    const to = recipients[i]
-    const r = await sendOne({ to, subject, html, text })
+  for (let i = 0; i < subs.length; i++) {
+    const sub = subs[i]
+    const to = sub.email
+    const personalHtml = personalize(html, sub)
+    const personalText = text ? personalize(text, sub) : undefined
+    const r = await sendOne({ to, subject, html: personalHtml, text: personalText })
     results.push({ to, ok: r.ok, id: r.id || null, error: r.error || null })
     if (r.ok) sent++
     else failed++
     // Throttle ~200ms between sends
-    if (i < recipients.length - 1) await new Promise(r => setTimeout(r, 200))
+    if (i < subs.length - 1) await new Promise(r => setTimeout(r, 200))
   }
 
   const status = failed === 0 ? 'sent' : (sent === 0 ? 'error' : 'partial')
-  return { status, sent, failed, total: recipients.length, results }
+  return { status, sent, failed, total: subs.length, results }
 }
 
 export const resendConfigured = isConfigured

@@ -6,6 +6,7 @@
 // ships if Claude is unreachable.
 
 import Anthropic from '@anthropic-ai/sdk'
+import { sanitizeAiOutput } from './textSanitize.js'
 
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -59,8 +60,10 @@ export async function assembleMarketsCommentary(stocks) {
     })
     const text = (message.content?.[0]?.text || '').trim()
     if (!text) return ''
-    // Sanity: trim to one line, strip surrounding quotes if Claude added them
-    return text.split('\n')[0].replace(/^["']|["']$/g, '').trim().slice(0, 200)
+    // Sanity: trim to one line, strip surrounding quotes if Claude added them,
+    // then run through the shared sanitizer to nuke any em dashes / banned phrases.
+    const cleaned = text.split('\n')[0].replace(/^["']|["']$/g, '').trim()
+    return sanitizeAiOutput(cleaned).slice(0, 200)
   } catch (e) {
     console.warn('[marketsCommentary]', e.message)
     return ''

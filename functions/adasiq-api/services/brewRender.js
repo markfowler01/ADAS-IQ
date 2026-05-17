@@ -3,6 +3,8 @@
 // to keep the payload under Zoho Campaigns' ~10KB htmlcontent limit.
 // Style-block CSS works in Gmail, Apple Mail, Outlook web/Mac, and most modern clients.
 
+import { stripEmDashes } from './textSanitize.js'
+
 const ORANGE = '#CD4419'
 
 const TAG_COLORS = {
@@ -81,9 +83,22 @@ p{font-size:15px;line-height:1.55;margin:0 0 10px}
 .cta{margin:32px 28px 8px;background:#fff7f3;border:1.5px solid ${ORANGE};border-radius:12px;padding:20px 22px}
 .cta p{margin:0 0 14px}
 .btn{display:inline-block;background:${ORANGE};color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:11px 22px;border-radius:8px}
+.readtime{font-size:11px;color:#9ca3af;font-family:monospace;letter-spacing:.04em;margin-top:4px}
+.greet{padding:20px 28px 0;font-size:16px;font-weight:600;color:#1a1a1a}
+.reply{margin:20px 28px 8px;padding:14px 18px;background:#fff8f4;border-left:3px solid ${ORANGE};border-radius:8px;font-size:14px;line-height:1.5;color:#374151}
+.reply strong{color:${ORANGE}}
+.tomorrow{margin:18px 28px 0;padding:12px 16px;background:#0f172a;color:#e5e7eb;border-radius:8px;font-size:13px;line-height:1.5;font-style:italic}
+.tomorrow strong{color:#fbbf24}
 .byline{padding:32px 28px 8px;font-size:13px;line-height:1.55;color:#6b7280;font-style:italic;margin:0}
 .foot{padding:24px 28px 28px;border-top:1px solid #ececec;font-size:12px;color:#6b7280}
 .foot a{color:#6b7280}`.replace(/\s*\n\s*/g, '')
+
+// Estimate reading time at ~200 wpm. Round up, min 1.
+function estimateReadingMin(intro, stories, commentary) {
+  const text = [intro || '', commentary || '', ...(stories || []).map(s => `${s.headline || ''} ${s.body || ''}`)].join(' ')
+  const words = text.trim().split(/\s+/).filter(Boolean).length
+  return Math.max(1, Math.round(words / 200))
+}
 
 function fmtPrice(n) {
   if (!Number.isFinite(n)) return '—'
@@ -128,14 +143,27 @@ export function renderDigest(digest, opts = {}) {
   const dateLabel      = new Date(dateISO).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
   const unsubscribeUrl = opts.unsubscribeUrl || 'https://absoluteadas.com/unsubscribe'
 
-  const subject      = digest.subject || 'ADAS Brew — Today\'s top stories'
-  const previewText  = digest.preview_text || ''
-  const tagline      = digest.tagline || 'Today\'s brew'
-  const intro        = digest.intro || ''
-  const stories      = Array.isArray(digest.stories) ? digest.stories : []
+  // Sanitize all Claude-generated text fields — strip em dashes that slip past
+  // the system-prompt rule (Claude occasionally uses them despite instructions).
+  const subject      = stripEmDashes(digest.subject || 'ADAS Brew - today\'s top stories')
+  const previewText  = stripEmDashes(digest.preview_text || '')
+  const tagline      = stripEmDashes(digest.tagline || 'Today\'s brew')
+  const intro        = stripEmDashes(digest.intro || '')
+  const rawStories   = Array.isArray(digest.stories) ? digest.stories : []
+  const stories      = rawStories.map(s => ({
+    ...s,
+    headline: stripEmDashes(s.headline),
+    body: stripEmDashes(s.body),
+  }))
   const stocks            = Array.isArray(opts.stocks) ? opts.stocks : []
   const marketsCommentary = String(opts.marketsCommentary || '')
   const marketsHtml       = renderMarketsBlock(stocks, marketsCommentary)
+  const replyPrompt       = String(opts.replyPrompt || '')
+  const tomorrowStinger   = String(opts.tomorrowStinger || '')
+  const readMin           = estimateReadingMin(intro, stories, marketsCommentary)
+  // Per-recipient personalization marker — sendBroadcast does .replace per email.
+  // Falls back to "Good morning." with no name if substitution didn't happen.
+  const greetingHtml = `<div class="greet">Good morning, {{firstName}}.</div>`
   // Pin CTA destination to one of a small allowlist — prevents AI from inventing
   // URLs but lets Friday Field Notes mode point at Mark's LinkedIn for the
   // "DM me 'audit'" CTA.
@@ -160,7 +188,7 @@ export function renderDigest(digest, opts = {}) {
   // with subject + issue link pre-filled, X / LinkedIn share with the issue URL.
   const issueUrl = `https://absoluteadas.com/brew/issues/${encodeURIComponent(issueNumber)}`
   const shareSubject = encodeURIComponent(`Read this ADAS Brew issue: ${subject}`)
-  const shareBody = encodeURIComponent(`Saw this and thought of you — calibration / collision intel for body shops.\n\n${subject}\n${issueUrl}\n\nSubscribe free: https://absoluteadas.com/brew`)
+  const shareBody = encodeURIComponent(`Saw this and thought of you. Calibration and collision intel for body shops.\n\n${subject}\n${issueUrl}\n\nSubscribe free: https://absoluteadas.com/brew`)
   const mailtoUrl = `mailto:?subject=${shareSubject}&body=${shareBody}`
   const liShareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(issueUrl)}`
   const fbShareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(issueUrl)}`
@@ -168,7 +196,14 @@ export function renderDigest(digest, opts = {}) {
 
   const forwardBlock = `<div style="margin:28px 0 18px;padding:18px 20px;background:#fff8f4;border-left:3px solid #CD4419;border-radius:8px"><p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#CD4419;letter-spacing:.02em">📤 Know a shop that should read this?</p><p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#374151">One forward could save them three hours of denial fights this month.</p><div style="font-size:13px"><a href="${mailtoUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#CD4419;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">Forward by email</a><a href="${liShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#0a66c2;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">LinkedIn</a><a href="${fbShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#1877f2;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">Facebook</a><a href="${xShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#000;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">X</a></div></div>`
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div></div>${marketsHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner — mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p><div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
+  const replyBlock = replyPrompt
+    ? `<div class="reply"><strong>📬 Hit reply.</strong> ${esc(replyPrompt)}</div>`
+    : ''
+  const tomorrowBlock = tomorrowStinger
+    ? `<div class="tomorrow"><strong>👀 ${esc(tomorrowStinger)}</strong></div>`
+    : ''
+
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div><div class="readtime">~${readMin} min read</div></div>${marketsHtml}${greetingHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${replyBlock}${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner. Mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p>${tomorrowBlock}<div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
 
   // Plain-text alternative
   const stocksText = stocks.length
@@ -183,9 +218,11 @@ export function renderDigest(digest, opts = {}) {
       ].join('\n')
     : ''
   const text = [
-    `ADAS BREW — ${dateLabel}${issueNumber ? ` · Issue #${issueNumber}` : ''}`,
+    `ADAS BREW — ${dateLabel}${issueNumber ? ` · Issue #${issueNumber}` : ''} · ~${readMin} min read`,
     '',
     stocksText,
+    `Good morning, {{firstName}}.`,
+    '',
     intro,
     '',
     ...stories.map((s, i) => [
@@ -198,7 +235,11 @@ export function renderDigest(digest, opts = {}) {
     cta.text || '',
     cta.button_url ? `→ ${cta.button_url}` : '',
     '',
+    replyPrompt ? `📬 Hit reply. ${replyPrompt}` : '',
+    '',
     'Published by Absolute ADAS. Mark Fowler, owner — mobile ADAS calibration, Western Washington. 50,000+ calibrations on the floor.',
+    '',
+    tomorrowStinger ? `👀 ${tomorrowStinger}` : '',
     `Unsubscribe: ${unsubscribeUrl}`,
   ].filter(Boolean).join('\n')
 
