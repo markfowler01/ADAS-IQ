@@ -39,7 +39,10 @@ function tagSpan(tag) {
 }
 
 function renderStory(s, idx) {
-  return `<div class="story"><div class="tagrow">${tagSpan(s.tag)}</div><h2><span class="num">${idx}.</span> ${esc(s.headline)}</h2><p>${esc(s.body)}</p><p class="src">Source: <a href="${safeUrl(s.source_url)}">${esc(s.source_label || 'Read more')} →</a></p></div>`
+  const takeBlock = s.mark_take
+    ? `<p class="mtake"><span class="mtake-label">Mark says:</span> ${esc(stripEmDashes(s.mark_take))}</p>`
+    : ''
+  return `<div class="story"><div class="tagrow">${tagSpan(s.tag)}</div><h2><span class="num">${idx}.</span> ${esc(s.headline)}</h2><p>${esc(s.body)}</p>${takeBlock}<p class="src">Source: <a href="${safeUrl(s.source_url)}">${esc(s.source_label || 'Read more')} →</a></p></div>`
 }
 
 const STYLES = `body{margin:0;padding:0;background:#f5f3f0;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a}
@@ -80,6 +83,8 @@ h2{font-size:20px;line-height:1.3;font-weight:700;margin:0 0 8px}
 p{font-size:15px;line-height:1.55;margin:0 0 10px}
 .src{font-size:13px;color:#6b7280;margin:0}
 .src a{color:${ORANGE};font-weight:600;text-decoration:none}
+.mtake{margin:10px 0 8px;padding:10px 14px;background:#fff7f3;border-left:3px solid ${ORANGE};border-radius:6px;font-size:14px;line-height:1.5;color:#1a1a1a;font-style:italic}
+.mtake-label{color:${ORANGE};font-weight:800;font-style:normal;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin-right:6px}
 .cta{margin:32px 28px 8px;background:#fff7f3;border:1.5px solid ${ORANGE};border-radius:12px;padding:20px 22px}
 .cta p{margin:0 0 14px}
 .btn{display:inline-block;background:${ORANGE};color:#fff;font-size:14px;font-weight:700;text-decoration:none;padding:11px 22px;border-radius:8px}
@@ -242,9 +247,10 @@ export function renderDigest(digest, opts = {}) {
     ...stories.map((s, i) => [
       `${i + 1}. [${s.tag || 'INDUSTRY'}] ${s.headline}`,
       s.body,
-      `Source: ${s.source_label} — ${s.source_url}`,
+      s.mark_take ? `Mark says: ${stripEmDashes(s.mark_take)}` : '',
+      `Source: ${s.source_label}: ${s.source_url}`,
       '',
-    ].join('\n')),
+    ].filter(Boolean).join('\n')),
     '---',
     cta.text || '',
     cta.button_url ? `→ ${cta.button_url}` : '',

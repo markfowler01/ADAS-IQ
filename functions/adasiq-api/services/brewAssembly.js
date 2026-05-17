@@ -58,7 +58,8 @@ OUTPUT: Return ONLY a raw JSON object matching this schema. No markdown, no prea
       "body": "string — 2-4 short sentences. Plain prose, no markdown. Add brief practitioner context.",
       "source_label": "string — name of the source publication",
       "source_url": "string — URL to the original item",
-      "tag": "string — one of: TSB, RECALL, INSURANCE, OEM, INDUSTRY, TRAINING"
+      "tag": "string — one of: TSB, RECALL, INSURANCE, OEM, INDUSTRY, TRAINING",
+      "mark_take": "string — REQUIRED. ONE sentence in Mark Fowler's voice (peer-in-the-bay practitioner, 50k+ calibrations on the floor) on what this story means for the SHOP. Concrete and specific — name the play the reader should make today. Not commentary on the news. Under 22 words. No em dashes. No AI phrases. Examples: 'Front your estimators with this OEM cite before Monday.', 'Put the recall lookup on every check-in walkthrough this week.', 'If you sublet this calibration, pull the bulletin and attach it to every supplement.'"
     }
   ],
   "cta": {
@@ -226,6 +227,7 @@ Return only the JSON object as specified.`
       source_label: String(s.source_label || ''),
       source_url:   String(s.source_url || ''),
       tag:          String(s.tag || 'INDUSTRY'),
+      mark_take:    String(s.mark_take || '').slice(0, 250),
     }))
 
     return parsed
