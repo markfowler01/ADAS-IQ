@@ -148,6 +148,24 @@ export async function buildAndPublishVoiceMemo(digest, dateISO, opts = {}) {
     if (dayPT === 'Sat' || dayPT === 'Sun') return null
   }
 
+  const publicUrl = `https://absoluteadas.com/audio/${dateISO}.mp3`
+
+  // Short-circuit: if today's MP3 is already on GitHub, return its URL without
+  // re-running Claude + TTS. Makes /preview reliable (returns instantly under
+  // the 30s gateway cap) and prevents redundant TTS spend if the cron retries.
+  // opts.force=true bypasses this (used by /_test-voice-memo to regenerate).
+  if (!opts.force) {
+    try {
+      const head = await axios.head(
+        `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/audio/${dateISO}.mp3`,
+        { timeout: 5000, validateStatus: s => s < 500 }
+      )
+      if (head.status === 200) {
+        return { url: publicUrl, cached: true, script: null }
+      }
+    } catch { /* fall through and generate */ }
+  }
+
   // Skip if no TTS key — fail-soft so the email still ships
   if (!process.env.OPENAI_API_KEY) {
     console.log('[voiceMemo] OPENAI_API_KEY not set, skipping audio')
@@ -167,8 +185,6 @@ export async function buildAndPublishVoiceMemo(digest, dateISO, opts = {}) {
       message: `Voice memo for ADAS Brew ${dateISO}`,
     })
     if (!r?.ok || !r?.rawUrl) return null
-    // Public URL on absoluteadas.com (served from GitHub Pages)
-    const publicUrl = `https://absoluteadas.com/audio/${dateISO}.mp3`
     return { url: publicUrl, rawUrl: r.rawUrl, script }
   } catch (e) {
     console.warn('[voiceMemo commit]', e.message)

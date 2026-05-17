@@ -179,12 +179,15 @@ async function buildIssue(req, preFetched = null) {
   const dateISO = new Date().toISOString().slice(0, 10)
   // `?carrier=1` forces the Wednesday-only Carrier of the Week block to render
   // any day — for previewing the layout before Wednesday hits.
+  // `?audio=1` forces the weekday-only voice memo to render any day (cache
+  // short-circuit returns today's existing MP3 if present, so preview is fast).
   const forceCarrier = req.query?.carrier === '1' || req.query?.carrier === 'true'
+  const forceAudio = req.query?.audio === '1' || req.query?.audio === 'true'
   const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo, carrierOfWeek] = await Promise.all([
     stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
     generateReplyPrompt(digest).catch(() => ''),
     generateTomorrowWatching(digest).catch(() => ''),
-    buildAndPublishVoiceMemo(digest, dateISO).catch(() => null),
+    buildAndPublishVoiceMemo(digest, dateISO, { always: forceAudio }).catch(() => null),
     generateCarrierOfWeek(digest, { always: forceCarrier }).catch(() => null),
   ])
   const rendered = renderDigest(digest, {
@@ -630,7 +633,7 @@ cronRouter.get('/_test-voice-memo', requireCronSecretFlex, async (req, res) => {
   try {
     const built = await buildIssue(req)
     const dateISO = new Date().toISOString().slice(0, 10)
-    const memo = await buildAndPublishVoiceMemo(built.digest, dateISO, { always: true })
+    const memo = await buildAndPublishVoiceMemo(built.digest, dateISO, { always: true, force: true })
     if (!memo) {
       return res.status(500).json({
         ok: false,
