@@ -110,7 +110,7 @@ async function scriptToMp3(script) {
       'https://api.openai.com/v1/audio/speech',
       {
         model: 'tts-1',          // cheap + fast; tts-1-hd is ~2x cost for slight quality lift
-        voice: process.env.BREW_VOICE_MEMO_VOICE || 'onyx',  // deep confident male
+        voice: process.env.BREW_VOICE_MEMO_VOICE || 'echo',  // Mark-picked: closest to his real voice
         input: script.slice(0, 4000),  // OpenAI cap is 4096 chars
         response_format: 'mp3',
       },
