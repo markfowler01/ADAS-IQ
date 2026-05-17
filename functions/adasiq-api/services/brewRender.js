@@ -47,6 +47,21 @@ const STYLES = `body{margin:0;padding:0;background:#f5f3f0;font-family:-apple-sy
 .slogan{font-size:14px;color:#6b7280;font-style:italic;margin:6px 0 14px;line-height:1.4}
 .h1{font-size:30px;font-weight:800;line-height:1.1;margin:4px 0 0}
 .date{font-family:monospace;font-size:12px;color:#6b7280;margin-top:6px}
+.markets{margin:20px 28px 0;border:1px solid #e5e7eb;border-radius:10px;padding:14px 18px;background:#fafafa}
+.mh{font-family:monospace;font-size:11px;font-weight:700;letter-spacing:.16em;color:#2563eb;text-transform:uppercase;margin-bottom:10px}
+.mt{width:100%;border-collapse:collapse;font-size:13px}
+.mt td{padding:8px 0;border-bottom:1px solid #ececec;vertical-align:middle}
+.mt tr:last-child td{border-bottom:none}
+.ma{width:18px;text-align:center;font-size:14px;font-weight:700}
+.ma.up{color:#16a34a}
+.ma.down{color:#dc2626}
+.mn{font-weight:700;color:#1a1a1a;padding-left:6px}
+.mp{text-align:right;color:#1a1a1a;padding-right:10px}
+.mc{text-align:right;font-weight:700;font-size:12px;white-space:nowrap}
+.mc span{padding:3px 8px;border-radius:6px;display:inline-block}
+.mc.up span{background:#dcfce7;color:#166534}
+.mc.down span{background:#fee2e2;color:#b91c1c}
+.mf{font-size:11px;color:#9ca3af;margin-top:8px;text-align:right}
 .intro{padding:24px 28px 0;font-size:16px;line-height:1.55}
 .story{padding:24px 28px 0;border-bottom:1px solid #ececec}
 .story:last-of-type{border-bottom:0}
@@ -63,6 +78,29 @@ p{font-size:15px;line-height:1.55;margin:0 0 10px}
 .byline{padding:32px 28px 8px;font-size:13px;line-height:1.55;color:#6b7280;font-style:italic;margin:0}
 .foot{padding:24px 28px 28px;border-top:1px solid #ececec;font-size:12px;color:#6b7280}
 .foot a{color:#6b7280}`.replace(/\s*\n\s*/g, '')
+
+function fmtPrice(n) {
+  if (!Number.isFinite(n)) return '—'
+  // 4-digit indices like 26,635 → no decimals; <100 → 2 decimals
+  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 })
+  return n.toFixed(2)
+}
+
+function fmtPct(n) {
+  if (!Number.isFinite(n)) return '—'
+  const sign = n >= 0 ? '+' : ''
+  return `${sign}${n.toFixed(2)}%`
+}
+
+function renderMarketsBlock(stocks) {
+  if (!stocks || stocks.length === 0) return ''
+  const rows = stocks.map(s => {
+    const dir = s.direction || (s.changeAbs >= 0 ? 'up' : 'down')
+    const arrow = dir === 'up' ? '▲' : '▼'
+    return `<tr><td class="ma ${dir}">${arrow}</td><td class="mn">${esc(s.name)}</td><td class="mp">$${fmtPrice(s.price)}</td><td class="mc ${dir}"><span>${esc(fmtPct(s.changePct))}</span></td></tr>`
+  }).join('')
+  return `<div class="markets"><div class="mh">Markets</div><table class="mt">${rows}</table><div class="mf">Data via Yahoo Finance</div></div>`
+}
 
 /**
  * Render a digest to HTML.
@@ -81,6 +119,8 @@ export function renderDigest(digest, opts = {}) {
   const tagline      = digest.tagline || 'Today\'s brew'
   const intro        = digest.intro || ''
   const stories      = Array.isArray(digest.stories) ? digest.stories : []
+  const stocks       = Array.isArray(opts.stocks) ? opts.stocks : []
+  const marketsHtml  = renderMarketsBlock(stocks)
   // Pin CTA destination to one of a small allowlist — prevents AI from inventing
   // URLs but lets Friday Field Notes mode point at Mark's LinkedIn for the
   // "DM me 'audit'" CTA.
@@ -113,12 +153,24 @@ export function renderDigest(digest, opts = {}) {
 
   const forwardBlock = `<div style="margin:28px 0 18px;padding:18px 20px;background:#fff8f4;border-left:3px solid #CD4419;border-radius:8px"><p style="margin:0 0 8px;font-size:14px;font-weight:700;color:#CD4419;letter-spacing:.02em">📤 Know a shop that should read this?</p><p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#374151">One forward could save them three hours of denial fights this month.</p><div style="font-size:13px"><a href="${mailtoUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#CD4419;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">Forward by email</a><a href="${liShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#0a66c2;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">LinkedIn</a><a href="${fbShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#1877f2;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">Facebook</a><a href="${xShareUrl}" style="display:inline-block;margin:0 8px 4px 0;padding:7px 13px;background:#000;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">X</a></div></div>`
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div></div>${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner — mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p><div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div></div>${marketsHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner — mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p><div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
 
   // Plain-text alternative
+  const stocksText = stocks.length
+    ? [
+        'MARKETS',
+        ...stocks.map(s => {
+          const dir = (s.changeAbs >= 0 ? '▲' : '▼')
+          return `${dir} ${s.name.padEnd(12)} $${fmtPrice(s.price)}   ${fmtPct(s.changePct)}`
+        }),
+        '(Data via Yahoo Finance)',
+        '',
+      ].join('\n')
+    : ''
   const text = [
     `ADAS BREW — ${dateLabel}${issueNumber ? ` · Issue #${issueNumber}` : ''}`,
     '',
+    stocksText,
     intro,
     '',
     ...stories.map((s, i) => [

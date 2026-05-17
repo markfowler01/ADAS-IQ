@@ -12,6 +12,7 @@ import catalyst from 'zcatalyst-sdk-node'
 import { fetchAllSources, recentItems } from '../services/brewSources.js'
 import { assembleDigest } from '../services/brewAssembly.js'
 import { renderDigest, renderLinkedIn } from '../services/brewRender.js'
+import { fetchTopStocks } from '../services/stockTicker.js'
 import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
 import { postToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost } from '../services/brewLinkedIn.js'
@@ -166,9 +167,13 @@ async function buildIssue(req, preFetched = null) {
   const mode = overrideMode === 'friday' ? 'friday' : (todayPT === 'Fri' ? 'friday' : 'standard')
   const digest = await assembleDigest(recent, subjectHistory, { mode })
   const issueNumber = await nextIssueNumber(segment)
+  // Fetch ADAS-relevant tickers in parallel with anything else slow — Yahoo
+  // call is ~1s; fails-soft to empty array so the email still ships.
+  const stocks = await fetchTopStocks().catch(() => [])
   const rendered = renderDigest(digest, {
     issueNumber: String(issueNumber),
     dateISO: new Date().toISOString().slice(0, 10),
+    stocks,
   })
   return { digest, rendered, issueNumber, sourceStatus, itemsConsidered: recent.length }
 }
@@ -1631,7 +1636,9 @@ async function executeDailyPipeline(req) {
     digest = stash.digest
     issueNumber = stash.issueNumber
     isoDate = stash.dateISO
-    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate })
+    // Re-fetch stocks for cache-hit path too — prices move during the day
+    const stocks = await fetchTopStocks().catch(() => [])
+    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks })
   } else {
     const fetched = await fetchAndTrim()
     const built = await buildIssue(req, { items: fetched.items, status: fetched.status })
