@@ -23,7 +23,7 @@ REBUTTAL STRUCTURE (exactly this order):
 3. WHY THE OEM SAYS IT — one or two sentences translating the OEM position into shop language.
 4. INDUSTRY BACKUP — mention the relevant I-CAR Repairability Technical Support (RTS) position OR the SCRS guidance, OR (if applicable) the GM-funded University of Michigan study showing ADAS systems reduce injury crashes by up to 57 percent. Use this as the safety-critical backup argument.
 5. THE ASK — a clear, professional request for the carrier to reauthorize the line item, with the calibration invoice itemized and the OEM procedure cited.
-6. CLOSE — "I'm available to review documentation directly. Phone: 1-844-FIX-ADAS. Email: brew@adas-iq.com." Sign-off as the shop, NOT as Mark — this rebuttal is going FROM the shop TO the carrier.
+6. CLOSE — "I'm available to review documentation directly. Phone: 1-844-FIX-ADAS. Email: brew@absoluteadas.com." Sign-off as the shop, NOT as Mark — this rebuttal is going FROM the shop TO the carrier.
 
 VOICE
 - Calm, professional, technically sound — not adversarial

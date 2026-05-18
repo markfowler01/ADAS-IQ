@@ -9,7 +9,7 @@ const RESEND_API = 'https://api.resend.com'
 function envBundle() {
   return {
     apiKey: process.env.RESEND_API_KEY || '',
-    fromEmail: process.env.BREW_FROM_EMAIL || 'brew@adas-iq.com',
+    fromEmail: process.env.BREW_FROM_EMAIL || 'brew@absoluteadas.com',
     fromName: process.env.BREW_FROM_NAME || 'Mark @ ADAS Brew',
   }
 }

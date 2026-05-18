@@ -13,7 +13,7 @@ function envBundle() {
     clientId: process.env.ZOHO_CAMPAIGNS_CLIENT_ID || '',
     clientSecret: process.env.ZOHO_CAMPAIGNS_CLIENT_SECRET || '',
     listKey: process.env.ZOHO_CAMPAIGNS_LIST_KEY || '',
-    fromEmail: process.env.ZOHO_CAMPAIGNS_FROM_EMAIL || 'brew@adas-iq.com',
+    fromEmail: process.env.ZOHO_CAMPAIGNS_FROM_EMAIL || 'brew@absoluteadas.com',
     fromName: process.env.ZOHO_CAMPAIGNS_FROM_NAME || 'Mark @ ADAS Brew',
   }
 }
