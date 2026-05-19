@@ -687,39 +687,68 @@ router.delete('/tasks/:id', async (req, res) => {
   }
 })
 
-// GET /api/calendar/tasks/delegate — create a task in the AR group (for delegations)
+// Zoho ToDo numeric user IDs for AR group members. Jayden does NOT have an active
+// Zoho ToDo account, so his delegations are routed via Cliq DM (using his email).
+const TODO_USER_IDS = {
+  Mark: 858216366,
+  Kat:  914153354,
+  Kath: 914153354,
+}
+
+// GET /api/calendar/tasks/delegate — route delegation to the picked assignee.
+// Kat → Zoho ToDo (Mark + Kat in AR group). Jayden → Cliq DM (no ToDo account).
 router.get('/tasks/delegate', async (req, res) => {
   try {
     const { subject, dueDate, assignee } = req.query
     if (!subject) return res.status(400).json({ error: 'subject is required' })
+    const assigneeName = (assignee || '').trim()
+
+    // Jayden path: Cliq DM only (no Zoho ToDo). Awaited per Catalyst rule (no FF after res.json).
+    if (/^jay(den)?$/i.test(assigneeName)) {
+      const { postToCliqUser } = await import('../services/cliq.js')
+      const text = `📋 *Delegation from Mark*\n${subject}${dueDate ? `\n_Due:_ ${dueDate}` : ''}`
+      let cliqOk = false, cliqErr = null
+      try { await postToCliqUser('jayden@absoluteadas.com', text); cliqOk = true }
+      catch (e) { cliqErr = e.response?.data || e.message }
+      console.log(`[calendar] Delegation to Jayden via Cliq: ${subject} — sent=${cliqOk}`)
+      return res.json({ success: cliqOk, channel: 'cliq', assignee: 'Jayden', error: cliqErr || undefined })
+    }
+
+    // Kat (or default): Zoho ToDo in AR group, assigned to Mark + Kat
+    const recipients = [TODO_USER_IDS.Mark]
+    const assigneeId = TODO_USER_IDS[assigneeName]
+    if (assigneeId && assigneeId !== TODO_USER_IDS.Mark) recipients.push(assigneeId)
+    // Fallback: if no recognized assignee, default to Mark + Kat (back-compat with empty assignee)
+    if (recipients.length === 1) recipients.push(TODO_USER_IDS.Kat)
+
     const token = await getTodoAccessToken()
     const d = dueDate || new Date().toISOString().slice(0, 10)
     const [y, m, dd] = d.split('-')
     const body = { title: subject, dueDate: `${dd}/${m}/${y}`, priority: '2' }
-    // Assign to both Mark + Kat after creation
-    let taskId = null
     const resp = await axios.post(`${ZOHO_TODO_GROUP_API}/${AR_GROUP_ID}`, body, {
       headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }, timeout: 10000,
     })
-    taskId = resp.data?.data?.id
-    // Assign to both Mark and Kat
+    const taskId = resp.data?.data?.id
+
+    let bulkOk = false
     try {
-      await axios.put(`${ZOHO_TODO_GROUP_API}/${AR_GROUP_ID}/${taskId}`, {
-        assignee: [858216366, 914153354],
-      }, { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }, timeout: 10000 })
+      await axios.put(`${ZOHO_TODO_GROUP_API}/${AR_GROUP_ID}/${taskId}`, { assignee: recipients }, {
+        headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }, timeout: 10000,
+      })
+      bulkOk = true
     } catch (assignErr) {
-      console.warn('[calendar] Assign failed, trying individually:', assignErr.response?.data?.data?.errorCode)
-      // Try assigning one at a time
-      for (const uid of [858216366, 914153354]) {
+      console.warn('[calendar] Bulk assign failed, trying individually:', assignErr.response?.data?.data?.errorCode)
+      for (const uid of recipients) {
         try {
-          await axios.put(`${ZOHO_TODO_GROUP_API}/${AR_GROUP_ID}/${taskId}`, {
-            assignee: uid,
-          }, { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }, timeout: 10000 })
+          await axios.put(`${ZOHO_TODO_GROUP_API}/${AR_GROUP_ID}/${taskId}`, { assignee: uid }, {
+            headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }, timeout: 10000,
+          })
         } catch {}
       }
     }
-    console.log(`[calendar] Created AR delegation: ${subject} → ${taskId} (assigned to Mark + Kat)`)
-    res.json({ success: true, taskId: String(taskId) })
+
+    console.log(`[calendar] AR delegation ${taskId}: assignee=${assigneeName} recipients=[${recipients.join(',')}] bulkOk=${bulkOk}`)
+    res.json({ success: true, taskId: String(taskId), channel: 'zoho-todo', assignee: assigneeName, recipients })
   } catch (err) {
     console.error('[calendar] Delegate create error:', err.response?.data || err.message)
     res.status(500).json({ error: err.message })
