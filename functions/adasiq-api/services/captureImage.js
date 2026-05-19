@@ -300,20 +300,32 @@ function escXml(s) {
 // floor, vehicles in repair) photographs cleanly and convincingly.
 const STYLE_PROMPT = `Documentary photograph, landscape 1200x627 (LinkedIn share size). Photoreal, magazine-quality, shot on a 35mm or medium-format camera with shallow depth of field.
 
-SCENE: Inside a clean modern collision repair body shop bay. A late-model SUV positioned for an ADAS calibration. An ADAS calibration target frame on a tripod set up in front of the vehicle, with the target board facing the windshield. An OEM scan tool plugged into the vehicle's OBD port, screen glowing faintly. Clean polished concrete floor. Pegboard with calibration tools in soft focus background. The whole frame says "real calibration work in progress."
+SCENE OPTIONS (pick whichever reads cleanest — vary subtly across generations):
+- A late-model SUV or sedan parked inside a clean modern collision repair body shop bay, three-quarter front view, body lines catching light. The vehicle is the hero.
+- Close-up on a vehicle's front clip — headlight cluster, grille, windshield base where the rain-sensor and forward camera live. Modern automotive detail, shallow DOF.
+- Wide shot of a clean, organized body shop bay: polished concrete floor, open roll-up bay door letting in natural light, a vehicle just inside, paint booth or work bench in the soft-focus background.
+- Detail shot of a vehicle hood / windshield / A-pillar with morning light catching the clearcoat. The work environment is implied, not detailed.
 
-LIGHTING: Cinematic mix — natural golden-hour light spilling through the open bay door from the left, mixed with cool overhead LED shop lights. Mood: confident, professional, end-of-workday calm.
+LIGHTING (most important): Cinematic, golden-hour natural light spilling through the open bay door, mixed with cool overhead shop fluorescents. Strong directional light, deep shadows, magazine-cover mood. Confident, professional, end-of-workday calm.
 
-ABSOLUTELY NO PEOPLE. No technicians, no shop owners, no hands, no human silhouettes. Empty of people. Just the equipment and the vehicle.
+ENVIRONMENT: clean, polished concrete floor. Organized, modern shop. Light coming from a real bay door, not stock-photo studio. No clutter, no debris.
 
-CRITICAL: NO TEXT, NO LOGOS, NO WATERMARKS, NO GRAPHICS of any kind in the image. Do NOT add captions, headlines, wordmarks, or branding. Text and branding will be composited on top in code afterward.
+HARD BANS — anything in this list looks fake or "AI-weird":
+- NO people, no technicians, no hands, no silhouettes. Frame empty of humans.
+- NO specific scan-tool devices with visible screens, displayed numbers, menu UI, or brand markings (Autel, Bosch, etc.). AI butchers these.
+- NO calibration target frames with complex geometric patterns. AI gets the geometry wrong and it reads as cartoon.
+- NO branded logos on any equipment, ANY tools, ANY tags or signage in the shop.
+- NO text, NO captions, NO watermarks, NO graphics anywhere in the image. Branding gets composited on after.
+- NO stock-photo aesthetic. NO overly bright "advertising" lighting. NO clean white seamless background.
 
-COMPOSITION GUIDANCE (so the overlay reads cleanly):
-- Top 50% of frame: the main subject (calibration setup, target frame, scan tool, vehicle).
-- Middle 30% of frame: keep this area visually quieter (darker shadows, out-of-focus background, neutral tones) so a headline text overlay reads cleanly when placed there.
+The subject is the vehicle and the environment. Tools and equipment can exist in deep soft focus background but should never be the center of attention.
+
+COMPOSITION GUIDANCE (so the text overlay reads cleanly):
+- Top 60% of frame: the vehicle / scene as described above.
+- Middle 25% of frame: keep this area visually quieter (darker shadows, out-of-focus background, neutral tones, smooth surfaces) so a headline text overlay reads cleanly when placed there.
 - Bottom 15% of frame: keep dark and uniform (concrete floor, shadow, dark background) because a graphic footer with the brand mark will sit there.
 
-Real photography only. NO stock-photo aesthetic. NO illustration. Just the photograph — text and brand graphics come later in code.`
+Real photography only. Documentary magazine quality. Subaru WRX STI cover-of-Road-and-Track energy, but for collision repair. Just the photograph — text and brand graphics come later in code.`
 
 /**
  * Generate a LinkedIn-share-sized image for one post variant.
