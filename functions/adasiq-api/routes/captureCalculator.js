@@ -640,25 +640,109 @@ captureCalcRouter.post('/linkedin/draft-week', requireCronSecretFlex, express.js
   }
 })
 
+// ─── WEEKLY STORY DROPBOX ───────────────────────────────────────────────────
+// Mark drops his ~200-word weekly story Tuesday/Wednesday morning. The
+// Sunday-night cron reads it from the cache and generates the LinkedIn batch.
+//
+//   POST /api/capture-calc/weekly-story (cron-secret)
+//   Body: { story, caseStudy?, angle? }
+//   GET  /api/capture-calc/weekly-story (cron-secret) — read current stored story
+captureCalcRouter.post('/weekly-story', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const story = String(req.body?.story || '').trim()
+    if (!story) return res.status(400).json({ ok: false, error: 'story is required' })
+    if (story.length < 60) return res.status(400).json({ ok: false, error: 'story is too short (need at least ~60 chars to give the drafter material to work with)' })
+
+    // Wrap in {story} object — cacheSet skips JSON encoding for raw strings
+    // and cacheGet always JSON.parses on read, so raw strings round-trip badly.
+    await cacheSet(segment, 'capture_weekly_story_current', { story, ts: Date.now() })
+    if (req.body?.caseStudy) await cacheSet(segment, 'capture_weekly_case_study', { value: String(req.body.caseStudy).trim() })
+    if (req.body?.angle) await cacheSet(segment, 'capture_weekly_angle', { value: String(req.body.angle).trim() })
+
+    res.json({
+      ok: true,
+      stored_chars: story.length,
+      message: 'Weekly story stored. Sunday-night LinkedIn batch cron will pick it up.',
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.get('/weekly-story', requireCronSecretFlex, async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const storyBlob = await cacheGet(segment, 'capture_weekly_story_current', null)
+    const caseStudyBlob = await cacheGet(segment, 'capture_weekly_case_study', null)
+    const angleBlob = await cacheGet(segment, 'capture_weekly_angle', null)
+    res.json({
+      ok: true,
+      stored: Boolean(storyBlob?.story),
+      story: storyBlob?.story || '',
+      story_stored_at: storyBlob?.ts ? new Date(storyBlob.ts).toISOString() : null,
+      caseStudy: caseStudyBlob?.value || '',
+      angle: angleBlob?.value || '',
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // ─── LINKEDIN 3-VARIANT BATCH (Sunday-night cron path) ──────────────────────
 // Generates the week's Mon-Fri slots with 3 hook variants each, enqueues all
 // 15 drafts, and posts a Cliq card per slot grouping the 3 variants for Mark.
 //
 //   POST /api/capture-calc/linkedin/draft-week-variants  (cron-secret)
-//   Body: { story, caseStudy?, angle? }
+//   Body: { story?, caseStudy?, angle? }  ← all optional; falls back to stored
+//   Query: ?force=1  ← bypass the Sunday-only day gate (for manual testing)
 //   Returns: { ok, slots: [{day, type, variant_ids: [3]}] }
 //
-// Schedule per the brief: Mon-Fri 6:30am Pacific. We set scheduled_for to the
-// upcoming weekday at 13:30 UTC (6:30am PT) for each day.
+// Catalyst cron UI has no "weekly" option, so cron is set to DAILY at 6pm PT
+// (01:00 UTC) and the handler gates by day-of-week — no-op every day except
+// Sunday Pacific. Story is read from cache key capture_weekly_story_current
+// (drop via POST /api/capture-calc/weekly-story) if not provided in body.
 captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
-    const story = String(req.body?.story || '').trim()
-    const caseStudy = String(req.body?.caseStudy || '').trim()
-    const angle = String(req.body?.angle || '').trim()
-    if (!story) return res.status(400).json({ ok: false, error: 'story is required' })
+    const force = req.query.force === '1' || req.query.force === 'true'
+
+    // Day-of-week gate: only fires on Sunday PT.
+    if (!force) {
+      const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+      if (dayPT !== 'Sun') {
+        return res.json({ ok: true, skipped: true, reason: `today is ${dayPT} PT, weekly LinkedIn batch only fires on Sun` })
+      }
+    }
+
+    const segment = getSegment(req)
+
+    // Story can come from body OR the stored "current week's story" cache key
+    // (Mark drops a fresh one Tuesday morning via /weekly-story endpoint).
+    let story = String(req.body?.story || '').trim()
+    let caseStudy = String(req.body?.caseStudy || '').trim()
+    let angle = String(req.body?.angle || '').trim()
+    if (!story) {
+      const blob = await cacheGet(segment, 'capture_weekly_story_current', null)
+      story = String(blob?.story || '')
+    }
+    if (!caseStudy) {
+      const blob = await cacheGet(segment, 'capture_weekly_case_study', null)
+      caseStudy = String(blob?.value || '')
+    }
+    if (!angle) {
+      const blob = await cacheGet(segment, 'capture_weekly_angle', null)
+      angle = String(blob?.value || '')
+    }
+
+    if (!story) {
+      return res.json({
+        ok: true,
+        skipped: true,
+        reason: 'no weekly story available — drop one via POST /api/capture-calc/weekly-story before next Sun',
+      })
+    }
 
     const slots = await draftWeekVariants({ story, caseStudy, angle })
-    const segment = getSegment(req)
     const out = []
 
     for (const slot of slots) {
