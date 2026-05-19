@@ -204,11 +204,10 @@ export function renderDigest(digest, opts = {}) {
   // Falls back to "Good morning." with no name if substitution didn't happen.
   const greetingHtml = `<div class="greet">Good morning, {{firstName}}.</div>`
 
-  // Audio block (Friday voice memo) — only renders if voiceMemo service published
-  // an MP3. Native <audio> tag for clients that support it (Apple Mail, modern
-  // webmail) + a "Listen on the web" link for clients that strip it (Gmail, Outlook).
+  // Audio block — Mon-Fri. The TTS voice obviously isn't Mark, so own it
+  // instead of pretending. Honest is funnier than fake.
   const audioHtml = audioUrl
-    ? `<div class="audio"><div class="audio-eyebrow">🎙️ Mark's Voice Memo</div><div class="audio-title">60 seconds on this week's biggest signal</div><audio class="audio-player" controls preload="none"><source src="${safeUrl(audioUrl)}" type="audio/mpeg"></audio><div class="audio-fallback">Inbox player not showing? <a href="${safeUrl(audioUrl)}">Listen on the web →</a></div></div>`
+    ? `<div class="audio"><div class="audio-eyebrow">🤖 ROBO-MARK</div><div class="audio-title">Have AI read the newsletter to you. (Definitely not my voice.)</div><audio class="audio-player" controls preload="none"><source src="${safeUrl(audioUrl)}" type="audio/mpeg"></audio><div class="audio-fallback">Inbox player not showing? <a href="${safeUrl(audioUrl)}">Listen on the web →</a></div></div>`
     : ''
   // Pin CTA destination to one of a small allowlist — prevents AI from inventing
   // URLs but lets Friday Field Notes mode point at Mark's LinkedIn for the
