@@ -17,6 +17,7 @@ import { sendBroadcast } from '../services/brewResend.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
+import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import axios from 'axios'
 
 export const captureCalcRouter = express.Router()
@@ -332,6 +333,76 @@ captureCalcRouter.get('/nurture/preview', requireCronSecretFlex, async (req, res
 
     const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text })
     res.json({ ok: r.status === 'sent' || r.status === 'partial', day, to, subject: email.subject, status: r.status })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── COLD OUTREACH — preview / test-send / batch-send ───────────────────────
+//
+//   GET  /api/capture-calc/cold/render?secret=...&hook=greed|fear|curiosity&day=0|4|10
+//        — Render a single cold email as HTML for review (no send).
+//   GET  /api/capture-calc/cold/preview?secret=...&hook=...&day=...&to=...&shop=...&name=...
+//        — Send a single cold email to a test address.
+//   POST /api/capture-calc/cold/send?secret=...
+//        — Body: { hook, day, targets: [{contactName, shopName, email, city?}] }
+//        — Sends to a list of targets. Throttled by sendBroadcast (~5/sec).
+//          Use small batches (50-100/day max) to keep domain reputation healthy.
+
+captureCalcRouter.get('/cold/render', requireCronSecretFlex, async (req, res) => {
+  try {
+    const hook = String(req.query.hook || 'greed')
+    const day = Number(req.query.day) || 0
+    const target = {
+      contactName: String(req.query.name || 'Mark Tester'),
+      shopName: String(req.query.shop || 'Test Shop Calibration'),
+      email: String(req.query.to || 'preview@absoluteadas.com'),
+    }
+    const email = buildColdEmail({ hook, day }, target)
+    if (!email) return res.status(400).type('text/plain').send(`Invalid hook=${hook} or day=${day}. Hooks: ${COLD_HOOKS.join(', ')}. Days: ${COLD_DAYS.join(', ')}.`)
+    res.set('Content-Type', 'text/html; charset=utf-8')
+    res.send(email.html)
+  } catch (e) {
+    res.status(500).type('text/plain').send(e.message)
+  }
+})
+
+captureCalcRouter.get('/cold/preview', requireCronSecretFlex, async (req, res) => {
+  try {
+    const hook = String(req.query.hook || 'greed')
+    const day = Number(req.query.day) || 0
+    const to = String(req.query.to || 'brew@absoluteadas.com').trim()
+    const target = {
+      contactName: String(req.query.name || 'Mark Tester'),
+      shopName: String(req.query.shop || 'Test Shop Calibration'),
+      email: to,
+    }
+    const email = buildColdEmail({ hook, day }, target)
+    if (!email) return res.status(400).json({ ok: false, error: `Invalid hook or day` })
+    const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text })
+    res.json({ ok: r.status === 'sent' || r.status === 'partial', hook, day, to, subject: email.subject, status: r.status })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.post('/cold/send', requireCronSecretFlex, express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const hook = String(req.body?.hook || 'greed')
+    const day = Number(req.body?.day) || 0
+    const targets = Array.isArray(req.body?.targets) ? req.body.targets : []
+    if (!targets.length) return res.status(400).json({ ok: false, error: 'targets[] required' })
+    if (targets.length > 100) return res.status(400).json({ ok: false, error: 'Batch capped at 100 to protect domain reputation' })
+
+    const results = []
+    for (const t of targets) {
+      const email = buildColdEmail({ hook, day }, t)
+      if (!email || !t.email) { results.push({ to: t.email, ok: false, error: 'invalid_target_or_email' }); continue }
+      const r = await sendBroadcast({ recipients: [t.email], subject: email.subject, html: email.html, text: email.text })
+      results.push({ to: t.email, ok: r.status === 'sent' || r.status === 'partial', status: r.status })
+      await new Promise(rs => setTimeout(rs, 250)) // belt-and-suspenders pacing
+    }
+    res.json({ ok: true, hook, day, count: results.length, results })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
