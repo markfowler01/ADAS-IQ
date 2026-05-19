@@ -854,10 +854,22 @@ captureCalcRouter.get('/engagement/run', requireCronSecretFlex, async (req, res)
 
 // ─── FRIDAY WEEKLY REPORT ───────────────────────────────────────────────────
 // Per the brief: Friday 6am PT Cliq message to Mark summarizing the week.
-// Posts to MARK_ALERT_CHANNEL_ID. Add to cron as GET /api/capture-calc/report/weekly
-// with x-cron-secret header.
+// Posts to MARK_ALERT_CHANNEL_ID.
+//
+// Catalyst cron UI doesn't have a "weekly" option (only hourly/daily/monthly/
+// yearly). So the cron is set to DAILY at 6am PT and we gate by day-of-week
+// here. The handler is a no-op every day except Friday Pacific.
+//   ?force=1 bypasses the day gate (for manual testing).
 captureCalcRouter.get('/report/weekly', requireCronSecretFlex, async (req, res) => {
   try {
+    const force = req.query.force === '1' || req.query.force === 'true'
+    if (!force) {
+      // Day-of-week gate: only run on Fridays (Pacific time).
+      const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+      if (dayPT !== 'Fri') {
+        return res.json({ ok: true, skipped: true, reason: `today is ${dayPT} PT, weekly report only fires on Fri` })
+      }
+    }
     const segment = getSegment(req)
     const sevenDaysAgo = Date.now() - 7 * 86400000
 
