@@ -88,11 +88,13 @@ function esc(s) {
 }
 
 // ─── POST /generate ─────────────────────────────────────────────────────────
+// v3.1 inputs: calibrationsPerMonth + listPrice (default $450 from cost-list xlsx).
+// Tier auto-derives from monthly volume (15/20/25% at 1-14 / 15-29 / 30+).
 captureCalcRouter.post('/generate', express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim()
     if (rateLimited(ip)) {
-      return res.status(429).json({ ok: false, error: 'Too many requests. Try again in an hour, or text 1-844-FIX-ADAS.' })
+      return res.status(429).json({ ok: false, error: 'Too many requests. Try again in an hour, or text 1-844-349-2327.' })
     }
 
     const body = req.body || {}
@@ -101,82 +103,79 @@ captureCalcRouter.post('/generate', express.json({ limit: '32kb' }), async (req,
     const shopName = String(body.shopName || '').trim().slice(0, 120)
     const phone = String(body.phone || '').trim().slice(0, 30)
     const calibrationsPerMonth = Number(String(body.calibrationsPerMonth || '').replace(/[^0-9.]/g, ''))
-    const avgTicket = Number(String(body.avgTicket || '').replace(/[^0-9.]/g, ''))
-    const currentCapturePct = Number(String(body.currentCapturePct || '').replace(/[^0-9.]/g, ''))
+    // listPrice optional — defaults to $450 (canonical static cal list price)
+    const listPriceRaw = String(body.listPrice || '').replace(/[^0-9.]/g, '')
+    const listPrice = listPriceRaw ? Number(listPriceRaw) : 450
 
     if (!contactName) return res.status(400).json({ ok: false, error: 'Your name is required' })
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ ok: false, error: 'Valid email required' })
     if (!shopName) return res.status(400).json({ ok: false, error: 'Shop name is required' })
     if (!Number.isFinite(calibrationsPerMonth) || calibrationsPerMonth <= 0) {
-      return res.status(400).json({ ok: false, error: 'Tell us roughly how many calibrations you sublet per month' })
+      return res.status(400).json({ ok: false, error: 'Tell us roughly how many calibrations per month you sublet' })
     }
-    if (!Number.isFinite(avgTicket) || avgTicket <= 0) {
-      return res.status(400).json({ ok: false, error: 'Tell us your average sublet ticket' })
-    }
-    if (!Number.isFinite(currentCapturePct) || currentCapturePct < 0 || currentCapturePct > 100) {
-      return res.status(400).json({ ok: false, error: 'Current capture % must be 0-100' })
+    if (!Number.isFinite(listPrice) || listPrice <= 0 || listPrice > 2000) {
+      return res.status(400).json({ ok: false, error: 'List price must be a positive number under $2,000' })
     }
 
-    const calc = computeCaptureNumbers({ calibrationsPerMonth, avgTicket, currentCapturePct })
+    const calc = computeCaptureNumbers({ calibrationsPerMonth, listPrice })
 
-    // Persist for Mark's CRM review
     recordSubmission(req, {
-      contactName, email, shopName, phone, calibrationsPerMonth, avgTicket,
-      currentCapturePct, ip,
-      annualLeak: calc.annualLeak, annualCapture: calc.annualCapture,
+      contactName, email, shopName, phone, calibrationsPerMonth, listPrice, ip,
+      tier: calc.tier, tierDiscountPct: calc.tierDiscountPct,
+      monthlyMargin: calc.monthlyMargin, annualMargin: calc.annualMargin,
     }).catch(() => {})
 
-    // Build the PDF, then send everything in parallel (PDF is the slow part,
-    // ~200-400ms; everything else < 100ms).
     let pdfBuf = null
     try {
       pdfBuf = await generateCaptureReportPdf({
-        shopName, contactName, calibrationsPerMonth, avgTicket, currentCapturePct, calc,
+        shopName, contactName, calibrationsPerMonth, listPrice, calc,
       })
     } catch (e) {
       console.warn('[capture-calc pdf]', e.message)
     }
 
-    const subject = `${shopName} — your hidden GP leak is ${fmtCurrency(calc.annualLeak)} / year`
+    const subject = `${shopName} — your partnership margin is ${fmtCurrency(calc.annualMargin)} / year`
     const html = renderResultEmail({ contactName, shopName, calc })
     const text = renderResultText({ contactName, shopName, calc })
 
     sendBroadcast({
       recipients: [email], subject, html, text,
-      attachments: pdfBuf ? [{ filename: `${shopName.replace(/[^a-z0-9]/gi, '_')}_Capture_Report.pdf`, content: pdfBuf.toString('base64') }] : undefined,
+      attachments: pdfBuf ? [{ filename: `${shopName.replace(/[^a-z0-9]/gi, '_')}_Partnership_Discount_Report.pdf`, content: pdfBuf.toString('base64') }] : undefined,
     }).catch(e => console.warn('[capture-calc email]', e.message))
 
-    // CRM sync — same path as newsletter, tagged differently downstream
     syncNewsletterSubscriberToCrm({ email, shop: shopName, name: contactName, source: 'capture_calculator' })
       .catch(e => console.warn('[capture-calc crm]', e.message))
 
-    // Cliq Mark — this is a hot lead, they just self-qualified themselves
     const cliqMsg = [
-      '💰 NEW CAPTURE CALC LEAD',
+      '💰 NEW PARTNERSHIP CALC LEAD',
       '',
       `Shop: ${shopName}`,
       `Contact: ${contactName}`,
       `Email: ${email}`,
       phone ? `Phone: ${phone}` : '',
       '',
-      `Inputs: ${calibrationsPerMonth} cals/mo × ${fmtCurrency(avgTicket)} ticket @ ${currentCapturePct}% current capture`,
-      `Their annual leak: ${fmtCurrency(calc.annualLeak)}`,
-      `Their annual capture upside: ${fmtCurrency(calc.annualCapture)}`,
+      `Inputs: ${calibrationsPerMonth} cals/mo × ${fmtCurrency(listPrice)} list = ${calc.tierLabel} tier (${calc.tierDiscountPct}% off)`,
+      `Their margin: ${fmtCurrency(calc.monthlyMargin)}/mo · ${fmtCurrency(calc.annualMargin)}/yr`,
+      `At Volume tier (15+/mo): ${fmtCurrency(calc.annualAtVolume)}/yr`,
+      `At Preferred (30+/mo): ${fmtCurrency(calc.annualAtPreferred)}/yr`,
       '',
-      'PDF report already emailed. Follow up within 24 hrs to book the Revenue Audit.',
+      'PDF emailed. Follow up within 24 hrs to book the Partnership Audit.',
     ].filter(Boolean).join('\n').slice(0, 2000)
     postToCliqUser(TECH_CLIQ_IDS.Mark, cliqMsg).catch(e => console.warn('[capture-calc cliq]', e.message))
 
     res.json({
       ok: true,
       shopName,
-      monthlyLeak: calc.monthlyLeak,
-      annualLeak: calc.annualLeak,
-      monthlyCapture: calc.monthlyCapture,
-      annualCapture: calc.annualCapture,
-      currentMonthlyGp: calc.currentMonthlyGp,
-      targetMonthlyGp: calc.targetMonthlyGp,
-      targetCapturePct: calc.targetCapturePct,
+      tier: calc.tier,
+      tierLabel: calc.tierLabel,
+      tierDiscountPct: calc.tierDiscountPct,
+      marginPerCal: calc.marginPerCal,
+      partnerPrice: calc.partnerPrice,
+      monthlyMargin: calc.monthlyMargin,
+      annualMargin: calc.annualMargin,
+      annualAtStandard: calc.annualAtStandard,
+      annualAtVolume: calc.annualAtVolume,
+      annualAtPreferred: calc.annualAtPreferred,
       pdfDelivered: Boolean(pdfBuf),
     })
   } catch (e) {
@@ -187,64 +186,75 @@ captureCalcRouter.post('/generate', express.json({ limit: '32kb' }), async (req,
 
 // ─── Email rendering ────────────────────────────────────────────────────────
 function renderResultEmail({ contactName, shopName, calc }) {
+  const ladder = [
+    ['Standard (1-14 cals/mo)',      '15% off list', calc.annualAtStandard,  calc.tier === 'standard'],
+    ['Volume (15-29 cals/mo)',       '20% off list', calc.annualAtVolume,    calc.tier === 'volume'],
+    ['Preferred Partner (30+/mo)',   '25% off list', calc.annualAtPreferred, calc.tier === 'preferred'],
+  ].map(([label, disc, amt, cur]) =>
+    `<tr><td style="padding:10px 14px;font-size:13px;color:${cur ? '#CD4419' : '#374151'};font-weight:${cur ? 700 : 500};background:${cur ? '#fef7ed' : '#fff'};border:1px solid ${cur ? '#fdba74' : '#e5e7eb'};border-radius:6px">${esc(label)}<br><span style="font-size:11px;color:#6b7280;font-weight:500">${esc(disc)}</span></td><td style="padding:10px 14px;font-size:15px;color:${cur ? '#CD4419' : '#1a1a1a'};font-weight:700;text-align:right;background:${cur ? '#fef7ed' : '#fff'};border:1px solid ${cur ? '#fdba74' : '#e5e7eb'};border-radius:6px">${fmtCurrency(amt)}/yr</td></tr><tr><td colspan="2" style="height:6px"></td></tr>`
+  ).join('')
+
   return `<!doctype html><html><body style="margin:0;padding:0;background:#f5f3f0;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f3f0"><tr><td align="center" style="padding:32px 16px">
 <table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#fff;border-radius:14px;border-top:4px solid #CD4419">
 <tr><td style="padding:32px 28px">
-  <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:800;letter-spacing:.18em;color:#CD4419;text-transform:uppercase;margin-bottom:6px">Capture Rate Report</div>
-  <h1 style="font-size:24px;margin:0 0 6px;font-weight:800;line-height:1.2;color:#0d0d0d">${esc(shopName)}'s hidden GP leak</h1>
-  <p style="font-size:14px;color:#6b7280;margin:0 0 22px">Personalized for ${esc(contactName)}. PDF attached.</p>
+  <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:800;letter-spacing:.18em;color:#CD4419;text-transform:uppercase;margin-bottom:6px">Partnership Discount Report</div>
+  <h1 style="font-size:24px;margin:0 0 6px;font-weight:800;line-height:1.2;color:#0d0d0d">${esc(shopName)}'s margin on calibrations</h1>
+  <p style="font-size:14px;color:#6b7280;margin:0 0 22px">Personalized for ${esc(contactName)}. Full PDF attached.</p>
 
-  <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:20px 22px;margin-bottom:14px">
-    <div style="font-size:10px;font-weight:800;letter-spacing:.18em;color:#dc2626;text-transform:uppercase;margin-bottom:6px">The leak, right now</div>
-    <div style="font-size:36px;font-weight:800;color:#dc2626;line-height:1">${fmtCurrency(calc.annualLeak)}</div>
-    <div style="font-size:13px;color:#374151;margin-top:8px">per year walking out your bay door as sublet vendor margin.</div>
-  </div>
-
-  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:20px 22px;margin-bottom:22px">
-    <div style="font-size:10px;font-weight:800;letter-spacing:.18em;color:#16a34a;text-transform:uppercase;margin-bottom:6px">The capture, with the absolute capture system</div>
-    <div style="font-size:36px;font-weight:800;color:#16a34a;line-height:1">${fmtCurrency(calc.annualCapture)}</div>
-    <div style="font-size:13px;color:#374151;margin-top:8px">net new gross profit per year. Captured automatically through your existing RO flow. No capex.</div>
+  <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:22px 22px;margin-bottom:22px">
+    <div style="font-size:10px;font-weight:800;letter-spacing:.18em;color:#15803d;text-transform:uppercase;margin-bottom:6px">Your partnership margin</div>
+    <div style="font-size:42px;font-weight:800;color:#16a34a;line-height:1">${fmtCurrency(calc.annualMargin)}<span style="font-size:18px;color:#374151;font-weight:600">/year</span></div>
+    <div style="font-size:14px;color:#374151;margin-top:10px;line-height:1.5">That's <strong>${fmtCurrency(calc.monthlyMargin)} every month</strong>, earned automatically on calibrations you're already billing insurance for at list. You're at the <strong>${esc(calc.tierLabel)}</strong> tier (${calc.tierDiscountPct}% off list).</div>
   </div>
 
   <p style="font-size:15px;line-height:1.55;margin:0 0 14px;color:#1a1a1a">${esc(contactName)},</p>
-  <p style="font-size:15px;line-height:1.55;margin:0 0 14px;color:#1a1a1a">${esc(shopName)} is leaking ${fmtCurrency(calc.monthlyLeak)} every month in gross profit to your sublet vendor. That's not a guess. That's your number based on what you just told us.</p>
-  <p style="font-size:15px;line-height:1.55;margin:0 0 18px;color:#1a1a1a">There's a 4-step system to close it. We call it <strong>The Absolute Capture System</strong> — Audit, Activate, Allocate, Amplify. It runs through your existing RO workflow. No new software. No new staff. A defined percentage of every calibration just shows up as shop GP.</p>
+  <p style="font-size:15px;line-height:1.55;margin:0 0 14px;color:#1a1a1a">Most mobile calibration vendors show up at your bay, use your power and parking, charge full list, send the invoice, and leave. The standard sublet playbook. They keep 100% of the margin on a job your facility helped make possible.</p>
+  <p style="font-size:15px;line-height:1.55;margin:0 0 18px;color:#1a1a1a">We do it differently. <strong>The Partnership Discount Model</strong> means every invoice from Absolute ADAS shows a 15-25% partner discount off list. You bill insurance at list (insurance-approved — we're a preferred vendor with State Farm and other major carriers). The difference between list and what you pay us is your margin. Automatic, every invoice, no paperwork.</p>
 
-  <div style="background:#0d0d0d;border-radius:10px;padding:20px 22px;margin:18px 0">
-    <div style="font-size:10px;font-weight:800;letter-spacing:.18em;color:#CD4419;text-transform:uppercase;margin-bottom:6px">The guarantee</div>
-    <p style="font-size:14px;line-height:1.55;color:#ffffff;margin:0;font-weight:600">If the Absolute Capture System doesn't add at least $10,000 in new monthly GP within 90 days of activation, we work for free until it does. And we cut you a check for $1,000 for the time we wasted.</p>
+  <div style="margin:18px 0">
+    <div style="font-size:12px;font-weight:700;color:#1a1a1a;letter-spacing:.04em;margin-bottom:8px">YOUR ANNUAL MARGIN AT EVERY TIER</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:0">${ladder}</table>
+    <p style="font-size:11px;color:#9ca3af;margin:0 0 0 2px">Tier upgrades automatically based on a rolling 90-day average. Same list price; bigger partner discount.</p>
   </div>
 
-  <p style="font-size:15px;line-height:1.55;margin:18px 0 18px;color:#1a1a1a"><strong>Next step:</strong> a 15-minute Revenue Audit. We pull your actual sublet invoices and confirm the real number, not the calculator estimate. Free. No commitment.</p>
-  <p style="margin:0 0 22px"><a href="https://absoluteadas.com/audit" style="display:inline-block;background:#CD4419;color:#fff;padding:13px 26px;text-decoration:none;font-weight:800;border-radius:8px;font-size:14px">Book your Revenue Audit  →</a></p>
+  <div style="background:#0d0d0d;border-radius:10px;padding:20px 22px;margin:22px 0">
+    <div style="font-size:10px;font-weight:800;letter-spacing:.18em;color:#CD4419;text-transform:uppercase;margin-bottom:6px">The Partnership Guarantee</div>
+    <p style="font-size:14px;line-height:1.55;color:#ffffff;margin:0;font-weight:600">If we don't deliver every calibration on-time, with full OEM documentation, AND apply your partnership discount on every single invoice for your first 90 days, we work for free until we do. AND we cut you a check for $500 to make it right.</p>
+  </div>
 
-  <p style="font-size:13px;color:#6b7280;margin:0 0 4px">Or text me direct: <a href="tel:+18443492327" style="color:#CD4419;font-weight:700;text-decoration:none">1-844-FIX-ADAS</a></p>
-  <p style="font-size:15px;line-height:1.55;margin:18px 0 0;color:#1a1a1a">— Mark Fowler<br><span style="color:#6b7280;font-size:13px">Owner, Absolute ADAS  ·  50,000+ calibrations on the floor</span></p>
+  <p style="font-size:15px;line-height:1.55;margin:18px 0 18px;color:#1a1a1a"><strong>Next step:</strong> 15-minute Partnership Audit. We walk through how the discount lands on your specific RO workflow + answer any questions before your first trial calibration. Free, no commitment.</p>
+  <p style="margin:0 0 22px"><a href="https://absoluteadas.com/audit" style="display:inline-block;background:#CD4419;color:#fff;padding:13px 26px;text-decoration:none;font-weight:800;border-radius:8px;font-size:14px">Book your Partnership Audit  →</a></p>
+
+  <p style="font-size:13px;color:#6b7280;margin:0 0 4px">Or call me direct: <a href="tel:+18443492327" style="color:#CD4419;font-weight:700;text-decoration:none">1-844-349-2327</a></p>
+  <p style="font-size:15px;line-height:1.55;margin:18px 0 0;color:#1a1a1a">— Mark Fowler<br><span style="color:#6b7280;font-size:13px">Owner, Absolute ADAS  ·  50,000+ calibrations  ·  State Farm DRP preferred vendor</span></p>
 </td></tr>
 <tr><td style="padding:16px 28px 24px;border-top:1px solid #ececec">
-  <p style="font-size:12px;color:#6b7280;margin:0">Estimate based on industry-typical sublet margins. Real numbers vary by carrier mix and vehicle profile. Detailed breakdown in the attached PDF.</p>
+  <p style="font-size:12px;color:#6b7280;margin:0">Estimate based on $${calc.listPrice} static calibration list price (canonical insurance-approved rate). Per-job pricing varies by service type — full cost list in the attached PDF.</p>
 </td></tr>
 </table></td></tr></table></body></html>`
 }
 
 function renderResultText({ contactName, shopName, calc }) {
   return [
-    `${shopName} — Your Capture Rate Report`,
+    `${shopName} — Your Partnership Discount Report`,
     '',
     `${contactName},`,
     '',
-    `THE LEAK (right now): ${fmtCurrency(calc.annualLeak)} per year walking out your bay door as sublet vendor margin.`,
+    `YOUR PARTNERSHIP MARGIN: ${fmtCurrency(calc.annualMargin)}/year (${fmtCurrency(calc.monthlyMargin)}/mo) at the ${calc.tierLabel} tier (${calc.tierDiscountPct}% off list).`,
     '',
-    `THE CAPTURE (with the Absolute Capture System): ${fmtCurrency(calc.annualCapture)} net new GP per year, captured automatically through your existing RO flow.`,
+    `HOW IT WORKS: Most mobile calibration vendors charge full list and walk. The Partnership Discount Model means every Absolute ADAS invoice shows a 15-25% partner discount off list. You bill insurance at list (insurance-approved — we're a State Farm preferred vendor). The difference is your margin. Automatic, every invoice, no paperwork.`,
     '',
-    `That's ${fmtCurrency(calc.monthlyLeak)} every single month, leaking out of ${shopName} in gross profit. It is automatic. The capture is a choice.`,
+    `YOUR ANNUAL MARGIN AT EVERY TIER (same list price, bigger discount):`,
+    `  · Standard (1-14/mo, 15% off):     ${fmtCurrency(calc.annualAtStandard)}/yr`,
+    `  · Volume (15-29/mo, 20% off):      ${fmtCurrency(calc.annualAtVolume)}/yr`,
+    `  · Preferred Partner (30+/mo, 25%): ${fmtCurrency(calc.annualAtPreferred)}/yr`,
     '',
-    `THE GUARANTEE: If The Absolute Capture System doesn't add at least $10,000 in new monthly GP within 90 days of activation, we work for free until it does. AND we cut you a check for $1,000 for the time we wasted.`,
+    `THE PARTNERSHIP GUARANTEE: If we don't deliver every calibration on-time, with full OEM documentation, AND apply your partnership discount on every single invoice for your first 90 days, we work for free until we do. AND we cut you a $500 check to make it right.`,
     '',
-    `NEXT STEP: Book a 15-minute Revenue Audit. We pull your actual sublet invoices and confirm the real number. Free, no commitment.`,
+    `NEXT STEP: Book a 15-minute Partnership Audit. Free, no commitment.`,
     `→ https://absoluteadas.com/audit`,
-    `→ Or text: 1-844-FIX-ADAS`,
+    `→ Or call: 1-844-349-2327`,
     '',
     `— Mark Fowler, Owner, Absolute ADAS`,
   ].join('\n')
