@@ -731,7 +731,9 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
   }
 })
 
-// Compute the next weekday at 13:30 UTC (6:30am PT) for a given Mon-Fri label.
+// Compute the next weekday at 14:00 UTC (7:00am PT) for a given Mon-Fri label.
+// Schedule at top-of-hour so it aligns with Catalyst's hourly cron tick
+// (Catalyst minimum interval is 1 hour — sub-hourly schedules not allowed).
 function nextScheduledFor(day) {
   const dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5 }
   const target = dayMap[day]
@@ -742,7 +744,7 @@ function nextScheduledFor(day) {
   if (daysAhead === 0) daysAhead = 7   // schedule for next week if same day
   const result = new Date(now)
   result.setUTCDate(now.getUTCDate() + daysAhead)
-  result.setUTCHours(13, 30, 0, 0)
+  result.setUTCHours(14, 0, 0, 0)  // 14:00 UTC = 7am PT (PDT)
   return result
 }
 
@@ -954,12 +956,23 @@ captureCalcRouter.get('/scheduler/run', requireCronSecretFlex, async (req, res) 
     const segment = getSegment(req)
     const list = await listQueue(segment, { status: 'approved' })
     const now = Date.now()
-    const window = 15 * 60 * 1000
+    // Catalyst's minimum cron interval is 1 hour. Pickup window matches:
+    // a draft whose scheduled_for is within the next 60 min (or in the past)
+    // is fair game. Combined with a top-of-hour scheduled_for, posts publish
+    // within minutes of their intended time.
+    const window = 60 * 60 * 1000   // 60 min forward window
+    const staleCutoff = 24 * 3600000 // don't publish drafts >24h past-due
     for (const draft of list) {
       const sched = draft.scheduled_for ? new Date(draft.scheduled_for).getTime() : 0
       if (!sched) continue
-      // Past-due OR within next 15 min
+      // Future beyond the cron window — wait for next tick
       if (sched > now + window) continue
+      // Way past-due (>24h) — likely orphaned, mark stale instead of posting
+      if (now - sched > staleCutoff) {
+        if (!dry) await updateDraft(segment, draft.id, { status: 'stale', stale_reason: `${Math.round((now - sched) / 3600000)}h past scheduled_for` })
+        out.push({ id: draft.id, channel: draft.channel, stale: true, hours_late: Math.round((now - sched) / 3600000) })
+        continue
+      }
 
       if (dry) { out.push({ id: draft.id, channel: draft.channel, dry: true }); continue }
 
