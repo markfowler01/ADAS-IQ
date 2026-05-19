@@ -15,6 +15,10 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { sanitizeAiOutput } from './textSanitize.js'
+import { scoreDraft } from './voiceScorer.js'
+
+const MIN_VOICE_SCORE = 70   // Brief: re-draft anything below 70
+const MAX_RETRIES = 2        // Brief: max 3 retries total (first attempt + 2 retries)
 
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -129,12 +133,63 @@ export async function draftLinkedInWeek({ story, caseStudy = '', angle = '' } = 
   }
 
   const drafts = Array.isArray(parsed.drafts) ? parsed.drafts : []
-  return {
-    drafts: drafts.slice(0, 5).map((d, i) => ({
-      day: String(d.day || POST_TYPES[i]?.day || ''),
-      type: String(d.type || POST_TYPES[i]?.type || ''),
-      headline: sanitizeAiOutput(String(d.headline || '')).slice(0, 120),
+  const scored = drafts.slice(0, 5).map((d, i) => {
+    const day = String(d.day || POST_TYPES[i]?.day || '')
+    const type = String(d.type || POST_TYPES[i]?.type || '')
+    const headline = sanitizeAiOutput(String(d.headline || '')).slice(0, 120)
+    const body = sanitizeAiOutput(String(d.body || '')).slice(0, 2200)
+    const { score, deductions } = scoreDraft(body, { channel: 'linkedin' })
+    return { day, type, headline, body, voice_score: score, voice_deductions: deductions }
+  })
+
+  // Re-draft any below MIN_VOICE_SCORE — max MAX_RETRIES per draft.
+  for (let i = 0; i < scored.length; i++) {
+    if (scored[i].voice_score >= MIN_VOICE_SCORE) continue
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      const redraft = await redraftOne({
+        client, originalPrompt: userMsg, draft: scored[i],
+        slate, type: scored[i].type, day: scored[i].day,
+      })
+      if (!redraft) break
+      const { score, deductions } = scoreDraft(redraft.body, { channel: 'linkedin' })
+      if (score > scored[i].voice_score) {
+        scored[i] = { ...scored[i], ...redraft, voice_score: score, voice_deductions: deductions, retries: attempt }
+      }
+      if (score >= MIN_VOICE_SCORE) break
+    }
+  }
+
+  return { drafts: scored }
+}
+
+// One-shot retry: ask Claude to rewrite a single draft using the violations as feedback.
+async function redraftOne({ client, originalPrompt, draft, slate, type, day }) {
+  try {
+    const reasons = (draft.voice_deductions || []).map(d => `- ${d.reason} (${d.points} pts)`).join('\n')
+    const feedback = `Your previous draft for ${day} (${type}) scored ${draft.voice_score}/100 on the voice contract. Specific deductions:\n${reasons}\n\nRewrite ONLY this single post. Fix every flagged issue. Return JSON: {"day":"${day}","type":"${type}","headline":"...","body":"..."}`
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: SYSTEM_PROMPT,
+      messages: [
+        { role: 'user', content: originalPrompt },
+        { role: 'assistant', content: JSON.stringify({ drafts: [{ day, type, headline: draft.headline, body: draft.body }] }) },
+        { role: 'user', content: feedback },
+      ],
+    })
+    const raw = (msg.content?.[0]?.text || '').trim()
+    if (!raw) return null
+    const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+    const parsed = JSON.parse(cleaned)
+    const d = Array.isArray(parsed.drafts) ? parsed.drafts[0] : parsed
+    if (!d?.body) return null
+    return {
+      day, type,
+      headline: sanitizeAiOutput(String(d.headline || draft.headline)).slice(0, 120),
       body: sanitizeAiOutput(String(d.body || '')).slice(0, 2200),
-    })),
+    }
+  } catch (e) {
+    console.warn('[linkedInDrafter redraft]', e.message)
+    return null
   }
 }

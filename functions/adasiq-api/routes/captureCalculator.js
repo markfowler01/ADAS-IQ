@@ -20,6 +20,7 @@ import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/capt
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek } from '../services/linkedInDrafter.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
+import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
 import axios from 'axios'
 
 export const captureCalcRouter = express.Router()
@@ -383,6 +384,50 @@ captureCalcRouter.get('/cold/preview', requireCronSecretFlex, async (req, res) =
     if (!email) return res.status(400).json({ ok: false, error: `Invalid hook or day` })
     const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text })
     res.json({ ok: r.status === 'sent' || r.status === 'partial', hook, day, to, subject: email.subject, status: r.status })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── VOICE SCORER (diagnostic endpoints) ────────────────────────────────────
+//   POST /api/capture-calc/voice/score   body:{text, channel?}      → score 0-100
+//   GET  /api/capture-calc/voice/fingerprint                        → current fingerprint
+//   POST /api/capture-calc/voice/signal   body:{category, signal, text, editedText?}
+//        — Update fingerprint from a Mark signal (up/down/edited).
+captureCalcRouter.post('/voice/score', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const text = String(req.body?.text || '')
+    const channel = String(req.body?.channel || 'generic')
+    if (!text) return res.status(400).json({ ok: false, error: 'text required' })
+    const result = scoreDraft(text, { channel })
+    res.json({ ok: true, ...result })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.get('/voice/fingerprint', requireCronSecretFlex, async (req, res) => {
+  try {
+    const fp = await loadFingerprint(getSegment(req))
+    const trust = {}
+    for (const cat of Object.keys(fp.approvals_by_category || {})) {
+      trust[cat] = categoryTrust(fp, cat)
+    }
+    res.json({ ok: true, fingerprint: fp, category_trust: trust })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.post('/voice/signal', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const { category, signal, text, editedText } = req.body || {}
+    if (!signal || !['up', 'down', 'edited'].includes(signal)) {
+      return res.status(400).json({ ok: false, error: 'signal must be up|down|edited' })
+    }
+    if (!text) return res.status(400).json({ ok: false, error: 'text required' })
+    const fp = await updateFingerprint(getSegment(req), { category, signal, text, editedText })
+    res.json({ ok: true, fingerprint: fp })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
