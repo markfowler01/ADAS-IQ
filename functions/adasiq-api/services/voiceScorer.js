@@ -84,7 +84,11 @@ export function measureDraft(text) {
 
   // Capture System / 4-A name-drop check — every asset should reference at
   // least one per the v2.5 doctrine.
-  const namesMechanism = /absolute capture system|4 ?a'?s|audit, ?activate, ?allocate, ?amplify/i.test(t)
+  // v3.1 doctrine: the mechanism is the Partnership Discount Model.
+  // Accept either the full name OR any of the 4 component phrases, OR a
+  // reference to the discount/partnership tier mechanics. v2.5's "Absolute
+  // Capture System" / 4 A's no longer count (would be a regression).
+  const namesMechanism = /partnership discount model|we come to you|discount off list|bill at list|volume rewards you|partnership discount|partner price|standard partner|preferred partner|volume tier/i.test(t)
 
   return {
     words,

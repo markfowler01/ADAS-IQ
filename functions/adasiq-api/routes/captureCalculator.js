@@ -736,7 +736,7 @@ function nextScheduledFor(day) {
 //   POST /image/regen   — regenerate image for an existing draft (consumes budget)
 captureCalcRouter.get('/image/test', requireCronSecretFlex, async (req, res) => {
   try {
-    const headline = String(req.query.headline || 'Your sublet vendor is making profit inside your building.').slice(0, 100)
+    const headline = String(req.query.headline || 'Earn $8,100 a year on calibrations you already bill insurance for.').slice(0, 100)
     const draftId = `test-${Date.now()}`
     const r = await generateCaptureImage({ headline, draftId }, { force: true, segment: getSegment(req) })
     if (!r.ok) return res.status(500).json({ ok: false, error: r.error })
