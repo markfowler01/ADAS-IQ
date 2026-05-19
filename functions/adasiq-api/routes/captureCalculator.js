@@ -18,10 +18,11 @@ import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
-import { draftLinkedInWeek } from '../services/linkedInDrafter.js'
+import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
+import { postToLinkedIn } from '../services/brewLinkedIn.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
-import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard } from '../services/captureApprovalQueue.js'
+import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard, buildSignedActionUrl } from '../services/captureApprovalQueue.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import axios from 'axios'
 
@@ -591,7 +592,7 @@ captureCalcRouter.get('/leave-behind.pdf', async (req, res) => {
 // ─── LINKEDIN DRAFT WEEK ────────────────────────────────────────────────────
 //   POST /api/capture-calc/linkedin/draft-week
 //   Body: { story: "Mark's ~200-word weekly shop-visit story", caseStudy?, angle? }
-//   Returns: { drafts: [{day, type, headline, body}] × 5 } — Mon/Tue/Wed/Thu/Fri
+//   Returns: { drafts: [{day, type, headline, body}] × 5 } — single-variant
 captureCalcRouter.post('/linkedin/draft-week', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const story = String(req.body?.story || '').trim()
@@ -602,6 +603,129 @@ captureCalcRouter.post('/linkedin/draft-week', requireCronSecretFlex, express.js
     res.json({ ok: true, ...result })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── LINKEDIN 3-VARIANT BATCH (Sunday-night cron path) ──────────────────────
+// Generates the week's Mon-Fri slots with 3 hook variants each, enqueues all
+// 15 drafts, and posts a Cliq card per slot grouping the 3 variants for Mark.
+//
+//   POST /api/capture-calc/linkedin/draft-week-variants  (cron-secret)
+//   Body: { story, caseStudy?, angle? }
+//   Returns: { ok, slots: [{day, type, variant_ids: [3]}] }
+//
+// Schedule per the brief: Mon-Fri 6:30am Pacific. We set scheduled_for to the
+// upcoming weekday at 13:30 UTC (6:30am PT) for each day.
+captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const story = String(req.body?.story || '').trim()
+    const caseStudy = String(req.body?.caseStudy || '').trim()
+    const angle = String(req.body?.angle || '').trim()
+    if (!story) return res.status(400).json({ ok: false, error: 'story is required' })
+
+    const slots = await draftWeekVariants({ story, caseStudy, angle })
+    const segment = getSegment(req)
+    const out = []
+
+    for (const slot of slots) {
+      if (slot.error || !slot.variants?.length) {
+        out.push({ day: slot.day, error: slot.error || 'no variants', variant_ids: [] })
+        continue
+      }
+      const scheduledFor = nextScheduledFor(slot.day)
+      const variantIds = []
+      const cardSections = [`📝 *${slot.day} ${slot.type} — 3 VARIANTS FOR APPROVAL*`, `Scheduled: ${scheduledFor.toISOString()}`, '']
+      for (const v of slot.variants) {
+        const entry = await enqueueDraft(segment, {
+          channel: 'linkedin_personal',
+          category: slot.type,
+          headline: v.headline,
+          body: v.body,
+          scheduled_for: scheduledFor.toISOString(),
+          voice_score: v.voice_score,
+          voice_deductions: v.voice_deductions,
+          meta: { hook: v.hook, slot: slot.day, group: `${slot.day}-${scheduledFor.toISOString().slice(0,10)}` },
+        })
+        variantIds.push(entry.id)
+        cardSections.push(`*${v.hook.toUpperCase()}* (voice ${v.voice_score}/100):`)
+        cardSections.push(v.body)
+        cardSections.push(`👍 *Approve ${v.hook}:* ${buildSignedActionUrl(PUBLIC_BASE, entry.id, 'approve')}`)
+        cardSections.push(`✏️ *Edit ${v.hook}:* ${buildSignedActionUrl(PUBLIC_BASE, entry.id, 'edit')}`)
+        cardSections.push(`❌ *Kill ${v.hook}:* ${buildSignedActionUrl(PUBLIC_BASE, entry.id, 'kill')}`)
+        cardSections.push('')
+      }
+      const card = cardSections.join('\n').slice(0, 6000)
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(e => console.warn('[cliq card]', e.message))
+      out.push({ day: slot.day, type: slot.type, variant_ids: variantIds, scheduled_for: scheduledFor.toISOString() })
+    }
+
+    res.json({ ok: true, slots: out })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Compute the next weekday at 13:30 UTC (6:30am PT) for a given Mon-Fri label.
+function nextScheduledFor(day) {
+  const dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5 }
+  const target = dayMap[day]
+  if (!target) return new Date(Date.now() + 24 * 3600000)
+  const now = new Date()
+  const todayUtc = now.getUTCDay() // 0=Sun..6=Sat
+  let daysAhead = (target - todayUtc + 7) % 7
+  if (daysAhead === 0) daysAhead = 7   // schedule for next week if same day
+  const result = new Date(now)
+  result.setUTCDate(now.getUTCDate() + daysAhead)
+  result.setUTCHours(13, 30, 0, 0)
+  return result
+}
+
+// ─── AUTO-PUBLISH SCHEDULER ─────────────────────────────────────────────────
+// Runs every 15 minutes. For every approved draft whose scheduled_for falls
+// within the next 15 min (or past-due), publishes to the target channel and
+// marks the draft "published". Currently supports linkedin_personal; FB/IG
+// reuse the existing brew metaPosting wrappers and can be added later.
+//
+//   GET /api/capture-calc/scheduler/run?secret=...   → idempotent, safe to retry
+//   GET /api/capture-calc/scheduler/run?dry=1        → log what would publish
+captureCalcRouter.get('/scheduler/run', requireCronSecretFlex, async (req, res) => {
+  const dry = req.query.dry === '1' || req.query.dry === 'true'
+  const out = []
+  try {
+    const segment = getSegment(req)
+    const list = await listQueue(segment, { status: 'approved' })
+    const now = Date.now()
+    const window = 15 * 60 * 1000
+    for (const draft of list) {
+      const sched = draft.scheduled_for ? new Date(draft.scheduled_for).getTime() : 0
+      if (!sched) continue
+      // Past-due OR within next 15 min
+      if (sched > now + window) continue
+
+      if (dry) { out.push({ id: draft.id, channel: draft.channel, dry: true }); continue }
+
+      if (draft.channel === 'linkedin_personal') {
+        try {
+          const r = await postToLinkedIn({ text: draft.body })
+          if (r?.ok && r.id) {
+            await updateDraft(segment, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id })
+            out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to LinkedIn: ${draft.headline || draft.body.slice(0, 60)}\n${PUBLIC_BASE}/.../${r.id}`).catch(() => {})
+          } else {
+            await updateDraft(segment, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+          }
+        } catch (e) {
+          await updateDraft(segment, draft.id, { status: 'publish_failed', error: e.message })
+          out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+        }
+      } else {
+        out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'unsupported channel' })
+      }
+    }
+    res.json({ ok: true, dry, processed: out.length, results: out })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, partial: out })
   }
 })
 

@@ -162,6 +162,108 @@ export async function draftLinkedInWeek({ story, caseStudy = '', angle = '' } = 
   return { drafts: scored }
 }
 
+// ─── 3-VARIANT-PER-SLOT GENERATOR ────────────────────────────────────────────
+// Per the Engineering Brief v1.0: every scheduled slot gets 3 A/B/C variants
+// testing different hook angles (greed / fear / identity / curiosity). Mark
+// picks the winner via the Cliq approval card.
+
+const DEFAULT_HOOKS = ['greed', 'fear', 'identity']
+
+const HOOK_GUIDANCE = {
+  greed:     'GREED HOOK — open with the dollar leak. Name a number ($14k/yr, $3k/mo). Make the reader feel the cost of inaction in their P&L.',
+  fear:      'FEAR HOOK — open with the consolidator threat or the 5-year clock. Tie the post to losing DRP slots, getting bought for pennies, or insurance steering away from sublet shops.',
+  identity:  'IDENTITY HOOK — open with the becoming-the-ADAS-shop framing. Tie the post to staying independent, surviving 2030, building the shop your kid would actually want to inherit.',
+  curiosity: 'CURIOSITY HOOK — open with a counterintuitive observation or a hidden number. "The capture number your vendor hopes you never run." "The denial pattern carriers don\'t want you to map."',
+}
+
+const SLOT_DEFS = {
+  Mon: { type: 'story',      prompt: POST_TYPES[0].prompt },
+  Tue: { type: 'framework',  prompt: POST_TYPES[1].prompt },
+  Wed: { type: 'story',      prompt: POST_TYPES[2].prompt },
+  Thu: { type: 'framework',  prompt: POST_TYPES[3].prompt },
+  Fri: { type: 'case_study', prompt: POST_TYPES[4].prompt },
+}
+
+/**
+ * Generate 3 hook-variant drafts for one slot. Each variant tests a different
+ * hook angle so Mark can pick the strongest. Voice-scored + retried per slot.
+ *
+ * @param {Object} input
+ * @param {string} input.day        — Mon/Tue/Wed/Thu/Fri
+ * @param {string} input.story      — Mark's weekly raw story
+ * @param {string} [input.caseStudy]
+ * @param {string} [input.angle]
+ * @param {Array<string>} [input.hooks] — default ['greed','fear','identity']
+ * @returns {Promise<{day, type, variants: [{hook, headline, body, voice_score, voice_deductions}]}>}
+ */
+export async function draftSlotVariants({ day, story, caseStudy = '', angle = '', hooks = DEFAULT_HOOKS } = {}) {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured')
+  if (!story || story.trim().length < 40) throw new Error('story is required')
+  const slot = SLOT_DEFS[day]
+  if (!slot) throw new Error(`unknown day: ${day}`)
+
+  const variantGuidance = hooks.map(h => `${h.toUpperCase()}: ${HOOK_GUIDANCE[h] || h}`).join('\n')
+
+  const userMsg = [
+    `Today's slot: ${day} (${slot.type}).`,
+    slot.prompt,
+    '',
+    'MARK\'S WEEKLY STORY (use as raw material if relevant):',
+    `"""`, story.trim().slice(0, 1500), `"""`,
+    '',
+    caseStudy ? [`CASE STUDY MATERIAL:`, `"""`, caseStudy.trim().slice(0, 1500), `"""`].join('\n') : 'NO REAL CASE STUDY PROVIDED — use a labeled composite if needed.',
+    '',
+    angle ? `ANGLE STEERING: ${angle.slice(0, 300)}` : '',
+    '',
+    `Write THREE distinct variants of this single slot — one per hook below. Same slot, same type, three different opening angles. Each variant must be a complete LinkedIn post (100-220 words, full post text, ready to publish).`,
+    '',
+    variantGuidance,
+    '',
+    `Return JSON only: {"day":"${day}","type":"${slot.type}","variants":[{"hook":"${hooks[0]}","headline":"...","body":"..."},{"hook":"${hooks[1]}","headline":"...","body":"..."},{"hook":"${hooks[2]}","headline":"...","body":"..."}]}`,
+  ].filter(Boolean).join('\n')
+
+  const client = getClient()
+  const msg = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2500,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userMsg }],
+  })
+  const raw = (msg.content?.[0]?.text || '').trim()
+  if (!raw) throw new Error('Empty response from Claude')
+  const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+  let parsed
+  try { parsed = JSON.parse(cleaned) }
+  catch (e) { throw new Error(`Could not parse variants: ${e.message}. Raw: ${cleaned.slice(0, 200)}`) }
+
+  const variants = Array.isArray(parsed.variants) ? parsed.variants : []
+  const scored = variants.slice(0, 3).map((v, i) => {
+    const hook = String(v.hook || hooks[i] || '').toLowerCase()
+    const headline = sanitizeAiOutput(String(v.headline || '')).slice(0, 120)
+    const body = sanitizeAiOutput(String(v.body || '')).slice(0, 2200)
+    const { score, deductions } = scoreDraft(body, { channel: 'linkedin' })
+    return { hook, headline, body, voice_score: score, voice_deductions: deductions }
+  })
+
+  return { day, type: slot.type, variants: scored }
+}
+
+/**
+ * Convenience batch: draft Mon-Fri 3-variant slots in parallel. Used by the
+ * Sunday-night cron to seed the week's approval queue.
+ *
+ * @param {{story, caseStudy?, angle?}} input
+ * @returns {Promise<Array<{day, type, variants}>>}
+ */
+export async function draftWeekVariants({ story, caseStudy = '', angle = '' } = {}) {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+  const results = await Promise.allSettled(
+    days.map(day => draftSlotVariants({ day, story, caseStudy, angle }))
+  )
+  return results
+    .map((r, i) => r.status === 'fulfilled' ? r.value : { day: days[i], type: SLOT_DEFS[days[i]]?.type, variants: [], error: r.reason?.message })
+}
+
 // One-shot retry: ask Claude to rewrite a single draft using the violations as feedback.
 async function redraftOne({ client, originalPrompt, draft, slate, type, day }) {
   try {
