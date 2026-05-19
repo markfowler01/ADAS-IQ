@@ -170,7 +170,10 @@ async function compositeOverlay(rawImageBuffer, headline) {
   const taglineFontSize = Math.round(footerH * 0.15)
   const wordmarkWhite = 'Absolute'
   const wordmarkOrange = 'ADAS'
-  const tagline = 'Mobile ADAS calibration  ·  Western Washington'
+  const taglineWhite = 'Mobile ADAS calibration  ·  Western Washington  ·  '
+  const taglineOrange = '1-844-FIX-ADAS'
+  // Combined for width math (we render via a single <text> with <tspan>).
+  const tagline = taglineWhite + taglineOrange
 
   // Approximate widths for centering the footer block (Inter Bold ~0.58× em).
   const wordmarkApproxW = Math.round((wordmarkWhite.length + 1 + wordmarkOrange.length) * wordmarkFontSize * 0.58)
@@ -244,6 +247,11 @@ async function compositeOverlay(rawImageBuffer, headline) {
           fill: rgba(255,255,255,0.85);
           letter-spacing: 0;
         }
+        .tagline-phone {
+          font-family: 'Inter', sans-serif;
+          font-weight: 700;
+          fill: ${BRAND_ORANGE};
+        }
       </style>
     </defs>
     <!-- Headline darken band -->
@@ -255,8 +263,8 @@ async function compositeOverlay(rawImageBuffer, headline) {
     <!-- Wordmark: "Absolute" white + "ADAS" orange -->
     <text x="${footerTextX}" y="${wordmarkY}" class="wordmark-white">${wordmarkWhite}</text>
     <text x="${wordmarkOrangeX}" y="${wordmarkY}" class="wordmark-orange">${wordmarkOrange}</text>
-    <!-- Tagline -->
-    <text x="${footerTextX}" y="${taglineY}" class="tagline">${escXml(tagline)}</text>
+    <!-- Tagline (white) + phone number CTA (orange, bold) on same line -->
+    <text x="${footerTextX}" y="${taglineY}" class="tagline">${escXml(taglineWhite)}<tspan class="tagline-phone">${escXml(taglineOrange)}</tspan></text>
     <!-- Logo PNG embedded as base64 -->
     <image x="${footerLogoX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${logoB64}"/>
   </svg>`
