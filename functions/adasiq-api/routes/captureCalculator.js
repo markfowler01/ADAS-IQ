@@ -20,6 +20,7 @@ import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/capt
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
 import { postToLinkedIn } from '../services/brewLinkedIn.js'
+import { collectForDraft, applyKillRules } from '../services/engagementCollector.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
 import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard, buildSignedActionUrl } from '../services/captureApprovalQueue.js'
@@ -679,6 +680,41 @@ function nextScheduledFor(day) {
   result.setUTCHours(13, 30, 0, 0)
   return result
 }
+
+// ─── ENGAGEMENT COLLECTOR (cron, hourly) ────────────────────────────────────
+// Pulls post performance metrics for every published draft, updates engagement
+// blob per draft, applies kill rules from the brief, and marks failing
+// variants as "killed_by_engagement" so they stop influencing the fingerprint.
+//
+//   GET /api/capture-calc/engagement/run  (cron-secret)
+captureCalcRouter.get('/engagement/run', requireCronSecretFlex, async (req, res) => {
+  const out = []
+  try {
+    const segment = getSegment(req)
+    const published = await listQueue(segment, { status: 'published' })
+    for (const draft of published) {
+      // Skip stale (>30 days) — we won't get new analytics value
+      const ageMs = Date.now() - new Date(draft.published_at || draft.created_at).getTime()
+      if (ageMs > 30 * 86400000) continue
+
+      const engagement = await collectForDraft(draft)
+      if (!engagement) { out.push({ id: draft.id, channel: draft.channel, skipped: 'no_data' }); continue }
+
+      // Apply kill rules
+      const killCheck = applyKillRules({ ...draft, engagement })
+      const patch = { engagement }
+      if (killCheck.kill) {
+        patch.status = 'killed_by_engagement'
+        patch.kill_reason = killCheck.reason
+      }
+      await updateDraft(segment, draft.id, patch)
+      out.push({ id: draft.id, channel: draft.channel, killed: !!killCheck.kill, reason: killCheck.reason })
+    }
+    res.json({ ok: true, processed: out.length, results: out })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, partial: out })
+  }
+})
 
 // ─── FRIDAY WEEKLY REPORT ───────────────────────────────────────────────────
 // Per the brief: Friday 6am PT Cliq message to Mark summarizing the week.
