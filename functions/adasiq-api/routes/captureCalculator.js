@@ -21,6 +21,8 @@ import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
 import { postToLinkedIn } from '../services/brewLinkedIn.js'
 import { collectForDraft, applyKillRules } from '../services/engagementCollector.js'
+import { generateCaptureImage, captureImagesEnabled } from '../services/captureImage.js'
+import { postImageToLinkedIn } from '../services/brewLinkedIn.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
 import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard, buildSignedActionUrl } from '../services/captureApprovalQueue.js'
@@ -648,8 +650,25 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
           meta: { hook: v.hook, slot: slot.day, group: `${slot.day}-${scheduledFor.toISOString().slice(0,10)}` },
         })
         variantIds.push(entry.id)
+
+        // Generate image (only fires if CAPTURE_IMAGES_ENABLED=true; silent
+        // no-op otherwise). Failure is non-blocking: draft still ships text-only.
+        let imageUrl = null
+        if (captureImagesEnabled()) {
+          const r = await generateCaptureImage({ headline: v.headline || v.body.split('\n')[0], draftId: entry.id }).catch(e => ({ ok: false, error: e.message }))
+          if (r?.ok) {
+            imageUrl = r.url
+            await updateDraft(segment, entry.id, { image_url: r.url, image_status: 'generated' })
+          } else {
+            await updateDraft(segment, entry.id, { image_status: 'failed', image_error: r?.error })
+          }
+        } else {
+          await updateDraft(segment, entry.id, { image_status: 'disabled' })
+        }
+
         cardSections.push(`*${v.hook.toUpperCase()}* (voice ${v.voice_score}/100):`)
         cardSections.push(v.body)
+        if (imageUrl) cardSections.push(`🖼️ *Image:* ${imageUrl}`)
         cardSections.push(`👍 *Approve ${v.hook}:* ${buildSignedActionUrl(PUBLIC_BASE, entry.id, 'approve')}`)
         cardSections.push(`✏️ *Edit ${v.hook}:* ${buildSignedActionUrl(PUBLIC_BASE, entry.id, 'edit')}`)
         cardSections.push(`❌ *Kill ${v.hook}:* ${buildSignedActionUrl(PUBLIC_BASE, entry.id, 'kill')}`)
@@ -680,6 +699,39 @@ function nextScheduledFor(day) {
   result.setUTCHours(13, 30, 0, 0)
   return result
 }
+
+// ─── IMAGE GEN — TEST + STATUS ──────────────────────────────────────────────
+// Standalone test endpoint so Mark can preview a single image before flipping
+// CAPTURE_IMAGES_ENABLED on. Uses opts.force=true so it works regardless of
+// the kill switch. Posts the resulting URL to MARK_ALERT_CHANNEL for review.
+//
+//   GET /api/capture-calc/image/test?secret=...&headline=Your+test+headline
+//   GET /api/capture-calc/image/status?secret=...  → kill-switch state
+captureCalcRouter.get('/image/test', requireCronSecretFlex, async (req, res) => {
+  try {
+    const headline = String(req.query.headline || 'Your sublet vendor is making profit inside your building.').slice(0, 100)
+    const draftId = `test-${Date.now()}`
+    const r = await generateCaptureImage({ headline, draftId }, { force: true })
+    if (!r.ok) return res.status(500).json({ ok: false, error: r.error })
+    // Drop a Cliq note so Mark can tap the URL on his phone for a quick look
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🖼️ *Capture-image test*\nHeadline: _${headline}_\nPreview: ${r.url}`).catch(() => {})
+    res.json({ ok: true, url: r.url, headline })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.get('/image/status', requireCronSecretFlex, async (req, res) => {
+  res.json({
+    ok: true,
+    enabled: captureImagesEnabled(),
+    gemini_key_set: Boolean(process.env.GEMINI_API_KEY),
+    env_flag: String(process.env.CAPTURE_IMAGES_ENABLED || '(unset)'),
+    note: captureImagesEnabled()
+      ? 'Live: drafts created via /linkedin/draft-week-variants will get images.'
+      : 'OFF: set CAPTURE_IMAGES_ENABLED=true in Catalyst env vars to activate.',
+  })
+})
 
 // ─── ENGAGEMENT COLLECTOR (cron, hourly) ────────────────────────────────────
 // Pulls post performance metrics for every published draft, updates engagement
@@ -831,11 +883,16 @@ captureCalcRouter.get('/scheduler/run', requireCronSecretFlex, async (req, res) 
 
       if (draft.channel === 'linkedin_personal') {
         try {
-          const r = await postToLinkedIn({ text: draft.body })
+          // Use image-post path when an image was attached at draft time;
+          // fall back to text-only if image gen failed or was disabled.
+          const r = draft.image_url
+            ? await postImageToLinkedIn({ imageUrl: draft.image_url, text: draft.body })
+            : await postToLinkedIn({ text: draft.body })
           if (r?.ok && r.id) {
-            await updateDraft(segment, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id })
-            out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id })
-            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to LinkedIn: ${draft.headline || draft.body.slice(0, 60)}\n${PUBLIC_BASE}/.../${r.id}`).catch(() => {})
+            await updateDraft(segment, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, posted_with_image: Boolean(draft.image_url) })
+            out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id, with_image: Boolean(draft.image_url) })
+            const imgNote = draft.image_url ? ' (with image)' : ''
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to LinkedIn${imgNote}: ${draft.headline || draft.body.slice(0, 60)}`).catch(() => {})
           } else {
             await updateDraft(segment, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
