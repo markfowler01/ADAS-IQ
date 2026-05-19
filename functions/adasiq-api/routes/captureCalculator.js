@@ -21,6 +21,8 @@ import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.
 import { draftLinkedInWeek } from '../services/linkedInDrafter.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
+import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard } from '../services/captureApprovalQueue.js'
+import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import axios from 'axios'
 
 export const captureCalcRouter = express.Router()
@@ -388,6 +390,143 @@ captureCalcRouter.get('/cold/preview', requireCronSecretFlex, async (req, res) =
     res.status(500).json({ ok: false, error: e.message })
   }
 })
+
+// ─── APPROVAL QUEUE + CLIQ CARD POSTING ─────────────────────────────────────
+// Enqueue a draft for approval + post a Cliq card with signed action links.
+//
+//   POST /api/capture-calc/approval/enqueue  (cron-secret)
+//        body: {channel, category, headline?, body, scheduled_for?, voice_score?, voice_deductions?}
+//        → posts a Cliq card to Mark's alert channel with approve/edit/kill links
+//
+//   GET  /api/capture-calc/approval/approve?id=&t=&sig=  (PUBLIC, signed)
+//   GET  /api/capture-calc/approval/kill?id=&t=&sig=     (PUBLIC, signed)
+//   GET  /api/capture-calc/approval/edit?id=&t=&sig=     (PUBLIC, signed) → HTML form
+//   POST /api/capture-calc/approval/edit?id=&t=&sig=     (PUBLIC, signed) → save edit + approve
+//
+//   GET  /api/capture-calc/approval/queue  (cron-secret) → list pending
+
+const PUBLIC_BASE = 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+
+captureCalcRouter.post('/approval/enqueue', requireCronSecretFlex, express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const entry = await enqueueDraft(getSegment(req), req.body || {})
+    const card = formatApprovalCard({ entry, baseUrl: PUBLIC_BASE })
+    const r = await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(e => ({ ok: false, error: e.message }))
+    // Persist fingerprint signal: enqueued drafts aren't approvals, just track them
+    res.json({ ok: true, id: entry.id, cliq: r?.ok !== false, voice_score: entry.voice_score })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Reset/clear the queue — used to flush bad test data
+captureCalcRouter.post('/approval/reset', requireCronSecretFlex, async (req, res) => {
+  try {
+    const seg = getSegment(req)
+    await cacheSet(seg, 'capture_approval_queue', [])
+    res.json({ ok: true, message: 'queue cleared' })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.get('/approval/queue', requireCronSecretFlex, async (req, res) => {
+  try {
+    const status = req.query.status || undefined
+    const list = await listQueue(getSegment(req), { status })
+    res.json({ ok: true, count: list.length, items: list })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Public approve/kill/edit — signed via HMAC. GETs return confirmation pages
+// (NO side effects, because Cliq + iMessage + Slack link-unfurl bots auto-GET
+// URLs for previews). Real action requires a POST from the confirm button.
+function handleConfirmGet(action) {
+  return async (req, res) => {
+    const { id, t, sig } = req.query || {}
+    const v = verifySignedAction({ id, action, t, sig })
+    if (!v.ok) return res.status(401).type('text/html').send(approvalPage({ title: 'Link invalid', message: v.error, color: '#dc2626' }))
+    const draft = await getDraft(getSegment(req), id)
+    if (!draft) return res.status(404).type('text/html').send(approvalPage({ title: 'Draft not found', message: '', color: '#dc2626' }))
+    if (draft.status !== 'pending') return res.type('text/html').send(approvalPage({ title: `Already ${draft.status}`, message: 'This draft has already been acted on.', color: '#6b7280', body: draft.body }))
+
+    if (action === 'edit') return res.type('text/html').send(editForm({ draft, t, sig }))
+
+    // approve / kill — show a confirm page with a one-click POST button
+    return res.type('text/html').send(confirmPage({ draft, action, t, sig }))
+  }
+}
+
+function handleSignedPost(action) {
+  return async (req, res) => {
+    const { id, t, sig } = req.query || {}
+    const v = verifySignedAction({ id, action, t, sig })
+    if (!v.ok) return res.status(401).type('text/html').send(approvalPage({ title: 'Link invalid', message: v.error, color: '#dc2626' }))
+    const segment = getSegment(req)
+    const draft = await getDraft(segment, id)
+    if (!draft) return res.status(404).type('text/html').send(approvalPage({ title: 'Draft not found', message: '', color: '#dc2626' }))
+    if (draft.status !== 'pending') return res.type('text/html').send(approvalPage({ title: `Already ${draft.status}`, message: 'This draft has already been acted on.', color: '#6b7280' }))
+
+    if (action === 'approve') {
+      const updated = await updateDraft(segment, id, { status: 'approved' })
+      await updateFingerprint(segment, { category: draft.category, signal: 'up', text: draft.body }).catch(() => {})
+      return res.type('text/html').send(approvalPage({ title: '✅ Approved', message: `Approved for ${updated.channel}. Will publish at the scheduled time.`, color: '#16a34a', body: draft.body }))
+    }
+    if (action === 'kill') {
+      await updateDraft(segment, id, { status: 'killed' })
+      await updateFingerprint(segment, { category: draft.category, signal: 'down', text: draft.body }).catch(() => {})
+      return res.type('text/html').send(approvalPage({ title: '❌ Killed', message: 'Draft will not be published.', color: '#dc2626' }))
+    }
+    res.status(400).type('text/plain').send('Unknown action')
+  }
+}
+
+captureCalcRouter.get('/approval/approve',  handleConfirmGet('approve'))
+captureCalcRouter.get('/approval/kill',     handleConfirmGet('kill'))
+captureCalcRouter.get('/approval/edit',     handleConfirmGet('edit'))
+captureCalcRouter.post('/approval/approve', handleSignedPost('approve'))
+captureCalcRouter.post('/approval/kill',    handleSignedPost('kill'))
+
+captureCalcRouter.post('/approval/edit', express.urlencoded({ extended: false, limit: '64kb' }), async (req, res) => {
+  const { id, t, sig } = req.query || {}
+  const v = verifySignedAction({ id, action: 'edit', t, sig })
+  if (!v.ok) return res.status(401).type('text/html').send(approvalPage({ title: 'Link invalid', message: v.error, color: '#dc2626' }))
+  const segment = getSegment(req)
+  const draft = await getDraft(segment, id)
+  if (!draft) return res.status(404).type('text/html').send(approvalPage({ title: 'Draft not found', message: '', color: '#dc2626' }))
+  const editedBody = String(req.body?.body || '').trim()
+  if (!editedBody) return res.status(400).type('text/html').send(approvalPage({ title: 'Body required', message: '', color: '#dc2626' }))
+  const editedHeadline = String(req.body?.headline || draft.headline || '').trim()
+  const updated = await updateDraft(segment, id, { status: 'approved', body: editedBody, headline: editedHeadline, was_edited: true })
+  await updateFingerprint(segment, { category: draft.category, signal: 'edited', text: draft.body, editedText: editedBody }).catch(() => {})
+  res.type('text/html').send(approvalPage({ title: '✅ Edited & Approved', message: 'Your edit is saved and the draft is queued to publish.', color: '#16a34a', body: editedBody }))
+})
+
+// ─── Approval result + edit-form HTML helpers ───────────────────────────────
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function approvalPage({ title, message, color, body }) {
+  const safe = escHtml(body || '')
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(title)}</title><style>body{margin:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}.wrap{max-width:520px;background:#151515;border-radius:16px;padding:36px 32px;border-top:4px solid ${color}}h1{font-size:26px;margin:0 0 12px;color:${color}}p{font-size:15px;line-height:1.55;color:#ccc;margin:0 0 16px}.body{margin:20px 0 0;padding:16px 18px;background:#0d0d0d;border-radius:10px;font-size:14px;line-height:1.55;color:#e5e7eb;white-space:pre-wrap}</style></head><body><div class="wrap"><h1>${escHtml(title)}</h1>${message ? `<p>${escHtml(message)}</p>` : ''}${safe ? `<div class="body">${safe}</div>` : ''}</div></body></html>`
+}
+
+function confirmPage({ draft, action, t, sig }) {
+  const isKill = action === 'kill'
+  const heading = isKill ? '❌ Confirm Kill' : '✅ Confirm Approve'
+  const accent = isKill ? '#dc2626' : '#16a34a'
+  const btnText = isKill ? 'Yes, kill this draft' : 'Yes, approve this draft'
+  const postUrl = `${PUBLIC_BASE}/api/capture-calc/approval/${action}?id=${encodeURIComponent(draft.id)}&t=${encodeURIComponent(t)}&sig=${encodeURIComponent(sig)}`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(heading)}</title><style>body{margin:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;padding:24px}.wrap{max-width:600px;margin:0 auto;background:#151515;border-radius:16px;padding:28px;border-top:4px solid ${accent}}h1{font-size:24px;margin:0 0 8px;color:${accent}}.meta{font-size:12px;color:#999;margin-bottom:14px}.body{margin:14px 0 20px;padding:16px 18px;background:#0d0d0d;border-radius:10px;font-size:14px;line-height:1.55;color:#e5e7eb;white-space:pre-wrap}.btn{background:${accent};color:#fff;font-weight:800;padding:14px 24px;border:none;border-radius:9px;cursor:pointer;font-size:15px}.score{display:inline-block;padding:5px 12px;background:rgba(205,68,25,.15);color:#CD4419;font-size:12px;font-weight:700;border-radius:6px;margin-bottom:14px}</style></head><body><div class="wrap"><h1>${escHtml(heading)}</h1><div class="meta">Channel: <strong style="color:#fff">${escHtml(draft.channel)}</strong> · Category: <strong style="color:#fff">${escHtml(draft.category)}</strong></div><div class="score">Voice score: ${draft.voice_score || '—'}/100</div>${draft.headline ? `<div style="font-size:16px;font-weight:700;margin-bottom:8px">${escHtml(draft.headline)}</div>` : ''}<div class="body">${escHtml(draft.body)}</div><form method="POST" action="${postUrl}"><button class="btn" type="submit">${escHtml(btnText)}</button></form></div></body></html>`
+}
+
+function editForm({ draft, t, sig }) {
+  const action = `${PUBLIC_BASE}/api/capture-calc/approval/edit?id=${encodeURIComponent(draft.id)}&t=${encodeURIComponent(t)}&sig=${encodeURIComponent(sig)}`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Edit draft</title><style>body{margin:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;padding:24px}.wrap{max-width:680px;margin:0 auto;background:#151515;border-radius:16px;padding:28px;border-top:4px solid #CD4419}h1{font-size:22px;margin:0 0 8px;color:#CD4419}.meta{font-size:12px;color:#999;margin-bottom:18px}label{display:block;font-size:13px;font-weight:700;letter-spacing:.04em;color:#ccc;margin:14px 0 8px;text-transform:uppercase}input[type=text],textarea{width:100%;padding:12px 14px;background:#1e1e1e;border:1px solid rgba(255,255,255,.08);border-radius:10px;color:#fff;font-family:'Inter',sans-serif;font-size:15px;line-height:1.5}textarea{min-height:240px;resize:vertical}button{margin-top:18px;background:#CD4419;color:#fff;font-weight:800;padding:14px 22px;border:none;border-radius:9px;cursor:pointer;font-size:15px}.score{display:inline-block;padding:6px 12px;background:rgba(205,68,25,.15);color:#CD4419;font-size:13px;font-weight:700;border-radius:6px;margin-bottom:14px}</style></head><body><div class="wrap"><h1>Edit & approve</h1><div class="meta">Channel: <strong style="color:#fff">${escHtml(draft.channel)}</strong> · Category: <strong style="color:#fff">${escHtml(draft.category)}</strong></div><div class="score">Voice score: ${draft.voice_score || '—'}/100</div><form method="POST" action="${action}">${draft.headline ? `<label>Headline</label><input type="text" name="headline" value="${escHtml(draft.headline)}">` : ''}<label>Body</label><textarea name="body" required>${escHtml(draft.body)}</textarea><button type="submit">Save & Approve  →</button></form></div></body></html>`
+}
 
 // ─── VOICE SCORER (diagnostic endpoints) ────────────────────────────────────
 //   POST /api/capture-calc/voice/score   body:{text, channel?}      → score 0-100
