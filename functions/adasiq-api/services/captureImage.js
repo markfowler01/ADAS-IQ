@@ -12,18 +12,38 @@
 
 import axios from 'axios'
 import sharp from 'sharp'
+import fs from 'fs/promises'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { commitBinaryFile } from './brewArchive.js'
 
-// Brand logo source — same file used on absoluteadas.com nav. We download
-// once and cache the buffer in module scope (warm-container reuse). On cold
-// start we re-fetch, ~277KB so the latency is sub-second.
-const LOGO_URL = 'https://images.squarespace-cdn.com/content/v1/682beb3cab58930b42e509fb/e03450c2-ecd4-49b1-8ecb-080cfd27a870/LOGO+TRANSPERRENT+.png'
-let _logoCache = null
-async function getLogoBuffer() {
-  if (_logoCache) return _logoCache
-  const res = await axios.get(LOGO_URL, { responseType: 'arraybuffer', timeout: 10000 })
-  _logoCache = Buffer.from(res.data)
-  return _logoCache
+// Axios is used for the Gemini API call below; sharp/fs/path are used for
+// the local brand-asset composite that matches the newsletter footer.
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const ASSETS_DIR = path.join(__dirname, '..', 'assets')
+
+// Footer brand assets — same files the tip-card composite uses, so the
+// capture image footer reads identically to the newsletter posts.
+// "Absolute" in white + "ADAS" in orange + tagline, with the logo PNG.
+const BRAND_ORANGE = '#CD4419'
+let _logoB64 = null
+let _interBoldB64 = null
+let _interRegularB64 = null
+async function loadBrandAssets() {
+  if (!_logoB64) {
+    const buf = await fs.readFile(path.join(ASSETS_DIR, 'absolute-adas-logo.png'))
+    _logoB64 = buf.toString('base64')
+  }
+  if (!_interBoldB64) {
+    const buf = await fs.readFile(path.join(ASSETS_DIR, 'fonts', 'Inter-Bold.ttf'))
+    _interBoldB64 = buf.toString('base64')
+  }
+  if (!_interRegularB64) {
+    const buf = await fs.readFile(path.join(ASSETS_DIR, 'fonts', 'Inter-Regular.ttf'))
+    _interRegularB64 = buf.toString('base64')
+  }
+  return { logoB64: _logoB64, interBoldB64: _interBoldB64, interRegularB64: _interRegularB64 }
 }
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
@@ -127,37 +147,147 @@ export async function getAuditLog(segment, limit = 50) {
 // Per-batch limit getter — used by callers that want to refuse oversized requests
 export function getPerBatchLimit() { return PER_BATCH_LIMIT }
 
-// ─── Logo composite ─────────────────────────────────────────────────────────
-// Drops the real Absolute ADAS logo PNG into the bottom-left of the dark band
-// the AI left blank for us. Positioned 36px from left edge, 36px from bottom.
-// Logo resized to fit at ~110px tall (looks right inside the band at the
-// 1200x627 base size). Returns a fresh PNG buffer.
-async function compositeLogo(rawImageBuffer) {
+// ─── SVG overlay composite ──────────────────────────────────────────────────
+// Same layout pattern as the newsletter tip card (tipImageComposite.js):
+//   - Mid-image: headline with semi-transparent darken band behind it
+//   - Bottom band: solid dark footer with logo + "Absolute"/"ADAS" split
+//     wordmark + tagline, centered
+// Uses real Inter Bold + Inter Regular fonts embedded into the SVG so the
+// brand reads identically every time, no AI typography drift.
+async function compositeOverlay(rawImageBuffer, headline) {
   const baseMeta = await sharp(rawImageBuffer).metadata()
   const baseW = baseMeta.width || 1200
   const baseH = baseMeta.height || 627
+  const safeHeadline = String(headline || '').trim().slice(0, 100)
 
-  // Sizing rules: logo height ≈ 17% of base image height (so it visually
-  // matches the headline weight in the band). Logo width auto.
-  const targetLogoHeight = Math.round(baseH * 0.17)
-  const logoBuf = await getLogoBuffer()
-  const resizedLogo = await sharp(logoBuf)
-    .resize({ height: targetLogoHeight, fit: 'inside' })
-    .png()
-    .toBuffer()
-  const resizedMeta = await sharp(resizedLogo).metadata()
+  const { logoB64, interBoldB64, interRegularB64 } = await loadBrandAssets()
 
-  const padLeft = Math.round(baseW * 0.03)
-  const padBottom = Math.round(baseH * 0.06)
+  // ── Footer band geometry (matches newsletter footer proportions) ──────────
+  const footerH = Math.round(baseH * 0.16)           // ~100px on 627
+  const footerY = baseH - footerH
+  const logoSize = Math.round(footerH * 0.62)         // logo fills ~62% of band height
+  const wordmarkFontSize = Math.round(footerH * 0.34) // wordmark big enough to read in feed
+  const taglineFontSize = Math.round(footerH * 0.15)
+  const wordmarkWhite = 'Absolute'
+  const wordmarkOrange = 'ADAS'
+  const tagline = 'Mobile ADAS calibration  ·  Western Washington'
+
+  // Approximate widths for centering the footer block (Inter Bold ~0.58× em).
+  const wordmarkApproxW = Math.round((wordmarkWhite.length + 1 + wordmarkOrange.length) * wordmarkFontSize * 0.58)
+  const taglineApproxW = Math.round(tagline.length * taglineFontSize * 0.55)
+  const textBlockW = Math.max(wordmarkApproxW, taglineApproxW)
+  const totalBlockW = logoSize + 20 + textBlockW
+  const blockStartX = Math.round((baseW - totalBlockW) / 2)
+  const footerLogoX = blockStartX
+  const footerLogoY = footerY + Math.round((footerH - logoSize) / 2)
+  const footerTextX = blockStartX + logoSize + 20
+  const wordmarkWhiteApproxW = Math.round(wordmarkWhite.length * wordmarkFontSize * 0.58)
+  const wordmarkY = footerY + Math.round(footerH * 0.50)
+  const wordmarkOrangeX = footerTextX + wordmarkWhiteApproxW + Math.round(wordmarkFontSize * 0.30)
+  const taglineY = footerY + Math.round(footerH * 0.78)
+
+  // ── Headline band (mid-image) ────────────────────────────────────────────
+  // Dynamic font size based on headline length + word count to keep multi-line
+  // headlines readable at thumbnail scale.
+  const headlineFontSize = safeHeadline.length > 60 ? 40 : safeHeadline.length > 40 ? 50 : 60
+  const headlineMaxCharsPerLine = Math.round(baseW * 0.85 / (headlineFontSize * 0.55))
+  const headlineLines = wrapHeadline(safeHeadline, headlineMaxCharsPerLine)
+  const lineGap = Math.round(headlineFontSize * 1.15)
+  const headlineBlockH = headlineLines.length * lineGap
+  // Place the headline block so its bottom edge sits just above the footer
+  // band with a comfortable margin.
+  const headlineBlockBottom = footerY - Math.round(baseH * 0.04)
+  const headlineBlockTop = headlineBlockBottom - headlineBlockH
+  const darkenBandPadY = 22
+  const darkenBandY = headlineBlockTop - darkenBandPadY
+  const darkenBandH = headlineBlockH + darkenBandPadY * 2
+
+  // ── Build SVG ────────────────────────────────────────────────────────────
+  const headlineTextSvg = headlineLines.map((line, i) =>
+    `<text x="${Math.round(baseW / 2)}" y="${headlineBlockTop + (i + 1) * lineGap - Math.round(lineGap * 0.25)}" class="headline">${escXml(line)}</text>`
+  ).join('\n      ')
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${baseW}" height="${baseH}" viewBox="0 0 ${baseW} ${baseH}">
+    <defs>
+      <style type="text/css">
+        @font-face { font-family: 'Inter'; src: url(data:font/ttf;base64,${interBoldB64}) format('truetype'); font-weight: 700; }
+        @font-face { font-family: 'Inter'; src: url(data:font/ttf;base64,${interRegularB64}) format('truetype'); font-weight: 400; }
+        .headline {
+          font-family: 'Inter', sans-serif;
+          font-weight: 700;
+          font-size: ${headlineFontSize}px;
+          fill: #ffffff;
+          text-anchor: middle;
+          letter-spacing: -0.015em;
+          paint-order: stroke;
+          stroke: rgba(0,0,0,0.55);
+          stroke-width: 3px;
+        }
+        .wordmark-white {
+          font-family: 'Inter', sans-serif;
+          font-weight: 700;
+          font-size: ${wordmarkFontSize}px;
+          fill: #ffffff;
+          letter-spacing: -0.015em;
+        }
+        .wordmark-orange {
+          font-family: 'Inter', sans-serif;
+          font-weight: 700;
+          font-size: ${wordmarkFontSize}px;
+          fill: ${BRAND_ORANGE};
+          letter-spacing: -0.015em;
+        }
+        .tagline {
+          font-family: 'Inter', sans-serif;
+          font-weight: 400;
+          font-size: ${taglineFontSize}px;
+          fill: rgba(255,255,255,0.85);
+          letter-spacing: 0;
+        }
+      </style>
+    </defs>
+    <!-- Headline darken band -->
+    <rect x="0" y="${darkenBandY}" width="${baseW}" height="${darkenBandH}" fill="rgba(0,0,0,0.42)"/>
+    ${headlineTextSvg}
+
+    <!-- Footer band (solid dark, full width) -->
+    <rect x="0" y="${footerY}" width="${baseW}" height="${footerH}" fill="#0d0d0d"/>
+    <!-- Wordmark: "Absolute" white + "ADAS" orange -->
+    <text x="${footerTextX}" y="${wordmarkY}" class="wordmark-white">${wordmarkWhite}</text>
+    <text x="${wordmarkOrangeX}" y="${wordmarkY}" class="wordmark-orange">${wordmarkOrange}</text>
+    <!-- Tagline -->
+    <text x="${footerTextX}" y="${taglineY}" class="tagline">${escXml(tagline)}</text>
+    <!-- Logo PNG embedded as base64 -->
+    <image x="${footerLogoX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${logoB64}"/>
+  </svg>`
 
   return sharp(rawImageBuffer)
-    .composite([{
-      input: resizedLogo,
-      left: padLeft,
-      top: baseH - (resizedMeta.height || targetLogoHeight) - padBottom,
-    }])
+    .composite([{ input: Buffer.from(svg, 'utf-8'), top: 0, left: 0 }])
     .png()
     .toBuffer()
+}
+
+function wrapHeadline(text, maxChars) {
+  if (!text) return []
+  const words = text.split(/\s+/)
+  const lines = []
+  let cur = ''
+  for (const w of words) {
+    const candidate = cur ? `${cur} ${w}` : w
+    if (candidate.length > maxChars && cur) {
+      lines.push(cur)
+      cur = w
+    } else {
+      cur = candidate
+    }
+  }
+  if (cur) lines.push(cur)
+  // Cap at 3 lines — anything longer should be trimmed at the source
+  return lines.slice(0, 3)
+}
+
+function escXml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
 
 // Style anchor. Real body-shop / calibration-floor photography + editorial
@@ -176,18 +306,14 @@ LIGHTING: Cinematic mix — natural golden-hour light spilling through the open 
 
 ABSOLUTELY NO PEOPLE. No technicians, no shop owners, no hands, no human silhouettes. Empty of people. Just the equipment and the vehicle.
 
-TEXT OVERLAY (editorial, magazine-cover style, must be perfectly readable):
-- Bottom third of the image: a solid dark band (#0d0d0d, 80% opacity, full-width, ~30% of image height) overlaid on the photo.
-- Bottom-LEFT corner of the dark band (roughly 30% width × full band height): LEAVE COMPLETELY BLANK. No text, no logo, no marks. This space is reserved for a real brand logo to be composited on top after generation.
-- Center / right portion of the dark band:
-  - Large bold serif headline in white (#ffffff) reading "{HEADLINE}". Multi-line OK, generous line spacing, takes the dominant visual weight.
-  - Small white monospace caption below the headline reading "absoluteadas.com/calculator".
+CRITICAL: NO TEXT, NO LOGOS, NO WATERMARKS, NO GRAPHICS of any kind in the image. Do NOT add captions, headlines, wordmarks, or branding. Text and branding will be composited on top in code afterward.
 
-ABSOLUTELY NO text reading "ABSOLUTE ADAS" or any brand wordmark — that area is left blank for the real logo to be composited on. Do NOT write any logo or brand name yourself.
+COMPOSITION GUIDANCE (so the overlay reads cleanly):
+- Top 50% of frame: the main subject (calibration setup, target frame, scan tool, vehicle).
+- Middle 30% of frame: keep this area visually quieter (darker shadows, out-of-focus background, neutral tones) so a headline text overlay reads cleanly when placed there.
+- Bottom 15% of frame: keep dark and uniform (concrete floor, shadow, dark background) because a graphic footer with the brand mark will sit there.
 
-Composition: photo on top 70%, text band on bottom 30%. Headline + caption fill the right 70% of the band; left 30% stays empty. Text must be perfectly legible at LinkedIn's in-feed thumbnail size (around 552x288). High contrast.
-
-NO stock-photo aesthetic. NO illustration. Real photography only.`
+Real photography only. NO stock-photo aesthetic. NO illustration. Just the photograph — text and brand graphics come later in code.`
 
 /**
  * Generate a LinkedIn-share-sized image for one post variant.
@@ -251,16 +377,16 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
     }
     const rawBuffer = Buffer.from(imgPart.inlineData.data, 'base64')
 
-    // Composite the real Absolute ADAS logo into the bottom-left of the dark
-    // band. AI-generated wordmarks are inconsistent; using the actual PNG
-    // gives us a pixel-perfect brand mark every time.
+    // Composite the headline + brand footer over the raw photo. The footer
+    // layout matches the newsletter tip-card exactly (logo + "Absolute"/"ADAS"
+    // split wordmark + tagline, centered) so all Absolute ADAS imagery reads
+    // as one brand. Failure falls back to shipping the raw photo rather than
+    // blocking the whole pipeline.
     let buffer
     try {
-      buffer = await compositeLogo(rawBuffer)
+      buffer = await compositeOverlay(rawBuffer, safeHeadline)
     } catch (e) {
-      // If compositing fails, ship the raw image rather than blocking. Log
-      // the failure so we know to investigate.
-      console.warn('[captureImage] logo composite failed, shipping raw:', e.message)
+      console.warn('[captureImage] overlay composite failed, shipping raw:', e.message)
       buffer = rawBuffer
     }
 
