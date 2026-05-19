@@ -21,7 +21,7 @@ import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
 import { postToLinkedIn } from '../services/brewLinkedIn.js'
 import { collectForDraft, applyKillRules } from '../services/engagementCollector.js'
-import { generateCaptureImage, captureImagesEnabled } from '../services/captureImage.js'
+import { generateCaptureImage, captureImagesEnabled, captureImageConfig, checkBudget, getAuditLog, getPerBatchLimit } from '../services/captureImage.js'
 import { postImageToLinkedIn } from '../services/brewLinkedIn.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
@@ -524,7 +524,20 @@ function confirmPage({ draft, action, t, sig }) {
   const accent = isKill ? '#dc2626' : '#16a34a'
   const btnText = isKill ? 'Yes, kill this draft' : 'Yes, approve this draft'
   const postUrl = `${PUBLIC_BASE}/api/capture-calc/approval/${action}?id=${encodeURIComponent(draft.id)}&t=${encodeURIComponent(t)}&sig=${encodeURIComponent(sig)}`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(heading)}</title><style>body{margin:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;padding:24px}.wrap{max-width:600px;margin:0 auto;background:#151515;border-radius:16px;padding:28px;border-top:4px solid ${accent}}h1{font-size:24px;margin:0 0 8px;color:${accent}}.meta{font-size:12px;color:#999;margin-bottom:14px}.body{margin:14px 0 20px;padding:16px 18px;background:#0d0d0d;border-radius:10px;font-size:14px;line-height:1.55;color:#e5e7eb;white-space:pre-wrap}.btn{background:${accent};color:#fff;font-weight:800;padding:14px 24px;border:none;border-radius:9px;cursor:pointer;font-size:15px}.score{display:inline-block;padding:5px 12px;background:rgba(205,68,25,.15);color:#CD4419;font-size:12px;font-weight:700;border-radius:6px;margin-bottom:14px}</style></head><body><div class="wrap"><h1>${escHtml(heading)}</h1><div class="meta">Channel: <strong style="color:#fff">${escHtml(draft.channel)}</strong> · Category: <strong style="color:#fff">${escHtml(draft.category)}</strong></div><div class="score">Voice score: ${draft.voice_score || '—'}/100</div>${draft.headline ? `<div style="font-size:16px;font-weight:700;margin-bottom:8px">${escHtml(draft.headline)}</div>` : ''}<div class="body">${escHtml(draft.body)}</div><form method="POST" action="${postUrl}"><button class="btn" type="submit">${escHtml(btnText)}</button></form></div></body></html>`
+
+  // Image preview block — mandatory so Mark never blind-approves a draft with
+  // a bad image attached. If image_url is missing but image_status is set,
+  // show the status so the failure mode is visible.
+  let imageBlock = ''
+  if (draft.image_url) {
+    imageBlock = `<div style="margin:18px 0 20px"><div style="font-size:11px;color:#9ca3af;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px">🖼️ Image that will publish with this post</div><a href="${escHtml(draft.image_url)}" target="_blank" rel="noopener"><img src="${escHtml(draft.image_url)}" alt="Generated post image" style="width:100%;max-width:560px;border-radius:10px;border:1px solid rgba(255,255,255,.08);display:block"/></a><div style="font-size:12px;color:#6b7280;margin-top:6px">Tap to view full size. If the image is wrong, hit kill instead, or regenerate via the API.</div></div>`
+  } else if (draft.image_status === 'failed') {
+    imageBlock = `<div style="margin:18px 0 20px;padding:14px 16px;background:rgba(220,38,38,.1);border:1px solid rgba(220,38,38,.4);border-radius:10px;font-size:13px;color:#fda4af">🖼️ Image gen <strong>failed</strong> for this draft. ${draft.image_error ? `Error: ${escHtml(String(draft.image_error).slice(0, 200))}` : ''} Post will publish as text-only.</div>`
+  } else if (draft.image_status === 'disabled') {
+    imageBlock = `<div style="margin:18px 0 20px;padding:12px 16px;background:#1e1e1e;border-radius:8px;font-size:13px;color:#9ca3af">🖼️ Image gen was OFF when this draft was created. Post will publish as text-only.</div>`
+  }
+
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escHtml(heading)}</title><style>body{margin:0;font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;padding:24px}.wrap{max-width:640px;margin:0 auto;background:#151515;border-radius:16px;padding:28px;border-top:4px solid ${accent}}h1{font-size:24px;margin:0 0 8px;color:${accent}}.meta{font-size:12px;color:#999;margin-bottom:14px}.body{margin:14px 0 20px;padding:16px 18px;background:#0d0d0d;border-radius:10px;font-size:14px;line-height:1.55;color:#e5e7eb;white-space:pre-wrap}.btn{background:${accent};color:#fff;font-weight:800;padding:14px 24px;border:none;border-radius:9px;cursor:pointer;font-size:15px}.score{display:inline-block;padding:5px 12px;background:rgba(205,68,25,.15);color:#CD4419;font-size:12px;font-weight:700;border-radius:6px;margin-bottom:14px}</style></head><body><div class="wrap"><h1>${escHtml(heading)}</h1><div class="meta">Channel: <strong style="color:#fff">${escHtml(draft.channel)}</strong> · Category: <strong style="color:#fff">${escHtml(draft.category)}</strong></div><div class="score">Voice score: ${draft.voice_score || '—'}/100</div>${draft.headline ? `<div style="font-size:16px;font-weight:700;margin-bottom:8px">${escHtml(draft.headline)}</div>` : ''}<div class="body">${escHtml(draft.body)}</div>${imageBlock}<form method="POST" action="${postUrl}"><button class="btn" type="submit">${escHtml(btnText)}</button></form></div></body></html>`
 }
 
 function editForm({ draft, t, sig }) {
@@ -651,11 +664,14 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
         })
         variantIds.push(entry.id)
 
-        // Generate image (only fires if CAPTURE_IMAGES_ENABLED=true; silent
-        // no-op otherwise). Failure is non-blocking: draft still ships text-only.
+        // Generate image — guardrails enforced inside the service. Failure is
+        // non-blocking: draft ships text-only and we tag image_status.
         let imageUrl = null
         if (captureImagesEnabled()) {
-          const r = await generateCaptureImage({ headline: v.headline || v.body.split('\n')[0], draftId: entry.id }).catch(e => ({ ok: false, error: e.message }))
+          const r = await generateCaptureImage(
+            { headline: v.headline || v.body.split('\n')[0], draftId: entry.id },
+            { segment }
+          ).catch(e => ({ ok: false, error: e.message }))
           if (r?.ok) {
             imageUrl = r.url
             await updateDraft(segment, entry.id, { image_url: r.url, image_status: 'generated' })
@@ -679,6 +695,18 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
       out.push({ day: slot.day, type: slot.type, variant_ids: variantIds, scheduled_for: scheduledFor.toISOString() })
     }
 
+    // Post-batch alerts: budget warning + failure-rate warning
+    if (captureImagesEnabled()) {
+      const budget = await checkBudget(segment)
+      const warnings = []
+      if (budget.used >= budget.cap) warnings.push(`🛑 *Daily image cap hit:* ${budget.used}/${budget.cap}. New image gen blocked until midnight UTC.`)
+      else if (budget.used >= Math.floor(budget.cap * 0.8)) warnings.push(`⚠️ *Image budget at ${Math.round(budget.used / budget.cap * 100)}%* (${budget.used}/${budget.cap}).`)
+      if (budget.recentCount >= 5 && budget.recentFailRate >= 0.5) warnings.push(`⚠️ *Image gen fail rate ${Math.round(budget.recentFailRate * 100)}%* over last ${budget.recentCount} attempts. Check Gemini API health.`)
+      if (warnings.length) {
+        postToCliqChannelById(MARK_ALERT_CHANNEL_ID, warnings.join('\n')).catch(() => {})
+      }
+    }
+
     res.json({ ok: true, slots: out })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
@@ -700,20 +728,18 @@ function nextScheduledFor(day) {
   return result
 }
 
-// ─── IMAGE GEN — TEST + STATUS ──────────────────────────────────────────────
-// Standalone test endpoint so Mark can preview a single image before flipping
-// CAPTURE_IMAGES_ENABLED on. Uses opts.force=true so it works regardless of
-// the kill switch. Posts the resulting URL to MARK_ALERT_CHANNEL for review.
-//
-//   GET /api/capture-calc/image/test?secret=...&headline=Your+test+headline
-//   GET /api/capture-calc/image/status?secret=...  → kill-switch state
+// ─── IMAGE GEN — TEST + STATUS + AUDIT + REGEN ──────────────────────────────
+//   GET /image/test     — generate one image, regardless of kill switch (force=true).
+//                         Doesn't consume daily budget.
+//   GET /image/status   — kill switch + budget + recent fail rate
+//   GET /image/audit    — last 50 image gen attempts (success + failure)
+//   POST /image/regen   — regenerate image for an existing draft (consumes budget)
 captureCalcRouter.get('/image/test', requireCronSecretFlex, async (req, res) => {
   try {
     const headline = String(req.query.headline || 'Your sublet vendor is making profit inside your building.').slice(0, 100)
     const draftId = `test-${Date.now()}`
-    const r = await generateCaptureImage({ headline, draftId }, { force: true })
+    const r = await generateCaptureImage({ headline, draftId }, { force: true, segment: getSegment(req) })
     if (!r.ok) return res.status(500).json({ ok: false, error: r.error })
-    // Drop a Cliq note so Mark can tap the URL on his phone for a quick look
     postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🖼️ *Capture-image test*\nHeadline: _${headline}_\nPreview: ${r.url}`).catch(() => {})
     res.json({ ok: true, url: r.url, headline })
   } catch (e) {
@@ -722,15 +748,53 @@ captureCalcRouter.get('/image/test', requireCronSecretFlex, async (req, res) => 
 })
 
 captureCalcRouter.get('/image/status', requireCronSecretFlex, async (req, res) => {
+  const cfg = captureImageConfig()
+  const budget = await checkBudget(getSegment(req))
   res.json({
     ok: true,
-    enabled: captureImagesEnabled(),
-    gemini_key_set: Boolean(process.env.GEMINI_API_KEY),
-    env_flag: String(process.env.CAPTURE_IMAGES_ENABLED || '(unset)'),
-    note: captureImagesEnabled()
-      ? 'Live: drafts created via /linkedin/draft-week-variants will get images.'
+    ...cfg,
+    budget,
+    note: cfg.enabled
+      ? `Live. ${budget.remaining}/${budget.cap} images remaining today.`
       : 'OFF: set CAPTURE_IMAGES_ENABLED=true in Catalyst env vars to activate.',
   })
+})
+
+captureCalcRouter.get('/image/audit', requireCronSecretFlex, async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50))
+    const log = await getAuditLog(getSegment(req), limit)
+    const ok = log.filter(a => a.ok).length
+    const failed = log.length - ok
+    res.json({ ok: true, count: log.length, success: ok, failed, items: log })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.post('/image/regen', requireCronSecretFlex, express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const id = String(req.body?.id || req.query?.id || '')
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' })
+    const draft = await getDraft(segment, id)
+    if (!draft) return res.status(404).json({ ok: false, error: 'draft not found' })
+
+    const headline = String(req.body?.headline || draft.headline || draft.body.split('\n')[0]).slice(0, 100)
+    // Regen consumes daily budget. Hit the kill switch only if explicitly off.
+    if (!captureImagesEnabled() && !req.body?.force) {
+      return res.status(409).json({ ok: false, error: 'image gen kill switch is off (set CAPTURE_IMAGES_ENABLED=true or pass force=true)' })
+    }
+    const r = await generateCaptureImage({ headline, draftId: id }, { segment, force: Boolean(req.body?.force) })
+    if (!r.ok) {
+      await updateDraft(segment, id, { image_status: 'regen_failed', image_error: r.error })
+      return res.status(500).json({ ok: false, error: r.error, budget: r.budget })
+    }
+    await updateDraft(segment, id, { image_url: r.url, image_status: 'regenerated' })
+    res.json({ ok: true, id, url: r.url, budget: r.budget })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
 })
 
 // ─── ENGAGEMENT COLLECTOR (cron, hourly) ────────────────────────────────────
