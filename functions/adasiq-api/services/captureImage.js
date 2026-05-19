@@ -114,17 +114,32 @@ export async function getAuditLog(segment, limit = 50) {
 // Per-batch limit getter — used by callers that want to refuse oversized requests
 export function getPerBatchLimit() { return PER_BATCH_LIMIT }
 
-// Style anchor. Plain typography. NO people, NO photo elements. This keeps
-// us safely away from uncanny-AI-face territory and ensures consistency
-// across every post. Tweak only this string to evolve the look.
-const STYLE_PROMPT = `Editorial social-post graphic, landscape 1200x627 (LinkedIn share size).
-Cream background (#f5f3f0). Bold orange accent (#CD4419).
-Top-left: small monospace caps "ABSOLUTE ADAS" in dark gray (#1a1a1a), with a tiny orange dot before the text. Thin orange underline rule below the wordmark.
-Center-left: large bold serif typography in near-black (#1a1a1a) reading "{HEADLINE}". Multi-line OK, generous line spacing, left-aligned, takes up about 60% of the width.
-Bottom-left: small monospace text in gray reading "absoluteadas.com/calculator".
-Top-right corner: a small, abstract orange editorial accent element — could be a thin underline, a small geometric mark, or a single character glyph. Tasteful, minimal.
-NO people, NO faces, NO stock-photo elements, NO illustrations of cars or shops. Type-only design.
-Magazine-quality editorial layout. Clean, minimal, lots of negative space. High-end print design feel.`
+// Style anchor. Real body-shop / calibration-floor photography + editorial
+// text overlay. The pattern that actually performs on LinkedIn: documentary
+// work photography that signals "this is real shop work", with a bold
+// readable text overlay so the hook lands in-feed without needing a click.
+//
+// HARD RULE: NO people, NO faces. AI-generated faces look uncanny and tank
+// credibility instantly. The work itself (target frames, scan tools, bay
+// floor, vehicles in repair) photographs cleanly and convincingly.
+const STYLE_PROMPT = `Documentary photograph, landscape 1200x627 (LinkedIn share size). Photoreal, magazine-quality, shot on a 35mm or medium-format camera with shallow depth of field.
+
+SCENE: Inside a clean modern collision repair body shop bay. A late-model SUV positioned for an ADAS calibration. An ADAS calibration target frame on a tripod set up in front of the vehicle, with the target board facing the windshield. An OEM scan tool plugged into the vehicle's OBD port, screen glowing faintly. Clean polished concrete floor. Pegboard with calibration tools in soft focus background. The whole frame says "real calibration work in progress."
+
+LIGHTING: Cinematic mix — natural golden-hour light spilling through the open bay door from the left, mixed with cool overhead LED shop lights. Mood: confident, professional, end-of-workday calm.
+
+ABSOLUTELY NO PEOPLE. No technicians, no shop owners, no hands, no human silhouettes. Empty of people. Just the equipment and the vehicle.
+
+TEXT OVERLAY (editorial, magazine-cover style, must be perfectly readable):
+- Bottom third of the image: a solid dark band (#0d0d0d, 80% opacity, full-width, ~30% of image height) overlaid on the photo.
+- Inside the dark band, left-aligned with comfortable padding:
+  - Tiny orange caps eyebrow text reading "ABSOLUTE ADAS" (#CD4419, monospace, 14pt feel, letter-spaced).
+  - Large bold serif headline in white (#ffffff) reading "{HEADLINE}". Multi-line OK, generous line spacing, takes the dominant visual weight.
+  - Small white monospace caption at the very bottom reading "absoluteadas.com/calculator".
+
+Composition: photo on top 70%, text band on bottom 30%. The text must be perfectly legible at LinkedIn's in-feed thumbnail size (around 552x288). High contrast.
+
+NO logo placement other than the wordmark text above. NO stock-photo aesthetic. NO illustration. Real photography only.`
 
 /**
  * Generate a LinkedIn-share-sized image for one post variant.
