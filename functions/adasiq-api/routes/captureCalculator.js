@@ -19,6 +19,7 @@ import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek } from '../services/linkedInDrafter.js'
+import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import axios from 'axios'
 
 export const captureCalcRouter = express.Router()
@@ -384,6 +385,22 @@ captureCalcRouter.get('/cold/preview', requireCronSecretFlex, async (req, res) =
     res.json({ ok: r.status === 'sent' || r.status === 'partial', hook, day, to, subject: email.subject, status: r.status })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── SALES LEAVE-BEHIND PDF (public, no auth) ───────────────────────────────
+// Mark + Kat print this for in-person shop visits and direct mail drops.
+// 2-page brochure, front = hook + math, back = 4-A system + Grand Slam.
+//   GET /api/capture-calc/leave-behind.pdf  → inline PDF
+captureCalcRouter.get('/leave-behind.pdf', async (req, res) => {
+  try {
+    const pdfBuf = await generateLeaveBehindPdf()
+    res.set('Content-Type', 'application/pdf')
+    res.set('Content-Disposition', 'inline; filename="absolute-adas-capture-system.pdf"')
+    res.set('Cache-Control', 'public, max-age=86400')
+    res.send(pdfBuf)
+  } catch (e) {
+    res.status(500).type('text/plain').send(e.message)
   }
 })
 
