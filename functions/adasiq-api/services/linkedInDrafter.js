@@ -183,13 +183,16 @@ export async function draftLinkedInWeek({ story, caseStudy = '', angle = '' } = 
 // testing different hook angles (greed / fear / identity / curiosity). Mark
 // picks the winner via the Cliq approval card.
 
-const DEFAULT_HOOKS = ['greed', 'fear', 'identity']
+// v3.1 hooks (Greed / Fairness / Identity). Fear was a v2.5 hook that used
+// the "consolidator threat" villain framing — replaced because v3.1 villain
+// is "list-price vendors that don't discount", not consolidators.
+const DEFAULT_HOOKS = ['greed', 'fairness', 'identity']
 
 const HOOK_GUIDANCE = {
-  greed:     'GREED HOOK — open with the dollar leak. Name a number ($14k/yr, $3k/mo). Make the reader feel the cost of inaction in their P&L.',
-  fear:      'FEAR HOOK — open with the consolidator threat or the 5-year clock. Tie the post to losing DRP slots, getting bought for pennies, or insurance steering away from sublet shops.',
-  identity:  'IDENTITY HOOK — open with the becoming-the-ADAS-shop framing. Tie the post to staying independent, surviving 2030, building the shop your kid would actually want to inherit.',
-  curiosity: 'CURIOSITY HOOK — open with a counterintuitive observation or a hidden number. "The capture number your vendor hopes you never run." "The denial pattern carriers don\'t want you to map."',
+  greed:     'GREED HOOK — open with the dollar margin uncollected. Name a number ($8,100/yr at Standard tier, $16,200/yr at Volume, $40,500/yr at Preferred). Make the reader feel the partnership margin they\'re leaving on the table at their current calibration volume.',
+  fairness:  'FAIRNESS HOOK — open with the imbalance. The mobile vendor uses the shop\'s bay, the shop\'s power, the shop\'s tech\'s time, and charges full list anyway. Frame the Partnership Discount Model as the response: vendors that recognize the shop\'s facility is part of the calibration and discount accordingly.',
+  identity:  'IDENTITY HOOK — open with the shop owner who runs a sharper operation than the rest. The shop owner who knows the difference between a vendor that charges and a vendor that partners. The shop owner who isn\'t paying list like everyone else.',
+  curiosity: 'CURIOSITY HOOK — open with a counterintuitive observation or a hidden number. "The calibration math 95% of shop owners never run." "Why every Absolute ADAS invoice shows a 15% discount line item."',
 }
 
 const SLOT_DEFS = {

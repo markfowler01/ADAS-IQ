@@ -25,7 +25,7 @@ import { generateCaptureImage, captureImagesEnabled, captureImageConfig, checkBu
 import { postImageToLinkedIn } from '../services/brewLinkedIn.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
-import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard, buildSignedActionUrl } from '../services/captureApprovalQueue.js'
+import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard, buildSignedActionUrl, getDraftFullBody, setDraftBody } from '../services/captureApprovalQueue.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import axios from 'axios'
 
@@ -462,14 +462,20 @@ function handleConfirmGet(action) {
     const { id, t, sig } = req.query || {}
     const v = verifySignedAction({ id, action, t, sig })
     if (!v.ok) return res.status(401).type('text/html').send(approvalPage({ title: 'Link invalid', message: v.error, color: '#dc2626' }))
-    const draft = await getDraft(getSegment(req), id)
+    const segment = getSegment(req)
+    const draft = await getDraft(segment, id)
     if (!draft) return res.status(404).type('text/html').send(approvalPage({ title: 'Draft not found', message: '', color: '#dc2626' }))
-    if (draft.status !== 'pending') return res.type('text/html').send(approvalPage({ title: `Already ${draft.status}`, message: 'This draft has already been acted on.', color: '#6b7280', body: draft.body }))
 
-    if (action === 'edit') return res.type('text/html').send(editForm({ draft, t, sig }))
+    // Fetch full body for display — queue stores truncated preview.
+    const fullBody = await getDraftFullBody(segment, id).catch(() => draft.body)
+    const draftForView = { ...draft, body: fullBody }
+
+    if (draft.status !== 'pending') return res.type('text/html').send(approvalPage({ title: `Already ${draft.status}`, message: 'This draft has already been acted on.', color: '#6b7280', body: fullBody }))
+
+    if (action === 'edit') return res.type('text/html').send(editForm({ draft: draftForView, t, sig }))
 
     // approve / kill — show a confirm page with a one-click POST button
-    return res.type('text/html').send(confirmPage({ draft, action, t, sig }))
+    return res.type('text/html').send(confirmPage({ draft: draftForView, action, t, sig }))
   }
 }
 
@@ -513,7 +519,9 @@ captureCalcRouter.post('/approval/edit', express.urlencoded({ extended: false, l
   const editedBody = String(req.body?.body || '').trim()
   if (!editedBody) return res.status(400).type('text/html').send(approvalPage({ title: 'Body required', message: '', color: '#dc2626' }))
   const editedHeadline = String(req.body?.headline || draft.headline || '').trim()
-  const updated = await updateDraft(segment, id, { status: 'approved', body: editedBody, headline: editedHeadline, was_edited: true })
+  // Full body stored at FULL_BODY_KEY; queue entry holds only metadata.
+  await setDraftBody(segment, id, editedBody)
+  const updated = await updateDraft(segment, id, { status: 'approved', headline: editedHeadline, was_edited: true })
   await updateFingerprint(segment, { category: draft.category, signal: 'edited', text: draft.body, editedText: editedBody }).catch(() => {})
   res.type('text/html').send(approvalPage({ title: '✅ Edited & Approved', message: 'Your edit is saved and the draft is queued to publish.', color: '#16a34a', body: editedBody }))
 })
@@ -957,11 +965,15 @@ captureCalcRouter.get('/scheduler/run', requireCronSecretFlex, async (req, res) 
 
       if (draft.channel === 'linkedin_personal') {
         try {
+          // Queue stores a truncated preview body; fetch the publish-ready
+          // full version from the per-draft cache key. Falls back to queue
+          // body if the full version isn't found.
+          const publishBody = await getDraftFullBody(segment, draft.id).catch(() => draft.body)
           // Use image-post path when an image was attached at draft time;
           // fall back to text-only if image gen failed or was disabled.
           const r = draft.image_url
-            ? await postImageToLinkedIn({ imageUrl: draft.image_url, text: draft.body })
-            : await postToLinkedIn({ text: draft.body })
+            ? await postImageToLinkedIn({ imageUrl: draft.image_url, text: publishBody })
+            : await postToLinkedIn({ text: publishBody })
           if (r?.ok && r.id) {
             await updateDraft(segment, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, posted_with_image: Boolean(draft.image_url) })
             out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id, with_image: Boolean(draft.image_url) })

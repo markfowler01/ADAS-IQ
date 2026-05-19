@@ -63,31 +63,86 @@ async function writeQueue(segment, queue) {
   catch { await segment.put(QUEUE_KEY, str) }
 }
 
+// Catalyst Cache per-value cap is ~64-100KB. Don't put draft bodies in the
+// queue blob at all — store the full body under its own per-draft key and
+// the queue only holds metadata. Keeps queue blob tiny no matter how long
+// individual drafts run.
+const QUEUE_MAX_ITEMS = 100
+const FULL_BODY_KEY = (id) => `capture_draft_body_${id}`
+
 /**
  * Enqueue a draft awaiting approval.
- * @param {Object} segment — Catalyst cache segment
- * @param {Object} draft — {channel, category, body, headline?, scheduled_for?, voice_score?, meta?}
- * @returns {Promise<{id, ...draft}>}
+ * Body is stored under a separate per-draft cache key (FULL_BODY_KEY) — the
+ * queue blob holds only metadata so it can't bloat past Catalyst's per-value
+ * cache cap regardless of how long individual drafts run.
+ *
+ * The returned entry includes body for the caller's immediate use (e.g.
+ * formatApprovalCard) but the persisted queue entry does not.
  */
 export async function enqueueDraft(segment, draft) {
   const id = crypto.randomBytes(9).toString('base64url')
-  const entry = {
+  const fullBody = String(draft.body || '')
+
+  // Persist full body under its own key (so publisher + edit/confirm can fetch)
+  if (fullBody) {
+    try { await segment.update(FULL_BODY_KEY(id), fullBody) }
+    catch { await segment.put(FULL_BODY_KEY(id), fullBody) }
+  }
+
+  // Metadata-only entry for the queue blob
+  const queueEntry = {
     id,
     status: 'pending',
     created_at: new Date().toISOString(),
     channel:        String(draft.channel || ''),
     category:       String(draft.category || ''),
-    headline:       String(draft.headline || ''),
-    body:           String(draft.body || ''),
+    headline:       String(draft.headline || '').slice(0, 200),
     scheduled_for:  draft.scheduled_for || null,
     voice_score:    Number(draft.voice_score) || null,
-    voice_deductions: draft.voice_deductions || [],
+    // Voice deductions can be verbose — cap to 3 short reason strings only
+    voice_deductions: (draft.voice_deductions || []).slice(0, 3).map(d => ({ reason: String(d.reason || '').slice(0, 120), points: d.points })),
     meta:           draft.meta || {},
+    has_body:       Boolean(fullBody),
   }
   const queue = await readQueue(segment)
-  const next = [entry, ...queue].slice(0, 200)
+  const next = [queueEntry, ...queue].slice(0, QUEUE_MAX_ITEMS)
   await writeQueue(segment, next)
-  return entry
+
+  // Return entry with body attached for caller's immediate use (Cliq card etc)
+  return { ...queueEntry, body: fullBody }
+}
+
+/**
+ * Read the full untruncated body for a draft (used by the publisher).
+ * Falls back to the queue body if the separate key is missing.
+ */
+export async function getDraftFullBody(segment, id) {
+  try {
+    const val = await segment.getValue(FULL_BODY_KEY(id))
+    if (val) return val
+  } catch (e) {
+    if (!(e?.statusCode === 404 || e?.errorInfo?.statusCode === 404)) throw e
+  }
+  // Fallback: queue body (may be truncated)
+  const d = await getDraft(segment, id)
+  return d?.body || ''
+}
+
+/**
+ * Save an edited full body. Stores full at FULL_BODY_KEY, returns a
+ * { truncated, was_truncated } pair the caller stores in the queue blob.
+ * Used by the edit POST flow so the same split-storage pattern applies.
+ */
+export async function setDraftBody(segment, id, fullBody) {
+  const safe = String(fullBody || '')
+  if (safe) {
+    try { await segment.update(FULL_BODY_KEY(id), safe) }
+    catch { await segment.put(FULL_BODY_KEY(id), safe) }
+  }
+  const truncated = safe.length > QUEUE_BODY_PREVIEW_CHARS
+    ? safe.slice(0, QUEUE_BODY_PREVIEW_CHARS) + '\n…[truncated for queue display, full text on publish]'
+    : safe
+  return { truncated, was_truncated: safe.length > QUEUE_BODY_PREVIEW_CHARS }
 }
 
 export async function listQueue(segment, filter = {}) {
