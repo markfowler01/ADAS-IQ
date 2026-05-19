@@ -11,7 +11,20 @@
 // text-only posts. Per-call override via opts.force = true.
 
 import axios from 'axios'
+import sharp from 'sharp'
 import { commitBinaryFile } from './brewArchive.js'
+
+// Brand logo source — same file used on absoluteadas.com nav. We download
+// once and cache the buffer in module scope (warm-container reuse). On cold
+// start we re-fetch, ~277KB so the latency is sub-second.
+const LOGO_URL = 'https://images.squarespace-cdn.com/content/v1/682beb3cab58930b42e509fb/e03450c2-ecd4-49b1-8ecb-080cfd27a870/LOGO+TRANSPERRENT+.png'
+let _logoCache = null
+async function getLogoBuffer() {
+  if (_logoCache) return _logoCache
+  const res = await axios.get(LOGO_URL, { responseType: 'arraybuffer', timeout: 10000 })
+  _logoCache = Buffer.from(res.data)
+  return _logoCache
+}
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
 
@@ -114,6 +127,39 @@ export async function getAuditLog(segment, limit = 50) {
 // Per-batch limit getter — used by callers that want to refuse oversized requests
 export function getPerBatchLimit() { return PER_BATCH_LIMIT }
 
+// ─── Logo composite ─────────────────────────────────────────────────────────
+// Drops the real Absolute ADAS logo PNG into the bottom-left of the dark band
+// the AI left blank for us. Positioned 36px from left edge, 36px from bottom.
+// Logo resized to fit at ~110px tall (looks right inside the band at the
+// 1200x627 base size). Returns a fresh PNG buffer.
+async function compositeLogo(rawImageBuffer) {
+  const baseMeta = await sharp(rawImageBuffer).metadata()
+  const baseW = baseMeta.width || 1200
+  const baseH = baseMeta.height || 627
+
+  // Sizing rules: logo height ≈ 17% of base image height (so it visually
+  // matches the headline weight in the band). Logo width auto.
+  const targetLogoHeight = Math.round(baseH * 0.17)
+  const logoBuf = await getLogoBuffer()
+  const resizedLogo = await sharp(logoBuf)
+    .resize({ height: targetLogoHeight, fit: 'inside' })
+    .png()
+    .toBuffer()
+  const resizedMeta = await sharp(resizedLogo).metadata()
+
+  const padLeft = Math.round(baseW * 0.03)
+  const padBottom = Math.round(baseH * 0.06)
+
+  return sharp(rawImageBuffer)
+    .composite([{
+      input: resizedLogo,
+      left: padLeft,
+      top: baseH - (resizedMeta.height || targetLogoHeight) - padBottom,
+    }])
+    .png()
+    .toBuffer()
+}
+
 // Style anchor. Real body-shop / calibration-floor photography + editorial
 // text overlay. The pattern that actually performs on LinkedIn: documentary
 // work photography that signals "this is real shop work", with a bold
@@ -132,14 +178,16 @@ ABSOLUTELY NO PEOPLE. No technicians, no shop owners, no hands, no human silhoue
 
 TEXT OVERLAY (editorial, magazine-cover style, must be perfectly readable):
 - Bottom third of the image: a solid dark band (#0d0d0d, 80% opacity, full-width, ~30% of image height) overlaid on the photo.
-- Inside the dark band, left-aligned with comfortable padding:
-  - Tiny orange caps eyebrow text reading "ABSOLUTE ADAS" (#CD4419, monospace, 14pt feel, letter-spaced).
+- Bottom-LEFT corner of the dark band (roughly 30% width × full band height): LEAVE COMPLETELY BLANK. No text, no logo, no marks. This space is reserved for a real brand logo to be composited on top after generation.
+- Center / right portion of the dark band:
   - Large bold serif headline in white (#ffffff) reading "{HEADLINE}". Multi-line OK, generous line spacing, takes the dominant visual weight.
-  - Small white monospace caption at the very bottom reading "absoluteadas.com/calculator".
+  - Small white monospace caption below the headline reading "absoluteadas.com/calculator".
 
-Composition: photo on top 70%, text band on bottom 30%. The text must be perfectly legible at LinkedIn's in-feed thumbnail size (around 552x288). High contrast.
+ABSOLUTELY NO text reading "ABSOLUTE ADAS" or any brand wordmark — that area is left blank for the real logo to be composited on. Do NOT write any logo or brand name yourself.
 
-NO logo placement other than the wordmark text above. NO stock-photo aesthetic. NO illustration. Real photography only.`
+Composition: photo on top 70%, text band on bottom 30%. Headline + caption fill the right 70% of the band; left 30% stays empty. Text must be perfectly legible at LinkedIn's in-feed thumbnail size (around 552x288). High contrast.
+
+NO stock-photo aesthetic. NO illustration. Real photography only.`
 
 /**
  * Generate a LinkedIn-share-sized image for one post variant.
@@ -201,7 +249,20 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
       if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: err, latency_ms: Date.now() - t0 })
       return { ok: false, error: err }
     }
-    const buffer = Buffer.from(imgPart.inlineData.data, 'base64')
+    const rawBuffer = Buffer.from(imgPart.inlineData.data, 'base64')
+
+    // Composite the real Absolute ADAS logo into the bottom-left of the dark
+    // band. AI-generated wordmarks are inconsistent; using the actual PNG
+    // gives us a pixel-perfect brand mark every time.
+    let buffer
+    try {
+      buffer = await compositeLogo(rawBuffer)
+    } catch (e) {
+      // If compositing fails, ship the raw image rather than blocking. Log
+      // the failure so we know to investigate.
+      console.warn('[captureImage] logo composite failed, shipping raw:', e.message)
+      buffer = rawBuffer
+    }
 
     // Commit to GitHub Pages so the image has a permanent public URL
     const path = `capture-images/${draftId}.png`
