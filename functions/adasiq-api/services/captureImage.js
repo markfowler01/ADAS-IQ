@@ -147,6 +147,73 @@ export async function getAuditLog(segment, limit = 50) {
 // Per-batch limit getter — used by callers that want to refuse oversized requests
 export function getPerBatchLimit() { return PER_BATCH_LIMIT }
 
+// ─── Scene randomizer ──────────────────────────────────────────────────────
+// Curated complete scene scripts. Each is internally coherent so the AI
+// gets a focused directive instead of a random mash-up of components.
+// Categories span the real collision-industry context Mark works in:
+//   - Vehicle in clean shop bay (the original style)
+//   - Pre-repair / panel damage visible in the bay
+//   - Post-repair / paint booth / freshly finished
+//   - Repair in progress (lift, frame rack, prep area)
+//   - On the road / driving (subtext: calibrated ADAS working in the world)
+//   - Dealership / commercial lot context
+//
+// HARD BANS (consistent across all scripts): NO people, NO faces, NO graphic
+// damage/blood/glass debris, NO branded equipment, NO text rendered in image.
+// Vehicle colors curated to neutral palettes that don't clash with orange brand.
+const SCENE_SCRIPTS = [
+  // ── Clean vehicle in shop bay (the calm/professional baseline) ────────────
+  `A silver late-model midsize SUV positioned inside a clean modern collision repair body shop bay with an open roll-up door at the far side. Three-quarter front view, body lines catching light, vehicle filling center of frame. Golden-hour natural light spilling through the bay door from camera-left, warm directional shadows, magazine-cover mood.`,
+
+  `A dark gray executive sedan parked inside a spacious modern shop with skylights overhead and a paint booth visible in soft focus background. Side profile, full-length composition. Overcast natural daylight filtered through the skylights, soft diffuse light, neutral color balance, cinematic.`,
+
+  `A pearl-white luxury sedan parked inside a clean working bay with a tool cart and pegboard visible in deep soft focus. Low-angle front three-quarter shot, dramatic perspective, vehicle hero. Cool overhead LED shop lighting mixed with one warm tungsten lamp off-frame.`,
+
+  `A graphite midsize crossover positioned in a wide industrial bay with high-bay LED lighting and polished concrete floor stretching to the back wall. Wide overhead-ish angle showing the bay with the vehicle parked center. Mixed daylight and warm shop fluorescents, sodium-vapor accents on metal surfaces, working-shop authenticity.`,
+
+  // ── Pre-repair / minor panel damage visible (collision industry context) ─
+  `A charcoal full-size SUV inside a clean modern collision repair bay with the front bumper cover lightly creased and the headlight assembly showing minor impact damage. Three-quarter front view, damage visible but not graphic, vehicle still composed and on its wheels. Cool overhead LED shop lighting, neutral cinematic mood, magazine-quality documentary photo.`,
+
+  `A navy blue compact SUV in a body shop bay with the right rear quarter panel showing a clean crease and the rear bumper slightly pushed in from a minor impact. Three-quarter rear view, damage visible but understated. Mixed daylight from open bay door + warm shop fluorescents.`,
+
+  `A white midsize sedan in a body shop with the driver-side door panel removed and set on a padded stand next to the vehicle, exposing the door frame for repair. Side profile of the vehicle, removed door in soft focus foreground. Golden-hour natural light through open bay door, cinematic.`,
+
+  // ── Post-repair / paint booth / freshly finished ─────────────────────────
+  `A dark blue station wagon in a clean modern automotive paint booth with bright white walls, freshly painted body panels glistening, paint still wet-looking. Three-quarter front view, vehicle isolated under booth lighting. Cool overhead booth LED lighting, even uniform illumination, glossy-finish editorial photography.`,
+
+  `A slate gray hatchback in a paint booth's drying bay, freshly cleared body panels reflecting the booth lighting. Side profile, full-length composition. Bright clean booth lighting, polished concrete floor, magazine-quality industrial photography.`,
+
+  `A bronze metallic compact SUV parked inside a clean shop bay after final detail, body lines pristine, no damage visible, the vehicle ready for delivery. Three-quarter front view, hero composition. Late-afternoon sun coming through open bay door from camera-right, long shadows, end-of-workday calm.`,
+
+  // ── Vehicle on a lift / repair in progress ───────────────────────────────
+  `A black premium crossover SUV on a drive-on alignment lift inside a clean collision repair shop, vehicle suspended at chest height. Side profile, vehicle silhouetted against bay lighting in the background. Mixed natural daylight from open bay door and warm shop fluorescents.`,
+
+  `A champagne metallic minivan parked next to a frame rack in a clean modern body shop, frame rack hardware visible but vehicle not yet attached. Three-quarter front view, vehicle on its wheels, equipment in soft focus background. Overcast diffuse daylight through skylights, neutral color balance.`,
+
+  `A charcoal full-size pickup truck on a two-post lift inside a clean working shop bay, lifted to mid-height. Side profile, full-length composition with the lift columns visible. Cool overhead LED shop lighting, modern editorial feel.`,
+
+  // ── On the road / driving context (calibrated ADAS in the wild) ──────────
+  `A silver luxury crossover driving on a clean wet asphalt road in the Pacific Northwest, low cloud cover overhead, evergreen trees in soft focus background. Three-quarter front view from a slightly low angle, vehicle in motion, tire spray faintly visible. Overcast diffuse daylight, slightly cool cinematic color grade, calm and quiet.`,
+
+  `A dark gray midsize pickup on a quiet two-lane highway at the edge of a forest, vehicle in motion. Side profile composition, road and tree line stretching into the distance. Late-afternoon golden light through the trees from camera-right, magazine-cover automotive photography.`,
+
+  `A pearl-white luxury sedan parked at a clean modern overlook with a city skyline visible in soft focus in the background, vehicle calm and composed. Three-quarter front view. Early morning blue-hour light, slightly cool color grade, cinematic.`,
+
+  // ── Commercial / dealership lot context (broader industry framing) ───────
+  `A row of late-model vehicles parked neatly at a clean modern auto dealership lot at golden hour, with the hero vehicle (a dark gray midsize crossover) in the foreground three-quarter front. Light spilling across the lot from the setting sun, long shadows, magazine-cover composition.`,
+
+  `A graphite metallic full-size SUV parked at the entrance to a clean modern collision repair facility, signage visible in soft focus background (no readable text). Three-quarter front view, vehicle hero. Overcast natural daylight, neutral color balance, documentary photography.`,
+]
+
+/**
+ * Pick a single complete scene script per call.
+ * Each script is internally coherent so the AI gets a focused, unambiguous
+ * directive instead of a recombined mash-up of components.
+ */
+function pickSceneVariant() {
+  return SCENE_SCRIPTS[Math.floor(Math.random() * SCENE_SCRIPTS.length)]
+}
+
 // ─── SVG overlay composite ──────────────────────────────────────────────────
 // Same layout pattern as the newsletter tip card (tipImageComposite.js):
 //   - Mid-image: headline with semi-transparent darken band behind it
@@ -306,17 +373,15 @@ function escXml(s) {
 // HARD RULE: NO people, NO faces. AI-generated faces look uncanny and tank
 // credibility instantly. The work itself (target frames, scan tools, bay
 // floor, vehicles in repair) photographs cleanly and convincingly.
+//
+// {SCENE_DIRECTIVE} is injected per call from pickSceneVariant() so every
+// image gets a different vehicle + framing + lighting combination.
 const STYLE_PROMPT = `Documentary photograph, landscape 1200x627 (LinkedIn share size). Photoreal, magazine-quality, shot on a 35mm or medium-format camera with shallow depth of field.
 
-SCENE OPTIONS (pick whichever reads cleanest — vary subtly across generations):
-- A late-model SUV or sedan parked inside a clean modern collision repair body shop bay, three-quarter front view, body lines catching light. The vehicle is the hero.
-- Close-up on a vehicle's front clip — headlight cluster, grille, windshield base where the rain-sensor and forward camera live. Modern automotive detail, shallow DOF.
-- Wide shot of a clean, organized body shop bay: polished concrete floor, open roll-up bay door letting in natural light, a vehicle just inside, paint booth or work bench in the soft-focus background.
-- Detail shot of a vehicle hood / windshield / A-pillar with morning light catching the clearcoat. The work environment is implied, not detailed.
+SCENE (specific, follow exactly):
+{SCENE_DIRECTIVE}
 
-LIGHTING (most important): Cinematic, golden-hour natural light spilling through the open bay door, mixed with cool overhead shop fluorescents. Strong directional light, deep shadows, magazine-cover mood. Confident, professional, end-of-workday calm.
-
-ENVIRONMENT: clean, polished concrete floor. Organized, modern shop. Light coming from a real bay door, not stock-photo studio. No clutter, no debris.
+ENVIRONMENT: clean, polished concrete floor. Organized, modern shop. Light coming from a real bay door or skylight, not stock-photo studio. No clutter, no debris.
 
 HARD BANS — anything in this list looks fake or "AI-weird":
 - NO people, no technicians, no hands, no silhouettes. Frame empty of humans.
@@ -369,7 +434,12 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
   }
 
   const safeHeadline = String(headline).trim().slice(0, 100)
-  const prompt = STYLE_PROMPT.replace('{HEADLINE}', safeHeadline)
+  // Randomize vehicle + framing + environment + lighting per call so consecutive
+  // images don't look like the same composition.
+  const sceneDirective = pickSceneVariant()
+  const prompt = STYLE_PROMPT
+    .replace('{HEADLINE}', safeHeadline)
+    .replace('{SCENE_DIRECTIVE}', sceneDirective)
   const t0 = Date.now()
 
   try {
@@ -418,17 +488,33 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
       return { ok: false, error: err }
     }
 
-    // Commit to GitHub Pages so the image has a permanent public URL
+    // Commit to GitHub Pages so the image has a permanent public URL.
+    // 409 retry with jitter — when multiple image gens fire in parallel (e.g.
+    // the 15-image Sunday-night LinkedIn batch), commits race each other and
+    // GitHub rejects all but one (the parent SHA they all fetched gets stale
+    // the moment the first commit lands). Retry up to 4 times with random
+    // jitter before failing.
     const path = `capture-images/${draftId}.png`
-    const r = await commitBinaryFile({
-      path,
-      buffer,
-      message: `Capture campaign image: ${draftId}`,
-    })
+    let r = null
+    let lastErr = null
+    for (let attempt = 0; attempt < 4; attempt++) {
+      r = await commitBinaryFile({
+        path,
+        buffer,
+        message: `Capture campaign image: ${draftId}`,
+      })
+      if (r?.ok) break
+      lastErr = r?.error || 'github commit failed'
+      // Retry only on 409 (race condition). Other errors fail immediately.
+      if (!/409/.test(String(lastErr))) break
+      // Jittered backoff: 200-1200ms, 400-1800ms, 600-2400ms across attempts
+      const baseMs = 200 + attempt * 400
+      const jitter = Math.floor(Math.random() * 800)
+      await new Promise(rs => setTimeout(rs, baseMs + jitter))
+    }
     if (!r?.ok) {
-      const err = r?.error || 'github commit failed'
-      if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: err, latency_ms: Date.now() - t0 })
-      return { ok: false, error: err }
+      if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: lastErr, latency_ms: Date.now() - t0 })
+      return { ok: false, error: lastErr }
     }
     const url = `https://absoluteadas.com/${path}`
 
