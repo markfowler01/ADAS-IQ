@@ -16,6 +16,7 @@ import { computeCaptureNumbers, generateCaptureReportPdf } from '../services/cap
 import { sendBroadcast } from '../services/brewResend.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
+import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import axios from 'axios'
 
 export const captureCalcRouter = express.Router()
@@ -254,5 +255,104 @@ captureCalcRouter.get('/submissions', requireCronSecretFlex, async (req, res) =>
     res.json({ ok: true, count: list.length, items: list })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── DAILY NURTURE CRON ─────────────────────────────────────────────────────
+// Run once per day. For each opt-in, computes which nurture day they're on
+// (1-7) and sends that day's email if it hasn't been sent yet. Idempotent
+// via per-submission nurture_sent[] tracking, so safe to re-run.
+//
+//   GET /api/capture-calc/nurture/run?secret=...
+//   GET /api/capture-calc/nurture/run?secret=...&dry=1   — log what would send, no email
+//   GET /api/capture-calc/nurture/preview?secret=...&day=N&to=email   — send single day to test address
+captureCalcRouter.get('/nurture/run', requireCronSecretFlex, async (req, res) => {
+  const dry = req.query.dry === '1' || req.query.dry === 'true'
+  const out = []
+  try {
+    const seg = getSegment(req)
+    const list = (await cacheGet(seg, SUBMISSIONS_KEY, [])) || []
+    let mutated = false
+
+    for (let i = 0; i < list.length; i++) {
+      const sub = list[i]
+      const day = nurtureDayFor(sub)
+      if (day < 1 || day > 7) continue
+      const sent = Array.isArray(sub.nurture_sent) ? sub.nurture_sent : []
+      if (sent.includes(day)) continue
+
+      const email = buildNurtureEmail(sub, day)
+      if (!email) continue
+
+      if (dry) {
+        out.push({ email: sub.email, shop: sub.shopName, day, subject: email.subject, dry: true })
+        continue
+      }
+
+      const r = await sendBroadcast({
+        recipients: [sub.email],
+        subject: email.subject,
+        html: email.html,
+        text: email.text,
+      })
+      const ok = r.status === 'sent' || r.status === 'partial'
+      if (ok) {
+        list[i] = { ...sub, nurture_sent: [...sent, day] }
+        mutated = true
+      }
+      out.push({ email: sub.email, shop: sub.shopName, day, subject: email.subject, ok, status: r.status })
+    }
+
+    if (mutated) await cacheSet(seg, SUBMISSIONS_KEY, list)
+    res.json({ ok: true, dry, processed: out.length, results: out })
+  } catch (e) {
+    console.error('[capture-calc nurture]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, partialResults: out })
+  }
+})
+
+// Preview / test a single day's nurture email by sending it to a test address.
+//   ?day=1..7  ?to=test@example.com  (defaults: day=1, to=brew@absoluteadas.com)
+captureCalcRouter.get('/nurture/preview', requireCronSecretFlex, async (req, res) => {
+  try {
+    const day = Math.max(1, Math.min(7, Number(req.query.day) || 1))
+    const to = String(req.query.to || 'brew@absoluteadas.com').trim()
+    const shopName = String(req.query.shop || 'Test Shop Calibration')
+    const contactName = String(req.query.name || 'Mark Tester')
+
+    // Synthesize a fake submission so we can preview without needing a real opt-in
+    const fake = {
+      contactName, email: to, shopName,
+      calibrationsPerMonth: 20, avgTicket: 475, currentCapturePct: 10,
+      annualLeak: 22800, annualCapture: 22800,
+      at: new Date(Date.now() - day * 86400000).toISOString(),
+    }
+    const email = buildNurtureEmail(fake, day)
+    if (!email) return res.status(400).json({ ok: false, error: `Day ${day} not defined` })
+
+    const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text })
+    res.json({ ok: r.status === 'sent' || r.status === 'partial', day, to, subject: email.subject, status: r.status })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Render a single day's email as HTML for browser preview (no send).
+//   ?day=1..7
+captureCalcRouter.get('/nurture/render', requireCronSecretFlex, async (req, res) => {
+  try {
+    const day = Math.max(1, Math.min(7, Number(req.query.day) || 1))
+    const fake = {
+      contactName: 'Mark Tester', email: 'preview@absoluteadas.com', shopName: 'Test Shop Calibration',
+      calibrationsPerMonth: 20, avgTicket: 475, currentCapturePct: 10,
+      annualLeak: 22800, annualCapture: 22800,
+      at: new Date(Date.now() - day * 86400000).toISOString(),
+    }
+    const email = buildNurtureEmail(fake, day)
+    if (!email) return res.status(400).type('text/plain').send(`Day ${day} not defined`)
+    res.set('Content-Type', 'text/html; charset=utf-8')
+    res.send(email.html)
+  } catch (e) {
+    res.status(500).type('text/plain').send(e.message)
   }
 })
