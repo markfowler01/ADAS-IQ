@@ -680,6 +680,95 @@ function nextScheduledFor(day) {
   return result
 }
 
+// ─── FRIDAY WEEKLY REPORT ───────────────────────────────────────────────────
+// Per the brief: Friday 6am PT Cliq message to Mark summarizing the week.
+// Posts to MARK_ALERT_CHANNEL_ID. Add to cron as GET /api/capture-calc/report/weekly
+// with x-cron-secret header.
+captureCalcRouter.get('/report/weekly', requireCronSecretFlex, async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const sevenDaysAgo = Date.now() - 7 * 86400000
+
+    // Approval queue stats
+    const queue = await listQueue(segment)
+    const weekItems = queue.filter(d => new Date(d.created_at).getTime() >= sevenDaysAgo)
+    const counts = {
+      drafted:    weekItems.length,
+      approved:   weekItems.filter(d => d.status === 'approved' || d.status === 'published').length,
+      killed:     weekItems.filter(d => d.status === 'killed').length,
+      published:  weekItems.filter(d => d.status === 'published').length,
+      pending:    weekItems.filter(d => d.status === 'pending').length,
+      edited:     weekItems.filter(d => d.was_edited).length,
+    }
+    const approvalRate = counts.drafted ? Math.round((counts.approved / counts.drafted) * 100) : 0
+
+    // Voice trend
+    const fp = await loadFingerprint(segment)
+    const trustLines = Object.entries(fp.approvals_by_category || {})
+      .filter(([, c]) => (c.up + c.down) > 0)
+      .map(([cat, c]) => {
+        const total = c.up + c.down
+        const pct = total ? Math.round((c.up / total) * 100) : 0
+        return `  · ${cat.padEnd(12)} ${pct}% approval (${c.up}/${total})`
+      }).join('\n') || '  · (no signals yet)'
+
+    // Top + bottom posts by voice score
+    const published = queue.filter(d => d.status === 'published')
+    const byScore = [...published].sort((a, b) => (b.voice_score || 0) - (a.voice_score || 0))
+    const top3 = byScore.slice(0, 3).map(d => `  · ${d.voice_score}/100 · ${(d.headline || d.body || '').slice(0, 70)}`).join('\n') || '  · (none yet)'
+    const bottom3 = byScore.slice(-3).reverse().map(d => `  · ${d.voice_score}/100 · ${(d.headline || d.body || '').slice(0, 70)}`).join('\n') || '  · (none yet)'
+
+    // Calculator opt-ins this week
+    const subs = (await cacheGet(segment, 'capture_calc_submissions', [])) || []
+    const weekSubs = subs.filter(s => new Date(s.at).getTime() >= sevenDaysAgo)
+    const totalLeak = weekSubs.reduce((acc, s) => acc + (Number(s.annualLeak) || 0), 0)
+
+    // Killed posts this week (with reasons-ish)
+    const killedRecent = weekItems.filter(d => d.status === 'killed').slice(0, 5)
+    const killedLines = killedRecent.map(d => `  · ${d.channel}: ${(d.headline || d.body || '').slice(0, 70)}`).join('\n') || '  · (none)'
+
+    const msg = [
+      `📊 *CAPTURE WEEKLY REPORT*  ·  ${new Date().toISOString().slice(0, 10)}`,
+      ``,
+      `*Drafts this week*`,
+      `  · Drafted: ${counts.drafted}`,
+      `  · Approved: ${counts.approved}  (${approvalRate}%)`,
+      `  · Killed: ${counts.killed}`,
+      `  · Edited by Mark: ${counts.edited}`,
+      `  · Published: ${counts.published}`,
+      `  · Pending approval: ${counts.pending}`,
+      ``,
+      `*Voice approval rate by category*`,
+      trustLines,
+      ``,
+      `*Top 3 published (by voice score)*`,
+      top3,
+      ``,
+      `*Bottom 3 published*`,
+      bottom3,
+      ``,
+      `*Recently killed*`,
+      killedLines,
+      ``,
+      `*Capture Calculator opt-ins this week*: ${weekSubs.length}`,
+      weekSubs.length ? `  · Total annual leak shown to leads: $${Math.round(totalLeak).toLocaleString('en-US')}` : '',
+      ``,
+      `_Engagement metrics (impressions/clicks) will appear once the engagement collector is wired._`,
+    ].filter(Boolean).join('\n').slice(0, 6000)
+
+    if (req.query.dry === '1') {
+      res.set('Content-Type', 'text/plain').send(msg)
+      return
+    }
+
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(e => console.warn('[weekly report cliq]', e.message))
+    res.json({ ok: true, length: msg.length, counts })
+  } catch (e) {
+    console.error('[capture-calc weekly]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // ─── AUTO-PUBLISH SCHEDULER ─────────────────────────────────────────────────
 // Runs every 15 minutes. For every approved draft whose scheduled_for falls
 // within the next 15 min (or past-due), publishes to the target channel and
