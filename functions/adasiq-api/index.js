@@ -16,6 +16,7 @@ import jobsRouter, { performSyncQuotes, readJobsPublic } from './routes/jobs.js'
 import brewRouter, { cronRouter as brewCronRouter } from './routes/brew.js'
 import { tipsRouter as brewTipsRouter } from './routes/brewTips.js'
 import { auditRouter as auditToolRouter } from './routes/auditTool.js'
+import { captureCalcRouter } from './routes/captureCalculator.js'
 import webhookRouter from './routes/webhook.js'
 import feedbackRouter from './routes/feedback.js'
 import postscanRouter from './routes/postscan.js'
@@ -271,6 +272,11 @@ app.use('/api/cron/brew-tips', brewTipsRouter)
 // /generate is public (no auth) so the form at adas-iq.com/audit can call it
 // directly. /submissions is cron-secret protected for Mark's review.
 app.use('/api/audit-tool', auditToolRouter)
+
+// Public CAPTURE RATE CALCULATOR — the Tier-1 lead magnet for the v2.5
+// acquisition campaign (separate engine from the newsletter). Form at
+// absoluteadas.com/calculator. /generate is public, /submissions is cron-secret.
+app.use('/api/capture-calc', captureCalcRouter)
 
 // Calendar route — public (called from 5:30 planner)
 app.use('/api/calendar', calendarRouter)

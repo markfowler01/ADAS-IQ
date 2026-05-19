@@ -20,10 +20,11 @@ function isConfigured() {
 
 /**
  * Send one email via Resend.
- * @param {{ to: string, subject: string, html: string, text?: string }} payload
+ * @param {{ to: string, subject: string, html: string, text?: string, attachments?: Array<{filename: string, content: string}> }} payload
+ *   attachments: array of { filename, content } where content is base64-encoded.
  * @returns {Promise<{ ok: boolean, id?: string, error?: string }>}
  */
-async function sendOne({ to, subject, html, text }) {
+async function sendOne({ to, subject, html, text, attachments }) {
   const e = envBundle()
   if (!e.apiKey) return { ok: false, error: 'RESEND_API_KEY not configured' }
 
@@ -36,6 +37,7 @@ async function sendOne({ to, subject, html, text }) {
         subject,
         html,
         text: text || undefined,
+        attachments: Array.isArray(attachments) && attachments.length ? attachments : undefined,
       },
       {
         headers: {
@@ -72,7 +74,7 @@ function personalize(body, sub) {
  * Returns aggregate result + per-recipient detail.
  * Throttles to ~5 req/sec to stay well under Resend's 10/sec rate limit.
  */
-export async function sendBroadcast({ recipients, subscribers, subject, html, text }) {
+export async function sendBroadcast({ recipients, subscribers, subject, html, text, attachments }) {
   // Normalize to subscriber objects so personalization always runs
   const subs = Array.isArray(subscribers) && subscribers.length
     ? subscribers
@@ -92,7 +94,7 @@ export async function sendBroadcast({ recipients, subscribers, subject, html, te
     const to = sub.email
     const personalHtml = personalize(html, sub)
     const personalText = text ? personalize(text, sub) : undefined
-    const r = await sendOne({ to, subject, html: personalHtml, text: personalText })
+    const r = await sendOne({ to, subject, html: personalHtml, text: personalText, attachments })
     results.push({ to, ok: r.ok, id: r.id || null, error: r.error || null })
     if (r.ok) sent++
     else failed++
