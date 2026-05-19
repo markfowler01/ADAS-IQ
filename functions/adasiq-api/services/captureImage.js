@@ -171,7 +171,7 @@ async function compositeOverlay(rawImageBuffer, headline) {
   const wordmarkWhite = 'Absolute'
   const wordmarkOrange = 'ADAS'
   const taglineWhite = 'Mobile ADAS calibration  ·  Western Washington  ·  '
-  const taglineOrange = '1-844-FIX-ADAS'
+  const taglineOrange = '1-844-349-2327'
   // Combined for width math (we render via a single <text> with <tspan>).
   const tagline = taglineWhite + taglineOrange
 
@@ -328,12 +328,14 @@ HARD BANS — anything in this list looks fake or "AI-weird":
 
 The subject is the vehicle and the environment. Tools and equipment can exist in deep soft focus background but should never be the center of attention.
 
-COMPOSITION GUIDANCE (so the text overlay reads cleanly):
-- Top 60% of frame: the vehicle / scene as described above.
-- Middle 25% of frame: keep this area visually quieter (darker shadows, out-of-focus background, neutral tones, smooth surfaces) so a headline text overlay reads cleanly when placed there.
-- Bottom 15% of frame: keep dark and uniform (concrete floor, shadow, dark background) because a graphic footer with the brand mark will sit there.
+COMPOSITION (visual zones only — describe the IMAGE, do not write any words):
+- Top 60% of frame: the vehicle / scene as described above, the main subject.
+- Middle 25% of frame: visually quiet zone — out-of-focus background, smooth shadows, dark walls, plain ceiling. Low detail.
+- Bottom 15% of frame: pure darkness — black or near-black shadow, the deep underside of the bay. Uniform, no texture, no detail.
 
-Real photography only. Documentary magazine quality. Subaru WRX STI cover-of-Road-and-Track energy, but for collision repair. Just the photograph — text and brand graphics come later in code.`
+DO NOT WRITE ANY WORDS IN THE IMAGE. Do not place the words "HEADLINE", "OVERLAY", "FOOTER", "ABSOLUTE", "ADAS", "BRAND MARK", "LOGO", "HERE", or any other text, label, caption, or annotation anywhere in the photograph. The composition zones above describe brightness and detail levels only — never write the zone names visibly. The image must be 100% photograph, no rendered text of any kind.
+
+Real photography only. Documentary magazine quality. Just the photograph.`
 
 /**
  * Generate a LinkedIn-share-sized image for one post variant.
