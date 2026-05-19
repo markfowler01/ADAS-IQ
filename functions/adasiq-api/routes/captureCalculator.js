@@ -18,6 +18,7 @@ import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
+import { draftLinkedInWeek } from '../services/linkedInDrafter.js'
 import axios from 'axios'
 
 export const captureCalcRouter = express.Router()
@@ -381,6 +382,23 @@ captureCalcRouter.get('/cold/preview', requireCronSecretFlex, async (req, res) =
     if (!email) return res.status(400).json({ ok: false, error: `Invalid hook or day` })
     const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text })
     res.json({ ok: r.status === 'sent' || r.status === 'partial', hook, day, to, subject: email.subject, status: r.status })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── LINKEDIN DRAFT WEEK ────────────────────────────────────────────────────
+//   POST /api/capture-calc/linkedin/draft-week
+//   Body: { story: "Mark's ~200-word weekly shop-visit story", caseStudy?, angle? }
+//   Returns: { drafts: [{day, type, headline, body}] × 5 } — Mon/Tue/Wed/Thu/Fri
+captureCalcRouter.post('/linkedin/draft-week', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const story = String(req.body?.story || '').trim()
+    const caseStudy = String(req.body?.caseStudy || '').trim()
+    const angle = String(req.body?.angle || '').trim()
+    if (!story) return res.status(400).json({ ok: false, error: 'story is required' })
+    const result = await draftLinkedInWeek({ story, caseStudy, angle })
+    res.json({ ok: true, ...result })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
