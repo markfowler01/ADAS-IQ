@@ -177,7 +177,7 @@ export function scoreDraft(text, opts = {}) {
 
   // Mechanism reference — every customer-facing asset must name-drop.
   if (!m.namesMechanism && m.words > 100) {
-    deductions.push({ reason: 'no mention of the Absolute Capture System / 4 A\'s', points: -10 })
+    deductions.push({ reason: 'no mention of the Partnership Discount Model / its 4 components', points: -10 })
     score -= 10
   }
 

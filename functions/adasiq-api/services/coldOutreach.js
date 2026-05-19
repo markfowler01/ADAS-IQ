@@ -1,29 +1,29 @@
-// Cold email outbound engine for the v2.5 Capture System campaign.
+// Cold email outbound engine for the v3.1 Partnership Discount campaign.
 //
-// 3 sequences × 3 emails = 9 variants. Each sequence tests a different
-// hook angle (Greed / Fear / Curiosity). All emails follow the v2.5 voice
-// contract: pattern-interrupt opener, story over pitch, one CTA per email,
-// no em dashes, no AI tells.
+// 3 hook sequences × 3 emails = 9 variants.
+//   GREED:     "$X/yr of margin you're not earning at your current cal volume"
+//   FAIRNESS:  "your vendor uses your bay and charges you full list anyway"
+//   CURIOSITY: "the calibration math 95% of shop owners never run"
 //
-// Cadence: Email 1 (Day 0) → Email 2 (Day 4) → Email 3 (Day 10). Total
-// sequence length: 10 days. Pause sending if reply rate < 3%.
+// Cadence: Email 1 (Day 0) → Email 2 (Day 4) → Email 3 (Day 10). Pause sending
+// if reply rate < 3%.
 //
-// Send via Resend (same warm domain as the newsletter). Throttle inside
-// sendBroadcast keeps us under Resend's rate limits.
+// v3.1 doctrine: villain = list-price vendors that don't discount.
+// Mechanism = Partnership Discount Model (15/20/25% off list).
+// Canonical pricing only. Phone = digits (1-844-349-2327).
 
 const CALCULATOR_URL = 'https://absoluteadas.com/calculator'
 const AUDIT_URL = 'https://absoluteadas.com/audit'
-const PHONE = '1-844-FIX-ADAS'
-const TEL_HREF = 'tel:+18443492327'
+const PHONE = '1-844-349-2327'
 
-const HOOKS = ['greed', 'fear', 'curiosity']
-const DAYS = [0, 4, 10]   // Day-0 first contact, Day-4 follow-up, Day-10 close
+const HOOKS = ['greed', 'fairness', 'curiosity']
+const DAYS = [0, 4, 10]
 
 function esc(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-// Cold emails are intentionally plain-text-feel. Minimal HTML, no big design
+// Cold emails are intentionally plain-text-feel. Minimal HTML, no design
 // flourishes — a cold email that looks like a newsletter gets caught by spam.
 function shell({ preheader, bodyHtml }) {
   return `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;padding:0;background:#ffffff;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a;font-size:15px;line-height:1.6">
@@ -47,251 +47,6 @@ function firstName(target) {
   return String(target?.contactName || '').trim().split(/\s+/)[0] || ''
 }
 
-// ─── GREED sequence ─────────────────────────────────────────────────────────
-function buildGreedDay0(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `${shop} is paying your sublet vendor about $50k/yr`
-  const preheader = `60 seconds to see your number. Free tool.`
-  const bodyHtml = [
-    name ? p(`${name}. Bad opener, true math.`) : p(`Bad opener, true math.`),
-    p(`A two-bay shop subletting 18 calibrations a month at $450 average is sending the sublet vendor roughly $50,000 of gross profit per year. Most shop owners I talk to are within $10,000 of that number and don't realize it.`),
-    p(`Your shop's specific number is probably bigger or smaller depending on volume, ticket, and how much you're already marking up. The math is easy. Built a free calculator that does it in 60 seconds.`),
-    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
-    p(`Three numbers in. Personalized PDF out. No call required.`),
-    p(`If the number scares you, hit reply and I'll show you the four-step system to capture it back. If it doesn't, ignore me and have a good week.`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `Bad opener, true math.`,
-    ``,
-    `A 2-bay shop subletting 18 calibrations/mo at $450 avg sends ~$50,000 of GP per year to the sublet vendor.`,
-    ``,
-    `Your shop's number is bigger or smaller depending on volume + ticket. Easy math. Free calculator:`,
-    ``,
-    `${CALCULATOR_URL}`,
-    ``,
-    `Three numbers in. Personalized PDF out. No call required.`,
-    ``,
-    `If the number scares you, hit reply.`,
-  ] }) }
-}
-
-function buildGreedDay4(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `Following up. The $43,000 leak.`
-  const preheader = `A real shop's number. Same shape as yours probably is.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`Quick story to anchor the email I sent earlier this week.`),
-    p(`Mike runs a two-bay shop about an hour from me. Nineteen years in. I asked him to pull ninety days of sublet invoices. Forty-three thousand dollars in sublet calibration revenue. He was making forty-three hundred. The sublet vendor was making the other thirteen thousand inside his building.`),
-    p(`He didn't believe me until we laid the actual invoices on his desk.`),
-    p(`I'm not asking you to take anyone's word for anything. The calculator gives you the math in 60 seconds. The Revenue Audit gives you the math from your real invoices in 15 minutes.`),
-    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>. 60 seconds, no call.`),
-    pHtml(`<a href="${esc(AUDIT_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/audit</a>. 15 minutes, with me.`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `Quick story.`,
-    ``,
-    `Mike runs a 2-bay shop about an hour from me. 19 years in. Pulled 90 days of sublet invoices: $43,000 in revenue. He was making $4,300. The vendor was making $13,000 inside his building.`,
-    ``,
-    `He didn't believe me until we laid the actual invoices on his desk.`,
-    ``,
-    `Calculator (60 sec, no call): ${CALCULATOR_URL}`,
-    `Audit (15 min, with me): ${AUDIT_URL}`,
-  ] }) }
-}
-
-function buildGreedDay10(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `Last one. I'll get out of your way.`
-  const preheader = `If this isn't the right month, I'll stop.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`This is my last email to ${shop} unless I hear back.`),
-    p(`Quick recap. Two weeks ago I told you a two-bay shop is typically sending fifty thousand dollars of gross profit a year to a sublet vendor. Last week I told you about Mike, who was paying thirteen thousand a quarter to a vendor running across town.`),
-    p(`If the math doesn't bother you, that's a fine answer. I'll get out of your way.`),
-    p(`If the math does bother you, the cleanest next step is the 15-minute Revenue Audit. I pull your real sublet invoices, I tell you your real number, and you decide if you want to keep talking. Free. No commitment.`),
-    p(`I cap onboarding at three new shops per month in our service area. Two slots are open this month. After that, first week of next month is the next opening.`),
-    pHtml(`<a href="${esc(AUDIT_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/audit</a>`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `Last email to ${shop} unless I hear back.`,
-    ``,
-    `Recap: a 2-bay shop typically sends $50k/yr of GP to a sublet vendor. Mike was paying $13k/quarter to a vendor across town.`,
-    ``,
-    `If the math doesn't bother you, fine answer. I'll get out of your way.`,
-    ``,
-    `If it does: 15-min Revenue Audit. Real invoices, real number, no commitment.`,
-    ``,
-    `I cap onboarding at 3 shops/mo. 2 slots open this month.`,
-    ``,
-    `${AUDIT_URL}`,
-  ] }) }
-}
-
-// ─── FEAR sequence ──────────────────────────────────────────────────────────
-function buildFearDay0(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `Caliber is buying shops in your zip code`
-  const preheader = `Sending this to indie shops in our service area.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`Quick note from one independent collision shop to another. Cold email, I know. Read it or don't.`),
-    p(`The national consolidators are not just buying shops anymore. They are building in-house ADAS calibration departments inside the shops they buy. Caliber, Gerber, Crash Champions, Joe Hudson's, Classic Collision. All of them.`),
-    p(`The reason is the same reason it should worry you. Insurance carriers are quietly steering more work to shops that do everything on-site, fast, with documentation. If your shop is subletting calibrations across town to a vendor, you are slower and more expensive than the consolidator shop down the road. That's a DRP problem in 2027.`),
-    p(`I run a mobile ADAS calibration shop in Western Washington. I built a calculator that shows you in 60 seconds how much GP your sublet vendor is making inside your building, and how much of it you could capture back without buying any new equipment.`),
-    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
-    p(`Hit reply if the number lights you up. Or don't.`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `Cold email. Read it or don't.`,
-    ``,
-    `The national consolidators (Caliber, Gerber, Crash Champions, Joe Hudson's, Classic Collision) are building in-house ADAS departments inside the shops they buy.`,
-    ``,
-    `Insurance is steering work to on-site shops with fast documentation. Subletting calibrations across town = DRP problem in 2027.`,
-    ``,
-    `Calculator (60 sec): ${CALCULATOR_URL}`,
-  ] }) }
-}
-
-function buildFearDay4(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `The shops that don't pivot get bought for pennies`
-  const preheader = `Hard truth from the field.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`I'm going to say something that probably sounds dramatic and isn't. The independents that don't have an ADAS story by 2030 are going to sell to consolidators for pennies on the dollar.`),
-    p(`Severity goes up every year. Complexity goes up every year. The carriers are not subtle about which shops they want on DRPs. Those shops have the certifications, the OEM-procedure documentation, and the on-site capability. Subletting to a vendor that runs across town is slower, more expensive, and more error-prone. Every adjuster knows it.`),
-    p(`You don't need to buy a $250k Autel kit to have an ADAS story. You need a white-label partner that handles the calibration on your floor with OEM tools and full documentation, and a math arrangement that gives YOU the gross profit instead of the vendor. That's what I built. We call it the Absolute Capture System.`),
-    p(`Easiest first step is the calculator. Shows you your number. Sixty seconds.`),
-    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `The independents that don't have an ADAS story by 2030 will sell to consolidators for pennies.`,
-    ``,
-    `Carriers steer DRPs to shops with on-site ADAS, OEM documentation, fast cycle time. Subletting across town is the opposite of that.`,
-    ``,
-    `You don't need to buy a $250k Autel kit. You need a white-label partner doing the calibration on YOUR floor with the math arrangement giving YOU the GP. That's the Absolute Capture System.`,
-    ``,
-    `Calculator: ${CALCULATOR_URL}`,
-  ] }) }
-}
-
-function buildFearDay10(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `Last try. I'll stop after this.`
-  const preheader = `One direct question.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`One direct question and then I'm done.`),
-    p(`If a national consolidator made you a check offer for ${shop} in the next 18 months, would you have the leverage to say no?`),
-    p(`The shops that have leverage in that conversation are the ones that show DRP-ready ADAS capability on their P&L. That's revenue captured in-house, documented to OEM standard, with cycle-time data the carrier respects. The shops that don't have that get the lowball offer and have to take it.`),
-    p(`Fifteen minutes is all I need to show you what that capability would look like inside ${shop}. Free. No pitch. If the math doesn't work, we shake hands and you keep doing what you're doing.`),
-    pHtml(`<a href="${esc(AUDIT_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/audit</a>`),
-    p(`I cap onboarding at three shops per month. Two slots open this month. After that, first week of next month.`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `One direct question and then I'm done.`,
-    ``,
-    `If a consolidator made you a check offer for ${shop} in 18 months, would you have leverage to say no?`,
-    ``,
-    `Leverage = DRP-ready ADAS capability on your P&L. Captured in-house, documented to OEM, cycle-time data carriers respect.`,
-    ``,
-    `Without that, the offer is a lowball and you have to take it.`,
-    ``,
-    `15-min audit, free, no pitch: ${AUDIT_URL}`,
-    ``,
-    `3 shops/mo cap. 2 slots open.`,
-  ] }) }
-}
-
-// ─── CURIOSITY sequence ─────────────────────────────────────────────────────
-function buildCuriosityDay0(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `The capture number your vendor hopes you never run`
-  const preheader = `60 seconds to see it. Free tool.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`Three numbers. Sixty seconds. You'll see how much gross profit your sublet calibration vendor is making inside ${shop} every year.`),
-    p(`Most shop owners I talk to have never run this math. Not because it's hard. Because nobody asked them to. The vendor has zero incentive to bring it up.`),
-    p(`Calibrations subbed per month, average ticket, and the margin you currently make when you mark up the sublet on the RO. Plug those in. See your number.`),
-    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
-    p(`PDF emailed to you instantly. Nobody calls you. No upsell. If the number is small, great. If the number is big, I built a system to capture it back without buying a $250k Autel kit. We can talk about that when you're ready, or never.`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `Three numbers. Sixty seconds.`,
-    ``,
-    `Calibrations subbed/mo, avg ticket, current capture %. Plug in. See your number.`,
-    ``,
-    `Most shop owners never run this math because the vendor has zero incentive to bring it up.`,
-    ``,
-    `${CALCULATOR_URL}`,
-    ``,
-    `PDF instant. No call. No upsell.`,
-  ] }) }
-}
-
-function buildCuriosityDay4(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `Why State Farm is quietly steering work to in-house ADAS`
-  const preheader = `Pattern I see every week.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`Pattern I see every week and nobody talks about.`),
-    p(`State Farm in particular is quietly tightening which shops get severity work. The signal is calibration documentation. Shops that show OEM-cited pre-scan, post-scan, calibration, and R&R line items, with on-site capability and same-day turnaround, are getting more steering. Shops that sublet across town and submit late docs are getting less.`),
-    p(`This is not on any public memo. It's a pattern across the fifty thousand calibrations of data I sit on top of, plus what adjusters tell me off the record at trade shows.`),
-    p(`The Absolute Capture System gives you on-site capability without buying equipment. Same-day mobile dispatch, OEM tools, full documentation that meets every position-statement requirement. Documentation that adjusters can't deny because it's already cited.`),
-    p(`It also pays you more gross profit on the work, which is the part most shops care about first. Calculator below.`),
-    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `Pattern I see every week:`,
-    ``,
-    `State Farm quietly steers severity to shops showing OEM-cited pre/post-scan, calibration, R&R with on-site cap and same-day docs. Subletting + late docs = less steering.`,
-    ``,
-    `Not on any public memo. It's a pattern from the 50k calibrations of data we sit on + what adjusters tell me off-record.`,
-    ``,
-    `Absolute Capture System = on-site capability without buying gear. Same-day mobile, OEM tools, full docs. Pays you more GP too.`,
-    ``,
-    `${CALCULATOR_URL}`,
-  ] }) }
-}
-
-function buildCuriosityDay10(target) {
-  const name = firstName(target)
-  const shop = target.shopName || 'your shop'
-  const subject = `Closing the loop`
-  const preheader = `One specific offer before I stop emailing.`
-  const bodyHtml = [
-    name ? p(`${name},`) : p(`Hey,`),
-    p(`Closing the loop on this thread. Two emails this month, this is the third. After this I stop.`),
-    p(`Specific offer. I'll do one calibration at ${shop}, white-label, no charge to you, so you can see exactly what the workflow looks like from the inside. Your tech watches, your service writer sees the documentation, your customer gets a fully-calibrated vehicle. Zero cost trial.`),
-    p(`If after that trial calibration you don't see how it would work in your shop, no harm done. If you do see it, we walk through the math, and you decide whether to onboard. The Absolute Capture System has a guarantee that says if it doesn't add at least ten thousand dollars in new monthly gross profit within ninety days of activation, we work for free until it does, and I cut you a thousand-dollar check for the time we wasted.`),
-    p(`Three steps to claim the trial. Run the calculator. Book the 15-minute audit. We schedule the trial.`),
-    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
-  ].join('\n')
-  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
-    `Closing the loop. Specific offer:`,
-    ``,
-    `One calibration at ${shop}, white-label, no charge. Your tech watches. Your service writer sees the docs. Zero-cost trial.`,
-    ``,
-    `If after the trial you don't see how it works in your shop, no harm. If you do, we walk through the math.`,
-    ``,
-    `Absolute Capture System guarantee: $10k new monthly GP within 90 days of activation, or we work free until it does + I cut you a $1,000 check.`,
-    ``,
-    `Steps: Calculator → Audit → Trial.`,
-    ``,
-    `${CALCULATOR_URL}`,
-  ] }) }
-}
-
 function textVersion({ name, shop, lines }) {
   const sig = [
     '',
@@ -305,10 +60,256 @@ function textVersion({ name, shop, lines }) {
   return [head, '', ...lines, ...sig].join('\n')
 }
 
+// ─── GREED sequence ─────────────────────────────────────────────────────────
+function buildGreedDay0(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `${shop} is leaving $8,100+/yr of calibration margin uncollected`
+  const preheader = `Same insurance bill. Smaller invoice from us. The difference is your margin.`
+  const bodyHtml = [
+    name ? p(`${name}. Bad opener, true math.`) : p(`Bad opener, true math.`),
+    p(`A shop doing 10 static calibrations a month at the $450 list price most carriers approve is sending the entire calibration margin to whatever mobile vendor is invoicing them at full list. That's $8,100 a year of margin uncollected, on calibration work the shop is already billing insurance for.`),
+    p(`Absolute ADAS gives partner shops a 15% discount off list on every invoice. Same insurance bill ($450). Smaller invoice from us ($382.50). The difference ($67.50 per cal) is your shop's margin. Automatic, every job, no paperwork.`),
+    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
+    p(`Two numbers in. Personalized PDF out. No call required.`),
+    p(`If your current mobile vendor isn't already discounting your invoices, hit reply and I'll show you how the math works on your specific volume.`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `Bad opener, true math.`,
+    ``,
+    `Shop doing 10 static cals/mo at $450 list = $8,100/yr of margin uncollected if the mobile vendor charges full list.`,
+    ``,
+    `Absolute ADAS gives partner shops 15% off list on every invoice. Same insurance bill ($450). Smaller invoice from us ($382.50). $67.50 per cal is your margin.`,
+    ``,
+    `Two numbers in, PDF out, no call:`,
+    `${CALCULATOR_URL}`,
+    ``,
+    `If your current vendor doesn't discount, hit reply.`,
+  ] }) }
+}
+
+function buildGreedDay4(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `Following up. Mike's shop captured $9,200 in 60 days.`
+  const preheader = `Real story. Same shape as yours is.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`Quick story to anchor the email I sent this week.`),
+    p(`Mike runs a 2-bay shop about an hour from me. He was already running calibrations through a mobile vendor that charged full list and pocketed the margin. He thought that was how the model worked. We moved him onto a Partnership Discount Model invoice in eleven days. Same vehicles. Same insurance approvals at list. Every Absolute ADAS invoice now shows the 15% line item discount.`),
+    p(`Sixty days later: $9,200 of net new margin captured by the shop. He hired his nephew back.`),
+    p(`Composite of three real shops in our Western Washington portfolio. Specific numbers, blended details.`),
+    p(`I'm not asking you to take anyone's word. The calculator runs your shop's numbers in 60 seconds. The Partnership Audit walks through how the discount lands on your specific RO workflow in 15 minutes.`),
+    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>. 60 seconds, no call.`),
+    pHtml(`<a href="${esc(AUDIT_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/audit</a>. 15 minutes, with me.`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `Quick story.`,
+    ``,
+    `Mike runs a 2-bay shop. Was running cals through a vendor that charged full list and pocketed the margin. Eleven days from our first conversation, on a Partnership Discount Model invoice. Same vehicles, same insurance approvals, 15% line item discount on every invoice.`,
+    ``,
+    `60 days later: $9,200 net new margin captured. Hired his nephew back.`,
+    ``,
+    `[Composite of three real shops in our Western Washington portfolio.]`,
+    ``,
+    `Calculator (60 sec): ${CALCULATOR_URL}`,
+    `Audit (15 min, with me): ${AUDIT_URL}`,
+  ] }) }
+}
+
+function buildGreedDay10(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `Last one. I'll get out of your way.`
+  const preheader = `If this isn't the right month, I'll stop.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`This is my last email to ${shop} unless I hear back.`),
+    p(`Quick recap. A shop running 10 static calibrations a month at $450 list = $8,100/year of margin currently going to whatever mobile vendor invoices at full list. On 15 cals/mo at the Volume tier, $16,200/year. On 30+/mo at the Preferred Partner tier, $40,500/year. Same insurance bills. The only thing that changes is whose invoice shows the discount.`),
+    p(`If the math doesn't bother you, that's a fine answer. I'll get out of your way.`),
+    p(`If it does, the cleanest next step is the 15-minute Partnership Audit. I walk through how the discount lands on your specific RO workflow, you decide if it fits, we schedule a trial. Free, no commitment.`),
+    p(`I cap onboarding at three new partner shops per month in our service area. Two trial slots are open this month. After that, first week of next month is the next opening.`),
+    pHtml(`<a href="${esc(AUDIT_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/audit</a>`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `Last email to ${shop} unless I hear back.`,
+    ``,
+    `Recap: 10 cals/mo @ $450 list = $8,100/yr margin to whoever invoices at full list. 15 cals = $16,200. 30+ cals = $40,500. Same insurance bills, just who keeps the discount.`,
+    ``,
+    `If the math doesn't bother you, fine. I'll get out of your way.`,
+    ``,
+    `If it does: 15-min Partnership Audit. Free, no commitment.`,
+    ``,
+    `I cap onboarding at 3 partner shops/mo. 2 trial slots open this month.`,
+    ``,
+    `${AUDIT_URL}`,
+  ] }) }
+}
+
+// ─── FAIRNESS sequence ─────────────────────────────────────────────────────
+function buildFairnessDay0(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `Your mobile calibration vendor uses your bay. Why no discount?`
+  const preheader = `Most shops never ask. It's a fair question.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`Cold email, I know. One question and I'm out.`),
+    p(`When your mobile ADAS calibration vendor pulls up to your shop, they use your bay. They use your power. When something needs a second set of hands, they pull your tech for a minute. The customer pays insurance at list price. The vendor sends ${shop} an invoice for the full list amount and leaves.`),
+    p(`Fair question: why isn't your shop on the invoice for some piece of the margin? Your facility is what makes mobile calibration possible. The vendor walks in with tools, walks out with profit, and your shop carries none of it on the P&L.`),
+    p(`Absolute ADAS runs the Partnership Discount Model. Every invoice to a partner shop shows a 15-25% line item discount off list because your bay, your power, and your time matter to us economically. You bill insurance at list (insurance-approved, since we're a preferred vendor with State Farm and other major carriers). The discount we give you is your shop's margin.`),
+    p(`The calculator runs your numbers in 60 seconds. No call required.`),
+    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `Cold email. One question and I'm out.`,
+    ``,
+    `Your mobile cal vendor uses your bay, your power, your tech's time when needed. Customer pays insurance at list. Vendor invoices ${shop} for full list and leaves.`,
+    ``,
+    `Why isn't your shop on the invoice for some of the margin? Your facility is what makes mobile possible.`,
+    ``,
+    `Absolute ADAS = Partnership Discount Model. 15-25% off list on every partner invoice because your bay matters to us economically. You bill insurance at list (approved with State Farm and other major carriers). The discount is your shop's margin.`,
+    ``,
+    `60-sec calculator: ${CALCULATOR_URL}`,
+  ] }) }
+}
+
+function buildFairnessDay4(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `Standard sublet playbook vs Partnership Discount`
+  const preheader = `Same vehicle, same insurance bill, different math.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`The math, side by side.`),
+    p(`<strong>Standard sublet playbook:</strong> vendor charges your shop $450 list. You bill insurance $450. Your margin is whatever you can mark up the sublet on the RO. If your carrier doesn't pay the markup, your margin is zero.`),
+    p(`<strong>Partnership Discount Model:</strong> Absolute ADAS invoices your shop $382.50 (15% off list). You bill insurance the same $450 (insurance-approved). Your margin is $67.50 per cal, automatic, every invoice, no markup negotiation, no carrier pushback.`),
+    p(`Per calibration, that's $67.50 in your pocket instead of the vendor's. At 10 cals a month, $675/mo or $8,100/yr. At 15 cals, $1,350/mo or $16,200/yr. At 30+, $3,375/mo or $40,500/yr.`),
+    p(`The Partnership Audit walks you through how this lands on your specific RO workflow. 15 minutes, free, with me.`),
+    pHtml(`<a href="${esc(AUDIT_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/audit</a>`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `Math side by side.`,
+    ``,
+    `STANDARD: vendor charges $450. You bill $450. Margin = whatever markup you can negotiate. Often zero.`,
+    ``,
+    `PARTNERSHIP: vendor invoices $382.50 (15% off). You bill $450 (insurance-approved). $67.50/cal margin, automatic, no negotiation.`,
+    ``,
+    `10 cals/mo = $8,100/yr. 15 cals = $16,200/yr. 30+ cals = $40,500/yr.`,
+    ``,
+    `15-min audit, with me, free: ${AUDIT_URL}`,
+  ] }) }
+}
+
+function buildFairnessDay10(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `Last try. One direct question.`
+  const preheader = `Then I'm out of your inbox.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`One direct question and I'm done.`),
+    p(`If a mobile ADAS calibration vendor walked into ${shop} this week, used your bay, charged your shop full list price, sent the invoice, and left, what part of that arrangement would you describe as a partnership?`),
+    p(`That's the question shop owners can't unhear once they've heard it. The standard sublet playbook treats your facility as a free amenity. The Partnership Discount Model treats it as part of the deal, and shows the discount on every invoice to prove it.`),
+    p(`Fifteen minutes is all I need to walk through what that would look like inside ${shop} specifically. Free, no pitch. If the math doesn't fit, we shake hands and you keep doing what you're doing.`),
+    pHtml(`<a href="${esc(AUDIT_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/audit</a>`),
+    p(`Two trial slots open this month. After that, first week of next month.`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `One direct question and I'm done.`,
+    ``,
+    `If a mobile cal vendor walked into ${shop}, used your bay, charged your shop full list, invoiced you, and left, what part of that would you call a partnership?`,
+    ``,
+    `Standard sublet treats your facility as a free amenity. Partnership Discount Model treats it as part of the deal, and proves it with the line item discount.`,
+    ``,
+    `15-min audit, free: ${AUDIT_URL}`,
+    ``,
+    `2 trial slots open this month.`,
+  ] }) }
+}
+
+// ─── CURIOSITY sequence ─────────────────────────────────────────────────────
+function buildCuriosityDay0(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `The calibration math 95% of shop owners never run`
+  const preheader = `Two numbers, sixty seconds, free tool.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`Two numbers. Sixty seconds. You'll see how much partnership margin ${shop} could be earning on the calibration volume you're already doing.`),
+    p(`Most shop owners never run this math. Not because it's hard. Because nobody asked them to. The mobile cal vendor has zero incentive to bring up the discount they could be giving and aren't.`),
+    p(`Calibrations per month and your average list price. Plug those in, see your shop's annual margin under the Partnership Discount Model (15% off list at the Standard tier, 20% at Volume, 25% at Preferred Partner).`),
+    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
+    p(`PDF emailed to you instantly. Nobody calls you. No upsell. If the number is small, great. If the number is big, the Partnership Audit walks through how the discount lands on your specific RO workflow. We can talk about that when you're ready, or never.`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `Two numbers. Sixty seconds.`,
+    ``,
+    `Calibrations per month + your average list price. Plug in, see your shop's annual margin at the Standard / Volume / Preferred tiers.`,
+    ``,
+    `Most shop owners never run this math. The mobile cal vendor has zero incentive to bring it up.`,
+    ``,
+    `${CALCULATOR_URL}`,
+    ``,
+    `PDF instant. No call. No upsell.`,
+  ] }) }
+}
+
+function buildCuriosityDay4(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `Why every Absolute ADAS invoice shows a 15% discount line item`
+  const preheader = `Pattern most shop owners haven't seen on a calibration invoice before.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`If you've ever pulled up a calibration invoice from your mobile vendor and looked for the discount line, you probably didn't find one. There usually isn't one. The standard sublet playbook charges list and doesn't acknowledge that your facility is part of the calibration.`),
+    p(`Every Absolute ADAS invoice to a partner shop shows a partner discount line item: 15% off list at the Standard tier, 20% at Volume (15+ cals/mo), 25% at Preferred Partner (30+ cals/mo). It's the same place on the invoice every time. Same percentage. No carrier negotiation, no markup math, no waiting on a quarterly rebate.`),
+    p(`The discount IS your shop's margin. You bill insurance at list ($450 for static, the canonical insurance-approved rate we share with State Farm and other major carriers). You pay us less than list. The difference shows up on your P&L automatically.`),
+    p(`See what your shop's number looks like:`),
+    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `If you've ever looked at a calibration invoice from your mobile vendor for the discount line, there usually isn't one. Standard playbook charges list, doesn't acknowledge your facility is part of the calibration.`,
+    ``,
+    `Every Absolute ADAS invoice to a partner shop shows the partner discount line: 15% (Standard), 20% (Volume, 15+/mo), 25% (Preferred, 30+/mo).`,
+    ``,
+    `The discount IS your margin. Bill insurance $450 (approved with State Farm and other carriers). Pay us less. The difference is on your P&L automatically.`,
+    ``,
+    `${CALCULATOR_URL}`,
+  ] }) }
+}
+
+function buildCuriosityDay10(target) {
+  const name = firstName(target)
+  const shop = target.shopName || 'your shop'
+  const subject = `Closing the loop. One specific offer.`
+  const preheader = `Before I stop emailing.`
+  const bodyHtml = [
+    name ? p(`${name},`) : p(`Hey,`),
+    p(`Closing the loop on this thread. Two emails this month, this is the third. After this I stop.`),
+    p(`Specific offer: I'll do one trial calibration at ${shop} so you can see exactly what the workflow + the partner discount look like from the inside. Your tech watches. Your service writer sees the invoice with the discount line item. Your customer gets a fully calibrated vehicle. No long-term commitment after the trial.`),
+    p(`If after that trial you don't see how it would work in your shop, no harm done. If you do see it, we walk through the math, and you decide whether to onboard as a partner.`),
+    p(`The Partnership Guarantee says: if we don't deliver every calibration on-time, with full OEM documentation, AND apply your partnership discount on every single invoice for your first 90 days as a partner, we work for free until we do, and I cut you a check for $500 to make it right.`),
+    p(`Three steps. Run the calculator. Book the 15-minute Partnership Audit. We schedule the trial calibration.`),
+    pHtml(`<a href="${esc(CALCULATOR_URL)}" style="color:#CD4419;font-weight:700">absoluteadas.com/calculator</a>`),
+  ].join('\n')
+  return { subject, preheader, html: shell({ preheader, bodyHtml }), text: textVersion({ name, shop, lines: [
+    `Closing the loop. Specific offer:`,
+    ``,
+    `One trial calibration at ${shop}. Your tech watches. Your service writer sees the invoice with the 15% partner discount line. Customer gets a fully calibrated vehicle. No long-term commitment after the trial.`,
+    ``,
+    `Partnership Guarantee: on-time + full OEM docs + discount on every invoice for your first 90 days as partner, or we work free until we do + $500 check.`,
+    ``,
+    `Steps: Calculator → Audit → Trial.`,
+    ``,
+    `${CALCULATOR_URL}`,
+  ] }) }
+}
+
 // ─── Sequence registry ──────────────────────────────────────────────────────
 const BUILDERS = {
   greed:     { 0: buildGreedDay0,     4: buildGreedDay4,     10: buildGreedDay10 },
-  fear:      { 0: buildFearDay0,      4: buildFearDay4,      10: buildFearDay10 },
+  fairness:  { 0: buildFairnessDay0,  4: buildFairnessDay4,  10: buildFairnessDay10 },
   curiosity: { 0: buildCuriosityDay0, 4: buildCuriosityDay4, 10: buildCuriosityDay10 },
 }
 
