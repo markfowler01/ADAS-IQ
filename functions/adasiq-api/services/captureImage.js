@@ -392,14 +392,20 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
     // Composite the headline + brand footer over the raw photo. The footer
     // layout matches the newsletter tip-card exactly (logo + "Absolute"/"ADAS"
     // split wordmark + tagline, centered) so all Absolute ADAS imagery reads
-    // as one brand. Failure falls back to shipping the raw photo rather than
-    // blocking the whole pipeline.
+    // as one brand.
+    //
+    // POLICY (Mark, 2026-05-19): images without the brand footer must NEVER
+    // ship. If the composite step fails, we fail the whole generation rather
+    // than shipping an unbranded raw photo. The pipeline downstream already
+    // handles image-gen failure by falling back to text-only LinkedIn posts.
     let buffer
     try {
       buffer = await compositeOverlay(rawBuffer, safeHeadline)
     } catch (e) {
-      console.warn('[captureImage] overlay composite failed, shipping raw:', e.message)
-      buffer = rawBuffer
+      const err = `footer composite failed (image suppressed): ${e.message}`
+      console.warn('[captureImage]', err)
+      if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: err, latency_ms: Date.now() - t0 })
+      return { ok: false, error: err }
     }
 
     // Commit to GitHub Pages so the image has a permanent public URL
