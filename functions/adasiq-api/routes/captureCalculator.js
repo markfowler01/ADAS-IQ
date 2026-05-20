@@ -142,6 +142,7 @@ captureCalcRouter.post('/generate', express.json({ limit: '32kb' }), async (req,
     sendBroadcast({
       recipients: [email], subject, html, text,
       attachments: pdfBuf ? [{ filename: `${shopName.replace(/[^a-z0-9]/gi, '_')}_Partnership_Discount_Report.pdf`, content: pdfBuf.toString('base64') }] : undefined,
+      fromEmail: CAPTURE_FROM_EMAIL, fromName: CAPTURE_FROM_NAME,
     }).catch(e => console.warn('[capture-calc email]', e.message))
 
     syncNewsletterSubscriberToCrm({ email, shop: shopName, name: contactName, source: 'capture_calculator' })
@@ -225,7 +226,7 @@ function renderResultEmail({ contactName, shopName, calc }) {
   </div>
 
   <p style="font-size:15px;line-height:1.55;margin:18px 0 18px;color:#1a1a1a"><strong>Next step:</strong> 15-minute Partnership Audit. We walk through how the discount lands on your specific RO workflow + answer any questions before your first trial calibration. Free, no commitment.</p>
-  <p style="margin:0 0 22px"><a href="https://absoluteadas.com/audit" style="display:inline-block;background:#CD4419;color:#fff;padding:13px 26px;text-decoration:none;font-weight:800;border-radius:8px;font-size:14px">Book your Partnership Audit  →</a></p>
+  <p style="margin:0 0 22px"><a href="https://absoluteadas.com/partnership-audit" style="display:inline-block;background:#CD4419;color:#fff;padding:13px 26px;text-decoration:none;font-weight:800;border-radius:8px;font-size:14px">Book your Partnership Audit  →</a></p>
 
   <p style="font-size:13px;color:#6b7280;margin:0 0 4px">Or call me direct: <a href="tel:+18443492327" style="color:#CD4419;font-weight:700;text-decoration:none">1-844-349-2327</a></p>
   <p style="font-size:15px;line-height:1.55;margin:18px 0 0;color:#1a1a1a">— Mark Fowler<br><span style="color:#6b7280;font-size:13px">Owner, Absolute ADAS  ·  50,000+ calibrations  ·  State Farm DRP preferred vendor</span></p>
@@ -254,7 +255,7 @@ function renderResultText({ contactName, shopName, calc }) {
     `THE PARTNERSHIP GUARANTEE: If we don't deliver every calibration on-time, with full OEM documentation, AND apply your partnership discount on every single invoice for your first 90 days, we work for free until we do. AND we cut you a $500 check to make it right.`,
     '',
     `NEXT STEP: Book a 15-minute Partnership Audit. Free, no commitment.`,
-    `→ https://absoluteadas.com/audit`,
+    `→ https://absoluteadas.com/partnership-audit`,
     `→ Or call: 1-844-349-2327`,
     '',
     `— Mark Fowler, Owner, Absolute ADAS`,
@@ -327,6 +328,7 @@ captureCalcRouter.get('/nurture/run', requireCronSecretFlex, async (req, res) =>
         subject: email.subject,
         html: email.html,
         text: email.text,
+        fromEmail: CAPTURE_FROM_EMAIL, fromName: CAPTURE_FROM_NAME,
       })
       const ok = r.status === 'sent' || r.status === 'partial'
       if (ok) {
@@ -363,7 +365,7 @@ captureCalcRouter.get('/nurture/preview', requireCronSecretFlex, async (req, res
     const email = buildNurtureEmail(fake, day)
     if (!email) return res.status(400).json({ ok: false, error: `Day ${day} not defined` })
 
-    const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text })
+    const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text, fromEmail: CAPTURE_FROM_EMAIL, fromName: CAPTURE_FROM_NAME })
     res.json({ ok: r.status === 'sent' || r.status === 'partial', day, to, subject: email.subject, status: r.status })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
@@ -411,7 +413,7 @@ captureCalcRouter.get('/cold/preview', requireCronSecretFlex, async (req, res) =
     }
     const email = buildColdEmail({ hook, day }, target)
     if (!email) return res.status(400).json({ ok: false, error: `Invalid hook or day` })
-    const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text })
+    const r = await sendBroadcast({ recipients: [to], subject: email.subject, html: email.html, text: email.text, fromEmail: CAPTURE_FROM_EMAIL, fromName: CAPTURE_FROM_NAME })
     res.json({ ok: r.status === 'sent' || r.status === 'partial', hook, day, to, subject: email.subject, status: r.status })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
@@ -433,6 +435,11 @@ captureCalcRouter.get('/cold/preview', requireCronSecretFlex, async (req, res) =
 //   GET  /api/capture-calc/approval/queue  (cron-secret) → list pending
 
 const PUBLIC_BASE = 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+
+// Capture acquisition campaign emails go from Mark personally — separate from
+// the brew newsletter sender (brew@absoluteadas.com). Newsletter stays locked.
+const CAPTURE_FROM_EMAIL = 'mf@absoluteadas.com'
+const CAPTURE_FROM_NAME  = 'Mark Fowler'
 
 captureCalcRouter.post('/approval/enqueue', requireCronSecretFlex, express.json({ limit: '64kb' }), async (req, res) => {
   try {
@@ -648,6 +655,106 @@ captureCalcRouter.post('/linkedin/draft-week', requireCronSecretFlex, express.js
     if (!story) return res.status(400).json({ ok: false, error: 'story is required' })
     const result = await draftLinkedInWeek({ story, caseStudy, angle })
     res.json({ ok: true, ...result })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── PARTNERSHIP AUDIT BOOKING (public form on absoluteadas.com/partnership-audit) ───
+// Lead submits the booking form → we store it, Cliq DM Mark, send Mark an
+// email with the lead details, send the lead a confirmation email.
+captureCalcRouter.post('/partnership-audit/submit', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim()
+    if (rateLimited(ip)) {
+      return res.status(429).json({ ok: false, error: 'Too many requests. Try again in an hour, or call 1-844-349-2327.' })
+    }
+
+    const body = req.body || {}
+    const name = String(body.name || '').trim().slice(0, 80)
+    const shop = String(body.shop || '').trim().slice(0, 120)
+    const email = String(body.email || '').trim().toLowerCase().slice(0, 180)
+    const phone = String(body.phone || '').trim().slice(0, 30)
+    const notes = String(body.notes || '').trim().slice(0, 600)
+
+    if (!name) return res.status(400).json({ ok: false, error: 'Name required' })
+    if (!shop) return res.status(400).json({ ok: false, error: 'Shop name required' })
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ ok: false, error: 'Valid email required' })
+
+    // Persist for Mark's CRM review
+    const seg = getSegment(req)
+    const PA_KEY = 'partnership_audit_requests'
+    const existing = (await cacheGet(seg, PA_KEY, [])) || []
+    const entry = { name, shop, email, phone, notes, ip, at: new Date().toISOString() }
+    await cacheSet(seg, PA_KEY, [entry, ...existing].slice(0, 200)).catch(() => {})
+
+    // Cliq DM Mark — this is a hot lead, they explicitly asked to talk
+    const cliqMsg = [
+      '🤝 NEW PARTNERSHIP AUDIT REQUEST',
+      '',
+      `Name: ${name}`,
+      `Shop: ${shop}`,
+      `Email: ${email}`,
+      phone ? `Phone: ${phone}` : '',
+      '',
+      notes ? `Notes: ${notes}` : '(no notes)',
+      '',
+      'They expect a same-day reply. Reach out via the channel they prefer.',
+    ].filter(Boolean).join('\n').slice(0, 2000)
+    postToCliqUser(TECH_CLIQ_IDS.Mark, cliqMsg).catch(e => console.warn('[pa-audit cliq]', e.message))
+
+    // Email Mark with the lead details
+    const markEmailHtml = `<!doctype html><html><body style="font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:560px;margin:0 auto;padding:24px;background:#fff">
+<h2 style="color:#CD4419;font-size:22px;margin:0 0 16px">🤝 New Partnership Audit Request</h2>
+<table cellpadding="8" style="font-size:15px;line-height:1.55;border-collapse:collapse;width:100%">
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Name:</strong></td><td style="border-bottom:1px solid #ececec">${esc(name)}</td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Shop:</strong></td><td style="border-bottom:1px solid #ececec">${esc(shop)}</td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Email:</strong></td><td style="border-bottom:1px solid #ececec"><a href="mailto:${esc(email)}">${esc(email)}</a></td></tr>
+  ${phone ? `<tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Phone:</strong></td><td style="border-bottom:1px solid #ececec"><a href="tel:${esc(phone)}">${esc(phone)}</a></td></tr>` : ''}
+  ${notes ? `<tr><td style="color:#6b7280;border-bottom:1px solid #ececec;vertical-align:top"><strong>Notes:</strong></td><td style="border-bottom:1px solid #ececec">${esc(notes)}</td></tr>` : ''}
+</table>
+<p style="font-size:13px;color:#6b7280;margin-top:18px">Submitted ${new Date().toISOString()}. They expect a same-day reply.</p>
+</body></html>`
+    sendBroadcast({
+      recipients: ['mf@absoluteadas.com'],
+      subject: `🤝 Partnership Audit request from ${name} (${shop})`,
+      html: markEmailHtml,
+      text: `New Partnership Audit request\n\nName: ${name}\nShop: ${shop}\nEmail: ${email}\n${phone ? `Phone: ${phone}\n` : ''}${notes ? `Notes: ${notes}\n` : ''}\nSubmitted ${new Date().toISOString()}`,
+      fromEmail: 'mf@absoluteadas.com',
+      fromName: 'Absolute ADAS',
+    }).catch(e => console.warn('[pa-audit email-mark]', e.message))
+
+    // Auto-respond to the lead so they know it landed
+    const leadEmailHtml = `<!doctype html><html><body style="font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a;background:#f5f3f0;padding:32px 16px"><table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center"><table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:14px;border-top:4px solid #CD4419"><tr><td style="padding:28px">
+<div style="font-family:monospace;font-size:11px;font-weight:800;letter-spacing:.18em;color:#CD4419;text-transform:uppercase;margin-bottom:8px">PARTNERSHIP AUDIT · REQUEST RECEIVED</div>
+<h1 style="font-size:22px;margin:0 0 14px;font-weight:800">Got it, ${esc(name.split(/\s+/)[0])}.</h1>
+<p style="font-size:15px;line-height:1.55;color:#1a1a1a">Thanks for booking a Partnership Audit for ${esc(shop)}. I'll reach out same-day — either to your email or to ${phone ? esc(phone) : 'a number you give me'}.</p>
+<p style="font-size:15px;line-height:1.55;color:#1a1a1a">If you want to grab the slot faster, just call me: <a href="tel:+18443492327" style="color:#CD4419;font-weight:700">1-844-349-2327</a>. I pick up.</p>
+<p style="font-size:15px;line-height:1.55;color:#1a1a1a;margin-top:18px">Before we talk, if you can email me your last 30-90 days of sublet calibration invoices (PDF or photos — whatever's easiest), I'll have the math ready when we get on the call. No prep required on your end if that's a hassle.</p>
+<p style="font-size:15px;line-height:1.55;margin:18px 0 0;color:#1a1a1a">— Mark Fowler<br><span style="color:#6b7280;font-size:13px">Owner, Absolute ADAS · 50,000+ calibrations · State Farm DRP preferred vendor</span></p>
+</td></tr></table></td></tr></table></body></html>`
+    sendBroadcast({
+      recipients: [email],
+      subject: `Partnership Audit booked — Mark will reply same-day`,
+      html: leadEmailHtml,
+      text: `Got it, ${name.split(/\s+/)[0]}.\n\nThanks for booking a Partnership Audit for ${shop}. I'll reach out same-day.\n\nIf you want to grab the slot faster, just call me: 1-844-349-2327.\n\nBefore we talk, if you can email me your last 30-90 days of sublet calibration invoices, I'll have the math ready when we get on the call.\n\n— Mark Fowler\nOwner, Absolute ADAS`,
+      fromEmail: 'mf@absoluteadas.com',
+      fromName: 'Mark Fowler',
+    }).catch(e => console.warn('[pa-audit email-lead]', e.message))
+
+    res.json({ ok: true, message: 'Request received. Mark will reply same-day.' })
+  } catch (e) {
+    console.error('[pa-audit submit]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: list recent audit requests
+captureCalcRouter.get('/partnership-audit/requests', requireCronSecretFlex, async (req, res) => {
+  try {
+    const seg = getSegment(req)
+    const list = (await cacheGet(seg, 'partnership_audit_requests', [])) || []
+    res.json({ ok: true, count: list.length, items: list })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
@@ -1224,7 +1331,7 @@ captureCalcRouter.post('/cold/send', requireCronSecretFlex, express.json({ limit
     for (const t of targets) {
       const email = buildColdEmail({ hook, day }, t)
       if (!email || !t.email) { results.push({ to: t.email, ok: false, error: 'invalid_target_or_email' }); continue }
-      const r = await sendBroadcast({ recipients: [t.email], subject: email.subject, html: email.html, text: email.text })
+      const r = await sendBroadcast({ recipients: [t.email], subject: email.subject, html: email.html, text: email.text, fromEmail: CAPTURE_FROM_EMAIL, fromName: CAPTURE_FROM_NAME })
       results.push({ to: t.email, ok: r.status === 'sent' || r.status === 'partial', status: r.status })
       await new Promise(rs => setTimeout(rs, 250)) // belt-and-suspenders pacing
     }

@@ -13,7 +13,7 @@
 // Canonical pricing only. Phone = digits (1-844-349-2327).
 
 const CALCULATOR_URL = 'https://absoluteadas.com/calculator'
-const AUDIT_URL = 'https://absoluteadas.com/audit'
+const AUDIT_URL = 'https://absoluteadas.com/partnership-audit'
 const PHONE = '1-844-349-2327'
 
 const HOOKS = ['greed', 'fairness', 'curiosity']

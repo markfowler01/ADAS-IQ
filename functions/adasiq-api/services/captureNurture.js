@@ -23,7 +23,7 @@
 //   - Canonical pricing only ($450 list, 15/20/25% tiers, $67.50/$90/$112.50 margins)
 
 const CALCULATOR_URL = 'https://absoluteadas.com/calculator'
-const AUDIT_URL = 'https://absoluteadas.com/audit'
+const AUDIT_URL = 'https://absoluteadas.com/partnership-audit'
 const PHONE = '1-844-349-2327'
 const TEL_HREF = 'tel:+18443492327'
 

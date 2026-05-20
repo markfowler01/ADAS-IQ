@@ -24,15 +24,19 @@ function isConfigured() {
  *   attachments: array of { filename, content } where content is base64-encoded.
  * @returns {Promise<{ ok: boolean, id?: string, error?: string }>}
  */
-async function sendOne({ to, subject, html, text, attachments }) {
+async function sendOne({ to, subject, html, text, attachments, fromEmail, fromName }) {
   const e = envBundle()
   if (!e.apiKey) return { ok: false, error: 'RESEND_API_KEY not configured' }
+  // Per-call from override (used by capture campaign to send as mf@absoluteadas.com;
+  // newsletter pipeline uses the env defaults — brew@absoluteadas.com).
+  const effectiveFromName = fromName || e.fromName
+  const effectiveFromEmail = fromEmail || e.fromEmail
 
   try {
     const res = await axios.post(
       `${RESEND_API}/emails`,
       {
-        from: `${e.fromName} <${e.fromEmail}>`,
+        from: `${effectiveFromName} <${effectiveFromEmail}>`,
         to: [to],
         subject,
         html,
@@ -74,7 +78,7 @@ function personalize(body, sub) {
  * Returns aggregate result + per-recipient detail.
  * Throttles to ~5 req/sec to stay well under Resend's 10/sec rate limit.
  */
-export async function sendBroadcast({ recipients, subscribers, subject, html, text, attachments }) {
+export async function sendBroadcast({ recipients, subscribers, subject, html, text, attachments, fromEmail, fromName }) {
   // Normalize to subscriber objects so personalization always runs
   const subs = Array.isArray(subscribers) && subscribers.length
     ? subscribers
@@ -94,7 +98,7 @@ export async function sendBroadcast({ recipients, subscribers, subject, html, te
     const to = sub.email
     const personalHtml = personalize(html, sub)
     const personalText = text ? personalize(text, sub) : undefined
-    const r = await sendOne({ to, subject, html: personalHtml, text: personalText, attachments })
+    const r = await sendOne({ to, subject, html: personalHtml, text: personalText, attachments, fromEmail, fromName })
     results.push({ to, ok: r.ok, id: r.id || null, error: r.error || null })
     if (r.ok) sent++
     else failed++

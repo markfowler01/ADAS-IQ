@@ -157,7 +157,7 @@ function drawBack(doc) {
   doc.font('Helvetica').fontSize(11).fillColor(GRAY_DARK)
     .text('Free, no commitment. We walk through how the discount lands on your specific RO workflow + answer any questions before your first trial calibration.', MARGIN + 20, y + 38, { width: CONTENT_W - 40, lineGap: 2 })
   doc.font('Helvetica-Bold').fontSize(13).fillColor(ORANGE)
-    .text('absoluteadas.com/audit', MARGIN + 20, y + 72)
+    .text('absoluteadas.com/partnership-audit', MARGIN + 20, y + 72)
   doc.font('Helvetica-Bold').fontSize(13).fillColor(ORANGE)
     .text('1-844-349-2327', MARGIN + 20, y + 72, { width: CONTENT_W - 40, align: 'right' })
 

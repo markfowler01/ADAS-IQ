@@ -159,7 +159,7 @@ export function generateCaptureReportPdf(input) {
     doc.roundedRect(MARGIN, y, 200, 28, 6).fill(ORANGE)
     doc.font('Helvetica-Bold').fontSize(10).fillColor(WHITE).text('Book your audit  →', MARGIN, y + 9, { width: 200, align: 'center' })
     doc.font('Helvetica').fontSize(9).fillColor(GRAY_MID)
-      .text('absoluteadas.com/audit  ·  1-844-349-2327', MARGIN + 212, y + 10)
+      .text('absoluteadas.com/partnership-audit  ·  1-844-349-2327', MARGIN + 212, y + 10)
 
     // ── FOOTER ──────────────────────────────────────────────────────────────
     const fy = PAGE_H - 30
