@@ -19,6 +19,7 @@ import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
+import { generateWeeklyStory } from '../services/captureStoryGenerator.js'
 import { postToLinkedIn } from '../services/brewLinkedIn.js'
 import { collectForDraft, applyKillRules } from '../services/engagementCollector.js'
 import { generateCaptureImage, captureImagesEnabled, captureImageConfig, checkBudget, getAuditLog, getPerBatchLimit } from '../services/captureImage.js'
@@ -267,6 +268,18 @@ function requireCronSecretFlex(req, res, next) {
   if (want && got !== want) return res.status(401).type('text/plain').send('Unauthorized')
   next()
 }
+
+// Flush all stored Calculator submissions. Used when clearing test data
+// so the nurture cron doesn't loop through pre-launch test opt-ins.
+captureCalcRouter.post('/submissions/reset', requireCronSecretFlex, async (req, res) => {
+  try {
+    const seg = getSegment(req)
+    await cacheSet(seg, SUBMISSIONS_KEY, [])
+    res.json({ ok: true, message: 'submissions cleared' })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
 
 captureCalcRouter.get('/submissions', requireCronSecretFlex, async (req, res) => {
   try {
@@ -670,8 +683,78 @@ captureCalcRouter.post('/weekly-story', requireCronSecretFlex, express.json({ li
   }
 })
 
+// Clear the currently stored weekly story (forces auto-gen on next cron run).
+captureCalcRouter.post('/weekly-story/reset', requireCronSecretFlex, async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    await cacheSet(segment, 'capture_weekly_story_current', { story: '', ts: Date.now() })
+    res.json({ ok: true, message: 'stored weekly story cleared — next Sunday cron will auto-generate' })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 captureCalcRouter.get('/weekly-story', requireCronSecretFlex, async (req, res) => {
   try {
+    const segment = getSegment(req)
+    const storyBlob = await cacheGet(segment, 'capture_weekly_story_current', null)
+    const caseStudyBlob = await cacheGet(segment, 'capture_weekly_case_study', null)
+    const angleBlob = await cacheGet(segment, 'capture_weekly_angle', null)
+    res.json({
+      ok: true,
+      stored: Boolean(storyBlob?.story),
+      story: storyBlob?.story || '',
+      story_stored_at: storyBlob?.ts ? new Date(storyBlob.ts).toISOString() : null,
+      caseStudy: caseStudyBlob?.value || '',
+      angle: angleBlob?.value || '',
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// ─── INTERNAL STORY DROPBOX (web-form-friendly, password-gated) ─────────────
+// Public POST endpoint Mark uses from a private web form on absoluteadas.com.
+// Gated by STORY_DROPBOX_PASSWORD env var. Same backing storage as the
+// cron-secret /weekly-story endpoint so Sunday cron picks up either route.
+captureCalcRouter.post('/internal/story-submit', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const required = String(process.env.STORY_DROPBOX_PASSWORD || '').trim()
+    if (!required) {
+      return res.status(503).json({ ok: false, error: 'Dropbox not configured. Set STORY_DROPBOX_PASSWORD env var in Catalyst.' })
+    }
+    const provided = String(req.body?.password || '').trim()
+    if (provided !== required) {
+      return res.status(401).json({ ok: false, error: 'Wrong password' })
+    }
+    const story = String(req.body?.story || '').trim()
+    if (!story) return res.status(400).json({ ok: false, error: 'Story is required' })
+    if (story.length < 60) return res.status(400).json({ ok: false, error: 'Story too short (need ~60+ chars to give the drafter material to work with)' })
+
+    const segment = getSegment(req)
+    await cacheSet(segment, 'capture_weekly_story_current', { story, ts: Date.now() })
+    if (req.body?.caseStudy) await cacheSet(segment, 'capture_weekly_case_study', { value: String(req.body.caseStudy).trim() })
+    if (req.body?.angle) await cacheSet(segment, 'capture_weekly_angle', { value: String(req.body.angle).trim() })
+
+    res.json({
+      ok: true,
+      stored_chars: story.length,
+      stored_at: new Date().toISOString(),
+      message: 'Story stored. Next Sunday-night cron will use it.',
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Read endpoint so the form can show "currently stored" — same password gate.
+captureCalcRouter.get('/internal/story-read', async (req, res) => {
+  try {
+    const required = String(process.env.STORY_DROPBOX_PASSWORD || '').trim()
+    if (!required) return res.status(503).json({ ok: false, error: 'Dropbox not configured' })
+    const provided = String(req.query.password || '').trim()
+    if (provided !== required) return res.status(401).json({ ok: false, error: 'Wrong password' })
+
     const segment = getSegment(req)
     const storyBlob = await cacheGet(segment, 'capture_weekly_story_current', null)
     const caseStudyBlob = await cacheGet(segment, 'capture_weekly_case_study', null)
@@ -734,12 +817,30 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
       angle = String(blob?.value || '')
     }
 
+    // Fully automated mode (per Mark 2026-05-19): if no real story has
+    // been dropped, auto-generate a labeled-composite one. As Mark drops
+    // real stories via /weekly-story, those override the auto-gen.
+    let storySource = 'dropped'
     if (!story) {
-      return res.json({
-        ok: true,
-        skipped: true,
-        reason: 'no weekly story available — drop one via POST /api/capture-calc/weekly-story before next Sun',
-      })
+      try {
+        const recentBlob = await cacheGet(segment, 'capture_story_history', null)
+        const recentStories = Array.isArray(recentBlob?.stories) ? recentBlob.stories : []
+        story = await generateWeeklyStory({ recentStories })
+        storySource = 'auto-generated'
+        // Persist into history (cap at 4 to keep next-call dedupe small)
+        const nextHistory = [story, ...recentStories].slice(0, 4)
+        await cacheSet(segment, 'capture_story_history', { stories: nextHistory, last_generated_at: Date.now() })
+        // Post to Cliq so Mark sees what got used + can drop a real one next week
+        postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+          `🤖 *Auto-generated this week's story* (you didn't drop one). Used for the 15 LinkedIn drafts.\n\n${story.slice(0, 1500)}\n\n_Drop your own next week via /weekly-story to override._`
+        ).catch(() => {})
+      } catch (e) {
+        return res.json({
+          ok: false,
+          skipped: true,
+          reason: `auto-gen failed (${e.message}) — drop a story via POST /api/capture-calc/weekly-story`,
+        })
+      }
     }
 
     const slots = await draftWeekVariants({ story, caseStudy, angle })
@@ -809,7 +910,12 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
       }
     }
 
-    res.json({ ok: true, slots: out })
+    // Clear the dropbox after a successful batch so next week starts fresh —
+    // otherwise the same story would be reused. Mark's real stories dropped
+    // later in the week will land in the empty slot for the next Sunday.
+    await cacheSet(segment, 'capture_weekly_story_current', { story: '', ts: Date.now() }).catch(() => {})
+
+    res.json({ ok: true, story_source: storySource, slots: out })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
