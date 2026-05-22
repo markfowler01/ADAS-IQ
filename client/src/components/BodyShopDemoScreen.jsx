@@ -48,7 +48,7 @@ export default function BodyShopDemoScreen({ user, onLogout }) {
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #ebebeb' }}>
         <div className="max-w-4xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <img src="/logo.png" alt="Absolute ADAS" className="w-8 h-8 object-contain" />
+            <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-8 h-8 object-contain" />
             <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Absolute <span style={{ color: ORANGE }}>ADAS</span></span>
             <span className="text-xs px-2 py-0.5 rounded-full font-semibold ml-1" style={{ backgroundColor: '#f0f9ff', color: BLUE }}>Body Shop</span>
           </div>
@@ -113,7 +113,7 @@ export default function BodyShopDemoScreen({ user, onLogout }) {
         {/* Stage: Processing */}
         {stage === 'processing' && (
           <div className="flex flex-col items-center justify-center py-24">
-            <img src="/logo.png" alt="Absolute ADAS" className="w-16 h-16 object-contain mb-6 animate-pulse" />
+            <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-16 h-16 object-contain mb-6 animate-pulse" />
             <h2 className="text-xl font-bold mb-2" style={{ color: '#1a1a1a' }}>Analyzing estimate…</h2>
             <p className="text-gray-400 text-sm">Reading vehicle equipment and repair operations</p>
           </div>

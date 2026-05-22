@@ -12,7 +12,7 @@ export default function LoginScreen({ authError, authErrMsg }) {
       {/* Logo */}
       <div className="mb-8 flex flex-col items-center gap-3">
         <div className="w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg bg-white">
-          <img src="/logo.png" alt="Absolute ADAS" className="w-14 h-14 object-contain" />
+          <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-14 h-14 object-contain" />
         </div>
         <div className="text-center">
           <h1 className="text-3xl font-bold" style={{ color: '#1a1a1a', fontFamily: 'IBM Plex Sans, sans-serif' }}>

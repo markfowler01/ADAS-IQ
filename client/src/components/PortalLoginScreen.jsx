@@ -47,7 +47,7 @@ export default function PortalLoginScreen({ onLoggedIn }) {
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl mb-4"
               style={{ backgroundColor: ORANGE }}>
               <span className="w-5 h-5 rounded bg-white flex items-center justify-center">
-                <img src="/logo.png" alt="" className="w-3.5 h-3.5 object-contain" />
+                <img src={import.meta.env.BASE_URL + 'logo.png'} alt="" className="w-3.5 h-3.5 object-contain" />
               </span>
               <span className="text-white font-bold text-sm tracking-wide">ABSOLUTE ADAS</span>
             </div>

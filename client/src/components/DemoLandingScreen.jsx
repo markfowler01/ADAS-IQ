@@ -31,7 +31,7 @@ export default function DemoLandingScreen({ onLogin }) {
       {/* Header */}
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #ebebeb' }}>
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-3">
-          <img src="/logo.png" alt="Absolute ADAS" className="w-9 h-9 object-contain" />
+          <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-9 h-9 object-contain" />
           <div>
             <span className="text-lg font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Absolute <span style={{ color: ORANGE }}>ADAS</span></span>
             <span className="ml-2 text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: '#fff3cd', color: '#92400e' }}>DEMO</span>

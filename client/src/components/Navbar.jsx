@@ -129,7 +129,7 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
 
         {/* Left: Logo */}
         <div className="flex items-center gap-2.5 cursor-pointer flex-shrink-0" onClick={() => navigate('upload')}>
-          <img src="/logo.png" alt="Absolute ADAS" className="w-8 h-8 object-contain" />
+          <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-8 h-8 object-contain" />
           <span className="text-base font-extrabold tracking-tight" style={{ color: '#1a1a1a' }}>
             Absolute <span style={{ color: ORANGE }}>ADAS</span>
           </span>
