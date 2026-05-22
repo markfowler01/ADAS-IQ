@@ -405,7 +405,7 @@ router.post('/cliq-test', async (req, res) => {
   if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
-  const result = await sendCliqAlert('🧪 Test ping from ADAS IQ mail agent — if you see this on your phone, Cliq alerts are wired up.')
+  const result = await sendCliqAlert('🧪 Test ping from Absolute ADAS mail agent — if you see this on your phone, Cliq alerts are wired up.')
   res.json(result)
 })
 

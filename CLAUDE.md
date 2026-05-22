@@ -1,6 +1,15 @@
-# ADAS IQ — Developer Reference
+# Absolute ADAS — Developer Reference
 
 Internal operations tool for Absolute ADAS: job board (Kanban), invoicing, CRM, Zoho integrations.
+(Formerly "ADAS IQ" — user-facing layer rebranded to Absolute ADAS, May 2026.)
+
+---
+
+## Branding & Namespace Convention
+
+- **User-facing layer = Absolute ADAS.** All UI text, browser title, logo, PDF reports, and emails say "Absolute ADAS". Logo = the orange car-and-waves mark: `client/public/logo.png` (web app) + `functions/adasiq-api/services/assets/logo.png` (PDF reports). Brand orange `#CD4419`.
+- **Legacy backend stays "adasiq".** The `adasiq-api` Catalyst function, `/server/adasiq-api/` API base, `adas_iq_*` cache keys, datastore table names, env vars, webhook URLs, cron configs, and domains are UNCHANGED — renaming them breaks live integrations.
+- **New code → Absolute ADAS namespace.** New API routes, services, integrations, webhooks, config keys, and external domains should use `absolute_adas` / `absoluteadas` naming + `absoluteadas.com` (sub)domains — not `adas_iq` / `adasiq`. When extending existing functionality, default the new version to the Absolute ADAS namespace. Flag non-obvious old-vs-new namespace choices.
 
 ---
 
@@ -29,7 +38,7 @@ Internal operations tool for Absolute ADAS: job board (Kanban), invoicing, CRM, 
 
 - **Login**: Zoho OAuth → HMAC-signed JWT stored in `sessionStorage`, sent as `X-Auth-Token` header
 - **Protected routes**: `requireAuth` middleware on all `/api/*` routes except webhooks, cron, postscan
-- **Role map** (`auth.js`): `jayden@absoluteadas.com` → `{ role: 'technician', techName: 'Jaden' }`. All others → `role: admin`.
+- **Role map** (`auth.js`): `jayden@absoluteadas.com` → `{ role: 'technician', techName: 'Jayden' }`. All others → `role: admin`.
 - **Cron auth**: `x-cron-secret` header checked against env var — no session required
 
 ---
@@ -120,15 +129,25 @@ Mark alerts   — Channel ID: P6015142000000718001  (MARK_ALERT_CHANNEL_ID const
 ```
 Both exported from `services/cliq.js` as `TECHNICIANS_CHANNEL` and `MARK_ALERT_CHANNEL_ID`.
 
-### When notifications fire
-| Trigger | Who gets notified | Message style |
-|---------|-------------------|---------------|
-| Job assigned/reassigned | Tech (DM) + `#technicians` channel | Rich: shop, vehicle, VIN, insurer, date, full cal list, notes, quote#, WorkDrive/report URLs |
-| Job → ready_invoice | Kat (DM) | Simple |
-| New quote synced from Zoho | Mark (channel) + salesperson if not Mark | Simple |
-| Invoice created (books.js) | Mark | Simple |
-| Billing reminders sent | Kat | Simple |
-| Zoho Books invoice webhook | Mark's alert channel | Simple |
+### Notification model (rebuilt 2026-05-17)
+
+5 core notifications, one per real job-flow event. `createNotification` is the
+per-recipient primitive; `notifyNeedsDispatch` / `notifyJobDispatched` in `jobs.js`
+handle multi-recipient fan-out (and pass `skipTechChannel` so `#technicians` posts once).
+
+| # | Event | Type | Who | Channels |
+|---|-------|------|-----|----------|
+| 1 | Job requested (Request-a-Job form) | `job_requested` | Kat | DM + email |
+| 2 | Job lands in `need_dispatch` | `needs_dispatch` | Mark + Kat | Mark channel + Kat DM + `#technicians` |
+| 3 | Tech assigned (→ `dispatched_*`) | `job_dispatched` | Assigned tech | Tech DM + `#technicians` |
+| 4 | Job → `ready_invoice` | `job_ready_invoice` | Kat | Kat DM (NOT `#technicians`) |
+| 5 | Zoho Books invoice **sent** | (direct, `webhook.js`) | Mark + techs | Mark channel (detailed) + `#technicians` (simple) |
+
+- `needs_dispatch` + `job_dispatched` use the full rich job card; `#technicians` posting gated by `!skipTechChannel`.
+- #2 fires from: `POST /api/jobs` (new need_dispatch job), PUT/PATCH (status→need_dispatch), `performSyncQuotes`.
+- #5 fires only on sent/viewed/accepted/paid/overdue (drafts skipped), once per invoice (`wasAlreadyInvoiced` guard).
+- **Removed**: `job_updated` (noise), `job_invoiced` PUT/PATCH dupes, `invoice_created` ×3 (books.js/quotes.js), `quote_created`. Zoho Books webhook is the single source of truth for invoice alerts.
+- Separate systems still using `createNotification` simple format: `billing-cron.js` (Kat), `pto.js`.
 
 ---
 
@@ -153,6 +172,10 @@ Both exported from `services/cliq.js` as `TECHNICIANS_CHANNEL` and `MARK_ALERT_C
 - `cf_year`, `cf_make`, `cf_model`, `cf_vin`, `cf_insurer` → vehicle fields
 - `estimate_number` → `quote_number`
 - `cf_scan_report_and_documentation` → `folder_url`
+
+**Technician = Zoho "salesperson".** ADAS IQ has exactly 2 technicians: Mark Fowler + Jayden Goshorn. `GET /api/salespersons` (`routes/salespersons.js`) filters Zoho's user list to those two. The picker (`SalespersonPicker.jsx`, labeled "Technician" in the UI — component name kept) selects one; the name is sent back to Zoho Books as `salesperson_name` on quote/invoice creation. Code identifiers still say "salesperson" internally.
+
+**Board → Zoho sync:** when a job's `technician` is reassigned via PUT/PATCH, `updateEstimateSalesperson()` (`zoho.js`) pushes it to the linked Zoho estimate (requires `zoho_estimate_id`). Short names normalize to the full Zoho name (`Jayden` → `Jayden Goshorn`). Awaited but errors swallowed — a Zoho hiccup never fails the job update.
 
 ---
 
@@ -196,6 +219,9 @@ Hourly cron reads `postscan@absoluteadas.com` inbox → extracts RO# from subjec
 | mailagenthourly | POST `/api/mail-agent/run` | Every 1 hour | `MAIL_AGENT_CRON_SECRET` |
 | garmindailysync | POST `/api/garmin/sync` | Daily 03:00 PT | `GARMIN_CRON_SECRET` |
 | crm-reminder | GET `/api/crm-reminder/run` | Daily 07:30 PT | `CRM_CRON_SECRET` |
+| stuck-jobs | POST `/api/cron/stuck-jobs` | Daily ~08:00 PT | `BILLING_CRON_SECRET` |
+
+**Stuck-job digest** (`/api/cron/stuck-jobs`): flags jobs parked too long — `dispatched_*` 3+ days, `pending_parts` 7+ days (age by `created_at`). Digest → Mark channel + Kat DM. Silent when nothing's stuck.
 
 ---
 

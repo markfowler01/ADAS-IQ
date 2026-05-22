@@ -514,7 +514,7 @@ router.post('/export/zoho-payroll', async (req, res) => {
         otPay.toFixed(2),
         bonus.toFixed(2),
         l.gross.toFixed(2),
-        `Imported from ADAS IQ payroll`,
+        `Imported from Absolute ADAS payroll`,
       ].map(escapeCSV).join(','))
     }
 

@@ -73,6 +73,15 @@ app.post('/api/portal/stripe-webhook',
 )
 
 app.use(express.json({ limit: '25mb' }))
+// Accept text/plain bodies too — public forms on absoluteadas.com send JSON as
+// text/plain to dodge the CORS preflight that Catalyst's gateway swallows.
+app.use(express.text({ type: 'text/plain', limit: '25mb' }))
+app.use((req, res, next) => {
+  if (typeof req.body === 'string' && (req.body.startsWith('{') || req.body.startsWith('['))) {
+    try { req.body = JSON.parse(req.body) } catch (e) { /* leave as string */ }
+  }
+  next()
+})
 
 app.use(cookieSession({
   name: 'adasiq_sess',
@@ -243,7 +252,7 @@ app.post('/api/cron/workdrive-health', async (req, res) => {
         '',
         ...lines,
         '',
-        'Open each job card in ADAS IQ and tap "Fix Link" to regenerate the public URL.',
+        'Open each job card in Absolute ADAS and tap "Fix Link" to regenerate the public URL.',
       ].join('\n')
       await postToCliqUser(TECH_CLIQ_IDS.Mark, msg)
       console.log(`[workdrive-health] Found ${broken.length} jobs with broken share links — Cliq alert sent`)
@@ -254,6 +263,82 @@ app.post('/api/cron/workdrive-health', async (req, res) => {
     res.json({ ok: true, broken: broken.length })
   } catch (err) {
     console.error('[workdrive-health]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Stuck-job digest cron — flags jobs parked too long in dispatched_* or pending_parts.
+// Sends a digest to Mark (channel) + Kat (DM). Protected by BILLING_CRON_SECRET.
+// Only pings when there's something stuck — no news = no message.
+app.post('/api/cron/stuck-jobs', async (req, res) => {
+  const cronSecret = process.env.BILLING_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { postToCliqChannelById, postToCliqUser, MARK_ALERT_CHANNEL_ID, TECH_CLIQ_IDS } = await import('./services/cliq.js')
+    const jobs = await readJobsPublic(req)
+
+    const now = Date.now()
+    const DAY = 24 * 60 * 60 * 1000
+    // status → days in the system before it counts as "stuck"
+    const THRESHOLD_DAYS = { dispatched_jaden: 3, dispatched_mark: 3, pending_parts: 7 }
+
+    const stuck = []
+    for (const job of jobs) {
+      const threshold = THRESHOLD_DAYS[job.status]
+      if (!threshold) continue
+      const createdAt = new Date(job.created_at || 0).getTime()
+      if (!createdAt) continue
+      const ageDays = Math.floor((now - createdAt) / DAY)
+      if (ageDays < threshold) continue
+      stuck.push({ job, ageDays })
+    }
+
+    if (stuck.length === 0) {
+      console.log('[stuck-jobs] No stuck jobs ✅')
+      return res.json({ ok: true, stuck: 0 })
+    }
+
+    stuck.sort((a, b) => b.ageDays - a.ageDays)
+
+    const fmt = ({ job, ageDays }) => {
+      const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+      const roNum = job.quote_number || (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+      return '• ' + [
+        job.shop_name || 'Unknown shop',
+        roNum ? `RO# ${roNum}` : null,
+        vehicle || null,
+        job.technician || null,
+        `${ageDays}d`,
+      ].filter(Boolean).join(' · ')
+    }
+
+    const dispatched   = stuck.filter(s => s.job.status.startsWith('dispatched_'))
+    const pendingParts = stuck.filter(s => s.job.status === 'pending_parts')
+
+    const lines = [`⚠️ *${stuck.length} job${stuck.length !== 1 ? 's' : ''} stuck in the pipeline*`]
+    if (dispatched.length) {
+      lines.push('', `🔧 Dispatched 3+ days (${dispatched.length}):`, ...dispatched.map(fmt))
+    }
+    if (pendingParts.length) {
+      lines.push('', `📦 Pending parts 7+ days (${pendingParts.length}):`, ...pendingParts.map(fmt))
+    }
+    lines.push('', '🗂 Job Board: https://adas-iq-904191467.development.catalystserverless.com/app/index.html')
+    const msg = lines.join('\n')
+
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg)
+      .catch(e => console.warn('[stuck-jobs] Mark alert failed:', e.message))
+    const katId = TECH_CLIQ_IDS.Kat || TECH_CLIQ_IDS.Kath
+    if (katId) {
+      await postToCliqUser(katId, msg)
+        .catch(e => console.warn('[stuck-jobs] Kat alert failed:', e.message))
+    }
+
+    console.log(`[stuck-jobs] ${stuck.length} stuck — digest sent to Mark + Kat`)
+    res.json({ ok: true, stuck: stuck.length, dispatched: dispatched.length, pending_parts: pendingParts.length })
+  } catch (err) {
+    console.error('[stuck-jobs]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })

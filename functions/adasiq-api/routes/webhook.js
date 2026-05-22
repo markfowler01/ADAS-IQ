@@ -1,10 +1,14 @@
 import express from 'express'
 import { readJobsPublic, updateJobPublic, performSyncQuotes } from './jobs.js'
+import { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, TECHNICIANS_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
 
+const JOB_BOARD_URL = 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html'
+
 // POST /webhooks/zoho-books
-// Called by Zoho Books when an invoice is created or sent
+// Called by Zoho Books when an invoice is created or sent.
+// Marks the matching job invoiced + posts an alert to Mark's channel.
 router.post('/zoho-books', async (req, res) => {
   try {
     const webhookSecret = process.env.WEBHOOK_SECRET
@@ -19,19 +23,26 @@ router.post('/zoho-books', async (req, res) => {
     console.log('[webhook] Zoho Books payload:', JSON.stringify(payload).slice(0, 500))
 
     const invoice = payload.invoice || payload
-    const invoiceNumber  = invoice.invoice_number || invoice.number || ''
+    const invoiceNumber   = invoice.invoice_number || invoice.number || ''
     const referenceNumber = (invoice.reference_number || invoice.reference || '').toString()
-    const customerName   = (invoice.customer_name || invoice.contact_name || '').toLowerCase().trim()
-    const status         = (invoice.status || '').toLowerCase()
-    const vin            = invoice.custom_fields?.find?.(f =>
+    const customerName    = (invoice.customer_name || invoice.contact_name || '').toLowerCase().trim()
+    const status          = (invoice.status || '').toLowerCase()
+    const total           = invoice.total ?? invoice.total_amount ?? ''
+    const vin             = invoice.custom_fields?.find?.(f =>
       f.label?.toLowerCase().includes('vin')
     )?.value || ''
 
-    console.log(`[webhook] Invoice: #${invoiceNumber} ref="${referenceNumber}" customer="${customerName}" status="${status}"`)
+    console.log(`[webhook] Invoice: #${invoiceNumber} ref="${referenceNumber}" customer="${customerName}" status="${status}" total="${total}"`)
 
-    const invoicedStatuses = ['sent', 'accepted', 'paid', 'overdue', 'viewed', 'draft']
-    if (!invoicedStatuses.includes(status) && status !== '') {
-      return res.json({ success: true, message: `Status "${status}" does not trigger invoiced flag` })
+    const totalStr = (total !== '' && total != null && !isNaN(Number(total)))
+      ? `$${Number(total).toFixed(2)}`
+      : ''
+
+    // Only act once the invoice has actually been sent — skip drafts.
+    const SENT_STATUSES = ['sent', 'viewed', 'accepted', 'paid', 'overdue']
+    if (status && !SENT_STATUSES.includes(status)) {
+      console.log(`[webhook] Status "${status}" — invoice not sent yet, skipping`)
+      return res.json({ success: true, message: `Status "${status}" — not sent, skipped` })
     }
 
     const jobs = await readJobsPublic(req)
@@ -64,14 +75,28 @@ router.post('/zoho-books', async (req, res) => {
       if (customerJobs.length === 1) {
         matchedJob = customerJobs[0]
       } else if (customerJobs.length > 1) {
-        console.warn(`[webhook] Ambiguous — ${customerJobs.length} unmatched jobs for "${customerName}". Skipping.`)
+        console.warn(`[webhook] Ambiguous — ${customerJobs.length} unmatched jobs for "${customerName}". Skipping match.`)
       }
     }
 
+    // No job matched — still alert Mark so an invoice never goes unnoticed.
     if (!matchedJob) {
       console.log('[webhook] No matching job found for invoice', invoiceNumber)
-      return res.json({ success: true, message: 'No matching job found', invoice_number: invoiceNumber })
+      const cliqMsg = [
+        `💰 *Invoice Sent — #${invoiceNumber}*`,
+        '',
+        `🏢 ${customerName || 'Unknown customer'}`,
+        referenceNumber ? `📋 RO#: ${referenceNumber}` : null,
+        totalStr ? `💵 Total: ${totalStr}` : null,
+        `⚠️ No matching job found in Absolute ADAS`,
+        `\n🗂 Job Board: ${JOB_BOARD_URL}`,
+      ].filter(l => l !== null).join('\n')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e =>
+        console.warn('[webhook] Cliq alert failed (non-fatal):', e.message))
+      return res.json({ success: true, message: 'No matching job — alert sent', invoice_number: invoiceNumber })
     }
+
+    const wasAlreadyInvoiced = matchedJob.invoiced === true
 
     // Update just this one job row — atomic, no overwrite risk
     await updateJobPublic(req, matchedJob.id, {
@@ -80,8 +105,48 @@ router.post('/zoho-books', async (req, res) => {
       invoice_number: invoiceNumber,
       invoice_status: status,
     })
-
     console.log(`[webhook] Marked job ${matchedJob.id} as invoiced (invoice ${invoiceNumber})`)
+
+    // Don't re-notify on a status-change re-fire (sent → viewed → paid).
+    if (wasAlreadyInvoiced) {
+      console.log('[webhook] Job was already invoiced — skipping duplicate alert')
+      return res.json({ success: true, job_id: matchedJob.id, invoice_number: invoiceNumber, message: 'already invoiced' })
+    }
+
+    // Build the alert — RO#, vehicle, completion state, total
+    const roNum = (matchedJob.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1]
+      || matchedJob.quote_number
+      || referenceNumber
+      || ''
+    const vehicle = [matchedJob.year, matchedJob.make, matchedJob.model].filter(Boolean).join(' ')
+      || matchedJob.vehicle || ''
+    const isComplete = matchedJob.status === 'complete'
+
+    const cliqMsg = [
+      `💰 *Invoice Sent — #${invoiceNumber}*`,
+      '',
+      `🏢 ${matchedJob.shop_name || customerName || 'Unknown shop'}`,
+      roNum ? `📋 RO#: ${roNum}` : null,
+      vehicle ? `🚗 ${vehicle}${matchedJob.vin ? ' · VIN: ' + matchedJob.vin : ''}` : null,
+      `🏦 ${matchedJob.insurer || 'Customer Pay (CP)'}`,
+      isComplete
+        ? '✅ Job completed'
+        : `⚠️ Job NOT marked complete (status: ${(matchedJob.status || 'unknown').replace(/_/g, ' ')})`,
+      totalStr ? `💵 Total: ${totalStr}` : null,
+      `\n🗂 Job Board: ${JOB_BOARD_URL}`,
+    ].filter(l => l !== null).join('\n')
+
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e =>
+      console.warn('[webhook] Cliq alert failed (non-fatal):', e.message))
+
+    // Simpler ping to #technicians — shop, RO#, vehicle, invoiced
+    const techMsg = [
+      `✅ *RO# ${roNum || 'N/A'} — invoiced*`,
+      `🏢 ${matchedJob.shop_name || customerName || 'Unknown shop'}${vehicle ? ' · 🚗 ' + vehicle : ''}`,
+    ].join('\n')
+    await postToCliqChannel(TECHNICIANS_CHANNEL, techMsg).catch(e =>
+      console.warn('[webhook] #technicians alert failed (non-fatal):', e.message))
+
     res.json({ success: true, job_id: matchedJob.id, invoice_number: invoiceNumber })
 
   } catch (err) {
