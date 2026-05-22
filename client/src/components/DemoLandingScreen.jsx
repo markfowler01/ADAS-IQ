@@ -31,11 +31,9 @@ export default function DemoLandingScreen({ onLogin }) {
       {/* Header */}
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #ebebeb' }}>
         <div className="max-w-5xl mx-auto px-6 py-4 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ backgroundColor: ORANGE }}>
-            <span className="text-white font-bold text-sm" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-          </div>
+          <img src="/logo.png" alt="Absolute ADAS" className="w-9 h-9 object-contain" />
           <div>
-            <span className="text-lg font-bold tracking-tight" style={{ color: '#1a1a1a' }}>ADAS IQ</span>
+            <span className="text-lg font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Absolute <span style={{ color: ORANGE }}>ADAS</span></span>
             <span className="ml-2 text-xs px-2 py-0.5 rounded-full font-semibold" style={{ backgroundColor: '#fff3cd', color: '#92400e' }}>DEMO</span>
           </div>
         </div>
@@ -45,7 +43,7 @@ export default function DemoLandingScreen({ onLogin }) {
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
         <div className="max-w-3xl w-full text-center mb-12">
           <h1 className="text-4xl font-bold mb-4" style={{ color: '#1a1a1a' }}>
-            Welcome to ADAS IQ
+            Welcome to Absolute ADAS
           </h1>
           <p className="text-lg text-gray-500 max-w-xl mx-auto">
             The intelligent platform for ADAS calibration management. Choose your demo below to explore the full experience.
@@ -128,7 +126,7 @@ export default function DemoLandingScreen({ onLogin }) {
         {/* Footer note */}
         <p className="text-xs text-gray-400 mt-10 text-center">
           This is a live demo environment. PDF uploads are real — all invoice and job data is sample data only.
-          <br />Interested in ADAS IQ for your business? Contact <a href="mailto:mark@absoluteadas.com" style={{ color: ORANGE }}>mark@absoluteadas.com</a>
+          <br />Interested in Absolute ADAS for your business? Contact <a href="mailto:mark@absoluteadas.com" style={{ color: ORANGE }}>mark@absoluteadas.com</a>
         </p>
       </div>
     </div>

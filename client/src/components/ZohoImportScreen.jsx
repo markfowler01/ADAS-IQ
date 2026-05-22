@@ -55,7 +55,7 @@ export default function ZohoImportScreen({ user, onLogout, currentScreen, onNavi
         <div className="mb-6">
           <h1 className="text-2xl font-bold" style={{ color: '#1a1a1a' }}>Import from Zoho Books</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            One-time sync of customers, items (services), and invoice history into your ADAS IQ Books.
+            One-time sync of customers, items (services), and invoice history into your Absolute ADAS Books.
           </p>
         </div>
 

@@ -162,7 +162,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           name: cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${i + 1}`,
           mode: cal.cal_type || cal.mode || 'Static',
         }))
-        await apiFetch(`${API_BASE}/api/jobs`, {
+        const jobRes = await apiFetch(`${API_BASE}/api/jobs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -179,13 +179,22 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             calibrations: JSON.stringify(calList),
             notes: `RO#: ${jobData.ro_number || ''} | Quote: ${data.quoteNumber || ''}`,
             report_url: data.quoteUrl || data.folderUrl || '',
+            quote_number: data.quoteNumber || '',
+            quote_url: data.quoteUrl || '',
+            folder_url: data.shareLink || data.folderUrl || '',
             status: 'need_dispatch',
           }),
         })
+        // apiFetch resolves even on 4xx/5xx — must check res.ok explicitly
+        if (!jobRes.ok) {
+          let serverMsg = `HTTP ${jobRes.status}`
+          try { const j = await jobRes.json(); serverMsg = j.error || serverMsg } catch {}
+          throw new Error(serverMsg)
+        }
+        console.log('[kanban] Auto-ticket created OK')
       } catch (autoErr) {
-        // Fix #7 — surface the failure instead of silently ignoring it
-        console.warn('[kanban] Auto-ticket failed:', autoErr.message)
-        setKanbanWarning('Quote created, but the Kanban ticket could not be auto-created. Add it manually on the Job Board.')
+        console.error('[kanban] Auto-ticket failed:', autoErr.message)
+        setKanbanWarning(`⚠️ Zoho quote saved, but the Kanban card was NOT created. Reason: ${autoErr.message}. Add it manually on the Job Board.`)
       }
     } catch (e) {
       setInvoiceError(e.message || 'Failed to create invoice. Please try again.')
@@ -194,7 +203,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     }
   }
 
-  // ── Create a Job — writes to ADAS IQ Books (separate from Zoho flow) ─────
+  // ── Create a Job — writes to Absolute ADAS Books (separate from Zoho flow) ─────
   async function handleCreateJob() {
     if (selected.length === 0) return
     setCreatingJob(true)
@@ -227,7 +236,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           name: cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${i + 1}`,
           mode: cal.cal_type || cal.mode || 'Static',
         }))
-        await apiFetch(`${API_BASE}/api/jobs`, {
+        const jobRes = await apiFetch(`${API_BASE}/api/jobs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -238,12 +247,19 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             technician: selectedSalesperson?.name || '',
             scheduled_date: new Date().toISOString().split('T')[0],
             calibrations: JSON.stringify(calList),
-            notes: `RO#: ${jobData.ro_number || ''} | ADAS IQ Invoice: ${data.invoice?.invoice_number || ''}`,
-            adas_iq_invoice_id: data.invoice?.id || '',
+            notes: `RO#: ${jobData.ro_number || ''} | Absolute ADAS Invoice: ${data.invoice?.invoice_number || ''}`,
+            status: 'need_dispatch',
           }),
         })
+        if (!jobRes.ok) {
+          let serverMsg = `HTTP ${jobRes.status}`
+          try { const j = await jobRes.json(); serverMsg = j.error || serverMsg } catch {}
+          throw new Error(serverMsg)
+        }
+        console.log('[kanban] Auto-ticket from Create-a-Job created OK')
       } catch (autoErr) {
-        console.warn('[kanban] Auto-ticket from Create-a-Job failed:', autoErr.message)
+        console.error('[kanban] Auto-ticket from Create-a-Job failed:', autoErr.message)
+        setKanbanWarning(`⚠️ Absolute ADAS Books job saved, but the Kanban card was NOT created. Reason: ${autoErr.message}.`)
       }
     } catch (e) {
       setInvoiceError(e.message || 'Failed to create job in Books.')
@@ -420,7 +436,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           )}
 
           {invoiceResult ? (
-            <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} />
+            <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
           ) : jobResult ? (
             <JobSuccessCard result={jobResult} onNavigate={onNavigate} />
           ) : (
@@ -446,7 +462,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
                 <div className="flex-1 h-px" style={{ backgroundColor: '#e5e7eb' }} />
               </div>
 
-              {/* Secondary: ADAS IQ Books test flow */}
+              {/* Secondary: Absolute ADAS Books test flow */}
               <button
                 onClick={handleCreateJob}
                 disabled={selected.length === 0 || submitting || creatingJob}
@@ -459,10 +475,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
                   cursor: selected.length === 0 || submitting || creatingJob ? 'not-allowed' : 'pointer',
                 }}
               >
-                {creatingJob ? 'Creating Job in ADAS IQ...' : '🧪 Create a Job (ADAS IQ Books)'}
+                {creatingJob ? 'Creating Job in Absolute ADAS...' : '🧪 Create a Job (Absolute ADAS Books)'}
               </button>
               <p className="text-xs text-center" style={{ color: '#9ca3af' }}>
-                Safe to test — creates a draft in ADAS IQ Books only. No Zoho side effects.
+                Safe to test — creates a draft in Absolute ADAS Books only. No Zoho side effects.
               </p>
             </div>
           )}
@@ -472,7 +488,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   )
 }
 
-function SuccessCard({ result, job, lineCount, selectedCustomer }) {
+function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate }) {
   return (
     <div className="rounded-xl px-5 py-4 flex flex-col gap-3" style={{ backgroundColor: '#f0faf4', border: '1.5px solid #6fcf97' }}>
       <div className="flex items-center gap-2">
@@ -532,6 +548,15 @@ function SuccessCard({ result, job, lineCount, selectedCustomer }) {
           <p className="mt-1.5">New items may have been created. Add them to your Zoho Books item catalog so they match next time.</p>
         </div>
       )}
+
+      {/* Navigation button */}
+      <button
+        onClick={() => onNavigate && onNavigate('kanban')}
+        className="w-full py-3 rounded-xl text-sm font-semibold mt-1"
+        style={{ backgroundColor: '#1a6b3a', color: 'white' }}
+      >
+        🗂 View Job Board
+      </button>
     </div>
   )
 }
@@ -555,7 +580,7 @@ function JobSuccessCard({ result, onNavigate }) {
       <div className="flex items-center gap-2">
         <span className="text-lg">✓</span>
         <h3 className="font-bold" style={{ color: '#1d4ed8' }}>
-          Job Drafted in ADAS IQ Books
+          Job Drafted in Absolute ADAS Books
         </h3>
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm">

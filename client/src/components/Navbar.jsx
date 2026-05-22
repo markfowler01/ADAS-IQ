@@ -129,10 +129,10 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
 
         {/* Left: Logo */}
         <div className="flex items-center gap-2.5 cursor-pointer flex-shrink-0" onClick={() => navigate('upload')}>
-          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: ORANGE }}>
-            <span className="text-white text-xs font-bold" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-          </div>
-          <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>ADAS IQ</span>
+          <img src="/logo.png" alt="Absolute ADAS" className="w-8 h-8 object-contain" />
+          <span className="text-base font-extrabold tracking-tight" style={{ color: '#1a1a1a' }}>
+            Absolute <span style={{ color: ORANGE }}>ADAS</span>
+          </span>
         </div>
 
         {/* Center: Primary nav + More dropdown — desktop only */}

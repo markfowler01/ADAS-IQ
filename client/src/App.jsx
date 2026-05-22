@@ -165,9 +165,7 @@ function MainApp() {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#f5f3f0' }}>
         <div className="flex flex-col items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: '#CD4419' }}>
-            <span className="text-white font-bold text-lg" style={{ fontFamily: 'IBM Plex Mono, monospace' }}>IQ</span>
-          </div>
+          <img src="/logo.png" alt="Absolute ADAS" className="w-14 h-14 object-contain" />
           <p className="text-gray-400 text-sm">Loading…</p>
         </div>
       </div>

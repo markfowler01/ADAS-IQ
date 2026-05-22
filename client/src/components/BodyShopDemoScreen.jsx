@@ -48,10 +48,8 @@ export default function BodyShopDemoScreen({ user, onLogout }) {
       <header style={{ backgroundColor: 'white', borderBottom: '1px solid #ebebeb' }}>
         <div className="max-w-4xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: ORANGE }}>
-              <span className="text-white text-xs font-bold" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-            </div>
-            <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>ADAS IQ</span>
+            <img src="/logo.png" alt="Absolute ADAS" className="w-8 h-8 object-contain" />
+            <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Absolute <span style={{ color: ORANGE }}>ADAS</span></span>
             <span className="text-xs px-2 py-0.5 rounded-full font-semibold ml-1" style={{ backgroundColor: '#f0f9ff', color: BLUE }}>Body Shop</span>
           </div>
           <div className="flex items-center gap-3">
@@ -99,7 +97,7 @@ export default function BodyShopDemoScreen({ user, onLogout }) {
             <div className="mt-10 grid grid-cols-3 gap-6">
               {[
                 { icon: '📤', title: 'Upload Estimate', desc: 'Drop in your CCC ONE collision estimate PDF' },
-                { icon: '🔍', title: 'Auto-Detection', desc: 'ADAS IQ reads the vehicle equipment and repair lines' },
+                { icon: '🔍', title: 'Auto-Detection', desc: 'Absolute ADAS reads the vehicle equipment and repair lines' },
                 { icon: '✅', title: 'Instant Report', desc: 'See every calibration needed with OEM justifications' },
               ].map(s => (
                 <div key={s.title} className="text-center">
@@ -115,9 +113,7 @@ export default function BodyShopDemoScreen({ user, onLogout }) {
         {/* Stage: Processing */}
         {stage === 'processing' && (
           <div className="flex flex-col items-center justify-center py-24">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-6 animate-pulse" style={{ backgroundColor: ORANGE }}>
-              <span className="text-white font-bold text-xl" style={{ fontFamily: "'IBM Plex Mono', monospace" }}>IQ</span>
-            </div>
+            <img src="/logo.png" alt="Absolute ADAS" className="w-16 h-16 object-contain mb-6 animate-pulse" />
             <h2 className="text-xl font-bold mb-2" style={{ color: '#1a1a1a' }}>Analyzing estimate…</h2>
             <p className="text-gray-400 text-sm">Reading vehicle equipment and repair operations</p>
           </div>

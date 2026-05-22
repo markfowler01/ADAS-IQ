@@ -11,15 +11,12 @@ export default function LoginScreen({ authError, authErrMsg }) {
 
       {/* Logo */}
       <div className="mb-8 flex flex-col items-center gap-3">
-        <div
-          className="w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg"
-          style={{ backgroundColor: '#CD4419' }}
-        >
-          <span className="text-white font-bold text-3xl" style={{ fontFamily: 'IBM Plex Mono, monospace' }}>IQ</span>
+        <div className="w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg bg-white">
+          <img src="/logo.png" alt="Absolute ADAS" className="w-14 h-14 object-contain" />
         </div>
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-gray-900" style={{ fontFamily: 'IBM Plex Sans, sans-serif' }}>
-            ADAS IQ
+          <h1 className="text-3xl font-bold" style={{ color: '#1a1a1a', fontFamily: 'IBM Plex Sans, sans-serif' }}>
+            Absolute <span style={{ color: '#CD4419' }}>ADAS</span>
           </h1>
           <p className="text-gray-500 text-sm mt-1" style={{ fontFamily: 'IBM Plex Mono, monospace' }}>
             Powered by Claude AI

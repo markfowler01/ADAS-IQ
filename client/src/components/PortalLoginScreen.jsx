@@ -46,8 +46,9 @@ export default function PortalLoginScreen({ onLoggedIn }) {
           <div className="text-center mb-6">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl mb-4"
               style={{ backgroundColor: ORANGE }}>
-              <span className="w-5 h-5 rounded flex items-center justify-center text-white text-[10px] font-bold"
-                style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>IQ</span>
+              <span className="w-5 h-5 rounded bg-white flex items-center justify-center">
+                <img src="/logo.png" alt="" className="w-3.5 h-3.5 object-contain" />
+              </span>
               <span className="text-white font-bold text-sm tracking-wide">ABSOLUTE ADAS</span>
             </div>
             <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Customer Portal</h1>
