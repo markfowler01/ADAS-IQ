@@ -88,7 +88,7 @@ router.get('/test-email', async (req, res) => {
         <p>We matched Post Scan Report <strong>#${roNumber}</strong> to WorkDrive folder <strong>#${matchedRO}</strong>. It wasn't an exact match, but it was close enough to run with — so we went ahead and uploaded the PDF.</p>
         <p>Feel free to move it if it landed in the wrong folder.</p>
         <p style="color:#888;font-size:13px;margin-top:16px;">Folder: ${folderName}<br>Email subject: ${subject}</p>
-        <p style="color:#bbb;font-size:12px;margin-top:24px;">— ADAS IQ PostScan Automation</p>
+        <p style="color:#bbb;font-size:12px;margin-top:24px;">— Absolute ADAS PostScan Automation</p>
       `,
     })
     res.json({ ok: true, message: `Test email sent to ${to}` })
@@ -219,7 +219,7 @@ router.post('/run', async (req, res) => {
               <p>We matched Post Scan Report <strong>#${roNumber}</strong> to WorkDrive folder <strong>#${folder.matchedRO}</strong>. It wasn't an exact match, but it was close enough to run with — so we went ahead and uploaded the PDF.</p>
               <p>Feel free to move it if it landed in the wrong folder.</p>
               <p style="color:#888;font-size:13px;margin-top:16px;">Folder: ${folder.folderName}<br>Email subject: ${subject}</p>
-              <p style="color:#bbb;font-size:12px;margin-top:24px;">— ADAS IQ PostScan Automation</p>
+              <p style="color:#bbb;font-size:12px;margin-top:24px;">— Absolute ADAS PostScan Automation</p>
             `,
           })
           console.log('[postscan] Fuzzy match notification sent to techs@absoluteadas.com')

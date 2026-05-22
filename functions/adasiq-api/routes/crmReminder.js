@@ -313,7 +313,7 @@ router.get('/run', async (req, res) => {
               Open CRM →
             </a>
             <p style="color:#bbb;font-size:11px;margin:12px 0 0;">
-              ADAS IQ · Daily briefing · 7:30 AM
+              Absolute ADAS · Daily briefing · 7:30 AM
             </p>
           </div>
 
@@ -322,8 +322,8 @@ router.get('/run', async (req, res) => {
 
     const totalDue = overdue.length + dueToday.length
     const subject  = totalDue > 0
-      ? `☀️ ${totalDue} follow-up${totalDue !== 1 ? 's' : ''} today — ADAS IQ Morning Briefing`
-      : `☀️ Pipeline looks good — ADAS IQ Morning Briefing`
+      ? `☀️ ${totalDue} follow-up${totalDue !== 1 ? 's' : ''} today — Absolute ADAS Morning Briefing`
+      : `☀️ Pipeline looks good — Absolute ADAS Morning Briefing`
 
     const mailToken     = await getMailAccessToken()
     const mailAccountId = await getMailAccountId(mailToken)

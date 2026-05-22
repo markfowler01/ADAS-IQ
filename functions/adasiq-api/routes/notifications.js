@@ -46,7 +46,7 @@ async function saveNotifications(req, notifications) {
 const STATUS_MAP = {
   job_requested:    { label: 'Job Requested',   bg: '#e0f2fe', color: '#0369a1', border: '#bae6fd' },
   need_dispatch:    { label: 'Need to Dispatch', bg: '#fef3c7', color: '#92400e', border: '#fde68a' },
-  dispatched_jaden: { label: 'Dispatched to Jaden', bg: '#dbeafe', color: '#1e40af', border: '#bfdbfe' },
+  dispatched_jaden: { label: 'Dispatched to Jayden', bg: '#dbeafe', color: '#1e40af', border: '#bfdbfe' },
   dispatched_mark:  { label: 'Dispatched to Mark',  bg: '#ede9fe', color: '#6d28d9', border: '#ddd6fe' },
   pending_parts:    { label: 'Pending Parts',  bg: '#fff7ed', color: '#9a3412', border: '#fed7aa' },
   ready_invoice:    { label: 'Ready to Invoice',bg: '#fdf4ff', color: '#7e22ce', border: '#e9d5ff' },
@@ -76,6 +76,16 @@ function buildCardHtml(job) {
   // PCSI + POST always
   const fixedTags = `<span style="display:inline-block;font-size:11px;padding:2px 7px;border-radius:5px;margin:2px;background:#dbeafe;color:#1e40af;font-weight:600;">PCSI</span><span style="display:inline-block;font-size:11px;padding:2px 7px;border-radius:5px;margin:2px;background:#dbeafe;color:#1e40af;font-weight:600;">POST</span>`
 
+  // RO# from quote_number or extracted from notes
+  const roFromNotes = (job.notes || '').match(/RO#[:\s]*(\S+)/i)?.[1] || ''
+  const ro = job.quote_number || roFromNotes
+  // Description = notes minus the RO# line
+  const description = (job.notes || '')
+    .split('\n')
+    .filter(line => !/^RO#[:\s]/i.test(line.trim()))
+    .join('\n')
+    .trim()
+
   return `
     <div style="border:1px solid #e8e4e0;border-radius:12px;padding:16px;background:white;max-width:380px;margin:16px 0;font-family:-apple-system,system-ui,sans-serif;">
       <!-- Shop + status -->
@@ -83,14 +93,21 @@ function buildCardHtml(job) {
         <span style="font-weight:600;font-size:14px;color:#1a1a1a;">${job.shop_name || 'No shop'}</span>
         <span style="display:inline-block;font-size:11px;font-weight:500;padding:2px 8px;border-radius:999px;margin-left:8px;background:${st.bg};color:${st.color};border:1px solid ${st.border};">${st.label}</span>
       </div>
-      <!-- Vehicle -->
-      <div style="font-size:13px;color:#555;margin-bottom:8px;">${vehicle}</div>
+      <!-- Vehicle + VIN -->
+      <div style="font-size:13px;color:#555;margin-bottom:8px;">
+        ${vehicle}${job.vin ? ` <span style="color:#999;font-family:'IBM Plex Mono',monospace;">· VIN ${job.vin}</span>` : ''}
+      </div>
       <!-- Meta row -->
       <div style="font-size:12px;color:#aaa;margin-bottom:10px;">
         ${job.technician ? `<span style="margin-right:10px;">👤 ${job.technician}</span>` : ''}
+        ${ro ? `<span style="margin-right:10px;">📋 RO# ${ro}</span>` : ''}
         ${job.scheduled_date ? `<span style="margin-right:10px;">📅 ${job.scheduled_date}</span>` : ''}
-        ${job.insurer ? `<span>🏢 ${job.insurer}</span>` : ''}
+        <span>🏦 ${job.insurer || 'Customer Pay (CP)'}</span>
       </div>
+      ${description ? `
+      <!-- Description / What's Needed -->
+      <div style="background:#fafaf9;border-left:3px solid #CD4419;padding:8px 12px;margin-bottom:10px;font-size:13px;color:#333;white-space:pre-wrap;">${description.replace(/</g, '&lt;')}</div>
+      ` : ''}
       <!-- Calibrations -->
       <div style="line-height:1.8;">
         ${calTags}${moreTag}${fixedTags}
@@ -110,7 +127,7 @@ async function emailNotify(toEmail, title, body, job) {
     const cardHtml = buildCardHtml(job)
 
     // Build subject: "2024 Toyota RAV4 — Front Radar, Forward Camera, PCSI, POST"
-    let subject = `ADAS IQ — ${title}`
+    let subject = `Absolute ADAS — ${title}`
     if (job) {
       const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
       const shop = job.shop_name || ''
@@ -130,7 +147,7 @@ async function emailNotify(toEmail, title, body, job) {
       body: `
         <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 480px;">
           <div style="background: #CD4419; color: white; padding: 12px 18px; border-radius: 8px 8px 0 0; font-weight: 600; font-size: 15px;">
-            ADAS IQ Notification
+            Absolute ADAS Notification
           </div>
           <div style="border: 1px solid #ebebeb; border-top: none; border-radius: 0 0 8px 8px; padding: 18px;">
             <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px; color: #1a1a1a;">${title}</div>
@@ -139,7 +156,7 @@ async function emailNotify(toEmail, title, body, job) {
             <div style="margin-top: 16px;">
               <a href="https://adas-iq-904191467.development.catalystserverless.com/app/index.html"
                 style="display: inline-block; background: #CD4419; color: white; padding: 8px 18px; border-radius: 6px; text-decoration: none; font-size: 13px; font-weight: 600;">
-                Open ADAS IQ
+                Open Absolute ADAS
               </a>
             </div>
           </div>
@@ -154,7 +171,8 @@ async function emailNotify(toEmail, title, body, job) {
 
 // Fallback hardcoded map (used if settings haven't been configured yet)
 const FALLBACK_EMAILS = {
-  'jaden':  'jayden@absoluteadas.com',
+  'jayden': 'jayden@absoluteadas.com',
+  'jaden':  'jayden@absoluteadas.com',  // alias — old data may still say "Jaden"
   'mark':   'mf@absoluteadas.com',
   'kath':   'k.belmonte@absoluteadas.com',
 }
@@ -166,7 +184,7 @@ const FALLBACK_EMAILS = {
  *   - to: tech name (for in-app filtering + tech email lookup)
  *   - toEmail: dispatcher's email (the logged-in user)
  */
-export async function createNotification(req, { to, toEmail, type, title, body, jobId, job }) {
+export async function createNotification(req, { to, toEmail, type, title, body, jobId, job, skipTechChannel = false }) {
   console.log(`[notifications] Creating notification for "${to}" — ${title}`)
   let all = []
   try {
@@ -212,14 +230,38 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
       try {
         const vehicle = job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' ') || ''
         const shop = job?.shop_name || ''
-        const isDispatch = type === 'job_assigned' || type === 'job_updated'
+        // job_dispatched + needs_dispatch both use the full rich job card.
+        const isRichJob = type === 'job_dispatched' || type === 'needs_dispatch'
         const isReadyInvoice = type === 'job_ready_invoice'
+        const isJobRequested = type === 'job_requested'
 
         let cliqMsg
-        if (isReadyInvoice && job) {
+        if (isJobRequested && job) {
+          // Full-fidelity request message — every field the requester filled out
+          const jobBoardUrl = 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html'
+          const ro = job.quote_number || ''
+          // notes is built as "RO# 12345\n<description>" — strip the RO# line to get just the description
+          const description = (job.notes || '')
+            .split('\n')
+            .filter(line => !/^RO#[:\s]/i.test(line.trim()))
+            .join('\n')
+            .trim()
+
+          const lines = [
+            `📥 *New Job Request: ${shop || 'Unknown shop'}*`,
+            '',
+            job.technician ? `👤 Requested by: ${job.technician}` : null,
+            ro ? `📋 RO#: ${ro}` : null,
+            vehicle ? `🚗 ${vehicle}` : null,
+            job.vin ? `🔑 VIN: ${job.vin}` : null,
+            description ? `\n📝 What's Needed:\n${description}` : null,
+            `\n🗂 Job Board: ${jobBoardUrl}`,
+          ]
+          cliqMsg = lines.filter(l => l !== null).join('\n')
+        } else if (isReadyInvoice && job) {
           const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ') || ''
           const roMatch = (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)
-          const roNum = roMatch?.[1] || ''
+          const roNum = roMatch?.[1] || job.quote_number || ''
           const timeStr = new Date().toLocaleTimeString('en-US', {
             hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'America/Los_Angeles',
           })
@@ -229,17 +271,18 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
           const lines = [
             `🟢 *Ready to Invoice: ${job.shop_name || 'Job'}*`,
             '',
-            vehicle ? `🚗 ${vehicle}` : null,
+            vehicle ? `🚗 ${vehicle}${job.vin ? ' · VIN: ' + job.vin : ''}` : null,
             roNum ? `📋 RO#: ${roNum}` : null,
             job.technician ? `👤 Tech: ${job.technician}` : null,
+            `🏦 ${job.insurer || 'Customer Pay (CP)'}`,
             `⏰ ${timeStr}`,
             '',
             booksLink ? `📗 Open in Zoho Books:\n${booksLink}` : null,
             `🗂 Job Board: ${jobBoardUrl}`,
           ]
           cliqMsg = lines.filter(l => l !== null).join('\n')
-        } else if (isDispatch && job) {
-          // Rich dispatch message — full job details
+        } else if (isRichJob && job) {
+          // Rich job card — full job details (needs_dispatch + job_dispatched)
           let cals = []
           try { cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : (job.calibrations || []) } catch {}
           const calLines = cals.map(c => {
@@ -251,7 +294,7 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
 
           // Extract RO# from notes (e.g. "RO#: 20463 | Quote: ABS 20463.1" → "20463")
           const roMatch = (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)
-          const roNum = roMatch?.[1] || ''
+          const roNum = roMatch?.[1] || job.quote_number || ''
           // Extra notes = anything that isn't the RO# or Quote segment
           const extraNotes = (job.notes || '')
             .replace(/RO#[:\s]*[^\s|,]+/i, '')
@@ -265,11 +308,10 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
             '',
             `🏢 ${shop || 'No shop'}`,
             vehicle ? `🚗 ${vehicle}${job.vin ? ' · VIN: ' + job.vin : ''}` : null,
-            job.insurer ? `🏦 ${job.insurer}` : null,
+            roNum ? `📋 RO#: ${roNum}` : null,
+            job.technician ? `👤 ${job.technician}` : null,
+            `🏦 ${job.insurer || 'Customer Pay (CP)'}`,
             job.scheduled_date ? `📅 ${job.scheduled_date}` : null,
-            '',
-            // RO# + vehicle above calibrations
-            roNum ? `📋 RO#: ${roNum} · ${[job.year, job.make, job.model].filter(Boolean).join(' ') || vehicle}` : null,
             '',
             'Calibrations:',
             ...calLines,
@@ -304,12 +346,14 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
           else console.log(`[notifications] No Cliq ID for "${to}" — skipping DM`)
         }
 
-        // Also post to #technicians channel for dispatch + ready_invoice events
-        if (isDispatch || isReadyInvoice) {
+        // Also post to #technicians channel for needs_dispatch + job_dispatched events.
+        // skipTechChannel lets a multi-recipient event post to the channel only once.
+        const postedTechChannel = isRichJob && !skipTechChannel
+        if (postedTechChannel) {
           await postToCliqChannel(TECHNICIANS_CHANNEL, cliqMsg)
         }
 
-        console.log(`[notifications] Cliq sent to "${to}"${(isDispatch || isReadyInvoice) ? ' + #technicians' : ''}`)
+        console.log(`[notifications] Cliq sent to "${to}"${postedTechChannel ? ' + #technicians' : ''}`)
       } catch (e) {
         console.warn(`[notifications] Cliq to "${to}" failed:`, e.message)
       }
@@ -319,7 +363,7 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
   return notif
 }
 
-// GET /api/notifications?user=Jaden
+// GET /api/notifications?user=Jayden
 router.get('/', async (req, res) => {
   const user = req.query.user || ''
   if (!user) return res.json({ ok: true, notifications: [] })
