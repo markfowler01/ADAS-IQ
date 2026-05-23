@@ -200,9 +200,13 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
   }
 
   const pins = data?.pins || []
-  const markCount = pins.filter(p => (p.technician || '').toLowerCase().includes('mark')).length
-  const jaydenCount = pins.filter(p => /jay?den/.test((p.technician || '').toLowerCase())).length
-  const unassignedCount = pins.filter(p => !p.technician || p.status === 'need_dispatch').length
+  // A pin is "unassigned" if it has no technician OR its status is still
+  // need_dispatch (the side panel's tech groups treat those as Unassigned
+  // too — keep these counts mutually exclusive).
+  const isUnassignedPin = (p) => !p.technician || p.status === 'need_dispatch'
+  const markCount    = pins.filter(p => !isUnassignedPin(p) && (p.technician || '').toLowerCase().includes('mark')).length
+  const jaydenCount  = pins.filter(p => !isUnassignedPin(p) && /jay?den/.test((p.technician || '').toLowerCase())).length
+  const unassignedCount = pins.filter(isUnassignedPin).length
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
