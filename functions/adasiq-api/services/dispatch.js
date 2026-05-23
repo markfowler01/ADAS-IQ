@@ -183,7 +183,8 @@ export async function calculateDriveOrder(req, techName, dateISO, techJobs) {
 
 // ── ETA + time window calculation ───────────────────────────────────────────
 const DEFAULT_JOB_MIN = 90          // baseline calibration duration if no history
-const AVG_DRIVE_MPH = 30            // local-road average
+const AVG_DRIVE_MPH = 35            // local-road average
+const DRIVE_BUFFER_MIN = 5          // parking, setup, slack between every leg
 const WINDOW_MIN = 30               // customer-facing window length
 const DAY_START_HOUR = 8            // 8:00 AM start
 
@@ -201,7 +202,6 @@ export async function getTechCapacity(req, techName, dateISO, allJobs, techConfi
     isAssignedTo(j, techName)
     && (j.scheduled_date || '') === dateISO
     && j.status !== 'complete'
-    && j.status !== 'ready_invoice'
   ).length
   const status = used > cap ? 'over' : (used >= cap ? 'full' : 'room')
   return { cap, used, available: Math.max(0, cap - used), atCap: used >= cap, overCap: used > cap, status }
@@ -282,6 +282,7 @@ export function calculateTimeWindows(orderedJobs, state, geocache, home) {
     if (prev) {
       const miles = haversineMiles(prev, coords)
       cursorMs += (miles / AVG_DRIVE_MPH) * 60 * 60 * 1000
+      cursorMs += DRIVE_BUFFER_MIN * 60 * 1000
     }
 
     const arrival = new Date(cursorMs)

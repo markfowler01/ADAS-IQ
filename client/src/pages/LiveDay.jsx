@@ -19,6 +19,15 @@ function fmtElapsed(min) {
   return `${h}h ${min - h * 60}m`
 }
 
+// On-site projected complete time: started_at + 90 min (baseline duration).
+// Returns HH:MM string for display next to the current job.
+function projectedDoneBy(startedAtIso, durationMin = 90) {
+  try {
+    const t = new Date(new Date(startedAtIso).getTime() + durationMin * 60 * 1000)
+    return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+  } catch { return '' }
+}
+
 function parseRO(notes) {
   return (notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
 }
@@ -119,7 +128,9 @@ function TechCard({ tech }) {
           </div>
           <div className="text-xs mt-0.5" style={{ color: '#555' }}>
             {current.vehicle || ''}
-            {current.time_window_start && ` · ⏰ ${current.time_window_start}`}
+            {current.started_at
+              ? ` · ✓ Done by ${projectedDoneBy(current.started_at)}`
+              : current.time_window_start ? ` · ETA ${current.time_window_start}` : ''}
           </div>
         </div>
       ) : tech.status === 'done' ? (
@@ -195,14 +206,18 @@ function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
         {suggestions?.suggestions?.map(s => (
           <button
             key={s.tech}
-            onClick={() => onAssign(job.id, s.tech)}
-            disabled={!s.recommend}
+            onClick={() => {
+              if (!s.recommend) {
+                if (!confirm(`${s.tech} is already at ${s.used} / ${s.cap}. Assign anyway and overbook?`)) return
+              }
+              onAssign(job.id, s.tech)
+            }}
             className="w-full text-left rounded-xl p-3 mb-2"
             style={{
               backgroundColor: s.recommend ? '#fafaf9' : '#f5f3f0',
               border: `1.5px solid ${s.recommend ? (TECH_COLOR[s.tech] || '#ccc') : '#e0e0e0'}`,
-              opacity: s.recommend ? 1 : 0.55,
-              cursor: s.recommend ? 'pointer' : 'not-allowed',
+              opacity: s.recommend ? 1 : 0.7,
+              cursor: 'pointer',
             }}
           >
             <div className="flex items-center justify-between">
@@ -211,7 +226,7 @@ function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
                 <div className="text-xs" style={{ color: '#666' }}>
                   {s.recommend
                     ? `Slot in at position ${s.suggest_insert_at} · ${s.used + 1} / ${s.cap} after`
-                    : `Already ${s.used} / ${s.cap} — at cap`}
+                    : `Already ${s.used} / ${s.cap}, at cap. Tap to overbook.`}
                 </div>
               </div>
               <div className="text-right text-[11px]" style={{ color: '#888' }}>

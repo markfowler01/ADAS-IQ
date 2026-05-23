@@ -17,7 +17,7 @@ const router = express.Router()
 
 const TECHS = ['Mark', 'Jayden']
 
-// PATCH /api/dispatch/reorder — manually renumber a tech's day.
+// PATCH /api/dispatch/reorder, manually renumber a tech's day.
 // Body: { tech, date, order: [jobId, jobId, ...] }
 // Renumbers drive_order to 1..N in the given sequence.
 router.patch('/reorder', async (req, res) => {
@@ -34,7 +34,7 @@ router.patch('/reorder', async (req, res) => {
   }
 })
 
-// GET /api/dispatch/live — real-time per-tech snapshot for the Live Day view.
+// GET /api/dispatch/live, real-time per-tech snapshot for the Live Day view.
 router.get('/live', async (req, res) => {
   try {
     const dateISO = (req.query.date || todayPT()).toString()
@@ -95,7 +95,7 @@ router.get('/live', async (req, res) => {
   }
 })
 
-// POST /api/dispatch/suggest-slot — capacity-aware insertion suggestion.
+// POST /api/dispatch/suggest-slot, capacity-aware insertion suggestion.
 // Body: { shop_name, date? }
 router.post('/suggest-slot', async (req, res) => {
   try {
@@ -182,7 +182,7 @@ router.post('/suggest-slot', async (req, res) => {
   }
 })
 
-// GET /api/dispatch/map-data — pins + capacities for the Dispatch Map.
+// GET /api/dispatch/map-data, pins + capacities for the Dispatch Map.
 router.get('/map-data', async (req, res) => {
   try {
     const dateISO = (req.query.date || todayPT()).toString()
@@ -225,7 +225,7 @@ router.get('/map-data', async (req, res) => {
       return ao - bo
     })
 
-    // All manually-pinned shops (Mark's main clients), regardless of date/job —
+    // All manually-pinned shops (Mark's main clients), regardless of date/job.
     // rendered as faded background markers so dispatch sees client locations
     // even when no active job is on the map.
     const pinned_shops = Object.entries(geocache)

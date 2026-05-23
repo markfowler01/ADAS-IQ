@@ -253,6 +253,12 @@ export default function DispatchSidePanel({
                   onClick={() => {
                     if (isCurrent) return
                     const newTech = opt === 'Unassigned' ? '' : opt
+                    // Match the drag-drop confirm: warn before overbooking an at-cap tech.
+                    const targetCap = capacities[opt]
+                    if (targetCap?.atCap && opt !== 'Unassigned') {
+                      const ok = confirm(`${opt} is already at ${targetCap.used} of ${targetCap.cap}. Assign anyway?`)
+                      if (!ok) return
+                    }
                     onReassign && onReassign(selectedJob.id, newTech)
                   }}
                   disabled={isCurrent}

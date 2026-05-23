@@ -1,4 +1,4 @@
-// /dispatch/map screen — desktop-primary dispatch view with Mapbox map +
+// /dispatch/map screen, desktop-primary dispatch view with Mapbox map +
 // side panel. Pins color-coded by tech; drag jobs between groups to
 // reassign; manual override picker for shops without geocoded locations.
 
@@ -103,51 +103,32 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
     pins.forEach(pin => {
       const color = pinColor(pin)
       const label = pin.drive_order != null ? String(pin.drive_order) : '•'
-      const isPinnedShop = pinnedShopNames.has((pin.shop_name || '').toLowerCase().trim())
 
+      // Every active job pin = Absolute ADAS logo in a white circle with a
+      // tech-colored ring and a drive-order number badge. Brand-first design.
       const el = document.createElement('div')
       el.style.cursor = 'pointer'
-
-      if (isPinnedShop) {
-        // Active job at a main client (pinned shop): show the Absolute ADAS
-        // logo with a tech-colored ring and a drive-order number badge.
-        el.innerHTML = `
-          <div style="position: relative; width: 44px; height: 44px;">
-            <div style="width: 44px; height: 44px; border-radius: 50%;
-                        border: 3px solid ${color}; background: white;
-                        display: flex; align-items: center; justify-content: center;
-                        overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">
-              <img src="${LOGO_URL}" alt="" style="width: 30px; height: 30px; object-fit: contain;" />
-            </div>
-            ${pin.drive_order != null ? `
-              <div style="position: absolute; top: -4px; right: -4px;
-                          min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
-                          background: ${color}; color: white;
-                          font-family: -apple-system, BlinkMacSystemFont, 'IBM Plex Sans', sans-serif;
-                          font-weight: 800; font-size: 11px;
-                          display: flex; align-items: center; justify-content: center;
-                          border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3);">
-                ${label}
-              </div>
-            ` : ''}
+      el.innerHTML = `
+        <div style="position: relative; width: 44px; height: 44px;">
+          <div style="width: 44px; height: 44px; border-radius: 50%;
+                      border: 3px solid ${color}; background: white;
+                      display: flex; align-items: center; justify-content: center;
+                      overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">
+            <img src="${LOGO_URL}" alt="" style="width: 30px; height: 30px; object-fit: contain;" />
           </div>
-        `
-      } else {
-        // Standard calibration teardrop pin (regular job, non-pinned shop)
-        el.innerHTML = `
-          <svg width="40" height="52" viewBox="0 0 40 52" xmlns="http://www.w3.org/2000/svg"
-               style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); display: block;">
-            <path d="M12 8 Q20 4.5 28 8"  stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
-            <path d="M9.5 4.5 Q20 0.5 30.5 4.5" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.32"/>
-            <path d="M20 11 C10 11 3 18 3 27.5 C3 36.5 20 51 20 51 C20 51 37 36.5 37 27.5 C37 18 30 11 20 11 Z"
-                  fill="${color}" stroke="white" stroke-width="2"/>
-            <circle cx="20" cy="27.5" r="10" fill="white"/>
-            <text x="20" y="31.5" text-anchor="middle"
-                  font-family="-apple-system, BlinkMacSystemFont, 'IBM Plex Sans', sans-serif"
-                  font-weight="800" font-size="13" fill="${color}">${label}</text>
-          </svg>
-        `
-      }
+          ${pin.drive_order != null ? `
+            <div style="position: absolute; top: -4px; right: -4px;
+                        min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+                        background: ${color}; color: white;
+                        font-family: -apple-system, BlinkMacSystemFont, 'IBM Plex Sans', sans-serif;
+                        font-weight: 800; font-size: 11px;
+                        display: flex; align-items: center; justify-content: center;
+                        border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3);">
+              ${label}
+            </div>
+          ` : ''}
+        </div>
+      `
 
       // Click pin -> select job in side panel (don't use the popup; the
       // detail card in the side panel is the spec'd interaction).
@@ -157,9 +138,7 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
         setSidePanelTab('jobs')
       })
 
-      // Logo marker is a circle (anchor at center); teardrop has its point
-      // at the bottom (anchor at bottom).
-      const marker = new mapboxgl.Marker({ element: el, anchor: isPinnedShop ? 'center' : 'bottom' })
+      const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
         .setLngLat([pin.coords.lng, pin.coords.lat])
         .addTo(map)
       markersRef.current.push(marker)
@@ -265,7 +244,7 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
   const pins = data?.pins || []
   // A pin is "unassigned" if it has no technician OR its status is still
   // need_dispatch (the side panel's tech groups treat those as Unassigned
-  // too — keep these counts mutually exclusive).
+  // too, so keep these counts mutually exclusive).
   const isUnassignedPin = (p) => !p.technician || p.status === 'need_dispatch'
   const markCount    = pins.filter(p => !isUnassignedPin(p) && (p.technician || '').toLowerCase().includes('mark')).length
   const jaydenCount  = pins.filter(p => !isUnassignedPin(p) && /jay?den/.test((p.technician || '').toLowerCase())).length
@@ -304,8 +283,8 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
             Include unassigned (Need to Dispatch)
           </label>
           <div className="ml-auto text-xs" style={{ color: '#888' }}>
-            <span style={{ color: TECH_COLOR.Mark }}>● Mark {markCount}</span>
-            <span className="ml-3" style={{ color: TECH_COLOR.Jayden }}>● Jayden {jaydenCount}</span>
+            <span style={{ color: TECH_COLOR.Mark }}>● Mark {markCount}/{data?.capacities?.Mark?.cap ?? 4}</span>
+            <span className="ml-3" style={{ color: TECH_COLOR.Jayden }}>● Jayden {jaydenCount}/{data?.capacities?.Jayden?.cap ?? 4}</span>
             <span className="ml-3" style={{ color: UNASSIGNED_COLOR }}>● Unassigned {unassignedCount}</span>
           </div>
         </div>
