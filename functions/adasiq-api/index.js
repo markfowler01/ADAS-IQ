@@ -13,6 +13,8 @@ import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
 import historyRouter from './routes/history.js'
 import jobsRouter, { performSyncQuotes, readJobsPublic } from './routes/jobs.js'
+import todayRouter from './routes/today.js'
+import dispatchRouter from './routes/dispatch.js'
 import brewRouter, { cronRouter as brewCronRouter } from './routes/brew.js'
 import { tipsRouter as brewTipsRouter } from './routes/brewTips.js'
 import { auditRouter as auditToolRouter } from './routes/auditTool.js'
@@ -174,6 +176,8 @@ app.use('/api/report', requireAuth, reportRouter)
 app.use('/api/audit', requireAuth, auditLimiter, auditRouter)
 app.use('/api/history', requireAuth, historyRouter)
 app.use('/api/jobs', requireAuth, jobsRouter)
+app.use('/api/today', requireAuth, todayRouter)
+app.use('/api/dispatch', requireAuth, dispatchRouter)
 app.use('/api/brew', requireAuth, brewRouter)
 
 app.use('/api/feedback', requireAuth, feedbackRouter)
@@ -339,6 +343,93 @@ app.post('/api/cron/stuck-jobs', async (req, res) => {
     res.json({ ok: true, stuck: stuck.length, dispatched: dispatched.length, pending_parts: pendingParts.length })
   } catch (err) {
     console.error('[stuck-jobs]', err.message, err.stack)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Geocoding cron — populates lat/lng for CRM shops + tech home bases.
+// Reads addresses from CRMShops Datastore and absolute_adas_tech_config cache,
+// calls Google Geocoding API (reuses GOOGLE_PLACES_API_KEY; Geocoding API must
+// be enabled on the same Google Cloud project), writes results to the
+// absolute_adas_geocache cache. Manual overrides (geocode_source = "manual")
+// are never overwritten. Caps at 25 lookups per run to stay under the gateway.
+// Protected by BILLING_CRON_SECRET (reuses existing billing secret).
+app.post('/api/cron/geocode-shops', async (req, res) => {
+  const cronSecret = process.env.BILLING_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { getAllShops } = await import('./routes/shops.js')
+    const {
+      readGeocache, writeGeocache, geocodeAddress, normalizeKey,
+      readTechConfig, writeTechConfig, ensureTechConfigSeed,
+    } = await import('./services/geocoding.js')
+
+    const MAX_PER_RUN = 25
+    const STALE_DAYS = 90
+    const now = Date.now()
+    const isStale = (iso) => !iso || (now - new Date(iso).getTime()) > STALE_DAYS * 24 * 60 * 60 * 1000
+
+    // Seed tech config if first run
+    await ensureTechConfigSeed(req)
+
+    const [shops, cache, techConfig] = await Promise.all([
+      getAllShops(req),
+      readGeocache(req),
+      readTechConfig(req),
+    ])
+
+    // Pick shops needing geocoding (no entry, status not "ok", or stale by 90d).
+    // Manual overrides (source "manual") are skipped permanently.
+    const todo = []
+    for (const shop of shops) {
+      if (!shop.shop_name || !shop.address) continue
+      const key = normalizeKey(shop.shop_name)
+      const existing = cache[key]
+      if (existing?.geocode_source === 'manual') continue
+      if (existing?.geocode_status === 'ok' && !isStale(existing.geocoded_at)) continue
+      todo.push({ kind: 'shop', key, name: shop.shop_name, address: shop.address })
+      if (todo.length >= MAX_PER_RUN) break
+    }
+
+    // Also queue tech home bases that are not yet geocoded.
+    if (todo.length < MAX_PER_RUN) {
+      for (const [tech, cfg] of Object.entries(techConfig)) {
+        if (!cfg.home_address) continue
+        if (cfg.home_lat != null && cfg.home_lng != null) continue
+        todo.push({ kind: 'tech', tech, address: cfg.home_address })
+        if (todo.length >= MAX_PER_RUN) break
+      }
+    }
+
+    let ok = 0, ambiguous = 0, failed = 0
+    for (const item of todo) {
+      const result = await geocodeAddress(item.address)
+      if (!result) { failed++; continue }
+      if (result.geocode_status === 'ok') ok++
+      else if (result.geocode_status === 'ambiguous') ambiguous++
+      else failed++
+
+      const stamp = new Date().toISOString()
+      if (item.kind === 'shop') {
+        cache[item.key] = { ...result, geocoded_at: stamp }
+      } else if (item.kind === 'tech') {
+        techConfig[item.tech] = {
+          ...(techConfig[item.tech] || {}),
+          home_lat: result.lat,
+          home_lng: result.lng,
+          geocoded_at: stamp,
+          geocode_status: result.geocode_status,
+        }
+      }
+    }
+
+    await Promise.all([writeGeocache(req, cache), writeTechConfig(req, techConfig)])
+    console.log(`[geocode-shops] processed=${todo.length} ok=${ok} ambiguous=${ambiguous} failed=${failed}`)
+    res.json({ ok: true, processed: todo.length, geocoded_ok: ok, ambiguous, failed })
+  } catch (err) {
+    console.error('[geocode-shops]', err.message, err.stack)
     res.status(500).json({ error: err.message })
   }
 })

@@ -90,6 +90,9 @@ async function getAllShops(req) {
   return (rows || []).map(rowToShop)
 }
 
+// Exported for the dispatch-map feature (geocoding cron, map data endpoint).
+export { getAllShops }
+
 async function insertShop(req, shopData) {
   const table = getTable(req)
   const row = shopToRow({ ...shopData, created_at: shopData.created_at || new Date().toISOString() })
@@ -469,6 +472,63 @@ router.get('/search-places', async (req, res) => {
   } catch (err) {
     console.error('[places] Search error:', err.response?.data || err.message)
     res.status(500).json({ error: err.response?.data?.error?.message || err.message })
+  }
+})
+
+// ── Dispatch-map geocoding extensions (absolute_adas namespace) ─────────────
+
+// POST /api/shops/:shopName/geocode
+// Force a single-shop re-geocode against Google. Used when an address changes
+// or when an automatic geocode came back ambiguous and dispatch wants to retry.
+router.post('/:shopName/geocode', async (req, res) => {
+  try {
+    const { readGeocache, writeGeocache, geocodeAddress, normalizeKey } = await import('../services/geocoding.js')
+    const shopName = decodeURIComponent(req.params.shopName)
+    const shops = await getAllShops(req)
+    const shop = shops.find(s => s.shop_name?.toLowerCase().trim() === shopName.toLowerCase().trim())
+    if (!shop) return res.status(404).json({ error: `Shop "${shopName}" not found` })
+    if (!shop.address) return res.status(400).json({ error: 'Shop has no address to geocode' })
+
+    const result = await geocodeAddress(shop.address)
+    if (!result) return res.status(500).json({ error: 'Geocoding API unavailable (check GOOGLE_PLACES_API_KEY + Geocoding API enabled)' })
+
+    const cache = await readGeocache(req)
+    cache[normalizeKey(shopName)] = { ...result, geocoded_at: new Date().toISOString() }
+    await writeGeocache(req, cache)
+
+    res.json({ ok: true, shop_name: shopName, ...cache[normalizeKey(shopName)] })
+  } catch (err) {
+    console.error('[shops geocode]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT /api/shops/:shopName/coordinates
+// Manual lat/lng override for a shop. Used when geocoding fails or returns
+// the wrong location (common for industrial parks). Sticky: marked source
+// "manual" so the cron does not overwrite it.
+router.put('/:shopName/coordinates', async (req, res) => {
+  try {
+    const { readGeocache, writeGeocache, normalizeKey } = await import('../services/geocoding.js')
+    const shopName = decodeURIComponent(req.params.shopName)
+    const { lat, lng } = req.body || {}
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'lat and lng must be numbers' })
+    }
+
+    const cache = await readGeocache(req)
+    cache[normalizeKey(shopName)] = {
+      lat, lng,
+      geocoded_at: new Date().toISOString(),
+      geocode_status: 'ok',
+      geocode_source: 'manual',
+    }
+    await writeGeocache(req, cache)
+
+    res.json({ ok: true, shop_name: shopName, ...cache[normalizeKey(shopName)] })
+  } catch (err) {
+    console.error('[shops coordinates]', err.message)
+    res.status(500).json({ error: err.message })
   }
 })
 

@@ -2,7 +2,7 @@ import express from 'express'
 import multer from 'multer'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
-import { listAllEstimates, getEstimateLineItems, getAccessToken, updateEstimateShareLink } from '../services/zoho.js'
+import { listAllEstimates, getEstimateLineItems, getAccessToken, updateEstimateShareLink, updateEstimateSalesperson } from '../services/zoho.js'
 import { createNotification } from './notifications.js'
 import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from '../services/workdrive.js'
 import { appendHistory } from '../services/history.js'
@@ -182,6 +182,51 @@ async function deleteJob(req, rowId) {
   await table.deleteRow(rowId)
 }
 
+// ─── Notification helpers ─────────────────────────────────────────────────────
+
+// "Needs Dispatch" — fires when a job lands in need_dispatch.
+// Goes to both dispatchers (Mark + Kat) and the #technicians channel (posted once).
+async function notifyNeedsDispatch(req, job) {
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const roNum = job.quote_number || (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+  const title = `New job to dispatch: ${job.shop_name || 'Unknown shop'}`
+  const body = `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}`
+  // Mark — also posts the message to #technicians
+  await createNotification(req, {
+    to: 'Mark', toEmail: 'mf@absoluteadas.com',
+    type: 'needs_dispatch', title, body, jobId: job.id, job,
+  }).catch(e => console.warn('[notif needs_dispatch/Mark]', e.message))
+  // Kat — skip #technicians so the channel isn't double-posted
+  await createNotification(req, {
+    to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
+    type: 'needs_dispatch', title, body, jobId: job.id, job, skipTechChannel: true,
+  }).catch(e => console.warn('[notif needs_dispatch/Kat]', e.message))
+}
+
+// When a job's technician is reassigned, push it to the linked Zoho estimate's
+// salesperson field. Awaited (Catalyst kills fire-and-forget) but errors are
+// swallowed so a Zoho hiccup never fails the job update.
+async function syncTechnicianToZoho(job, techName) {
+  if (!job?.zoho_estimate_id || !techName) return
+  await updateEstimateSalesperson(job.zoho_estimate_id, techName)
+    .then(() => console.log(`[zoho-sync] Estimate ${job.zoho_estimate_id} salesperson → ${techName}`))
+    .catch(e => console.warn('[zoho-sync] salesperson update failed (non-fatal):', e.message))
+}
+
+// "Job Dispatched" — fires when a tech is assigned.
+// Goes to the assigned tech (DM) + the #technicians channel.
+async function notifyJobDispatched(req, job) {
+  if (!job.technician) return
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  await createNotification(req, {
+    to: job.technician, toEmail: '',
+    type: 'job_dispatched',
+    title: `Job dispatched to ${job.technician}: ${job.shop_name || 'New job'}`,
+    body: `${vehicle || 'Vehicle TBD'} — ${job.shop_name || 'Unknown shop'}${job.scheduled_date ? ' on ' + job.scheduled_date : ''}`,
+    jobId: job.id, job,
+  }).catch(e => console.warn('[notif job_dispatched]', e.message))
+}
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // GET /api/jobs/completions — tech completion log (last 90 days)
@@ -225,6 +270,12 @@ router.post('/', async (req, res) => {
       }).catch(e => console.warn('[notifications job request]', e.message))
     }
 
+    // Notify dispatchers (Mark + Kat) + #technicians when a new job arrives at need_dispatch
+    // (covers: Upload Report → Create Zoho Invoice, ManualQuoteScreen, any other direct job creation)
+    if (!req.body.via_request && (newJob.status === 'need_dispatch' || (!newJob.status && req.body.status === 'need_dispatch'))) {
+      await notifyNeedsDispatch(req, newJob)
+    }
+
     res.status(201).json(newJob)
   } catch (err) {
     console.error('[jobs POST]', err.message, err.stack)
@@ -263,38 +314,27 @@ router.put('/:id', async (req, res) => {
     }
     if (req.body.invoiced === true || req.body.invoiced === 'true') {
       logJobHistory(req, updated, 'invoiced')
-      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
-      await createNotification(req, {
-        to: 'Mark',
-        toEmail: 'mf@absoluteadas.com',
-        type: 'job_invoiced',
-        title: `Job invoiced: ${updated.shop_name || 'Job'}`,
-        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'}${updated.invoice_number ? ' · Invoice #' + updated.invoice_number : ''}`,
-        jobId: updated.id,
-        job: updated,
-      }).catch(e => console.warn('[notifications invoiced]', e.message))
+      // Invoice notifications come solely from the Zoho Books webhook — see webhook.js
     }
 
-    // Notify tech on every job update when a tech is assigned
+    // Notify dispatchers when a job lands in need_dispatch
+    if (updated.status === 'need_dispatch' && prevStatus !== 'need_dispatch') {
+      await notifyNeedsDispatch(req, updated)
+    }
+
+    // Notify the assigned tech + #technicians when a job is dispatched (tech assigned)
     const newTech = updated.technician
-    if (newTech) {
-      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
-      const statusChanged = updated.status !== prevStatus
-      const techChanged = newTech !== prevTech
-      const type = techChanged ? 'job_assigned' : 'job_updated'
-      const action = techChanged ? `Job assigned to ${newTech}` : `Job updated for ${newTech}`
-      await createNotification(req, {
-        to: newTech,
-        toEmail: req.user?.email || '',
-        type,
-        title: `${action}: ${updated.shop_name || 'New job'}`,
-        body: `${vehicle || 'Vehicle TBD'} — ${updated.shop_name || 'Unknown shop'}${updated.scheduled_date ? ' on ' + updated.scheduled_date : ''}${statusChanged ? ' → ' + (updated.status || '').replace(/_/g, ' ') : ''}`,
-        jobId: updated.id,
-        job: updated,
-      }).catch(e => console.warn('[notifications]', e.message))
+    const techChanged = newTech && newTech !== prevTech
+    const statusBecameDispatched = /^dispatched_/.test(updated.status || '') && !/^dispatched_/.test(prevStatus || '')
+    if (newTech && (techChanged || statusBecameDispatched)) {
+      await notifyJobDispatched(req, updated)
+    }
+    // Keep the linked Zoho estimate's salesperson in sync with the technician
+    if (techChanged) {
+      await syncTechnicianToZoho(updated, newTech)
     }
 
-    // Notify Kath + #technicians when job moves to ready_invoice
+    // Notify Kat when a job moves to ready_invoice
     if (updated.status === 'ready_invoice' && prevStatus !== 'ready_invoice') {
       await createNotification(req, {
         to: 'Kath',
@@ -321,6 +361,20 @@ router.patch('/:id', async (req, res) => {
     const table = getTable(req)
     const currentRow = await table.getRow(req.params.id)
     const currentJob = rowToJob(currentRow)
+
+    // Auto-status-move: if technician is newly assigned (or changed) and the
+    // request did NOT explicitly set status, derive the dispatched_* column.
+    // Lets dispatch reassign jobs from the new map view without separately
+    // dragging the Kanban card.
+    if (req.body.technician !== undefined && req.body.technician && req.body.status === undefined) {
+      const nt = (req.body.technician || '').toLowerCase()
+      const ot = (currentJob.technician || '').toLowerCase()
+      if (nt !== ot) {
+        if (nt.includes('jayden') || nt.includes('jaden'))      req.body.status = 'dispatched_jaden'
+        else if (nt.includes('mark'))                            req.body.status = 'dispatched_mark'
+      }
+    }
+
     const merged = { ...currentJob, ...req.body }
     const updated = await updateJob(req, req.params.id, merged)
 
@@ -330,38 +384,27 @@ router.patch('/:id', async (req, res) => {
     }
     if (req.body.invoiced === true && !currentJob.invoiced) {
       logJobHistory(req, updated, 'invoiced')
-      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
-      await createNotification(req, {
-        to: 'Mark',
-        toEmail: 'mf@absoluteadas.com',
-        type: 'job_invoiced',
-        title: `Job invoiced: ${updated.shop_name || 'Job'}`,
-        body: `${vehicle || 'Vehicle'} — ${updated.shop_name || 'Unknown shop'}${updated.invoice_number ? ' · Invoice #' + updated.invoice_number : ''}`,
-        jobId: updated.id,
-        job: updated,
-      }).catch(e => console.warn('[notifications invoiced]', e.message))
+      // Invoice notifications come solely from the Zoho Books webhook — see webhook.js
     }
 
-    // Notify tech on every job update when a tech is assigned
+    // Notify dispatchers when a job lands in need_dispatch
+    if (updated.status === 'need_dispatch' && currentJob.status !== 'need_dispatch') {
+      await notifyNeedsDispatch(req, updated)
+    }
+
+    // Notify the assigned tech + #technicians when a job is dispatched (tech assigned)
     const newTech = updated.technician
-    if (newTech) {
-      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
-      const statusChanged = updated.status !== currentJob.status
-      const techChanged = newTech !== currentJob.technician
-      const type = techChanged ? 'job_assigned' : 'job_updated'
-      const action = techChanged ? `Job assigned to ${newTech}` : `Job updated for ${newTech}`
-      await createNotification(req, {
-        to: newTech,
-        toEmail: req.user?.email || '',
-        type,
-        title: `${action}: ${updated.shop_name || 'New job'}`,
-        body: `${vehicle || 'Vehicle TBD'} — ${updated.shop_name || 'Unknown shop'}${updated.scheduled_date ? ' on ' + updated.scheduled_date : ''}${statusChanged ? ' → ' + (updated.status || '').replace(/_/g, ' ') : ''}`,
-        jobId: updated.id,
-        job: updated,
-      }).catch(e => console.warn('[notifications]', e.message))
+    const techChanged = newTech && newTech !== currentJob.technician
+    const statusBecameDispatched = /^dispatched_/.test(updated.status || '') && !/^dispatched_/.test(currentJob.status || '')
+    if (newTech && (techChanged || statusBecameDispatched)) {
+      await notifyJobDispatched(req, updated)
+    }
+    // Keep the linked Zoho estimate's salesperson in sync with the technician
+    if (techChanged) {
+      await syncTechnicianToZoho(updated, newTech)
     }
 
-    // Notify Kath + #technicians when job moves to ready_invoice
+    // Notify Kat when a job moves to ready_invoice
     if (updated.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
       await createNotification(req, {
         to: 'Kath',
@@ -389,6 +432,151 @@ router.delete('/:id', async (req, res) => {
     res.json({ success: true })
   } catch (err) {
     console.error('[jobs DELETE]', err.message, err.stack)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── Field-state routes (dispatch map / tech today) ─────────────────────────
+//
+// These store per-job timestamps and derived fields (drive_order, time windows,
+// en_route_at, started_at, completed_at) in the absolute_adas_job_state cache
+// instead of the Jobs Datastore table so the feature works without a schema
+// migration. See services/dispatch.js + docs/dispatch-map-setup.md.
+
+// PATCH /api/jobs/:id/en-route — tech tapped "Navigate". No Cliq noise.
+router.patch('/:id/en-route', async (req, res) => {
+  try {
+    const { updateJobStateFields } = await import('../services/dispatch.js')
+    const state = await updateJobStateFields(req, req.params.id, { en_route_at: new Date().toISOString() })
+    res.json({ ok: true, job_id: String(req.params.id), state })
+  } catch (err) {
+    console.error('[jobs en-route]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PATCH /api/jobs/:id/start — tech tapped "Start Job". No Cliq noise.
+router.patch('/:id/start', async (req, res) => {
+  try {
+    const { updateJobStateFields } = await import('../services/dispatch.js')
+    const state = await updateJobStateFields(req, req.params.id, { started_at: new Date().toISOString() })
+    res.json({ ok: true, job_id: String(req.params.id), state })
+  } catch (err) {
+    console.error('[jobs start]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PATCH /api/jobs/:id/complete — tech finished. Sets completed_at, optionally
+// updates calibrations (from the Calibration Review Modal), moves status to
+// ready_invoice. The existing ready_invoice → Kat notification fires from the
+// PATCH /:id handler chain. Then recomputes remaining drive_order for the
+// tech's day so the next card surfaces.
+router.patch('/:id/complete', async (req, res) => {
+  try {
+    const { updateJobStateFields, recomputeDayForTech, isAssignedTo, readJobState, mergeJobState } = await import('../services/dispatch.js')
+    const jobId = String(req.params.id)
+
+    // 1) Stamp completed_at
+    await updateJobStateFields(req, jobId, { completed_at: new Date().toISOString() })
+
+    // 2) Move job to ready_invoice (and optionally update calibrations) via the
+    // existing updateJob path so all existing notifications fire normally.
+    const current = rowToJob(await getTable(req).getRow(jobId))
+    const patch = { status: 'ready_invoice' }
+    if (req.body?.calibrations !== undefined) {
+      patch.calibrations = typeof req.body.calibrations === 'string'
+        ? req.body.calibrations
+        : JSON.stringify(req.body.calibrations || [])
+    }
+    const merged = { ...current, ...patch }
+    const updated = await updateJob(req, jobId, merged)
+
+    // Fire the existing Kat notification (mirrors PATCH /:id ready_invoice branch)
+    if (current.status !== 'ready_invoice') {
+      await createNotification(req, {
+        to: 'Kath',
+        toEmail: 'k.belmonte@absoluteadas.com',
+        type: 'job_ready_invoice',
+        title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
+        body: '',
+        jobId: updated.id,
+        job: updated,
+      }).catch(e => console.warn('[notifications complete]', e.message))
+    }
+
+    // 3) Recompute remaining drive_order for this tech's day
+    if (updated.technician && updated.scheduled_date) {
+      try {
+        const allJobs = await getAllJobs(req)
+        const stateMap = await readJobState(req)
+        const techJobs = allJobs
+          .filter(j => isAssignedTo(j, updated.technician))
+          .filter(j => (j.scheduled_date || '') === updated.scheduled_date)
+          .map(j => mergeJobState(j, stateMap))
+        await recomputeDayForTech(req, updated.technician, updated.scheduled_date, techJobs)
+      } catch (e) {
+        console.warn('[jobs complete] recompute failed (non-fatal):', e.message)
+      }
+    }
+
+    res.json({ ok: true, job: updated })
+  } catch (err) {
+    console.error('[jobs complete]', err.message, err.stack)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/jobs/:id/running-late — tech pings Kat with a delay note
+router.post('/:id/running-late', async (req, res) => {
+  try {
+    const { postToCliqUser, TECH_CLIQ_IDS } = await import('../services/cliq.js')
+    const jobId = String(req.params.id)
+    const current = rowToJob(await getTable(req).getRow(jobId))
+    const delayMin = Number(req.body?.delay_min || 0) || 0
+    const note = (req.body?.note || '').toString().slice(0, 280)
+
+    const vehicle = current.vehicle || [current.year, current.make, current.model].filter(Boolean).join(' ')
+    const msg = [
+      `⏰ *Running late: ${current.shop_name || 'Job'}*`,
+      vehicle ? `🚗 ${vehicle}` : null,
+      current.technician ? `👤 ${current.technician}` : null,
+      delayMin ? `⌛ ~${delayMin} min late` : '⌛ Running behind',
+      note ? `📝 ${note}` : null,
+    ].filter(Boolean).join('\n')
+
+    const katId = TECH_CLIQ_IDS.Kat || TECH_CLIQ_IDS.Kath
+    if (katId) await postToCliqUser(katId, msg).catch(e => console.warn('[running-late cliq]', e.message))
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[jobs running-late]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/jobs/:id/cant-access — tech can't access the vehicle, pings Kat
+router.post('/:id/cant-access', async (req, res) => {
+  try {
+    const { postToCliqUser, TECH_CLIQ_IDS } = await import('../services/cliq.js')
+    const jobId = String(req.params.id)
+    const current = rowToJob(await getTable(req).getRow(jobId))
+    const note = (req.body?.note || '').toString().slice(0, 280)
+
+    const vehicle = current.vehicle || [current.year, current.make, current.model].filter(Boolean).join(' ')
+    const msg = [
+      `🚫 *Can't access vehicle: ${current.shop_name || 'Job'}*`,
+      vehicle ? `🚗 ${vehicle}` : null,
+      current.technician ? `👤 ${current.technician}` : null,
+      note ? `📝 ${note}` : null,
+    ].filter(Boolean).join('\n')
+
+    const katId = TECH_CLIQ_IDS.Kat || TECH_CLIQ_IDS.Kath
+    if (katId) await postToCliqUser(katId, msg).catch(e => console.warn('[cant-access cliq]', e.message))
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[jobs cant-access]', err.message)
     res.status(500).json({ error: err.message })
   }
 })
@@ -442,36 +630,9 @@ export async function performSyncQuotes(req) {
     })
     created++
 
-    // Notify Mark + assigned salesperson that a new job is ready to dispatch
+    // Notify dispatchers (Mark + Kat) + #technicians that a new job is ready to dispatch
     try {
-      const notifTitle = `New job: ${est.customer_name || 'Unknown shop'}`
-      const notifBody = [vehicle, est.estimate_number ? `Quote #${est.estimate_number}` : ''].filter(Boolean).join(' · ')
-      const jobData = { ...newJob, vehicle }
-
-      // Always notify Mark (dispatcher)
-      await createNotification(req, {
-        to: 'Mark',
-        toEmail: 'mf@absoluteadas.com',
-        type: 'job_created',
-        title: notifTitle,
-        body: notifBody,
-        jobId: newJob.id || '',
-        job: jobData,
-      })
-
-      // Also notify the salesperson from Zoho if they're not Mark
-      const salesperson = (est.salesperson_name || '').trim()
-      if (salesperson && salesperson.toLowerCase() !== 'mark') {
-        await createNotification(req, {
-          to: salesperson,
-          toEmail: null,
-          type: 'job_created',
-          title: notifTitle,
-          body: notifBody,
-          jobId: newJob.id || '',
-          job: jobData,
-        })
-      }
+      await notifyNeedsDispatch(req, { ...newJob, vehicle })
     } catch (notifErr) {
       console.warn('[jobs sync] notification failed:', notifErr.message)
     }
@@ -510,26 +671,33 @@ export async function performSyncQuotes(req) {
   return { created, removed, folderLinked, total: estimates.length }
 }
 
-// GET /api/jobs/top-calibrations — top 10 cal names from historical job data
+// GET /api/jobs/top-calibrations — top calibrations for the Review modal quick-add chips.
+//
+// Source of truth: Zoho Books "Sales Invoice by Product" report (ordered by sales value).
+// These are the exact Zoho item names so they match cleanly when an invoice is created.
+// Skipped: PCSI / Post Collision Safety Inspection 1 (always-included badge),
+//          POST / Post-Scan (always-included badge), -No Value-, Diagnostic 1 (not a calibration).
+const TOP_CALIBRATIONS = [
+  'Front Windshield Calibration',
+  'Front Radar (ACC) - Static',
+  'Around View Camera Calibration (AVC) - Static',
+  'Blind Spot Calibration (BS)',
+  'SFP - 3A Static Calibrations - (All others)',
+  'Front Radar Calibration',
+  'Park Distance Sensor - Static (PSC)',
+  'Front Radar (ACC) - Dynamic',
+  'Around View Calibration (AVC) - Dynamic',
+  'Rear Blind Spot Radar (BSR)',
+  'Steering Angle Sensor',
+  'SFP - Level 2 - Dynamic Calibrations',
+]
+
 router.get('/top-calibrations', async (req, res) => {
   try {
-    const jobs = await getAllJobs(req)
-    const counts = {}
-    for (const job of jobs) {
-      let cals = []
-      try { cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : (job.calibrations || []) } catch {}
-      for (const c of cals) {
-        const name = (c.name || c.calibration_name || (typeof c === 'string' ? c : '')).trim()
-        if (name && name !== 'PCSI' && name !== 'POST') {
-          counts[name] = (counts[name] || 0) + 1
-        }
-      }
-    }
-    const top = Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([name, count]) => ({ name, count }))
-    res.json({ ok: true, calibrations: top })
+    res.json({
+      ok: true,
+      calibrations: TOP_CALIBRATIONS.map(name => ({ name })),
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
