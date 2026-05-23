@@ -41,6 +41,7 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
   const [loading, setLoading] = useState(true)
   const [pickerShop, setPickerShop] = useState(null)
   const [sidePanelTab, setSidePanelTab] = useState('jobs') // 'jobs' | 'pinned'
+  const [selectedJob, setSelectedJob] = useState(null)
 
   const mapContainer = useRef(null)
   const mapRef = useRef(null)
@@ -118,18 +119,16 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
         </svg>
       `
 
-      const popup = new mapboxgl.Popup({ offset: 24, closeButton: false }).setHTML(`
-        <div style="font-family: 'IBM Plex Sans', sans-serif; padding: 4px 2px; min-width: 180px;">
-          <div style="font-weight: 700; font-size: 13px; color: #1a1a1a;">${pin.shop_name || 'Unknown'}</div>
-          <div style="font-size: 12px; color: #555; margin-top: 2px;">${pin.vehicle || ''}</div>
-          ${pin.technician ? `<div style="font-size: 11px; color: #888; margin-top: 4px;">👤 ${pin.technician}</div>` : ''}
-          ${pin.time_window_start ? `<div style="font-size: 11px; color: #888;">⏰ ${pin.time_window_start} – ${pin.time_window_end || ''}</div>` : ''}
-        </div>
-      `)
+      // Click pin -> select job in side panel (don't use the popup; the
+      // detail card in the side panel is the spec'd interaction).
+      el.addEventListener('click', (e) => {
+        e.stopPropagation()
+        setSelectedJob(pin)
+        setSidePanelTab('jobs')
+      })
 
       const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
         .setLngLat([pin.coords.lng, pin.coords.lat])
-        .setPopup(popup)
         .addTo(map)
       markersRef.current.push(marker)
       bounds.extend([pin.coords.lng, pin.coords.lat])
@@ -175,9 +174,28 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
         try { const j = await res.json(); m = j.error || m } catch {}
         throw new Error(m)
       }
+      setSelectedJob(null) // clear selection so the new pin color renders
       await load()
     } catch (e) {
       setErr(`Reassign failed: ${e.message}`)
+    }
+  }
+
+  async function handleReorder(tech, orderedJobIds) {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/dispatch/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tech, date, order: orderedJobIds }),
+      })
+      if (!res.ok) {
+        let m = `HTTP ${res.status}`
+        try { const j = await res.json(); m = j.error || m } catch {}
+        throw new Error(m)
+      }
+      await load()
+    } catch (e) {
+      setErr(`Reorder failed: ${e.message}`)
     }
   }
 
@@ -271,10 +289,13 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
                 <DispatchSidePanel
                   pins={pins}
                   onReassign={handleReassign}
+                  onReorder={handleReorder}
                   ambiguousShops={data?.ambiguous_shops || []}
                   ungeocodedShops={data?.ungeocoded_shops || []}
                   onManualGeocode={(name) => setPickerShop(name)}
-                  onJobClick={() => {}}
+                  onJobClick={(p) => setSelectedJob(p)}
+                  selectedJob={selectedJob}
+                  onClearSelection={() => setSelectedJob(null)}
                 />
               ) : (
                 <PinnedShopsPanel onChanged={load} />

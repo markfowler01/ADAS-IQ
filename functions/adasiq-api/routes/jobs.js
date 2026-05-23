@@ -403,6 +403,25 @@ router.patch('/:id', async (req, res) => {
     if (techChanged) {
       await syncTechnicianToZoho(updated, newTech)
     }
+    // Recompute drive_order for BOTH the new tech's day and the old tech's day
+    // (the old tech now has one fewer stop, so their route shrinks).
+    if (techChanged && updated.scheduled_date) {
+      try {
+        const { recomputeDayForTech, isAssignedTo, readJobState, mergeJobState } = await import('../services/dispatch.js')
+        const all = await getAllJobs(req)
+        const stateMap = await readJobState(req)
+        const dayJobsForTech = (tech) => all
+          .filter(j => isAssignedTo(j, tech))
+          .filter(j => (j.scheduled_date || '') === updated.scheduled_date)
+          .map(j => mergeJobState(j, stateMap))
+        await recomputeDayForTech(req, newTech, updated.scheduled_date, dayJobsForTech(newTech))
+        if (currentJob.technician && currentJob.technician !== newTech) {
+          await recomputeDayForTech(req, currentJob.technician, updated.scheduled_date, dayJobsForTech(currentJob.technician))
+        }
+      } catch (e) {
+        console.warn('[jobs PATCH] drive_order recompute on reassign failed (non-fatal):', e.message)
+      }
+    }
 
     // Notify Kat when a job moves to ready_invoice
     if (updated.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
