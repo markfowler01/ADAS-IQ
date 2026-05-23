@@ -5,12 +5,12 @@ const ORANGE = '#CD4419'
 
 // Primary nav — everyday workflow, 6 items max
 const PRIMARY_LINKS = [
+  { id: 'live',    label: 'Live', adminOnly: true },
   { id: 'today',   label: 'Today' },
   { id: 'kanban',  label: 'Jobs' },
   { id: 'dispatch-map', label: 'Map', adminOnly: true },
   { id: 'crm',     label: 'CRM' },
   { id: 'books',   label: 'Books' },
-  { id: 'ops',     label: 'Ops', adminOnly: true },
 ]
 
 // Secondary nav — grouped by category in a spacious dropdown
@@ -42,6 +42,7 @@ const MORE_GROUPS = [
     { id: 'messages',  label: 'Messages' },
   ]},
   { label: 'Admin', links: [
+    { id: 'ops',         label: 'Ops', adminOnly: true },
     { id: 'branding',    label: 'Branding', adminOnly: true },
     { id: 'zoho-import', label: 'Import from Zoho', adminOnly: true },
   ]},

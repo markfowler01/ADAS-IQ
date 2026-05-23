@@ -50,6 +50,7 @@ import IntelligenceScreen from './components/IntelligenceScreen'
 import PayrollScreen from './components/PayrollScreen'
 import TechToday from './pages/TechToday'
 import DispatchMap from './pages/DispatchMap'
+import LiveDay from './pages/LiveDay'
 
 // Top-level route check: public pay page and customer portal bypass the main auth flow.
 function getTopLevelRoute() {
@@ -251,6 +252,9 @@ function MainApp() {
       )}
       {screen === 'dispatch-map' && (
         <DispatchMap user={user} onLogout={handleLogout} {...navProps} />
+      )}
+      {screen === 'live' && (
+        <LiveDay user={user} onLogout={handleLogout} {...navProps} />
       )}
       {screen === 'estimates' && (
         <RepairEstimateScreen onBack={() => setScreen('upload')} {...navProps} />

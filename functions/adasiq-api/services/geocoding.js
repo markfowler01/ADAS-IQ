@@ -82,8 +82,8 @@ export async function writeTechConfig(req, data) {
 // when the stored address differs and clears the cached lat/lng so the next
 // cron run re-geocodes it).
 export const TECH_HOME_DEFAULTS = {
-  Mark:   { home_address: '2307 Cedar Rd, Lake Stevens, WA 98258',       label: 'Lake Stevens' },
-  Jayden: { home_address: '13322 78th St NE, Lake Stevens, WA 98258',    label: 'Lake Stevens' },
+  Mark:   { home_address: '2307 Cedar Rd, Lake Stevens, WA 98258',       label: 'Lake Stevens', daily_cap: 4 },
+  Jayden: { home_address: '13322 78th St NE, Lake Stevens, WA 98258',    label: 'Lake Stevens', daily_cap: 4 },
 }
 
 export async function ensureTechConfigSeed(req, { force = false } = {}) {
@@ -92,9 +92,21 @@ export async function ensureTechConfigSeed(req, { force = false } = {}) {
   for (const [tech, cfg] of Object.entries(TECH_HOME_DEFAULTS)) {
     const existing = current[tech]
     if (!existing) {
-      current[tech] = { home_address: cfg.home_address, label: cfg.label, home_lat: null, home_lng: null, geocoded_at: null }
+      current[tech] = {
+        home_address: cfg.home_address,
+        label: cfg.label,
+        daily_cap: cfg.daily_cap,
+        home_lat: null,
+        home_lng: null,
+        geocoded_at: null,
+      }
       changed = true
       continue
+    }
+    // Backfill daily_cap if missing on existing entries.
+    if (existing.daily_cap == null) {
+      existing.daily_cap = cfg.daily_cap
+      changed = true
     }
     // If address changed (or force), update and clear lat/lng so next cron run re-geocodes.
     if (force || existing.home_address !== cfg.home_address) {
@@ -102,6 +114,7 @@ export async function ensureTechConfigSeed(req, { force = false } = {}) {
         ...existing,
         home_address: cfg.home_address,
         label: cfg.label,
+        daily_cap: existing.daily_cap ?? cfg.daily_cap,
         home_lat: null,
         home_lng: null,
         geocoded_at: null,

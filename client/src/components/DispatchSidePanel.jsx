@@ -36,6 +36,7 @@ export default function DispatchSidePanel({
   pins, onReassign, onReorder, onJobClick,
   ambiguousShops = [], ungeocodedShops = [], onManualGeocode,
   selectedJob, onClearSelection,
+  capacities = {},
 }) {
   const [dragJob, setDragJob] = useState(null)
   const [dragOverGroup, setDragOverGroup] = useState(null)
@@ -90,7 +91,14 @@ export default function DispatchSidePanel({
       const orderedIds = without.map(j => j.id)
       onReorder && onReorder(groupName, orderedIds)
     } else {
-      // Reassign to new tech
+      // Reassign to new tech. Warn if the target is already at/over cap.
+      const targetCap = capacities[groupName]
+      if (targetCap?.atCap && groupName !== 'Unassigned') {
+        const ok = window.confirm(
+          `${groupName} is already at ${targetCap.used} of ${targetCap.cap}. Assign anyway?`
+        )
+        if (!ok) { handleDragEnd(); return }
+      }
       const newTech = (groupName === 'Unassigned') ? '' : groupName
       onReassign && onReassign(dragJob.id, newTech)
     }
@@ -146,6 +154,14 @@ export default function DispatchSidePanel({
   function renderGroup(name) {
     const list = groups[name] || []
     const isDropTarget = dragOverGroup === name && dragOverIndex == null
+    const cap = capacities[name] || null
+    // Capacity styling: amber at cap, red over cap, green when room.
+    let capStyle = null
+    if (cap) {
+      if (cap.status === 'over')      capStyle = { bg: '#fef2f2', border: '#fecaca', fg: '#991b1b', label: 'OVER CAP' }
+      else if (cap.status === 'full') capStyle = { bg: '#fffbeb', border: '#fde68a', fg: '#92400e', label: 'FULL' }
+      else                            capStyle = { bg: '#f0fdf4', border: '#bbf7d0', fg: '#166534', label: `${cap.available} OPEN` }
+    }
     return (
       <div
         key={name}
@@ -162,8 +178,20 @@ export default function DispatchSidePanel({
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded-full" style={{ backgroundColor: TECH_COLOR[name] || '#999' }} />
             <span className="font-bold text-sm" style={{ color: '#1a1a1a' }}>{name}</span>
-            <span className="text-xs" style={{ color: '#888' }}>({list.length})</span>
+            {cap ? (
+              <span className="text-xs font-semibold" style={{ color: '#555' }}>
+                {cap.used} / {cap.cap}
+              </span>
+            ) : (
+              <span className="text-xs" style={{ color: '#888' }}>({list.length})</span>
+            )}
           </div>
+          {capStyle && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+              style={{ backgroundColor: capStyle.bg, color: capStyle.fg, border: `1px solid ${capStyle.border}` }}>
+              {capStyle.label}
+            </span>
+          )}
         </div>
         {list.length === 0 ? (
           <p className="text-xs italic px-1" style={{ color: '#bbb' }}>Drop a job here to assign</p>

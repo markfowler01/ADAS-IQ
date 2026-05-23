@@ -196,20 +196,49 @@ function fmtHHMM(date) {
 /**
  * Calculate time_window_start/_end for the tech's day, in order.
  *
- * @param {Array} orderedJobs  jobs in drive_order
- * @param {object} state       job-state cache map
+ * Mid-day-aware: if the tech has already completed some stops, the route
+ * recomputes from the last completed shop's location at the completed_at
+ * time, NOT from home at 8am. ETAs stay accurate as the day unfolds.
+ *
+ * @param {Array} orderedJobs  jobs in drive_order (may include completed ones)
+ * @param {object} state       (unused, kept for API stability)
  * @param {object} geocache    geocoded-shop cache map
  * @param {object} home        tech home base { home_lat, home_lng }
- * @returns updates array
+ * @returns updates array — only for non-completed jobs (completed ones keep their stamps)
  */
 export function calculateTimeWindows(orderedJobs, state, geocache, home) {
   const updates = []
-  const dayStart = new Date()
-  dayStart.setHours(DAY_START_HOUR, 0, 0, 0)
-  let cursorMs = dayStart.getTime()
-  let prev = (home?.home_lat != null) ? { lat: home.home_lat, lng: home.home_lng } : null
 
+  // Find the latest completed job (the tech's "current position" point).
+  let lastCompleted = null
+  for (const j of orderedJobs) {
+    if (j.completed_at) {
+      if (!lastCompleted || new Date(j.completed_at) > new Date(lastCompleted.completed_at)) {
+        lastCompleted = j
+      }
+    }
+  }
+
+  // Starting cursor: either at the last completed shop (mid-day) or at home
+  // at day start (morning).
+  let cursorMs, prev
+  if (lastCompleted) {
+    const c = geocache[normalizeKey(lastCompleted.shop_name)]
+    if (c?.lat != null) {
+      prev = { lat: c.lat, lng: c.lng }
+      cursorMs = new Date(lastCompleted.completed_at).getTime()
+    }
+  }
+  if (!prev) {
+    const dayStart = new Date()
+    dayStart.setHours(DAY_START_HOUR, 0, 0, 0)
+    cursorMs = dayStart.getTime()
+    prev = (home?.home_lat != null) ? { lat: home.home_lat, lng: home.home_lng } : null
+  }
+
+  // Walk the remaining (non-completed) jobs in order and assign time windows.
   for (const job of orderedJobs) {
+    if (job.completed_at) continue // skip already-done jobs
     const coords = geocache[normalizeKey(job.shop_name)]
     if (!coords || coords.lat == null) continue
 
@@ -225,12 +254,59 @@ export function calculateTimeWindows(orderedJobs, state, geocache, home) {
       patch: { time_window_start: fmtHHMM(arrival), time_window_end: fmtHHMM(windowEnd) },
     })
 
-    // Job duration
-    const durMin = DEFAULT_JOB_MIN
-    cursorMs += durMin * 60 * 1000
+    cursorMs += DEFAULT_JOB_MIN * 60 * 1000
     prev = coords
   }
   return updates
+}
+
+// ── Capacity ────────────────────────────────────────────────────────────────
+/**
+ * Compute capacity for a tech on a given date.
+ * Returns { cap, used, available, atCap, overCap, status }
+ *   - used: number of jobs in dispatched_* or pending_parts (not complete/ready_invoice)
+ *   - status: 'room' | 'full' | 'over'
+ */
+export async function getTechCapacity(req, techName, dateISO, allJobs, techConfig) {
+  const homeKey = Object.keys(techConfig || {}).find(k => isAssignedTo({ technician: techName }, k))
+  const cap = techConfig?.[homeKey]?.daily_cap ?? 4
+  const used = (allJobs || []).filter(j =>
+    isAssignedTo(j, techName)
+    && (j.scheduled_date || '') === dateISO
+    && j.status !== 'complete'
+    && j.status !== 'ready_invoice'
+  ).length
+  const status = used > cap ? 'over' : (used >= cap ? 'full' : 'room')
+  return { cap, used, available: Math.max(0, cap - used), atCap: used >= cap, overCap: used > cap, status }
+}
+
+// ── Live snapshot per tech ──────────────────────────────────────────────────
+/**
+ * Derive what each tech is doing RIGHT NOW from existing timestamps.
+ * Returns { status, current_job, current_elapsed_min, next_job, current_position, eod_projected }
+ */
+export function deriveLiveStatusForTech(orderedJobs) {
+  const open = orderedJobs.filter(j => !j.completed_at)
+  const inProgress = open.find(j => j.started_at)
+  const enRoute = open.find(j => j.en_route_at && !j.started_at)
+  const next = open.find(j => !j.en_route_at && !j.started_at)
+  let status = 'idle'
+  if (inProgress) status = 'on-site'
+  else if (enRoute) status = 'en-route'
+  else if (open.length === 0) status = 'done'
+  else status = 'idle'
+
+  let elapsedMin = null
+  if (inProgress?.started_at) {
+    elapsedMin = Math.floor((Date.now() - new Date(inProgress.started_at).getTime()) / 60000)
+  }
+
+  return {
+    status,
+    current_job: inProgress || enRoute || null,
+    current_elapsed_min: elapsedMin,
+    next_job: next || null,
+  }
 }
 
 // ── Combined: recompute drive_order + windows for tech/date ─────────────────

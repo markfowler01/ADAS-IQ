@@ -296,6 +296,7 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
                   onJobClick={(p) => setSelectedJob(p)}
                   selectedJob={selectedJob}
                   onClearSelection={() => setSelectedJob(null)}
+                  capacities={data?.capacities || {}}
                 />
               ) : (
                 <PinnedShopsPanel onChanged={load} />
