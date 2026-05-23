@@ -62,7 +62,6 @@ export default function PinnedShopsPanel({ onChanged }) {
   }
 
   async function handleMigrate() {
-    if (!confirm('Migrate any pinned shops still living in cache into the durable Datastore table? Safe to run multiple times.')) return
     setMigrating(true)
     setMigrationResult('')
     setErr('')
@@ -94,8 +93,39 @@ export default function PinnedShopsPanel({ onChanged }) {
     }
   }
 
+  // Banner is dismissed permanently for the session once the user has run the
+  // migration successfully. If migrationResult exists and migrated 0, also hide
+  // (nothing was in the cache to begin with).
+  const migrationDone = !!migrationResult
+  const showMigrateBanner = !migrationDone
+
   return (
     <div className="h-full overflow-y-auto p-3" style={{ backgroundColor: '#f5f3f0' }}>
+      {/* One-time migration banner — visible until user clicks Migrate */}
+      {showMigrateBanner && (
+        <div className="rounded-xl mb-3 p-3"
+          style={{ backgroundColor: '#fff7ed', border: `2px solid ${ORANGE}` }}>
+          <div className="text-xs font-bold mb-1" style={{ color: ORANGE }}>
+            ONE-TIME: Move legacy pins to durable storage
+          </div>
+          <div className="text-xs mb-2" style={{ color: '#555' }}>
+            Existing pinned shops still live in the old Catalyst Cache. Click below to copy them into the new PinnedShops Datastore table (durable, backed up to WorkDrive every 5 hours).
+          </div>
+          <button
+            onClick={handleMigrate}
+            disabled={migrating}
+            className="w-full rounded-lg text-white font-bold py-2.5 text-sm"
+            style={{ backgroundColor: ORANGE, opacity: migrating ? 0.6 : 1 }}
+          >{migrating ? 'Migrating…' : 'Migrate pins to Datastore'}</button>
+        </div>
+      )}
+      {migrationResult && (
+        <div className="rounded-xl mb-3 p-3 text-xs"
+          style={{ backgroundColor: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0' }}>
+          ✓ {migrationResult}
+        </div>
+      )}
+
       {/* Add form */}
       <form
         onSubmit={handleAdd}
@@ -141,25 +171,10 @@ export default function PinnedShopsPanel({ onChanged }) {
       )}
 
       {/* Pins list */}
-      <div className="flex items-center justify-between mb-2 px-1">
-        <div className="text-xs uppercase tracking-wider font-semibold"
-          style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-          Current pins ({pins.length})
-        </div>
-        <button
-          onClick={handleMigrate}
-          disabled={migrating}
-          className="text-[10px] underline"
-          style={{ color: '#888' }}
-          title="One-time: copy any pinned shops still in the old cache into the Datastore"
-        >{migrating ? 'Migrating…' : 'Migrate from cache'}</button>
+      <div className="text-xs uppercase tracking-wider mb-2 font-semibold px-1"
+        style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
+        Current pins ({pins.length})
       </div>
-      {migrationResult && (
-        <div className="text-[11px] mb-2 px-2 py-1 rounded"
-          style={{ backgroundColor: '#f0f9f4', color: '#15803d', border: '1px solid #bbf7d0' }}>
-          {migrationResult}
-        </div>
-      )}
       {loading ? (
         <p className="text-sm px-2" style={{ color: '#aaa' }}>Loading…</p>
       ) : pins.length === 0 ? (
