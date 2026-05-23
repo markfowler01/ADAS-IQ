@@ -93,18 +93,32 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
     const pins = (data.pins || []).filter(p => p.coords && p.coords.lat != null)
 
     pins.forEach(pin => {
+      const color = pinColor(pin)
+      const label = pin.drive_order != null ? String(pin.drive_order) : '•'
+      // Custom calibration pin: teardrop with two radar/sensor arcs above the
+      // head, signaling "this is a calibration job site" — color-coded by tech,
+      // drive order number in the center disc.
       const el = document.createElement('div')
-      el.style.cssText = `
-        width: 32px; height: 32px; border-radius: 50%;
-        background: ${pinColor(pin)};
-        color: white; font-weight: 800; font-size: 12px;
-        display: flex; align-items: center; justify-content: center;
-        border: 2px solid white; box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        cursor: pointer;
+      el.style.cursor = 'pointer'
+      el.innerHTML = `
+        <svg width="40" height="52" viewBox="0 0 40 52" xmlns="http://www.w3.org/2000/svg"
+             style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); display: block;">
+          <!-- Calibration sensor arcs above pin head -->
+          <path d="M12 8 Q20 4.5 28 8"  stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+          <path d="M9.5 4.5 Q20 0.5 30.5 4.5" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.32"/>
+          <!-- Teardrop pin body -->
+          <path d="M20 11 C10 11 3 18 3 27.5 C3 36.5 20 51 20 51 C20 51 37 36.5 37 27.5 C37 18 30 11 20 11 Z"
+                fill="${color}" stroke="white" stroke-width="2"/>
+          <!-- Inner white disc -->
+          <circle cx="20" cy="27.5" r="10" fill="white"/>
+          <!-- Drive order number -->
+          <text x="20" y="31.5" text-anchor="middle"
+                font-family="-apple-system, BlinkMacSystemFont, 'IBM Plex Sans', sans-serif"
+                font-weight="800" font-size="13" fill="${color}">${label}</text>
+        </svg>
       `
-      el.textContent = pin.drive_order != null ? String(pin.drive_order) : '•'
 
-      const popup = new mapboxgl.Popup({ offset: 18, closeButton: false }).setHTML(`
+      const popup = new mapboxgl.Popup({ offset: 24, closeButton: false }).setHTML(`
         <div style="font-family: 'IBM Plex Sans', sans-serif; padding: 4px 2px; min-width: 180px;">
           <div style="font-weight: 700; font-size: 13px; color: #1a1a1a;">${pin.shop_name || 'Unknown'}</div>
           <div style="font-size: 12px; color: #555; margin-top: 2px;">${pin.vehicle || ''}</div>
@@ -113,7 +127,7 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
         </div>
       `)
 
-      const marker = new mapboxgl.Marker(el)
+      const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
         .setLngLat([pin.coords.lng, pin.coords.lat])
         .setPopup(popup)
         .addTo(map)
@@ -121,19 +135,25 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
       bounds.extend([pin.coords.lng, pin.coords.lat])
     })
 
-    // Plot tech home bases as small diamond markers
+    // Plot tech home bases as small house markers, color-coded by tech.
     if (data.tech_homes) {
       for (const [tech, cfg] of Object.entries(data.tech_homes)) {
         if (cfg.home_lat == null || cfg.home_lng == null) continue
+        const color = TECH_COLOR[tech] || '#999'
         const el = document.createElement('div')
-        el.style.cssText = `
-          width: 16px; height: 16px; transform: rotate(45deg);
-          background: ${TECH_COLOR[tech] || '#999'};
-          border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-          opacity: 0.6;
+        el.title = `${tech}'s base`
+        el.innerHTML = `
+          <svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg"
+               style="filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35)); display: block;">
+            <!-- house silhouette -->
+            <path d="M11 2 L2 10 L4 10 L4 19 L9 19 L9 14 L13 14 L13 19 L18 19 L18 10 L20 10 Z"
+                  fill="${color}" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+          </svg>
         `
-        new mapboxgl.Marker(el).setLngLat([cfg.home_lng, cfg.home_lat]).addTo(map)
-        markersRef.current.push({ remove: () => el.remove() })
+        const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([cfg.home_lng, cfg.home_lat])
+          .addTo(map)
+        markersRef.current.push(marker)
         bounds.extend([cfg.home_lng, cfg.home_lat])
       }
     }
