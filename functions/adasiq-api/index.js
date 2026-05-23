@@ -347,6 +347,33 @@ app.post('/api/cron/stuck-jobs', async (req, res) => {
   }
 })
 
+// One-time cleanup: remove geocache entries that came from name-only guesses
+// or "ambiguous" results. Manual pins and "ok" entries from real addresses
+// are kept. Protected by BILLING_CRON_SECRET.
+app.post('/api/cron/cleanup-name-fallback', async (req, res) => {
+  const cronSecret = process.env.BILLING_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { readGeocache, writeGeocache } = await import('./services/geocoding.js')
+    const cache = await readGeocache(req)
+    const before = Object.keys(cache).length
+    let removed = 0
+    for (const [key, v] of Object.entries(cache)) {
+      if (v.geocode_source === 'manual') continue            // keep pins
+      if (v.geocode_status === 'ok' && v.address_source !== 'name-fallback') continue  // keep real addresses
+      delete cache[key]
+      removed++
+    }
+    await writeGeocache(req, cache)
+    res.json({ ok: true, before, after: Object.keys(cache).length, removed })
+  } catch (err) {
+    console.error('[cleanup-name-fallback]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // One-time diagnostic: show how every job-shop's address would be resolved.
 // Reads Zoho Books customers + CRM Shops + current geocache and returns the
 // chain we'd use, so we can see why a shop is "ambiguous" or "name-fallback".
@@ -571,7 +598,10 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
       const k = normalizeKey(shopName)
       if (crmShop?.address && crmShop.address.trim()) return { address: crmShop.address, source: 'crm' }
       if (zohoAddrByKey.has(k)) return { address: zohoAddrByKey.get(k), source: 'zoho' }
-      return { address: `${shopName}, Lake Stevens, WA`, source: 'name-fallback' }
+      // Mark only wants real addresses on the map. No name-only guesses.
+      // Shops with no address stay un-pinned until manually pinned via
+      // the Pinned Shops tab.
+      return null
     }
 
     // Pick shops needing geocoding. Skip manual overrides forever. Skip "ok"
@@ -584,25 +614,20 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
       const existing = cache[key]
       if (existing?.geocode_source === 'manual') return
       if (existing?.geocode_status === 'ok' && !isStale(existing.geocoded_at)) return
-      if (existing?.geocode_status === 'ambiguous' && !isStale(existing.geocoded_at)) {
-        // Only retry ambiguous when we have a real (non-fallback) address now
-        // and it differs from what we used last time.
-        const hadFallback = !existing.address_source || existing.address_source === 'name-fallback'
-        const haveBetter = addressSource !== 'name-fallback'
-        const differs = existing.address !== address
-        if (!(hadFallback && haveBetter && differs)) return
-      }
       todo.push({ kind: 'shop', key, name, address, addressSource })
     }
 
-    // 1) Every shop that has a job (the dispatch-relevant set) — resolve the
-    //    best address from CRM Shops, Zoho Books, or name-fallback.
+    // Resolve every shop that has a job or is in CRM to its best real address.
+    // Shops with no address in CRM and no Zoho billing_address are skipped —
+    // they stay un-pinned and surface in "no location" for manual pinning.
     const allShopNames = new Set(jobShopNames)
     for (const s of shops) if (s.shop_name) allShopNames.add(s.shop_name)
+    let skippedNoAddress = 0
     for (const name of allShopNames) {
       const crmShop = crmByKey.get(normalizeKey(name)) || null
-      const { address, source } = bestAddressFor(name, crmShop)
-      queueShop(name, address, source)
+      const resolved = bestAddressFor(name, crmShop)
+      if (!resolved) { skippedNoAddress++; continue }
+      queueShop(name, resolved.address, resolved.source)
       if (todo.length >= MAX_PER_RUN) break
     }
 
