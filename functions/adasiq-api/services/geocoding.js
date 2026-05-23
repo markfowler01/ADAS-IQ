@@ -67,18 +67,37 @@ export async function writeTechConfig(req, data) {
   }
 }
 
-// Seed the tech config with Mark + Jayden home bases if not present yet.
-// Lat/lng are populated by the geocoding cron on first run.
-export async function ensureTechConfigSeed(req) {
+// Source of truth for tech home addresses. Changing one here and re-running
+// the geocoding cron will pick up the correction (the seed function overwrites
+// when the stored address differs and clears the cached lat/lng so the next
+// cron run re-geocodes it).
+export const TECH_HOME_DEFAULTS = {
+  Mark:   { home_address: '2307 Cedar Rd, Lake Stevens, WA 98258',       label: 'Lake Stevens' },
+  Jayden: { home_address: '13322 78th St NE, Lake Stevens, WA 98258',    label: 'Lake Stevens' },
+}
+
+export async function ensureTechConfigSeed(req, { force = false } = {}) {
   const current = await readTechConfig(req)
   let changed = false
-  const defaults = {
-    Mark:   { home_address: '2307 Cedar Rd, Lake Stevens, WA',     home_lat: null, home_lng: null, geocoded_at: null, label: 'Lake Stevens' },
-    Jayden: { home_address: '13322 78th St SE, Lake Stevens, WA',  home_lat: null, home_lng: null, geocoded_at: null, label: 'Lake Stevens' },
-  }
-  for (const [tech, cfg] of Object.entries(defaults)) {
-    if (!current[tech]) { current[tech] = cfg; changed = true }
-    else if (!current[tech].home_address) { current[tech].home_address = cfg.home_address; changed = true }
+  for (const [tech, cfg] of Object.entries(TECH_HOME_DEFAULTS)) {
+    const existing = current[tech]
+    if (!existing) {
+      current[tech] = { home_address: cfg.home_address, label: cfg.label, home_lat: null, home_lng: null, geocoded_at: null }
+      changed = true
+      continue
+    }
+    // If address changed (or force), update and clear lat/lng so next cron run re-geocodes.
+    if (force || existing.home_address !== cfg.home_address) {
+      current[tech] = {
+        ...existing,
+        home_address: cfg.home_address,
+        label: cfg.label,
+        home_lat: null,
+        home_lng: null,
+        geocoded_at: null,
+      }
+      changed = true
+    }
   }
   if (changed) await writeTechConfig(req, current)
   return current

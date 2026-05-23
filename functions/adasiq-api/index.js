@@ -347,6 +347,25 @@ app.post('/api/cron/stuck-jobs', async (req, res) => {
   }
 })
 
+// Force-reseed the tech config from TECH_HOME_DEFAULTS in services/geocoding.js.
+// Use this after editing a tech's home address in code: it overwrites any cached
+// entry and nulls lat/lng so the next geocode-shops run re-geocodes it.
+app.post('/api/cron/reseed-tech-config', async (req, res) => {
+  const cronSecret = process.env.BILLING_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { ensureTechConfigSeed, readTechConfig } = await import('./services/geocoding.js')
+    await ensureTechConfigSeed(req, { force: true })
+    const cfg = await readTechConfig(req)
+    res.json({ ok: true, config: cfg })
+  } catch (err) {
+    console.error('[reseed-tech-config]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Geocoding cron — populates lat/lng for CRM shops + tech home bases.
 // Reads addresses from CRMShops Datastore and absolute_adas_tech_config cache,
 // calls Google Geocoding API (reuses GOOGLE_PLACES_API_KEY; Geocoding API must
@@ -365,6 +384,7 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
       readGeocache, writeGeocache, geocodeAddress, normalizeKey,
       readTechConfig, writeTechConfig, ensureTechConfigSeed,
     } = await import('./services/geocoding.js')
+    const { readJobsPublic } = await import('./routes/jobs.js')
 
     const MAX_PER_RUN = 25
     const STALE_DAYS = 90
@@ -374,23 +394,60 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
     // Seed tech config if first run
     await ensureTechConfigSeed(req)
 
-    const [shops, cache, techConfig] = await Promise.all([
+    const [shops, jobs, cache, techConfig] = await Promise.all([
       getAllShops(req),
+      readJobsPublic(req),
       readGeocache(req),
       readTechConfig(req),
     ])
 
+    // Build a unified set of shop_names that need geocoding:
+    //  - all CRM shops (use their address if present)
+    //  - all distinct shop_names from open jobs that aren't already in CRM
+    //    (fall back to "Name, Lake Stevens, WA" so Zoho-Books-only shops
+    //     still get pinned).
+    const crmByKey = new Map()
+    for (const s of shops) {
+      if (!s.shop_name) continue
+      crmByKey.set(normalizeKey(s.shop_name), s)
+    }
+    const jobShopNames = new Set()
+    for (const j of jobs || []) {
+      if (j.shop_name && j.status !== 'complete') jobShopNames.add(j.shop_name)
+    }
+
     // Pick shops needing geocoding (no entry, status not "ok", or stale by 90d).
     // Manual overrides (source "manual") are skipped permanently.
-    const todo = []
-    for (const shop of shops) {
-      if (!shop.shop_name || !shop.address) continue
-      const key = normalizeKey(shop.shop_name)
+    function queueShop(name, address) {
+      const key = normalizeKey(name)
       const existing = cache[key]
-      if (existing?.geocode_source === 'manual') continue
-      if (existing?.geocode_status === 'ok' && !isStale(existing.geocoded_at)) continue
-      todo.push({ kind: 'shop', key, name: shop.shop_name, address: shop.address })
+      if (existing?.geocode_source === 'manual') return
+      // Skip if recently processed at any non-failed status (re-runs of
+      // ambiguous results would just keep returning the same ambiguous answer
+      // and burn API calls; user can promote to "ok" via manual pin).
+      if (existing?.geocode_status === 'ok' && !isStale(existing.geocoded_at)) return
+      if (existing?.geocode_status === 'ambiguous' && !isStale(existing.geocoded_at)) return
+      todo.push({ kind: 'shop', key, name, address })
+    }
+
+    const todo = []
+    // 1) CRM shops with real addresses
+    for (const shop of shops) {
+      if (!shop.shop_name) continue
+      const address = shop.address && shop.address.trim()
+        ? shop.address
+        : `${shop.shop_name}, Lake Stevens, WA`
+      queueShop(shop.shop_name, address)
       if (todo.length >= MAX_PER_RUN) break
+    }
+    // 2) Shops that appear on jobs but aren't in CRM (Zoho-Books-only shops).
+    //    Geocode them by name + city so they still get pins on the dispatch map.
+    if (todo.length < MAX_PER_RUN) {
+      for (const name of jobShopNames) {
+        if (crmByKey.has(normalizeKey(name))) continue
+        queueShop(name, `${name}, Lake Stevens, WA`)
+        if (todo.length >= MAX_PER_RUN) break
+      }
     }
 
     // Also queue tech home bases that are not yet geocoded.

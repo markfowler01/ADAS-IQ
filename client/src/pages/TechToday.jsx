@@ -10,19 +10,31 @@ import Navbar from '../components/Navbar.jsx'
 
 const ORANGE = '#CD4419'
 
-// Open the native maps app. iOS prefers Apple Maps; everything else Google.
-function openMaps({ lat, lng, address }) {
+// Open the native maps app. Tries lat/lng first (always works), then a search
+// query built from address / shop name. iOS prefers Apple Maps; everything else
+// Google. Logs the chosen target so we can debug "no address" reports.
+function openMaps({ lat, lng, address, shopName }) {
   const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream
+  const fallbackQuery = address || (shopName ? `${shopName}, Lake Stevens, WA` : '')
   let url
+
   if (isiOS) {
-    if (lat != null && lng != null) url = `maps://?daddr=${lat},${lng}`
-    else if (address) url = `maps://?daddr=${encodeURIComponent(address)}`
+    if (lat != null && lng != null) {
+      url = `maps://?daddr=${lat},${lng}`
+    } else if (fallbackQuery) {
+      url = `maps://?daddr=${encodeURIComponent(fallbackQuery)}`
+    }
   }
   if (!url) {
-    if (lat != null && lng != null) url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
-    else if (address) url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`
+    if (lat != null && lng != null) {
+      url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`
+    } else if (fallbackQuery) {
+      url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fallbackQuery)}`
+    }
   }
+  console.log('[navigate]', { lat, lng, address, shopName, url })
   if (url) window.location.href = url
+  else alert(`No location for "${shopName || 'this job'}". Add an address to the shop in CRM or set coordinates from the Dispatch Map.`)
 }
 
 export default function TechToday({ user, onLogout, currentScreen, onNavigate }) {
@@ -91,7 +103,8 @@ export default function TechToday({ user, onLogout, currentScreen, onNavigate })
         openMaps({
           lat: job.coords?.lat,
           lng: job.coords?.lng,
-          address: job.shop_address,
+          address: job.nav_address || job.shop_address,
+          shopName: job.shop_name,
         })
         await load()
         return

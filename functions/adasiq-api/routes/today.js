@@ -38,18 +38,43 @@ router.get('/', async (req, res) => {
     ])
     const shopByName = new Map(shops.map(s => [(s.shop_name || '').toLowerCase().trim(), s]))
 
+    // Fuzzy shop lookup — exact match first, then case-insensitive substring.
+    function findShop(name) {
+      const k = (name || '').toLowerCase().trim()
+      if (!k) return null
+      if (shopByName.has(k)) return shopByName.get(k)
+      // Loose contains-match in either direction
+      for (const [key, shop] of shopByName.entries()) {
+        if (key.includes(k) || k.includes(key)) return shop
+      }
+      return null
+    }
+
     let techJobs = allJobs
       .filter(j => isAssignedTo(j, techName))
       .filter(j => (j.scheduled_date || '') === dateISO)
       .map(j => {
         const merged = mergeJobState(j, stateMap)
-        const shop = shopByName.get((j.shop_name || '').toLowerCase().trim()) || null
+        const shop = findShop(j.shop_name)
         const coords = geocache[normalizeKey(j.shop_name)] || null
+        const address = shop?.address || ''
+        // Build a robust nav target: prefer geocoded coords; fall back to a
+        // full address (always appending Lake Stevens, WA if it looks bare);
+        // last resort fall back to "ShopName, Lake Stevens, WA" so the maps
+        // app at least searches for the business by name.
+        let navAddress = address
+        if (navAddress && !/wa\b|washington/i.test(navAddress)) {
+          navAddress = `${navAddress}, Lake Stevens, WA`
+        }
+        if (!navAddress && j.shop_name) {
+          navAddress = `${j.shop_name}, Lake Stevens, WA`
+        }
         return {
           ...merged,
-          shop_address: shop?.address || '',
+          shop_address: address,
           shop_contact: shop?.contact_name || '',
           shop_phone: shop?.phone || '',
+          nav_address: navAddress,
           coords: coords ? { lat: coords.lat, lng: coords.lng, status: coords.geocode_status } : null,
         }
       })
