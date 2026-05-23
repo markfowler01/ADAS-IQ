@@ -482,7 +482,7 @@ router.get('/search-places', async (req, res) => {
 // or when an automatic geocode came back ambiguous and dispatch wants to retry.
 router.post('/:shopName/geocode', async (req, res) => {
   try {
-    const { readGeocache, writeGeocache, geocodeAddress, normalizeKey } = await import('../services/geocoding.js')
+    const { readGeocacheRaw, writeGeocache, geocodeAddress, normalizeKey } = await import('../services/geocoding.js')
     const shopName = decodeURIComponent(req.params.shopName)
     const shops = await getAllShops(req)
     const shop = shops.find(s => s.shop_name?.toLowerCase().trim() === shopName.toLowerCase().trim())
@@ -492,7 +492,7 @@ router.post('/:shopName/geocode', async (req, res) => {
     const result = await geocodeAddress(shop.address)
     if (!result) return res.status(500).json({ error: 'Geocoding API unavailable (check GOOGLE_PLACES_API_KEY + Geocoding API enabled)' })
 
-    const cache = await readGeocache(req)
+    const cache = await readGeocacheRaw(req)
     cache[normalizeKey(shopName)] = { ...result, geocoded_at: new Date().toISOString() }
     await writeGeocache(req, cache)
 
@@ -509,14 +509,14 @@ router.post('/:shopName/geocode', async (req, res) => {
 // "manual" so the cron does not overwrite it.
 router.put('/:shopName/coordinates', async (req, res) => {
   try {
-    const { readGeocache, writeGeocache, normalizeKey } = await import('../services/geocoding.js')
+    const { readGeocacheRaw, writeGeocache, normalizeKey } = await import('../services/geocoding.js')
     const shopName = decodeURIComponent(req.params.shopName)
     const { lat, lng } = req.body || {}
     if (typeof lat !== 'number' || typeof lng !== 'number') {
       return res.status(400).json({ error: 'lat and lng must be numbers' })
     }
 
-    const cache = await readGeocache(req)
+    const cache = await readGeocacheRaw(req)
     cache[normalizeKey(shopName)] = {
       lat, lng,
       geocoded_at: new Date().toISOString(),
@@ -534,22 +534,24 @@ router.put('/:shopName/coordinates', async (req, res) => {
 
 // ── Pinned shops (Mark's main-client list) ──────────────────────────────────
 //
-// A pinned shop is a manual geocache entry that takes precedence over CRM
-// Shops, Zoho Books, and the geocoding cron. Used for the 5-6 shops Mark
-// works with daily, so their locations are set once and never drift.
+// Stored in Catalyst Datastore table `PinnedShops` (durable). The read path
+// in services/geocoding.js merges these on top of the geocache so all
+// dispatch code sees pinned coords transparently. The cron skips any shop
+// whose key is in the pinned set.
 
-// GET /api/shops/pins — list every shop with a manual override
+// GET /api/shops/pins — list every pinned shop (durable)
 router.get('/pins', async (req, res) => {
   try {
-    const { readGeocache } = await import('../services/geocoding.js')
-    const cache = await readGeocache(req)
-    const pins = Object.entries(cache)
-      .filter(([, v]) => v.geocode_source === 'manual')
-      .map(([key, v]) => ({
-        shop_name_key: key,
-        lat: v.lat, lng: v.lng,
-        address: v.address || '',
-        geocoded_at: v.geocoded_at,
+    const { listPinnedShops } = await import('../services/pinnedShops.js')
+    const all = await listPinnedShops(req)
+    const pins = all
+      .map(p => ({
+        shop_name_key: p.shop_name_key,
+        shop_name: p.shop_name,
+        lat: p.lat,
+        lng: p.lng,
+        address: p.address,
+        geocoded_at: p.geocoded_at,
       }))
       .sort((a, b) => a.shop_name_key.localeCompare(b.shop_name_key))
     res.json({ ok: true, pins })
@@ -560,55 +562,93 @@ router.get('/pins', async (req, res) => {
 })
 
 // POST /api/shops/pin — add or update a pinned shop by typing an address.
-// Body: { shop_name, address }. Geocodes the address and stores a manual
-// override; the cron never overwrites manual entries.
+// Body: { shop_name, address }. Geocodes the address and writes to Datastore.
 router.post('/pin', async (req, res) => {
   try {
     const { shop_name, address } = req.body || {}
     if (!shop_name || !shop_name.trim()) return res.status(400).json({ error: 'shop_name is required' })
     if (!address || !address.trim()) return res.status(400).json({ error: 'address is required' })
 
-    const { geocodeAddress, readGeocache, writeGeocache, normalizeKey } = await import('../services/geocoding.js')
+    const { geocodeAddress } = await import('../services/geocoding.js')
+    const { upsertPinnedShop } = await import('../services/pinnedShops.js')
     const result = await geocodeAddress(address)
     if (!result || result.lat == null) {
       return res.status(422).json({ error: `Could not geocode "${address}". Try a more specific address.` })
     }
 
-    const cache = await readGeocache(req)
-    const key = normalizeKey(shop_name)
-    cache[key] = {
+    const saved = await upsertPinnedShop(req, {
+      shop_name: shop_name.trim(),
+      address: address.trim(),
       lat: result.lat,
       lng: result.lng,
-      geocoded_at: new Date().toISOString(),
-      geocode_status: 'ok',
-      geocode_source: 'manual',
-      address,
-      address_source: 'pinned',
-    }
-    await writeGeocache(req, cache)
-
-    res.json({ ok: true, shop_name, ...cache[key] })
+    })
+    res.json({ ok: true, ...saved })
   } catch (err) {
     console.error('[shops pin add]', err.message)
     res.status(500).json({ error: err.message })
   }
 })
 
-// DELETE /api/shops/pin/:shopName — remove a manual pin (revert to whatever
-// the cron + CRM + Zoho can resolve naturally).
+// DELETE /api/shops/pin/:shopName — remove a pinned shop.
 router.delete('/pin/:shopName', async (req, res) => {
   try {
-    const { readGeocache, writeGeocache, normalizeKey } = await import('../services/geocoding.js')
-    const cache = await readGeocache(req)
+    const { normalizeKey } = await import('../services/geocoding.js')
+    const { deletePinnedShopByKey } = await import('../services/pinnedShops.js')
     const key = normalizeKey(decodeURIComponent(req.params.shopName))
-    if (cache[key]?.geocode_source !== 'manual') {
-      return res.status(404).json({ error: 'Not a manual pin' })
-    }
-    delete cache[key]
-    await writeGeocache(req, cache)
+    const removed = await deletePinnedShopByKey(req, key)
+    if (!removed) return res.status(404).json({ error: 'Pinned shop not found' })
     res.json({ ok: true })
   } catch (err) {
     console.error('[shops pin delete]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/shops/migrate-pins — one-time: copy manual pins from the cache
+// into the PinnedShops Datastore table. Idempotent: skips entries that
+// already exist by shop_name_key. Optionally clears the cache copies after
+// a successful migration (?clearCache=true).
+router.post('/migrate-pins', async (req, res) => {
+  try {
+    const { readGeocacheRaw, writeGeocache } = await import('../services/geocoding.js')
+    const { listPinnedShops, upsertPinnedShop } = await import('../services/pinnedShops.js')
+    const cache = await readGeocacheRaw(req)
+    const existing = await listPinnedShops(req)
+    const existingKeys = new Set(existing.map(p => p.shop_name_key))
+
+    const cacheManual = Object.entries(cache).filter(([, v]) => v.geocode_source === 'manual')
+    const migrated = []
+    const skipped = []
+    for (const [key, v] of cacheManual) {
+      if (existingKeys.has(key)) { skipped.push(key); continue }
+      if (v.lat == null || v.lng == null) { skipped.push(key); continue }
+      await upsertPinnedShop(req, {
+        shop_name: key,
+        address: v.address || '',
+        lat: v.lat,
+        lng: v.lng,
+      })
+      migrated.push(key)
+    }
+
+    let cleared = 0
+    if (req.query.clearCache === 'true') {
+      for (const [key] of cacheManual) {
+        delete cache[key]
+        cleared++
+      }
+      await writeGeocache(req, cache)
+    }
+
+    res.json({
+      ok: true,
+      migrated_count: migrated.length,
+      skipped_count: skipped.length,
+      cleared_from_cache: cleared,
+      migrated, skipped,
+    })
+  } catch (err) {
+    console.error('[shops migrate-pins]', err.message)
     res.status(500).json({ error: err.message })
   }
 })

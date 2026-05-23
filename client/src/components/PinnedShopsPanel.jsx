@@ -16,6 +16,8 @@ export default function PinnedShopsPanel({ onChanged }) {
   const [address, setAddress] = useState('')
   const [saving, setSaving] = useState(false)
   const [savedFlash, setSavedFlash] = useState('')
+  const [migrating, setMigrating] = useState(false)
+  const [migrationResult, setMigrationResult] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -56,6 +58,25 @@ export default function PinnedShopsPanel({ onChanged }) {
       setErr(e.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleMigrate() {
+    if (!confirm('Migrate any pinned shops still living in cache into the durable Datastore table? Safe to run multiple times.')) return
+    setMigrating(true)
+    setMigrationResult('')
+    setErr('')
+    try {
+      const res = await apiFetch(`${API_BASE}/api/shops/migrate-pins?clearCache=true`, { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      setMigrationResult(`Migrated ${json.migrated_count} · skipped ${json.skipped_count} · cleared ${json.cleared_from_cache} from cache`)
+      await load()
+      onChanged && onChanged()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setMigrating(false)
     }
   }
 
@@ -120,10 +141,25 @@ export default function PinnedShopsPanel({ onChanged }) {
       )}
 
       {/* Pins list */}
-      <div className="text-xs uppercase tracking-wider mb-2 font-semibold px-1"
-        style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-        Current pins ({pins.length})
+      <div className="flex items-center justify-between mb-2 px-1">
+        <div className="text-xs uppercase tracking-wider font-semibold"
+          style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
+          Current pins ({pins.length})
+        </div>
+        <button
+          onClick={handleMigrate}
+          disabled={migrating}
+          className="text-[10px] underline"
+          style={{ color: '#888' }}
+          title="One-time: copy any pinned shops still in the old cache into the Datastore"
+        >{migrating ? 'Migrating…' : 'Migrate from cache'}</button>
       </div>
+      {migrationResult && (
+        <div className="text-[11px] mb-2 px-2 py-1 rounded"
+          style={{ backgroundColor: '#f0f9f4', color: '#15803d', border: '1px solid #bbf7d0' }}>
+          {migrationResult}
+        </div>
+      )}
       {loading ? (
         <p className="text-sm px-2" style={{ color: '#aaa' }}>Loading…</p>
       ) : pins.length === 0 ? (

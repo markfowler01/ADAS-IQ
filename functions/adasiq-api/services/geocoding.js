@@ -35,13 +35,28 @@ export function formatZohoAddress(b) {
   return parts.join(', ')
 }
 
+// Reads the cache-based geocache AND merges durable pinned shops from
+// Datastore on top. Pinned shops always win. They're the manual,
+// hand-entered locations Mark cares about. Cache entries are regenerable
+// from the geocoding cron; pinned shops are not.
 export async function readGeocache(req) {
+  const cacheEntries = await readGeocacheRaw(req)
+  // Lazy import to avoid a circular dep (pinnedShops imports normalizeKey from here).
+  const { getPinnedShopsMap } = await import('./pinnedShops.js')
+  const pinned = await getPinnedShopsMap(req)
+  return { ...cacheEntries, ...pinned }
+}
+
+// Cache-only read (no Datastore overlay). Used by writers that round-trip
+// the cache value: writeGeocache should not persist the merged pinned entries
+// back into the cache.
+export async function readGeocacheRaw(req) {
   try {
     const item = await getSegment(req).get(GEOCACHE_KEY)
     return item?.cache_value ? JSON.parse(item.cache_value) : {}
   } catch (e) {
     if (isNotFound(e)) return {}
-    console.warn('[geocoding] readGeocache failed:', e.message)
+    console.warn('[geocoding] readGeocacheRaw failed:', e.message)
     return {}
   }
 }

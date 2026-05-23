@@ -129,7 +129,7 @@ router.get('/run', async (req, res) => {
     }
 
     // Read everything in parallel
-    const [crmShops, jobHistory, jobs, calRules, booksInvoices, booksServices, booksExpenses, booksDeposits] = await Promise.all([
+    const [crmShops, jobHistory, jobs, calRules, booksInvoices, booksServices, booksExpenses, booksDeposits, pinnedShops] = await Promise.all([
       readShopsForBackup(),
       readCache(segment, 'job_history'),
       readDatastore(app, 'Jobs'),
@@ -138,6 +138,7 @@ router.get('/run', async (req, res) => {
       readCache(segment, 'books_services'),
       readCache(segment, 'books_expenses'),
       readCache(segment, 'books_deposits'),
+      readDatastore(app, 'PinnedShops'),
     ])
 
     // Read invoice counter (scalar, not array)
@@ -153,6 +154,7 @@ router.get('/run', async (req, res) => {
       job_history:       jobHistory,
       jobs:              jobs,
       calibration_rules: calRules,
+      pinned_shops:      pinnedShops,
       books: {
         invoices:      booksInvoices,
         services:      Array.isArray(booksServices) ? booksServices : (booksServices || []),
@@ -165,6 +167,7 @@ router.get('/run', async (req, res) => {
         job_history:       Array.isArray(jobHistory)     ? jobHistory.length     : 0,
         jobs:              Array.isArray(jobs)            ? jobs.length           : 0,
         calibration_rules: Array.isArray(calRules)       ? calRules.length       : 0,
+        pinned_shops:      Array.isArray(pinnedShops)    ? pinnedShops.length    : 0,
         books_invoices:    Array.isArray(booksInvoices)  ? booksInvoices.length  : 0,
         books_expenses:    Array.isArray(booksExpenses)  ? booksExpenses.length  : 0,
         books_deposits:    Array.isArray(booksDeposits)  ? booksDeposits.length  : 0,

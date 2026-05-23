@@ -356,8 +356,8 @@ app.post('/api/cron/cleanup-name-fallback', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' })
   }
   try {
-    const { readGeocache, writeGeocache } = await import('./services/geocoding.js')
-    const cache = await readGeocache(req)
+    const { readGeocacheRaw, writeGeocache } = await import('./services/geocoding.js')
+    const cache = await readGeocacheRaw(req)
     const before = Object.keys(cache).length
     let removed = 0
     for (const [key, v] of Object.entries(cache)) {
@@ -518,7 +518,7 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
   try {
     const { getAllShops } = await import('./routes/shops.js')
     const {
-      readGeocache, writeGeocache, geocodeAddress, normalizeKey,
+      readGeocacheRaw, writeGeocache, geocodeAddress, normalizeKey,
       readTechConfig, writeTechConfig, ensureTechConfigSeed,
       formatZohoAddress,
     } = await import('./services/geocoding.js')
@@ -533,16 +533,19 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
     // Seed tech config if first run
     await ensureTechConfigSeed(req)
 
-    const [shops, jobs, cache, techConfig, zohoCustomers] = await Promise.all([
+    const { getPinnedShopsMap } = await import('./services/pinnedShops.js')
+    const [shops, jobs, cache, techConfig, zohoCustomers, pinnedMap] = await Promise.all([
       getAllShops(req),
       readJobsPublic(req),
-      readGeocache(req),
+      readGeocacheRaw(req),
       readTechConfig(req),
       listCustomers().catch(e => {
         console.warn('[geocode-shops] listCustomers failed (non-fatal):', e.message)
         return []
       }),
+      getPinnedShopsMap(req),
     ])
+    const pinnedKeys = new Set(Object.keys(pinnedMap))
 
     // Address resolution chain per shop:
     //  1) CRM Shops table (if address present)
@@ -611,8 +614,9 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
     const todo = []
     function queueShop(name, address, addressSource) {
       const key = normalizeKey(name)
+      if (pinnedKeys.has(key)) return                          // Datastore pin wins; never re-geocode
       const existing = cache[key]
-      if (existing?.geocode_source === 'manual') return
+      if (existing?.geocode_source === 'manual') return        // legacy pre-migration manual entry
       if (existing?.geocode_status === 'ok' && !isStale(existing.geocoded_at)) return
       todo.push({ kind: 'shop', key, name, address, addressSource })
     }
