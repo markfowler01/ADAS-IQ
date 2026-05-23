@@ -225,6 +225,18 @@ router.get('/map-data', async (req, res) => {
       return ao - bo
     })
 
+    // All manually-pinned shops (Mark's main clients), regardless of date/job —
+    // rendered as faded background markers so dispatch sees client locations
+    // even when no active job is on the map.
+    const pinned_shops = Object.entries(geocache)
+      .filter(([, v]) => v.geocode_source === 'manual' && v.lat != null)
+      .map(([key, v]) => ({
+        shop_name_key: key,
+        lat: v.lat,
+        lng: v.lng,
+        address: v.address || '',
+      }))
+
     res.json({
       ok: true,
       date: dateISO,
@@ -232,6 +244,7 @@ router.get('/map-data', async (req, res) => {
       tech_homes: techConfig,
       capacities,
       pins,
+      pinned_shops,
       ambiguous_shops: pins
         .filter(p => p.coords && p.coords.status !== 'ok')
         .map(p => ({ shop_name: p.shop_name, status: p.coords.status })),

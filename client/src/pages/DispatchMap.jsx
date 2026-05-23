@@ -134,6 +134,37 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
       bounds.extend([pin.coords.lng, pin.coords.lat])
     })
 
+    // Plot pinned shops as small faded gray markers BEHIND the active job pins.
+    // Visual confirmation that pinned-shop locations are saved, even on days
+    // when no active job is on the map for that shop.
+    if (data.pinned_shops) {
+      for (const p of data.pinned_shops) {
+        if (p.lat == null || p.lng == null) continue
+        // Skip if there's already an active job pin at this shop (avoid stacking)
+        const hasActive = pins.some(jp => jp.shop_name && jp.shop_name.toLowerCase().trim() === (p.shop_name_key || '').toLowerCase().trim())
+        if (hasActive) continue
+        const el = document.createElement('div')
+        el.title = p.shop_name_key
+        el.innerHTML = `
+          <svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg"
+               style="display: block; opacity: 0.6;">
+            <circle cx="7" cy="7" r="5" fill="#999999" stroke="white" stroke-width="1.5"/>
+          </svg>
+        `
+        const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
+          .setLngLat([p.lng, p.lat])
+          .setPopup(new mapboxgl.Popup({ offset: 10, closeButton: false }).setHTML(`
+            <div style="font-family: 'IBM Plex Sans', sans-serif; padding: 4px 2px; min-width: 140px;">
+              <div style="font-weight: 600; font-size: 12px; color: #555;">${p.shop_name_key}</div>
+              ${p.address ? `<div style="font-size: 11px; color: #888; margin-top: 2px;">${p.address}</div>` : ''}
+              <div style="font-size: 10px; color: #aaa; margin-top: 4px; font-style: italic;">Pinned shop (no active job today)</div>
+            </div>
+          `))
+          .addTo(map)
+        markersRef.current.push(marker)
+      }
+    }
+
     // Plot tech home bases as small house markers, color-coded by tech.
     if (data.tech_homes) {
       for (const [tech, cfg] of Object.entries(data.tech_homes)) {
