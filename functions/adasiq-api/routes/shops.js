@@ -532,4 +532,85 @@ router.put('/:shopName/coordinates', async (req, res) => {
   }
 })
 
+// ── Pinned shops (Mark's main-client list) ──────────────────────────────────
+//
+// A pinned shop is a manual geocache entry that takes precedence over CRM
+// Shops, Zoho Books, and the geocoding cron. Used for the 5-6 shops Mark
+// works with daily, so their locations are set once and never drift.
+
+// GET /api/shops/pins — list every shop with a manual override
+router.get('/pins', async (req, res) => {
+  try {
+    const { readGeocache } = await import('../services/geocoding.js')
+    const cache = await readGeocache(req)
+    const pins = Object.entries(cache)
+      .filter(([, v]) => v.geocode_source === 'manual')
+      .map(([key, v]) => ({
+        shop_name_key: key,
+        lat: v.lat, lng: v.lng,
+        address: v.address || '',
+        geocoded_at: v.geocoded_at,
+      }))
+      .sort((a, b) => a.shop_name_key.localeCompare(b.shop_name_key))
+    res.json({ ok: true, pins })
+  } catch (err) {
+    console.error('[shops pins list]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/shops/pin — add or update a pinned shop by typing an address.
+// Body: { shop_name, address }. Geocodes the address and stores a manual
+// override; the cron never overwrites manual entries.
+router.post('/pin', async (req, res) => {
+  try {
+    const { shop_name, address } = req.body || {}
+    if (!shop_name || !shop_name.trim()) return res.status(400).json({ error: 'shop_name is required' })
+    if (!address || !address.trim()) return res.status(400).json({ error: 'address is required' })
+
+    const { geocodeAddress, readGeocache, writeGeocache, normalizeKey } = await import('../services/geocoding.js')
+    const result = await geocodeAddress(address)
+    if (!result || result.lat == null) {
+      return res.status(422).json({ error: `Could not geocode "${address}". Try a more specific address.` })
+    }
+
+    const cache = await readGeocache(req)
+    const key = normalizeKey(shop_name)
+    cache[key] = {
+      lat: result.lat,
+      lng: result.lng,
+      geocoded_at: new Date().toISOString(),
+      geocode_status: 'ok',
+      geocode_source: 'manual',
+      address,
+      address_source: 'pinned',
+    }
+    await writeGeocache(req, cache)
+
+    res.json({ ok: true, shop_name, ...cache[key] })
+  } catch (err) {
+    console.error('[shops pin add]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/shops/pin/:shopName — remove a manual pin (revert to whatever
+// the cron + CRM + Zoho can resolve naturally).
+router.delete('/pin/:shopName', async (req, res) => {
+  try {
+    const { readGeocache, writeGeocache, normalizeKey } = await import('../services/geocoding.js')
+    const cache = await readGeocache(req)
+    const key = normalizeKey(decodeURIComponent(req.params.shopName))
+    if (cache[key]?.geocode_source !== 'manual') {
+      return res.status(404).json({ error: 'Not a manual pin' })
+    }
+    delete cache[key]
+    await writeGeocache(req, cache)
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[shops pin delete]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router

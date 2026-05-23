@@ -8,6 +8,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import DispatchSidePanel from '../components/DispatchSidePanel.jsx'
 import ManualGeocodePicker from '../components/ManualGeocodePicker.jsx'
+import PinnedShopsPanel from '../components/PinnedShopsPanel.jsx'
 import Navbar from '../components/Navbar.jsx'
 
 const ORANGE = '#CD4419'
@@ -39,6 +40,7 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [pickerShop, setPickerShop] = useState(null)
+  const [sidePanelTab, setSidePanelTab] = useState('jobs') // 'jobs' | 'pinned'
 
   const mapContainer = useRef(null)
   const mapRef = useRef(null)
@@ -223,15 +225,41 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
             className="rounded-2xl overflow-hidden"
             style={{ border: '1px solid #ebebeb', backgroundColor: '#e8e4e0' }}
           />
-          <div className="rounded-2xl overflow-hidden" style={{ border: '1px solid #ebebeb' }}>
-            <DispatchSidePanel
-              pins={pins}
-              onReassign={handleReassign}
-              ambiguousShops={data?.ambiguous_shops || []}
-              ungeocodedShops={data?.ungeocoded_shops || []}
-              onManualGeocode={(name) => setPickerShop(name)}
-              onJobClick={() => {}}
-            />
+          <div className="rounded-2xl overflow-hidden flex flex-col" style={{ border: '1px solid #ebebeb', backgroundColor: '#f5f3f0' }}>
+            {/* Tab toggle */}
+            <div className="flex gap-1 px-2 pt-2" style={{ backgroundColor: '#f5f3f0' }}>
+              {[
+                { id: 'jobs',   label: 'Jobs' },
+                { id: 'pinned', label: 'Pinned Shops' },
+              ].map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => setSidePanelTab(t.id)}
+                  className="px-3 py-1.5 rounded-t-lg text-xs font-semibold"
+                  style={{
+                    backgroundColor: sidePanelTab === t.id ? 'white' : 'transparent',
+                    color: sidePanelTab === t.id ? '#1a1a1a' : '#666',
+                    border: '1px solid #ebebeb',
+                    borderBottom: sidePanelTab === t.id ? '1px solid white' : '1px solid #ebebeb',
+                    marginBottom: -1,
+                  }}
+                >{t.label}</button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {sidePanelTab === 'jobs' ? (
+                <DispatchSidePanel
+                  pins={pins}
+                  onReassign={handleReassign}
+                  ambiguousShops={data?.ambiguous_shops || []}
+                  ungeocodedShops={data?.ungeocoded_shops || []}
+                  onManualGeocode={(name) => setPickerShop(name)}
+                  onJobClick={() => {}}
+                />
+              ) : (
+                <PinnedShopsPanel onChanged={load} />
+              )}
+            </div>
           </div>
         </div>
       </div>
