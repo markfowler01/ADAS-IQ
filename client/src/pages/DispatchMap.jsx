@@ -93,31 +93,61 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
     const bounds = new mapboxgl.LngLatBounds()
     const pins = (data.pins || []).filter(p => p.coords && p.coords.lat != null)
 
+    // Build a set of pinned-shop names so we know which pins get the
+    // Absolute ADAS logo treatment instead of the standard teardrop.
+    const pinnedShopNames = new Set(
+      (data.pinned_shops || []).map(p => (p.shop_name_key || '').toLowerCase().trim())
+    )
+    const LOGO_URL = import.meta.env.BASE_URL + 'logo.png'
+
     pins.forEach(pin => {
       const color = pinColor(pin)
       const label = pin.drive_order != null ? String(pin.drive_order) : '•'
-      // Custom calibration pin: teardrop with two radar/sensor arcs above the
-      // head, signaling "this is a calibration job site" — color-coded by tech,
-      // drive order number in the center disc.
+      const isPinnedShop = pinnedShopNames.has((pin.shop_name || '').toLowerCase().trim())
+
       const el = document.createElement('div')
       el.style.cursor = 'pointer'
-      el.innerHTML = `
-        <svg width="40" height="52" viewBox="0 0 40 52" xmlns="http://www.w3.org/2000/svg"
-             style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); display: block;">
-          <!-- Calibration sensor arcs above pin head -->
-          <path d="M12 8 Q20 4.5 28 8"  stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
-          <path d="M9.5 4.5 Q20 0.5 30.5 4.5" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.32"/>
-          <!-- Teardrop pin body -->
-          <path d="M20 11 C10 11 3 18 3 27.5 C3 36.5 20 51 20 51 C20 51 37 36.5 37 27.5 C37 18 30 11 20 11 Z"
-                fill="${color}" stroke="white" stroke-width="2"/>
-          <!-- Inner white disc -->
-          <circle cx="20" cy="27.5" r="10" fill="white"/>
-          <!-- Drive order number -->
-          <text x="20" y="31.5" text-anchor="middle"
-                font-family="-apple-system, BlinkMacSystemFont, 'IBM Plex Sans', sans-serif"
-                font-weight="800" font-size="13" fill="${color}">${label}</text>
-        </svg>
-      `
+
+      if (isPinnedShop) {
+        // Active job at a main client (pinned shop): show the Absolute ADAS
+        // logo with a tech-colored ring and a drive-order number badge.
+        el.innerHTML = `
+          <div style="position: relative; width: 44px; height: 44px;">
+            <div style="width: 44px; height: 44px; border-radius: 50%;
+                        border: 3px solid ${color}; background: white;
+                        display: flex; align-items: center; justify-content: center;
+                        overflow: hidden; box-shadow: 0 2px 6px rgba(0,0,0,0.35);">
+              <img src="${LOGO_URL}" alt="" style="width: 30px; height: 30px; object-fit: contain;" />
+            </div>
+            ${pin.drive_order != null ? `
+              <div style="position: absolute; top: -4px; right: -4px;
+                          min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+                          background: ${color}; color: white;
+                          font-family: -apple-system, BlinkMacSystemFont, 'IBM Plex Sans', sans-serif;
+                          font-weight: 800; font-size: 11px;
+                          display: flex; align-items: center; justify-content: center;
+                          border: 2px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3);">
+                ${label}
+              </div>
+            ` : ''}
+          </div>
+        `
+      } else {
+        // Standard calibration teardrop pin (regular job, non-pinned shop)
+        el.innerHTML = `
+          <svg width="40" height="52" viewBox="0 0 40 52" xmlns="http://www.w3.org/2000/svg"
+               style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35)); display: block;">
+            <path d="M12 8 Q20 4.5 28 8"  stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.6"/>
+            <path d="M9.5 4.5 Q20 0.5 30.5 4.5" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" opacity="0.32"/>
+            <path d="M20 11 C10 11 3 18 3 27.5 C3 36.5 20 51 20 51 C20 51 37 36.5 37 27.5 C37 18 30 11 20 11 Z"
+                  fill="${color}" stroke="white" stroke-width="2"/>
+            <circle cx="20" cy="27.5" r="10" fill="white"/>
+            <text x="20" y="31.5" text-anchor="middle"
+                  font-family="-apple-system, BlinkMacSystemFont, 'IBM Plex Sans', sans-serif"
+                  font-weight="800" font-size="13" fill="${color}">${label}</text>
+          </svg>
+        `
+      }
 
       // Click pin -> select job in side panel (don't use the popup; the
       // detail card in the side panel is the spec'd interaction).
@@ -127,7 +157,9 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
         setSidePanelTab('jobs')
       })
 
-      const marker = new mapboxgl.Marker({ element: el, anchor: 'bottom' })
+      // Logo marker is a circle (anchor at center); teardrop has its point
+      // at the bottom (anchor at bottom).
+      const marker = new mapboxgl.Marker({ element: el, anchor: isPinnedShop ? 'center' : 'bottom' })
         .setLngLat([pin.coords.lng, pin.coords.lat])
         .addTo(map)
       markersRef.current.push(marker)
@@ -147,8 +179,8 @@ export default function DispatchMap({ user, onLogout, currentScreen, onNavigate 
         el.title = p.shop_name_key
         el.innerHTML = `
           <svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg"
-               style="display: block; opacity: 0.6;">
-            <circle cx="7" cy="7" r="5" fill="#999999" stroke="white" stroke-width="1.5"/>
+               style="display: block; opacity: 0.65;">
+            <circle cx="7" cy="7" r="5" fill="#CD4419" stroke="white" stroke-width="1.5"/>
           </svg>
         `
         const marker = new mapboxgl.Marker({ element: el, anchor: 'center' })
