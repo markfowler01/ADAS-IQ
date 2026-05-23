@@ -48,6 +48,8 @@ import CustomerExperienceScreen from './components/CustomerExperienceScreen'
 import NPSScreen from './components/NPSScreen'
 import IntelligenceScreen from './components/IntelligenceScreen'
 import PayrollScreen from './components/PayrollScreen'
+import TechToday from './pages/TechToday'
+import DispatchMap from './pages/DispatchMap'
 
 // Top-level route check: public pay page and customer portal bypass the main auth flow.
 function getTopLevelRoute() {
@@ -243,6 +245,12 @@ function MainApp() {
           onExtracted={handleExtracted}
           {...navProps}
         />
+      )}
+      {screen === 'today' && (
+        <TechToday user={user} onLogout={handleLogout} {...navProps} />
+      )}
+      {screen === 'dispatch-map' && (
+        <DispatchMap user={user} onLogout={handleLogout} {...navProps} />
       )}
       {screen === 'estimates' && (
         <RepairEstimateScreen onBack={() => setScreen('upload')} {...navProps} />

@@ -5,11 +5,11 @@ const ORANGE = '#CD4419'
 
 // Primary nav — everyday workflow, 6 items max
 const PRIMARY_LINKS = [
-  { id: 'planner', label: 'My Day' },
+  { id: 'today',   label: 'Today' },
   { id: 'kanban',  label: 'Jobs' },
+  { id: 'dispatch-map', label: 'Map', adminOnly: true },
   { id: 'crm',     label: 'CRM' },
   { id: 'books',   label: 'Books' },
-  { id: 'projects', label: 'Projects' },
   { id: 'ops',     label: 'Ops', adminOnly: true },
 ]
 
@@ -36,6 +36,8 @@ const MORE_GROUPS = [
   ]},
   { label: 'Tools', links: [
     { id: 'upload',    label: 'Upload PDF' },
+    { id: 'planner',   label: 'My Day Planner' },
+    { id: 'projects',  label: 'Projects' },
     { id: 'rules',     label: 'Calibration Rules' },
     { id: 'messages',  label: 'Messages' },
   ]},
