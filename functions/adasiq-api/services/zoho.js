@@ -62,6 +62,27 @@ function orgParam() {
 }
 
 /**
+ * Fetch a single customer's full record from Zoho Books, including
+ * billing_address (which the list endpoint omits). Returns the contact object
+ * or null on error.
+ */
+export async function getCustomerFull(contactId) {
+  if (!contactId) return null
+  try {
+    const token = await getAccessToken()
+    const res = await axios.get(`${ZOHO_API_BASE}/contacts/${contactId}`, {
+      headers: zohoHeaders(token),
+      params: orgParam(),
+      timeout: 10000,
+    })
+    return res.data?.contact || null
+  } catch (e) {
+    console.warn('[zoho] getCustomerFull failed for', contactId, ':', e.message)
+    return null
+  }
+}
+
+/**
  * Fetch all customers from Zoho Books.
  * Returns array of { contact_id, contact_name, company_name, email, phone, mobile, billing_address }
  */
@@ -596,6 +617,31 @@ export async function updateEstimateShareLink(estimateId, shareLink) {
   await axios.put(
     `${ZOHO_API_BASE}/estimates/${estimateId}`,
     { custom_fields: [{ label: 'Scan Report and Documentation', value: shareLink }] },
+    { headers: zohoHeaders(token), params: orgParam() }
+  )
+}
+
+// Short tech name → full Zoho Books salesperson name. Jobs may store either form
+// ("Jayden" from a column drag, "Jayden Goshorn" from the picker/Zoho sync).
+const SALESPERSON_FULL_NAME = {
+  mark:   'Mark Fowler',
+  jayden: 'Jayden Goshorn',
+  jaden:  'Jayden Goshorn',  // alias — old data may say "Jaden"
+}
+
+/**
+ * Update the salesperson on a Zoho Books estimate. Called when a job's
+ * technician is reassigned on the Kanban board, so Zoho stays in sync.
+ * Normalizes short names to the full salesperson name Zoho Books expects.
+ */
+export async function updateEstimateSalesperson(estimateId, technicianName) {
+  if (!estimateId || !technicianName) return
+  const key = technicianName.trim().toLowerCase()
+  const salespersonName = SALESPERSON_FULL_NAME[key] || technicianName
+  const token = await getAccessToken()
+  await axios.put(
+    `${ZOHO_API_BASE}/estimates/${estimateId}`,
+    { salesperson_name: salespersonName },
     { headers: zohoHeaders(token), params: orgParam() }
   )
 }

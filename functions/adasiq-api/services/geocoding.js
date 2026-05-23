@@ -25,6 +25,16 @@ export function normalizeKey(s) {
   return (s || '').trim().toLowerCase()
 }
 
+// Format a Zoho Books billing_address object into a single address string
+// suitable for Google Geocoding. Returns '' if no usable parts.
+export function formatZohoAddress(b) {
+  if (!b || typeof b !== 'object') return ''
+  const parts = [b.address, b.street2, b.city, b.state, b.zip]
+    .map(p => (p || '').trim())
+    .filter(Boolean)
+  return parts.join(', ')
+}
+
 export async function readGeocache(req) {
   try {
     const item = await getSegment(req).get(GEOCACHE_KEY)

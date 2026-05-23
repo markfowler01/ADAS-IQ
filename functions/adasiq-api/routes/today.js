@@ -57,11 +57,12 @@ router.get('/', async (req, res) => {
         const merged = mergeJobState(j, stateMap)
         const shop = findShop(j.shop_name)
         const coords = geocache[normalizeKey(j.shop_name)] || null
-        const address = shop?.address || ''
-        // Build a robust nav target: prefer geocoded coords; fall back to a
-        // full address (always appending Lake Stevens, WA if it looks bare);
-        // last resort fall back to "ShopName, Lake Stevens, WA" so the maps
-        // app at least searches for the business by name.
+        // Address resolution: prefer the address the geocoder actually used
+        // (which is the Zoho Books billing address when CRM didn't have one);
+        // fall back to CRM Shops address; final fallback is name + city.
+        const cachedAddress = coords?.address || ''
+        const crmAddress = shop?.address || ''
+        const address = cachedAddress || crmAddress
         let navAddress = address
         if (navAddress && !/wa\b|washington/i.test(navAddress)) {
           navAddress = `${navAddress}, Lake Stevens, WA`

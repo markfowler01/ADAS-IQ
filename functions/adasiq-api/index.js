@@ -347,6 +347,116 @@ app.post('/api/cron/stuck-jobs', async (req, res) => {
   }
 })
 
+// One-time diagnostic: show how every job-shop's address would be resolved.
+// Reads Zoho Books customers + CRM Shops + current geocache and returns the
+// chain we'd use, so we can see why a shop is "ambiguous" or "name-fallback".
+// Protected by BILLING_CRON_SECRET.
+app.get('/api/cron/address-debug', async (req, res) => {
+  const cronSecret = process.env.BILLING_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { getAllShops } = await import('./routes/shops.js')
+    const { readJobsPublic } = await import('./routes/jobs.js')
+    const { readGeocache, normalizeKey, formatZohoAddress } = await import('./services/geocoding.js')
+    const { listCustomers } = await import('./services/zoho.js')
+
+    const [shops, jobs, cache, zohoCustomers] = await Promise.all([
+      getAllShops(req),
+      readJobsPublic(req),
+      readGeocache(req),
+      listCustomers().catch(() => []),
+    ])
+
+    const crmByKey = new Map()
+    for (const s of shops) if (s.shop_name) crmByKey.set(normalizeKey(s.shop_name), s)
+
+    const zohoByKey = new Map()
+    for (const c of zohoCustomers) {
+      const addr = formatZohoAddress(c.billing_address)
+      if (!addr) continue
+      if (c.company_name) zohoByKey.set(normalizeKey(c.company_name), { addr, matched: c.company_name })
+      if (c.contact_name) zohoByKey.set(normalizeKey(c.contact_name), { addr, matched: c.contact_name })
+    }
+
+    const jobShopNames = new Set()
+    for (const j of jobs || []) if (j.shop_name && j.status !== 'complete') jobShopNames.add(j.shop_name)
+
+    const out = []
+    for (const name of jobShopNames) {
+      const k = normalizeKey(name)
+      const crm = crmByKey.get(k)
+      const zohoExact = zohoByKey.get(k)
+      let zohoLoose = null
+      if (!zohoExact) {
+        for (const [zk, v] of zohoByKey.entries()) {
+          if (zk.includes(k) || k.includes(zk)) { zohoLoose = { ...v, viaKey: zk }; break }
+        }
+      }
+      const cached = cache[k]
+      out.push({
+        shop_name: name,
+        crm_address: crm?.address || null,
+        zoho_exact: zohoExact || null,
+        zoho_loose: zohoLoose,
+        cached: cached ? { status: cached.geocode_status, source: cached.geocode_source, address: cached.address || null, address_source: cached.address_source || null } : null,
+      })
+    }
+
+    // Sample: fetch full record for ONE customer (first one we can find by name
+    // from a job) via the individual contact endpoint, to see what fields
+    // Zoho actually returns when we query a single contact.
+    let sampleContact = null
+    try {
+      const axios = (await import('axios')).default
+      const { getAccessToken } = await import('./services/zoho.js')
+      const token = await getAccessToken()
+      // Try to find a Zoho contact that loosely matches one of our job shop names
+      const firstJobShopName = [...jobShopNames][0]
+      const match = zohoCustomers.find(c => {
+        const cn = (c.company_name || c.contact_name || '').toLowerCase()
+        return cn && (cn.includes((firstJobShopName || '').toLowerCase()) || (firstJobShopName || '').toLowerCase().includes(cn))
+      }) || zohoCustomers[0]
+      if (match?.contact_id) {
+        const r = await axios.get(`https://www.zohoapis.com/books/v3/contacts/${match.contact_id}`, {
+          headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' },
+          params: { organization_id: process.env.ZOHO_ORGANIZATION_ID || process.env.ZOHO_ORG_ID || '' },
+          timeout: 10000,
+        })
+        sampleContact = r.data?.contact || r.data
+      }
+    } catch (e) {
+      sampleContact = { error: e.message }
+    }
+
+    res.json({
+      ok: true,
+      counts: {
+        zoho_customers: zohoCustomers.length,
+        zoho_with_address: zohoByKey.size,
+        crm_shops: shops.length,
+        job_shop_names: jobShopNames.size,
+      },
+      sample_contact_keys: sampleContact && !sampleContact.error
+        ? Object.keys(sampleContact).slice(0, 60)
+        : sampleContact,
+      sample_contact_address_fields: sampleContact && !sampleContact.error
+        ? {
+            billing_address: sampleContact.billing_address || null,
+            shipping_address: sampleContact.shipping_address || null,
+            contact_name: sampleContact.contact_name,
+            company_name: sampleContact.company_name,
+          }
+        : null,
+      shops: out,
+    })
+  } catch (err) {
+    console.error('[address-debug]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Force-reseed the tech config from TECH_HOME_DEFAULTS in services/geocoding.js.
 // Use this after editing a tech's home address in code: it overwrites any cached
 // entry and nulls lat/lng so the next geocode-shops run re-geocodes it.
@@ -383,8 +493,10 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
     const {
       readGeocache, writeGeocache, geocodeAddress, normalizeKey,
       readTechConfig, writeTechConfig, ensureTechConfigSeed,
+      formatZohoAddress,
     } = await import('./services/geocoding.js')
     const { readJobsPublic } = await import('./routes/jobs.js')
+    const { listCustomers, getCustomerFull } = await import('./services/zoho.js')
 
     const MAX_PER_RUN = 25
     const STALE_DAYS = 90
@@ -394,60 +506,104 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
     // Seed tech config if first run
     await ensureTechConfigSeed(req)
 
-    const [shops, jobs, cache, techConfig] = await Promise.all([
+    const [shops, jobs, cache, techConfig, zohoCustomers] = await Promise.all([
       getAllShops(req),
       readJobsPublic(req),
       readGeocache(req),
       readTechConfig(req),
+      listCustomers().catch(e => {
+        console.warn('[geocode-shops] listCustomers failed (non-fatal):', e.message)
+        return []
+      }),
     ])
 
-    // Build a unified set of shop_names that need geocoding:
-    //  - all CRM shops (use their address if present)
-    //  - all distinct shop_names from open jobs that aren't already in CRM
-    //    (fall back to "Name, Lake Stevens, WA" so Zoho-Books-only shops
-    //     still get pinned).
+    // Address resolution chain per shop:
+    //  1) CRM Shops table (if address present)
+    //  2) Zoho Books customer billing_address (matched by company_name or contact_name)
+    //  3) Fallback to "ShopName, Lake Stevens, WA"
     const crmByKey = new Map()
     for (const s of shops) {
       if (!s.shop_name) continue
       crmByKey.set(normalizeKey(s.shop_name), s)
     }
+    // Zoho's list endpoint doesn't return billing_address. We need the individual
+    // contact endpoint for that. Pre-resolve the names we care about (jobs +
+    // CRM shops missing addresses) into a name → contact_id map, then fetch
+    // those full records in parallel.
     const jobShopNames = new Set()
     for (const j of jobs || []) {
       if (j.shop_name && j.status !== 'complete') jobShopNames.add(j.shop_name)
     }
+    const namesNeedingZoho = new Set([...jobShopNames])
+    for (const s of shops) if (s.shop_name && !(s.address && s.address.trim())) namesNeedingZoho.add(s.shop_name)
 
-    // Pick shops needing geocoding (no entry, status not "ok", or stale by 90d).
-    // Manual overrides (source "manual") are skipped permanently.
-    function queueShop(name, address) {
+    const zohoIdByName = new Map() // normalized shop_name -> contact_id
+    for (const name of namesNeedingZoho) {
+      const k = normalizeKey(name)
+      let matched = zohoCustomers.find(c => normalizeKey(c.company_name) === k || normalizeKey(c.contact_name) === k)
+      if (!matched) {
+        matched = zohoCustomers.find(c => {
+          const cn = normalizeKey(c.company_name) || normalizeKey(c.contact_name)
+          return cn && (cn.includes(k) || k.includes(cn))
+        })
+      }
+      if (matched?.contact_id) zohoIdByName.set(k, matched.contact_id)
+    }
+
+    // Fetch full contact records (limited to keep cron under 30s — at ~1s per
+    // call, 20 in parallel is safe).
+    const idsToFetch = [...new Set(zohoIdByName.values())].slice(0, 20)
+    const fullById = new Map()
+    if (idsToFetch.length > 0) {
+      const records = await Promise.all(idsToFetch.map(id => getCustomerFull(id).catch(() => null)))
+      idsToFetch.forEach((id, i) => { if (records[i]) fullById.set(id, records[i]) })
+    }
+
+    const zohoAddrByKey = new Map()
+    for (const [k, id] of zohoIdByName.entries()) {
+      const full = fullById.get(id)
+      if (!full) continue
+      const addr = formatZohoAddress(full.billing_address) || formatZohoAddress(full.shipping_address)
+      if (addr) zohoAddrByKey.set(k, addr)
+    }
+
+    function bestAddressFor(shopName, crmShop) {
+      const k = normalizeKey(shopName)
+      if (crmShop?.address && crmShop.address.trim()) return { address: crmShop.address, source: 'crm' }
+      if (zohoAddrByKey.has(k)) return { address: zohoAddrByKey.get(k), source: 'zoho' }
+      return { address: `${shopName}, Lake Stevens, WA`, source: 'name-fallback' }
+    }
+
+    // Pick shops needing geocoding. Skip manual overrides forever. Skip "ok"
+    // entries that aren't stale. Re-process "ambiguous" entries IF we have a
+    // better address now than we did before (e.g., we previously had only the
+    // shop name and now we have a Zoho Books street address).
+    const todo = []
+    function queueShop(name, address, addressSource) {
       const key = normalizeKey(name)
       const existing = cache[key]
       if (existing?.geocode_source === 'manual') return
-      // Skip if recently processed at any non-failed status (re-runs of
-      // ambiguous results would just keep returning the same ambiguous answer
-      // and burn API calls; user can promote to "ok" via manual pin).
       if (existing?.geocode_status === 'ok' && !isStale(existing.geocoded_at)) return
-      if (existing?.geocode_status === 'ambiguous' && !isStale(existing.geocoded_at)) return
-      todo.push({ kind: 'shop', key, name, address })
+      if (existing?.geocode_status === 'ambiguous' && !isStale(existing.geocoded_at)) {
+        // Only retry ambiguous when we have a real (non-fallback) address now
+        // and it differs from what we used last time.
+        const hadFallback = !existing.address_source || existing.address_source === 'name-fallback'
+        const haveBetter = addressSource !== 'name-fallback'
+        const differs = existing.address !== address
+        if (!(hadFallback && haveBetter && differs)) return
+      }
+      todo.push({ kind: 'shop', key, name, address, addressSource })
     }
 
-    const todo = []
-    // 1) CRM shops with real addresses
-    for (const shop of shops) {
-      if (!shop.shop_name) continue
-      const address = shop.address && shop.address.trim()
-        ? shop.address
-        : `${shop.shop_name}, Lake Stevens, WA`
-      queueShop(shop.shop_name, address)
+    // 1) Every shop that has a job (the dispatch-relevant set) — resolve the
+    //    best address from CRM Shops, Zoho Books, or name-fallback.
+    const allShopNames = new Set(jobShopNames)
+    for (const s of shops) if (s.shop_name) allShopNames.add(s.shop_name)
+    for (const name of allShopNames) {
+      const crmShop = crmByKey.get(normalizeKey(name)) || null
+      const { address, source } = bestAddressFor(name, crmShop)
+      queueShop(name, address, source)
       if (todo.length >= MAX_PER_RUN) break
-    }
-    // 2) Shops that appear on jobs but aren't in CRM (Zoho-Books-only shops).
-    //    Geocode them by name + city so they still get pins on the dispatch map.
-    if (todo.length < MAX_PER_RUN) {
-      for (const name of jobShopNames) {
-        if (crmByKey.has(normalizeKey(name))) continue
-        queueShop(name, `${name}, Lake Stevens, WA`)
-        if (todo.length >= MAX_PER_RUN) break
-      }
     }
 
     // Also queue tech home bases that are not yet geocoded.
@@ -470,7 +626,12 @@ app.post('/api/cron/geocode-shops', async (req, res) => {
 
       const stamp = new Date().toISOString()
       if (item.kind === 'shop') {
-        cache[item.key] = { ...result, geocoded_at: stamp }
+        cache[item.key] = {
+          ...result,
+          geocoded_at: stamp,
+          address: item.address,                  // formatted address actually used
+          address_source: item.addressSource,     // crm | zoho | name-fallback
+        }
       } else if (item.kind === 'tech') {
         techConfig[item.tech] = {
           ...(techConfig[item.tech] || {}),
