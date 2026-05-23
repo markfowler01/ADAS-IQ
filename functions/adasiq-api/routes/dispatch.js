@@ -1,9 +1,40 @@
-// GET /api/dispatch/live — real-time snapshot per tech.
-// Used by the mobile Live Day command center. Returns:
-//   - per-tech: capacity, current status (idle / en-route / on-site / done),
-//     current job + elapsed time, next job + ETA, end-of-day projection,
-//     full ordered job list for today (4 slots)
-//   - unassigned_today: jobs scheduled for today with no tech
+// Dispatch routes: map data, live snapshot, slot suggestions, reorder.
+//
+// /map-data       pins + capacities for the Dispatch Map screen
+// /live           per-tech real-time snapshot for the Live Day mobile view
+// /suggest-slot   capacity-aware insertion suggestion for a same-day quote
+// /reorder        manual renumber of a tech's day (drag-to-reorder)
+
+import express from 'express'
+import { readJobsPublic } from './jobs.js'
+import {
+  readJobState, mergeJobState, isAssignedTo, todayPT,
+  getTechCapacity, deriveLiveStatusForTech, haversineMiles,
+} from '../services/dispatch.js'
+import { readGeocache, readTechConfig, normalizeKey } from '../services/geocoding.js'
+
+const router = express.Router()
+
+const TECHS = ['Mark', 'Jayden']
+
+// PATCH /api/dispatch/reorder — manually renumber a tech's day.
+// Body: { tech, date, order: [jobId, jobId, ...] }
+// Renumbers drive_order to 1..N in the given sequence.
+router.patch('/reorder', async (req, res) => {
+  try {
+    const { updateJobStateMany } = await import('../services/dispatch.js')
+    const order = Array.isArray(req.body?.order) ? req.body.order : []
+    if (order.length === 0) return res.status(400).json({ error: 'order array is required' })
+    const updates = order.map((jobId, i) => ({ jobId: String(jobId), patch: { drive_order: i + 1 } }))
+    await updateJobStateMany(req, updates)
+    res.json({ ok: true, count: updates.length })
+  } catch (err) {
+    console.error('[dispatch reorder]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/dispatch/live — real-time per-tech snapshot for the Live Day view.
 router.get('/live', async (req, res) => {
   try {
     const dateISO = (req.query.date || todayPT()).toString()
@@ -31,12 +62,9 @@ router.get('/live', async (req, res) => {
       const capacity = await getTechCapacity(req, techName, dateISO, allJobs, techConfig)
       const liveStatus = deriveLiveStatusForTech(techJobs)
 
-      // End-of-day projection: last job's window end, or null if no scheduled
       const lastWithWindow = [...techJobs].reverse().find(j => j.time_window_end)
       const eod_projected = lastWithWindow?.time_window_end || null
 
-      // Current geographic position: last completed job's coords, or current
-      // in-progress job's coords, or home base. Used for the Live map.
       const homeKey = Object.keys(techConfig || {}).find(k => isAssignedTo({ technician: techName }, k))
       const home = homeKey ? techConfig[homeKey] : null
       let position = null
@@ -69,8 +97,6 @@ router.get('/live', async (req, res) => {
 
 // POST /api/dispatch/suggest-slot — capacity-aware insertion suggestion.
 // Body: { shop_name, date? }
-// Returns ranked suggestions for which tech and where to insert a new job.
-// If both techs are at cap, suggests scheduling for tomorrow's first slot.
 router.post('/suggest-slot', async (req, res) => {
   try {
     const dateISO = (req.body?.date || todayPT()).toString()
@@ -97,8 +123,6 @@ router.post('/suggest-slot', async (req, res) => {
 
       if (!cap.atCap) bothAtCap = false
 
-      // Find the position that adds minimal extra drive miles. If we have no
-      // target coords, just append at end.
       let bestInsertAt = techJobs.length
       let bestExtraMiles = Infinity
       if (targetCoords && techJobs.length > 0) {
@@ -133,13 +157,12 @@ router.post('/suggest-slot', async (req, res) => {
       suggestions.push({
         tech: techName,
         ...cap,
-        suggest_insert_at: bestInsertAt + 1, // 1-indexed for display
+        suggest_insert_at: bestInsertAt + 1,
         extra_miles: Math.round(bestExtraMiles * 10) / 10,
         recommend: !cap.atCap,
       })
     }
 
-    // Sort: recommended techs first (room), then by extra miles asc
     suggestions.sort((a, b) => {
       if (a.recommend !== b.recommend) return a.recommend ? -1 : 1
       return a.extra_miles - b.extra_miles
@@ -159,46 +182,11 @@ router.post('/suggest-slot', async (req, res) => {
   }
 })
 
-// PATCH /api/dispatch/reorder — manually renumber a tech's day.
-// Body: { tech, date, order: [jobId, jobId, ...] }
-// Renumbers drive_order to 1..N in the given sequence. Used by the side
-// panel's drag-to-reorder within a tech group. Any job IDs not in `order`
-// keep their existing drive_order (no-op for them).
-router.patch('/reorder', async (req, res) => {
-  try {
-    const { updateJobStateMany } = await import('../services/dispatch.js')
-    const order = Array.isArray(req.body?.order) ? req.body.order : []
-    if (order.length === 0) return res.status(400).json({ error: 'order array is required' })
-    const updates = order.map((jobId, i) => ({ jobId: String(jobId), patch: { drive_order: i + 1 } }))
-    await updateJobStateMany(req, updates)
-    res.json({ ok: true, count: updates.length })
-  } catch (err) {
-    console.error('[dispatch reorder]', err.message)
-    res.status(500).json({ error: err.message })
-  }
-})
-
-// GET /api/dispatch/map-data — pins for the dispatch map.
-// Returns jobs for a given date (default today PT) joined with their shop's
-// lat/lng, plus tech home bases. Admins see all techs; techs see only their own.
-
-import express from 'express'
-import { readJobsPublic } from './jobs.js'
-import {
-  readJobState, mergeJobState, isAssignedTo, todayPT,
-  getTechCapacity, deriveLiveStatusForTech, haversineMiles,
-} from '../services/dispatch.js'
-import { readGeocache, readTechConfig, normalizeKey } from '../services/geocoding.js'
-
-const router = express.Router()
-
-const TECHS = ['Mark', 'Jayden']
-
+// GET /api/dispatch/map-data — pins + capacities for the Dispatch Map.
 router.get('/map-data', async (req, res) => {
   try {
     const dateISO = (req.query.date || todayPT()).toString()
-    const techFilter = req.query.tech?.toString() || '' // 'Mark' / 'Jayden' / '' (all)
-    // includeUnassigned: also surface need_dispatch jobs (no scheduled_date filter)
+    const techFilter = req.query.tech?.toString() || ''
     const includeUnassigned = req.query.unassigned === 'true'
 
     const [allJobs, stateMap, geocache, techConfig] = await Promise.all([
@@ -208,16 +196,12 @@ router.get('/map-data', async (req, res) => {
       readTechConfig(req),
     ])
 
-    // Capacity snapshot per tech (used by side panel indicators)
     const capacities = {}
     for (const t of TECHS) {
       capacities[t] = await getTechCapacity(req, t, dateISO, allJobs, techConfig)
     }
 
-    // Statuses that show on the dispatch map
-    const MAP_STATUSES = new Set([
-      'dispatched_jaden', 'dispatched_mark', 'pending_parts',
-    ])
+    const MAP_STATUSES = new Set(['dispatched_jaden', 'dispatched_mark', 'pending_parts'])
 
     let pins = allJobs
       .filter(j => {
@@ -231,13 +215,10 @@ router.get('/map-data', async (req, res) => {
         const coords = geocache[normalizeKey(j.shop_name)] || null
         return {
           ...merged,
-          coords: coords ? {
-            lat: coords.lat, lng: coords.lng, status: coords.geocode_status,
-          } : null,
+          coords: coords ? { lat: coords.lat, lng: coords.lng, status: coords.geocode_status } : null,
         }
       })
 
-    // Sort by drive_order so dispatch sees the route order
     pins.sort((a, b) => {
       const ao = a.drive_order ?? Number.POSITIVE_INFINITY
       const bo = b.drive_order ?? Number.POSITIVE_INFINITY
@@ -251,7 +232,6 @@ router.get('/map-data', async (req, res) => {
       tech_homes: techConfig,
       capacities,
       pins,
-      // Surface shops with no/ambiguous geocode for the manual-override panel
       ambiguous_shops: pins
         .filter(p => p.coords && p.coords.status !== 'ok')
         .map(p => ({ shop_name: p.shop_name, status: p.coords.status })),

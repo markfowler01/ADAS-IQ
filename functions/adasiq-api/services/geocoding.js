@@ -96,9 +96,7 @@ export async function ensureTechConfigSeed(req, { force = false } = {}) {
         home_address: cfg.home_address,
         label: cfg.label,
         daily_cap: cfg.daily_cap,
-        home_lat: null,
-        home_lng: null,
-        geocoded_at: null,
+        home_lat: null, home_lng: null, geocoded_at: null,
       }
       changed = true
       continue
@@ -108,16 +106,13 @@ export async function ensureTechConfigSeed(req, { force = false } = {}) {
       existing.daily_cap = cfg.daily_cap
       changed = true
     }
-    // If address changed (or force), update and clear lat/lng so next cron run re-geocodes.
     if (force || existing.home_address !== cfg.home_address) {
       current[tech] = {
         ...existing,
         home_address: cfg.home_address,
         label: cfg.label,
         daily_cap: existing.daily_cap ?? cfg.daily_cap,
-        home_lat: null,
-        home_lng: null,
-        geocoded_at: null,
+        home_lat: null, home_lng: null, geocoded_at: null,
       }
       changed = true
     }
