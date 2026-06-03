@@ -653,4 +653,50 @@ router.post('/migrate-pins', async (req, res) => {
   }
 })
 
+// GET /api/shops/zoho-duplicates?q=L-M
+// Diagnostic: list every Zoho Books contact whose name contains the query
+// substring (case-insensitive). Returns count, contact_ids, created_time,
+// status. Use to see the scope of duplicate customers in Zoho Books so a
+// cleanup pass can be planned.
+router.get('/zoho-duplicates', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim().toLowerCase()
+    if (!q) return res.status(400).json({ error: 'Pass ?q=<name fragment>, e.g. ?q=l-m' })
+    const all = await listCustomers()
+    const matches = all
+      .filter(c => (c.contact_name || '').toLowerCase().includes(q))
+      .map(c => ({
+        contact_id: c.contact_id,
+        contact_name: c.contact_name,
+        company_name: c.company_name,
+        email: c.email,
+        phone: c.phone || c.mobile,
+        status: c.status,
+        billing_city: c.billing_address?.city || '',
+      }))
+    // Group by exact normalized name to surface dup clusters
+    const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const clusters = {}
+    for (const c of matches) {
+      const k = normalize(c.contact_name)
+      if (!clusters[k]) clusters[k] = []
+      clusters[k].push(c)
+    }
+    const clusterSummary = Object.entries(clusters)
+      .map(([k, list]) => ({ normalized: k, count: list.length, sample: list[0]?.contact_name }))
+      .sort((a, b) => b.count - a.count)
+    res.json({
+      ok: true,
+      query: q,
+      total_matches: matches.length,
+      total_clusters: Object.keys(clusters).length,
+      clusters: clusterSummary,
+      contacts: matches,
+    })
+  } catch (err) {
+    console.error('[shops zoho-duplicates]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router

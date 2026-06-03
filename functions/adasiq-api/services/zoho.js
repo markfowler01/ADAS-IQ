@@ -83,6 +83,22 @@ export async function getCustomerFull(contactId) {
 }
 
 /**
+ * Pre-flight check used by every estimate creator. Confirms the picked
+ * customer_id still maps to a real, non-deleted contact in Zoho Books.
+ * Refusing to POST the estimate when this fails is what prevents a stale
+ * contact_id from triggering Zoho's "auto-create contact from estimate"
+ * fallback (which is how the Kinetic scrubber occasionally creates a new
+ * L-M Body Shop entry).
+ *
+ * Returns true when verified, false otherwise. Never throws.
+ */
+export async function verifyCustomerExists(contactId) {
+  if (!contactId) return false
+  const contact = await getCustomerFull(contactId)
+  return !!(contact && contact.contact_id)
+}
+
+/**
  * Fetch all customers from Zoho Books.
  * Returns array of { contact_id, contact_name, company_name, email, phone, mobile, billing_address }
  */
@@ -450,12 +466,23 @@ export async function createDraftQuote({
     status: 'draft',
   }
 
-  // Never create a new Zoho Books customer — always require an existing contact_id.
+  // Never create a new Zoho Books customer. Always require an existing contact_id.
   // If no customer is selected the caller must provide one; reject rather than auto-create.
   if (!customerId) {
     throw new Error('Please select a Zoho Books customer before creating an estimate. Creating new customers from the app is disabled.')
   }
+  // Pre-flight verify the picked contact still exists. A stale contact_id
+  // (picker showed a customer that was deleted in Zoho) would otherwise risk
+  // Zoho silently auto-creating a new contact under the wire.
+  const verified = await verifyCustomerExists(customerId)
+  if (!verified) {
+    throw new Error(`Selected Zoho Books customer (id ${customerId}) no longer exists in Zoho. Refresh the customer dropdown and pick again. Creating new customers from the app is disabled.`)
+  }
   body.customer_id = customerId
+  // Defense-in-depth: never send customer_name. Zoho's estimate API can
+  // auto-create a contact when customer_name appears in the body without a
+  // matching customer_id, which is exactly what we are guarding against.
+  delete body.customer_name
   if (salespersonName) body.salesperson_name = salespersonName
 
   // 4. Create the estimate — retry with .1, .2 etc. on duplicate number or unique field conflict
@@ -755,11 +782,19 @@ export async function createRepairDraftQuote({
     line_items:       lineItems,
     status:           'draft',
   }
-  // Never create a new Zoho Books customer — require an existing contact_id.
+  // Never create a new Zoho Books customer. Require an existing contact_id.
   if (!customerId) {
     throw new Error('Please select a Zoho Books customer before creating an estimate. Creating new customers from the app is disabled.')
   }
+  // Pre-flight verify the picked contact still exists. See createDraftQuote
+  // for the rationale (stale picker IDs were silently creating duplicate
+  // L-M Body Shop entries via Zoho's auto-fallback).
+  const verifiedRepair = await verifyCustomerExists(customerId)
+  if (!verifiedRepair) {
+    throw new Error(`Selected Zoho Books customer (id ${customerId}) no longer exists in Zoho. Refresh the customer dropdown and pick again. Creating new customers from the app is disabled.`)
+  }
   body.customer_id = customerId
+  delete body.customer_name
   if (salespersonName) body.salesperson_name = salespersonName
 
   // Create with retry on duplicate number
