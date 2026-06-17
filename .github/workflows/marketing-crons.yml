@@ -1,0 +1,169 @@
+name: Marketing Crons (external watchdog)
+
+# WHY THIS EXISTS:
+# Catalyst's own cron system keeps silently disabling the marketing cron jobs
+# (auto-disable triggered three separate times — May 24, June 13, June 16).
+# This workflow runs on GitHub's infrastructure and hits the same routes from
+# outside. Catalyst-independent — even if Catalyst's scheduler is fully broken,
+# content still flows.
+#
+# Uses the NO-AUTH /debug/* endpoints (built into the function — they self-call
+# the protected endpoints using the function's own BREW_CRON_SECRET env var,
+# so we don't need a GitHub secret).
+#
+# Catalyst crons can stay enabled in parallel (belt + suspenders) — every cron
+# route is idempotent (scheduler skips already-published, nurture dedupes per
+# lead, holiday_poster has per-holiday cache key, drafters have Sunday-gate).
+# Worst case: minor duplicate work, never duplicate posts.
+#
+# Times in cron lines are UTC. PT = UTC-7 (PDT) / UTC-8 (PST).
+
+on:
+  schedule:
+    # Hourly publisher + nurture + email-monitor. +7min offset to dodge top-of-hour
+    # GitHub scheduler rush.
+    - cron: '7 * * * *'
+
+    # Sunday 13:13 UTC (~ 6 AM PT) — weekly Meta + LinkedIn drafters.
+    - cron: '13 13 * * 0'
+
+    # Friday 14:17 UTC (~ 7 AM PT) — weekly report to Mark.
+    - cron: '17 14 * * 5'
+
+    # Daily 13:23 UTC (~ 6 AM PT) — engagement collector + holiday-poster.
+    - cron: '23 13 * * *'
+
+  # Manual trigger from GitHub UI — useful for one-off recovery or testing.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Which job to run manually'
+        required: true
+        default: 'hourly'
+        type: choice
+        options:
+          - hourly
+          - sunday-drafters
+          - friday-weekly
+          - daily-tasks
+
+env:
+  BASE: https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug
+
+jobs:
+  # ── HOURLY ─────────────────────────────────────────────────────────────────
+  hourly:
+    if: github.event.schedule == '7 * * * *' || inputs.job == 'hourly'
+    runs-on: ubuntu-latest
+    steps:
+      - name: capture_scheduler — publish in-window drafts
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 120 \
+            "$BASE/run-scheduler")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 2000; echo
+          [ "$code" -lt 400 ] || exit 1
+
+      - name: capture_nurture — drip emails to calculator leads
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 90 \
+            "$BASE/nurture-run")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 1500; echo
+          [ "$code" -lt 400 ] || exit 1
+
+      - name: cron_monitor — scan inbox for Catalyst auto-disable emails
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 60 \
+            "$BASE/cron-monitor-run")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 1000; echo
+          [ "$code" -lt 400 ] || exit 1
+
+  # ── SUNDAY DRAFTERS ────────────────────────────────────────────────────────
+  # Drafters take 60-180s each. Catalyst's HTTP gateway returns 408 at 30s but
+  # the inner handler keeps running server-side and stamps the heartbeat on
+  # completion. We accept 408 (and curl's own timeout-exit-28) as "expected,
+  # work continues" and verify via heartbeat after a wait.
+  sunday-drafters:
+    if: github.event.schedule == '13 13 * * 0' || inputs.job == 'sunday-drafters'
+    runs-on: ubuntu-latest
+    steps:
+      - name: capture_meta — generate the week's FB + IG + TT drafts
+        run: |
+          set +e
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 40 \
+            "$BASE/draft-meta-week")
+          curl_exit=$?
+          echo "HTTP $code (curl exit $curl_exit) — 408 / curl-28 expected for long drafter"
+          cat /tmp/r.json 2>/dev/null | head -c 500; echo
+          # Accept 2xx, 408 (gateway timeout), and curl timeout (inner still running)
+          if [ "$curl_exit" -eq 28 ] || [ -z "$code" ] || [ "$code" = "000" ]; then exit 0; fi
+          if [ "$code" -ge 500 ]; then exit 1; fi
+          exit 0
+
+      - name: capture_linkedin — generate the week's LinkedIn variants
+        run: |
+          set +e
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 40 \
+            "$BASE/draft-linkedin-week")
+          curl_exit=$?
+          echo "HTTP $code (curl exit $curl_exit) — 408 / curl-28 expected for long drafter"
+          cat /tmp/r.json 2>/dev/null | head -c 500; echo
+          if [ "$curl_exit" -eq 28 ] || [ -z "$code" ] || [ "$code" = "000" ]; then exit 0; fi
+          if [ "$code" -ge 500 ]; then exit 1; fi
+          exit 0
+
+      - name: wait 3 min then verify drafters completed via heartbeat
+        run: |
+          sleep 180
+          curl -sS --max-time 30 \
+            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug/heartbeats" \
+            | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)['heartbeats']
+          fail = False
+          for name in ['capture_meta', 'capture_linkedin']:
+              hb = d.get(name, {})
+              age = hb.get('last_success_age_min')
+              if age is None or age > 10:
+                  print(f'❌ {name}: last_success_age_min={age} — drafter did not complete')
+                  fail = True
+              else:
+                  print(f'✅ {name}: last_success_age_min={age}m')
+          sys.exit(1 if fail else 0)
+          "
+
+  # ── FRIDAY WEEKLY REPORT ───────────────────────────────────────────────────
+  friday-weekly:
+    if: github.event.schedule == '17 14 * * 5' || inputs.job == 'friday-weekly'
+    runs-on: ubuntu-latest
+    steps:
+      - name: capture_weekly — Friday digest to Mark
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 60 \
+            "$BASE/weekly-run")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 1500; echo
+          [ "$code" -lt 400 ] || exit 1
+
+  # ── DAILY ──────────────────────────────────────────────────────────────────
+  daily-tasks:
+    if: github.event.schedule == '23 13 * * *' || inputs.job == 'daily-tasks'
+    runs-on: ubuntu-latest
+    steps:
+      - name: capture_engagement — pull post-engagement stats
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 60 \
+            "$BASE/engagement-run")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 1500; echo
+          [ "$code" -lt 400 ] || exit 1
+
+      - name: holiday_poster — draft upcoming holiday batches
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 90 \
+            "$BASE/holiday-poster-run")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 1500; echo
+          [ "$code" -lt 400 ] || exit 1
