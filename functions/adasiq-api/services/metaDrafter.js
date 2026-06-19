@@ -260,6 +260,49 @@ BANNED CTAs:
   · Any URL missing the absoluteadas.com prefix
   · Multiple URLs in one post (one CTA per post — locked elsewhere)`
 
+// UNIFIED prompt — one post, fans out identically to FB + IG + LinkedIn.
+// Format constraints chosen to work on all three:
+//   · FB: paragraph breaks every 2-3 sentences (no wall of text)
+//   · IG: first line is the hook (truncates ~125 chars on feed); hashtags at end
+//   · LinkedIn: professional tone, can take longer body, full URL clickable
+// Single CTA with full URL (clickable on FB+LI, plain text on IG with "(Link in bio.)"
+// suffix so IG-readers know where to tap).
+const UNIFIED_SYSTEM_PROMPT = `You are the drafting engine for Mark Fowler at Absolute ADAS, a mobile ADAS calibration company in Western Washington. The post you draft will publish IDENTICALLY on Facebook, Instagram, and LinkedIn — same headline, same body, same image. Write once, works everywhere.
+
+Audience: body shop owners, collision MSOs, glass shops in Western Washington.
+
+${SHARED_VOICE}
+
+UNIFIED CROSS-CHANNEL FORMAT:
+- 120-180 words total. Tight is better than long.
+- First line is THE hook — has to land before Instagram's ~125-char feed truncation. Make it a number, a question, or a one-line scene. No throat-clearing.
+- Paragraph breaks every 2-3 sentences (Facebook wall-of-text dies on mobile).
+- One CTA at the bottom on its own line, full URL spelled out (clickable on FB and LinkedIn; plain text on IG). Add "(Link in bio.)" after the URL so IG readers know to tap the profile.
+- 3-5 hashtags on a single line at the very end (IG benefits, FB and LI ignore harmlessly).
+- No platform-specific phrases ("swipe up", "share to your story", "comment YES below"). Keep it universal.
+- Emoji optional — one or two earn-their-spot only, never decorative.
+
+${IMAGE_PROMPT_SPEC}`
+
+// Type prompts shared by the unified drafter (FB/IG/LI all use the same type set).
+const UNIFIED_TYPE_PROMPTS = {
+  story:      'A SHORT STORY POST from the field. Open with a specific scene (place, time, one sensory detail). Name a shop owner with a first name (or labeled composite if not real). One specific moment from a visit where the owner realized they were paying full list while the vendor pocketed everything. End with a single universal lesson + the CTA.',
+  framework:  'A FRAMEWORK / EDUCATIONAL POST. Walk through ONE of the 4 Partnership Discount Model components (We come to you / We discount off list / You bill at list / Volume rewards you more). Show the per-job math: $450 list → $382.50 partner → $67.50 margin. End with the calculator CTA.',
+  case_study: 'A CASE STUDY POST. Format: shop name (or composite label), city, calibrations per month, monthly partnership margin earned, one short direct quote in quotes. End with the Partnership Audit CTA.',
+}
+
+// Daily type rotation — 7 days. Two pillars (story / framework / case_study)
+// rotated so the same type doesn't repeat consecutively.
+const UNIFIED_DAY_ROTATION = {
+  Mon: 'story',
+  Tue: 'framework',
+  Wed: 'case_study',
+  Thu: 'story',
+  Fri: 'framework',
+  Sat: 'case_study',
+  Sun: 'story',
+}
+
 const FB_SYSTEM_PROMPT = `You are the drafting engine for the Absolute ADAS Facebook business page. Audience: body shop owners, glass shops, collision MSOs in Western Washington.
 
 ${SHARED_VOICE}
@@ -325,6 +368,107 @@ ${IMAGE_PROMPT_SPEC}`
  * @param {string} [input.caseStudy]
  * @returns {Promise<{headline, body, voice_score, voice_deductions}>}
  */
+/**
+ * Unified daily drafter — ONE post for FB + IG + LinkedIn.
+ * Single Claude call produces one headline + body + image_prompt that fits
+ * all three channels. Caller fans it out to 3 drafts with the same content.
+ *
+ * @param {Object} input
+ * @param {string} input.story
+ * @param {string} [input.caseStudy]
+ * @param {string} input.type        — story | framework | case_study
+ * @param {string} [input.targetDate]
+ * @param {string} [input.day]       — Mon..Sun (for logging only)
+ * @returns {Promise<{headline, body, image_prompt, voice_score, voice_deductions}>}
+ */
+export async function draftUnifiedDailyPost({ story, caseStudy = '', type, targetDate = null, day = '' } = {}) {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured')
+  if (!story || story.trim().length < 40) throw new Error('story is required')
+  const typePrompt = UNIFIED_TYPE_PROMPTS[type]
+  if (!typePrompt) throw new Error(`unknown unified type: ${type}`)
+
+  const dateLine = targetDate
+    ? `TARGET POST DATE: ${new Date(targetDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/Los_Angeles' })} (${new Date(targetDate).toISOString().slice(0, 10)})`
+    : `TARGET POST DATE: not provided — use the STANDARD TEMPLATE for image_prompt.`
+
+  const userMsg = [
+    dateLine,
+    '',
+    `Today's post type: ${type} (${day || 'unspecified day'}). This post publishes to FB, IG, and LinkedIn IDENTICALLY.`,
+    typePrompt,
+    '',
+    `MARK'S WEEKLY STORY (raw material if relevant):`,
+    `"""`, story.trim().slice(0, 1500), `"""`,
+    '',
+    caseStudy ? [`CASE STUDY MATERIAL:`, `"""`, caseStudy.trim().slice(0, 1500), `"""`].join('\n') : 'NO REAL CASE STUDY PROVIDED, use a labeled composite if needed.',
+    '',
+    `Write ONE post. Same body fans to all three channels. Follow the UNIFIED CROSS-CHANNEL FORMAT exactly.`,
+    '',
+    `Return JSON only: {"headline":"...","body":"...","image_prompt":"..."}`,
+  ].filter(Boolean).join('\n')
+
+  const client = getClient()
+  const maxBody = 1800
+  const msg = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1500,
+    system: UNIFIED_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: userMsg }],
+  })
+  const raw = (msg.content?.[0]?.text || '').trim()
+  if (!raw) throw new Error('Empty response from Claude')
+  const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+
+  let parsed
+  try { parsed = JSON.parse(cleaned) }
+  catch (e) { throw new Error(`Could not parse unified draft: ${e.message}. Raw: ${cleaned.slice(0, 200)}`) }
+
+  let headline = sanitizeAiOutput(String(parsed.headline || '')).slice(0, 120)
+  let body = sanitizeAiOutput(String(parsed.body || '')).slice(0, maxBody)
+  let imagePrompt = String(parsed.image_prompt || '').trim().slice(0, 1200)
+  // Score against FB voice (most general) — used for the same body on all 3 channels.
+  let { score, deductions } = scoreDraft(body, { channel: 'facebook' })
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (score >= MIN_VOICE_SCORE) break
+    const reasons = (deductions || []).map(d => `- ${d.reason} (${d.points} pts)`).join('\n')
+    const feedback = `Your previous draft scored ${score}/100 on the voice contract. Deductions:\n${reasons}\n\nRewrite this single post. Fix every flagged issue. Return JSON: {"headline":"...","body":"...","image_prompt":"..."}`
+    try {
+      const retry = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1500,
+        system: UNIFIED_SYSTEM_PROMPT,
+        messages: [
+          { role: 'user', content: userMsg },
+          { role: 'assistant', content: JSON.stringify({ headline, body, image_prompt: imagePrompt }) },
+          { role: 'user', content: feedback },
+        ],
+      })
+      const r = (retry.content?.[0]?.text || '').trim().replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+      const p = JSON.parse(r)
+      const newHeadline = sanitizeAiOutput(String(p.headline || headline)).slice(0, 120)
+      const newBody = sanitizeAiOutput(String(p.body || '')).slice(0, maxBody)
+      const newImagePrompt = String(p.image_prompt || '').trim().slice(0, 1200)
+      if (!newBody) break
+      const s = scoreDraft(newBody, { channel: 'facebook' })
+      if (s.score > score) {
+        headline = newHeadline
+        body = newBody
+        score = s.score
+        deductions = s.deductions
+        if (newImagePrompt) imagePrompt = newImagePrompt
+      }
+    } catch (e) {
+      console.warn('[unifiedDrafter retry]', e.message)
+      break
+    }
+  }
+
+  return { headline, body, image_prompt: imagePrompt, voice_score: score, voice_deductions: deductions, type }
+}
+
+export const UNIFIED_DAY_TYPE_FOR = (day) => UNIFIED_DAY_ROTATION[day] || 'story'
+
 export async function draftMetaSlot({ channel, day, type, story, caseStudy = '', targetDate = null } = {}) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured')
   if (!story || story.trim().length < 40) throw new Error('story is required')

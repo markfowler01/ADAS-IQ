@@ -19,7 +19,7 @@ import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
-import { draftMetaWeek, draftMetaDay, draftMetaSlot, FB_SLOTS, IG_SLOTS } from '../services/metaDrafter.js'
+import { draftMetaWeek, draftMetaDay, draftMetaSlot, draftUnifiedDailyPost, UNIFIED_DAY_TYPE_FOR, FB_SLOTS, IG_SLOTS } from '../services/metaDrafter.js'
 import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured } from '../services/metaPosting.js'
 import { postPhotoToTikTok, tiktokConfigured } from '../services/tikTokPosting.js'
 import { imageToShortVideo, cloudinaryConfigured } from '../services/cloudinaryVideo.js'
@@ -1514,12 +1514,15 @@ captureCalcRouter.all('/meta/draft-week', heartbeatAttempt('capture_meta'), requ
 })
 
 //   POST /api/capture-calc/meta/draft-day  (cron-secret)
-//   Body: { story?, caseStudy? }       ← optional, falls back to stored
-//   Query: ?dayName=Mon                ← override today (testing only)
+//   Body: { story?, caseStudy? }
+//   Query: ?dayName=Mon  ← override today (testing)
+//          ?type=story|framework|case_study  ← override today's rotation
 //
-// Daily drafter — replaces the Sunday weekly batch with a daily 3-post pass
-// (1 FB + 1 IG + 1 TT for today's slot). Skips channels that already have an
-// approved/published draft for today to make the cron idempotent.
+// UNIFIED daily drafter (2026-06-19): ONE post per day, identical body +
+// identical image fanned across FB + IG + LinkedIn. Single Claude call,
+// single image gen. Channel-specific drafting was replaced because Mark
+// wanted one coherent message everywhere instead of 3-4 slight variants.
+// Skips any channel that already has a live draft for today (idempotent).
 captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const segment = getSegment(req)
@@ -1527,8 +1530,7 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     const dayName = String(req.query.dayName || todayPT)
     const todayDateStr = new Date().toISOString().slice(0, 10)
 
-    // Concurrent-fire lock — Catalyst's gateway times out at 30s on long
-    // drafter runs and may auto-retry. Block second invocation within 10min.
+    // Concurrent-fire lock
     const LOCK_KEY = `meta_daily_inprogress_${todayDateStr}`
     if (req.query.force_relock !== '1') {
       const existingLock = await cacheGet(segment, LOCK_KEY, null)
@@ -1541,7 +1543,7 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     // Idempotence — skip channels that already have a live draft for today.
     const existing = await listQueue(req, {})
     const todayLive = existing.filter(d => {
-      if (!['facebook_page', 'instagram_business', 'tiktok_business', 'youtube_shorts', 'linkedin_personal'].includes(d.channel)) return false
+      if (!['facebook_page', 'instagram_business', 'linkedin_personal'].includes(d.channel)) return false
       if (!['approved', 'pending', 'published'].includes(d.status)) return false
       const sched = (d.scheduled_for || '').slice(0, 10)
       return sched === todayDateStr
@@ -1570,152 +1572,80 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
       }
     }
 
-    const { fb, ig, tt, yt, day } = await draftMetaDay({ story, caseStudy, dayName })
-
-    // LinkedIn — 1 post per day, single hook rotation through greed/fairness/identity
-    // by day of week so the angle varies across the week. Same day map as
-    // linkedInDrafter.SLOT_DEFS (Mon→Sun) so type stays consistent with FB.
-    const LI_HOOK_BY_DAY = { Mon: 'greed', Tue: 'fairness', Wed: 'identity', Thu: 'greed', Fri: 'fairness', Sat: 'identity', Sun: 'greed' }
-    let liDraft = null
-    let liError = null
+    // ── ONE unified post for today, fanned across FB + IG + LinkedIn ──────
+    const todayType = String(req.query.type || UNIFIED_DAY_TYPE_FOR(dayName))
+    const todayDateIso = new Date().toISOString()
+    let unified
     try {
-      const slot = await draftSlotVariants({ day, story, caseStudy, hooks: [LI_HOOK_BY_DAY[day] || 'greed'] })
-      liDraft = slot.variants?.[0] ? { ...slot.variants[0], day, type: slot.type } : null
+      unified = await draftUnifiedDailyPost({ story, caseStudy, type: todayType, targetDate: todayDateIso, day: dayName })
     } catch (e) {
-      liError = e.message
+      await reportCronFailure(req, 'capture_meta', e)
+      return res.json({ ok: false, error: `unified draft failed: ${e.message}` })
     }
 
-    const out = { day, fb: [], ig: [], tt: [], yt: [], li: [], skipped: [] }
-
-    // Shared-image-per-type (same scaffolding as draft-week).
-    const draftedSlots = [...fb, ...ig, ...tt, ...yt]
-    const typeToPrompt = {}
-    const typeToHeadline = {}
-    for (const d of draftedSlots) {
-      if (d.error || !d.type) continue
-      if (!typeToPrompt[d.type] && d.image_prompt) typeToPrompt[d.type] = d.image_prompt
-      if (!typeToHeadline[d.type] && d.headline) typeToHeadline[d.type] = d.headline
-    }
-    const typeToImageUrl = {}
-    const typeToImageError = {}
-    const batchSlug = `metaday-${todayDateStr}`
+    // ── ONE image, shared across all 3 channels ────────────────────────────
+    let imageUrl = null
+    let imageError = null
     if (captureImagesEnabled()) {
-      for (const [type, prompt] of Object.entries(typeToPrompt)) {
-        const r = await generateCaptureImage(
-          { headline: typeToHeadline[type] || type, draftId: `${batchSlug}-${type}` },
-          { segment, sceneOverride: prompt }
-        ).catch(e => ({ ok: false, error: e.message }))
-        if (r?.ok) typeToImageUrl[type] = r.url
-        else typeToImageError[type] = r?.error || 'image generation failed'
-      }
-    }
-    const typeToVideoUrl = {}
-    const typeToVideoError = {}
-    const YT_TYPES = ['visual_hook', 'mechanism', 'testimonial']
-    if (cloudinaryConfigured()) {
-      for (const type of YT_TYPES) {
-        const imgUrl = typeToImageUrl[type]
-        if (!imgUrl) continue
-        const v = await imageToShortVideo({ imageUrl: imgUrl, duration: 8 }).catch(e => ({ ok: false, error: e.message }))
-        if (v?.ok) typeToVideoUrl[type] = v.url
-        else typeToVideoError[type] = v?.error || 'video conversion failed'
-      }
+      const batchSlug = `metaday-${todayDateStr}-${todayType}`
+      const r = await generateCaptureImage(
+        { headline: unified.headline, draftId: batchSlug },
+        { segment, sceneOverride: unified.image_prompt }
+      ).catch(e => ({ ok: false, error: e.message }))
+      if (r?.ok) imageUrl = r.url
+      else imageError = r?.error || 'image generation failed'
     }
 
-    const enqueueOne = async (channelKey, draft, bucket) => {
-      if (channelsAlreadyDone.has(channelKey)) {
-        out.skipped.push({ channel: channelKey, reason: 'already has a live draft for today' })
-        return
+    // ── Fan out to 3 channels at their prime times ─────────────────────────
+    const CHANNEL_SCHEDULE = [
+      { channel: 'linkedin_personal',  hour: 9,  minute: 0,  label: 'LinkedIn (9am PT)' },
+      { channel: 'instagram_business', hour: 11, minute: 30, label: 'Instagram (11:30am PT)' },
+      { channel: 'facebook_page',      hour: 12, minute: 0,  label: 'Facebook (12pm PT)' },
+    ]
+    const out = { day: dayName, type: todayType, drafts: [], skipped: [] }
+
+    for (const { channel, hour, minute, label } of CHANNEL_SCHEDULE) {
+      if (channelsAlreadyDone.has(channel)) {
+        out.skipped.push({ channel, reason: 'already has a live draft for today' })
+        continue
       }
-      if (draft.error) {
-        bucket.push({ day: draft.day, error: draft.error })
-        return
-      }
-      const scheduledFor = todayScheduledForAtTimePT(draft.hour, draft.minute)
+      const scheduledFor = todayScheduledForAtTimePT(hour, minute)
       const entry = await enqueueDraft(req, {
-        channel: channelKey,
-        category: draft.type,
-        headline: draft.headline,
-        body: draft.body,
+        channel,
+        category: todayType,
+        headline: unified.headline,
+        body: unified.body,
         scheduled_for: scheduledFor.toISOString(),
-        voice_score: draft.voice_score,
-        voice_deductions: draft.voice_deductions,
-        meta: { slot: draft.day, group: `metaday-${todayDateStr}`, image_prompt: draft.image_prompt || null },
+        voice_score: unified.voice_score,
+        voice_deductions: unified.voice_deductions,
+        meta: { slot: dayName, group: `metaday-${todayDateStr}`, image_prompt: unified.image_prompt || null, unified: true },
         status: 'approved',
       })
-      const imageUrl = typeToImageUrl[draft.type] || null
       if (imageUrl) {
         await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
       } else if (!captureImagesEnabled()) {
         await updateDraft(req, entry.id, { image_status: 'disabled' })
       } else {
-        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[draft.type] || 'no image for type' })
+        await updateDraft(req, entry.id, { image_status: 'failed', image_error: imageError || 'image generation failed' })
       }
-      if (channelKey === 'youtube_shorts') {
-        const videoUrl = typeToVideoUrl[draft.type] || null
-        if (videoUrl) {
-          await updateDraft(req, entry.id, { video_url: videoUrl, video_status: 'generated' })
-        } else if (!cloudinaryConfigured()) {
-          await updateDraft(req, entry.id, { video_status: 'cloudinary_not_configured' })
-        } else if (imageUrl) {
-          await updateDraft(req, entry.id, { video_status: 'failed', video_error: typeToVideoError[draft.type] || 'no video for type' })
-        }
-        bucket.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl, has_video: !!videoUrl })
-      } else {
-        bucket.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl })
-      }
+      out.drafts.push({ channel, label, id: entry.id, scheduled_for: scheduledFor.toISOString(), has_image: !!imageUrl })
     }
 
-    for (const draft of fb) await enqueueOne('facebook_page',      draft, out.fb)
-    for (const draft of ig) await enqueueOne('instagram_business', draft, out.ig)
-    for (const draft of tt) await enqueueOne('tiktok_business',    draft, out.tt)
-    for (const draft of yt) await enqueueOne('youtube_shorts',     draft, out.yt)
-
-    // LinkedIn — schedule for 9 AM PT (16:00 UTC), reuse the type-shared image
-    // (story/framework/case_study types overlap with FB so FB's image fits).
-    if (channelsAlreadyDone.has('linkedin_personal')) {
-      out.skipped.push({ channel: 'linkedin_personal', reason: 'already has a live draft for today' })
-    } else if (liError) {
-      out.li.push({ day, error: liError })
-    } else if (liDraft) {
-      const scheduledForLi = todayScheduledForAtTimePT(9, 0)
-      const entry = await enqueueDraft(req, {
-        channel: 'linkedin_personal',
-        category: liDraft.type,
-        headline: liDraft.headline,
-        body: liDraft.body,
-        scheduled_for: scheduledForLi.toISOString(),
-        voice_score: liDraft.voice_score,
-        voice_deductions: liDraft.voice_deductions,
-        meta: { slot: day, group: `metaday-${todayDateStr}`, hook: liDraft.hook },
-        status: 'approved',
-      })
-      const imageUrl = typeToImageUrl[liDraft.type] || null
-      if (imageUrl) {
-        await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
-      } else if (!captureImagesEnabled()) {
-        await updateDraft(req, entry.id, { image_status: 'disabled' })
-      } else {
-        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[liDraft.type] || 'no image for type' })
-      }
-      out.li.push({ day, id: entry.id, scheduled_for: scheduledForLi.toISOString(), voice_score: liDraft.voice_score, has_image: !!imageUrl, hook: liDraft.hook })
-    }
-
-    const created = out.fb.length + out.ig.length + out.tt.length + out.yt.length + out.li.length
+    // Cliq summary card
     const card = [
-      `📱 *DAILY SOCIAL DRAFTED* — ${day} ${todayDateStr}`,
-      `${created} new post${created === 1 ? '' : 's'} auto-approved for today.`,
+      `📱 *DAILY UNIFIED POST DRAFTED* — ${dayName} ${todayDateStr} (${todayType})`,
+      `${out.drafts.length} channel${out.drafts.length === 1 ? '' : 's'} got the same body + same image, auto-approved.`,
       ...(out.skipped.length ? [`Skipped (already had today): ${out.skipped.map(s => s.channel).join(', ')}`] : []),
       ``,
-      ...(out.li.length ? [`*LinkedIn* (9am PT):`, ...out.li.map(d => d.error ? `  · ❌ ${d.error}` : `  · ${d.hook || ''} hook · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '📝'}`)] : []),
-      ...(out.fb.length ? [``, `*Facebook* (12pm PT):`, ...out.fb.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '📝'}`)] : []),
-      ...(out.ig.length ? [``, `*Instagram* (11:30am PT):`, ...out.ig.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`)] : []),
-      ...(out.tt.length ? [``, `*TikTok* (2pm PT):`, ...out.tt.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`)] : []),
+      `*Headline:* ${unified.headline}`,
+      `*Voice score:* ${unified.voice_score}/100${imageUrl ? '  🖼️' : (imageError ? '  ⚠️ NO IMAGE: ' + imageError : '')}`,
+      ``,
+      ...out.drafts.map(d => `  · ${d.label}  →  scheduled ${d.scheduled_for.slice(11, 16)} UTC`),
     ].join('\n')
     postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(() => {})
 
-    const allDrafts = [...out.fb, ...out.ig, ...out.tt, ...out.yt, ...out.li].filter(d => !d.error && d.id)
-    for (const d of allDrafts) {
+    // Single approval card (one per channel, all sharing the same body)
+    for (const d of out.drafts) {
       const draft = await getDraft(req, d.id).catch(() => null)
       if (!draft) continue
       const fullBody = await getDraftFullBody(req, d.id).catch(() => draft.body)
@@ -1724,8 +1654,8 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     }
 
     await stampSuccess(req, 'capture_meta', {
-      day, fb: out.fb.length, ig: out.ig.length, tt: out.tt.length, yt: out.yt.length, li: out.li.length,
-      skipped: out.skipped.length, story_source: storySource,
+      day: dayName, type: todayType, drafts: out.drafts.length, skipped: out.skipped.length,
+      with_image: !!imageUrl, story_source: storySource,
     })
     res.json({ ok: true, story_source: storySource, ...out })
   } catch (e) {
@@ -2447,6 +2377,37 @@ captureCalcRouter.get('/debug/render-prompt', async (req, res) => {
     )
     if (!r?.ok) return res.status(500).json({ ok: false, error: r?.error, budget: r?.budget })
     res.json({ ok: true, label, headline, image_url: r.url })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Preview the unified daily post WITHOUT enqueueing or generating an image.
+// Returns the headline + body + image_prompt so Mark can verify the unified
+// drafter is producing good copy before tomorrow's cron fires it for real.
+//   GET /debug/unified-preview?type=story|framework|case_study&day=Sat
+captureCalcRouter.get('/debug/unified-preview', async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const dayName = String(req.query.day || new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' }))
+    const type = String(req.query.type || UNIFIED_DAY_TYPE_FOR(dayName))
+    let story = String(req.query.story || '').trim()
+    let caseStudy = String(req.query.caseStudy || '').trim()
+    if (!story) {
+      const blob = await cacheGet(segment, 'capture_weekly_story_current', null)
+      story = String(blob?.story || '')
+    }
+    if (!caseStudy) {
+      const blob = await cacheGet(segment, 'capture_weekly_case_study', null)
+      caseStudy = String(blob?.value || '')
+    }
+    if (!story) {
+      const recentBlob = await cacheGet(segment, 'capture_story_history', null)
+      const recentStories = Array.isArray(recentBlob?.stories) ? recentBlob.stories : []
+      story = await generateWeeklyStory({ recentStories })
+    }
+    const unified = await draftUnifiedDailyPost({ story, caseStudy, type, day: dayName, targetDate: new Date().toISOString() })
+    res.json({ ok: true, day: dayName, type, ...unified, body_word_count: unified.body.split(/\s+/).length })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
