@@ -24,8 +24,15 @@ on:
     # GitHub scheduler rush.
     - cron: '7 * * * *'
 
-    # Sunday 13:13 UTC (~ 6 AM PT) — weekly Meta + LinkedIn drafters.
-    - cron: '13 13 * * 0'
+    # DAILY 13:13 UTC (~ 6 AM PT) — daily Meta drafter (1 FB + 1 IG + 1 TT).
+    # Daily replaces the old Sunday weekly batch — Mark wants posts every day,
+    # and a daily run is more resilient (if one day fails, we lose 1 day, not 7).
+    # LinkedIn drafter still runs weekly on Sun (kept on the Sunday-only schedule below).
+    - cron: '13 13 * * *'
+
+    # Sunday 13:33 UTC (~ 6:33 AM PT) — weekly LinkedIn variants (5 per type).
+    # Offset 20min after the daily drafter to avoid Catalyst gateway contention.
+    - cron: '33 13 * * 0'
 
     # Friday 14:17 UTC (~ 7 AM PT) — weekly report to Mark.
     - cron: '17 14 * * 5'
@@ -43,7 +50,8 @@ on:
         type: choice
         options:
           - hourly
-          - sunday-drafters
+          - daily-drafters
+          - sunday-linkedin
           - friday-weekly
           - daily-tasks
 
@@ -80,28 +88,54 @@ jobs:
           cat /tmp/r.json | head -c 1000; echo
           [ "$code" -lt 400 ] || exit 1
 
-  # ── SUNDAY DRAFTERS ────────────────────────────────────────────────────────
-  # Drafters take 60-180s each. Catalyst's HTTP gateway returns 408 at 30s but
-  # the inner handler keeps running server-side and stamps the heartbeat on
-  # completion. We accept 408 (and curl's own timeout-exit-28) as "expected,
-  # work continues" and verify via heartbeat after a wait.
-  sunday-drafters:
-    if: github.event.schedule == '13 13 * * 0' || inputs.job == 'sunday-drafters'
+  # ── DAILY META DRAFTER ─────────────────────────────────────────────────────
+  # Fires every day at 13:13 UTC (~6 AM PT). Drafts 1 FB + 1 IG + 1 TT for
+  # today's slot, scheduled for prime times that same day. Idempotent — skips
+  # any channel that already has a live draft for today.
+  # Drafter takes 60-120s; Catalyst's gateway returns 408 at 30s but inner
+  # handler keeps running. Accept 408/curl-28 as "expected, work continues"
+  # and verify via heartbeat after a wait.
+  daily-drafters:
+    if: github.event.schedule == '13 13 * * *' || inputs.job == 'daily-drafters'
     runs-on: ubuntu-latest
     steps:
-      - name: capture_meta — generate the week's FB + IG + TT drafts
+      - name: capture_meta — generate today's FB + IG + TT drafts
         run: |
           set +e
           code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 40 \
-            "$BASE/draft-meta-week")
+            "$BASE/draft-meta-day")
           curl_exit=$?
           echo "HTTP $code (curl exit $curl_exit) — 408 / curl-28 expected for long drafter"
           cat /tmp/r.json 2>/dev/null | head -c 500; echo
-          # Accept 2xx, 408 (gateway timeout), and curl timeout (inner still running)
           if [ "$curl_exit" -eq 28 ] || [ -z "$code" ] || [ "$code" = "000" ]; then exit 0; fi
           if [ "$code" -ge 500 ]; then exit 1; fi
           exit 0
 
+      - name: wait 3 min then verify drafter completed via heartbeat
+        run: |
+          sleep 180
+          curl -sS --max-time 30 \
+            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug/heartbeats" \
+            | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)['heartbeats']
+          fail = False
+          hb = d.get('capture_meta', {})
+          age = hb.get('last_success_age_min')
+          if age is None or age > 10:
+              print(f'❌ capture_meta: last_success_age_min={age} — drafter did not complete')
+              fail = True
+          else:
+              print(f'✅ capture_meta: last_success_age_min={age}m')
+          sys.exit(1 if fail else 0)
+          "
+
+  # ── SUNDAY LINKEDIN DRAFTER ────────────────────────────────────────────────
+  # LinkedIn stays weekly (5 variants per type generated at once).
+  sunday-linkedin:
+    if: github.event.schedule == '33 13 * * 0' || inputs.job == 'sunday-linkedin'
+    runs-on: ubuntu-latest
+    steps:
       - name: capture_linkedin — generate the week's LinkedIn variants
         run: |
           set +e
@@ -114,7 +148,7 @@ jobs:
           if [ "$code" -ge 500 ]; then exit 1; fi
           exit 0
 
-      - name: wait 3 min then verify drafters completed via heartbeat
+      - name: wait 3 min then verify drafter completed via heartbeat
         run: |
           sleep 180
           curl -sS --max-time 30 \
@@ -123,14 +157,13 @@ jobs:
           import json, sys
           d = json.load(sys.stdin)['heartbeats']
           fail = False
-          for name in ['capture_meta', 'capture_linkedin']:
-              hb = d.get(name, {})
-              age = hb.get('last_success_age_min')
-              if age is None or age > 10:
-                  print(f'❌ {name}: last_success_age_min={age} — drafter did not complete')
-                  fail = True
-              else:
-                  print(f'✅ {name}: last_success_age_min={age}m')
+          hb = d.get('capture_linkedin', {})
+          age = hb.get('last_success_age_min')
+          if age is None or age > 10:
+              print(f'❌ capture_linkedin: last_success_age_min={age} — drafter did not complete')
+              fail = True
+          else:
+              print(f'✅ capture_linkedin: last_success_age_min={age}m')
           sys.exit(1 if fail else 0)
           "
 
