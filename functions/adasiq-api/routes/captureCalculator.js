@@ -19,6 +19,11 @@ import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
+import { draftMetaWeek, draftMetaDay, draftMetaSlot, FB_SLOTS, IG_SLOTS } from '../services/metaDrafter.js'
+import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured } from '../services/metaPosting.js'
+import { postPhotoToTikTok, tiktokConfigured } from '../services/tikTokPosting.js'
+import { imageToShortVideo, cloudinaryConfigured } from '../services/cloudinaryVideo.js'
+import { postShortToYouTube, youtubeConfigured } from '../services/youtubePosting.js'
 import { generateWeeklyStory } from '../services/captureStoryGenerator.js'
 import { postToLinkedIn } from '../services/brewLinkedIn.js'
 import { collectForDraft, applyKillRules } from '../services/engagementCollector.js'
@@ -26,8 +31,9 @@ import { generateCaptureImage, captureImagesEnabled, captureImageConfig, checkBu
 import { postImageToLinkedIn } from '../services/brewLinkedIn.js'
 import { generateLeaveBehindPdf } from '../services/leaveBehindPdf.js'
 import { scoreDraft, measureDraft, loadFingerprint, updateFingerprint, categoryTrust } from '../services/voiceScorer.js'
-import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard, buildSignedActionUrl, getDraftFullBody, setDraftBody } from '../services/captureApprovalQueue.js'
-import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
+import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, formatApprovalCard, buildSignedActionUrl, getDraftFullBody, setDraftBody, resetQueue } from '../services/captureApprovalQueue.js'
+import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID, cliqUrlButton } from '../services/cliq.js'
+import { heartbeatAttempt, stampSuccess, readAllHeartbeats, reportCronFailure } from '../services/cronHeartbeat.js'
 import axios from 'axios'
 
 export const captureCalcRouter = express.Router()
@@ -135,7 +141,7 @@ captureCalcRouter.post('/generate', express.json({ limit: '32kb' }), async (req,
       console.warn('[capture-calc pdf]', e.message)
     }
 
-    const subject = `${shopName} — your partnership margin is ${fmtCurrency(calc.annualMargin)} / year`
+    const subject = `${shopName}: your partnership margin is ${fmtCurrency(calc.annualMargin)} / year`
     const html = renderResultEmail({ contactName, shopName, calc })
     const text = renderResultText({ contactName, shopName, calc })
 
@@ -164,6 +170,31 @@ captureCalcRouter.post('/generate', express.json({ limit: '32kb' }), async (req,
       'PDF emailed. Follow up within 24 hrs to book the Partnership Audit.',
     ].filter(Boolean).join('\n').slice(0, 2000)
     postToCliqUser(TECH_CLIQ_IDS.Mark, cliqMsg).catch(e => console.warn('[capture-calc cliq]', e.message))
+
+    // Email Mark with the lead details so it lives in his inbox + CRM, not just Cliq
+    const markEmailHtml = `<!doctype html><html><body style="font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a;max-width:560px;margin:0 auto;padding:24px;background:#fff">
+<h2 style="color:#CD4419;font-size:22px;margin:0 0 16px">💰 New Partnership Calc Lead</h2>
+<table cellpadding="8" style="font-size:15px;line-height:1.55;border-collapse:collapse;width:100%">
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Shop:</strong></td><td style="border-bottom:1px solid #ececec">${esc(shopName)}</td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Contact:</strong></td><td style="border-bottom:1px solid #ececec">${esc(contactName)}</td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Email:</strong></td><td style="border-bottom:1px solid #ececec"><a href="mailto:${esc(email)}">${esc(email)}</a></td></tr>
+  ${phone ? `<tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Phone:</strong></td><td style="border-bottom:1px solid #ececec"><a href="tel:${esc(phone)}">${esc(phone)}</a></td></tr>` : ''}
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Inputs:</strong></td><td style="border-bottom:1px solid #ececec">${calibrationsPerMonth} cals/mo × ${fmtCurrency(listPrice)} list</td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Tier:</strong></td><td style="border-bottom:1px solid #ececec">${esc(calc.tierLabel)} (${calc.tierDiscountPct}% off list)</td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>Their margin:</strong></td><td style="border-bottom:1px solid #ececec"><strong>${fmtCurrency(calc.monthlyMargin)}/mo · ${fmtCurrency(calc.annualMargin)}/yr</strong></td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>At Volume (15+):</strong></td><td style="border-bottom:1px solid #ececec">${fmtCurrency(calc.annualAtVolume)}/yr</td></tr>
+  <tr><td style="color:#6b7280;border-bottom:1px solid #ececec"><strong>At Preferred (30+):</strong></td><td style="border-bottom:1px solid #ececec">${fmtCurrency(calc.annualAtPreferred)}/yr</td></tr>
+</table>
+<p style="font-size:13px;color:#6b7280;margin-top:18px">PDF emailed to lead. Follow up within 24 hrs to book the Partnership Audit. Submitted ${new Date().toISOString()}.</p>
+</body></html>`
+    sendBroadcast({
+      recipients: ['mf@absoluteadas.com'],
+      subject: `💰 New calc lead: ${shopName} (${fmtCurrency(calc.annualMargin)}/yr)`,
+      html: markEmailHtml,
+      text: cliqMsg,
+      fromEmail: 'mf@absoluteadas.com',
+      fromName: 'Absolute ADAS',
+    }).catch(e => console.warn('[capture-calc email-mark]', e.message))
 
     res.json({
       ok: true,
@@ -270,6 +301,9 @@ function requireCronSecretFlex(req, res, next) {
   next()
 }
 
+// Cron heartbeat: helpers live in services/cronHeartbeat.js so the cron-monitor
+// route can stamp the same keys. See that file for the rationale.
+
 // Flush all stored Calculator submissions. Used when clearing test data
 // so the nurture cron doesn't loop through pre-launch test opt-ins.
 captureCalcRouter.post('/submissions/reset', requireCronSecretFlex, async (req, res) => {
@@ -300,7 +334,10 @@ captureCalcRouter.get('/submissions', requireCronSecretFlex, async (req, res) =>
 //   GET /api/capture-calc/nurture/run?secret=...
 //   GET /api/capture-calc/nurture/run?secret=...&dry=1   — log what would send, no email
 //   GET /api/capture-calc/nurture/preview?secret=...&day=N&to=email   — send single day to test address
-captureCalcRouter.get('/nurture/run', requireCronSecretFlex, async (req, res) => {
+// .all() — accept GET or POST so the cron works regardless of how the
+// Catalyst cron's HTTP method is configured (a POST-vs-GET mismatch 404s
+// every run, which is what got capture_nurture auto-disabled).
+captureCalcRouter.all('/nurture/run', heartbeatAttempt('capture_nurture'), requireCronSecretFlex, async (req, res) => {
   const dry = req.query.dry === '1' || req.query.dry === 'true'
   const out = []
   try {
@@ -339,10 +376,11 @@ captureCalcRouter.get('/nurture/run', requireCronSecretFlex, async (req, res) =>
     }
 
     if (mutated) await cacheSet(seg, SUBMISSIONS_KEY, list)
+    if (!dry) await stampSuccess(req, 'capture_nurture', { processed: out.length })
     res.json({ ok: true, dry, processed: out.length, results: out })
   } catch (e) {
-    console.error('[capture-calc nurture]', e.message, e.stack)
-    res.status(500).json({ ok: false, error: e.message, partialResults: out })
+    await reportCronFailure(req, 'capture_nurture', e)
+    res.json({ ok: false, error: e.message, partialResults: out })
   }
 })
 
@@ -443,7 +481,7 @@ const CAPTURE_FROM_NAME  = 'Mark Fowler'
 
 captureCalcRouter.post('/approval/enqueue', requireCronSecretFlex, express.json({ limit: '64kb' }), async (req, res) => {
   try {
-    const entry = await enqueueDraft(getSegment(req), req.body || {})
+    const entry = await enqueueDraft(req, req.body || {})
     const card = formatApprovalCard({ entry, baseUrl: PUBLIC_BASE })
     const r = await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(e => ({ ok: false, error: e.message }))
     // Persist fingerprint signal: enqueued drafts aren't approvals, just track them
@@ -456,9 +494,8 @@ captureCalcRouter.post('/approval/enqueue', requireCronSecretFlex, express.json(
 // Reset/clear the queue — used to flush bad test data
 captureCalcRouter.post('/approval/reset', requireCronSecretFlex, async (req, res) => {
   try {
-    const seg = getSegment(req)
-    await cacheSet(seg, 'capture_approval_queue', [])
-    res.json({ ok: true, message: 'queue cleared' })
+    const deleted = await resetQueue(req)
+    res.json({ ok: true, message: `queue cleared (${deleted} drafts deleted)` })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
@@ -467,11 +504,79 @@ captureCalcRouter.post('/approval/reset', requireCronSecretFlex, async (req, res
 captureCalcRouter.get('/approval/queue', requireCronSecretFlex, async (req, res) => {
   try {
     const status = req.query.status || undefined
-    const list = await listQueue(getSegment(req), { status })
+    const list = await listQueue(req, { status })
     res.json({ ok: true, count: list.length, items: list })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
+})
+
+// TEMP DEBUG — unauthenticated diagnostic endpoint. REMOVE after Sunday-batch
+// outage is diagnosed (added 2026-05-26). Returns queue state, recent-draft
+// summary, env-var presence (booleans only — no values), and current PT day.
+captureCalcRouter.get('/debug/state', async (req, res) => {
+  const out = { ok: true, generated_at: new Date().toISOString() }
+  try {
+    out.now_pt = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    out.day_pt = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+  } catch (e) { out.day_pt_error = e.message }
+
+  out.env_present = {
+    BREW_CRON_SECRET:        Boolean(process.env.BREW_CRON_SECRET),
+    ANTHROPIC_API_KEY:       Boolean(process.env.ANTHROPIC_API_KEY),
+    GEMINI_API_KEY:          Boolean(process.env.GEMINI_API_KEY),
+    FB_PAGE_ID:              Boolean(process.env.FB_PAGE_ID),
+    FB_PAGE_ACCESS_TOKEN:    Boolean(process.env.FB_PAGE_ACCESS_TOKEN),
+    IG_BUSINESS_USER_ID:     Boolean(process.env.IG_BUSINESS_USER_ID),
+    LINKEDIN_REFRESH_TOKEN:  Boolean(process.env.LINKEDIN_REFRESH_TOKEN),
+    LINKEDIN_ACCESS_TOKEN:   Boolean(process.env.LINKEDIN_ACCESS_TOKEN),
+    LINKEDIN_CLIENT_ID:      Boolean(process.env.LINKEDIN_CLIENT_ID),
+    LINKEDIN_USER_URN:       Boolean(process.env.LINKEDIN_USER_URN),
+    YOUTUBE_REFRESH_TOKEN:   Boolean(process.env.YOUTUBE_REFRESH_TOKEN),
+    CLOUDINARY_URL:          Boolean(process.env.CLOUDINARY_URL),
+    TIKTOK_CLIENT_KEY:       Boolean(process.env.TIKTOK_CLIENT_KEY),
+    TIKTOK_REFRESH_TOKEN:    Boolean(process.env.TIKTOK_REFRESH_TOKEN),
+    ZOHO_CLIQ_REFRESH_TOKEN: Boolean(process.env.ZOHO_CLIQ_REFRESH_TOKEN),
+    RESEND_API_KEY:          Boolean(process.env.RESEND_API_KEY),
+  }
+
+  try {
+    const all = await listQueue(req, {})
+    const counts = {}
+    for (const d of all) counts[d.status || 'unknown'] = (counts[d.status || 'unknown'] || 0) + 1
+    out.queue_counts = counts
+    out.queue_total = all.length
+
+    const cutoff = Date.now() - 14 * 86400000
+    const recent = all
+      .filter(d => {
+        const t = d.created_at ? new Date(d.created_at).getTime() : 0
+        return t >= cutoff
+      })
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+      .slice(0, 60)
+      .map(d => ({
+        id: d.id,
+        channel: d.channel,
+        category: d.category,
+        status: d.status,
+        created_at: d.created_at,
+        scheduled_for: d.scheduled_for,
+        voice_score: d.voice_score,
+        has_image: Boolean(d.image_url),
+        has_video: Boolean(d.video_url),
+        image_status: d.image_status,
+        error: d.error,
+        stale_reason: d.stale_reason,
+      }))
+    out.recent_drafts = recent
+    out.recent_count = recent.length
+  } catch (e) {
+    out.queue_error = e.message
+    out.queue_stack = (e.stack || '').split('\n').slice(0, 4).join(' | ')
+  }
+
+  res.json(out)
 })
 
 // Public approve/kill/edit — signed via HMAC. GETs return confirmation pages
@@ -483,11 +588,11 @@ function handleConfirmGet(action) {
     const v = verifySignedAction({ id, action, t, sig })
     if (!v.ok) return res.status(401).type('text/html').send(approvalPage({ title: 'Link invalid', message: v.error, color: '#dc2626' }))
     const segment = getSegment(req)
-    const draft = await getDraft(segment, id)
+    const draft = await getDraft(req, id)
     if (!draft) return res.status(404).type('text/html').send(approvalPage({ title: 'Draft not found', message: '', color: '#dc2626' }))
 
     // Fetch full body for display — queue stores truncated preview.
-    const fullBody = await getDraftFullBody(segment, id).catch(() => draft.body)
+    const fullBody = await getDraftFullBody(req, id).catch(() => draft.body)
     const draftForView = { ...draft, body: fullBody }
 
     if (draft.status !== 'pending') return res.type('text/html').send(approvalPage({ title: `Already ${draft.status}`, message: 'This draft has already been acted on.', color: '#6b7280', body: fullBody }))
@@ -505,17 +610,17 @@ function handleSignedPost(action) {
     const v = verifySignedAction({ id, action, t, sig })
     if (!v.ok) return res.status(401).type('text/html').send(approvalPage({ title: 'Link invalid', message: v.error, color: '#dc2626' }))
     const segment = getSegment(req)
-    const draft = await getDraft(segment, id)
+    const draft = await getDraft(req, id)
     if (!draft) return res.status(404).type('text/html').send(approvalPage({ title: 'Draft not found', message: '', color: '#dc2626' }))
     if (draft.status !== 'pending') return res.type('text/html').send(approvalPage({ title: `Already ${draft.status}`, message: 'This draft has already been acted on.', color: '#6b7280' }))
 
     if (action === 'approve') {
-      const updated = await updateDraft(segment, id, { status: 'approved' })
+      const updated = await updateDraft(req, id, { status: 'approved' })
       await updateFingerprint(segment, { category: draft.category, signal: 'up', text: draft.body }).catch(() => {})
       return res.type('text/html').send(approvalPage({ title: '✅ Approved', message: `Approved for ${updated.channel}. Will publish at the scheduled time.`, color: '#16a34a', body: draft.body }))
     }
     if (action === 'kill') {
-      await updateDraft(segment, id, { status: 'killed' })
+      await updateDraft(req, id, { status: 'killed' })
       await updateFingerprint(segment, { category: draft.category, signal: 'down', text: draft.body }).catch(() => {})
       return res.type('text/html').send(approvalPage({ title: '❌ Killed', message: 'Draft will not be published.', color: '#dc2626' }))
     }
@@ -534,14 +639,14 @@ captureCalcRouter.post('/approval/edit', express.urlencoded({ extended: false, l
   const v = verifySignedAction({ id, action: 'edit', t, sig })
   if (!v.ok) return res.status(401).type('text/html').send(approvalPage({ title: 'Link invalid', message: v.error, color: '#dc2626' }))
   const segment = getSegment(req)
-  const draft = await getDraft(segment, id)
+  const draft = await getDraft(req, id)
   if (!draft) return res.status(404).type('text/html').send(approvalPage({ title: 'Draft not found', message: '', color: '#dc2626' }))
   const editedBody = String(req.body?.body || '').trim()
   if (!editedBody) return res.status(400).type('text/html').send(approvalPage({ title: 'Body required', message: '', color: '#dc2626' }))
   const editedHeadline = String(req.body?.headline || draft.headline || '').trim()
   // Full body stored at FULL_BODY_KEY; queue entry holds only metadata.
-  await setDraftBody(segment, id, editedBody)
-  const updated = await updateDraft(segment, id, { status: 'approved', headline: editedHeadline, was_edited: true })
+  await setDraftBody(req, id, editedBody)
+  const updated = await updateDraft(req, id, { status: 'approved', headline: editedHeadline, was_edited: true })
   await updateFingerprint(segment, { category: draft.category, signal: 'edited', text: draft.body, editedText: editedBody }).catch(() => {})
   res.type('text/html').send(approvalPage({ title: '✅ Edited & Approved', message: 'Your edit is saved and the draft is queued to publish.', color: '#16a34a', body: editedBody }))
 })
@@ -760,6 +865,16 @@ captureCalcRouter.get('/partnership-audit/requests', requireCronSecretFlex, asyn
   }
 })
 
+captureCalcRouter.post('/partnership-audit/reset', requireCronSecretFlex, async (req, res) => {
+  try {
+    const seg = getSegment(req)
+    await cacheSet(seg, 'partnership_audit_requests', [])
+    res.json({ ok: true, message: 'partnership audit requests cleared' })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // ─── WEEKLY STORY DROPBOX ───────────────────────────────────────────────────
 // Mark drops his ~200-word weekly story Tuesday/Wednesday morning. The
 // Sunday-night cron reads it from the cache and generates the LinkedIn batch.
@@ -892,7 +1007,7 @@ captureCalcRouter.get('/internal/story-read', async (req, res) => {
 // (01:00 UTC) and the handler gates by day-of-week — no-op every day except
 // Sunday Pacific. Story is read from cache key capture_weekly_story_current
 // (drop via POST /api/capture-calc/weekly-story) if not provided in body.
-captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+captureCalcRouter.all('/linkedin/draft-week-variants', heartbeatAttempt('capture_linkedin'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const force = req.query.force === '1' || req.query.force === 'true'
 
@@ -962,7 +1077,7 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
       const variantIds = []
       const cardSections = [`📝 *${slot.day} ${slot.type} — 3 VARIANTS FOR APPROVAL*`, `Scheduled: ${scheduledFor.toISOString()}`, '']
       for (const v of slot.variants) {
-        const entry = await enqueueDraft(segment, {
+        const entry = await enqueueDraft(req, {
           channel: 'linkedin_personal',
           category: slot.type,
           headline: v.headline,
@@ -984,12 +1099,12 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
           ).catch(e => ({ ok: false, error: e.message }))
           if (r?.ok) {
             imageUrl = r.url
-            await updateDraft(segment, entry.id, { image_url: r.url, image_status: 'generated' })
+            await updateDraft(req, entry.id, { image_url: r.url, image_status: 'generated' })
           } else {
-            await updateDraft(segment, entry.id, { image_status: 'failed', image_error: r?.error })
+            await updateDraft(req, entry.id, { image_status: 'failed', image_error: r?.error })
           }
         } else {
-          await updateDraft(segment, entry.id, { image_status: 'disabled' })
+          await updateDraft(req, entry.id, { image_status: 'disabled' })
         }
 
         cardSections.push(`*${v.hook.toUpperCase()}* (voice ${v.voice_score}/100):`)
@@ -1022,15 +1137,17 @@ captureCalcRouter.post('/linkedin/draft-week-variants', requireCronSecretFlex, e
     // later in the week will land in the empty slot for the next Sunday.
     await cacheSet(segment, 'capture_weekly_story_current', { story: '', ts: Date.now() }).catch(() => {})
 
+    await stampSuccess(req, 'capture_linkedin', { slots: out.length, story_source: storySource })
     res.json({ ok: true, story_source: storySource, slots: out })
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message })
+    await reportCronFailure(req, 'capture_linkedin', e)
+    res.json({ ok: false, error: e.message })
   }
 })
 
 // Compute the next weekday at 14:00 UTC (7:00am PT) for a given Mon-Fri label.
 // Schedule at top-of-hour so it aligns with Catalyst's hourly cron tick
-// (Catalyst minimum interval is 1 hour — sub-hourly schedules not allowed).
+// (Catalyst minimum interval is 1 hour, sub-hourly schedules not allowed).
 function nextScheduledFor(day) {
   const dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5 }
   const target = dayMap[day]
@@ -1044,6 +1161,572 @@ function nextScheduledFor(day) {
   result.setUTCHours(14, 0, 0, 0)  // 14:00 UTC = 7am PT (PDT)
   return result
 }
+
+// Same as above but with a specific PT hour/minute (used for Meta slots —
+// FB at 12:00pm PT, IG at 11:30am PT per master prompt v3.1 section 16).
+// PDT is UTC-7; we convert by adding 7 to the desired PT hour.
+// Schedule for TODAY at the given PT time. If that time has already passed
+// today, schedule for now+5min so the next scheduler tick picks it up.
+// Used by the daily drafter.
+function todayScheduledForAtTimePT(ptHour, ptMinute = 0) {
+  const now = new Date()
+  const utcHour = (ptHour + 7) % 24
+  const result = new Date(now)
+  result.setUTCHours(utcHour, ptMinute, 0, 0)
+  if (result.getTime() <= now.getTime() + 60000) {
+    return new Date(now.getTime() + 5 * 60000)
+  }
+  return result
+}
+
+function nextScheduledForAtTimePT(day, ptHour, ptMinute = 0) {
+  const dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 }
+  const target = dayMap[day]
+  if (target === undefined) return new Date(Date.now() + 24 * 3600000)
+  const now = new Date()
+  const todayUtc = now.getUTCDay()
+  let daysAhead = (target - todayUtc + 7) % 7
+  if (daysAhead === 0) daysAhead = 7
+  const result = new Date(now)
+  result.setUTCDate(now.getUTCDate() + daysAhead)
+  // PDT (Mar-Nov) = UTC-7, PST (Nov-Mar) = UTC-8. Using PDT for now since
+  // campaign launches in May. TODO when DST rolls back: bump by +1.
+  const utcHour = (ptHour + 7) % 24
+  result.setUTCHours(utcHour, ptMinute, 0, 0)
+  // If picking the same day this week would land in the past, push to next week
+  if (daysAhead < 7 && result.getTime() < now.getTime()) {
+    result.setUTCDate(result.getUTCDate() + 7)
+  }
+  return result
+}
+
+// Build one Meta post's Cliq card. The post is already auto-approved and
+// scheduled — the card is a heads-up with two tappable buttons: ✏️ Edit to
+// tweak it, ❌ Delete to pull it before it posts. Used by /meta/draft-week
+// and /meta/post-pending-cards.
+function buildMetaApprovalCard(draft, fullBody) {
+  const channelName = draft.channel === 'facebook_page' ? '📘 FACEBOOK'
+    : draft.channel === 'instagram_business' ? '📷 INSTAGRAM'
+    : draft.channel === 'tiktok_business' ? '🎵 TIKTOK'
+    : draft.channel === 'youtube_shorts' ? '🎬 YOUTUBE SHORT'
+    : draft.channel
+  const text = [
+    `${channelName} · ${draft.meta?.slot || ''} · voice ${draft.voice_score}/100`,
+    `✅ Scheduled to auto-post: ${draft.scheduled_for}`,
+    ``,
+    draft.headline ? `*${draft.headline}*` : '',
+    ``,
+    fullBody,
+    ``,
+    draft.image_url ? `🖼️ ${draft.image_url}` : '⚠️ no image',
+    ``,
+    `_This post is approved and will go out on schedule. Tap Delete to pull it._`,
+  ].filter(Boolean).join('\n').slice(0, 6000)
+  const buttons = [
+    cliqUrlButton('✏️ Edit',   buildSignedActionUrl(PUBLIC_BASE, draft.id, 'edit')),
+    cliqUrlButton('❌ Delete', buildSignedActionUrl(PUBLIC_BASE, draft.id, 'kill'), '-'),
+  ]
+  return { text, buttons }
+}
+
+// ─── META (Facebook + Instagram) WEEKLY DRAFT BATCH ──────────────────────────
+// Per master prompt v3.1 section 16:
+//   FB: Mon/Wed/Fri 12:00pm PT (3/week)
+//   IG: Mon/Tue/Thu 11:30am PT (3/week)
+//
+// Fires daily; gated to Sunday PT only (mirroring the LinkedIn weekly cron).
+// Uses the same weekly story dropbox as LinkedIn so one story feeds all
+// channels for the week.
+//
+//   POST /api/capture-calc/meta/draft-week  (cron-secret)
+//   Body: { story?, caseStudy? }       ← optional, falls back to stored
+//   Query: ?force=1                    ← bypass Sunday-only gate (manual test)
+captureCalcRouter.all('/meta/draft-week', heartbeatAttempt('capture_meta'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const force = req.query.force === '1' || req.query.force === 'true'
+    if (!force) {
+      const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+      if (dayPT !== 'Sun') {
+        return res.json({ ok: true, skipped: true, reason: `today is ${dayPT} PT, meta weekly batch only fires on Sun` })
+      }
+    }
+
+    const segment = getSegment(req)
+
+    // Concurrent-fire lock. Catalyst's gateway times out at 30s on long
+    // drafter runs, and the platform appears to auto-retry the same request
+    // — which silently produced 18 drafts (9 unique × 2) on 2026-06-17.
+    // This cache key blocks any second invocation within a 10-min window of
+    // a still-running drafter. Bypassable via ?force_relock=1 for genuine
+    // re-run intent.
+    const LOCK_KEY = `meta_batch_inprogress_${new Date().toISOString().slice(0, 10)}`
+    if (req.query.force_relock !== '1') {
+      const existingLock = await cacheGet(segment, LOCK_KEY, null)
+      if (existingLock && (Date.now() - new Date(existingLock.at).getTime()) < 600000) {
+        return res.json({ ok: true, skipped: true, reason: 'concurrent draft-week already in progress (lock held)', locked_at: existingLock.at })
+      }
+    }
+    await cacheSet(segment, LOCK_KEY, { at: new Date().toISOString() })
+
+    let story = String(req.body?.story || '').trim()
+    let caseStudy = String(req.body?.caseStudy || '').trim()
+    if (!story) {
+      const blob = await cacheGet(segment, 'capture_weekly_story_current', null)
+      story = String(blob?.story || '')
+    }
+    if (!caseStudy) {
+      const blob = await cacheGet(segment, 'capture_weekly_case_study', null)
+      caseStudy = String(blob?.value || '')
+    }
+
+    // Reuse the same auto-gen path as LinkedIn — if no story dropped, generate one.
+    let storySource = 'dropped'
+    if (!story) {
+      try {
+        const recentBlob = await cacheGet(segment, 'capture_story_history', null)
+        const recentStories = Array.isArray(recentBlob?.stories) ? recentBlob.stories : []
+        story = await generateWeeklyStory({ recentStories })
+        storySource = 'auto-generated'
+        // Don't overwrite story_history here (LinkedIn cron handles that). Just use it.
+      } catch (e) {
+        return res.json({ ok: false, skipped: true, reason: `auto-gen failed (${e.message})` })
+      }
+    }
+
+    const { fb, ig, tt, yt } = await draftMetaWeek({ story, caseStudy })
+    const out = { fb: [], ig: [], tt: [], yt: [] }
+
+    // ── Generate ONE image per unique post type, shared across channels ─────
+    // Per Mark's 2026-05-26 image-prompt spec: the drafter outputs the image
+    // prompt with the post, and all channels that share a "type" (story /
+    // framework / case_study / visual_hook / mechanism / testimonial) share
+    // the same image. Drops weekly image gen from ~12 → 6, keeps voice
+    // coherent across IG/TT/YT versions of the same lesson.
+    const draftedSlots = [...fb, ...ig, ...tt, ...yt]
+    const typeToPrompt = {}
+    for (const d of draftedSlots) {
+      if (d.error || !d.image_prompt || !d.type) continue
+      if (!typeToPrompt[d.type]) typeToPrompt[d.type] = d.image_prompt
+    }
+    const typeToImageUrl = {}
+    const typeToImageError = {}
+    const batchSlug = `meta-${new Date().toISOString().slice(0, 10)}`
+    if (captureImagesEnabled()) {
+      for (const [type, prompt] of Object.entries(typeToPrompt)) {
+        const r = await generateCaptureImage(
+          { headline: type, draftId: `${batchSlug}-${type}` },
+          { segment, sceneOverride: prompt }
+        ).catch(e => ({ ok: false, error: e.message }))
+        if (r?.ok) typeToImageUrl[type] = r.url
+        else typeToImageError[type] = r?.error || 'image generation failed'
+      }
+    }
+    // For YouTube, also pre-compute the MP4 from each type's image (one MP4
+    // per type, shared by all YT drafts of that type).
+    const typeToVideoUrl = {}
+    const typeToVideoError = {}
+    const YT_TYPES = ['visual_hook', 'mechanism', 'testimonial']
+    if (cloudinaryConfigured()) {
+      for (const type of YT_TYPES) {
+        const imgUrl = typeToImageUrl[type]
+        if (!imgUrl) continue
+        const v = await imageToShortVideo({ imageUrl: imgUrl, duration: 8 }).catch(e => ({ ok: false, error: e.message }))
+        if (v?.ok) typeToVideoUrl[type] = v.url
+        else typeToVideoError[type] = v?.error || 'video conversion failed'
+      }
+    }
+
+    // ── Facebook drafts ─────────────────────────────────────────────────────
+    for (const draft of fb) {
+      if (draft.error) {
+        out.fb.push({ day: draft.day, error: draft.error })
+        continue
+      }
+      const scheduledFor = nextScheduledForAtTimePT(draft.day, draft.hour, draft.minute)
+      const entry = await enqueueDraft(req, {
+        channel: 'facebook_page',
+        category: draft.type,
+        headline: draft.headline,
+        body: draft.body,
+        scheduled_for: scheduledFor.toISOString(),
+        voice_score: draft.voice_score,
+        voice_deductions: draft.voice_deductions,
+        meta: { slot: draft.day, group: `meta-${scheduledFor.toISOString().slice(0,10)}`, image_prompt: draft.image_prompt || null },
+        status: 'approved',   // auto-approved; Mark deletes any he doesn't want
+      })
+      // Image: shared per type (see typeToImageUrl above).
+      const imageUrl = typeToImageUrl[draft.type] || null
+      if (imageUrl) {
+        await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
+      } else if (!captureImagesEnabled()) {
+        await updateDraft(req, entry.id, { image_status: 'disabled' })
+      } else {
+        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[draft.type] || 'no image for type' })
+      }
+      out.fb.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl })
+    }
+
+    // ── Instagram drafts (image REQUIRED — Graph API constraint) ────────────
+    for (const draft of ig) {
+      if (draft.error) {
+        out.ig.push({ day: draft.day, error: draft.error })
+        continue
+      }
+      const scheduledFor = nextScheduledForAtTimePT(draft.day, draft.hour, draft.minute)
+      const entry = await enqueueDraft(req, {
+        channel: 'instagram_business',
+        category: draft.type,
+        headline: draft.headline,
+        body: draft.body,
+        scheduled_for: scheduledFor.toISOString(),
+        voice_score: draft.voice_score,
+        voice_deductions: draft.voice_deductions,
+        meta: { slot: draft.day, group: `meta-${scheduledFor.toISOString().slice(0,10)}`, image_prompt: draft.image_prompt || null },
+        status: 'approved',
+      })
+      const imageUrl = typeToImageUrl[draft.type] || null
+      if (imageUrl) {
+        await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
+      } else if (!captureImagesEnabled()) {
+        await updateDraft(req, entry.id, { image_status: 'disabled' })
+      } else {
+        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[draft.type] || 'no image for type' })
+      }
+      out.ig.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl })
+    }
+
+    // ── TikTok drafts (image REQUIRED — TikTok photo post needs media) ──────
+    for (const draft of tt) {
+      if (draft.error) {
+        out.tt.push({ day: draft.day, error: draft.error })
+        continue
+      }
+      const scheduledFor = nextScheduledForAtTimePT(draft.day, draft.hour, draft.minute)
+      const entry = await enqueueDraft(req, {
+        channel: 'tiktok_business',
+        category: draft.type,
+        headline: draft.headline,
+        body: draft.body,
+        scheduled_for: scheduledFor.toISOString(),
+        voice_score: draft.voice_score,
+        voice_deductions: draft.voice_deductions,
+        meta: { slot: draft.day, group: `meta-${scheduledFor.toISOString().slice(0,10)}`, image_prompt: draft.image_prompt || null },
+        status: 'approved',
+      })
+      const imageUrl = typeToImageUrl[draft.type] || null
+      if (imageUrl) {
+        await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
+      } else if (!captureImagesEnabled()) {
+        await updateDraft(req, entry.id, { image_status: 'disabled' })
+      } else {
+        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[draft.type] || 'no image for type' })
+      }
+      out.tt.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl })
+    }
+
+    // ── YouTube Shorts drafts (image generated, then Cloudinary → MP4) ──────
+    // Video gen happens here at draft time, not publish time — Cloudinary
+    // takes 5-30s and shouldn't compete with the scheduler's tight window.
+    // The MP4 URL is stashed on the draft; the scheduler downloads + uploads.
+    for (const draft of yt) {
+      if (draft.error) {
+        out.yt.push({ day: draft.day, error: draft.error })
+        continue
+      }
+      const scheduledFor = nextScheduledForAtTimePT(draft.day, draft.hour, draft.minute)
+      const entry = await enqueueDraft(req, {
+        channel: 'youtube_shorts',
+        category: draft.type,
+        headline: draft.headline,
+        body: draft.body,
+        scheduled_for: scheduledFor.toISOString(),
+        voice_score: draft.voice_score,
+        voice_deductions: draft.voice_deductions,
+        meta: { slot: draft.day, group: `meta-${scheduledFor.toISOString().slice(0,10)}`, image_prompt: draft.image_prompt || null },
+        status: 'approved',
+      })
+      const imageUrl = typeToImageUrl[draft.type] || null
+      const videoUrl = typeToVideoUrl[draft.type] || null
+      if (imageUrl) {
+        await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
+      } else if (!captureImagesEnabled()) {
+        await updateDraft(req, entry.id, { image_status: 'disabled' })
+      } else {
+        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[draft.type] || 'no image for type' })
+      }
+      if (videoUrl) {
+        await updateDraft(req, entry.id, { video_url: videoUrl, video_status: 'generated' })
+      } else if (!cloudinaryConfigured()) {
+        await updateDraft(req, entry.id, { video_status: 'cloudinary_not_configured' })
+      } else if (imageUrl) {
+        await updateDraft(req, entry.id, { video_status: 'failed', video_error: typeToVideoError[draft.type] || 'no video for type' })
+      }
+      out.yt.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl, has_video: !!videoUrl })
+    }
+
+    // Cliq summary card — the batch is auto-approved and scheduled. Mark only
+    // acts on a card if he wants to pull or tweak a post.
+    const card = [
+      `📱 *SOCIAL WEEKLY BATCH SCHEDULED* (${storySource} story)`,
+      `All ${out.fb.length + out.ig.length + out.tt.length} posts are auto-approved and will post on schedule.`,
+      `Tap *❌ Delete* on any card below to pull it. *✏️ Edit* to tweak it.`,
+      ``,
+      `*Facebook* (${out.fb.length} posts, Mon/Wed/Fri 12pm PT):`,
+      ...out.fb.map(d => d.error ? `  · ${d.day}: ❌ ${d.error}` : `  · ${d.day}: voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '📝'}`),
+      ``,
+      `*Instagram* (${out.ig.length} posts, Mon/Tue/Thu 11:30am PT):`,
+      ...out.ig.map(d => d.error ? `  · ${d.day}: ❌ ${d.error}` : `  · ${d.day}: voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`),
+      ``,
+      `*TikTok* (${out.tt.length} posts, Mon/Wed/Fri 2pm PT):`,
+      ...out.tt.map(d => d.error ? `  · ${d.day}: ❌ ${d.error}` : `  · ${d.day}: voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`),
+      ``,
+      // YouTube only shown when YOUTUBE_REFRESH_TOKEN is set (drafter gates it).
+      ...(out.yt.length ? [
+        `*YouTube Shorts* (${out.yt.length} posts, Tue/Thu/Sat 1pm PT):`,
+        ...out.yt.map(d => d.error ? `  · ${d.day}: ❌ ${d.error}` : `  · ${d.day}: voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMG'} ${d.has_video ? '🎬' : '⚠️ NO VIDEO'}`),
+        ``,
+      ] : []),
+      `Cards posting below…`,
+    ].join('\n')
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(() => {})
+
+    // Per-post cards — full body + tappable ✏️ Edit / ❌ Delete buttons.
+    const allDrafts = [...out.fb, ...out.ig, ...out.tt, ...out.yt].filter(d => !d.error)
+    for (const d of allDrafts) {
+      const draft = await getDraft(req, d.id).catch(() => null)
+      if (!draft) continue
+      const fullBody = await getDraftFullBody(req, d.id).catch(() => draft.body)
+      const { text, buttons } = buildMetaApprovalCard(draft, fullBody)
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text, buttons).catch(e => console.warn('[meta cliq card]', e.message))
+    }
+
+    await stampSuccess(req, 'capture_meta', {
+      fb: out.fb.length, ig: out.ig.length, tt: out.tt.length, yt: out.yt.length,
+      story_source: storySource,
+    })
+    res.json({ ok: true, story_source: storySource, ...out })
+  } catch (e) {
+    await reportCronFailure(req, 'capture_meta', e)
+    res.json({ ok: false, error: e.message })
+  }
+})
+
+//   POST /api/capture-calc/meta/draft-day  (cron-secret)
+//   Body: { story?, caseStudy? }       ← optional, falls back to stored
+//   Query: ?dayName=Mon                ← override today (testing only)
+//
+// Daily drafter — replaces the Sunday weekly batch with a daily 3-post pass
+// (1 FB + 1 IG + 1 TT for today's slot). Skips channels that already have an
+// approved/published draft for today to make the cron idempotent.
+captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const todayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+    const dayName = String(req.query.dayName || todayPT)
+    const todayDateStr = new Date().toISOString().slice(0, 10)
+
+    // Concurrent-fire lock — Catalyst's gateway times out at 30s on long
+    // drafter runs and may auto-retry. Block second invocation within 10min.
+    const LOCK_KEY = `meta_daily_inprogress_${todayDateStr}`
+    if (req.query.force_relock !== '1') {
+      const existingLock = await cacheGet(segment, LOCK_KEY, null)
+      if (existingLock && (Date.now() - new Date(existingLock.at).getTime()) < 600000) {
+        return res.json({ ok: true, skipped: true, reason: 'concurrent draft-day already in progress (lock held)', locked_at: existingLock.at })
+      }
+    }
+    await cacheSet(segment, LOCK_KEY, { at: new Date().toISOString() })
+
+    // Idempotence — skip channels that already have a live draft for today.
+    const existing = await listQueue(req, {})
+    const todayLive = existing.filter(d => {
+      if (!['facebook_page', 'instagram_business', 'tiktok_business', 'youtube_shorts'].includes(d.channel)) return false
+      if (!['approved', 'pending', 'published'].includes(d.status)) return false
+      const sched = (d.scheduled_for || '').slice(0, 10)
+      return sched === todayDateStr
+    })
+    const channelsAlreadyDone = new Set(todayLive.map(d => d.channel))
+
+    let story = String(req.body?.story || '').trim()
+    let caseStudy = String(req.body?.caseStudy || '').trim()
+    if (!story) {
+      const blob = await cacheGet(segment, 'capture_weekly_story_current', null)
+      story = String(blob?.story || '')
+    }
+    if (!caseStudy) {
+      const blob = await cacheGet(segment, 'capture_weekly_case_study', null)
+      caseStudy = String(blob?.value || '')
+    }
+    let storySource = 'dropped'
+    if (!story) {
+      try {
+        const recentBlob = await cacheGet(segment, 'capture_story_history', null)
+        const recentStories = Array.isArray(recentBlob?.stories) ? recentBlob.stories : []
+        story = await generateWeeklyStory({ recentStories })
+        storySource = 'auto-generated'
+      } catch (e) {
+        return res.json({ ok: false, skipped: true, reason: `auto-gen failed (${e.message})` })
+      }
+    }
+
+    const { fb, ig, tt, yt, day } = await draftMetaDay({ story, caseStudy, dayName })
+    const out = { day, fb: [], ig: [], tt: [], yt: [], skipped: [] }
+
+    // Shared-image-per-type (same scaffolding as draft-week).
+    const draftedSlots = [...fb, ...ig, ...tt, ...yt]
+    const typeToPrompt = {}
+    for (const d of draftedSlots) {
+      if (d.error || !d.image_prompt || !d.type) continue
+      if (!typeToPrompt[d.type]) typeToPrompt[d.type] = d.image_prompt
+    }
+    const typeToImageUrl = {}
+    const typeToImageError = {}
+    const batchSlug = `metaday-${todayDateStr}`
+    if (captureImagesEnabled()) {
+      for (const [type, prompt] of Object.entries(typeToPrompt)) {
+        const r = await generateCaptureImage(
+          { headline: type, draftId: `${batchSlug}-${type}` },
+          { segment, sceneOverride: prompt }
+        ).catch(e => ({ ok: false, error: e.message }))
+        if (r?.ok) typeToImageUrl[type] = r.url
+        else typeToImageError[type] = r?.error || 'image generation failed'
+      }
+    }
+    const typeToVideoUrl = {}
+    const typeToVideoError = {}
+    const YT_TYPES = ['visual_hook', 'mechanism', 'testimonial']
+    if (cloudinaryConfigured()) {
+      for (const type of YT_TYPES) {
+        const imgUrl = typeToImageUrl[type]
+        if (!imgUrl) continue
+        const v = await imageToShortVideo({ imageUrl: imgUrl, duration: 8 }).catch(e => ({ ok: false, error: e.message }))
+        if (v?.ok) typeToVideoUrl[type] = v.url
+        else typeToVideoError[type] = v?.error || 'video conversion failed'
+      }
+    }
+
+    const enqueueOne = async (channelKey, draft, bucket) => {
+      if (channelsAlreadyDone.has(channelKey)) {
+        out.skipped.push({ channel: channelKey, reason: 'already has a live draft for today' })
+        return
+      }
+      if (draft.error) {
+        bucket.push({ day: draft.day, error: draft.error })
+        return
+      }
+      const scheduledFor = todayScheduledForAtTimePT(draft.hour, draft.minute)
+      const entry = await enqueueDraft(req, {
+        channel: channelKey,
+        category: draft.type,
+        headline: draft.headline,
+        body: draft.body,
+        scheduled_for: scheduledFor.toISOString(),
+        voice_score: draft.voice_score,
+        voice_deductions: draft.voice_deductions,
+        meta: { slot: draft.day, group: `metaday-${todayDateStr}`, image_prompt: draft.image_prompt || null },
+        status: 'approved',
+      })
+      const imageUrl = typeToImageUrl[draft.type] || null
+      if (imageUrl) {
+        await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
+      } else if (!captureImagesEnabled()) {
+        await updateDraft(req, entry.id, { image_status: 'disabled' })
+      } else {
+        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[draft.type] || 'no image for type' })
+      }
+      if (channelKey === 'youtube_shorts') {
+        const videoUrl = typeToVideoUrl[draft.type] || null
+        if (videoUrl) {
+          await updateDraft(req, entry.id, { video_url: videoUrl, video_status: 'generated' })
+        } else if (!cloudinaryConfigured()) {
+          await updateDraft(req, entry.id, { video_status: 'cloudinary_not_configured' })
+        } else if (imageUrl) {
+          await updateDraft(req, entry.id, { video_status: 'failed', video_error: typeToVideoError[draft.type] || 'no video for type' })
+        }
+        bucket.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl, has_video: !!videoUrl })
+      } else {
+        bucket.push({ day: draft.day, id: entry.id, scheduled_for: scheduledFor.toISOString(), voice_score: draft.voice_score, has_image: !!imageUrl })
+      }
+    }
+
+    for (const draft of fb) await enqueueOne('facebook_page',      draft, out.fb)
+    for (const draft of ig) await enqueueOne('instagram_business', draft, out.ig)
+    for (const draft of tt) await enqueueOne('tiktok_business',    draft, out.tt)
+    for (const draft of yt) await enqueueOne('youtube_shorts',     draft, out.yt)
+
+    const created = out.fb.length + out.ig.length + out.tt.length + out.yt.length
+    const card = [
+      `📱 *DAILY SOCIAL DRAFTED* — ${day} ${todayDateStr}`,
+      `${created} new post${created === 1 ? '' : 's'} auto-approved for today.`,
+      ...(out.skipped.length ? [`Skipped (already had today): ${out.skipped.map(s => s.channel).join(', ')}`] : []),
+      ``,
+      ...(out.fb.length ? [`*Facebook* (12pm PT):`, ...out.fb.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '📝'}`)] : []),
+      ...(out.ig.length ? [``, `*Instagram* (11:30am PT):`, ...out.ig.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`)] : []),
+      ...(out.tt.length ? [``, `*TikTok* (2pm PT):`, ...out.tt.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`)] : []),
+    ].join('\n')
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(() => {})
+
+    const allDrafts = [...out.fb, ...out.ig, ...out.tt, ...out.yt].filter(d => !d.error && d.id)
+    for (const d of allDrafts) {
+      const draft = await getDraft(req, d.id).catch(() => null)
+      if (!draft) continue
+      const fullBody = await getDraftFullBody(req, d.id).catch(() => draft.body)
+      const { text, buttons } = buildMetaApprovalCard(draft, fullBody)
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text, buttons).catch(e => console.warn('[meta cliq card]', e.message))
+    }
+
+    await stampSuccess(req, 'capture_meta', {
+      day, fb: out.fb.length, ig: out.ig.length, tt: out.tt.length, yt: out.yt.length,
+      skipped: out.skipped.length, story_source: storySource,
+    })
+    res.json({ ok: true, story_source: storySource, ...out })
+  } catch (e) {
+    await reportCronFailure(req, 'capture_meta', e)
+    res.json({ ok: false, error: e.message })
+  }
+})
+
+// Smoke test for the Cloudinary image→video pipeline. Takes a public image
+// URL, returns the rendered MP4 URL + size. Read-only-ish (uploads to your
+// Cloudinary asset library — uses ~0.1 credit per call). Use to confirm
+// CLOUDINARY_URL is set correctly before relying on it in the YT pipeline.
+//   GET /api/capture-calc/cloudinary/test?image=<URL>  (cron-secret)
+captureCalcRouter.get('/cloudinary/test', requireCronSecretFlex, async (req, res) => {
+  try {
+    const imageUrl = String(req.query.image || '').trim()
+    if (!imageUrl) return res.status(400).json({ ok: false, error: 'image=<url> query param required' })
+    if (!cloudinaryConfigured()) return res.status(400).json({ ok: false, error: 'CLOUDINARY_URL not set' })
+    const duration = Math.max(2, Math.min(30, Number(req.query.duration) || 8))
+    const r = await imageToShortVideo({ imageUrl, duration })
+    if (!r?.ok) return res.status(500).json({ ok: false, ...r })
+    res.json({ ok: true, source_image: imageUrl, mp4_url: r.url, bytes: r.bytes, mime: r.mimeType, public_id: r.publicId, duration_sec: duration })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Retrofit: post approval cards for any pending FB/IG drafts already in the
+// queue (re-show this week's cards, or backfill after a card-format change).
+// Covers every Meta post still live — pending OR approved — that hasn't
+// published or been killed yet.
+//   POST /api/capture-calc/meta/post-pending-cards  (cron-secret)
+captureCalcRouter.post('/meta/post-pending-cards', requireCronSecretFlex, async (req, res) => {
+  try {
+    const all = await listQueue(req)
+    const meta = all.filter(d =>
+      ['facebook_page', 'instagram_business', 'tiktok_business', 'youtube_shorts'].includes(d.channel) &&
+      (d.status === 'pending' || d.status === 'approved'))
+    let posted = 0
+    for (const draft of meta) {
+      const fullBody = await getDraftFullBody(req, draft.id).catch(() => draft.body)
+      const { text, buttons } = buildMetaApprovalCard(draft, fullBody)
+      const r = await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text, buttons).catch(e => ({ ok: false, error: e.message }))
+      if (r?.ok !== false) posted++
+    }
+    res.json({ ok: true, total_meta_live: meta.length, cards_posted: posted })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
 
 // ─── IMAGE GEN — TEST + STATUS + AUDIT + REGEN ──────────────────────────────
 //   GET /image/test     — generate one image, regardless of kill switch (force=true).
@@ -1094,7 +1777,7 @@ captureCalcRouter.post('/image/regen', requireCronSecretFlex, express.json({ lim
     const segment = getSegment(req)
     const id = String(req.body?.id || req.query?.id || '')
     if (!id) return res.status(400).json({ ok: false, error: 'id required' })
-    const draft = await getDraft(segment, id)
+    const draft = await getDraft(req, id)
     if (!draft) return res.status(404).json({ ok: false, error: 'draft not found' })
 
     const headline = String(req.body?.headline || draft.headline || draft.body.split('\n')[0]).slice(0, 100)
@@ -1104,10 +1787,10 @@ captureCalcRouter.post('/image/regen', requireCronSecretFlex, express.json({ lim
     }
     const r = await generateCaptureImage({ headline, draftId: id }, { segment, force: Boolean(req.body?.force) })
     if (!r.ok) {
-      await updateDraft(segment, id, { image_status: 'regen_failed', image_error: r.error })
+      await updateDraft(req, id, { image_status: 'regen_failed', image_error: r.error })
       return res.status(500).json({ ok: false, error: r.error, budget: r.budget })
     }
-    await updateDraft(segment, id, { image_url: r.url, image_status: 'regenerated' })
+    await updateDraft(req, id, { image_url: r.url, image_status: 'regenerated' })
     res.json({ ok: true, id, url: r.url, budget: r.budget })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
@@ -1120,11 +1803,14 @@ captureCalcRouter.post('/image/regen', requireCronSecretFlex, express.json({ lim
 // variants as "killed_by_engagement" so they stop influencing the fingerprint.
 //
 //   GET /api/capture-calc/engagement/run  (cron-secret)
-captureCalcRouter.get('/engagement/run', requireCronSecretFlex, async (req, res) => {
+// Accept POST too — Catalyst's cron UI defaults to POST and any cron set up
+// with the default would 404 here, causing auto-disable after 20 consecutive
+// failures. `.all()` accepts both methods.
+captureCalcRouter.all('/engagement/run', heartbeatAttempt('capture_engagement'), requireCronSecretFlex, async (req, res) => {
   const out = []
   try {
     const segment = getSegment(req)
-    const published = await listQueue(segment, { status: 'published' })
+    const published = await listQueue(req, { status: 'published' })
     for (const draft of published) {
       // Skip stale (>30 days) — we won't get new analytics value
       const ageMs = Date.now() - new Date(draft.published_at || draft.created_at).getTime()
@@ -1140,12 +1826,14 @@ captureCalcRouter.get('/engagement/run', requireCronSecretFlex, async (req, res)
         patch.status = 'killed_by_engagement'
         patch.kill_reason = killCheck.reason
       }
-      await updateDraft(segment, draft.id, patch)
+      await updateDraft(req, draft.id, patch)
       out.push({ id: draft.id, channel: draft.channel, killed: !!killCheck.kill, reason: killCheck.reason })
     }
+    await stampSuccess(req, 'capture_engagement', { processed: out.length })
     res.json({ ok: true, processed: out.length, results: out })
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message, partial: out })
+    await reportCronFailure(req, 'capture_engagement', e)
+    res.json({ ok: false, error: e.message, partial: out })
   }
 })
 
@@ -1157,7 +1845,7 @@ captureCalcRouter.get('/engagement/run', requireCronSecretFlex, async (req, res)
 // yearly). So the cron is set to DAILY at 6am PT and we gate by day-of-week
 // here. The handler is a no-op every day except Friday Pacific.
 //   ?force=1 bypasses the day gate (for manual testing).
-captureCalcRouter.get('/report/weekly', requireCronSecretFlex, async (req, res) => {
+captureCalcRouter.all('/report/weekly', heartbeatAttempt('capture_weekly'), requireCronSecretFlex, async (req, res) => {
   try {
     const force = req.query.force === '1' || req.query.force === 'true'
     if (!force) {
@@ -1171,7 +1859,7 @@ captureCalcRouter.get('/report/weekly', requireCronSecretFlex, async (req, res) 
     const sevenDaysAgo = Date.now() - 7 * 86400000
 
     // Approval queue stats
-    const queue = await listQueue(segment)
+    const queue = await listQueue(req)
     const weekItems = queue.filter(d => new Date(d.created_at).getTime() >= sevenDaysAgo)
     const counts = {
       drafted:    weekItems.length,
@@ -1243,10 +1931,11 @@ captureCalcRouter.get('/report/weekly', requireCronSecretFlex, async (req, res) 
     }
 
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(e => console.warn('[weekly report cliq]', e.message))
+    await stampSuccess(req, 'capture_weekly', { length: msg.length, counts })
     res.json({ ok: true, length: msg.length, counts })
   } catch (e) {
-    console.error('[capture-calc weekly]', e.message, e.stack)
-    res.status(500).json({ ok: false, error: e.message })
+    await reportCronFailure(req, 'capture_weekly', e)
+    res.json({ ok: false, error: e.message })
   }
 })
 
@@ -1258,13 +1947,11 @@ captureCalcRouter.get('/report/weekly', requireCronSecretFlex, async (req, res) 
 //
 //   GET /api/capture-calc/scheduler/run?secret=...   → idempotent, safe to retry
 //   GET /api/capture-calc/scheduler/run?dry=1        → log what would publish
-captureCalcRouter.get('/scheduler/run', requireCronSecretFlex, async (req, res) => {
-  const dry = req.query.dry === '1' || req.query.dry === 'true'
+async function runSchedulerOnce(req, { dry = false } = {}) {
   const out = []
-  try {
-    const segment = getSegment(req)
-    const list = await listQueue(segment, { status: 'approved' })
-    const now = Date.now()
+  const segment = getSegment(req)
+  const list = await listQueue(req, { status: 'approved' })
+  const now = Date.now()
     // Catalyst's minimum cron interval is 1 hour. Pickup window matches:
     // a draft whose scheduled_for is within the next 60 min (or in the past)
     // is fair game. Combined with a top-of-hour scheduled_for, posts publish
@@ -1278,7 +1965,7 @@ captureCalcRouter.get('/scheduler/run', requireCronSecretFlex, async (req, res) 
       if (sched > now + window) continue
       // Way past-due (>24h) — likely orphaned, mark stale instead of posting
       if (now - sched > staleCutoff) {
-        if (!dry) await updateDraft(segment, draft.id, { status: 'stale', stale_reason: `${Math.round((now - sched) / 3600000)}h past scheduled_for` })
+        if (!dry) await updateDraft(req, draft.id, { status: 'stale', stale_reason: `${Math.round((now - sched) / 3600000)}h past scheduled_for` })
         out.push({ id: draft.id, channel: draft.channel, stale: true, hours_late: Math.round((now - sched) / 3600000) })
         continue
       }
@@ -1290,32 +1977,436 @@ captureCalcRouter.get('/scheduler/run', requireCronSecretFlex, async (req, res) 
           // Queue stores a truncated preview body; fetch the publish-ready
           // full version from the per-draft cache key. Falls back to queue
           // body if the full version isn't found.
-          const publishBody = await getDraftFullBody(segment, draft.id).catch(() => draft.body)
+          const publishBody = await getDraftFullBody(req, draft.id).catch(() => draft.body)
           // Use image-post path when an image was attached at draft time;
           // fall back to text-only if image gen failed or was disabled.
           const r = draft.image_url
             ? await postImageToLinkedIn({ imageUrl: draft.image_url, text: publishBody })
             : await postToLinkedIn({ text: publishBody })
           if (r?.ok && r.id) {
-            await updateDraft(segment, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, posted_with_image: Boolean(draft.image_url) })
+            await updateDraft(req, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, posted_with_image: Boolean(draft.image_url) })
             out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id, with_image: Boolean(draft.image_url) })
             const imgNote = draft.image_url ? ' (with image)' : ''
             await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to LinkedIn${imgNote}: ${draft.headline || draft.body.slice(0, 60)}`).catch(() => {})
           } else {
-            await updateDraft(segment, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
           }
         } catch (e) {
-          await updateDraft(segment, draft.id, { status: 'publish_failed', error: e.message })
+          await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
+          out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+        }
+      } else if (draft.channel === 'facebook_page') {
+        try {
+          if (!facebookConfigured()) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: 'FB not configured (FB_PAGE_ID / FB_PAGE_ACCESS_TOKEN missing)' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'fb_not_configured' })
+            continue
+          }
+          const publishBody = await getDraftFullBody(req, draft.id).catch(() => draft.body)
+          const r = await postToFacebookPage({ imageUrl: draft.image_url || null, caption: publishBody })
+          if (r?.ok && r.id) {
+            await updateDraft(req, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, posted_with_image: Boolean(draft.image_url) })
+            out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id, with_image: Boolean(draft.image_url) })
+            const imgNote = draft.image_url ? ' (with image)' : ''
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to Facebook${imgNote}: ${draft.headline || draft.body.slice(0, 60)}`).catch(() => {})
+          } else {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+          }
+        } catch (e) {
+          await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
+          out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+        }
+      } else if (draft.channel === 'instagram_business') {
+        try {
+          if (!instagramConfigured()) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: 'IG not configured (IG_BUSINESS_USER_ID / FB_PAGE_ACCESS_TOKEN missing)' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'ig_not_configured' })
+            continue
+          }
+          // Instagram REQUIRES an image (Graph API constraint).
+          if (!draft.image_url) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: 'IG requires an image; image_url missing' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'ig_image_required' })
+            continue
+          }
+          const publishBody = await getDraftFullBody(req, draft.id).catch(() => draft.body)
+          const r = await postToInstagram({ imageUrl: draft.image_url, caption: publishBody })
+          if (r?.ok && r.id) {
+            await updateDraft(req, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, posted_with_image: true })
+            out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id, with_image: true })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to Instagram: ${draft.headline || draft.body.slice(0, 60)}`).catch(() => {})
+          } else {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+          }
+        } catch (e) {
+          await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
+          out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+        }
+      } else if (draft.channel === 'youtube_shorts') {
+        try {
+          if (!youtubeConfigured()) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: 'YouTube not configured (YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET / YOUTUBE_REFRESH_TOKEN missing)' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'youtube_not_configured' })
+            continue
+          }
+          if (!draft.video_url) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: 'YouTube draft missing video_url (Cloudinary step failed at draft time)' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'youtube_video_missing' })
+            continue
+          }
+          const publishBody = await getDraftFullBody(req, draft.id).catch(() => draft.body)
+          // Download the Cloudinary-rendered MP4 buffer, then push to YouTube.
+          let videoBuffer = null
+          try {
+            const dl = await axios.get(draft.video_url, {
+              responseType: 'arraybuffer',
+              timeout: 120000,
+              maxContentLength: Infinity,
+              maxBodyLength: Infinity,
+            })
+            videoBuffer = Buffer.from(dl.data)
+          } catch (e) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: `video download failed: ${e.message}` })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+            continue
+          }
+          const r = await postShortToYouTube({
+            videoBuffer,
+            title: draft.headline || String(publishBody || '').slice(0, 80),
+            description: publishBody,
+          })
+          if (r?.ok && r.id) {
+            await updateDraft(req, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, youtube_url: r.url, posted_with_image: true })
+            out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to YouTube Shorts: ${draft.headline || draft.body.slice(0, 60)}\n${r.url}`).catch(() => {})
+          } else {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+          }
+        } catch (e) {
+          await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
+          out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+        }
+      } else if (draft.channel === 'tiktok_business') {
+        try {
+          if (!tiktokConfigured()) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: 'TikTok not configured (TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET / TIKTOK_REFRESH_TOKEN missing)' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'tiktok_not_configured' })
+            continue
+          }
+          // TikTok REQUIRES an image (Content Posting API photo mode needs media).
+          if (!draft.image_url) {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: 'TikTok requires an image; image_url missing' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'tiktok_image_required' })
+            continue
+          }
+          const publishBody = await getDraftFullBody(req, draft.id).catch(() => draft.body)
+          const r = await postPhotoToTikTok({ imageUrl: draft.image_url, caption: publishBody })
+          if (r?.ok && r.id) {
+            await updateDraft(req, draft.id, { status: 'published', published_at: new Date().toISOString(), platform_id: r.id, posted_with_image: true })
+            out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id, with_image: true })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to TikTok: ${draft.headline || draft.body.slice(0, 60)}`).catch(() => {})
+          } else {
+            await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
+            out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+          }
+        } catch (e) {
+          await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
           out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
         }
       } else {
         out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'unsupported channel' })
       }
     }
-    res.json({ ok: true, dry, processed: out.length, results: out })
+  return { processed: out.length, results: out }
+}
+
+captureCalcRouter.all('/scheduler/run', heartbeatAttempt('capture_scheduler'), requireCronSecretFlex, async (req, res) => {
+  const dry = req.query.dry === '1' || req.query.dry === 'true'
+  try {
+    const result = await runSchedulerOnce(req, { dry })
+    if (!dry) await stampSuccess(req, 'capture_scheduler', { processed: result.processed })
+    res.json({ ok: true, dry, ...result })
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message, partial: out })
+    await reportCronFailure(req, 'capture_scheduler', e)
+    res.json({ ok: false, error: e.message })
+  }
+})
+
+// TEMP DEBUG — unauthenticated trigger that runs one scheduler pass. Same
+// publishing logic as the hourly cron. Used to flush the queue when the
+// real cron has been auto-disabled. REMOVE after 2026-05-26 outage.
+captureCalcRouter.all('/debug/run-scheduler', async (req, res) => {
+  const dry = req.query.dry === '1' || req.query.dry === 'true'
+  try {
+    const result = await runSchedulerOnce(req, { dry })
+    if (!dry) await stampSuccess(req, 'capture_scheduler', { processed: result.processed, via: 'debug' })
+    res.json({ ok: true, dry, debug: true, ...result })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// TEMP DEBUG — unauthenticated wrapper that forwards to a cron route with the
+// function's own secret. Whitelisted to the recovery-relevant cron endpoints
+// so it can't be used to invoke arbitrary auth-gated routes.
+// REMOVE on or after 2026-06-09 (debug endpoints kept for 14 days post-outage).
+const DEBUG_FORWARD_WHITELIST = {
+  'draft-meta-week':     '/api/capture-calc/meta/draft-week?force=1',
+  'draft-meta-day':      '/api/capture-calc/meta/draft-day',
+  'draft-linkedin-week': '/api/capture-calc/linkedin/draft-week-variants?force=1',
+  'nurture-run':         '/api/capture-calc/nurture/run',
+  'cron-monitor-run':    '/api/cron-monitor/run',
+  'holiday-poster-run':  '/api/holiday-poster/run',
+  'engagement-run':      '/api/capture-calc/engagement/run',
+  'weekly-run':          '/api/capture-calc/report/weekly?force=1',
+  'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
+}
+async function debugForward(req, res, target) {
+  const secret = process.env.BREW_CRON_SECRET
+  if (!secret) return res.status(500).json({ ok: false, error: 'BREW_CRON_SECRET not set on function' })
+  const base = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api`
+  const sep = target.includes('?') ? '&' : '?'
+  const url = `${base}${target}${sep}secret=${encodeURIComponent(secret)}`
+  try {
+    // 250s — gateway will 504 at 30s for the OUTER curl, but the called
+    // handler keeps running server-side. Poll /debug/state to watch progress.
+    const r = await axios.post(url, {}, { timeout: 250000, validateStatus: () => true })
+    res.json({ ok: true, debug: true, forwarded: true, url: target, status: r.status, data: r.data })
+  } catch (e) {
+    res.json({ ok: true, debug: true, forwarded: true, url: target, note: 'outer timed out; inner may still be running', error: e.message })
+  }
+}
+captureCalcRouter.all('/debug/draft-meta-week',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['draft-meta-week']))
+captureCalcRouter.all('/debug/draft-meta-day',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['draft-meta-day']))
+captureCalcRouter.all('/debug/draft-linkedin-week', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['draft-linkedin-week']))
+captureCalcRouter.all('/debug/nurture-run',         (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['nurture-run']))
+captureCalcRouter.all('/debug/cron-monitor-run',    (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['cron-monitor-run']))
+captureCalcRouter.all('/debug/holiday-poster-run',  (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['holiday-poster-run']))
+captureCalcRouter.all('/debug/engagement-run',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['engagement-run']))
+captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
+captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
+
+// TEMP DEBUG — generate one meta-drafter slot and return text + image_prompt.
+// No enqueue, no image gen, no cost beyond one Claude call. Used to verify
+// the IMAGE_PROMPT_SPEC is producing template-correct prompts before relying
+// on it for the full Sunday batch. REMOVE on 2026-06-09 sweep.
+// TEMP DEBUG — post synthetic test messages to the aa + aajobs channels so
+// you can eyeball the format in Cliq without waiting for a real event.
+// Each message is prefixed with [TEST] so it can't be confused with a real
+// notification. REMOVE on 2026-06-09 sweep.
+captureCalcRouter.get('/debug/ops-test', async (req, res) => {
+  const { OPS_CHANNEL_ID, JADEN_CHANNEL_ID, postToCliqChannelById } = await import('../services/cliq.js')
+  const { formatDispatchMessage, formatInvoicedMessage, formatJobRequestMessage } = await import('../services/opsChannelFormat.js')
+
+  const sampleJob = {
+    shop_name: 'Avon Body Shop',
+    quote_number: '20521',
+    year: '2016',
+    make: 'Chevrolet',
+    model: 'Silverado 2500HD',
+    trim: 'LT',
+    vin: '1GC2KVEG2GZ200003',
+    technician: 'Jayden Goshorn',
+    calibrations: JSON.stringify([{ name: 'Steering Angle Sensor' }, { name: 'Front Radar' }]),
+    notes: 'RO# 20521 | Quote: ABS 20521.1\nCustomer needs done by EOD Friday',
+  }
+  const tag = '[TEST] '
+  const tests = [
+    { channel: OPS_CHANNEL_ID,   name: 'aa: dispatch',     msg: tag + formatDispatchMessage(sampleJob) },
+    { channel: OPS_CHANNEL_ID,   name: 'aa: invoiced',     msg: tag + formatInvoicedMessage(sampleJob, 487.50) },
+    { channel: JADEN_CHANNEL_ID, name: 'aajobs: dispatch', msg: tag + formatDispatchMessage(sampleJob) },
+    { channel: JADEN_CHANNEL_ID, name: 'aajobs: request',  msg: tag + formatJobRequestMessage(sampleJob) },
+    { channel: JADEN_CHANNEL_ID, name: 'aajobs: invoiced', msg: tag + formatInvoicedMessage(sampleJob, 487.50) },
+  ]
+
+  const results = []
+  for (const t of tests) {
+    try {
+      await postToCliqChannelById(t.channel, t.msg)
+      results.push({ name: t.name, channel: t.channel, ok: true })
+    } catch (e) {
+      results.push({ name: t.name, channel: t.channel, ok: false, error: e.message })
+    }
+  }
+  res.json({ ok: true, posted: results })
+})
+
+// TEMP DEBUG — render an image directly from a raw prompt string. Used to
+// A/B test Magic Lantern verbatim-library output vs Claude's blended output.
+// REMOVE 2026-06-09.
+// TEMP DEBUG — regenerate images for approved drafts.
+//   Default: finds drafts with image_status === 'failed' or no image_url.
+//   ?id=X    : regen one specific draft regardless of current image status.
+// Serial (not parallel) so we don't wedge Catalyst's concurrency again.
+captureCalcRouter.all('/debug/regen-failed-images', async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const all = await listQueue(req, { status: 'approved' })
+    const forceId = String(req.query.id || '').trim()
+    const bypassBudget = Boolean(forceId)  // explicit id = manual one-off, bypass daily cap
+    let needs
+    if (forceId) {
+      needs = all.filter(d => d.id === forceId)
+      if (!needs.length) return res.status(404).json({ ok: false, error: `no approved draft with id ${forceId}` })
+    } else {
+      needs = all.filter(d => !d.image_url || d.image_status === 'failed')
+    }
+    const out = []
+    for (const d of needs) {
+      const headline = d.headline || (d.body || '').split('\n')[0] || d.category
+      try {
+        const r = await generateCaptureImage(
+          { headline, draftId: d.id },
+          { segment, sceneOverride: d.meta?.image_prompt || null, force: bypassBudget }
+        )
+        if (r?.ok) {
+          await updateDraft(req, d.id, { image_url: r.url, image_status: 'generated', image_error: null })
+          out.push({ id: d.id, channel: d.channel, category: d.category, ok: true, url: r.url })
+        } else {
+          await updateDraft(req, d.id, { image_status: 'failed', image_error: r?.error || 'unknown' })
+          out.push({ id: d.id, channel: d.channel, category: d.category, ok: false, error: r?.error })
+        }
+      } catch (e) {
+        out.push({ id: d.id, channel: d.channel, category: d.category, ok: false, error: e.message })
+      }
+    }
+    res.json({ ok: true, attempted: out.length, succeeded: out.filter(o => o.ok).length, results: out })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// TEMP DEBUG — dedupe approved meta drafts. Walks the queue, groups by
+// (channel, scheduled_for, category), keeps the oldest created_at in each
+// group, kills the rest. Used to clean up after a Catalyst gateway-retry
+// double-fire. No-auth (debug). REMOVE on 2026-06-09 sweep window.
+// TEMP DEBUG — shift a single approved draft's scheduled_for to NOW + N min
+// so the next scheduler run picks it up. Used to push a real post live for
+// demo / smoke-test purposes outside of natural cadence. No-auth (debug).
+captureCalcRouter.all('/debug/reschedule', async (req, res) => {
+  try {
+    const id = String(req.query.id || '').trim()
+    // Cap raised 2026-06-17 from 60min to 7 days to allow batch rescheduling.
+    const offsetMin = Math.max(0, Math.min(10080, Number(req.query.offset_min) || 1))
+    if (!id) return res.status(400).json({ ok: false, error: 'id query param required' })
+    const draft = await getDraft(req, id)
+    if (!draft) return res.status(404).json({ ok: false, error: `no draft with id ${id}` })
+    const newWhen = new Date(Date.now() + offsetMin * 60000).toISOString()
+    await updateDraft(req, id, { scheduled_for: newWhen })
+    res.json({ ok: true, id, channel: draft.channel, category: draft.category, was: draft.scheduled_for, now_scheduled_for: newWhen })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.all('/debug/dedupe-meta', async (req, res) => {
+  try {
+    const META_CHANNELS = new Set(['facebook_page', 'instagram_business', 'tiktok_business', 'youtube_shorts'])
+    const all = await listQueue(req, { status: 'approved' })
+    const groups = {}
+    for (const d of all) {
+      if (!META_CHANNELS.has(d.channel)) continue
+      const key = `${d.channel}|${d.scheduled_for || ''}|${d.category || ''}`
+      if (!groups[key]) groups[key] = []
+      groups[key].push(d)
+    }
+    const killed = []
+    for (const key of Object.keys(groups)) {
+      const items = groups[key]
+      if (items.length < 2) continue
+      // Keep the oldest by created_at; kill the rest.
+      items.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
+      const keep = items[0]
+      for (let i = 1; i < items.length; i++) {
+        const d = items[i]
+        await updateDraft(req, d.id, { status: 'killed', killed_reason: `dedupe — duplicate of ${keep.id}` })
+        killed.push({ id: d.id, channel: d.channel, scheduled_for: d.scheduled_for, kept_id: keep.id })
+      }
+    }
+    res.json({ ok: true, killed_count: killed.length, killed })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// TEMP DEBUG — kill approved FB/IG/TT/YT drafts scheduled within the next N
+// days. Used to clear old un-locked-pattern drafts before re-firing a fresh
+// batch with the new HEADLINE PATTERN rules. Default 8 days = covers a week
+// plus buffer. Returns the killed draft IDs + counts. No-auth (debug).
+captureCalcRouter.all('/debug/clear-approved-meta', async (req, res) => {
+  try {
+    const days = Math.max(1, Math.min(30, Number(req.query.days) || 8))
+    const META_CHANNELS = new Set(['facebook_page', 'instagram_business', 'tiktok_business', 'youtube_shorts'])
+    const all = await listQueue(req, { status: 'approved' })
+    const now = Date.now()
+    const cutoff = now + days * 86400000
+    const killed = []
+    for (const d of all) {
+      if (!META_CHANNELS.has(d.channel)) continue
+      const sched = d.scheduled_for ? new Date(d.scheduled_for).getTime() : 0
+      if (!sched || sched > cutoff) continue
+      // Past or within window — kill it.
+      await updateDraft(req, d.id, { status: 'killed', killed_reason: 'cleared via /debug/clear-approved-meta before fresh batch' })
+      killed.push({ id: d.id, channel: d.channel, category: d.category, scheduled_for: d.scheduled_for })
+    }
+    res.json({ ok: true, days, killed_count: killed.length, killed })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.get('/debug/render-prompt', async (req, res) => {
+  try {
+    const prompt = String(req.query.prompt || '').trim()
+    const label = String(req.query.label || 'preview').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32) || 'preview'
+    // `headline` keeps spaces (it's what renders in the overlay).
+    // `label` is sanitized for the filename only.
+    const headline = String(req.query.headline || label).slice(0, 200)
+    if (!prompt) return res.status(400).json({ ok: false, error: 'prompt query param required' })
+    if (!captureImagesEnabled()) return res.status(400).json({ ok: false, error: 'CAPTURE_IMAGES_ENABLED not set' })
+    const segment = getSegment(req)
+    // ?force=1 bypasses the daily budget cap (debug-route, one-off renders).
+    const bypassBudget = req.query.force === '1' || req.query.force === 'true'
+    const r = await generateCaptureImage(
+      { headline, draftId: `${label}-${Date.now()}` },
+      { segment, sceneOverride: prompt, force: bypassBudget }
+    )
+    if (!r?.ok) return res.status(500).json({ ok: false, error: r?.error, budget: r?.budget })
+    res.json({ ok: true, label, headline, image_url: r.url })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+captureCalcRouter.get('/debug/meta-slot-preview', async (req, res) => {
+  try {
+    const channel = String(req.query.channel || 'facebook').toLowerCase()
+    const type = String(req.query.type || 'story')
+    const day = String(req.query.day || 'Mon')
+    // Pass ?targetDate=YYYY-MM-DD to test Magic Lantern routing (e.g.
+    // targetDate=2026-07-04 should land the Independence Day library template).
+    const targetDate = req.query.targetDate ? String(req.query.targetDate) : null
+    const story = String(req.query.story || `A body shop owner in Tacoma realized last month he was paying $450 list for every ADAS calibration. We sat down, walked through the partnership discount model. He's now saving $67.50 per calibration. He sublets 12 cals/month. That's $8,100 a year back in his shop.`)
+    const result = await draftMetaSlot({ channel, day, type, story, targetDate })
+    res.json({ ok: true, channel, type, day, target_date: targetDate, result })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// TEMP DEBUG — read cron heartbeats. Each timestamp shows the most recent
+// "attempt" (cron call reached the route) and "success" (handler completed).
+// Use to confirm whether a cron is reaching the function at all.
+captureCalcRouter.get('/debug/heartbeats', async (req, res) => {
+  try {
+    const heartbeats = await readAllHeartbeats(req)
+    res.json({ ok: true, now: new Date().toISOString(), heartbeats })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
   }
 })
 
