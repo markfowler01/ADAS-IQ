@@ -76,18 +76,18 @@ const FB_TYPE_PROMPTS = {
 }
 
 const IG_TYPE_PROMPTS = {
-  visual_hook:  'A VISUAL HOOK CAPTION. Punchy headline-style opener (one short line). 2-3 short body lines. Big specific dollar number anchor. Single CTA "Link in bio: /calculator". 3-6 relevant hashtags at the end (#bodyshop #collisionrepair #ADAS #autobody #shopowner). 80-130 words total.',
-  mechanism:    'A MECHANISM EXPLAINER CAPTION. One of the 4 Partnership Discount Model components named explicitly. Quick math: $450 list → $382.50 partner → $67.50 margin. CTA "Link in bio: /calculator". 3-6 hashtags. 100-150 words.',
-  testimonial:  'A TESTIMONIAL / CASE STUDY CAPTION. Shop name or composite label, city, dollar margin per month. One real-sounding quote in quotes. CTA "Link in bio: /partnership-audit". 3-6 hashtags. 90-140 words.',
+  visual_hook:  'A VISUAL HOOK CAPTION. Punchy headline-style opener (one short line). 2-3 short body lines. Big specific dollar number anchor. End with CTA per the SHARED CTA RULES block (full URL spelled out, never "/calculator" alone). 3-6 relevant hashtags at the end (#bodyshop #collisionrepair #ADAS #autobody #shopowner). 80-130 words total.',
+  mechanism:    'A MECHANISM EXPLAINER CAPTION. One of the 4 Partnership Discount Model components named explicitly. Quick math: $450 list → $382.50 partner → $67.50 margin. End with CTA per the SHARED CTA RULES block. 3-6 hashtags. 100-150 words.',
+  testimonial:  'A TESTIMONIAL / CASE STUDY CAPTION. Shop name or composite label, city, dollar margin per month. One real-sounding quote in quotes. End with CTA per the SHARED CTA RULES block. 3-6 hashtags. 90-140 words.',
 }
 
 // TikTok captions: shortest of the three channels. First line must hook
 // instantly (TikTok truncates ~100 chars on feed). Energy higher than IG.
 // Photo posts can be 2200 chars but under 150 words performs best.
 const TT_TYPE_PROMPTS = {
-  visual_hook:  'A TIKTOK HOOK CAPTION for a photo post. Open with a one-line hook under 90 chars that survives TikTok\'s feed truncation. Quick dollar-number anchor. CTA "Link in bio → /calculator". 4-6 hashtags (#bodyshop #autobody #collisionrepair #ADAS #shopowner #washingtonbusiness). 60-110 words total.',
-  mechanism:    'A TIKTOK MECHANISM CAPTION. Open with the question/number hook. Walk through the math fast: $450 list → $382.50 to you → $67.50 stays. Name "The Partnership Discount Model" once. CTA "Link in bio → /calculator". 4-6 hashtags. 80-130 words.',
-  testimonial:  'A TIKTOK SHOP-OWNER STORY CAPTION. One quick scene, one named shop owner (or composite label), one dollar figure. Direct quote in quotes. CTA "Link in bio → /partnership-audit". 4-6 hashtags. 70-120 words.',
+  visual_hook:  'A TIKTOK HOOK CAPTION for a photo post. Open with a one-line hook under 90 chars that survives TikTok\'s feed truncation. Quick dollar-number anchor. End with CTA per the SHARED CTA RULES block (full URL spelled out). 4-6 hashtags (#bodyshop #autobody #collisionrepair #ADAS #shopowner #washingtonbusiness). 60-110 words total.',
+  mechanism:    'A TIKTOK MECHANISM CAPTION. Open with the question/number hook. Walk through the math fast: $450 list → $382.50 to you → $67.50 stays. Name "The Partnership Discount Model" once. End with CTA per the SHARED CTA RULES block. 4-6 hashtags. 80-130 words.',
+  testimonial:  'A TIKTOK SHOP-OWNER STORY CAPTION. One quick scene, one named shop owner (or composite label), one dollar figure. Direct quote in quotes. End with CTA per the SHARED CTA RULES block. 4-6 hashtags. 70-120 words.',
 }
 
 // YouTube Shorts: title (headline) is what people see — under 60 chars works

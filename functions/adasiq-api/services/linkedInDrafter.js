@@ -64,7 +64,7 @@ CANONICAL PRICING (use only these numbers — do not invent):
 CTAs (rotate, one per post):
 - "Run your numbers in 60 seconds: absoluteadas.com/calculator"
 - "See your shop's annual margin: absoluteadas.com/calculator"
-- "Book your 15-min Partnership Audit: absoluteadas.com/audit"
+- "Book your 15-min Partnership Audit: absoluteadas.com/partnership-audit"
 - "DM me 'partner' if your mobile cal vendor still charges you full list."
 
 VILLAIN FRAMING (use selectively, never every post):
@@ -201,6 +201,9 @@ const SLOT_DEFS = {
   Wed: { type: 'story',      prompt: POST_TYPES[2].prompt },
   Thu: { type: 'framework',  prompt: POST_TYPES[3].prompt },
   Fri: { type: 'case_study', prompt: POST_TYPES[4].prompt },
+  // Sat/Sun added 2026-06-19 for the daily drafter — same prompt set, repeated.
+  Sat: { type: 'story',      prompt: POST_TYPES[0].prompt },
+  Sun: { type: 'framework',  prompt: POST_TYPES[1].prompt },
 }
 
 /**

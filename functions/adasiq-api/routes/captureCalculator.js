@@ -1304,9 +1304,11 @@ captureCalcRouter.all('/meta/draft-week', heartbeatAttempt('capture_meta'), requ
     // coherent across IG/TT/YT versions of the same lesson.
     const draftedSlots = [...fb, ...ig, ...tt, ...yt]
     const typeToPrompt = {}
+    const typeToHeadline = {}
     for (const d of draftedSlots) {
-      if (d.error || !d.image_prompt || !d.type) continue
-      if (!typeToPrompt[d.type]) typeToPrompt[d.type] = d.image_prompt
+      if (d.error || !d.type) continue
+      if (!typeToPrompt[d.type] && d.image_prompt) typeToPrompt[d.type] = d.image_prompt
+      if (!typeToHeadline[d.type] && d.headline) typeToHeadline[d.type] = d.headline
     }
     const typeToImageUrl = {}
     const typeToImageError = {}
@@ -1314,7 +1316,7 @@ captureCalcRouter.all('/meta/draft-week', heartbeatAttempt('capture_meta'), requ
     if (captureImagesEnabled()) {
       for (const [type, prompt] of Object.entries(typeToPrompt)) {
         const r = await generateCaptureImage(
-          { headline: type, draftId: `${batchSlug}-${type}` },
+          { headline: typeToHeadline[type] || type, draftId: `${batchSlug}-${type}` },
           { segment, sceneOverride: prompt }
         ).catch(e => ({ ok: false, error: e.message }))
         if (r?.ok) typeToImageUrl[type] = r.url
@@ -1539,7 +1541,7 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     // Idempotence — skip channels that already have a live draft for today.
     const existing = await listQueue(req, {})
     const todayLive = existing.filter(d => {
-      if (!['facebook_page', 'instagram_business', 'tiktok_business', 'youtube_shorts'].includes(d.channel)) return false
+      if (!['facebook_page', 'instagram_business', 'tiktok_business', 'youtube_shorts', 'linkedin_personal'].includes(d.channel)) return false
       if (!['approved', 'pending', 'published'].includes(d.status)) return false
       const sched = (d.scheduled_for || '').slice(0, 10)
       return sched === todayDateStr
@@ -1569,14 +1571,30 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     }
 
     const { fb, ig, tt, yt, day } = await draftMetaDay({ story, caseStudy, dayName })
-    const out = { day, fb: [], ig: [], tt: [], yt: [], skipped: [] }
+
+    // LinkedIn — 1 post per day, single hook rotation through greed/fairness/identity
+    // by day of week so the angle varies across the week. Same day map as
+    // linkedInDrafter.SLOT_DEFS (Mon→Sun) so type stays consistent with FB.
+    const LI_HOOK_BY_DAY = { Mon: 'greed', Tue: 'fairness', Wed: 'identity', Thu: 'greed', Fri: 'fairness', Sat: 'identity', Sun: 'greed' }
+    let liDraft = null
+    let liError = null
+    try {
+      const slot = await draftSlotVariants({ day, story, caseStudy, hooks: [LI_HOOK_BY_DAY[day] || 'greed'] })
+      liDraft = slot.variants?.[0] ? { ...slot.variants[0], day, type: slot.type } : null
+    } catch (e) {
+      liError = e.message
+    }
+
+    const out = { day, fb: [], ig: [], tt: [], yt: [], li: [], skipped: [] }
 
     // Shared-image-per-type (same scaffolding as draft-week).
     const draftedSlots = [...fb, ...ig, ...tt, ...yt]
     const typeToPrompt = {}
+    const typeToHeadline = {}
     for (const d of draftedSlots) {
-      if (d.error || !d.image_prompt || !d.type) continue
-      if (!typeToPrompt[d.type]) typeToPrompt[d.type] = d.image_prompt
+      if (d.error || !d.type) continue
+      if (!typeToPrompt[d.type] && d.image_prompt) typeToPrompt[d.type] = d.image_prompt
+      if (!typeToHeadline[d.type] && d.headline) typeToHeadline[d.type] = d.headline
     }
     const typeToImageUrl = {}
     const typeToImageError = {}
@@ -1584,7 +1602,7 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     if (captureImagesEnabled()) {
       for (const [type, prompt] of Object.entries(typeToPrompt)) {
         const r = await generateCaptureImage(
-          { headline: type, draftId: `${batchSlug}-${type}` },
+          { headline: typeToHeadline[type] || type, draftId: `${batchSlug}-${type}` },
           { segment, sceneOverride: prompt }
         ).catch(e => ({ ok: false, error: e.message }))
         if (r?.ok) typeToImageUrl[type] = r.url
@@ -1653,19 +1671,50 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     for (const draft of tt) await enqueueOne('tiktok_business',    draft, out.tt)
     for (const draft of yt) await enqueueOne('youtube_shorts',     draft, out.yt)
 
-    const created = out.fb.length + out.ig.length + out.tt.length + out.yt.length
+    // LinkedIn — schedule for 9 AM PT (16:00 UTC), reuse the type-shared image
+    // (story/framework/case_study types overlap with FB so FB's image fits).
+    if (channelsAlreadyDone.has('linkedin_personal')) {
+      out.skipped.push({ channel: 'linkedin_personal', reason: 'already has a live draft for today' })
+    } else if (liError) {
+      out.li.push({ day, error: liError })
+    } else if (liDraft) {
+      const scheduledForLi = todayScheduledForAtTimePT(9, 0)
+      const entry = await enqueueDraft(req, {
+        channel: 'linkedin_personal',
+        category: liDraft.type,
+        headline: liDraft.headline,
+        body: liDraft.body,
+        scheduled_for: scheduledForLi.toISOString(),
+        voice_score: liDraft.voice_score,
+        voice_deductions: liDraft.voice_deductions,
+        meta: { slot: day, group: `metaday-${todayDateStr}`, hook: liDraft.hook },
+        status: 'approved',
+      })
+      const imageUrl = typeToImageUrl[liDraft.type] || null
+      if (imageUrl) {
+        await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
+      } else if (!captureImagesEnabled()) {
+        await updateDraft(req, entry.id, { image_status: 'disabled' })
+      } else {
+        await updateDraft(req, entry.id, { image_status: 'failed', image_error: typeToImageError[liDraft.type] || 'no image for type' })
+      }
+      out.li.push({ day, id: entry.id, scheduled_for: scheduledForLi.toISOString(), voice_score: liDraft.voice_score, has_image: !!imageUrl, hook: liDraft.hook })
+    }
+
+    const created = out.fb.length + out.ig.length + out.tt.length + out.yt.length + out.li.length
     const card = [
       `📱 *DAILY SOCIAL DRAFTED* — ${day} ${todayDateStr}`,
       `${created} new post${created === 1 ? '' : 's'} auto-approved for today.`,
       ...(out.skipped.length ? [`Skipped (already had today): ${out.skipped.map(s => s.channel).join(', ')}`] : []),
       ``,
-      ...(out.fb.length ? [`*Facebook* (12pm PT):`, ...out.fb.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '📝'}`)] : []),
+      ...(out.li.length ? [`*LinkedIn* (9am PT):`, ...out.li.map(d => d.error ? `  · ❌ ${d.error}` : `  · ${d.hook || ''} hook · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '📝'}`)] : []),
+      ...(out.fb.length ? [``, `*Facebook* (12pm PT):`, ...out.fb.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '📝'}`)] : []),
       ...(out.ig.length ? [``, `*Instagram* (11:30am PT):`, ...out.ig.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`)] : []),
       ...(out.tt.length ? [``, `*TikTok* (2pm PT):`, ...out.tt.map(d => d.error ? `  · ❌ ${d.error}` : `  · voice ${d.voice_score}/100 ${d.has_image ? '🖼️' : '⚠️ NO IMAGE'}`)] : []),
     ].join('\n')
     postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(() => {})
 
-    const allDrafts = [...out.fb, ...out.ig, ...out.tt, ...out.yt].filter(d => !d.error && d.id)
+    const allDrafts = [...out.fb, ...out.ig, ...out.tt, ...out.yt, ...out.li].filter(d => !d.error && d.id)
     for (const d of allDrafts) {
       const draft = await getDraft(req, d.id).catch(() => null)
       if (!draft) continue
@@ -1675,7 +1724,7 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     }
 
     await stampSuccess(req, 'capture_meta', {
-      day, fb: out.fb.length, ig: out.ig.length, tt: out.tt.length, yt: out.yt.length,
+      day, fb: out.fb.length, ig: out.ig.length, tt: out.tt.length, yt: out.yt.length, li: out.li.length,
       skipped: out.skipped.length, story_source: storySource,
     })
     res.json({ ok: true, story_source: storySource, ...out })
