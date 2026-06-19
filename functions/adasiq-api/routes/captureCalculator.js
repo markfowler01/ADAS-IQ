@@ -2345,8 +2345,19 @@ captureCalcRouter.all('/debug/reschedule', async (req, res) => {
     const draft = await getDraft(req, id)
     if (!draft) return res.status(404).json({ ok: false, error: `no draft with id ${id}` })
     const newWhen = new Date(Date.now() + offsetMin * 60000).toISOString()
-    await updateDraft(req, id, { scheduled_for: newWhen })
-    res.json({ ok: true, id, channel: draft.channel, category: draft.category, was: draft.scheduled_for, now_scheduled_for: newWhen })
+    const patch = { scheduled_for: newWhen }
+    // ?status=approved (or any valid status) flips status while rescheduling.
+    // Used to promote a pending draft to publishable + push it to NOW in one shot.
+    const newStatus = String(req.query.status || '').trim()
+    if (newStatus) patch.status = newStatus
+    // ?kill=1 — convenience: skip reschedule, just mark killed.
+    if (req.query.kill === '1' || req.query.kill === 'true') {
+      patch.status = 'killed'
+      patch.killed_reason = 'killed via /debug/reschedule?kill=1'
+      delete patch.scheduled_for
+    }
+    await updateDraft(req, id, patch)
+    res.json({ ok: true, id, channel: draft.channel, category: draft.category, was: draft.scheduled_for, was_status: draft.status, ...patch })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
