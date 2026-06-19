@@ -449,12 +449,15 @@ export async function draftMetaSlot({ channel, day, type, story, caseStudy = '',
  */
 export async function draftMetaDay({ story, caseStudy = '', dayName } = {}) {
   const ytEnabled = !!process.env.YOUTUBE_REFRESH_TOKEN
+  // TikTok gated on the refresh token — otherwise drafts pile up that the
+  // publisher can't post (silent failure unless captured by publish_failed alerts).
+  const ttEnabled = !!process.env.TIKTOK_REFRESH_TOKEN
   const today = dayName || new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
   const todayDateIso = new Date().toISOString()
 
   const fbSlots = FB_SLOTS.filter(s => s.day === today)
   const igSlots = IG_SLOTS.filter(s => s.day === today)
-  const ttSlots = TT_SLOTS.filter(s => s.day === today)
+  const ttSlots = ttEnabled ? TT_SLOTS.filter(s => s.day === today) : []
   const ytSlots = ytEnabled ? YT_SLOTS.filter(s => s.day === today) : []
 
   const mk = (channel, slot) => draftMetaSlot({ channel, day: slot.day, type: slot.type, story, caseStudy, targetDate: todayDateIso })
@@ -478,6 +481,7 @@ export async function draftMetaDay({ story, caseStudy = '', dayName } = {}) {
 
 export async function draftMetaWeek({ story, caseStudy = '' } = {}) {
   const ytEnabled = !!process.env.YOUTUBE_REFRESH_TOKEN
+  const ttEnabled = !!process.env.TIKTOK_REFRESH_TOKEN
   // Compute the next future occurrence of each slot's day-of-week so the
   // drafter can route image prompts through Magic Lantern (holidays / sports /
   // regional events keyed by the actual post date).
@@ -495,7 +499,9 @@ export async function draftMetaWeek({ story, caseStudy = '' } = {}) {
   }
   const fbPromises = FB_SLOTS.map(slot => draftMetaSlot({ channel: 'facebook',  day: slot.day, type: slot.type, story, caseStudy, targetDate: nextDateForDay(slot.day) }))
   const igPromises = IG_SLOTS.map(slot => draftMetaSlot({ channel: 'instagram', day: slot.day, type: slot.type, story, caseStudy, targetDate: nextDateForDay(slot.day) }))
-  const ttPromises = TT_SLOTS.map(slot => draftMetaSlot({ channel: 'tiktok',    day: slot.day, type: slot.type, story, caseStudy, targetDate: nextDateForDay(slot.day) }))
+  const ttPromises = ttEnabled
+    ? TT_SLOTS.map(slot => draftMetaSlot({ channel: 'tiktok',    day: slot.day, type: slot.type, story, caseStudy, targetDate: nextDateForDay(slot.day) }))
+    : []
   const ytPromises = ytEnabled
     ? YT_SLOTS.map(slot => draftMetaSlot({ channel: 'youtube', day: slot.day, type: slot.type, story, caseStudy, targetDate: nextDateForDay(slot.day) }))
     : []
@@ -508,7 +514,9 @@ export async function draftMetaWeek({ story, caseStudy = '' } = {}) {
   return {
     fb: fbResults.map((r, i) => r.status === 'fulfilled' ? { ...FB_SLOTS[i], ...r.value } : { ...FB_SLOTS[i], error: r.reason?.message }),
     ig: igResults.map((r, i) => r.status === 'fulfilled' ? { ...IG_SLOTS[i], ...r.value } : { ...IG_SLOTS[i], error: r.reason?.message }),
-    tt: ttResults.map((r, i) => r.status === 'fulfilled' ? { ...TT_SLOTS[i], ...r.value } : { ...TT_SLOTS[i], error: r.reason?.message }),
+    tt: ttEnabled
+      ? ttResults.map((r, i) => r.status === 'fulfilled' ? { ...TT_SLOTS[i], ...r.value } : { ...TT_SLOTS[i], error: r.reason?.message })
+      : [],
     yt: ytEnabled
       ? ytResults.map((r, i) => r.status === 'fulfilled' ? { ...YT_SLOTS[i], ...r.value } : { ...YT_SLOTS[i], error: r.reason?.message })
       : [],

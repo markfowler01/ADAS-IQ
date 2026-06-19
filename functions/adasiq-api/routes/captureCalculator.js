@@ -2040,10 +2040,12 @@ async function runSchedulerOnce(req, { dry = false } = {}) {
           } else {
             await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 LinkedIn publish FAILED — ${r?.error || 'unknown'}\nDraft: ${draft.headline || draft.body.slice(0, 60)} (id ${draft.id})`).catch(() => {})
           }
         } catch (e) {
           await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
           out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 LinkedIn publish THREW — ${e.message}\nDraft id ${draft.id}`).catch(() => {})
         }
       } else if (draft.channel === 'facebook_page') {
         try {
@@ -2062,10 +2064,12 @@ async function runSchedulerOnce(req, { dry = false } = {}) {
           } else {
             await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 Facebook publish FAILED — ${r?.error || 'unknown'}\nDraft: ${draft.headline || draft.body.slice(0, 60)} (id ${draft.id})`).catch(() => {})
           }
         } catch (e) {
           await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
           out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 Facebook publish THREW — ${e.message}\nDraft id ${draft.id}`).catch(() => {})
         }
       } else if (draft.channel === 'instagram_business') {
         try {
@@ -2089,10 +2093,12 @@ async function runSchedulerOnce(req, { dry = false } = {}) {
           } else {
             await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 Instagram publish FAILED — ${r?.error || 'unknown'}\nDraft: ${draft.headline || draft.body.slice(0, 60)} (id ${draft.id})`).catch(() => {})
           }
         } catch (e) {
           await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
           out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 Instagram publish THREW — ${e.message}\nDraft id ${draft.id}`).catch(() => {})
         }
       } else if (draft.channel === 'youtube_shorts') {
         try {
@@ -2134,10 +2140,12 @@ async function runSchedulerOnce(req, { dry = false } = {}) {
           } else {
             await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 YouTube publish FAILED — ${r?.error || 'unknown'}\nDraft: ${draft.headline || draft.body.slice(0, 60)} (id ${draft.id})`).catch(() => {})
           }
         } catch (e) {
           await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
           out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 YouTube publish THREW — ${e.message}\nDraft id ${draft.id}`).catch(() => {})
         }
       } else if (draft.channel === 'tiktok_business') {
         try {
@@ -2161,10 +2169,12 @@ async function runSchedulerOnce(req, { dry = false } = {}) {
           } else {
             await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 TikTok publish FAILED — ${r?.error || 'unknown'}\nDraft: ${draft.headline || draft.body.slice(0, 60)} (id ${draft.id})`).catch(() => {})
           }
         } catch (e) {
           await updateDraft(req, draft.id, { status: 'publish_failed', error: e.message })
           out.push({ id: draft.id, channel: draft.channel, ok: false, error: e.message })
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 TikTok publish THREW — ${e.message}\nDraft id ${draft.id}`).catch(() => {})
         }
       } else {
         out.push({ id: draft.id, channel: draft.channel, ok: false, error: 'unsupported channel' })
