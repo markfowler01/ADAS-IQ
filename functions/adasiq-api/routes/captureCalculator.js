@@ -1550,12 +1550,14 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     })
     const channelsAlreadyDone = new Set(todayLive.map(d => d.channel))
 
+    // Story sourcing for the DAILY drafter:
+    //   1. If req.body.story is provided, use it verbatim (manual override).
+    //   2. Otherwise ALWAYS auto-generate a fresh story — do NOT read the
+    //      cached weekly story (that'd reuse the same shop/owner every day).
+    //   3. Pass the last 10 stories to Claude as anti-examples and append the
+    //      new one to history so tomorrow's run avoids today's owner/city.
     let story = String(req.body?.story || '').trim()
     let caseStudy = String(req.body?.caseStudy || '').trim()
-    if (!story) {
-      const blob = await cacheGet(segment, 'capture_weekly_story_current', null)
-      story = String(blob?.story || '')
-    }
     if (!caseStudy) {
       const blob = await cacheGet(segment, 'capture_weekly_case_study', null)
       caseStudy = String(blob?.value || '')
@@ -1565,8 +1567,11 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
       try {
         const recentBlob = await cacheGet(segment, 'capture_story_history', null)
         const recentStories = Array.isArray(recentBlob?.stories) ? recentBlob.stories : []
-        story = await generateWeeklyStory({ recentStories })
-        storySource = 'auto-generated'
+        story = await generateWeeklyStory({ recentStories: recentStories.slice(0, 10) })
+        storySource = 'auto-generated-fresh-daily'
+        // Grow history so tomorrow's auto-gen sees today's story and avoids it.
+        const nextHistory = [story, ...recentStories].slice(0, 20)
+        await cacheSet(segment, 'capture_story_history', { stories: nextHistory, last_generated_at: Date.now() }).catch(() => {})
       } catch (e) {
         return res.json({ ok: false, skipped: true, reason: `auto-gen failed (${e.message})` })
       }
