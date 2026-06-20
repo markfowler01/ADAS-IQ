@@ -324,21 +324,21 @@ async function compositeOverlay(rawImageBuffer, headline) {
           font-family: 'Inter', sans-serif;
           font-weight: 700;
           font-size: ${kickerFontSize}px;
-          fill: #1a1a1a;
+          fill: rgba(255,255,255,0.75);
           letter-spacing: 0.18em;
         }
         .np-headline {
           font-family: 'Playfair', serif;
           font-weight: 800;
           font-size: ${headlineFontSize}px;
-          fill: #0a0a0a;
+          fill: #ffffff;
           letter-spacing: -0.01em;
         }
         .np-byline {
           font-family: 'Inter', sans-serif;
           font-weight: 700;
           font-size: ${bylineFontSize}px;
-          fill: #5a5a5a;
+          fill: rgba(255,255,255,0.55);
           letter-spacing: 0.12em;
         }
         .wordmark-white {
@@ -365,21 +365,21 @@ async function compositeOverlay(rawImageBuffer, headline) {
       </style>
     </defs>
 
-    <!-- Newspaper top band: cream background (+6px overlap into photo to swallow letterbox seam) -->
-    <rect x="0" y="0" width="${baseW}" height="${topH + 6}" fill="#f7f3ec"/>
+    <!-- Newspaper top band: DARK background to match footer (+6px overlap into photo to swallow letterbox seam) -->
+    <rect x="0" y="0" width="${baseW}" height="${topH + 6}" fill="${BRAND_DARK}"/>
 
-    <!-- Kicker: orange "INDUSTRY REPORT" + dark brand on same line -->
+    <!-- Kicker: orange "INDUSTRY REPORT" + light brand on same line -->
     <text x="${padX}" y="${kickerY}" class="np-kicker">INDUSTRY REPORT</text>
     <text x="${padX}" y="${kickerY + Math.round(kickerFontSize * 1.4)}" class="np-kicker-brand" style="font-size:${Math.round(kickerFontSize * 0.75)}px;letter-spacing:0.22em;">ABSOLUTE ADAS  ·  COLLISION + ADAS CALIBRATION</text>
 
     <!-- Thin hairline rule below kicker -->
-    <line x1="${padX}" y1="${ruleTopY + Math.round(topH * 0.04)}" x2="${baseW - padX}" y2="${ruleTopY + Math.round(topH * 0.04)}" stroke="#0a0a0a" stroke-width="2"/>
+    <line x1="${padX}" y1="${ruleTopY + Math.round(topH * 0.04)}" x2="${baseW - padX}" y2="${ruleTopY + Math.round(topH * 0.04)}" stroke="rgba(255,255,255,0.45)" stroke-width="2"/>
 
-    <!-- Headline (serif, left-aligned) -->
+    <!-- Headline (serif, left-aligned, white on dark) -->
     ${headlineTextSvg}
 
     <!-- Thin gray hairline below headline -->
-    <line x1="${padX}" y1="${ruleBottomY}" x2="${baseW - padX}" y2="${ruleBottomY}" stroke="#c8c0b3" stroke-width="1"/>
+    <line x1="${padX}" y1="${ruleBottomY}" x2="${baseW - padX}" y2="${ruleBottomY}" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
 
     <!-- Byline -->
     <text x="${padX}" y="${bylineY}" class="np-byline">${escXml(byline)}</text>
