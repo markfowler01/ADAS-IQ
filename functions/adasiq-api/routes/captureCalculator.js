@@ -2158,8 +2158,17 @@ async function debugForward(req, res, target) {
   const secret = process.env.BREW_CRON_SECRET
   if (!secret) return res.status(500).json({ ok: false, error: 'BREW_CRON_SECRET not set on function' })
   const base = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api`
+  // Pass through query params from the debug request (e.g. ?force_relock=1
+  // or ?type=story) onto the forwarded target. Without this, debug-only
+  // overrides get silently dropped at the forward layer.
+  const forwardedParams = new URLSearchParams()
+  for (const [k, v] of Object.entries(req.query || {})) {
+    if (k === 'secret') continue
+    forwardedParams.set(k, String(v))
+  }
+  forwardedParams.set('secret', secret)
   const sep = target.includes('?') ? '&' : '?'
-  const url = `${base}${target}${sep}secret=${encodeURIComponent(secret)}`
+  const url = `${base}${target}${sep}${forwardedParams.toString()}`
   try {
     // 250s — gateway will 504 at 30s for the OUTER curl, but the called
     // handler keeps running server-side. Poll /debug/state to watch progress.
