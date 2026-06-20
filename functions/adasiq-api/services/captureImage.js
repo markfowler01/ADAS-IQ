@@ -27,9 +27,11 @@ const ASSETS_DIR = path.join(__dirname, '..', 'assets')
 // capture image footer reads identically to the newsletter posts.
 // "Absolute" in white + "ADAS" in orange + tagline, with the logo PNG.
 const BRAND_ORANGE = '#CD4419'
+const BRAND_DARK = '#0d0d0d'
 let _logoB64 = null
 let _interBoldB64 = null
 let _interRegularB64 = null
+let _playfairB64 = null
 async function loadBrandAssets() {
   if (!_logoB64) {
     const buf = await fs.readFile(path.join(ASSETS_DIR, 'absolute-adas-logo.png'))
@@ -43,7 +45,11 @@ async function loadBrandAssets() {
     const buf = await fs.readFile(path.join(ASSETS_DIR, 'fonts', 'Inter-Regular.ttf'))
     _interRegularB64 = buf.toString('base64')
   }
-  return { logoB64: _logoB64, interBoldB64: _interBoldB64, interRegularB64: _interRegularB64 }
+  if (!_playfairB64) {
+    const buf = await fs.readFile(path.join(ASSETS_DIR, 'fonts', 'PlayfairDisplay-Bold.ttf'))
+    _playfairB64 = buf.toString('base64')
+  }
+  return { logoB64: _logoB64, interBoldB64: _interBoldB64, interRegularB64: _interRegularB64, playfairB64: _playfairB64 }
 }
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta'
@@ -215,39 +221,79 @@ function pickSceneVariant() {
 }
 
 // ─── SVG overlay composite ──────────────────────────────────────────────────
-// Same layout pattern as the newsletter tip card (tipImageComposite.js):
-//   - Mid-image: headline with semi-transparent darken band behind it
-//   - Bottom band: solid dark footer with logo + "Absolute"/"ADAS" split
-//     wordmark + tagline, centered
-// Uses real Inter Bold + Inter Regular fonts embedded into the SVG so the
-// brand reads identically every time, no AI typography drift.
+// Newspaper-front-page treatment (locked 2026-06-16).
+// Layout top-to-bottom:
+//   - Top band (cream, ~26% height): orange kicker + black serif headline +
+//     gray byline. Reads like a published article masthead.
+//   - Middle: the photo (NO mid-image headline overlay anymore).
+//   - Bottom band (dark, ~16% height): existing brand footer — logo +
+//     "Absolute ADAS" split wordmark + tagline + phone.
+//
+// Fonts embedded as base64:
+//   - Playfair Display variable (used at weight 800) → newspaper headline
+//   - Inter Bold + Regular → kicker, byline, footer
 async function compositeOverlay(rawImageBuffer, headline) {
   const baseMeta = await sharp(rawImageBuffer).metadata()
   const baseW = baseMeta.width || 1200
   const baseH = baseMeta.height || 627
-  const safeHeadline = String(headline || '').trim().slice(0, 100)
+  const safeHeadline = String(headline || '').trim().slice(0, 120)
 
-  const { logoB64, interBoldB64, interRegularB64 } = await loadBrandAssets()
+  const { logoB64, interBoldB64, interRegularB64, playfairB64 } = await loadBrandAssets()
 
-  // ── Footer band geometry (matches newsletter footer proportions) ──────────
-  const footerH = Math.round(baseH * 0.16)           // ~100px on 627
+  // ── Newspaper-style TOP band (white/cream) ───────────────────────────────
+  // LOCKED 2026-06-17: fixed pixel sizes so the masthead/footer look identical
+  // on every image regardless of source dimensions. +4px overlap into photo
+  // zone to swallow Nano Banana's letterbox bars (those caused the dark seams).
+  const topH = 220
+  const padX = Math.round(baseW * 0.07)               // 70px side padding
+  const kickerFontSize = Math.round(topH * 0.075)      // ~20px
+  // Capped lower 2026-06-17 so 2-line headlines don't crowd the byline.
+  const headlineFontSize =
+    safeHeadline.length > 70 ? 38
+    : safeHeadline.length > 45 ? 44
+    : 48
+  const headlineLineGap = Math.round(headlineFontSize * 1.05)
+  const bylineFontSize = Math.round(topH * 0.065)     // ~18px
+
+  // Playfair Bold avg char width is ~0.60 em (digits + $ wider than the 0.50
+  // I had — that caused "$16,200" to split mid-word at 55px font). 0.60 is
+  // conservative enough to fit at the cost of slightly shorter lines.
+  const headlineMaxCharsPerLine = Math.round((baseW - 2 * padX) / (headlineFontSize * 0.60))
+  const headlineLines = wrapHeadline(safeHeadline, headlineMaxCharsPerLine).slice(0, 3)
+
+  // Build date string in newspaper byline format (e.g. JUNE 17, 2026)
+  const months = ['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER']
+  const now = new Date()
+  const dateline = `${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`
+  const byline = `BY MARK FOWLER  ·  ABSOLUTE ADAS  ·  ${dateline}`
+
+  // Y positions inside the top band
+  const kickerY = Math.round(topH * 0.18)
+  const ruleTopY = Math.round(topH * 0.27)
+  const headlineStartY = Math.round(topH * 0.36)
+  const ruleBottomY = headlineStartY + headlineLines.length * headlineLineGap + 4
+  const bylineY = Math.round(topH * 0.92)
+
+  // ── Bottom band — UNIFIED with brew-tips footer 2026-06-19 ────────────────
+  // Mark wants the brew-tips footer (dark bg, Inter Bold split-color wordmark,
+  // no phone number) on EVERY post on EVERY platform. Replaces the old cream
+  // Playfair footer.
+  const footerH = 170
   const footerY = baseH - footerH
-  const logoSize = Math.round(footerH * 0.62)         // logo fills ~62% of band height
-  const wordmarkFontSize = Math.round(footerH * 0.34) // wordmark big enough to read in feed
+  const logoSize = Math.round(footerH * 0.62)
+  const wordmarkFontSize = Math.round(footerH * 0.34)
   const taglineFontSize = Math.round(footerH * 0.15)
   const wordmarkWhite = 'Absolute'
   const wordmarkOrange = 'ADAS'
-  const taglineWhite = 'Mobile ADAS calibration  ·  Western Washington  ·  '
-  const taglineOrange = '1-844-349-2327'
-  // Combined for width math (we render via a single <text> with <tspan>).
-  const tagline = taglineWhite + taglineOrange
+  const tagline = 'Mobile ADAS calibration  ·  Western Washington'
 
-  // Approximate widths for centering the footer block (Inter Bold ~0.58× em).
+  // Inter Bold avg char width ~0.58 em.
   const wordmarkApproxW = Math.round((wordmarkWhite.length + 1 + wordmarkOrange.length) * wordmarkFontSize * 0.58)
   const taglineApproxW = Math.round(tagline.length * taglineFontSize * 0.55)
   const textBlockW = Math.max(wordmarkApproxW, taglineApproxW)
   const totalBlockW = logoSize + 20 + textBlockW
-  const blockStartX = Math.round((baseW - totalBlockW) / 2)
+  const centeredX = Math.round((baseW - totalBlockW) / 2)
+  const blockStartX = Math.max(Math.round(baseW * 0.04), centeredX)
   const footerLogoX = blockStartX
   const footerLogoY = footerY + Math.round((footerH - logoSize) / 2)
   const footerTextX = blockStartX + logoSize + 20
@@ -256,25 +302,9 @@ async function compositeOverlay(rawImageBuffer, headline) {
   const wordmarkOrangeX = footerTextX + wordmarkWhiteApproxW + Math.round(wordmarkFontSize * 0.30)
   const taglineY = footerY + Math.round(footerH * 0.78)
 
-  // ── Headline band (mid-image) ────────────────────────────────────────────
-  // Dynamic font size based on headline length + word count to keep multi-line
-  // headlines readable at thumbnail scale.
-  const headlineFontSize = safeHeadline.length > 60 ? 40 : safeHeadline.length > 40 ? 50 : 60
-  const headlineMaxCharsPerLine = Math.round(baseW * 0.85 / (headlineFontSize * 0.55))
-  const headlineLines = wrapHeadline(safeHeadline, headlineMaxCharsPerLine)
-  const lineGap = Math.round(headlineFontSize * 1.15)
-  const headlineBlockH = headlineLines.length * lineGap
-  // Place the headline block so its bottom edge sits just above the footer
-  // band with a comfortable margin.
-  const headlineBlockBottom = footerY - Math.round(baseH * 0.04)
-  const headlineBlockTop = headlineBlockBottom - headlineBlockH
-  const darkenBandPadY = 22
-  const darkenBandY = headlineBlockTop - darkenBandPadY
-  const darkenBandH = headlineBlockH + darkenBandPadY * 2
-
   // ── Build SVG ────────────────────────────────────────────────────────────
   const headlineTextSvg = headlineLines.map((line, i) =>
-    `<text x="${Math.round(baseW / 2)}" y="${headlineBlockTop + (i + 1) * lineGap - Math.round(lineGap * 0.25)}" class="headline">${escXml(line)}</text>`
+    `<text x="${padX}" y="${headlineStartY + (i + 1) * headlineLineGap - Math.round(headlineLineGap * 0.25)}" class="np-headline">${escXml(line)}</text>`
   ).join('\n      ')
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${baseW}" height="${baseH}" viewBox="0 0 ${baseW} ${baseH}">
@@ -282,16 +312,34 @@ async function compositeOverlay(rawImageBuffer, headline) {
       <style type="text/css">
         @font-face { font-family: 'Inter'; src: url(data:font/ttf;base64,${interBoldB64}) format('truetype'); font-weight: 700; }
         @font-face { font-family: 'Inter'; src: url(data:font/ttf;base64,${interRegularB64}) format('truetype'); font-weight: 400; }
-        .headline {
+        @font-face { font-family: 'Playfair'; src: url(data:font/ttf;base64,${playfairB64}) format('truetype'); font-weight: 800; }
+        .np-kicker {
           font-family: 'Inter', sans-serif;
           font-weight: 700;
+          font-size: ${kickerFontSize}px;
+          fill: ${BRAND_ORANGE};
+          letter-spacing: 0.18em;
+        }
+        .np-kicker-brand {
+          font-family: 'Inter', sans-serif;
+          font-weight: 700;
+          font-size: ${kickerFontSize}px;
+          fill: #1a1a1a;
+          letter-spacing: 0.18em;
+        }
+        .np-headline {
+          font-family: 'Playfair', serif;
+          font-weight: 800;
           font-size: ${headlineFontSize}px;
-          fill: #ffffff;
-          text-anchor: middle;
-          letter-spacing: -0.015em;
-          paint-order: stroke;
-          stroke: rgba(0,0,0,0.55);
-          stroke-width: 3px;
+          fill: #0a0a0a;
+          letter-spacing: -0.01em;
+        }
+        .np-byline {
+          font-family: 'Inter', sans-serif;
+          font-weight: 700;
+          font-size: ${bylineFontSize}px;
+          fill: #5a5a5a;
+          letter-spacing: 0.12em;
         }
         .wordmark-white {
           font-family: 'Inter', sans-serif;
@@ -314,25 +362,33 @@ async function compositeOverlay(rawImageBuffer, headline) {
           fill: rgba(255,255,255,0.85);
           letter-spacing: 0;
         }
-        .tagline-phone {
-          font-family: 'Inter', sans-serif;
-          font-weight: 700;
-          fill: ${BRAND_ORANGE};
-        }
       </style>
     </defs>
-    <!-- Headline darken band -->
-    <rect x="0" y="${darkenBandY}" width="${baseW}" height="${darkenBandH}" fill="rgba(0,0,0,0.42)"/>
+
+    <!-- Newspaper top band: cream background (+6px overlap into photo to swallow letterbox seam) -->
+    <rect x="0" y="0" width="${baseW}" height="${topH + 6}" fill="#f7f3ec"/>
+
+    <!-- Kicker: orange "INDUSTRY REPORT" + dark brand on same line -->
+    <text x="${padX}" y="${kickerY}" class="np-kicker">INDUSTRY REPORT</text>
+    <text x="${padX}" y="${kickerY + Math.round(kickerFontSize * 1.4)}" class="np-kicker-brand" style="font-size:${Math.round(kickerFontSize * 0.75)}px;letter-spacing:0.22em;">ABSOLUTE ADAS  ·  COLLISION + ADAS CALIBRATION</text>
+
+    <!-- Thin hairline rule below kicker -->
+    <line x1="${padX}" y1="${ruleTopY + Math.round(topH * 0.04)}" x2="${baseW - padX}" y2="${ruleTopY + Math.round(topH * 0.04)}" stroke="#0a0a0a" stroke-width="2"/>
+
+    <!-- Headline (serif, left-aligned) -->
     ${headlineTextSvg}
 
-    <!-- Footer band (solid dark, full width) -->
-    <rect x="0" y="${footerY}" width="${baseW}" height="${footerH}" fill="#0d0d0d"/>
-    <!-- Wordmark: "Absolute" white + "ADAS" orange -->
+    <!-- Thin gray hairline below headline -->
+    <line x1="${padX}" y1="${ruleBottomY}" x2="${baseW - padX}" y2="${ruleBottomY}" stroke="#c8c0b3" stroke-width="1"/>
+
+    <!-- Byline -->
+    <text x="${padX}" y="${bylineY}" class="np-byline">${escXml(byline)}</text>
+
+    <!-- Footer band (dark, matches brew-tips style; +8px overlap above footerY to swallow letterbox seam) -->
+    <rect x="0" y="${footerY - 8}" width="${baseW}" height="${footerH + 8}" fill="${BRAND_DARK}"/>
     <text x="${footerTextX}" y="${wordmarkY}" class="wordmark-white">${wordmarkWhite}</text>
     <text x="${wordmarkOrangeX}" y="${wordmarkY}" class="wordmark-orange">${wordmarkOrange}</text>
-    <!-- Tagline (white) + phone number CTA (orange, bold) on same line -->
-    <text x="${footerTextX}" y="${taglineY}" class="tagline">${escXml(taglineWhite)}<tspan class="tagline-phone">${escXml(taglineOrange)}</tspan></text>
-    <!-- Logo PNG embedded as base64 -->
+    <text x="${footerTextX}" y="${taglineY}" class="tagline">${escXml(tagline)}</text>
     <image x="${footerLogoX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${logoB64}"/>
   </svg>`
 
@@ -412,6 +468,7 @@ Real photography only. Documentary magazine quality. Just the photograph.`
  * @param {Object} [opts]
  * @param {boolean} [opts.force]   - Bypass the CAPTURE_IMAGES_ENABLED gate (test endpoint only)
  * @param {Object}  [opts.segment] - Catalyst cache segment; required for budget + audit
+ * @param {string}  [opts.sceneOverride] - Use this scene directive instead of a random vehicle-in-bay variant. Used for holiday-themed images.
  * @returns {Promise<{ok: true, url: string, prompt: string, budget?: Object} | {ok: false, error: string}>}
  */
 export async function generateCaptureImage({ headline, draftId }, opts = {}) {
@@ -434,9 +491,12 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
   }
 
   const safeHeadline = String(headline).trim().slice(0, 100)
-  // Randomize vehicle + framing + environment + lighting per call so consecutive
-  // images don't look like the same composition.
-  const sceneDirective = pickSceneVariant()
+  // opts.sceneOverride lets callers force a specific scene (e.g. holiday-themed
+  // scenes from holidays.js). Falls back to a random vehicle-in-bay scene
+  // when not provided, so existing callers keep working unchanged.
+  const sceneDirective = opts.sceneOverride && typeof opts.sceneOverride === 'string'
+    ? opts.sceneOverride
+    : pickSceneVariant()
   const prompt = STYLE_PROMPT
     .replace('{HEADLINE}', safeHeadline)
     .replace('{SCENE_DIRECTIVE}', sceneDirective)
