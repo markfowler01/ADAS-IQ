@@ -80,6 +80,15 @@ jobs:
           cat /tmp/r.json | head -c 1500; echo
           [ "$code" -lt 400 ] || exit 1
 
+      - name: li_comments — alert Mark on new LinkedIn comments
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 90 \
+            "$BASE/li-comments-check")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 1500; echo
+          # Non-fatal: a LinkedIn API hiccup shouldn't fail the whole hourly
+          [ "$code" -lt 500 ] || exit 1
+
       - name: cron_monitor — scan inbox for Catalyst auto-disable emails
         run: |
           code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 60 \

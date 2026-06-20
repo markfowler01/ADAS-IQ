@@ -60,7 +60,7 @@ async function refreshAccessToken() {
   return cachedToken
 }
 
-async function getAccessToken() {
+export async function getAccessToken() {
   const e = envBundle()
   if (e.accessToken) return e.accessToken
   if (cachedToken && Date.now() < cachedTokenExpiresAt) return cachedToken

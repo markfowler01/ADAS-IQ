@@ -1821,6 +1821,80 @@ captureCalcRouter.all('/engagement/run', heartbeatAttempt('capture_engagement'),
   }
 })
 
+// ─── LINKEDIN COMMENT WATCHER ───────────────────────────────────────────────
+// For every LinkedIn post Mark published in the last 7 days, fetch the
+// current comment list and compare against the seen-list in cache. For each
+// new comment, ping Mark in Cliq with the comment text + reply URL.
+//
+//   GET/POST /api/capture-calc/linkedin/comments/check   (cron-secret)
+//
+// Runs hourly via GH Actions. Idempotent — a comment is only notified once
+// (cache key li_comments_seen_{platformId} tracks notified ids).
+captureCalcRouter.all('/linkedin/comments/check', heartbeatAttempt('li_comments'), requireCronSecretFlex, async (req, res) => {
+  const out = []
+  try {
+    const segment = getSegment(req)
+    const { fetchPostComments, fetchAuthorName } = await import('../services/linkedInComments.js')
+    const published = await listQueue(req, { status: 'published' })
+    const cutoff = Date.now() - 7 * 86400000
+    const recentLi = published.filter(d =>
+      d.channel === 'linkedin_personal' &&
+      d.platform_id &&
+      new Date(d.published_at || d.created_at).getTime() >= cutoff
+    )
+
+    for (const draft of recentLi) {
+      const cacheKey = `li_comments_seen_${draft.platform_id}`
+      const seenBlob = await cacheGet(segment, cacheKey, null)
+      const seen = new Set(Array.isArray(seenBlob?.ids) ? seenBlob.ids : [])
+      const firstPass = !seenBlob
+
+      let comments
+      try {
+        comments = await fetchPostComments(draft.platform_id)
+      } catch (e) {
+        out.push({ draftId: draft.id, urn: draft.platform_id, error: e.message })
+        continue
+      }
+
+      const newOnes = comments.filter(c => c.id && !seen.has(c.id))
+      // On the FIRST pass for a post we DO NOT spam Mark with historical
+      // comments — just seed the cache. Going forward, only genuinely new
+      // comments fire alerts.
+      if (firstPass) {
+        await cacheSet(segment, cacheKey, { ids: comments.map(c => c.id), updated_at: new Date().toISOString(), seeded: true })
+        out.push({ draftId: draft.id, urn: draft.platform_id, total: comments.length, new: 0, seeded: true })
+        continue
+      }
+
+      for (const c of newOnes) {
+        const author = await fetchAuthorName(c.authorUrn).catch(() => '')
+        const liUrl = `https://www.linkedin.com/feed/update/${encodeURIComponent(draft.platform_id)}/`
+        const headline = draft.headline || draft.body?.slice(0, 60) || '(LinkedIn post)'
+        const msg = [
+          `💬 *New comment on your LinkedIn post*`,
+          `_${headline}_`,
+          ``,
+          `${author ? `*${author}:* ` : ''}${c.message.slice(0, 300)}${c.message.length > 300 ? '…' : ''}`,
+          ``,
+          `Reply: ${liUrl}`,
+        ].join('\n')
+        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+      }
+
+      // Update seen-list with the full current set of comment IDs.
+      await cacheSet(segment, cacheKey, { ids: comments.map(c => c.id), updated_at: new Date().toISOString() })
+      out.push({ draftId: draft.id, urn: draft.platform_id, total: comments.length, new: newOnes.length })
+    }
+
+    await stampSuccess(req, 'li_comments', { posts_checked: out.length, new_comments: out.reduce((s, r) => s + (r.new || 0), 0) })
+    res.json({ ok: true, processed: out.length, results: out })
+  } catch (e) {
+    await reportCronFailure(req, 'li_comments', e)
+    res.json({ ok: false, error: e.message, partial: out })
+  }
+})
+
 // ─── FRIDAY WEEKLY REPORT ───────────────────────────────────────────────────
 // Per the brief: Friday 6am PT Cliq message to Mark summarizing the week.
 // Posts to MARK_ALERT_CHANNEL_ID.
@@ -2156,6 +2230,7 @@ const DEBUG_FORWARD_WHITELIST = {
   'cron-monitor-run':    '/api/cron-monitor/run',
   'holiday-poster-run':  '/api/holiday-poster/run',
   'engagement-run':      '/api/capture-calc/engagement/run',
+  'li-comments-check':   '/api/capture-calc/linkedin/comments/check',
   'weekly-run':          '/api/capture-calc/report/weekly?force=1',
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
 }
@@ -2190,6 +2265,7 @@ captureCalcRouter.all('/debug/nurture-run',         (req, res) => debugForward(r
 captureCalcRouter.all('/debug/cron-monitor-run',    (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['cron-monitor-run']))
 captureCalcRouter.all('/debug/holiday-poster-run',  (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['holiday-poster-run']))
 captureCalcRouter.all('/debug/engagement-run',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['engagement-run']))
+captureCalcRouter.all('/debug/li-comments-check',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-comments-check']))
 captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
 
