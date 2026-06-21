@@ -273,6 +273,11 @@ Audience: body shop owners, collision MSOs, glass shops in Western Washington.
 
 ${SHARED_VOICE}
 
+CONSISTENCY CONTRACT — LOCKED 2026-06-21 (this rule fails the draft if violated)
+The headline and the body MUST describe THE SAME shop. One owner name. One city. One dollar figure. One monthly cal count. If the body talks about "Maria in Burlington at $17,280/year," the headline cannot say "Kyle in Lake Stevens captured $64,800/year." Pick ONE shop owner, ONE city, ONE annual dollar number, ONE monthly cal count — then write BOTH the headline and the body around that same shop. The image will render the headline as text over the photo — if the headline names a different shop than the body, the post is broken.
+
+Write the body FIRST in your head. Lock in the shop owner first name, the city, the calibrations per month, the per-cal margin, and the annual dollar figure. Then write the headline that compresses the SAME numbers and (if it names a shop) the SAME shop.
+
 UNIFIED CROSS-CHANNEL FORMAT:
 - 120-180 words total. Tight is better than long.
 - First line is THE hook — has to land before Instagram's ~125-char feed truncation. Make it a number, a question, or a one-line scene. No throat-clearing.
@@ -368,6 +373,28 @@ ${IMAGE_PROMPT_SPEC}`
  * @param {string} [input.caseStudy]
  * @returns {Promise<{headline, body, voice_score, voice_deductions}>}
  */
+// Extract every annual dollar amount mentioned in text. Handles formats like
+// "$8,100 a year", "$16,200/year", "$8,100 annually". Returns raw digits (no
+// commas, no dollar sign) so we can string-compare across formats.
+function extractAnnualDollars(text) {
+  const matches = [...String(text || '').matchAll(/\$\s*([\d,]+)\s*(?:a year|\/\s*yr|\/\s*year|annually|per year|\/yr)/gi)]
+  return matches.map(m => m[1].replace(/[\s,]/g, ''))
+}
+
+// Returns a mismatch description string if headline + body name different
+// shops by dollar figures, or empty string if consistent. The check is
+// asymmetric: every $/year claim in the HEADLINE must appear somewhere in
+// the body. Body can contain extra dollar figures (monthly, per-cal) that
+// don't appear in the headline — that's fine.
+function headlineBodyConsistencyMismatch(headline, body) {
+  const hDollars = extractAnnualDollars(headline)
+  if (!hDollars.length) return ''
+  const bDollars = extractAnnualDollars(body)
+  const missing = hDollars.filter(d => !bDollars.includes(d))
+  if (!missing.length) return ''
+  return `Headline mentions $${missing.join(', $')} per year but the body never references that figure (body has: ${bDollars.length ? '$' + bDollars.join(', $') : 'no annual figures'}).`
+}
+
 /**
  * Unified daily drafter — ONE post for FB + IG + LinkedIn.
  * Single Claude call produces one headline + body + image_prompt that fits
@@ -426,6 +453,41 @@ export async function draftUnifiedDailyPost({ story, caseStudy = '', type, targe
   let headline = sanitizeAiOutput(String(parsed.headline || '')).slice(0, 120)
   let body = sanitizeAiOutput(String(parsed.body || '')).slice(0, maxBody)
   let imagePrompt = String(parsed.image_prompt || '').trim().slice(0, 1200)
+
+  // Consistency retry — the headline + body must describe the same shop.
+  // We compare dollar-a-year figures: if the headline names $X/year and the
+  // body does not contain that same $X/year, Claude drifted between shops.
+  // Up to 2 retries with explicit mismatch feedback before giving up.
+  for (let cAttempt = 1; cAttempt <= 2; cAttempt++) {
+    const mismatch = headlineBodyConsistencyMismatch(headline, body)
+    if (!mismatch) break
+    const fb = `Your previous draft has the headline and body describing TWO DIFFERENT SHOPS. ${mismatch} Re-write so the headline and body describe the SAME shop owner, SAME city, SAME annual dollar figure, SAME calibration count. Return JSON: {"headline":"...","body":"...","image_prompt":"..."}`
+    try {
+      const retry = await client.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1500,
+        system: UNIFIED_SYSTEM_PROMPT,
+        messages: [
+          { role: 'user', content: userMsg },
+          { role: 'assistant', content: JSON.stringify({ headline, body, image_prompt: imagePrompt }) },
+          { role: 'user', content: fb },
+        ],
+      })
+      const r = (retry.content?.[0]?.text || '').trim().replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+      const p = JSON.parse(r)
+      const nh = sanitizeAiOutput(String(p.headline || headline)).slice(0, 120)
+      const nb = sanitizeAiOutput(String(p.body || '')).slice(0, maxBody)
+      const nip = String(p.image_prompt || '').trim().slice(0, 1200)
+      if (!nb) break
+      headline = nh
+      body = nb
+      if (nip) imagePrompt = nip
+    } catch (e) {
+      console.warn('[unifiedDrafter consistency retry]', e.message)
+      break
+    }
+  }
+
   // Score against FB voice (most general) — used for the same body on all 3 channels.
   let { score, deductions } = scoreDraft(body, { channel: 'facebook' })
 
