@@ -2231,6 +2231,7 @@ const DEBUG_FORWARD_WHITELIST = {
   'holiday-poster-run':  '/api/holiday-poster/run',
   'engagement-run':      '/api/capture-calc/engagement/run',
   'li-comments-check':   '/api/capture-calc/linkedin/comments/check',
+  'brew-run-bonus':      '/api/cron/brew/run-bonus',
   'weekly-run':          '/api/capture-calc/report/weekly?force=1',
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
 }
@@ -2252,7 +2253,14 @@ async function debugForward(req, res, target) {
   try {
     // 250s — gateway will 504 at 30s for the OUTER curl, but the called
     // handler keeps running server-side. Poll /debug/state to watch progress.
-    const r = await axios.post(url, {}, { timeout: 250000, validateStatus: () => true })
+    // Send the secret as a header too — some downstream routes (e.g. the
+    // strict requireCronSecret on the brew router) accept ONLY the header
+    // and ignore the query-string version.
+    const r = await axios.post(url, {}, {
+      timeout: 250000,
+      validateStatus: () => true,
+      headers: { 'x-cron-secret': secret },
+    })
     res.json({ ok: true, debug: true, forwarded: true, url: target, status: r.status, data: r.data })
   } catch (e) {
     res.json({ ok: true, debug: true, forwarded: true, url: target, note: 'outer timed out; inner may still be running', error: e.message })
@@ -2266,6 +2274,7 @@ captureCalcRouter.all('/debug/cron-monitor-run',    (req, res) => debugForward(r
 captureCalcRouter.all('/debug/holiday-poster-run',  (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['holiday-poster-run']))
 captureCalcRouter.all('/debug/engagement-run',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['engagement-run']))
 captureCalcRouter.all('/debug/li-comments-check',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-comments-check']))
+captureCalcRouter.all('/debug/brew-run-bonus',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['brew-run-bonus']))
 captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
 
