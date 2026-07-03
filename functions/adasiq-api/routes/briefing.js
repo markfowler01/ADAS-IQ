@@ -85,10 +85,11 @@ async function getRevenue() {
     const ytdTotal = invs.filter(i => (i.date || '').startsWith(y)).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
     const yesterdayTotal = invs.filter(i => i.date === yesterday).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
+    const todayTotal = invs.filter(i => i.date === today).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
     const yr = Number(y), mi = Number(ym.slice(5, 7)) - 1, dayNum = Number(today.slice(8, 10))
     const elapsed = Math.max(1, workingDays(yr, mi, dayNum))
     const projected = Math.round((monthlyTotal / elapsed) * workingDays(yr, mi))
-    return { monthlyTotal, ytdTotal, yesterdayTotal, projected, invoiceCount: invs.length }
+    return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, invoiceCount: invs.length }
   })
 }
 
@@ -144,12 +145,12 @@ async function getEmailBlocks() {
   })) || []
 }
 
-async function getCalendarEvents() {
+async function getCalendarEvents(date = todayStr()) {
   // Self-call the existing (unauthenticated) calendar route — reuses the tested
   // Zoho + Google-family-calendar logic without duplicating it.
   return (await safe('calendar', async () => {
     const r = await axios.get(`${SELF_BASE}/api/calendar/events`, {
-      params: { date: todayStr() }, timeout: 5500,
+      params: { date }, timeout: 5500,
     })
     return (r.data?.events || []).map(e => ({ title: e.title, start: e.startTime, end: e.endTime }))
   })) || []
@@ -194,8 +195,9 @@ async function persistCommitments(req, fresh) {
 
 // ---------- build ----------
 
-async function buildBriefing(req, { only } = {}) {
+async function buildBriefing(req, { only, mode = 'morning' } = {}) {
   const today = todayStr()
+  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
   const t0 = Date.now()
   const timings = {}
   const timed = (label, p) => p.then(v => { timings[label] = Date.now() - t0; return v })
@@ -210,6 +212,11 @@ async function buildBriefing(req, { only } = {}) {
     on('calendar') ? timed('calendar', withTimeout('calendar', getCalendarEvents(), 6000)).then(e => e || []) : [],
   ])
 
+  // Evening review looks ahead: tomorrow's calendar (jobs come from the same board).
+  const tomorrowEvents = mode === 'evening' && on('calendar')
+    ? (await withTimeout('calTomorrow', getCalendarEvents(tomorrow), 6000)) || []
+    : []
+
   const fresh = (on('extract')
     ? (await timed('extract', withTimeout('extract',
         safe('extract', () => extractCommitments({ blocks: [...cliqBlocks, ...emailBlocks], today })), 9000)))
@@ -223,17 +230,22 @@ async function buildBriefing(req, { only } = {}) {
   console.log('[briefing] timings', JSON.stringify(timings))
 
   const todaysJobs = jobs.filter(j => j.scheduled_date === today)
+  const tomorrowsJobs = jobs.filter(j => j.scheduled_date === tomorrow)
   const jaden = jobs.filter(j => String(j.technician || '').toLowerCase().startsWith('jay'))
   const jadenToday = jaden.filter(j => j.scheduled_date === today)
   const openJobs = jobs.filter(j => j.status && j.status !== 'complete')
+  const completedToday = jobs.filter(j => j.status === 'complete' &&
+    (String(j.completed_at || j.updated_at || '').slice(0, 10) === today))
   const followups = shops.filter(s => s.next_followup && s.next_followup <= today)
   const dueToday = commitments.filter(c => c.due === today)
+  const dueTomorrow = commitments.filter(c => c.due === tomorrow)
   const overdue = commitments.filter(c => c.due && c.due < today)
   const outbound = commitments.filter(c => c.direction === 'outbound')
 
   return {
-    today, jobs, revenue, shops, commitments, todaysJobs, jaden, jadenToday, openJobs,
-    followups, dueToday, overdue, outbound, events, timings,
+    today, tomorrow, mode, jobs, revenue, shops, commitments, todaysJobs, tomorrowsJobs,
+    jaden, jadenToday, openJobs, completedToday,
+    followups, dueToday, dueTomorrow, overdue, outbound, events, tomorrowEvents, timings,
     sources: { cliqBlocks: cliqBlocks.length, emailBlocks: emailBlocks.length, crmError: lastCrmError, cliqProbe: lastCliqProbe },
   }
 }
@@ -272,6 +284,52 @@ function formatDigest(b) {
   return `Briefing ${b.today}. Rev ${mtd} MTD, projecting ${proj} of ${money(TARGET)}. Jobs today ${b.todaysJobs.length} (Jaden ${b.jadenToday.length}). Events ${b.events.length}. Follow-ups ${b.followups.length}. Commitments due ${b.dueToday.length}, overdue ${b.overdue.length}. Full brief in Cliq.`
 }
 
+// ---------- voice (spoken by Siri Shortcut — plain sentences, no markdown/emoji) ----------
+
+// Spoken money: "649 dollars" (no $, TTS reads the comma grouping naturally).
+const spoken = n => `${Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })} dollars`
+const weekday = iso => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`
+
+// Morning briefing, read aloud in the van.
+function formatVoiceMorning(b) {
+  const L = [`Good morning, Mark. Here's your briefing for ${weekday(b.today)}.`]
+  if (b.revenue) {
+    const proj = b.revenue.projected || 0
+    const diff = proj - TARGET
+    L.push(`Yesterday you booked ${spoken(b.revenue.yesterdayTotal || 0)}. You're at ${spoken(b.revenue.monthlyTotal || 0)} for the month, on pace for ${spoken(proj)} against your fifty thousand target, ${diff >= 0 ? 'ahead' : 'behind'} by ${spoken(Math.abs(diff))}.`)
+  }
+  L.push(`On the board today, ${plural(b.todaysJobs.length, 'job')} scheduled. Jaden has ${b.jadenToday.length}. ${plural(b.openJobs.length, 'job')} open in total.`)
+  if (b.events.length) {
+    L.push(`On your calendar, ${b.events.slice(0, 5).map(e => e.title).join(', ')}.`)
+  }
+  if (b.dueToday.length) {
+    L.push(`${plural(b.dueToday.length, 'commitment')} due today. ${b.dueToday.slice(0, 5).map(c => `${c.person}, ${c.text}`).join('. ')}.`)
+  } else {
+    L.push('No commitments due today.')
+  }
+  if (b.overdue.length) L.push(`Heads up, ${plural(b.overdue.length, 'commitment')} overdue.`)
+  L.push('Make it a great day.')
+  return L.join(' ')
+}
+
+// End-of-day review, read aloud on the way home.
+function formatVoiceEvening(b) {
+  const L = [`Good evening, Mark. Here's your end of day review for ${weekday(b.today)}.`]
+  if (b.revenue) {
+    L.push(`Today you booked ${spoken(b.revenue.todayTotal || 0)}. That puts you at ${spoken(b.revenue.monthlyTotal || 0)} for the month, pacing to ${spoken(b.revenue.projected || 0)} of your fifty thousand target.`)
+  }
+  if (b.completedToday.length) L.push(`You closed out ${plural(b.completedToday.length, 'job')} today.`)
+  L.push(`${plural(b.openJobs.length, 'job')} still open. Tomorrow you've got ${plural(b.tomorrowsJobs.length, 'job')} on the schedule${b.tomorrowEvents.length ? `, plus ${b.tomorrowEvents.slice(0, 4).map(e => e.title).join(', ')}` : ''}.`)
+  if (b.dueTomorrow.length) {
+    L.push(`Due tomorrow, ${b.dueTomorrow.slice(0, 5).map(c => `${c.person}, ${c.text}`).join('. ')}.`)
+  }
+  if (b.overdue.length) L.push(`Still overdue, ${plural(b.overdue.length, 'commitment')}. Worth clearing before you clock out.`)
+  L.push('Two questions before you unplug. Did you move your Big Three today? And what is one thing you are grateful for?')
+  L.push("Rest up. Tomorrow's a new one.")
+  return L.join(' ')
+}
+
 // ---------- send + routes ----------
 
 export async function sendDailyBriefing(req, { dry = false, only } = {}) {
@@ -302,5 +360,16 @@ router.get('/debug', async (req, res) => {
 })
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })
 router.post('/send', async (req, res) => { res.json(await sendDailyBriefing(req)) })
+
+// Voice endpoint — plain spoken text for the Siri "Speak Text" shortcut.
+//   /api/briefing/voice            -> morning briefing
+//   /api/briefing/voice?mode=evening -> end-of-day review
+// GET so the shortcut is dead simple; still gated by the x-cron-secret header.
+router.get('/voice', async (req, res) => {
+  const mode = req.query.mode === 'evening' ? 'evening' : 'morning'
+  const b = await buildBriefing(req, { mode })
+  const text = mode === 'evening' ? formatVoiceEvening(b) : formatVoiceMorning(b)
+  res.type('text/plain').send(text)
+})
 
 export default router
