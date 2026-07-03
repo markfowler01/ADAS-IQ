@@ -27,12 +27,13 @@ on:
     # DAILY 13:13 UTC (~ 6 AM PT) — daily Meta drafter (1 FB + 1 IG + 1 TT).
     # Daily replaces the old Sunday weekly batch — Mark wants posts every day,
     # and a daily run is more resilient (if one day fails, we lose 1 day, not 7).
-    # LinkedIn drafter still runs weekly on Sun (kept on the Sunday-only schedule below).
+    # LinkedIn is covered by the daily unified drafter (below). The old Sunday
+    # weekly LI variant drafter was DISABLED 2026-07-03 — its pending drafts
+    # kept blocking the daily unified drafter's LinkedIn slot via idempotence.
     - cron: '13 13 * * *'
 
-    # Sunday 13:33 UTC (~ 6:33 AM PT) — weekly LinkedIn variants (5 per type).
-    # Offset 20min after the daily drafter to avoid Catalyst gateway contention.
-    - cron: '33 13 * * 0'
+    # Sunday LI drafter DISABLED — schedule commented for reference:
+    #   - cron: '33 13 * * 0'
 
     # Friday 14:17 UTC (~ 7 AM PT) — weekly report to Mark.
     - cron: '17 14 * * 5'
@@ -51,7 +52,6 @@ on:
         options:
           - hourly
           - daily-drafters
-          - sunday-linkedin
           - friday-weekly
           - daily-tasks
 
@@ -139,10 +139,13 @@ jobs:
           sys.exit(1 if fail else 0)
           "
 
-  # ── SUNDAY LINKEDIN DRAFTER ────────────────────────────────────────────────
-  # LinkedIn stays weekly (5 variants per type generated at once).
+  # ── SUNDAY LINKEDIN DRAFTER — DISABLED 2026-07-03 ─────────────────────────
+  # The daily unified drafter creates today's LI post automatically, and this
+  # job's pending variant drafts kept blocking the unified drafter's LinkedIn
+  # slot via idempotence. Guard set to `false` so it can't fire from cron or
+  # manual dispatch. Kept in the file for reference.
   sunday-linkedin:
-    if: github.event.schedule == '33 13 * * 0' || inputs.job == 'sunday-linkedin'
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: capture_linkedin — generate the week's LinkedIn variants
