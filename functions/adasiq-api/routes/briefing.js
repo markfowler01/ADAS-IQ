@@ -291,6 +291,17 @@ const spoken = n => `${Number(n || 0).toLocaleString('en-US', { maximumFractionD
 const weekday = iso => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
 const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`
 
+// Strip emoji/symbols so TTS doesn't read "family emoji", and drop empty titles.
+const deEmoji = s => String(s || '')
+  .replace(/[\p{Extended_Pictographic}‍️\u{1F3FB}-\u{1F3FF}]/gu, '')
+  .replace(/\s+/g, ' ').trim()
+const eventTitles = (arr, n) => (arr || []).map(e => deEmoji(e.title)).filter(Boolean).slice(0, n)
+// Final cleanup: fix stray/doubled punctuation left by omitted sections.
+const cleanSpeech = s => String(s)
+  .replace(/\s*,\s*,/g, ',').replace(/\s+([.,])/g, '$1')
+  .replace(/([.,])\1+/g, '$1').replace(/\.\s*\./g, '.').replace(/,\s*\./g, '.')
+  .replace(/\s{2,}/g, ' ').trim()
+
 // Morning briefing, read aloud in the van.
 function formatVoiceMorning(b) {
   const L = [`Good morning, Mark. Here's your briefing for ${weekday(b.today)}.`]
@@ -300,9 +311,8 @@ function formatVoiceMorning(b) {
     L.push(`Yesterday you booked ${spoken(b.revenue.yesterdayTotal || 0)}. You're at ${spoken(b.revenue.monthlyTotal || 0)} for the month, on pace for ${spoken(proj)} against your fifty thousand target, ${diff >= 0 ? 'ahead' : 'behind'} by ${spoken(Math.abs(diff))}.`)
   }
   L.push(`On the board today, ${plural(b.todaysJobs.length, 'job')} scheduled. Jaden has ${b.jadenToday.length}. ${plural(b.openJobs.length, 'job')} open in total.`)
-  if (b.events.length) {
-    L.push(`On your calendar, ${b.events.slice(0, 5).map(e => e.title).join(', ')}.`)
-  }
+  const ev = eventTitles(b.events, 5)
+  if (ev.length) L.push(`On your calendar, ${ev.join(', ')}.`)
   if (b.dueToday.length) {
     L.push(`${plural(b.dueToday.length, 'commitment')} due today. ${b.dueToday.slice(0, 5).map(c => `${c.person}, ${c.text}`).join('. ')}.`)
   } else {
@@ -310,7 +320,7 @@ function formatVoiceMorning(b) {
   }
   if (b.overdue.length) L.push(`Heads up, ${plural(b.overdue.length, 'commitment')} overdue.`)
   L.push('Make it a great day.')
-  return L.join(' ')
+  return cleanSpeech(L.join(' '))
 }
 
 // End-of-day review, read aloud on the way home.
@@ -320,14 +330,15 @@ function formatVoiceEvening(b) {
     L.push(`Today you booked ${spoken(b.revenue.todayTotal || 0)}. That puts you at ${spoken(b.revenue.monthlyTotal || 0)} for the month, pacing to ${spoken(b.revenue.projected || 0)} of your fifty thousand target.`)
   }
   if (b.completedToday.length) L.push(`You closed out ${plural(b.completedToday.length, 'job')} today.`)
-  L.push(`${plural(b.openJobs.length, 'job')} still open. Tomorrow you've got ${plural(b.tomorrowsJobs.length, 'job')} on the schedule${b.tomorrowEvents.length ? `, plus ${b.tomorrowEvents.slice(0, 4).map(e => e.title).join(', ')}` : ''}.`)
+  const evT = eventTitles(b.tomorrowEvents, 4)
+  L.push(`${plural(b.openJobs.length, 'job')} still open. Tomorrow you've got ${plural(b.tomorrowsJobs.length, 'job')} on the schedule${evT.length ? `, plus ${evT.join(', ')}` : ''}.`)
   if (b.dueTomorrow.length) {
     L.push(`Due tomorrow, ${b.dueTomorrow.slice(0, 5).map(c => `${c.person}, ${c.text}`).join('. ')}.`)
   }
   if (b.overdue.length) L.push(`Still overdue, ${plural(b.overdue.length, 'commitment')}. Worth clearing before you clock out.`)
   L.push('Two questions before you unplug. Did you move your Big Three today? And what is one thing you are grateful for?')
   L.push("Rest up. Tomorrow's a new one.")
-  return L.join(' ')
+  return cleanSpeech(L.join(' '))
 }
 
 // ---------- send + routes ----------
