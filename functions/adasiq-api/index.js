@@ -59,6 +59,7 @@ import intelligenceRouter from './routes/intelligence.js'
 import operationsRouter from './routes/operations.js'
 import booksFromExtractRouter from './routes/books-from-extract.js'
 import payrollRouter from './routes/payroll.js'
+import briefingRouter, { sendDailyBriefing } from './routes/briefing.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -745,6 +746,20 @@ app.use('/api/intelligence', requireAuth, intelligenceRouter)
 app.use('/api/operations', requireAuth, operationsRouter)
 app.use('/api/books', requireAuth, booksFromExtractRouter)
 app.use('/api/payroll', requireAuth, payrollRouter)
+
+// Ops daily briefing — endpoints self-gate on x-cron-secret (no requireAuth)
+app.use('/api/briefing', briefingRouter)
+app.post('/api/cron/daily-briefing', async (req, res) => {
+  const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+  if ((req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const out = await sendDailyBriefing(req, { dry: req.query.dry === '1' || req.query.dry === 'true', only: req.query.only })
+    res.json(out)
+  } catch (e) {
+    console.error('[cron/daily-briefing]', e)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
 
 // Deployment version probe
 app.get('/version', (req, res) => res.json({ version: 'postscan-v1' }))
