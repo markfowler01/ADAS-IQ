@@ -7,6 +7,56 @@ function fmt(n) {
   return `$${Number(n || 0).toFixed(2)}`
 }
 
+// ── Cash-customer helpers (mirror of services/cashPricing.js) ────────────
+// A blank insurer or a standard self-pay marker = cash. On cash jobs the
+// modal pre-fills the tier'd pricing schedule ($350 single / $700 cap +
+// SAS/SWS add-ons + auto-zero PCSI/Post Scan/Calibration ID cost). Kat
+// still sees the totals and can adjust any row, but she doesn't have to
+// remember the rules.
+const CASH_MAX = 700
+const CASH_ZERO_FRAGMENTS = ['calibration id','calibration identification','pcsi','post-collision safety','post collision safety','post scan','postscan','pre scan','prescan']
+function isCashCustomerJob(job) {
+  if (!job) return false
+  const ins = String(job.insurer || '').trim()
+  if (!ins) return true
+  return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(ins)
+}
+function isSasLine(n)      { return /steering\s*angle/i.test(n || '') }
+function isSwsLine(n)      { return /seat\s*weight/i.test(n || '') || /\bsws\b/i.test(n || '') }
+function isAutoZeroLine(n) { const lc = String(n || '').toLowerCase(); return CASH_ZERO_FRAGMENTS.some(f => lc.includes(f)) }
+function isRealCalibration(n) { return !isSasLine(n) && !isSwsLine(n) && !isAutoZeroLine(n) }
+
+// Transform an initial calibration list into cash-priced line items.
+function buildCashLineItems(cals) {
+  const real = cals.filter(c => isRealCalibration(c.name))
+  const sas  = cals.filter(c => isSasLine(c.name))
+  const sws  = cals.filter(c => isSwsLine(c.name))
+  const zero = cals.filter(c => isAutoZeroLine(c.name))
+  const realLines = real.map((c, i) => {
+    let rate = 0
+    if (real.length === 1) rate = 350
+    else if (real.length >= 2) {
+      const even = Math.floor(CASH_MAX / real.length)
+      const remainder = CASH_MAX - (even * real.length)
+      rate = even + (i === real.length - 1 ? remainder : 0)
+    }
+    return { id: `li_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, description: c.name, qty: 1, rate, noMatch: false, cashNote: real.length >= 2 ? 'cash cap split' : 'single cal' }
+  })
+  let used = real.length === 1 ? 350 : real.length >= 2 ? CASH_MAX : 0
+  const sasLines = sas.map(c => {
+    const rate = (CASH_MAX - used) >= 100 ? 100 : 0
+    used += rate
+    return { id: `li_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, description: c.name, qty: 1, rate, noMatch: false, cashNote: rate > 0 ? 'SAS' : 'SAS zeroed — cap reached' }
+  })
+  const swsLines = sws.map(c => {
+    const rate = (CASH_MAX - used) >= 100 ? 100 : 0
+    used += rate
+    return { id: `li_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, description: c.name, qty: 1, rate, noMatch: false, cashNote: rate > 0 ? 'SWS' : 'SWS zeroed — cap reached' }
+  })
+  const zeroLines = zero.map(c => ({ id: `li_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, description: c.name, qty: 1, rate: 0, noMatch: false, cashNote: 'zeroed — cash customer' }))
+  return [...realLines, ...sasLines, ...swsLines, ...zeroLines]
+}
+
 export default function CreateInvoicesModal({ job, onClose, onCreated }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -61,23 +111,31 @@ export default function CreateInvoicesModal({ job, onClose, onCreated }) {
             : (job.calibrations || [])
         } catch { cals = [] }
 
-        // Match to services
-        const items = cals.map(cal => {
-          const calName = cal.name || cal
-          const lc = calName.toLowerCase()
-          const firstWord = lc.split(' ')[0]
-          const svc = services.find(s =>
-            s.name.toLowerCase().includes(lc) ||
-            s.name.toLowerCase().includes(firstWord)
-          )
-          return {
-            id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-            description: calName + (cal.mode ? ` (${cal.mode})` : ''),
-            qty: 1,
-            rate: svc ? svc.unit_price : 175,
-            noMatch: !svc,
-          }
-        })
+        // Match to services — OR apply cash schedule on cash jobs. Cash
+        // pre-fill maxes out at $700 total, zeros PCSI/Post Scan/Cal ID cost,
+        // and marks each row with why it's priced that way so Kat can see
+        // the reason at a glance.
+        let items
+        if (isCashCustomerJob(job)) {
+          items = buildCashLineItems(cals.map(c => ({ name: (c.name || c) + (c.mode ? ` (${c.mode})` : '') })))
+        } else {
+          items = cals.map(cal => {
+            const calName = cal.name || cal
+            const lc = calName.toLowerCase()
+            const firstWord = lc.split(' ')[0]
+            const svc = services.find(s =>
+              s.name.toLowerCase().includes(lc) ||
+              s.name.toLowerCase().includes(firstWord)
+            )
+            return {
+              id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              description: calName + (cal.mode ? ` (${cal.mode})` : ''),
+              qty: 1,
+              rate: svc ? svc.unit_price : 175,
+              noMatch: !svc,
+            }
+          })
+        }
         setLineItems(items)
       } catch (e) {
         setError(e.message || 'Failed to load data')
@@ -222,6 +280,25 @@ export default function CreateInvoicesModal({ job, onClose, onCreated }) {
         </div>
 
         <div className="p-5 space-y-5">
+
+          {/* Cash-customer banner — visible only when the job has no insurer
+              (or a self-pay marker). Explains what the modal already pre-
+              filled and reminds Kat of the $700 cap so she can sanity-check
+              before submitting. */}
+          {isCashCustomerJob(job) && (
+            <div className="rounded-xl p-4" style={{ background: '#dcfce7', border: '2px solid #15803d' }}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xl">💵</span>
+                <span className="font-bold text-sm" style={{ color: '#14532d', letterSpacing: '0.02em' }}>
+                  CASH CUSTOMER — MAX ${CASH_MAX} OUT OF POCKET
+                </span>
+              </div>
+              <div className="text-xs" style={{ color: '#166534', lineHeight: 1.5 }}>
+                <div className="mb-1"><b>Pre-filled with cash pricing:</b> 1 cal = $350 · 2+ cals = $700 cap · SAS/SWS +$100 each if room · PCSI · Post Scan · Calibration ID cost → $0.</div>
+                <div>Adjust any line if this specific job is a weird exception, then Generate Invoices.</div>
+              </div>
+            </div>
+          )}
 
           {/* Calibrations table */}
           <div>

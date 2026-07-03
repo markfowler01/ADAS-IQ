@@ -17,6 +17,17 @@ function useIsMobile() {
 
 const ORANGE = '#CD4419'
 
+// Cash-customer detector — matches server-side services/cashPricing.js.
+// A blank insurer or one of the standard self-pay markers = cash. Kept
+// inline here (rather than importing a shared client module) so the shape
+// stays trivial and there's no build-time coupling with the backend file.
+function isCashCustomerJob(job) {
+  if (!job) return false
+  const ins = String(job.insurer || '').trim()
+  if (!ins) return true
+  return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(ins)
+}
+
 const COLUMNS = [
   { id: 'job_requested',    label: 'Job Requested' },
   { id: 'need_dispatch',    label: 'Need to Dispatch' },
@@ -650,8 +661,18 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </p>
       )}
 
-      {/* Insurer */}
-      {job.insurer && (
+      {/* Insurer OR Cash badge — cash = blank insurer or standard self-pay markers.
+          Bright green so Kat + tech can't miss it: cash jobs have different
+          pricing rules and Kat must zero PCSI / Post Scan / Calibration ID cost. */}
+      {isCashCustomerJob(job) ? (
+        <p className="mb-1">
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            style={{ background: '#15803d', color: '#fff', letterSpacing: '0.06em' }}
+            title="Cash customer — max $700 out of pocket, PCSI / Post Scan / Calibration ID cost zeroed"
+          >💵 CASH · max $700</span>
+        </p>
+      ) : job.insurer && (
         <p className="text-xs font-medium mb-1 truncate" style={{ color: '#2563eb' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Insurer: </span>{job.insurer}
         </p>
@@ -1701,11 +1722,17 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices }) 
         {vehicle || 'Unknown vehicle'}
       </p>
 
-      {/* Technician + date row */}
-      <div className="flex items-center gap-3 text-xs mb-2" style={{ color: '#aaa' }}>
+      {/* Technician + date row. Cash badge takes over the insurer slot. */}
+      <div className="flex items-center gap-3 text-xs mb-2 flex-wrap" style={{ color: '#aaa' }}>
         {job.technician && <span>👤 {job.technician}</span>}
         {job.scheduled_date && <span>📅 {job.scheduled_date}</span>}
-        {job.insurer && <span>🏢 {job.insurer}</span>}
+        {isCashCustomerJob(job) ? (
+          <span
+            className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={{ background: '#15803d', color: '#fff', fontSize: 10, letterSpacing: '0.06em' }}
+            title="Cash customer — max $700"
+          >💵 CASH</span>
+        ) : (job.insurer && <span>🏢 {job.insurer}</span>)}
       </div>
 
       {/* Calibrations */}

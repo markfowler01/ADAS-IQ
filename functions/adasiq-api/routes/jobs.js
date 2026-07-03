@@ -215,16 +215,53 @@ async function syncTechnicianToZoho(job, techName) {
 
 // "Job Dispatched" — fires when a tech is assigned.
 // Goes to the assigned tech (DM) + the #technicians channel.
+// On cash-customer jobs we prepend "💵 CASH" to the title so the tech
+// knows before rolling up not to promise extras and to expect the
+// $700-cap invoice.
 async function notifyJobDispatched(req, job) {
   if (!job.technician) return
+  const { isCashCustomer, CASH_MAX_OUT_OF_POCKET } = await import('../services/cashPricing.js')
+  const isCash = isCashCustomer(job)
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const cashTag = isCash ? '💵 CASH · ' : ''
+  const cashBody = isCash ? `\n\n💵 CASH CUSTOMER — max $${CASH_MAX_OUT_OF_POCKET} out of pocket. Only static cals + SAS + SWS billed.` : ''
   await createNotification(req, {
     to: job.technician, toEmail: '',
     type: 'job_dispatched',
-    title: `Job dispatched to ${job.technician}: ${job.shop_name || 'New job'}`,
-    body: `${vehicle || 'Vehicle TBD'} — ${job.shop_name || 'Unknown shop'}${job.scheduled_date ? ' on ' + job.scheduled_date : ''}`,
+    title: `${cashTag}Job dispatched to ${job.technician}: ${job.shop_name || 'New job'}`,
+    body: `${vehicle || 'Vehicle TBD'} — ${job.shop_name || 'Unknown shop'}${job.scheduled_date ? ' on ' + job.scheduled_date : ''}${cashBody}`,
     jobId: job.id, job,
   }).catch(e => console.warn('[notif job_dispatched]', e.message))
+}
+
+// Cash-customer reminder to Kat when a job hits ready_invoice. Fires
+// alongside the existing job_ready_invoice notification — the extra DM
+// gives Kat a scannable zeroing checklist so PCSI / Post Scan / Calibration
+// ID cost don't sneak onto a cash invoice. Idempotent-ish (fires on every
+// status→ready_invoice transition; downstream ready_invoice notification
+// handles the once-per-job dedup).
+async function notifyReadyToInvoiceCash(req, job) {
+  const { isCashCustomer, summarizeCashPricing, CASH_MAX_OUT_OF_POCKET } = await import('../services/cashPricing.js')
+  if (!isCashCustomer(job)) return
+  const { postToCliqUser } = await import('../services/cliq.js')
+  let cals = []
+  try {
+    cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations || '[]') : (job.calibrations || [])
+  } catch { cals = [] }
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const roNum = job.quote_number || (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+  const msg = [
+    `💵 *CASH CUSTOMER — Ready to Invoice*`,
+    `${job.shop_name || 'Job'}${vehicle ? ' · ' + vehicle : ''}${roNum ? ' · RO# ' + roNum : ''}`,
+    `⚠️ *ZERO these lines before creating invoice:*`,
+    `   • Calibration ID cost`,
+    `   • Post-Collision Safety Inspection (PCSI)`,
+    `   • Post Scan`,
+    `💰 Max out-of-pocket: $${CASH_MAX_OUT_OF_POCKET}`,
+    `📋 Auto-applied: ${summarizeCashPricing(cals)}`,
+  ].join('\n')
+  try { await postToCliqUser('Kath', msg) }
+  catch (e) { console.warn('[notif ready_invoice cash]', e.message) }
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -345,6 +382,8 @@ router.put('/:id', async (req, res) => {
         jobId: updated.id,
         job: updated,
       }).catch(e => console.warn('[notifications]', e.message))
+      // Extra "zero these" DM to Kat on cash jobs — no-op for insurance jobs.
+      await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice PUT]', e.message))
     }
 
     res.json(updated)
@@ -434,6 +473,7 @@ router.patch('/:id', async (req, res) => {
         jobId: updated.id,
         job: updated,
       }).catch(e => console.warn('[notifications]', e.message))
+      await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice PATCH]', e.message))
     }
 
     res.json(updated)
@@ -522,6 +562,7 @@ router.patch('/:id/complete', async (req, res) => {
         jobId: updated.id,
         job: updated,
       }).catch(e => console.warn('[notifications complete]', e.message))
+      await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice complete]', e.message))
     }
 
     // 3) Recompute remaining drive_order for this tech's day

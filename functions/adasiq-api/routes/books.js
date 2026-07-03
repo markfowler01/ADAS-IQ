@@ -8,6 +8,7 @@ import { generateADASIQPdf } from '../services/pdf.js'
 import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder } from '../services/workdrive.js'
 import { getAccessToken as getWdToken } from '../services/zoho.js'
 import { getAllRules } from '../services/calibrationRulesService.js'
+import { isCashCustomer, computeCashLineItems, summarizeCashPricing, CASH_MAX_OUT_OF_POCKET } from '../services/cashPricing.js'
 import { readJobsPublic, updateJobPublic } from './jobs.js'
 
 const router = express.Router()
@@ -1057,8 +1058,17 @@ router.post('/invoices/from-job', async (req, res) => {
       discPct = parseFloat(crm_shop?.shop_rate || 0)
     }
 
-    // Resolve invoice type from billing rules
-    const invoiceType = billingRules?.invoice_type || 'dual'
+    // Resolve invoice type from billing rules. Cash customers ALWAYS bill as
+    // "single" (shop-only) — there's no insurance side of the ledger for a
+    // self-pay job, and a dual invoice would leave a $0 insurance record.
+    const invoiceType = cashJob ? 'single' : (billingRules?.invoice_type || 'dual')
+
+    // Cash-customer detection — an override from the modal always wins (Kat
+    // can edit any line manually), but when no override is sent and the job
+    // is cash, we apply the flat cash-pricing schedule automatically instead
+    // of the catalog rates. This is the belt-and-suspenders fix for Kat
+    // forgetting to zero PCSI / Post Scan / Calibration ID cost on cash jobs.
+    const cashJob = isCashCustomer(job)
 
     // Build line items — use override if provided (from modal with user-edited prices)
     const lineItemsOverride = req.body.line_items_override
@@ -1072,6 +1082,21 @@ router.post('/invoices/from-job', async (req, res) => {
         amount: (Number(li.qty) || 1) * (Number(li.rate) || 175),
         retail_amount: (Number(li.qty) || 1) * (Number(li.rate) || 175),
       }))
+    } else if (cashJob) {
+      // Cash schedule: 0/1/2+ calibration tier + SAS/SWS add-ons under a
+      // $700 total ceiling + PCSI / Post Scan / Calibration ID cost zeroed.
+      // See services/cashPricing.js for the full ruleset.
+      const cashLines = computeCashLineItems(calibrations)
+      retailLineItems = cashLines.map(li => ({
+        id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        description: li.name + (li.cash_note ? ` — ${li.cash_note}` : ''),
+        qty: li.qty,
+        rate: li.rate,
+        amount: li.amount,
+        retail_amount: li.amount,
+        cash_note: li.cash_note,
+      }))
+      console.log(`[books from-job] cash-customer pricing applied for job ${job.id}: ${summarizeCashPricing(calibrations)}`)
     } else {
       retailLineItems = calibrations.map(cal => {
         const svc = findService(cal.name)
@@ -1087,6 +1112,14 @@ router.post('/invoices/from-job', async (req, res) => {
         }
       })
     }
+
+    // On cash jobs, stamp a paper-trail note at the top of the invoice notes
+    // so the invoice PDF itself records that the flat cash schedule was used.
+    // Also enforce the invoice type is "single" (shop only) since insurance
+    // billing doesn't apply to a cash customer.
+    const cashNotesSuffix = cashJob
+      ? `\n\n💵 CASH CUSTOMER — Flat pricing schedule applied. Max out-of-pocket: $${CASH_MAX_OUT_OF_POCKET}. Calibration ID cost, PCSI, and Post Scan zeroed per policy.`
+      : ''
 
     // Apply discount to shop line items
     const shopLineItems = retailLineItems.map(li => {
@@ -1148,7 +1181,7 @@ router.post('/invoices/from-job', async (req, res) => {
         tax_rate: 0,
         discount: 0,
         amount_paid: 0,
-        notes: `Job #${job.id || ''} — ${job.vehicle || ''} — Tech: ${job.technician || ''}`,
+        notes: `Job #${job.id || ''} — ${job.vehicle || ''} — Tech: ${job.technician || ''}${cashNotesSuffix}`,
         terms: termsStr,
         created_at: now,
         sent_at: null,
@@ -1181,7 +1214,7 @@ router.post('/invoices/from-job', async (req, res) => {
         tax_rate: 0,
         discount: 0,
         amount_paid: 0,
-        notes: `Job #${job.id || ''} — ${job.vehicle || ''} — Tech: ${job.technician || ''}`,
+        notes: `Job #${job.id || ''} — ${job.vehicle || ''} — Tech: ${job.technician || ''}${cashNotesSuffix}`,
         terms: termsStr,
         created_at: now,
         sent_at: null,
