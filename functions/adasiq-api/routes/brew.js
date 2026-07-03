@@ -1864,8 +1864,11 @@ async function executeDailyPipeline(req) {
     ? (async () => {
         try {
           const r = await postToInstagram({ imageUrl, caption })
+          // DO NOT auto-comment a link on the IG post. Meta banned the
+          // account 2026-07-03 for repeatedly posting a signup URL as the
+          // first comment. IG's spam classifier is aggressive about link-
+          // drop comments (fine on FB + LinkedIn). CTA lives ONLY in caption.
           if (r?.ok && r.id) {
-            await commentOnInstagramMedia({ mediaId: r.id, message: signupComment }).catch(() => {})
             return { ok: true, id: r.id }
           }
           return { ok: false, error: r?.error || 'unknown' }

@@ -337,10 +337,12 @@ tipsRouter.post('/run', requireCronSecret, async (req, res) => {
       fbComment = await commentOnFacebookPost({ postId: fbResult.id, message: offerComment })
         .catch(e => ({ ok: false, error: e.message }))
     }
-    if (igResult?.ok && igResult.id) {
-      igComment = await commentOnInstagramMedia({ mediaId: igResult.id, message: offerComment })
-        .catch(e => ({ ok: false, error: e.message }))
-    }
+    // DO NOT auto-comment on IG. Meta banned the account 2026-07-03 for
+    // link-drop comments on IG (fine on FB + LI). CTA lives in caption only.
+    // if (igResult?.ok && igResult.id) {
+    //   igComment = await commentOnInstagramMedia({ mediaId: igResult.id, message: offerComment })
+    //     .catch(e => ({ ok: false, error: e.message }))
+    // }
     if (liResult?.ok && liResult.id) {
       liComment = await commentOnLinkedInPost(liResult.id, offerComment)
         .catch(e => ({ ok: false, error: e.message }))
