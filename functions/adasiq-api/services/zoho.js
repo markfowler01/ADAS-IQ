@@ -677,6 +677,55 @@ export async function updateEstimateSalesperson(estimateId, technicianName) {
  * Fetch all estimates from Zoho Books (all statuses except void).
  * Returns array of estimate objects with custom fields parsed into cf_* keys.
  */
+/**
+ * Fetch invoices from Zoho Books between two ISO dates (inclusive).
+ * Returns a flat list of { invoice_number, salesperson_name, total, date, status }
+ * so the tech-stats route can filter + sum without knowing Zoho's shape.
+ *
+ * Draft invoices are excluded — MTD sales should only reflect firm money.
+ * Uses date_start / date_end query params which Zoho Books supports.
+ */
+export async function listInvoicesForDateRange(fromISO, toISO) {
+  const token = await getAccessToken()
+  let all = []
+  let page = 1
+  let hasMore = true
+  while (hasMore) {
+    const res = await axios.get(`${ZOHO_API_BASE}/invoices`, {
+      headers: zohoHeaders(token),
+      params: {
+        ...orgParam(),
+        per_page: 200,
+        page,
+        date_start: fromISO,
+        date_end: toISO,
+      },
+      timeout: 15000,
+    })
+    const invoices = res.data?.invoices || []
+    for (const inv of invoices) {
+      // Zoho returns status as string. Drafts don't count as sales — the
+      // money isn't firm yet. Everything else (sent, viewed, partially_paid,
+      // paid, overdue) counts.
+      const status = String(inv.status || '').toLowerCase()
+      if (status === 'draft') continue
+      all.push({
+        invoice_id:       inv.invoice_id,
+        invoice_number:   inv.invoice_number,
+        customer_name:    inv.customer_name,
+        salesperson_name: inv.salesperson_name || '',
+        total:            Number(inv.total || 0) || 0,
+        balance:          Number(inv.balance || 0) || 0,
+        date:             inv.date || '',
+        status,
+      })
+    }
+    hasMore = res.data?.page_context?.has_more_page === true
+    page++
+  }
+  return all
+}
+
 export async function listAllEstimates() {
   const token = await getAccessToken()
   const orgId = process.env.ZOHO_ORGANIZATION_ID

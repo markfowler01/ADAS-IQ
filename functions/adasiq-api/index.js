@@ -9,6 +9,7 @@ import extractRoImageRouter from './routes/extract-ro-image.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
 import salespersonsRouter from './routes/salespersons.js'
+import techStatsRouter from './routes/techStats.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
 import historyRouter from './routes/history.js'
@@ -172,6 +173,7 @@ app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRout
 app.use('/api/create-invoice', requireAuth, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
 app.use('/api/salespersons', requireAuth, salespersonsRouter)
+app.use('/api/tech-stats', requireAuth, techStatsRouter)
 app.use('/api/report', requireAuth, reportRouter)
 app.use('/api/audit', requireAuth, auditLimiter, auditRouter)
 app.use('/api/history', requireAuth, historyRouter)

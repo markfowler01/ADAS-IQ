@@ -58,21 +58,146 @@ function StatusPill({ tech }) {
   )
 }
 
+// GET SOME!!! target — 4 jobs a day fires the money-rain celebration
+// (used to trigger via /api/tech-stats but that endpoint isn't in this
+// repo yet — treat as a client-side target only for now).
+const GOAL_TARGET = 4
+
+// Monthly bonus goal per tech — editable inline on the scoreboard. Stored
+// in localStorage until the appConfig service is restored on the backend.
+// Read/write helpers keyed by tech name.
+function getStoredGoal(techName) {
+  try {
+    const raw = localStorage.getItem(`aa_bonus_goal_${String(techName).toLowerCase()}`)
+    const n = Number(raw)
+    return Number.isFinite(n) && n > 0 ? n : 20000
+  } catch { return 20000 }
+}
+function setStoredGoal(techName, val) {
+  try { localStorage.setItem(`aa_bonus_goal_${String(techName).toLowerCase()}`, String(val)) } catch {}
+}
+
+// Scoreboard — MTD sales toward the monthly bonus goal, plus today's sales,
+// plus jobs-today progress toward the GET SOME target. MTD/today $ come
+// from GET /api/tech-stats (Zoho Books invoices summed by salesperson,
+// drafts excluded, 5-min server-side cache). Auto-refresh every 60s so
+// numbers move as Kat marks invoices sent.
+function TechScoreboard({ tech, viewerRole }) {
+  const [goal, setGoal] = useState(() => getStoredGoal(tech.name))
+  const [stats, setStats] = useState(null)
+  const [statsErr, setStatsErr] = useState(false)
+  const canEdit = viewerRole !== 'technician'
+  const jobsToday = tech.used || 0
+  const hitTarget = jobsToday >= GOAL_TARGET
+  const bonus = Math.max(0, jobsToday - GOAL_TARGET)
+  const targetLabel = hitTarget
+    ? (bonus > 0 ? `🎯 GET SOME!!! +${bonus} BONUS` : '🎯 GET SOME!!!')
+    : `${GOAL_TARGET - jobsToday} TO GET SOME!!!`
+
+  const load = useCallback(async () => {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/tech-stats?tech=${encodeURIComponent(tech.name)}`)
+      if (!r.ok) { setStatsErr(true); return }
+      const j = await r.json()
+      setStats(j)
+      setStatsErr(false)
+    } catch { setStatsErr(true) }
+  }, [tech.name])
+
+  useEffect(() => {
+    let cancelled = false
+    const guarded = async () => { if (!cancelled) await load() }
+    guarded()
+    const id = setInterval(guarded, 60_000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [load])
+
+  function editGoal() {
+    const raw = window.prompt(`Set ${tech.name}'s monthly bonus goal ($):`, String(goal))
+    if (raw == null) return
+    const clean = String(raw).replace(/[^0-9]/g, '')
+    const val = Number(clean)
+    if (!clean || !Number.isFinite(val) || val <= 0) {
+      alert('Enter a positive whole-dollar amount (e.g. 20000)')
+      return
+    }
+    setStoredGoal(tech.name, val)
+    setGoal(val)
+  }
+
+  const color = TECH_COLOR[tech.name] || '#999'
+  const fmt$ = n => `$${Math.round(n || 0).toLocaleString('en-US')}`
+  const mtd = stats?.mtd_sales ?? 0
+  const todaySales = stats?.today_sales ?? 0
+  const pct = Math.min(100, Math.round((mtd / Math.max(1, goal)) * 100))
+
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#fafaf9', border: `1px solid #ebebeb` }}>
+      {/* Top row: MTD total vs. editable goal */}
+      <div className="flex items-baseline justify-between mb-1">
+        <div className="font-bold text-lg" style={{ color: '#1a1a1a' }}>
+          {stats ? fmt$(mtd) : (statsErr ? '$ —' : '…')}
+        </div>
+        <div className="text-xs flex items-center gap-1" style={{ color: '#888' }}>
+          of{' '}
+          {canEdit ? (
+            <button
+              onClick={editGoal}
+              className="underline decoration-dotted underline-offset-2"
+              style={{ color: '#1a1a1a', fontWeight: 600 }}
+              title="Tap to change the monthly goal"
+            >{fmt$(goal)} ✏️</button>
+          ) : (
+            <span style={{ color: '#1a1a1a', fontWeight: 600 }}>{fmt$(goal)}</span>
+          )}
+          {' '}· {pct}%
+        </div>
+      </div>
+      {/* Progress bar toward monthly goal */}
+      <div className="w-full rounded-full overflow-hidden" style={{ backgroundColor: '#eee', height: 8 }}>
+        <div style={{
+          width: `${pct}%`, height: '100%',
+          backgroundColor: pct >= 100 ? '#15803d' : color,
+          transition: 'width 0.6s ease-out',
+        }} />
+      </div>
+      {/* Bottom row: today's sales + job progress toward GET SOME */}
+      <div className="flex items-center justify-between text-xs mt-2">
+        <div style={{ color: '#1a1a1a' }}>
+          Today: <b>{stats ? fmt$(todaySales) : (statsErr ? '$ —' : '…')}</b>
+          <span style={{ color: '#888' }}> · {jobsToday} {jobsToday === 1 ? 'job' : 'jobs'}</span>
+        </div>
+        <div className="text-[10px] uppercase tracking-wider font-semibold"
+          style={{ color: hitTarget ? '#15803d' : color, fontFamily: 'IBM Plex Mono, monospace' }}>
+          {targetLabel}
+        </div>
+      </div>
+      {statsErr && (
+        <div className="text-[10px] mt-1" style={{ color: '#b45309' }}>
+          Zoho stats unavailable — showing job count only
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CapacityBar({ tech }) {
-  // Render 4 slots (or whatever cap is) with filled/empty/over states
+  // Progress toward the GET SOME!!! target, not a hard cap. 4 base slots
+  // fill with the tech's color; extra jobs get green bonus slots.
+  const color = TECH_COLOR[tech.name] || '#999'
+  const used = tech.used || 0
   const slots = []
-  for (let i = 0; i < tech.cap; i++) {
-    const filled = i < tech.used
+  for (let i = 0; i < GOAL_TARGET; i++) {
+    const filled = i < used
     slots.push(
       <div key={i} className="flex-1 h-2 rounded-full"
-        style={{ backgroundColor: filled ? (TECH_COLOR[tech.name] || '#999') : '#e8e4e0' }} />
+        style={{ backgroundColor: filled ? color : '#e8e4e0' }} />
     )
   }
-  // Overflow slots (red)
-  for (let i = tech.cap; i < tech.used; i++) {
+  for (let i = GOAL_TARGET; i < used; i++) {
     slots.push(
-      <div key={'over' + i} className="flex-1 h-2 rounded-full"
-        style={{ backgroundColor: '#dc2626' }} />
+      <div key={'bonus' + i} className="flex-1 h-2 rounded-full"
+        style={{ backgroundColor: '#15803d' }} />
     )
   }
   return (
@@ -82,10 +207,15 @@ function CapacityBar({ tech }) {
   )
 }
 
-function TechCard({ tech }) {
+function TechCard({ tech, viewerRole }) {
   const color = TECH_COLOR[tech.name] || '#999'
-  const capLabel = tech.status === 'over' ? 'OVER CAP' : (tech.status === 'full' ? 'FULL' : `${tech.available} OPEN`)
-  const capColor = tech.overCap ? '#dc2626' : (tech.atCap ? '#b45309' : '#15803d')
+  const jobsToday = tech.used || 0
+  const hitTarget = jobsToday >= GOAL_TARGET
+  const bonus = Math.max(0, jobsToday - GOAL_TARGET)
+  const capLabel = hitTarget
+    ? (bonus > 0 ? `🎯 GET SOME!!! +${bonus} BONUS` : '🎯 GET SOME!!!')
+    : `${GOAL_TARGET - jobsToday} TO GET SOME!!!`
+  const capColor = hitTarget ? '#15803d' : color
   const current = tech.current_job
   const next = tech.next_job
 
@@ -98,13 +228,16 @@ function TechCard({ tech }) {
           <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
           <span className="font-bold text-base" style={{ color: '#1a1a1a' }}>{tech.name}</span>
           <span className="text-xs" style={{ color: '#888' }}>
-            {tech.used} / {tech.cap}
+            {jobsToday} {jobsToday === 1 ? 'job' : 'jobs'} today
           </span>
         </div>
         <StatusPill tech={tech} />
       </div>
 
-      {/* Capacity bar */}
+      {/* Monthly bonus goal + jobs-today scoreboard */}
+      <TechScoreboard tech={tech} viewerRole={viewerRole} />
+
+      {/* Capacity bar — progress toward the GET SOME!!! target */}
       <div className="mb-3">
         <CapacityBar tech={tech} />
         <div className="flex items-center justify-between text-[10px] mt-1.5 uppercase tracking-wider font-semibold"
@@ -355,7 +488,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
         {/* Tech cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {(data?.techs || []).map(t => <TechCard key={t.name} tech={t} />)}
+          {(data?.techs || []).map(t => <TechCard key={t.name} tech={t} viewerRole={data?.viewer_role} />)}
         </div>
 
         {/* Unassigned same-day jobs */}
