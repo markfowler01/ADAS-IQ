@@ -33,7 +33,9 @@ const COMMIT_CACHE_KEY = 'ops_commitments'
 // and /send can fire SMS, so none of these should be publicly callable.
 router.use((req, res, next) => {
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
-  const provided = (req.headers['x-cron-secret'] || '').trim()
+  // Accept the secret via header OR ?k= query param — the query form lets a Siri
+  // "Get Contents of URL" action work with no custom header (the fiddly step).
+  const provided = (req.headers['x-cron-secret'] || req.query.k || '').trim()
   if (provided === secret) return next()
   return res.status(401).json({ error: 'Unauthorized' })
 })
