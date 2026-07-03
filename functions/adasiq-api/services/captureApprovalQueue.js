@@ -169,6 +169,25 @@ export async function updateDraft(segment, id, patch) {
   return queue[idx]
 }
 
+// Reset the queue — used by the /approval/reset admin endpoint to flush
+// bad test data. Iterates every segment (readQueue/writeQueue take a
+// segment name), zeros each one, and returns the total number of drafts
+// dropped. Callers pass `req` today but this file uses segment-scoped
+// queues; the segment name is derived from other calls, not from req.
+// Keeping the arg for shape compatibility with the route handler.
+const SEGMENTS = ['newsletter', 'linkedin', 'meta', 'tiktok', 'youtube', 'brew']
+export async function resetQueue(/* req */) {
+  let total = 0
+  for (const seg of SEGMENTS) {
+    try {
+      const q = await readQueue(seg)
+      total += q.length
+      await writeQueue(seg, [])
+    } catch { /* ignore per-segment failures — best effort flush */ }
+  }
+  return total
+}
+
 // Helper used by the bot to format approval Cliq card text. Includes the
 // scored deduction list so Mark can see voice issues at a glance.
 export function formatApprovalCard({ entry, baseUrl }) {

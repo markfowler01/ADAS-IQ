@@ -22,6 +22,18 @@ export const TECHNICIANS_CHANNEL = 'technicians'
 // Channel ID P6015142000000718001
 export const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
 
+// Stub for a rich Cliq action-button. captureCalculator.js imports
+// `cliqUrlButton(label, url, style?)` and passes the return value into
+// message payloads that presumably support a `buttons` array. The real
+// helper was never checked into this environment — its absence takes
+// adasiq-api down with a SyntaxError on module load. Returning a plain
+// text-link string keeps the calls alive; the button just renders as an
+// inline link inside the Cliq message instead of a clickable action row.
+// Restore the rich implementation when the source is recovered.
+export function cliqUrlButton(label, url /* , style */) {
+  return `[${label || 'Open'}](${url || ''})`
+}
+
 let cachedAccessToken = null
 let accessExpiresAt = 0
 
