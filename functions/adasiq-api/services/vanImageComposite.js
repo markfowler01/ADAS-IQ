@@ -136,14 +136,20 @@ FAIL the check if ANY visible lettering on the van is garbled, misspelled, melte
 
 PASS only if the van looks like an authentic photograph of this exact wrapped van with clean, correct lettering.
 
-Respond with JSON only: {"ok": true/false, "issues": ["specific problem", ...]}`,
+Respond with ONLY a JSON object — no preamble, no markdown, no explanation outside the JSON: {"ok": true/false, "issues": ["specific problem", ...]}`,
         },
       ],
     }],
   })
-  const raw = (msg.content?.[0]?.text || '').trim().replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '')
+  const raw = (msg.content?.[0]?.text || '').trim()
+  // Robust extraction: take the outermost {...} even if the model added a
+  // prose preamble or markdown fences (the model rejects assistant prefill,
+  // so we can't force pure JSON output).
+  const start = raw.indexOf('{')
+  const end = raw.lastIndexOf('}')
+  const jsonSlice = start >= 0 && end > start ? raw.slice(start, end + 1) : raw
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(jsonSlice)
     return { ok: Boolean(parsed.ok), issues: Array.isArray(parsed.issues) ? parsed.issues : [] }
   } catch {
     // Unparseable verdict — be conservative, fail the check
