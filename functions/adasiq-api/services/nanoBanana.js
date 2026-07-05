@@ -162,11 +162,17 @@ export async function generateTipCardImage({ photoSubject } = {}) {
 // DAY. DONE RIGHT.", Absolute ADAS logo, 1-844-FIX-ADAS) must survive intact —
 // that wrap IS the branding, so no SVG composite is layered on afterward.
 const VAN_SCENE_RULES = `
-CRITICAL RULES:
-- The white Ram ProMaster van from the reference photo is the hero. Preserve its wrap graphics EXACTLY as photographed: the "Absolute ADAS" logo, "SAME DAY. DONE RIGHT." text, phone number, and red circuit-pattern details. Do not redraw, blur, re-typeset, or alter any lettering on the van.
+ABSOLUTE RULE — THE VAN IS IMMUTABLE:
+Treat the van in the reference photo as a LOCKED, UNEDITABLE object — like a cut-out sticker placed into a new background. You may change ONLY the environment around the van (background, ground, lighting direction, weather). You may NOT redraw, repaint, re-render, re-typeset, resize, mirror, or "improve" the van itself in any way.
+- Every letter, word, number, and graphic on the wrap must appear EXACTLY as photographed, pixel-faithful: "Absolute ADAS" logo, "MOBILE ADAS CALIBRATION · WESTERN WASHINGTON", "SAME DAY. DONE RIGHT.", "50,000+ CALIBRATIONS", "OEM TARGETS STATIC + DYNAMIC", "For Collision & Glass shops. We come to you.", "1-844-FIX-ADAS", "AbsoluteADAS.com", and the red circuit-pattern details.
+- If a wrap element would be unreadable at the new angle, keep the SAME camera angle as the reference photo instead of inventing new lettering.
+- Do NOT mirror the van or show its opposite side (the graphics would be fabricated).
+- Same wheels, same mirrors, same proportions, same roof height.
+
+SCENE RULES:
 - Photo-realistic documentary photography. Natural light. No glossy advertisement look.
-- Landscape 4:5 or square 1:1 framing, van prominent but naturally placed in the scene.
-- Western Washington, USA setting: evergreen trees, overcast-to-sunny Pacific Northwest light, realistic collision shop exteriors.
+- Square 1:1 framing, van prominent and unobstructed.
+- Western Washington, USA setting: evergreen trees, Pacific Northwest light, realistic collision shop exteriors.
 - NO added text, NO added logos, NO watermarks, NO borders anywhere in the image.
 - People, if any, are background only — small, out of focus, no faces in detail.`
 

@@ -1719,39 +1719,51 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
       console.warn('[van photo library]', e.message)
     }
 
-    // 3. Generate the scene. Real-photo path preferred; fall back to pure
-    //    text-to-image if the folder is empty or WorkDrive hiccups.
+    // 3. Build the image with the wrap-integrity pipeline:
+    //      scene-gen → Claude-vision verify wrap → retry once → fall back to
+    //      Mark's UNTOUCHED real photo (always authentic). Then stamp the
+    //      locked dark brand footer on whichever image wins.
+    //    Requires a real van photo — no photo, no image (never post a fully
+    //    invented van; Mark 2026-07-05: keep the van the same in every pic).
+    const { compositeVanFooter, verifyVanWrap } = await import('../services/vanImageComposite.js')
     let imageUrl = null
     let imageError = null
     let imageSource = 'none'
-    if (captureImagesEnabled()) {
-      let gen
-      if (vanPhoto) {
-        gen = await generateVanSceneImage({
+    let verifyIssues = []
+    if (captureImagesEnabled() && vanPhoto) {
+      let finalBuffer = null
+      for (let attempt = 1; attempt <= 2 && !finalBuffer; attempt++) {
+        const gen = await generateVanSceneImage({
           vanPhotoBuffer: vanPhoto.buffer,
           vanPhotoMime: vanPhoto.mimeType,
           scenePrompt: draft.image_prompt,
         }).catch(e => ({ ok: false, error: e.message }))
-        imageSource = `photo:${vanPhoto.name}`
-      } else {
-        const r = await generateCaptureImage(
-          { headline: draft.headline, draftId: `van-${todayDateStr}` },
-          { segment, sceneOverride: draft.image_prompt }
-        ).catch(e => ({ ok: false, error: e.message }))
-        // generateCaptureImage returns a hosted URL directly
-        if (r?.ok) { imageUrl = r.url; imageSource = 'generated-fallback' }
-        else imageError = r?.error || 'image generation failed'
-        gen = null
+        if (!gen?.ok) { imageError = gen?.error || 'scene gen failed'; continue }
+        const verdict = await verifyVanWrap(gen.buffer, gen.mimeType).catch(e => ({ ok: false, issues: [e.message] }))
+        if (verdict.ok) {
+          finalBuffer = gen.buffer
+          imageSource = `scene:${vanPhoto.name} (verified, attempt ${attempt})`
+        } else {
+          verifyIssues = verdict.issues
+          console.warn('[van verify] attempt', attempt, 'failed:', verdict.issues.join('; '))
+        }
       }
-      // Host the image-to-image buffer on GitHub Pages
-      if (gen?.ok) {
-        const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}.png`
-        const c = await commitBinaryFile({ path, buffer: gen.buffer, message: `Van post image ${todayDateStr}` })
+      if (!finalBuffer) {
+        // Authenticity fallback: post the real photo as-is.
+        finalBuffer = vanPhoto.buffer
+        imageSource = `real-photo:${vanPhoto.name} (scene gen failed verification)`
+      }
+      try {
+        const stamped = await compositeVanFooter(finalBuffer)
+        const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}.png`
+        const c = await commitBinaryFile({ path, buffer: stamped, message: `Van post image ${todayDateStr}` })
         if (c?.ok) imageUrl = `https://absoluteadas.com/${path}`
         else imageError = c?.error || 'github commit failed'
-      } else if (gen && !gen.ok) {
-        imageError = gen.error
+      } catch (e) {
+        imageError = `footer composite failed: ${e.message}`
       }
+    } else if (captureImagesEnabled() && !vanPhoto) {
+      imageError = 'no van photos in WorkDrive folder — upload photos to enable the image'
     }
 
     // 4. Fan to 3 channels at 6:30 AM PT (or now+5min if past).
@@ -2611,6 +2623,52 @@ captureCalcRouter.get('/debug/render-prompt', async (req, res) => {
     )
     if (!r?.ok) return res.status(500).json({ ok: false, error: r?.error, budget: r?.budget })
     res.json({ ok: true, label, headline, image_url: r.url })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Run the FULL van image pipeline (real photo → scene gen → wrap verify →
+// footer stamp → hosted URL) WITHOUT enqueueing or posting anything.
+// Mark uses this to eyeball a sample before trusting the daily cron.
+//   GET /debug/van-image-test?day=Mon        (scene-gen + verify + footer)
+//   GET /debug/van-image-test?raw=1          (skip scene gen: real photo + footer only)
+captureCalcRouter.get('/debug/van-image-test', async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const { draftVanPost, todayDayName } = await import('../services/vanPostDrafter.js')
+    const { pickNextVanPhoto } = await import('../services/vanPhotoLibrary.js')
+    const { generateVanSceneImage } = await import('../services/nanoBanana.js')
+    const { compositeVanFooter, verifyVanWrap } = await import('../services/vanImageComposite.js')
+    const { commitBinaryFile } = await import('../services/brewArchive.js')
+
+    const dayName = String(req.query.day || todayDayName())
+    const rawOnly = req.query.raw === '1'
+
+    const vanPhoto = await pickNextVanPhoto(segment, cacheGet, cacheSet)
+    if (!vanPhoto) return res.json({ ok: false, error: 'no van photos in the WorkDrive folder yet' })
+
+    let buffer = vanPhoto.buffer
+    let source = `real-photo:${vanPhoto.name}`
+    let verdict = null
+    if (!rawOnly) {
+      const draft = await draftVanPost({ dayName, targetDate: new Date().toISOString() })
+      const gen = await generateVanSceneImage({
+        vanPhotoBuffer: vanPhoto.buffer, vanPhotoMime: vanPhoto.mimeType, scenePrompt: draft.image_prompt,
+      })
+      if (gen?.ok) {
+        verdict = await verifyVanWrap(gen.buffer, gen.mimeType).catch(e => ({ ok: false, issues: [e.message] }))
+        if (verdict.ok) { buffer = gen.buffer; source = `scene:${vanPhoto.name}` }
+        else source = `real-photo:${vanPhoto.name} (scene REJECTED by verifier)`
+      } else {
+        source = `real-photo:${vanPhoto.name} (scene gen error: ${gen?.error})`
+      }
+    }
+    const stamped = await compositeVanFooter(buffer)
+    const path = `capture-images/van-test-${Date.now().toString(36)}.png`
+    const c = await commitBinaryFile({ path, buffer: stamped, message: 'Van image pipeline test' })
+    if (!c?.ok) return res.json({ ok: false, error: c?.error || 'github commit failed' })
+    res.json({ ok: true, day: dayName, source, verifier: verdict, image_url: `https://absoluteadas.com/${path}` })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
