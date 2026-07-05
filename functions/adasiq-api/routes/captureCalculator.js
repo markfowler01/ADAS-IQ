@@ -1719,19 +1719,42 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
       console.warn('[van photo library]', e.message)
     }
 
-    // 3. Build the image with the wrap-integrity pipeline:
-    //      scene-gen → Claude-vision verify wrap → retry once → fall back to
-    //      Mark's UNTOUCHED real photo (always authentic). Then stamp the
-    //      locked dark brand footer on whichever image wins.
-    //    Requires a real van photo — no photo, no image (never post a fully
-    //    invented van; Mark 2026-07-05: keep the van the same in every pic).
-    const { compositeVanFooter, verifyVanWrap } = await import('../services/vanImageComposite.js')
+    // 3. Build the image. Preference order (Mark 2026-07-05):
+    //      a. COMPOSITE — pixel-exact van cutout (van-cutouts/<name>.png in
+    //         the site repo) placed onto a generated background with a ground
+    //         shadow. Van authenticity guaranteed by construction, so no
+    //         vision verification needed.
+    //      b. SCENE-GEN — Gemini image-to-image + Claude-vision wrap verify
+    //         (2 attempts). Usually fails verification; kept as second shot.
+    //      c. REAL PHOTO — Mark's untouched upload. Always authentic.
+    //    Then stamp the locked dark brand footer on whichever image wins.
+    const { compositeVanFooter, compositeVanOnBackground, verifyVanWrap } = await import('../services/vanImageComposite.js')
+    const { generateVanBackground } = await import('../services/nanoBanana.js')
+    const { fetchBinaryFile } = await import('../services/brewArchive.js')
     let imageUrl = null
     let imageError = null
     let imageSource = 'none'
-    let verifyIssues = []
     if (captureImagesEnabled() && vanPhoto) {
       let finalBuffer = null
+
+      // (a) Composite path — needs a pre-cut cutout for this photo.
+      const cutoutName = vanPhoto.name.replace(/\.[^.]+$/, '') + '.png'
+      const cutout = await fetchBinaryFile({ path: `van-cutouts/${cutoutName}` }).catch(e => ({ ok: false, error: e.message }))
+      if (cutout?.ok) {
+        const bg = await generateVanBackground({ scenePrompt: draft.image_prompt }).catch(e => ({ ok: false, error: e.message }))
+        if (bg?.ok) {
+          try {
+            finalBuffer = await compositeVanOnBackground({ cutoutBuffer: cutout.buffer, backgroundBuffer: bg.buffer })
+            imageSource = `composite:${vanPhoto.name}`
+          } catch (e) {
+            console.warn('[van composite]', e.message)
+          }
+        } else {
+          console.warn('[van background gen]', bg?.error)
+        }
+      }
+
+      // (b) Scene-gen path with wrap verification.
       for (let attempt = 1; attempt <= 2 && !finalBuffer; attempt++) {
         const gen = await generateVanSceneImage({
           vanPhotoBuffer: vanPhoto.buffer,
@@ -1744,15 +1767,16 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
           finalBuffer = gen.buffer
           imageSource = `scene:${vanPhoto.name} (verified, attempt ${attempt})`
         } else {
-          verifyIssues = verdict.issues
           console.warn('[van verify] attempt', attempt, 'failed:', verdict.issues.join('; '))
         }
       }
+
+      // (c) Authenticity fallback: the real photo as-is.
       if (!finalBuffer) {
-        // Authenticity fallback: post the real photo as-is.
         finalBuffer = vanPhoto.buffer
-        imageSource = `real-photo:${vanPhoto.name} (scene gen failed verification)`
+        imageSource = `real-photo:${vanPhoto.name}`
       }
+
       try {
         const stamped = await compositeVanFooter(finalBuffer)
         const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}.png`
@@ -2628,6 +2652,26 @@ captureCalcRouter.get('/debug/render-prompt', async (req, res) => {
   }
 })
 
+// List all photos in the van WorkDrive folder, or stream one by id.
+// Used by the local cutout workflow (Apple Vision segmentation runs on
+// Mark's Mac; cutouts get committed to the site repo as van-cutouts/*.png).
+//   GET /debug/van-photos            → [{id, name}]
+//   GET /debug/van-photos?id=XYZ     → raw image bytes
+captureCalcRouter.get('/debug/van-photos', async (req, res) => {
+  try {
+    const { listVanPhotos, downloadVanPhoto } = await import('../services/vanPhotoLibrary.js')
+    const id = String(req.query.id || '')
+    if (id) {
+      const { buffer, mimeType } = await downloadVanPhoto(id)
+      res.set('Content-Type', mimeType)
+      return res.send(buffer)
+    }
+    res.json({ ok: true, photos: await listVanPhotos() })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // Run the FULL van image pipeline (real photo → scene gen → wrap verify →
 // footer stamp → hosted URL) WITHOUT enqueueing or posting anything.
 // Mark uses this to eyeball a sample before trusting the daily cron.
@@ -2644,6 +2688,7 @@ captureCalcRouter.get('/debug/van-image-test', async (req, res) => {
 
     const dayName = String(req.query.day || todayDayName())
     const rawOnly = req.query.raw === '1'
+    const wantComposite = req.query.mode === 'composite'
 
     const vanPhoto = await pickNextVanPhoto(segment, cacheGet, cacheSet)
     if (!vanPhoto) return res.json({ ok: false, error: 'no van photos in the WorkDrive folder yet' })
@@ -2651,7 +2696,19 @@ captureCalcRouter.get('/debug/van-image-test', async (req, res) => {
     let buffer = vanPhoto.buffer
     let source = `real-photo:${vanPhoto.name}`
     let verdict = null
-    if (!rawOnly) {
+    if (wantComposite) {
+      const { compositeVanOnBackground } = await import('../services/vanImageComposite.js')
+      const { generateVanBackground } = await import('../services/nanoBanana.js')
+      const { fetchBinaryFile } = await import('../services/brewArchive.js')
+      const draft = await draftVanPost({ dayName, targetDate: new Date().toISOString() })
+      const cutoutName = vanPhoto.name.replace(/\.[^.]+$/, '') + '.png'
+      const cutout = await fetchBinaryFile({ path: `van-cutouts/${cutoutName}` })
+      if (!cutout?.ok) return res.json({ ok: false, error: `no cutout for ${vanPhoto.name} (${cutout?.error})`, photo: vanPhoto.name })
+      const bg = await generateVanBackground({ scenePrompt: draft.image_prompt })
+      if (!bg?.ok) return res.json({ ok: false, error: `background gen failed: ${bg?.error}` })
+      buffer = await compositeVanOnBackground({ cutoutBuffer: cutout.buffer, backgroundBuffer: bg.buffer })
+      source = `composite:${vanPhoto.name}`
+    } else if (!rawOnly) {
       const draft = await draftVanPost({ dayName, targetDate: new Date().toISOString() })
       const gen = await generateVanSceneImage({
         vanPhotoBuffer: vanPhoto.buffer, vanPhotoMime: vanPhoto.mimeType, scenePrompt: draft.image_prompt,

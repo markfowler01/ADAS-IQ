@@ -226,6 +226,38 @@ export async function generateVanSceneImage({ vanPhotoBuffer, vanPhotoMime = 'im
   }
 }
 
+/**
+ * Generate a BACKGROUND-ONLY scene for the van composite path. No vehicles —
+ * the real van cutout gets composited on top in code, so the lower half must
+ * be clear, level ground where a van can plausibly park.
+ * @param {{scenePrompt: string}} args
+ */
+export async function generateVanBackground({ scenePrompt }) {
+  if (!nanoBananaConfigured()) return { ok: false, error: 'GEMINI_API_KEY not set' }
+  const { apiKey, model } = envBundle()
+  const prompt = `Square 1:1 photographic image. ${String(scenePrompt || '').trim()}
+
+HARD RULES:
+- NO vehicles of any kind anywhere in the frame (a real van photo will be composited in later).
+- The LOWER HALF of the frame is clear, level asphalt or concrete ground — empty parking area, driveway, or shop apron — where a full-size van will be placed.
+- Camera at standing eye level, straight-on or very slight angle. Bright natural Pacific Northwest light, NOT moody or dark.
+- Photo-realistic documentary photography. Western Washington: evergreens, realistic collision shop exteriors.
+- NO people in the foreground. NO text, NO logos, NO watermarks, NO borders.`
+  try {
+    const res = await axios.post(
+      `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
+      { contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseModalities: ['IMAGE'] } },
+      { headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' }, timeout: 45000, validateStatus: s => s < 500 }
+    )
+    if (res.status >= 400) return { ok: false, error: res.data?.error?.message || `HTTP ${res.status}` }
+    const part = (res.data?.candidates?.[0]?.content?.parts || []).find(p => p.inlineData?.data)
+    if (!part) return { ok: false, error: 'no image in response' }
+    return { ok: true, buffer: Buffer.from(part.inlineData.data, 'base64'), mimeType: part.inlineData.mimeType || 'image/png', prompt }
+  } catch (e) {
+    return { ok: false, error: e.message || 'request failed' }
+  }
+}
+
 function formatIssueLine(issueNumber, dateISO) {
   let dateLabel = ''
   if (dateISO) {

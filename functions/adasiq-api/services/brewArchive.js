@@ -342,3 +342,32 @@ export async function deleteFile({ path, message }) {
     return { ok: false, error: err.message }
   }
 }
+
+/**
+ * Fetch a binary file's raw bytes from the site repo (e.g. van cutout PNGs).
+ * Uses the contents API with the raw media type — works for private repos
+ * and files up to ~100MB.
+ * @param {{path: string}} args
+ * @returns {Promise<{ok: true, buffer: Buffer} | {ok: false, error: string}>}
+ */
+export async function fetchBinaryFile({ path }) {
+  if (!isConfigured()) return { ok: false, error: 'GITHUB_TOKEN not set' }
+  const e = envBundle()
+  try {
+    const res = await axios.get(
+      `https://api.github.com/repos/${e.owner}/${e.repo}/contents/${encodeURIComponent(path).replace(/%2F/g, '/')}?ref=${encodeURIComponent(e.branch)}`,
+      {
+        headers: { ...ghHeaders(e.token), Accept: 'application/vnd.github.raw' },
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        maxContentLength: 60 * 1024 * 1024,
+        validateStatus: s => s < 500,
+      }
+    )
+    if (res.status === 404) return { ok: false, error: 'not found' }
+    if (res.status >= 400) return { ok: false, error: `GitHub ${res.status}` }
+    return { ok: true, buffer: Buffer.from(res.data) }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}

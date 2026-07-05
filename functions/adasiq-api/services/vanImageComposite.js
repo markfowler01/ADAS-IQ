@@ -93,6 +93,48 @@ export async function compositeVanFooter(imageBuffer) {
     .toBuffer()
 }
 
+/**
+ * Composite a pixel-exact van cutout (transparent PNG) onto a generated
+ * background: van scaled to ~86% of frame width, seated in the lower third,
+ * soft elliptical ground shadow underneath. The van pixels are Mark's real
+ * photo — no AI ever touches them.
+ *
+ * @param {Object} args
+ * @param {Buffer} args.cutoutBuffer     — van cutout PNG with alpha
+ * @param {Buffer} args.backgroundBuffer — generated scene
+ * @param {number} [args.size]           — output square edge (default 1080)
+ * @returns {Promise<Buffer>} PNG (footer NOT included — call compositeVanFooter after)
+ */
+export async function compositeVanOnBackground({ cutoutBuffer, backgroundBuffer, size = 1080 }) {
+  const bg = await sharp(backgroundBuffer).resize(size, size, { fit: 'cover' }).png().toBuffer()
+
+  const cutMeta = await sharp(cutoutBuffer).metadata()
+  const vanW = Math.round(size * 0.86)
+  const vanH = Math.round(cutMeta.height * (vanW / cutMeta.width))
+  const van = await sharp(cutoutBuffer).resize(vanW, vanH).png().toBuffer()
+
+  const vanX = Math.round((size - vanW) / 2)
+  // Van bottom sits above the footer band (170px) with breathing room.
+  const vanBottom = size - 170 - Math.round(size * 0.06)
+  const vanY = vanBottom - vanH
+
+  // Soft ground shadow: blurred ellipse under the van.
+  const shadowRx = Math.round(vanW * 0.48)
+  const shadowRy = Math.round(vanH * 0.07)
+  const shadowSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
+    <defs><filter id="b" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="14"/></filter></defs>
+    <ellipse cx="${size / 2}" cy="${vanBottom - Math.round(shadowRy * 0.4)}" rx="${shadowRx}" ry="${shadowRy}" fill="rgba(0,0,0,0.45)" filter="url(#b)"/>
+  </svg>`
+
+  return sharp(bg)
+    .composite([
+      { input: Buffer.from(shadowSvg, 'utf-8'), top: 0, left: 0 },
+      { input: van, top: vanY, left: vanX },
+    ])
+    .png()
+    .toBuffer()
+}
+
 // The wrap copy that must survive VERBATIM in any generated image of the van.
 // Taken from the real 2023 ProMaster wrap.
 export const VAN_WRAP_STRINGS = [
