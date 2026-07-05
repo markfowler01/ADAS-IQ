@@ -313,3 +313,24 @@ export async function postToInstagram({ imageUrl, caption }) {
     return { ok: false, step: 'publish', error: e.message || 'request failed', creationId }
   }
 }
+
+/**
+ * Delete a Facebook Page post (used to pull a broken image post before
+ * republishing the corrected version). IG media cannot be deleted via API.
+ * @param {{postId: string}} args
+ */
+export async function deleteFacebookPagePost({ postId }) {
+  if (!facebookConfigured()) return { ok: false, error: 'FB not configured' }
+  const token = process.env.FB_PAGE_ACCESS_TOKEN
+  try {
+    const res = await axios.delete(`${GRAPH_API}/${postId}`, {
+      params: { access_token: token },
+      timeout: 15000,
+      validateStatus: s => s < 500,
+    })
+    if (res.status >= 400) return { ok: false, error: `FB ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}` }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}

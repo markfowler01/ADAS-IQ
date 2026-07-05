@@ -1708,15 +1708,27 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
       (d.scheduled_for || '').slice(0, 10) === todayDateStr
     ).map(d => d.channel))
 
-    // 1. Draft the caption
-    const draft = await draftVanPost({ dayName, targetDate: new Date().toISOString() })
+    // SAME-CONTENT GUARANTEE (Mark 2026-07-05: "they all need to be the same
+    // exact pic"): the day's caption + image are cached on first successful
+    // build. Any re-run the same day (channel repair, manual re-fire) REUSES
+    // the cached content for missing channels instead of generating new —
+    // all channels always carry the identical post.
+    const CONTENT_KEY = `van_content_${todayDateStr}`
+    const cachedContent = await cacheGet(segment, CONTENT_KEY, null)
 
-    // 2. Pick a real van photo (LRU rotation from Mark's WorkDrive folder)
+    // 1. Draft the caption (or reuse today's)
+    const draft = (cachedContent?.body)
+      ? { headline: cachedContent.headline, body: cachedContent.body, image_prompt: cachedContent.image_prompt, voice_score: cachedContent.voice_score || null, voice_deductions: [], angle: cachedContent.angle || 'cached' }
+      : await draftVanPost({ dayName, targetDate: new Date().toISOString() })
+
+    // 2. Pick a real van photo (LRU rotation) — skipped when reusing cache.
     let vanPhoto = null
-    try {
-      vanPhoto = await pickNextVanPhoto(segment, cacheGet, cacheSet)
-    } catch (e) {
-      console.warn('[van photo library]', e.message)
+    if (!cachedContent?.image_url) {
+      try {
+        vanPhoto = await pickNextVanPhoto(segment, cacheGet, cacheSet)
+      } catch (e) {
+        console.warn('[van photo library]', e.message)
+      }
     }
 
     // 3. Build the image. Preference order (Mark 2026-07-05):
@@ -1728,13 +1740,13 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     //         (2 attempts). Usually fails verification; kept as second shot.
     //      c. REAL PHOTO — Mark's untouched upload. Always authentic.
     //    Then stamp the locked dark brand footer on whichever image wins.
-    const { compositeVanFooter, compositeVanOnBackground, verifyVanWrap } = await import('../services/vanImageComposite.js')
+    const { compositeVanFooter, compositeVanOnBackground, verifyVanWrap, verifyImageSane } = await import('../services/vanImageComposite.js')
     const { generateVanBackground } = await import('../services/nanoBanana.js')
     const { fetchBinaryFile } = await import('../services/brewArchive.js')
-    let imageUrl = null
+    let imageUrl = cachedContent?.image_url || null
     let imageError = null
-    let imageSource = 'none'
-    if (captureImagesEnabled() && vanPhoto) {
+    let imageSource = cachedContent?.image_url ? `cached:${cachedContent.image_source || 'same-day'}` : 'none'
+    if (!imageUrl && captureImagesEnabled() && vanPhoto) {
       let finalBuffer = null
 
       // (a) Composite path — needs a pre-cut cutout for this photo.
@@ -1779,12 +1791,29 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
 
       try {
         const stamped = await compositeVanFooter(finalBuffer)
-        const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}.jpg`
-        const c = await commitBinaryFile({ path, buffer: stamped, message: `Van post image ${todayDateStr}` })
-        if (c?.ok) imageUrl = `https://absoluteadas.com/${path}`
-        else imageError = c?.error || 'github commit failed'
+        // FINAL SANITY GATE (2026-07-05: a sideways EXIF-rotated photo hit
+        // Facebook): Claude vision confirms the image is upright, the van is
+        // the clear subject, wheels on the ground. Fail → NO image posts,
+        // Cliq alert fires. Better a text-only post than a broken image.
+        const sane = await verifyImageSane(stamped).catch(e => ({ ok: false, issues: [e.message] }))
+        if (!sane.ok) {
+          imageError = `sanity gate rejected image: ${sane.issues.join('; ')}`
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 Van image BLOCKED by sanity gate (${imageSource}):\n${sane.issues.join('\n')}`).catch(() => {})
+        } else {
+          const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}.jpg`
+          const c = await commitBinaryFile({ path, buffer: stamped, message: `Van post image ${todayDateStr}` })
+          if (c?.ok) imageUrl = `https://absoluteadas.com/${path}`
+          else imageError = c?.error || 'github commit failed'
+        }
       } catch (e) {
         imageError = `footer composite failed: ${e.message}`
+      }
+      // Persist today's content so any same-day re-run ships the identical post.
+      if (imageUrl) {
+        await cacheSet(segment, CONTENT_KEY, {
+          headline: draft.headline, body: draft.body, image_prompt: draft.image_prompt,
+          voice_score: draft.voice_score, angle: draft.angle, image_url: imageUrl, image_source: imageSource,
+        }).catch(() => {})
       }
     } else if (captureImagesEnabled() && !vanPhoto) {
       imageError = 'no van photos in WorkDrive folder — upload photos to enable the image'
@@ -2560,6 +2589,10 @@ captureCalcRouter.all('/debug/reschedule', async (req, res) => {
     // Used to promote a pending draft to publishable + push it to NOW in one shot.
     const newStatus = String(req.query.status || '').trim()
     if (newStatus) patch.status = newStatus
+    // ?image_url=<url> — pin the draft's image (used to force identical
+    // images across channels after a per-channel repair).
+    const newImageUrl = String(req.query.image_url || '').trim()
+    if (newImageUrl) { patch.image_url = newImageUrl; patch.image_status = 'generated' }
     // ?kill=1 — convenience: skip reschedule, just mark killed.
     if (req.query.kill === '1' || req.query.kill === 'true') {
       patch.status = 'killed'
@@ -2667,6 +2700,19 @@ captureCalcRouter.get('/debug/van-photos', async (req, res) => {
       return res.send(buffer)
     }
     res.json({ ok: true, photos: await listVanPhotos() })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Delete a Facebook Page post by id — for pulling a broken-image post
+// before republishing the corrected one. GET /debug/fb-delete-post?id=<postId>
+captureCalcRouter.get('/debug/fb-delete-post', async (req, res) => {
+  try {
+    const { deleteFacebookPagePost } = await import('../services/metaPosting.js')
+    const id = String(req.query.id || '').trim()
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' })
+    res.json(await deleteFacebookPagePost({ postId: id }))
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }

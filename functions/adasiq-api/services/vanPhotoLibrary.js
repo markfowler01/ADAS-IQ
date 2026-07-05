@@ -9,6 +9,7 @@
 //   https://workdrive.zoho.com/folder/0catccbe82bc6c3f243fc9c407f5d39a71b82
 
 import axios from 'axios'
+import sharp from 'sharp'
 import { getAccessToken } from './zoho.js'
 
 const WORKDRIVE_API = 'https://workdrive.zoho.com/api/v1'
@@ -59,7 +60,11 @@ export async function downloadVanPhoto(fileId) {
     throw new Error(`WorkDrive download failed: ${res.status}`)
   }
   const mimeType = String(res.headers['content-type'] || 'image/jpeg').split(';')[0]
-  return { buffer: Buffer.from(res.data), mimeType }
+  // AUTO-ROTATE per EXIF (2026-07-05: a phone photo shipped sideways to
+  // Facebook — browsers honor the EXIF flag, sharp strips it unless we
+  // bake the rotation into the pixels here at ingest).
+  const buffer = await sharp(Buffer.from(res.data)).rotate().toBuffer()
+  return { buffer, mimeType }
 }
 
 /**

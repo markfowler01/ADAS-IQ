@@ -49,6 +49,7 @@ export async function compositeVanFooter(imageBuffer) {
   // footer, and the output PNG blew past Facebook's 4MB photo limit —
   // 19MB on 2026-07-05, rejected as "Invalid parameter").
   imageBuffer = await sharp(imageBuffer)
+    .rotate()   // bake EXIF orientation into pixels (sideways-photo guard)
     .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
     .toBuffer()
   const meta = await sharp(imageBuffer).metadata()
@@ -131,16 +132,21 @@ export async function compositeVanOnBackground({ cutoutBuffer, backgroundBuffer,
   const van = await sharp(cutoutBuffer).resize(vanW, vanH).png().toBuffer()
 
   const vanX = Math.round((size - vanW) / 2)
-  // Van bottom sits above the footer band (170px) with breathing room.
-  const vanBottom = size - 170 - Math.round(size * 0.06)
+  // Van bottom sits above the footer band (170px) with a little breathing room.
+  const vanBottom = size - 170 - Math.round(size * 0.04)
   const vanY = vanBottom - vanH
 
-  // Soft ground shadow: blurred ellipse under the van.
-  const shadowRx = Math.round(vanW * 0.48)
-  const shadowRy = Math.round(vanH * 0.07)
+  // GROUNDING (fixed 2026-07-05 — van looked like it was floating): the
+  // cutout carries ~8px padding and Vision trims the darkest tire-contact
+  // pixels, so the visible tire line sits above the bbox bottom. Pull the
+  // shadow UP so the tires sink into it, tighten the blur, and widen the
+  // ellipse slightly so both axles read as planted.
+  const shadowRx = Math.round(vanW * 0.5)
+  const shadowRy = Math.round(vanH * 0.06)
+  const tireLine = vanBottom - Math.round(8 * (vanW / cutMeta.width))
   const shadowSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
-    <defs><filter id="b" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="14"/></filter></defs>
-    <ellipse cx="${size / 2}" cy="${vanBottom - Math.round(shadowRy * 0.4)}" rx="${shadowRx}" ry="${shadowRy}" fill="rgba(0,0,0,0.45)" filter="url(#b)"/>
+    <defs><filter id="b" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="9"/></filter></defs>
+    <ellipse cx="${size / 2}" cy="${tireLine - Math.round(shadowRy * 0.15)}" rx="${shadowRx}" ry="${shadowRy}" fill="rgba(0,0,0,0.5)" filter="url(#b)"/>
   </svg>`
 
   return sharp(bg)
@@ -213,5 +219,47 @@ Respond with ONLY a JSON object — no preamble, no markdown, no explanation out
   } catch {
     // Unparseable verdict — be conservative, fail the check
     return { ok: false, issues: [`unparseable verifier response: ${raw.slice(0, 120)}`] }
+  }
+}
+
+/**
+ * Final-image sanity gate — runs on EVERY van image (composite, scene-gen,
+ * or real photo) before it can be hosted/posted. Catches what slipped
+ * through on 2026-07-05: a sideways (EXIF-rotated) photo reaching Facebook.
+ * Claude vision checks: image is upright (sky up, wheels on the ground),
+ * exactly this company van is visible and dominant, nothing embarrassing.
+ *
+ * @param {Buffer} imageBuffer
+ * @returns {Promise<{ok: boolean, issues: string[]}>}
+ */
+export async function verifyImageSane(imageBuffer) {
+  if (!process.env.ANTHROPIC_API_KEY) return { ok: true, issues: ['sanity check skipped: no ANTHROPIC_API_KEY'] }
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  // Downscale for a cheap vision call
+  const small = await sharp(imageBuffer).resize(768, 768, { fit: 'inside' }).jpeg({ quality: 80 }).toBuffer()
+  const msg = await client.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 300,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: small.toString('base64') } },
+        { type: 'text', text: `Sanity-check this social media post image for a mobile ADAS calibration company. FAIL if ANY of these are true:
+- The image is rotated or sideways (sky not at top, vehicle wheels not resting downward on the ground)
+- No white Ram ProMaster service van is clearly visible as the main subject
+- The van is upside down, floating unnaturally high off the ground, or otherwise physically implausible
+- The image is blank, corrupted, or unreadable
+
+Respond ONLY with JSON: {"ok": true/false, "issues": ["..."]}` },
+      ],
+    }],
+  })
+  const raw = (msg.content?.[0]?.text || '').trim()
+  const s = raw.indexOf('{'); const e = raw.lastIndexOf('}')
+  try {
+    const parsed = JSON.parse(s >= 0 && e > s ? raw.slice(s, e + 1) : raw)
+    return { ok: Boolean(parsed.ok), issues: Array.isArray(parsed.issues) ? parsed.issues : [] }
+  } catch {
+    return { ok: false, issues: [`unparseable sanity verdict: ${raw.slice(0, 100)}`] }
   }
 }
