@@ -52,23 +52,27 @@ export async function compositeVanFooter(imageBuffer) {
   const footerH = 170
   const footerY = baseH - footerH
   const logoSize = Math.round(footerH * 0.62)
-  const wordmarkFontSize = Math.round(footerH * 0.34)
+  const wordmarkFontSize = Math.round(footerH * 0.29)
   const taglineFontSize = Math.round(footerH * 0.15)
   const wordmarkWhite = 'Absolute'
   const wordmarkOrange = 'ADAS'
   const tagline = 'Mobile ADAS calibration  ·  Western Washington'
 
-  const wordmarkApproxW = Math.round((wordmarkWhite.length + 1 + wordmarkOrange.length) * wordmarkFontSize * 0.58)
-  const taglineApproxW = Math.round(tagline.length * taglineFontSize * 0.55)
-  const textBlockW = Math.max(wordmarkApproxW, taglineApproxW)
-  const totalBlockW = logoSize + 20 + textBlockW
-  const blockStartX = Math.max(Math.round(baseW * 0.04), Math.round((baseW - totalBlockW) / 2))
+  // Phone number BIG in orange, right-aligned (Mark 2026-07-05). Dialable
+  // digits form — static images need dialable numbers, not vanity.
+  const phone = '1-844-349-2327'
+  const phoneFontSize = Math.round(footerH * 0.24)
+
+  // Left-aligned brand block; right-aligned phone.
+  const blockStartX = Math.round(baseW * 0.04)
   const footerLogoY = footerY + Math.round((footerH - logoSize) / 2)
   const footerTextX = blockStartX + logoSize + 20
   const wordmarkWhiteApproxW = Math.round(wordmarkWhite.length * wordmarkFontSize * 0.58)
   const wordmarkY = footerY + Math.round(footerH * 0.50)
   const wordmarkOrangeX = footerTextX + wordmarkWhiteApproxW + Math.round(wordmarkFontSize * 0.30)
   const taglineY = footerY + Math.round(footerH * 0.78)
+  const phoneX = Math.round(baseW * 0.96)
+  const phoneY = footerY + Math.round(footerH * 0.50)
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${baseW}" height="${baseH}" viewBox="0 0 ${baseW} ${baseH}">
     <defs>
@@ -78,12 +82,14 @@ export async function compositeVanFooter(imageBuffer) {
         .wm-white { font-family: 'Inter', sans-serif; font-weight: 700; font-size: ${wordmarkFontSize}px; fill: #ffffff; letter-spacing: -0.015em; }
         .wm-orange { font-family: 'Inter', sans-serif; font-weight: 700; font-size: ${wordmarkFontSize}px; fill: ${BRAND_ORANGE}; letter-spacing: -0.015em; }
         .tagline { font-family: 'Inter', sans-serif; font-weight: 400; font-size: ${taglineFontSize}px; fill: rgba(255,255,255,0.85); }
+        .phone { font-family: 'Inter', sans-serif; font-weight: 700; font-size: ${phoneFontSize}px; fill: ${BRAND_ORANGE}; letter-spacing: 0.01em; text-anchor: end; }
       </style>
     </defs>
     <rect x="0" y="${footerY - 8}" width="${baseW}" height="${footerH + 8}" fill="${BRAND_DARK}"/>
     <text x="${footerTextX}" y="${wordmarkY}" class="wm-white">${wordmarkWhite}</text>
     <text x="${wordmarkOrangeX}" y="${wordmarkY}" class="wm-orange">${wordmarkOrange}</text>
     <text x="${footerTextX}" y="${taglineY}" class="tagline">${escXml(tagline)}</text>
+    <text x="${phoneX}" y="${phoneY}" class="phone">${phone}</text>
     <image x="${blockStartX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${logoB64}"/>
   </svg>`
 

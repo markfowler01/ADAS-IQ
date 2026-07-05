@@ -274,26 +274,23 @@ async function compositeOverlay(rawImageBuffer, headline) {
   const ruleBottomY = headlineStartY + headlineLines.length * headlineLineGap + 4
   const bylineY = Math.round(topH * 0.92)
 
-  // ── Bottom band — UNIFIED with brew-tips footer 2026-06-19 ────────────────
-  // Mark wants the brew-tips footer (dark bg, Inter Bold split-color wordmark,
-  // no phone number) on EVERY post on EVERY platform. Replaces the old cream
-  // Playfair footer.
+  // ── Bottom band — UNIFIED brand footer (matches vanImageComposite.js) ─────
+  // Dark bg, Inter Bold split-color wordmark left, phone BIG in orange on the
+  // right (Mark 2026-07-05: "footer should have my 1-844-349-2327 phone number
+  // big orange letters"). Dialable digits, not vanity.
   const footerH = 170
   const footerY = baseH - footerH
   const logoSize = Math.round(footerH * 0.62)
-  const wordmarkFontSize = Math.round(footerH * 0.34)
+  const wordmarkFontSize = Math.round(footerH * 0.29)
   const taglineFontSize = Math.round(footerH * 0.15)
   const wordmarkWhite = 'Absolute'
   const wordmarkOrange = 'ADAS'
   const tagline = 'Mobile ADAS calibration  ·  Western Washington'
+  const footerPhone = '1-844-349-2327'
+  const phoneFontSize = Math.round(footerH * 0.24)
 
-  // Inter Bold avg char width ~0.58 em.
-  const wordmarkApproxW = Math.round((wordmarkWhite.length + 1 + wordmarkOrange.length) * wordmarkFontSize * 0.58)
-  const taglineApproxW = Math.round(tagline.length * taglineFontSize * 0.55)
-  const textBlockW = Math.max(wordmarkApproxW, taglineApproxW)
-  const totalBlockW = logoSize + 20 + textBlockW
-  const centeredX = Math.round((baseW - totalBlockW) / 2)
-  const blockStartX = Math.max(Math.round(baseW * 0.04), centeredX)
+  // Left-aligned brand block; right-aligned phone.
+  const blockStartX = Math.round(baseW * 0.04)
   const footerLogoX = blockStartX
   const footerLogoY = footerY + Math.round((footerH - logoSize) / 2)
   const footerTextX = blockStartX + logoSize + 20
@@ -301,6 +298,8 @@ async function compositeOverlay(rawImageBuffer, headline) {
   const wordmarkY = footerY + Math.round(footerH * 0.50)
   const wordmarkOrangeX = footerTextX + wordmarkWhiteApproxW + Math.round(wordmarkFontSize * 0.30)
   const taglineY = footerY + Math.round(footerH * 0.78)
+  const phoneX = Math.round(baseW * 0.96)
+  const phoneY = footerY + Math.round(footerH * 0.50)
 
   // ── Build SVG ────────────────────────────────────────────────────────────
   const headlineTextSvg = headlineLines.map((line, i) =>
@@ -362,6 +361,14 @@ async function compositeOverlay(rawImageBuffer, headline) {
           fill: rgba(255,255,255,0.85);
           letter-spacing: 0;
         }
+        .footer-phone {
+          font-family: 'Inter', sans-serif;
+          font-weight: 700;
+          font-size: ${phoneFontSize}px;
+          fill: ${BRAND_ORANGE};
+          letter-spacing: 0.01em;
+          text-anchor: end;
+        }
       </style>
     </defs>
 
@@ -389,6 +396,7 @@ async function compositeOverlay(rawImageBuffer, headline) {
     <text x="${footerTextX}" y="${wordmarkY}" class="wordmark-white">${wordmarkWhite}</text>
     <text x="${wordmarkOrangeX}" y="${wordmarkY}" class="wordmark-orange">${wordmarkOrange}</text>
     <text x="${footerTextX}" y="${taglineY}" class="tagline">${escXml(tagline)}</text>
+    <text x="${phoneX}" y="${phoneY}" class="footer-phone">${footerPhone}</text>
     <image x="${footerLogoX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${logoB64}"/>
   </svg>`
 
