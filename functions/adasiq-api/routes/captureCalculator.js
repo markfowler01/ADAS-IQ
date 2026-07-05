@@ -1779,7 +1779,7 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
 
       try {
         const stamped = await compositeVanFooter(finalBuffer)
-        const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}.png`
+        const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}.jpg`
         const c = await commitBinaryFile({ path, buffer: stamped, message: `Van post image ${todayDateStr}` })
         if (c?.ok) imageUrl = `https://absoluteadas.com/${path}`
         else imageError = c?.error || 'github commit failed'
@@ -2722,7 +2722,7 @@ captureCalcRouter.get('/debug/van-image-test', async (req, res) => {
       }
     }
     const stamped = await compositeVanFooter(buffer)
-    const path = `capture-images/van-test-${Date.now().toString(36)}.png`
+    const path = `capture-images/van-test-${Date.now().toString(36)}.jpg`
     const c = await commitBinaryFile({ path, buffer: stamped, message: 'Van image pipeline test' })
     if (!c?.ok) return res.json({ ok: false, error: c?.error || 'github commit failed' })
     res.json({ ok: true, day: dayName, source, verifier: verdict, image_url: `https://absoluteadas.com/${path}` })

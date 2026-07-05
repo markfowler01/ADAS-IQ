@@ -44,6 +44,13 @@ function escXml(s) {
  */
 export async function compositeVanFooter(imageBuffer) {
   const { logoB64, interBoldB64, interRegularB64 } = await loadAssets()
+  // Normalize to <=1600px FIRST so the fixed 170px footer is proportionally
+  // correct (a 4032px phone photo would otherwise get a comically tiny
+  // footer, and the output PNG blew past Facebook's 4MB photo limit —
+  // 19MB on 2026-07-05, rejected as "Invalid parameter").
+  imageBuffer = await sharp(imageBuffer)
+    .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
+    .toBuffer()
   const meta = await sharp(imageBuffer).metadata()
   const baseW = meta.width || 1080
   const baseH = meta.height || 1080
@@ -93,9 +100,13 @@ export async function compositeVanFooter(imageBuffer) {
     <image x="${blockStartX}" y="${footerLogoY}" width="${logoSize}" height="${logoSize}" preserveAspectRatio="xMidYMid meet" href="data:image/png;base64,${logoB64}"/>
   </svg>`
 
+  // Output JPEG capped at 1600px — Facebook rejects photos over 4MB with a
+  // vague "Invalid parameter" (hit 2026-07-05 when a full-res real photo
+  // shipped as a 19MB PNG). JPEG q88 at <=1600px lands well under every
+  // platform's limit with no visible quality loss at feed sizes.
   return sharp(imageBuffer)
     .composite([{ input: Buffer.from(svg, 'utf-8'), top: 0, left: 0 }])
-    .png()
+    .jpeg({ quality: 88 })
     .toBuffer()
 }
 
