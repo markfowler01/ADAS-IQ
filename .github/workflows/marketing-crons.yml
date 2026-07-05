@@ -35,6 +35,10 @@ on:
     # Sunday LI drafter DISABLED — schedule commented for reference:
     #   - cron: '33 13 * * 0'
 
+    # DAILY 13:01 UTC (~ 6:01 AM PT) — van-in-the-field pillar. Drafts the
+    # day's van post (real van photo + Gemini scene) scheduled for 6:30 AM PT.
+    - cron: '1 13 * * *'
+
     # Friday 14:17 UTC (~ 7 AM PT) — weekly report to Mark.
     - cron: '17 14 * * 5'
 
@@ -52,6 +56,7 @@ on:
         options:
           - hourly
           - daily-drafters
+          - van-post
           - friday-weekly
           - daily-tasks
 
@@ -137,6 +142,43 @@ jobs:
           else:
               print(f'✅ capture_meta: last_success_age_min={age}m')
           sys.exit(1 if fail else 0)
+          "
+
+  # ── VAN-IN-THE-FIELD DAILY POST ────────────────────────────────────────────
+  # Drafts the day's brand-presence van post (real van photo from Mark's
+  # WorkDrive folder + Gemini image-to-image scene). Publishes 6:30 AM PT via
+  # the hourly scheduler. Drafter takes 60-120s (Claude + Gemini + GitHub
+  # commit); accept the 30s gateway timeout and verify via heartbeat.
+  van-post:
+    if: github.event.schedule == '1 13 * * *' || inputs.job == 'van-post'
+    runs-on: ubuntu-latest
+    steps:
+      - name: van_post — draft today's van-in-the-field post
+        run: |
+          set +e
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 40 \
+            "$BASE/van-draft-day")
+          curl_exit=$?
+          echo "HTTP $code (curl exit $curl_exit) — 408 / curl-28 expected for long drafter"
+          cat /tmp/r.json 2>/dev/null | head -c 500; echo
+          if [ "$curl_exit" -eq 28 ] || [ -z "$code" ] || [ "$code" = "000" ]; then exit 0; fi
+          if [ "$code" -ge 500 ]; then exit 1; fi
+          exit 0
+
+      - name: wait 3 min then verify via heartbeat
+        run: |
+          sleep 180
+          curl -sS --max-time 30 \
+            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug/heartbeats" \
+            | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)['heartbeats']
+          hb = d.get('van_post', {})
+          age = hb.get('last_success_age_min')
+          if age is None or age > 10:
+              print(f'❌ van_post: last_success_age_min={age} — drafter did not complete')
+              sys.exit(1)
+          print(f'✅ van_post: last_success_age_min={age}m')
           "
 
   # ── SUNDAY LINKEDIN DRAFTER — DISABLED 2026-07-03 ─────────────────────────

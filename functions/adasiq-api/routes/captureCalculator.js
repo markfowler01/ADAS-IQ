@@ -1669,6 +1669,139 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
   }
 })
 
+//   POST /api/capture-calc/van/draft-day  (cron-secret)
+//   Query: ?dayName=Mon  ← override today (testing)
+//
+// VAN-IN-THE-FIELD daily pillar (2026-07-05): brand-presence post following
+// the collision shop's weekly rhythm (Mon teardown → Fri delivery → weekend
+// rest/prep). ONE caption + ONE image (Mark's real van photo placed into the
+// day's scene via Gemini image-to-image) fanned to FB + IG + LinkedIn at
+// 6:30 AM PT — before the educational unified post (9 AM-noon window).
+// The van wrap carries the branding, so NO SVG masthead/footer composite.
+// Idempotent: skips any channel with a live van-pillar draft for today.
+captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const { draftVanPost, todayDayName } = await import('../services/vanPostDrafter.js')
+    const { pickNextVanPhoto } = await import('../services/vanPhotoLibrary.js')
+    const { generateVanSceneImage } = await import('../services/nanoBanana.js')
+    const { commitBinaryFile } = await import('../services/brewArchive.js')
+
+    const dayName = String(req.query.dayName || todayDayName())
+    const todayDateStr = new Date().toISOString().slice(0, 10)
+
+    // Concurrent-fire lock (10-min TTL, same pattern as unified drafter)
+    const LOCK_KEY = `van_daily_inprogress_${todayDateStr}`
+    if (req.query.force_relock !== '1') {
+      const existingLock = await cacheGet(segment, LOCK_KEY, null)
+      if (existingLock && (Date.now() - new Date(existingLock.at).getTime()) < 600000) {
+        return res.json({ ok: true, skipped: true, reason: 'concurrent van draft-day already in progress (lock held)', locked_at: existingLock.at })
+      }
+    }
+    await cacheSet(segment, LOCK_KEY, { at: new Date().toISOString() })
+
+    // Idempotence — one van post per channel per day (category 'van_field').
+    const existing = await listQueue(req, {})
+    const channelsAlreadyDone = new Set(existing.filter(d =>
+      d.category === 'van_field' &&
+      ['approved', 'pending', 'published'].includes(d.status) &&
+      (d.scheduled_for || '').slice(0, 10) === todayDateStr
+    ).map(d => d.channel))
+
+    // 1. Draft the caption
+    const draft = await draftVanPost({ dayName, targetDate: new Date().toISOString() })
+
+    // 2. Pick a real van photo (LRU rotation from Mark's WorkDrive folder)
+    let vanPhoto = null
+    try {
+      vanPhoto = await pickNextVanPhoto(segment, cacheGet, cacheSet)
+    } catch (e) {
+      console.warn('[van photo library]', e.message)
+    }
+
+    // 3. Generate the scene. Real-photo path preferred; fall back to pure
+    //    text-to-image if the folder is empty or WorkDrive hiccups.
+    let imageUrl = null
+    let imageError = null
+    let imageSource = 'none'
+    if (captureImagesEnabled()) {
+      let gen
+      if (vanPhoto) {
+        gen = await generateVanSceneImage({
+          vanPhotoBuffer: vanPhoto.buffer,
+          vanPhotoMime: vanPhoto.mimeType,
+          scenePrompt: draft.image_prompt,
+        }).catch(e => ({ ok: false, error: e.message }))
+        imageSource = `photo:${vanPhoto.name}`
+      } else {
+        const r = await generateCaptureImage(
+          { headline: draft.headline, draftId: `van-${todayDateStr}` },
+          { segment, sceneOverride: draft.image_prompt }
+        ).catch(e => ({ ok: false, error: e.message }))
+        // generateCaptureImage returns a hosted URL directly
+        if (r?.ok) { imageUrl = r.url; imageSource = 'generated-fallback' }
+        else imageError = r?.error || 'image generation failed'
+        gen = null
+      }
+      // Host the image-to-image buffer on GitHub Pages
+      if (gen?.ok) {
+        const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}.png`
+        const c = await commitBinaryFile({ path, buffer: gen.buffer, message: `Van post image ${todayDateStr}` })
+        if (c?.ok) imageUrl = `https://absoluteadas.com/${path}`
+        else imageError = c?.error || 'github commit failed'
+      } else if (gen && !gen.ok) {
+        imageError = gen.error
+      }
+    }
+
+    // 4. Fan to 3 channels at 6:30 AM PT (or now+5min if past).
+    const CHANNELS = ['linkedin_personal', 'instagram_business', 'facebook_page']
+    const scheduledFor = todayScheduledForAtTimePT(6, 30)
+    const out = { day: dayName, angle: draft.angle, image_source: imageSource, drafts: [], skipped: [] }
+    for (const channel of CHANNELS) {
+      if (channelsAlreadyDone.has(channel)) {
+        out.skipped.push({ channel, reason: 'already has a van post today' })
+        continue
+      }
+      // IG requires an image — skip IG (not the whole run) if img failed.
+      if (channel === 'instagram_business' && !imageUrl) {
+        out.skipped.push({ channel, reason: `no image (${imageError || 'gen disabled'})` })
+        continue
+      }
+      const entry = await enqueueDraft(req, {
+        channel,
+        category: 'van_field',
+        headline: draft.headline,
+        body: draft.body,
+        scheduled_for: scheduledFor.toISOString(),
+        voice_score: draft.voice_score,
+        voice_deductions: draft.voice_deductions,
+        meta: { slot: dayName, group: `van-${todayDateStr}`, image_prompt: draft.image_prompt || null, pillar: 'van_field' },
+        status: 'approved',
+      })
+      if (imageUrl) await updateDraft(req, entry.id, { image_url: imageUrl, image_status: 'generated' })
+      else await updateDraft(req, entry.id, { image_status: imageError ? 'failed' : 'disabled', image_error: imageError || undefined })
+      out.drafts.push({ channel, id: entry.id, scheduled_for: scheduledFor.toISOString(), has_image: !!imageUrl })
+    }
+
+    const card = [
+      `🚐 *VAN POST DRAFTED* — ${dayName} ${todayDateStr} (${draft.angle})`,
+      `${out.drafts.length} channel${out.drafts.length === 1 ? '' : 's'}, image: ${imageSource}${imageError ? ` ⚠️ ${imageError}` : ''}`,
+      ``,
+      `*${draft.headline}*`,
+      draft.body,
+      ...(imageUrl ? [``, `🖼️ ${imageUrl}`] : []),
+    ].join('\n')
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card).catch(() => {})
+
+    await stampSuccess(req, 'van_post', { day: dayName, drafts: out.drafts.length, image: imageSource })
+    res.json({ ok: true, ...out, headline: draft.headline, body: draft.body, image_url: imageUrl })
+  } catch (e) {
+    await reportCronFailure(req, 'van_post', e)
+    res.json({ ok: false, error: e.message })
+  }
+})
+
 // Smoke test for the Cloudinary image→video pipeline. Takes a public image
 // URL, returns the rendered MP4 URL + size. Read-only-ish (uploads to your
 // Cloudinary asset library — uses ~0.1 credit per call). Use to confirm
@@ -2232,6 +2365,7 @@ const DEBUG_FORWARD_WHITELIST = {
   'engagement-run':      '/api/capture-calc/engagement/run',
   'li-comments-check':   '/api/capture-calc/linkedin/comments/check',
   'brew-run-bonus':      '/api/cron/brew/run-bonus',
+  'van-draft-day':       '/api/capture-calc/van/draft-day',
   'weekly-run':          '/api/capture-calc/report/weekly?force=1',
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
 }
@@ -2275,6 +2409,7 @@ captureCalcRouter.all('/debug/holiday-poster-run',  (req, res) => debugForward(r
 captureCalcRouter.all('/debug/engagement-run',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['engagement-run']))
 captureCalcRouter.all('/debug/li-comments-check',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-comments-check']))
 captureCalcRouter.all('/debug/brew-run-bonus',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['brew-run-bonus']))
+captureCalcRouter.all('/debug/van-draft-day',       (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['van-draft-day']))
 captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
 
@@ -2476,6 +2611,21 @@ captureCalcRouter.get('/debug/render-prompt', async (req, res) => {
     )
     if (!r?.ok) return res.status(500).json({ ok: false, error: r?.error, budget: r?.budget })
     res.json({ ok: true, label, headline, image_url: r.url })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Preview a van-in-the-field post WITHOUT enqueueing or generating an image.
+// Returns headline + body + image_prompt so Mark can react to the copy
+// before the daily van cron fires it for real.
+//   GET /debug/van-preview?day=Mon
+captureCalcRouter.get('/debug/van-preview', async (req, res) => {
+  try {
+    const { draftVanPost, todayDayName } = await import('../services/vanPostDrafter.js')
+    const dayName = String(req.query.day || todayDayName())
+    const draft = await draftVanPost({ dayName, targetDate: new Date().toISOString() })
+    res.json({ ok: true, day: dayName, ...draft, body_word_count: draft.body.split(/\s+/).length })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }

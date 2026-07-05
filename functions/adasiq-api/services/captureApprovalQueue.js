@@ -12,9 +12,19 @@
 // Storage: Catalyst Cache under capture_approval_queue. Capped at 200 items.
 
 import crypto from 'crypto'
+import catalyst from 'zcatalyst-sdk-node'
 
 const QUEUE_KEY = 'capture_approval_queue'
 const TOKEN_TTL_DAYS = 14
+
+// Callers across the routes pass EITHER an Express req (most common) or an
+// already-initialized cache segment. Normalize to a segment. (The req-based
+// convention came from an uncommitted revision lost in the 2026-07-03 working
+// tree wipe — this shim restores compatibility for both call styles.)
+function asSegment(reqOrSegment) {
+  if (reqOrSegment && typeof reqOrSegment.getValue === 'function') return reqOrSegment
+  return catalyst.initialize(reqOrSegment).cache().segment()
+}
 
 function getSecret() {
   return process.env.APPROVAL_HMAC_SECRET
@@ -80,6 +90,7 @@ const FULL_BODY_KEY = (id) => `capture_draft_body_${id}`
  * formatApprovalCard) but the persisted queue entry does not.
  */
 export async function enqueueDraft(segment, draft) {
+  segment = asSegment(segment)
   const id = crypto.randomBytes(9).toString('base64url')
   const fullBody = String(draft.body || '')
 
@@ -92,7 +103,9 @@ export async function enqueueDraft(segment, draft) {
   // Metadata-only entry for the queue blob
   const queueEntry = {
     id,
-    status: 'pending',
+    // Drafters pass status:'approved' for auto-approved pillars (unified
+    // daily, van-in-the-field); default 'pending' for manual-approval flows.
+    status: String(draft.status || 'pending'),
     created_at: new Date().toISOString(),
     channel:        String(draft.channel || ''),
     category:       String(draft.category || ''),
@@ -117,6 +130,7 @@ export async function enqueueDraft(segment, draft) {
  * Falls back to the queue body if the separate key is missing.
  */
 export async function getDraftFullBody(segment, id) {
+  segment = asSegment(segment)
   try {
     const val = await segment.getValue(FULL_BODY_KEY(id))
     if (val) return val
@@ -134,6 +148,7 @@ export async function getDraftFullBody(segment, id) {
  * Used by the edit POST flow so the same split-storage pattern applies.
  */
 export async function setDraftBody(segment, id, fullBody) {
+  segment = asSegment(segment)
   const safe = String(fullBody || '')
   if (safe) {
     try { await segment.update(FULL_BODY_KEY(id), safe) }
@@ -146,6 +161,7 @@ export async function setDraftBody(segment, id, fullBody) {
 }
 
 export async function listQueue(segment, filter = {}) {
+  segment = asSegment(segment)
   const q = await readQueue(segment)
   if (filter.status) return q.filter(d => d.status === filter.status)
   if (filter.channel) return q.filter(d => d.channel === filter.channel)
@@ -153,6 +169,7 @@ export async function listQueue(segment, filter = {}) {
 }
 
 export async function getDraft(segment, id) {
+  segment = asSegment(segment)
   const q = await readQueue(segment)
   return q.find(d => d.id === id) || null
 }
@@ -161,6 +178,7 @@ export async function getDraft(segment, id) {
  * Update a draft's status. Returns the updated entry or null if not found.
  */
 export async function updateDraft(segment, id, patch) {
+  segment = asSegment(segment)
   const queue = await readQueue(segment)
   const idx = queue.findIndex(d => d.id === id)
   if (idx === -1) return null

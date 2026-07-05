@@ -76,7 +76,7 @@ auditRouter.get('/form', (req, res) => {
 })
 
 // ─── POST /generate — accepts inputs, runs Claude, emails + DMs Mark ────────
-auditRouter.post('/generate', express.json({ limit: '64kb' }), async (req, res) => {
+auditRouter.post('/generate', express.json({ limit: '64kb' }), express.urlencoded({ extended: false, limit: '64kb' }), async (req, res) => {
   try {
     const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim()
     if (rateLimited(ip)) {

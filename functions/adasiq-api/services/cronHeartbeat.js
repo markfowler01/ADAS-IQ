@@ -32,6 +32,7 @@ export const CRON_NAMES = [
   'cron_monitor',
   'holiday_poster',
   'li_comments',
+  'van_post',
 ]
 
 export const HB_ATTEMPT_KEY = name => `capture_hb_attempt_${name}`

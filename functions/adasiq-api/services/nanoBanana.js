@@ -156,6 +156,70 @@ export async function generateTipCardImage({ photoSubject } = {}) {
   }
 }
 
+// ─── Van-in-the-field scene (image-to-image) ────────────────────────────────
+// Takes a REAL photo of Mark's wrapped service van as the reference image and
+// asks Gemini to place that exact van into the day's scene. The wrap ("SAME
+// DAY. DONE RIGHT.", Absolute ADAS logo, 1-844-FIX-ADAS) must survive intact —
+// that wrap IS the branding, so no SVG composite is layered on afterward.
+const VAN_SCENE_RULES = `
+CRITICAL RULES:
+- The white Ram ProMaster van from the reference photo is the hero. Preserve its wrap graphics EXACTLY as photographed: the "Absolute ADAS" logo, "SAME DAY. DONE RIGHT." text, phone number, and red circuit-pattern details. Do not redraw, blur, re-typeset, or alter any lettering on the van.
+- Photo-realistic documentary photography. Natural light. No glossy advertisement look.
+- Landscape 4:5 or square 1:1 framing, van prominent but naturally placed in the scene.
+- Western Washington, USA setting: evergreen trees, overcast-to-sunny Pacific Northwest light, realistic collision shop exteriors.
+- NO added text, NO added logos, NO watermarks, NO borders anywhere in the image.
+- People, if any, are background only — small, out of focus, no faces in detail.`
+
+/**
+ * Generate a van-in-the-field scene from a real van photo + scene direction.
+ * @param {Object} args
+ * @param {Buffer} args.vanPhotoBuffer — real photo of the wrapped van
+ * @param {string} args.vanPhotoMime   — e.g. "image/jpeg"
+ * @param {string} args.scenePrompt    — day-specific scene description
+ * @returns {Promise<{ok: true, buffer: Buffer, mimeType: string, prompt: string} | {ok: false, error: string}>}
+ */
+export async function generateVanSceneImage({ vanPhotoBuffer, vanPhotoMime = 'image/jpeg', scenePrompt }) {
+  if (!nanoBananaConfigured()) return { ok: false, error: 'GEMINI_API_KEY not set' }
+  if (!vanPhotoBuffer?.length) return { ok: false, error: 'vanPhotoBuffer required' }
+  const { apiKey, model } = envBundle()
+
+  const prompt = `Using the attached reference photo of this exact service van, create a new photograph placing this van in the following scene:\n\n${String(scenePrompt || '').trim()}\n${VAN_SCENE_RULES}`
+
+  try {
+    const res = await axios.post(
+      `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        contents: [{
+          parts: [
+            { inlineData: { mimeType: vanPhotoMime, data: vanPhotoBuffer.toString('base64') } },
+            { text: prompt },
+          ],
+        }],
+        generationConfig: { responseModalities: ['IMAGE'] },
+      },
+      {
+        headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+        timeout: 45000,
+        validateStatus: s => s < 500,
+      }
+    )
+    if (res.status >= 400) {
+      return { ok: false, error: res.data?.error?.message || `HTTP ${res.status}` }
+    }
+    const parts = res.data?.candidates?.[0]?.content?.parts || []
+    const imagePart = parts.find(p => p.inlineData?.data)
+    if (!imagePart) return { ok: false, error: 'no image in response' }
+    return {
+      ok: true,
+      buffer: Buffer.from(imagePart.inlineData.data, 'base64'),
+      mimeType: imagePart.inlineData.mimeType || 'image/png',
+      prompt,
+    }
+  } catch (e) {
+    return { ok: false, error: e.message || 'request failed' }
+  }
+}
+
 function formatIssueLine(issueNumber, dateISO) {
   let dateLabel = ''
   if (dateISO) {
