@@ -1707,10 +1707,14 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     vanStep = 'idempotence-read'
     // Idempotence — one van post per channel per day (category 'van_field').
     const existing = await listQueue(req, {})
+    // Compare scheduled_for in PT — the raw ISO string is UTC, and a 10 PM PT
+    // post lands on "tomorrow" in UTC, which made the next morning's run skip
+    // that channel entirely.
+    const ptDay = iso => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }) } catch { return '' } }
     const channelsAlreadyDone = new Set(existing.filter(d =>
       d.category === 'van_field' &&
       ['approved', 'pending', 'published'].includes(d.status) &&
-      (d.scheduled_for || '').slice(0, 10) === todayDateStr
+      ptDay(d.scheduled_for) === todayDateStr
     ).map(d => d.channel))
 
     // SAME-CONTENT GUARANTEE (Mark 2026-07-05: "they all need to be the same
