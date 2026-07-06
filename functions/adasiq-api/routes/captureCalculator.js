@@ -1528,7 +1528,7 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     const segment = getSegment(req)
     const todayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
     const dayName = String(req.query.dayName || todayPT)
-    const todayDateStr = new Date().toISOString().slice(0, 10)
+    const todayDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
 
     // Concurrent-fire lock
     const LOCK_KEY = `meta_daily_inprogress_${todayDateStr}`
@@ -1680,6 +1680,7 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
 // The van wrap carries the branding, so NO SVG masthead/footer composite.
 // Idempotent: skips any channel with a live van-pillar draft for today.
 captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  let vanStep = 'init'
   try {
     const segment = getSegment(req)
     const { draftVanPost, todayDayName } = await import('../services/vanPostDrafter.js')
@@ -1688,7 +1689,9 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     const { commitBinaryFile } = await import('../services/brewArchive.js')
 
     const dayName = String(req.query.dayName || todayDayName())
-    const todayDateStr = new Date().toISOString().slice(0, 10)
+    // PT-based date: UTC rolls to tomorrow at 5 PM PT, which made evening
+    // runs draft for the wrong day and poison the next day's content cache.
+    const todayDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
 
     // Concurrent-fire lock (10-min TTL, same pattern as unified drafter)
     const LOCK_KEY = `van_daily_inprogress_${todayDateStr}`
@@ -1698,8 +1701,10 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
         return res.json({ ok: true, skipped: true, reason: 'concurrent van draft-day already in progress (lock held)', locked_at: existingLock.at })
       }
     }
+    vanStep = 'lock-write'
     await cacheSet(segment, LOCK_KEY, { at: new Date().toISOString() })
 
+    vanStep = 'idempotence-read'
     // Idempotence — one van post per channel per day (category 'van_field').
     const existing = await listQueue(req, {})
     const channelsAlreadyDone = new Set(existing.filter(d =>
@@ -1713,8 +1718,10 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     // build. Any re-run the same day (channel repair, manual re-fire) REUSES
     // the cached content for missing channels instead of generating new —
     // all channels always carry the identical post.
+    vanStep = 'content-read'
     const CONTENT_KEY = `van_content_${todayDateStr}`
     const cachedContent = await cacheGet(segment, CONTENT_KEY, null)
+    vanStep = 'draft'
 
     // 1. Draft the caption (or reuse today's)
     const draft = (cachedContent?.body)
@@ -1722,6 +1729,7 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
       : await draftVanPost({ dayName, targetDate: new Date().toISOString() })
 
     // 2. Pick a real van photo (LRU rotation) — skipped when reusing cache.
+    vanStep = 'photo-pick'
     let vanPhoto = null
     if (!cachedContent?.image_url) {
       try {
@@ -1747,6 +1755,7 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     let imageError = null
     let imageSource = cachedContent?.image_url ? `cached:${cachedContent.image_source || 'same-day'}` : 'none'
     if (!imageUrl && captureImagesEnabled() && vanPhoto) {
+      vanStep = 'image-build'
       let finalBuffer = null
 
       // (a) Composite path — needs a pre-cut cutout for this photo.
@@ -1808,6 +1817,7 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
       } catch (e) {
         imageError = `footer composite failed: ${e.message}`
       }
+      vanStep = 'content-write'
       // Persist today's content so any same-day re-run ships the identical post.
       if (imageUrl) {
         await cacheSet(segment, CONTENT_KEY, {
@@ -1820,6 +1830,7 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     }
 
     // 4. Fan to 3 channels at 6:30 AM PT (or now+5min if past).
+    vanStep = 'enqueue'
     const CHANNELS = ['linkedin_personal', 'instagram_business', 'facebook_page']
     const scheduledFor = todayScheduledForAtTimePT(6, 30)
     const out = { day: dayName, angle: draft.angle, image_source: imageSource, drafts: [], skipped: [] }
@@ -1863,7 +1874,7 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     res.json({ ok: true, ...out, headline: draft.headline, body: draft.body, image_url: imageUrl })
   } catch (e) {
     await reportCronFailure(req, 'van_post', e)
-    res.json({ ok: false, error: e.message })
+    res.json({ ok: false, error: e.message, step: vanStep, code: e.code || e.errorInfo?.error_code || null, info: e.errorInfo || null, stack: (e.stack || '').split('\n').slice(0, 4) })
   }
 })
 
@@ -2700,6 +2711,19 @@ captureCalcRouter.get('/debug/van-photos', async (req, res) => {
       return res.send(buffer)
     }
     res.json({ ok: true, photos: await listVanPhotos() })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Clear a day's cached van post content (used when a bad run poisons the
+// same-day reuse cache). GET /debug/van-clear-content?date=YYYY-MM-DD
+captureCalcRouter.get('/debug/van-clear-content', async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const date = String(req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }))
+    await cacheSet(segment, `van_content_${date}`, '')
+    res.json({ ok: true, cleared: `van_content_${date}` })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }

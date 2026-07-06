@@ -68,16 +68,39 @@ async function readQueue(segment) {
 }
 
 async function writeQueue(segment, queue) {
-  const str = JSON.stringify(queue)
-  try { await segment.update(QUEUE_KEY, str) }
-  catch { await segment.put(QUEUE_KEY, str) }
+  // Sanitize legacy entries on every write: pre-2026-07-05 entries carry
+  // 1200-char image_prompts in meta which pushed the blob to Catalyst's
+  // per-value byte cap (LIMIT_REACHED at enqueue).
+  const sanitized = queue.map(d => {
+    if (d?.meta?.image_prompt && d.meta.image_prompt.length > 200) {
+      return { ...d, meta: { ...d.meta, image_prompt: d.meta.image_prompt.slice(0, 200) } }
+    }
+    return d
+  })
+  const attempt = async (items) => {
+    const str = JSON.stringify(items)
+    try { await segment.update(QUEUE_KEY, str) }
+    catch { await segment.put(QUEUE_KEY, str) }
+  }
+  // Self-healing: on LIMIT_REACHED, shrink oldest-first and retry.
+  for (const cap of [QUEUE_MAX_ITEMS, 30, 15]) {
+    try {
+      await attempt(sanitized.slice(0, cap))
+      return
+    } catch (e) {
+      const limit = e?.code === 'LIMIT_REACHED' || /max length/i.test(e?.message || '')
+      if (!limit) throw e
+      console.warn(`[queue] value over cache cap at ${cap} items — shrinking`)
+    }
+  }
+  throw new Error('queue write failed even at 15 items — investigate cache health')
 }
 
 // Catalyst Cache per-value cap is ~64-100KB. Don't put draft bodies in the
 // queue blob at all — store the full body under its own per-draft key and
 // the queue only holds metadata. Keeps queue blob tiny no matter how long
 // individual drafts run.
-const QUEUE_MAX_ITEMS = 100
+const QUEUE_MAX_ITEMS = 50   // Catalyst cache value cap ~100KB; 100 entries overflowed it 2026-07-05
 const FULL_BODY_KEY = (id) => `capture_draft_body_${id}`
 
 /**
@@ -114,7 +137,9 @@ export async function enqueueDraft(segment, draft) {
     voice_score:    Number(draft.voice_score) || null,
     // Voice deductions can be verbose — cap to 3 short reason strings only
     voice_deductions: (draft.voice_deductions || []).slice(0, 3).map(d => ({ reason: String(d.reason || '').slice(0, 120), points: d.points })),
-    meta:           draft.meta || {},
+    // Cap meta so the queue blob stays under Catalyst's ~100KB cache value
+    // limit — image_prompt alone can be 1200 chars per entry.
+    meta:           (() => { const m = { ...(draft.meta || {}) }; if (m.image_prompt) m.image_prompt = String(m.image_prompt).slice(0, 200); return m })(),
     has_body:       Boolean(fullBody),
   }
   const queue = await readQueue(segment)
