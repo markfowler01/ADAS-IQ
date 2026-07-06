@@ -180,7 +180,11 @@ async function deliver(recipient, msg) {
   }
 }
 
-async function sendMorningKickoff(req) {
+// Exported so the existing /api/cron/daily-briefing (routes/briefing.js
+// → sendDailyBriefing) can piggyback this side of the morning routine on
+// the cron trigger that's already set up in Catalyst — one console cron
+// fires both Mark's own briefing and the whole-team good-morning fan-out.
+export async function sendMorningKickoff(req) {
   const dateStr = todayPT()
   const yesterday = yesterdayPT(dateStr)
   const monthStart = monthStartPT(dateStr)

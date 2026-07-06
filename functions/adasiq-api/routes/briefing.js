@@ -360,7 +360,14 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   // Mark's number lives in the MARK_PHONE_NUMBER env var
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
   if (to) { const s = await safe('sms', () => sendSMS(req, { to, body: digest, category: 'briefing' })); sent.sms = !!s }
-  return { ok: true, sent, digest }
+  // Team good-morning fan-out (Kat / Joyce greetings + Jayden sales digest).
+  // Piggybacks on this cron so we don't need a second console entry. Failures
+  // are swallowed by safe() so a broken Cliq DM never derails Mark's briefing.
+  const kickoff = await safe('morning-kickoff', async () => {
+    const { sendMorningKickoff } = await import('./dailyGreeting.js')
+    return sendMorningKickoff(req)
+  })
+  return { ok: true, sent, digest, kickoff: kickoff || { ok: false } }
 }
 
 router.get('/debug', async (req, res) => {

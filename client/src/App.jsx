@@ -76,7 +76,13 @@ function MainApp() {
   const [user, setUser]   = useState(null)   // null = loading, false = not logged in, object = logged in
   const [loading, setLoading] = useState(true)
   const [authErrMsg, setAuthErrMsg] = useState(null)
-  const [screen,  setScreen]  = useState('kanban')
+  // Initial screen — mobile users land on Live Day, desktop lands on Kanban.
+  // Techs also get forced to 'live' after login (see the auth effect below)
+  // regardless of viewport, since Live Day is their only useful surface.
+  const [screen,  setScreen]  = useState(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) return 'live'
+    return 'kanban'
+  })
   const [jobData, setJobData] = useState(null)
   const [pdfFile, setPdfFile] = useState(null)
 
@@ -145,6 +151,14 @@ function MainApp() {
     warningTimerRef.current = setInterval(checkExpiry, 60 * 1000)
     return () => clearInterval(warningTimerRef.current)
   }, [user])
+
+  // Force technicians onto Live Day the moment their user object lands —
+  // the Kanban, upload, and admin screens aren't useful to them and
+  // clicking through login on a phone should drop them straight into
+  // their board. Runs once per login (guarded on user.role changing).
+  useEffect(() => {
+    if (user && user.role === 'technician') setScreen('live')
+  }, [user?.role])
 
   async function handleLogout() {
     setToken(null)

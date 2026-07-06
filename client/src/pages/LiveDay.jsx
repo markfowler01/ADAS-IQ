@@ -458,23 +458,52 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
       <div className="sticky top-0 z-10 px-4 py-3"
         style={{ backgroundColor: '#f5f3f0', borderBottom: '1px solid #e8e4e0' }}>
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <div>
+        <div className="max-w-3xl mx-auto flex items-center justify-between gap-2">
+          <div className="min-w-0">
             <div className="text-xs uppercase tracking-wider"
               style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
               Live Day
             </div>
-            <div className="text-base font-bold" style={{ color: '#1a1a1a' }}>
+            <div className="text-base font-bold truncate" style={{ color: '#1a1a1a' }}>
               {data?.date
                 ? new Date(data.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })
                 : ''}
             </div>
           </div>
-          <button
-            onClick={load}
-            className="text-xs px-3 py-1.5 rounded-lg font-semibold"
-            style={{ backgroundColor: 'white', border: '1px solid #ddd', color: '#555' }}
-          >↻ Refresh</button>
+          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+            {/* Reference-tool shortcuts — one tap from the tech's Live Day
+                straight into AllData / Kinetic in a new tab. Kept compact
+                as pill buttons so they don't eat header real estate. */}
+            <a
+              href="https://my.alldata.com/migrate/#/home"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: '#1e40af', color: 'white' }}
+              title="Open AllData"
+            >AllData</a>
+            <a
+              href="https://ops.kinetic.auto/id/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: '#0e7490', color: 'white' }}
+              title="Open Kinetic"
+            >Kinetic</a>
+            <a
+              href="https://dh.identifix.com/Default/LogOnIdentifix?sessionTerminated=True"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: '#7c2d12', color: 'white' }}
+              title="Open Identifix"
+            >Identifix</a>
+            <button
+              onClick={load}
+              className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: 'white', border: '1px solid #ddd', color: '#555' }}
+            >↻</button>
+          </div>
         </div>
       </div>
 
