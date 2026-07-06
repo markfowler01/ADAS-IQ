@@ -33,6 +33,7 @@ import calendarRouter from './routes/calendar.js'
 import garminRouter from './routes/garmin.js'
 import mailAgentRouter from './routes/mail-agent.js'
 import plannerBrainDumpRouter from './routes/planner-brain-dump.js'
+import plannerDelegationsRouter from './routes/planner-delegations.js'
 import expensesRouter from './routes/expenses.js'
 import notificationsRouter from './routes/notifications.js'
 import crmSyncRouter from './routes/crmSync.js'
@@ -713,6 +714,7 @@ app.use('/api/garmin', garminRouter)
 app.use('/api/mail-agent', mailAgentRouter)
 // Planner brain-dump — public (planner is a separate app); takes free text, returns structured planner draft
 app.use('/api/planner', plannerBrainDumpRouter)
+app.use('/api/planner', plannerDelegationsRouter) // GET /delegations — action items from mail/Cliq
 app.use('/api/expenses', requireAuth, expensesRouter)
 app.use('/api/notifications', requireAuth, notificationsRouter)
 app.use('/api/crm-sync', requireAuth, crmSyncRouter)
