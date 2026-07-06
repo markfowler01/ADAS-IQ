@@ -562,9 +562,21 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
     // GitHub rejects all but one (the parent SHA they all fetched gets stale
     // the moment the first commit lands). Retry up to 4 times with random
     // jitter before failing.
+    // Cloudinary is the primary host (2026-07-06): the URL is live the moment
+    // upload returns. GitHub Pages builds are rate-limited and took 10+ min,
+    // so FB/IG fetched a 404 at publish time. GH commit stays as best-effort
+    // archive + fallback host.
+    let url = null
+    let lastErr = null
+    const { uploadImageToCloudinary, cloudinaryImageConfigured } = await import('./cloudinaryImage.js')
+    if (cloudinaryImageConfigured()) {
+      const up = await uploadImageToCloudinary({ buffer, publicId: `capture-${draftId}` })
+      if (up.ok) url = up.url
+      else lastErr = up.error
+    }
+
     const path = `capture-images/${draftId}.png`
     let r = null
-    let lastErr = null
     for (let attempt = 0; attempt < 4; attempt++) {
       r = await commitBinaryFile({
         path,
@@ -580,11 +592,11 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
       const jitter = Math.floor(Math.random() * 800)
       await new Promise(rs => setTimeout(rs, baseMs + jitter))
     }
-    if (!r?.ok) {
+    if (!url && r?.ok) url = `https://absoluteadas.com/${path}`
+    if (!url) {
       if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: lastErr, latency_ms: Date.now() - t0 })
       return { ok: false, error: lastErr }
     }
-    const url = `https://absoluteadas.com/${path}`
 
     // Success — increment counter + log
     let newBudget = null

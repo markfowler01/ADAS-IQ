@@ -1,7 +1,7 @@
 {
   "functions": {
     "source": "functions",
-    "targets": ["adasiq-api"]
+    "targets": ["adasiq-api", "absoluteadas-cron-runner"]
   },
   "client": {
     "source": "client/dist"

@@ -1,0 +1,11 @@
+{
+  "deployment": {
+    "name": "absoluteadas-cron-runner",
+    "stack": "node18",
+    "type": "basicio"
+  },
+  "execution": {
+    "main": "index.js",
+    "timeout": 540
+  }
+}

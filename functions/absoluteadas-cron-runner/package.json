@@ -1,0 +1,7 @@
+{
+  "name": "absoluteadas-cron-runner",
+  "version": "1.0.0",
+  "description": "Catalyst-native scheduler for Absolute ADAS marketing crons (fires the no-auth /debug/* endpoints; replaces the unreliable GitHub Actions cron)",
+  "main": "index.js",
+  "private": true
+}

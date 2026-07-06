@@ -15,7 +15,7 @@ import catalyst from 'zcatalyst-sdk-node'
 import { computeCaptureNumbers, generateCaptureReportPdf } from '../services/captureReportPdf.js'
 import { sendBroadcast } from '../services/brewResend.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
-import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
+import { syncNewsletterSubscriberToCrm, fetchLeadsPage } from '../services/zohoCrm.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
@@ -1540,13 +1540,17 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     }
     await cacheSet(segment, LOCK_KEY, { at: new Date().toISOString() })
 
-    // Idempotence — skip channels that already have a live draft for today.
+    // Idempotence — skip channels that already have a live EDUCATIONAL draft
+    // for today. Must exclude other pillars (van_field posts share the same
+    // channels — before 2026-07-06 they falsely blocked this drafter and no
+    // educational post went out after the van pillar launched).
     const existing = await listQueue(req, {})
+    const metaPtDay = iso => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }) } catch { return '' } }
     const todayLive = existing.filter(d => {
       if (!['facebook_page', 'instagram_business', 'linkedin_personal'].includes(d.channel)) return false
       if (!['approved', 'pending', 'published'].includes(d.status)) return false
-      const sched = (d.scheduled_for || '').slice(0, 10)
-      return sched === todayDateStr
+      if (d.category === 'van_field') return false
+      return metaPtDay(d.scheduled_for) === todayDateStr
     })
     const channelsAlreadyDone = new Set(todayLive.map(d => d.channel))
 
@@ -1813,10 +1817,21 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
           imageError = `sanity gate rejected image: ${sane.issues.join('; ')}`
           await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚨 Van image BLOCKED by sanity gate (${imageSource}):\n${sane.issues.join('\n')}`).catch(() => {})
         } else {
-          const path = `capture-images/van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}.jpg`
-          const c = await commitBinaryFile({ path, buffer: stamped, message: `Van post image ${todayDateStr}` })
-          if (c?.ok) imageUrl = `https://absoluteadas.com/${path}`
-          else imageError = c?.error || 'github commit failed'
+          // Cloudinary primary — URL is live instantly. GitHub Pages builds
+          // are rate-limited and took 10+ min on 2026-07-06, so platforms
+          // fetching the image at publish time were hitting 404s.
+          const { uploadImageToCloudinary, cloudinaryImageConfigured } = await import('../services/cloudinaryImage.js')
+          const slug = `van-${todayDateStr}-${dayName.toLowerCase()}-${Date.now().toString(36)}`
+          if (cloudinaryImageConfigured()) {
+            const up = await uploadImageToCloudinary({ buffer: stamped, publicId: slug })
+            if (up.ok) imageUrl = up.url
+            else imageError = up.error
+          }
+          // GH commit kept as archive; also the fallback host if Cloudinary failed.
+          const path = `capture-images/${slug}.jpg`
+          const c = await commitBinaryFile({ path, buffer: stamped, message: `Van post image ${todayDateStr}` }).catch(e => ({ ok: false, error: e.message }))
+          if (!imageUrl && c?.ok) imageUrl = `https://absoluteadas.com/${path}`
+          else if (!imageUrl) imageError = imageError || c?.error || 'hosting failed'
         }
       } catch (e) {
         imageError = `footer composite failed: ${e.message}`
@@ -2720,6 +2735,58 @@ captureCalcRouter.get('/debug/van-photos', async (req, res) => {
   }
 })
 
+// GitHub Actions health check — reports the marketing-crons workflow state
+// (active vs disabled) and its recent runs, so a silent scheduler morning is
+// diagnosable without the gh CLI.  GET /debug/gh-actions-status
+captureCalcRouter.get('/debug/gh-actions-status', async (req, res) => {
+  try {
+    const axios = (await import('axios')).default
+    const token = process.env.GITHUB_TOKEN || ''
+    if (!token) return res.json({ ok: false, error: 'GITHUB_TOKEN not set' })
+    const gh = (path) => axios.get(`https://api.github.com${path}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' },
+      timeout: 15000, validateStatus: s => s < 500,
+    })
+    const repoFull = 'markfowler01/ADAS-IQ'
+    const [wf, runs, repoInfo] = await Promise.all([
+      gh(`/repos/${repoFull}/actions/workflows/marketing-crons.yml`),
+      gh(`/repos/${repoFull}/actions/workflows/marketing-crons.yml/runs?per_page=10`),
+      gh(`/repos/${repoFull}`),
+    ])
+    res.json({
+      ok: true,
+      workflow_state: wf.data?.state ?? `HTTP ${wf.status}`,
+      workflow_path: wf.data?.path,
+      default_branch: repoInfo.data?.default_branch ?? `HTTP ${repoInfo.status}`,
+      recent_runs: (runs.data?.workflow_runs || []).map(r => ({
+        started: r.run_started_at, event: r.event, status: r.status,
+        conclusion: r.conclusion, branch: r.head_branch,
+      })),
+      runs_http: runs.status,
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Rehost an already-committed repo image on Cloudinary (instant URL) —
+// used when GitHub Pages is too slow to serve a freshly committed image.
+//   GET /debug/van-rehost?file=capture-images/x.jpg
+captureCalcRouter.get('/debug/van-rehost', async (req, res) => {
+  try {
+    const { fetchBinaryFile } = await import('../services/brewArchive.js')
+    const { uploadImageToCloudinary } = await import('../services/cloudinaryImage.js')
+    const file = String(req.query.file || '').trim()
+    if (!file) return res.status(400).json({ ok: false, error: 'file required' })
+    const f = await fetchBinaryFile({ path: file })
+    if (!f?.ok) return res.json({ ok: false, error: `repo fetch failed: ${f?.error}` })
+    const up = await uploadImageToCloudinary({ buffer: f.buffer, publicId: file.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80) })
+    res.json(up)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // Clear a day's cached van post content (used when a bad run poisons the
 // same-day reuse cache). GET /debug/van-clear-content?date=YYYY-MM-DD
 captureCalcRouter.get('/debug/van-clear-content', async (req, res) => {
@@ -2868,6 +2935,21 @@ captureCalcRouter.get('/debug/meta-slot-preview', async (req, res) => {
 })
 
 // TEMP DEBUG — read cron heartbeats. Each timestamp shows the most recent
+// Paginated dump of Zoho CRM Leads. Pull one page at a time so the loop can
+// walk the entire module without hitting the 30s HTTP gateway timeout.
+//   GET /api/capture-calc/debug/leads-page?secret=X&page=N&per_page=200
+captureCalcRouter.get('/debug/leads-page', requireCronSecretFlex, async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const perPage = Math.min(200, Math.max(1, Number(req.query.per_page) || 200))
+    const fields = req.query.fields ? String(req.query.fields) : undefined
+    const r = await fetchLeadsPage({ page, perPage, fields })
+    res.json(r)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
 // "attempt" (cron call reached the route) and "success" (handler completed).
 // Use to confirm whether a cron is reaching the function at all.
 captureCalcRouter.get('/debug/heartbeats', async (req, res) => {
