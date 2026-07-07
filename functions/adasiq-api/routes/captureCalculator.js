@@ -18,7 +18,7 @@ import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { syncNewsletterSubscriberToCrm, fetchLeadsPage, fetchContactsPage, fetchAccountsPage } from '../services/zohoCrm.js'
 import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadcast, sendVanBroadcast, deleteVanBroadcast, unsubscribeVanContact, signUnsubEmail, verifyUnsubSig, vanUnsubscribeUrl } from '../services/fromTheVan.js'
 import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER } from '../services/fromTheVanNurture.js'
-import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
+import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, unmarkCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
 import { renderWeeklyIssue } from '../services/vanWeeklyRender.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
@@ -2840,7 +2840,53 @@ captureCalcRouter.get('/debug/setup-crons', async (req, res) => {
       return res.json({ ok: true, results: out })
     }
 
-    res.json({ ok: false, error: 'pass ?list=1, ?create=1 or ?revive=1' })
+    // Live-fire test: create a cron that fires ~4 min from now at a harmless
+    // idempotent endpoint, so the daily-cron mechanism is proven TODAY instead
+    // of discovering a config problem at 6 AM tomorrow.
+    //   ?testfire=1  → create aa_test_fire (OneTime, now+4min; falls back to Calendar Daily)
+    //   ?teststatus=1 → success/failure counts for every aa_* cron
+    //   ?testclean=1 → delete aa_test_fire
+    if (req.query.testfire === '1' || req.query.testfire === 'calendar') {
+      const calendarMode = req.query.testfire === 'calendar'
+      const base = {
+        cron_name: calendarMode ? 'aa_test_fire2' : 'aa_test_fire',
+        description: 'TEMP live-fire test of Catalyst dynamic crons — safe to delete',
+        status: true,
+        cron_url_details: { url: `${SELF}/run-scheduler`, request_method: 'GET' },
+      }
+      if (calendarMode) {
+        // Exact same shape as the production 6:01 AM crons (Calendar Daily, PT)
+        const pt = new Date(new Date().toLocaleString('en-US', { timeZone: TZ }))
+        pt.setMinutes(pt.getMinutes() + 4)
+        const jd = { repetition_type: 'Daily', hour: pt.getHours(), minute: pt.getMinutes(), second: 0, timezone: TZ }
+        const r2 = await cronApi.createCron({ ...base, cron_type: 'Calendar', job_detail: jd })
+        return res.json({ ok: true, mode: 'CalendarDaily', id: r2?.id, fires_at_pt: `${jd.hour}:${String(jd.minute).padStart(2, '0')}` })
+      }
+      const fireAt = Date.now() + 4 * 60000
+      const r = await cronApi.createCron({ ...base, cron_type: 'OneTime', job_detail: { time_of_execution: String(fireAt), timezone: TZ } })
+      return res.json({ ok: true, mode: 'OneTime', id: r?.id, fires_at: new Date(fireAt).toISOString() })
+    }
+
+    if (req.query.teststatus === '1') {
+      const all = await cronApi.getAllCron()
+      const rows = (all || []).filter(c => String(c.cron_name || '').startsWith('aa_'))
+        .map(c => ({ name: c.cron_name, active: c.cron_status ?? c.status, success: c.success_count, failure: c.failure_count }))
+      return res.json({ ok: true, crons: rows })
+    }
+
+    if (req.query.testclean === '1') {
+      const all = await cronApi.getAllCron()
+      const out = []
+      for (const name of ['aa_test_fire', 'aa_test_fire2']) {
+        const t = (all || []).find(c => c.cron_name === name)
+        if (!t) { out.push({ name, deleted: false, note: 'not found' }); continue }
+        await cronApi.deleteCron(t.id)
+        out.push({ name, deleted: true, final_counts: { success: t.success_count, failure: t.failure_count } })
+      }
+      return res.json({ ok: true, results: out })
+    }
+
+    res.json({ ok: false, error: 'pass ?list=1, ?create=1, ?revive=1, ?testfire=1, ?teststatus=1 or ?testclean=1' })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message, stack: String(e.stack).split('\n').slice(0, 4) })
   }
@@ -3869,20 +3915,10 @@ async function handleVanKillPost(req, res) {
       await writeIssueState(seg, rolledBack)
     }
   } catch (e) { console.warn('[van weekly kill] state rollback failed:', e.message) }
-  // Un-mark the case note as used
+  // Un-mark the case note as used. Uses the helper so the chunked-storage
+  // write path stays consistent (direct segment writes would bust the meta).
   try {
-    const notes = await readCaseNotes(seg)
-    let mutated = false
-    for (let i = 0; i < notes.length; i++) {
-      if (notes[i].id === pending.case_note_id && notes[i].used_by_issue === pending.issue_number) {
-        notes[i] = { ...notes[i], used: false, used_at: null, used_by_issue: null }
-        mutated = true
-      }
-    }
-    if (mutated) {
-      try { await seg.update('van_case_notes', JSON.stringify(notes.slice(-500))) }
-      catch { await seg.put('van_case_notes', JSON.stringify(notes.slice(-500))) }
-    }
+    await unmarkCaseNoteUsed(seg, pending.case_note_id, pending.issue_number)
   } catch (e) { console.warn('[van weekly kill] case-note un-mark failed:', e.message) }
 
   await clearPendingDraft(seg)
