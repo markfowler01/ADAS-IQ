@@ -22,6 +22,19 @@ export const TECHNICIANS_CHANNEL = 'technicians'
 // Channel ID P6015142000000718001
 export const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
 
+// AA Jobs — shared job-flow channel. All job lifecycle events (requested,
+// needs-dispatch, dispatched, ready-invoice, invoice sent) fan into this
+// one channel instead of DMing Mark / Kat / Jayden individually. Match by
+// channel NAME so the ID isn't hardcoded to this specific Cliq workspace;
+// posts go through postToCliqChannel(AA_JOBS_CHANNEL, msg).
+// URL: https://cliq.zoho.com/company/883116359/channels/aajobs
+export const AA_JOBS_CHANNEL = 'aajobs'
+
+// Dispatch channel — requests (job + quote) fan into #dispatch in addition
+// to #aajobs so the dispatch conversation stays with the people running
+// the schedule, not buried in the shared jobs feed.
+export const DISPATCH_CHANNEL = 'dispatch'
+
 // Stub for a rich Cliq action-button. captureCalculator.js imports
 // `cliqUrlButton(label, url, style?)` and passes the return value into
 // message payloads that presumably support a `buttons` array. The real

@@ -184,7 +184,7 @@ const FALLBACK_EMAILS = {
  *   - to: tech name (for in-app filtering + tech email lookup)
  *   - toEmail: dispatcher's email (the logged-in user)
  */
-export async function createNotification(req, { to, toEmail, type, title, body, jobId, job, skipTechChannel = false }) {
+export async function createNotification(req, { to, toEmail, type, title, body, jobId, job, skipTechChannel = false, skipCliq = false }) {
   console.log(`[notifications] Creating notification for "${to}" — ${title}`)
   let all = []
   try {
@@ -227,6 +227,11 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
       }
     })(),
     (async () => {
+      // skipCliq lets callers use createNotification for the in-app inbox
+      // record without also firing a Cliq DM — used when the caller has
+      // already posted to a shared channel (e.g. #aajobs) and doesn't want
+      // to spam the recipient's DM on top of that.
+      if (skipCliq) return
       try {
         const vehicle = job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' ') || ''
         const shop = job?.shop_name || ''

@@ -4,6 +4,7 @@ import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { listAllEstimates, getEstimateLineItems, getAccessToken, updateEstimateShareLink, updateEstimateSalesperson } from '../services/zoho.js'
 import { createNotification } from './notifications.js'
+import { postToCliqChannel, AA_JOBS_CHANNEL, DISPATCH_CHANNEL } from '../services/cliq.js'
 import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from '../services/workdrive.js'
 import { appendHistory } from '../services/history.js'
 
@@ -183,24 +184,46 @@ async function deleteJob(req, rowId) {
 }
 
 // ─── Notification helpers ─────────────────────────────────────────────────────
+//
+// All job-flow Cliq notifications (requested / needs-dispatch / dispatched /
+// ready-invoice) fan into the shared #aajobs channel instead of DMing Mark,
+// Kat, or Jayden individually. One channel, everyone subscribed, no missed
+// DMs when someone is head-down on something else. Set on 2026-07-06 —
+// prior model was per-recipient DMs (see git history / CLAUDE.md).
+//
+// In-app + email notifications are NOT deleted — they still fire through
+// createNotification so the /notifications bell inbox stays populated.
 
-// "Needs Dispatch" — fires when a job lands in need_dispatch.
-// Goes to both dispatchers (Mark + Kat) and the #technicians channel (posted once).
+// "Needs Dispatch" — fires when a job lands in need_dispatch. Posts to
+// #aajobs channel + writes a bell inbox row. No more Mark/Kat DMs.
 async function notifyNeedsDispatch(req, job) {
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const roNum = job.quote_number || (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
-  const title = `New job to dispatch: ${job.shop_name || 'Unknown shop'}`
+  const shop = job.shop_name || 'Unknown shop'
+  const scheduled = job.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
+
+  const msg = [
+    `📋 *Needs Dispatch* · ${shop}`,
+    `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${scheduled}`,
+  ].join('\n')
+  await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+    .catch(e => console.warn('[aajobs needs_dispatch]', e.message))
+
+  // Silent bell-inbox row for Mark + Kat so the /notifications feed still shows
+  // it. skipCliq flag tells createNotification not to also post a duplicate Cliq
+  // DM/channel — Cliq is handled above via the channel post.
+  const title = `New job to dispatch: ${shop}`
   const body = `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}`
-  // Mark — also posts the message to #technicians
   await createNotification(req, {
     to: 'Mark', toEmail: 'mf@absoluteadas.com',
     type: 'needs_dispatch', title, body, jobId: job.id, job,
-  }).catch(e => console.warn('[notif needs_dispatch/Mark]', e.message))
-  // Kat — skip #technicians so the channel isn't double-posted
+    skipCliq: true, skipTechChannel: true,
+  }).catch(e => console.warn('[notif needs_dispatch/Mark inbox]', e.message))
   await createNotification(req, {
     to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
-    type: 'needs_dispatch', title, body, jobId: job.id, job, skipTechChannel: true,
-  }).catch(e => console.warn('[notif needs_dispatch/Kat]', e.message))
+    type: 'needs_dispatch', title, body, jobId: job.id, job,
+    skipCliq: true, skipTechChannel: true,
+  }).catch(e => console.warn('[notif needs_dispatch/Kat inbox]', e.message))
 }
 
 // When a job's technician is reassigned, push it to the linked Zoho estimate's
@@ -223,15 +246,29 @@ async function notifyJobDispatched(req, job) {
   const { isCashCustomer, CASH_MAX_OUT_OF_POCKET } = await import('../services/cashPricing.js')
   const isCash = isCashCustomer(job)
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const roNum = job.quote_number || (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+  const shop = job.shop_name || 'Unknown shop'
+  const scheduled = job.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
   const cashTag = isCash ? '💵 CASH · ' : ''
-  const cashBody = isCash ? `\n\n💵 CASH CUSTOMER — max $${CASH_MAX_OUT_OF_POCKET} out of pocket. Only static cals + SAS + SWS billed.` : ''
+
+  const msg = [
+    `🚐 *${cashTag}Dispatched to ${job.technician}* · ${shop}`,
+    `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${scheduled}`,
+    isCash ? `💵 CASH — max $${CASH_MAX_OUT_OF_POCKET} out of pocket. Only static cals + SAS + SWS billed.` : null,
+  ].filter(Boolean).join('\n')
+  await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+    .catch(e => console.warn('[aajobs job_dispatched]', e.message))
+
+  // Silent inbox row for the tech so the bell feed still shows it — no Cliq DM.
+  const cashBody = isCash ? `\n\n💵 CASH CUSTOMER — max $${CASH_MAX_OUT_OF_POCKET} out of pocket.` : ''
   await createNotification(req, {
     to: job.technician, toEmail: '',
     type: 'job_dispatched',
-    title: `${cashTag}Job dispatched to ${job.technician}: ${job.shop_name || 'New job'}`,
-    body: `${vehicle || 'Vehicle TBD'} — ${job.shop_name || 'Unknown shop'}${job.scheduled_date ? ' on ' + job.scheduled_date : ''}${cashBody}`,
+    title: `${cashTag}Job dispatched to ${job.technician}: ${shop}`,
+    body: `${vehicle || 'Vehicle TBD'} — ${shop}${job.scheduled_date ? ' on ' + job.scheduled_date : ''}${cashBody}`,
     jobId: job.id, job,
-  }).catch(e => console.warn('[notif job_dispatched]', e.message))
+    skipCliq: true, skipTechChannel: true,
+  }).catch(e => console.warn('[notif job_dispatched inbox]', e.message))
 }
 
 // Cash-customer reminder to Kat when a job hits ready_invoice. Fires
@@ -243,7 +280,6 @@ async function notifyJobDispatched(req, job) {
 async function notifyReadyToInvoiceCash(req, job) {
   const { isCashCustomer, summarizeCashPricing, CASH_MAX_OUT_OF_POCKET } = await import('../services/cashPricing.js')
   if (!isCashCustomer(job)) return
-  const { postToCliqUser } = await import('../services/cliq.js')
   let cals = []
   try {
     cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations || '[]') : (job.calibrations || [])
@@ -260,8 +296,8 @@ async function notifyReadyToInvoiceCash(req, job) {
     `💰 Max out-of-pocket: $${CASH_MAX_OUT_OF_POCKET}`,
     `📋 Auto-applied: ${summarizeCashPricing(cals)}`,
   ].join('\n')
-  try { await postToCliqUser('Kath', msg) }
-  catch (e) { console.warn('[notif ready_invoice cash]', e.message) }
+  try { await postToCliqChannel(AA_JOBS_CHANNEL, msg) }
+  catch (e) { console.warn('[aajobs ready_invoice cash]', e.message) }
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -293,18 +329,38 @@ router.post('/', async (req, res) => {
   try {
     const newJob = await insertJob(req, req.body)
 
-    // Notify Kat when this is a manual job request (via_request flag from JobRequestModal)
+    // Request from the Live Day "Request a Job" or "Request a Quote" form
+    // → post to #aajobs. request_type: 'quote' | 'job' distinguishes them
+    // in the header emoji + label so Kat can tell what's being asked at a
+    // glance (a quote wants a price back, a job wants scheduling).
+    // Also drops a silent bell-inbox row for Kat so /notifications still lists it.
     if (req.body.via_request) {
+      const isQuote = String(req.body.request_type || '').toLowerCase() === 'quote'
       const vehicle = newJob.vehicle || [newJob.year, newJob.make, newJob.model].filter(Boolean).join(' ')
+      const shop = newJob.shop_name || 'Unknown shop'
+      const reqBy = newJob.technician ? ` · 👤 Requested by ${newJob.technician}` : ''
+      const ro = newJob.quote_number ? ` · RO# ${newJob.quote_number}` : ''
+      const insurer = newJob.insurer ? ` · 🏦 ${newJob.insurer}` : (isQuote ? ' · 🏦 Cash' : '')
+      const notes = (newJob.notes || '').trim()
+      const notesLine = isQuote && notes ? `\n📝 ${notes.replace(/\n+/g, ' ')}` : ''
+      const header = isQuote ? '📝 *Quote Requested*' : '🆕 *Job Requested*'
+      const msg = [
+        `${header} · ${shop}`,
+        `${vehicle || 'Vehicle TBD'}${ro}${reqBy}${insurer}${notesLine}`,
+      ].join('\n')
+      await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+        .catch(e => console.warn(`[aajobs ${isQuote ? 'quote' : 'job'}_requested]`, e.message))
+      // Also fan to #dispatch so the schedulers see it in their working channel.
+      await postToCliqChannel(DISPATCH_CHANNEL, msg)
+        .catch(e => console.warn(`[dispatch ${isQuote ? 'quote' : 'job'}_requested]`, e.message))
       await createNotification(req, {
-        to: 'Kath',
-        toEmail: 'k.belmonte@absoluteadas.com',
+        to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
         type: 'job_requested',
-        title: `New job request: ${newJob.shop_name || 'Unknown shop'}`,
-        body: `${vehicle || 'Vehicle TBD'}${newJob.technician ? ' · Requested by ' + newJob.technician : ''}${newJob.quote_number ? ' · RO# ' + newJob.quote_number : ''}`,
-        jobId: newJob.id,
-        job: newJob,
-      }).catch(e => console.warn('[notifications job request]', e.message))
+        title: `${isQuote ? 'New quote request' : 'New job request'}: ${shop}`,
+        body: `${vehicle || 'Vehicle TBD'}${reqBy}${ro}`,
+        jobId: newJob.id, job: newJob,
+        skipCliq: true, skipTechChannel: true,
+      }).catch(e => console.warn('[notif job_requested inbox]', e.message))
     }
 
     // Notify dispatchers (Mark + Kat) + #technicians when a new job arrives at need_dispatch
@@ -373,15 +429,28 @@ router.put('/:id', async (req, res) => {
 
     // Notify Kat when a job moves to ready_invoice
     if (updated.status === 'ready_invoice' && prevStatus !== 'ready_invoice') {
-      await createNotification(req, {
-        to: 'Kath',
-        toEmail: 'k.belmonte@absoluteadas.com',
-        type: 'job_ready_invoice',
-        title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
-        body: '',
-        jobId: updated.id,
-        job: updated,
-      }).catch(e => console.warn('[notifications]', e.message))
+      await (async () => {
+        const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+        const roNum = updated.quote_number || (updated.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+        const shop = updated.shop_name || 'Job'
+        const insurer = updated.insurer || 'Customer Pay (CP)'
+        const tech = updated.technician ? ` · 👤 ${updated.technician}` : ''
+        const msg = [
+          `🟢 *Ready to Invoice* · ${shop}`,
+          `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
+          `🏦 ${insurer}`,
+        ].join('\n')
+        await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+          .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
+        await createNotification(req, {
+          to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
+          type: 'job_ready_invoice',
+          title: `Ready to invoice: ${shop}`,
+          body: '',
+          jobId: updated.id, job: updated,
+          skipCliq: true, skipTechChannel: true,
+        }).catch(e => console.warn('[notif job_ready_invoice inbox]', e.message))
+      })()
       // Extra "zero these" DM to Kat on cash jobs — no-op for insurance jobs.
       await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice PUT]', e.message))
     }
@@ -464,15 +533,28 @@ router.patch('/:id', async (req, res) => {
 
     // Notify Kat when a job moves to ready_invoice
     if (updated.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
-      await createNotification(req, {
-        to: 'Kath',
-        toEmail: 'k.belmonte@absoluteadas.com',
-        type: 'job_ready_invoice',
-        title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
-        body: '',
-        jobId: updated.id,
-        job: updated,
-      }).catch(e => console.warn('[notifications]', e.message))
+      await (async () => {
+        const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+        const roNum = updated.quote_number || (updated.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+        const shop = updated.shop_name || 'Job'
+        const insurer = updated.insurer || 'Customer Pay (CP)'
+        const tech = updated.technician ? ` · 👤 ${updated.technician}` : ''
+        const msg = [
+          `🟢 *Ready to Invoice* · ${shop}`,
+          `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
+          `🏦 ${insurer}`,
+        ].join('\n')
+        await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+          .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
+        await createNotification(req, {
+          to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
+          type: 'job_ready_invoice',
+          title: `Ready to invoice: ${shop}`,
+          body: '',
+          jobId: updated.id, job: updated,
+          skipCliq: true, skipTechChannel: true,
+        }).catch(e => console.warn('[notif job_ready_invoice inbox]', e.message))
+      })()
       await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice PATCH]', e.message))
     }
 

@@ -8,6 +8,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
+import JobRequestModal from '../components/JobRequestModal.jsx'
+import QuoteRequestModal from '../components/QuoteRequestModal.jsx'
 
 const ORANGE = '#CD4419'
 const TECH_COLOR = { Mark: '#CD4419', Jayden: '#1F8B8B' }
@@ -380,6 +382,8 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [insertJob, setInsertJob] = useState(null)
   const [suggestions, setSuggestions] = useState(null)
   const [toast, setToast] = useState('')
+  const [jobRequestOpen,   setJobRequestOpen]   = useState(false)
+  const [quoteRequestOpen, setQuoteRequestOpen] = useState(false)
   const refreshTimerRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -424,6 +428,72 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     } catch (e) {
       showToast(`Suggestions failed: ${e.message}`)
     }
+  }
+
+  // Live Day "Request a Job" — posts to /api/jobs with via_request:true so
+  // the backend routes it to #aajobs and drops it into Kat's inbox.
+  async function handleJobRequest(formData) {
+    const notes = [
+      formData.ro_number ? `RO# ${formData.ro_number}` : '',
+      formData.notes || '',
+    ].filter(Boolean).join('\n')
+    const payload = {
+      shop_name:    formData.shop_name    || '',
+      year:         formData.year         || '',
+      make:         formData.make         || '',
+      model:        formData.model        || '',
+      vehicle:      [formData.year, formData.make, formData.model].filter(Boolean).join(' '),
+      vin:          formData.vin          || formData.last_four_vin || '',
+      technician:   formData.technician   || '',
+      notes,
+      quote_number: formData.ro_number    || '',
+      status:       'job_requested',
+      calibrations: '[]',
+      via_request:  true,
+      request_type: 'job',
+    }
+    const res = await apiFetch(`${API_BASE}/api/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Failed to create job request')
+    }
+    showToast('✅ Job requested — Kat has been notified in #aajobs')
+    await load()
+  }
+
+  // Live Day "Request a Quote" — same endpoint, different tag. Backend
+  // uses request_type:'quote' to prefix the Cliq post with 📝 Quote
+  // Requested so it's clear the ask is for a price, not to schedule.
+  async function handleQuoteRequest(formData) {
+    const payload = {
+      shop_name:    formData.shop_name    || '',
+      year:         formData.year         || '',
+      make:         formData.make         || '',
+      model:        formData.model        || '',
+      vehicle:      [formData.year, formData.make, formData.model].filter(Boolean).join(' '),
+      vin:          formData.vin          || '',
+      insurer:      formData.insurer      || '',
+      notes:        formData.notes        || '',
+      status:       'job_requested',
+      calibrations: '[]',
+      via_request:  true,
+      request_type: 'quote',
+    }
+    const res = await apiFetch(`${API_BASE}/api/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      throw new Error(d.error || 'Failed to submit quote request')
+    }
+    showToast('✅ Quote request sent — Kat will draft from #aajobs')
+    await load()
   }
 
   async function handleAssign(jobId, tech) {
@@ -515,6 +585,26 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           </div>
         )}
 
+        {/* Request buttons — Live Day companions for a tech in the field.
+            Both submit to #aajobs; Kat picks up either from Cliq. Stacked
+            on mobile, side-by-side on tablet+. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+          <button
+            onClick={() => setJobRequestOpen(true)}
+            className="text-sm font-bold rounded-2xl px-4 py-3 text-white"
+            style={{ backgroundColor: ORANGE }}
+          >
+            📥 Request a Job
+          </button>
+          <button
+            onClick={() => setQuoteRequestOpen(true)}
+            className="text-sm font-bold rounded-2xl px-4 py-3"
+            style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px solid ${ORANGE}` }}
+          >
+            📝 Request a Quote
+          </button>
+        </div>
+
         {/* Tech cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {(data?.techs || []).map(t => <TechCard key={t.name} tech={t} viewerRole={data?.viewer_role} />)}
@@ -567,6 +657,20 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           suggestions={suggestions}
           onAssign={handleAssign}
           onClose={() => { setInsertJob(null); setSuggestions(null) }}
+        />
+      )}
+
+      {jobRequestOpen && (
+        <JobRequestModal
+          onClose={() => setJobRequestOpen(false)}
+          onSubmit={handleJobRequest}
+        />
+      )}
+
+      {quoteRequestOpen && (
+        <QuoteRequestModal
+          onClose={() => setQuoteRequestOpen(false)}
+          onSubmit={handleQuoteRequest}
         />
       )}
 
