@@ -15,7 +15,11 @@ import catalyst from 'zcatalyst-sdk-node'
 import { computeCaptureNumbers, generateCaptureReportPdf } from '../services/captureReportPdf.js'
 import { sendBroadcast } from '../services/brewResend.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
-import { syncNewsletterSubscriberToCrm, fetchLeadsPage } from '../services/zohoCrm.js'
+import { syncNewsletterSubscriberToCrm, fetchLeadsPage, fetchContactsPage, fetchAccountsPage } from '../services/zohoCrm.js'
+import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadcast, sendVanBroadcast, deleteVanBroadcast, unsubscribeVanContact, signUnsubEmail, verifyUnsubSig, vanUnsubscribeUrl } from '../services/fromTheVan.js'
+import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER } from '../services/fromTheVanNurture.js'
+import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
+import { renderWeeklyIssue } from '../services/vanWeeklyRender.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
@@ -35,6 +39,7 @@ import { enqueueDraft, listQueue, getDraft, updateDraft, verifySignedAction, for
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID, cliqUrlButton } from '../services/cliq.js'
 import { heartbeatAttempt, stampSuccess, readAllHeartbeats, reportCronFailure } from '../services/cronHeartbeat.js'
 import axios from 'axios'
+import crypto from 'crypto'
 
 export const captureCalcRouter = express.Router()
 
@@ -2499,7 +2504,27 @@ captureCalcRouter.all('/debug/draft-meta-week',     (req, res) => debugForward(r
 captureCalcRouter.all('/debug/draft-meta-day',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['draft-meta-day']))
 captureCalcRouter.all('/debug/draft-linkedin-week', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['draft-linkedin-week']))
 captureCalcRouter.all('/debug/nurture-run',         (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['nurture-run']))
-captureCalcRouter.all('/debug/cron-monitor-run',    (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['cron-monitor-run']))
+captureCalcRouter.all('/debug/cron-monitor-run',    async (req, res) => {
+  // Self-healing (2026-07-07): the aa_* marketing crons live inside Catalyst;
+  // the long drafters 408 at the 30s gateway, which Catalyst counts as
+  // failures and auto-disables after 20 in a row. This hook runs hourly via
+  // aa_hourly_monitor and flips any disabled aa_* cron back on — fully
+  // Catalyst-native, no GitHub dependency. Best-effort: never blocks the scan.
+  try {
+    const catalystMod = (await import('zcatalyst-sdk-node')).default
+    const cronApi = catalystMod.initialize(req).cron()
+    const all = await cronApi.getAllCron()
+    for (const c of (all || [])) {
+      const disabled = c.status === false || c.cron_status === false
+      if (String(c.cron_name || '').startsWith('aa_') && disabled) {
+        await cronApi.updateCron({ ...c, status: true, cron_status: true }).catch(e =>
+          console.warn(`[cron-revive] ${c.cron_name} failed: ${e.message}`))
+        console.warn(`[cron-revive] re-enabled ${c.cron_name}`)
+      }
+    }
+  } catch (e) { console.warn('[cron-revive] skipped:', e.message) }
+  return debugForward(req, res, DEBUG_FORWARD_WHITELIST['cron-monitor-run'])
+})
 captureCalcRouter.all('/debug/holiday-poster-run',  (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['holiday-poster-run']))
 captureCalcRouter.all('/debug/engagement-run',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['engagement-run']))
 captureCalcRouter.all('/debug/li-comments-check',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-comments-check']))
@@ -2735,6 +2760,118 @@ captureCalcRouter.get('/debug/van-photos', async (req, res) => {
   }
 })
 
+// Catalyst dynamic-cron setup — creates the marketing cron schedule inside
+// Catalyst itself via the SDK (old Cloud Scale cron component; the newer Job
+// Scheduling service needs a console-created job pool, defeating the point).
+// These are URL-type crons hitting the no-auth /debug/* forwarders.
+//   GET /debug/setup-crons?list=1   → dump existing crons (learn/verify)
+//   GET /debug/setup-crons?create=1 → create the marketing crons (skips existing)
+//   GET /debug/setup-crons?revive=1 → re-enable any disabled aa_* cron
+//     (long drafters 408 at the 30s gateway; if Catalyst ever racks up 20
+//      consecutive "failures" and auto-disables, this flips them back on)
+captureCalcRouter.get('/debug/setup-crons', async (req, res) => {
+  try {
+    const catalystMod = (await import('zcatalyst-sdk-node')).default
+    const cronApi = catalystMod.initialize(req).cron()
+    const TZ = 'America/Los_Angeles'
+    const SELF = 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug'
+
+    if (req.query.list === '1') {
+      const all = await cronApi.getAllCron()
+      return res.json({ ok: true, count: all?.length, crons: all })
+    }
+
+    if (req.query.revive === '1') {
+      const all = await cronApi.getAllCron()
+      const revived = []
+      for (const c of (all || [])) {
+        const disabled = c.status === false || c.cron_status === false
+        if (String(c.cron_name || '').startsWith('aa_') && disabled) {
+          try {
+            await cronApi.updateCron({ ...c, status: true, cron_status: true })
+            revived.push(c.cron_name)
+          } catch (e) {
+            revived.push(`${c.cron_name}: FAILED ${e.message}`)
+          }
+        }
+      }
+      return res.json({ ok: true, revived })
+    }
+
+    if (req.query.create === '1') {
+      const WANT = [
+        { cron_name: 'aa_hourly_publisher', path: 'run-scheduler',   type: 'periodic', intervalHours: 1 },
+        { cron_name: 'aa_hourly_nurture',   path: 'nurture-run',     type: 'periodic', intervalHours: 1 },
+        { cron_name: 'aa_hourly_monitor',   path: 'cron-monitor-run', type: 'periodic', intervalHours: 1 },
+        { cron_name: 'aa_van_post',         path: 'van-draft-day',   type: 'daily', hour: 6, minute: 1 },
+        { cron_name: 'aa_daily_drafters',   path: 'draft-meta-day',  type: 'daily', hour: 6, minute: 13 },
+        { cron_name: 'aa_daily_tasks',      path: 'engagement-run',  type: 'daily', hour: 6, minute: 23 },
+        { cron_name: 'aa_holiday_poster',   path: 'holiday-poster-run', type: 'daily', hour: 6, minute: 27 },
+        { cron_name: 'aa_li_comments',      path: 'li-comments-check', type: 'daily', hour: 8, minute: 15 },
+        { cron_name: 'aa_weekly_report',    path: 'weekly-run',      type: 'weekly', hour: 7, minute: 17, weekDay: 6 }, // Catalyst week_day: 1=Sun … 6=Fri
+      ]
+      const existing = await cronApi.getAllCron().catch(() => [])
+      const existingNames = new Set((existing || []).map(c => c.cron_name))
+      const out = []
+      for (const w of WANT) {
+        if (existingNames.has(w.cron_name)) { out.push({ cron: w.cron_name, skipped: 'exists' }); continue }
+        const base = {
+          cron_name: w.cron_name,
+          description: `Absolute ADAS marketing: ${w.path} (created programmatically 2026-07-07)`,
+          status: true,
+          cron_url_details: { url: `${SELF}/${w.path}`, request_method: 'GET' },
+        }
+        let payload
+        if (w.type === 'periodic') {
+          payload = { ...base, cron_type: 'Periodic', job_detail: { hour: w.intervalHours, minute: 0, second: 0, repetition_type: 'every' } }
+        } else if (w.type === 'weekly') {
+          // NB: server wants "Calendar"/"Weekly" — the SDK enum's "Calender" is rejected
+          payload = { ...base, cron_type: 'Calendar', job_detail: { repetition_type: 'Weekly', hour: w.hour, minute: w.minute, second: 0, week_day: [w.weekDay], timezone: TZ } }
+        } else {
+          payload = { ...base, cron_type: 'Calendar', job_detail: { repetition_type: 'Daily', hour: w.hour, minute: w.minute, second: 0, timezone: TZ } }
+        }
+        try {
+          const r = await cronApi.createCron(payload)
+          out.push({ cron: w.cron_name, ok: true, id: r?.id })
+        } catch (e) {
+          out.push({ cron: w.cron_name, ok: false, error: String(e.message).slice(0, 300) })
+        }
+      }
+      return res.json({ ok: true, results: out })
+    }
+
+    res.json({ ok: false, error: 'pass ?list=1, ?create=1 or ?revive=1' })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, stack: String(e.stack).split('\n').slice(0, 4) })
+  }
+})
+
+// Catalyst admin API explorer — lists this project's cron jobs and functions
+// using the admin cred token the gateway injects into every request. Used to
+// learn the exact payload shape before creating crons programmatically.
+//   GET /debug/catalyst-crons
+captureCalcRouter.get('/debug/catalyst-crons', async (req, res) => {
+  try {
+    const axios = (await import('axios')).default
+    const token = req.headers['x-zc-admin-cred-token'] || ''
+    const projectId = req.headers['x-zc-projectid'] || process.env.CATALYST_PROJECT_ID || ''
+    if (!token || !projectId) return res.json({ ok: false, error: 'no admin cred token / project id on request', have_token: !!token, have_project: !!projectId })
+    const hdr = { Authorization: `Catalyst-Cred-Token ${token}` }
+    const get = (path) => axios.get(`https://api.catalyst.zoho.com${path}`, { headers: hdr, timeout: 15000, validateStatus: s => s < 500 })
+    const [crons, fns] = await Promise.all([
+      get(`/baas/v1/project/${projectId}/cron`),
+      get(`/baas/v1/project/${projectId}/function`),
+    ])
+    res.json({
+      ok: true,
+      crons: { http: crons.status, data: crons.data },
+      functions: { http: fns.status, data: (Array.isArray(fns.data?.data) ? fns.data.data : fns.data)?.map?.(f => ({ id: f.id, name: f.function_name || f.name, type: f.type })) ?? fns.data },
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // GitHub Actions health check — reports the marketing-crons workflow state
 // (active vs disabled) and its recent runs, so a silent scheduler morning is
 // diagnosable without the gh CLI.  GET /debug/gh-actions-status
@@ -2935,6 +3072,1133 @@ captureCalcRouter.get('/debug/meta-slot-preview', async (req, res) => {
 })
 
 // TEMP DEBUG — read cron heartbeats. Each timestamp shows the most recent
+// ─── From the Van Magic Lantern (7-day partnership pitch nurture) ───────────
+//
+// Enrollment records live in Catalyst Cache under `van_nurture_enrollments`
+// as an array of { email, name?, shop?, enrolled_at, nurture_sent[] }.
+// The cron reads all enrollments daily, computes each one's current day,
+// and sends the corresponding email (once per day per subscriber).
+//
+// NOTE: with only enrollment tracking in cache, we're back to the "cache
+// can expire" risk. Keeping it simple for now — if we see attrition, migrate
+// to Datastore like we did with the marketing queue.
+
+const VAN_NURTURE_KEY = 'van_nurture_enrollments'
+const VAN_CHUNK_SIZE = 50  // very conservative — 50×200B = 10KB per chunk, ~30 chunks for 1,410 records
+
+async function readVanEnrollments(req) {
+  const seg = getSegment(req)
+  const meta = await cacheGet(seg, VAN_NURTURE_KEY, null)
+  if (!meta || !meta.chunks) return []
+  const all = []
+  for (let i = 0; i < meta.chunks; i++) {
+    const chunk = await cacheGet(seg, `${VAN_NURTURE_KEY}_${i}`, [])
+    if (Array.isArray(chunk)) all.push(...chunk)
+  }
+  return all
+}
+async function writeVanEnrollments(req, list) {
+  const seg = getSegment(req)
+  const chunks = Math.max(1, Math.ceil(list.length / VAN_CHUNK_SIZE))
+  for (let i = 0; i < chunks; i++) {
+    const chunk = list.slice(i * VAN_CHUNK_SIZE, (i + 1) * VAN_CHUNK_SIZE)
+    const bytes = JSON.stringify(chunk).length
+    try {
+      await cacheSet(seg, `${VAN_NURTURE_KEY}_${i}`, chunk)
+    } catch (e) {
+      throw new Error(`chunk ${i} (${chunk.length} records, ${bytes} bytes) failed: ${e.message}`)
+    }
+  }
+  await cacheSet(seg, VAN_NURTURE_KEY, {
+    chunks, total: list.length, updated_at: new Date().toISOString(),
+  })
+}
+
+async function enrollVanSubscriber(req, { email, name, shop, cohort }) {
+  const clean = String(email || '').trim().toLowerCase()
+  if (!clean || !/^\S+@\S+\.\S+$/.test(clean)) return { ok: false, error: 'valid email required' }
+  const list = await readVanEnrollments(req)
+  const existing = list.find(e => e.email === clean)
+  if (existing) return { ok: true, duplicate: true, enrolled_at: existing.enrolled_at }
+  const entry = {
+    email: clean,
+    // Trim aggressively — storage-only fields, personalization uses just first name
+    name: String(name || '').slice(0, 40),
+    enrolled_at: new Date().toISOString(),
+    nurture_sent: [],
+    // 'signup' → future contacts Mark just met in person, gets Day-1 signup variant
+    // 'backfill' → seeded from an existing warm list (default), gets Day-1 backfill variant
+    cohort: cohort === 'signup' ? 'signup' : 'backfill',
+  }
+  list.push(entry)
+  await writeVanEnrollments(req, list.slice(-10000))
+  return { ok: true, duplicate: false, enrolled_at: entry.enrolled_at }
+}
+
+// ─── From the Van newsletter — subscribe + admin ────────────────────────────
+//
+// Public signup endpoint. Called from absoluteadas.com/van (Mark uses it on
+// his phone after shop visits; shop owners can also self-signup). Adds to
+// the Resend "From the Van" Audience, notifies Mark in Cliq.
+//   POST /api/capture-calc/from-the-van/subscribe
+//   Body: { email, name?, shop?, phone?, notes?, source? }
+captureCalcRouter.post('/from-the-van/subscribe', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim()
+    if (rateLimited(ip)) {
+      return res.status(429).json({ ok: false, error: 'Too many requests. Try again in an hour.' })
+    }
+    const email = String(req.body?.email || '').trim().toLowerCase().slice(0, 180)
+    const name = String(req.body?.name || '').trim().slice(0, 100)
+    const shop = String(req.body?.shop || '').trim().slice(0, 120)
+    const phone = String(req.body?.phone || '').trim().slice(0, 30)
+    const notes = String(req.body?.notes || '').trim().slice(0, 500)
+    const source = String(req.body?.source || 'van-visit').trim().slice(0, 30)
+    // Honeypot
+    if (req.body?.website) return res.json({ ok: true, message: 'ok' })
+
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+      return res.status(400).json({ ok: false, error: 'Valid email required' })
+    }
+
+    const [firstName, ...rest] = name.split(/\s+/).filter(Boolean)
+    const lastName = rest.join(' ') || undefined
+
+    const r = await addVanSubscriber({ email, firstName, lastName })
+    if (!r.ok) return res.status(500).json({ ok: false, error: r.error })
+
+    // Cliq DM Mark — a real subscription is a mini-milestone.
+    const cliqMsg = [
+      r.duplicate ? '📬 FROM THE VAN — duplicate (already subscribed)' : '🚐 NEW FROM THE VAN SUBSCRIBER',
+      '',
+      `Email: ${email}`,
+      name ? `Name: ${name}` : '',
+      shop ? `Shop: ${shop}` : '',
+      phone ? `Phone: ${phone}` : '',
+      notes ? `Notes: ${notes}` : '',
+      `Source: ${source}`,
+    ].filter(Boolean).join('\n').slice(0, 2000)
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e => console.warn('[from-the-van cliq]', e.message))
+
+    // Also mirror to Zoho CRM so the shop shows up in Contacts with the tag.
+    syncNewsletterSubscriberToCrm({ email, name, shop, source: `from-the-van-${source}` })
+      .catch(e => console.warn('[from-the-van crm]', e.message))
+
+    // Auto-enroll in the 7-day Magic Lantern (Partnership Discount pitch).
+    // Day 1 fires the next time capture_van_nurture cron runs.
+    // cohort='signup' → warm handoff Day 1 ("thanks for the minute at your shop today").
+    await enrollVanSubscriber(req, { email, name, shop, cohort: 'signup' })
+      .catch(e => console.warn('[van nurture enroll]', e.message))
+
+    res.json({ ok: true, message: r.duplicate ? 'Already subscribed.' : 'Subscribed.', duplicate: !!r.duplicate })
+  } catch (e) {
+    console.error('[from-the-van subscribe]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: create a Resend Broadcast against the From the Van audience.
+// Created as a DRAFT (no scheduled_at) — Mark previews in Resend dashboard,
+// then either schedules or sends via /from-the-van/send-broadcast.
+//   POST /api/capture-calc/from-the-van/create-broadcast (cron-secret)
+//   Body: { subject, html, text?, preview_text?, from?, reply_to?, name? }
+captureCalcRouter.post('/from-the-van/create-broadcast', requireCronSecretFlex, express.json({ limit: '4mb' }), async (req, res) => {
+  try {
+    const { subject, html, text, preview_text, from, reply_to, name } = req.body || {}
+    const r = await createVanBroadcast({ subject, html, text, previewText: preview_text, from, replyTo: reply_to, name })
+    if (!r.ok) return res.status(500).json(r)
+    res.json(r)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: send or schedule an existing draft Broadcast.
+//   POST /api/capture-calc/from-the-van/send-broadcast (cron-secret)
+//   Body: { id, scheduled_at? } — omit scheduled_at to send NOW
+captureCalcRouter.post('/from-the-van/send-broadcast', requireCronSecretFlex, express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const id = String(req.body?.id || '').trim()
+    const scheduledAt = req.body?.scheduled_at ? String(req.body.scheduled_at) : undefined
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' })
+    const r = await sendVanBroadcast(id, scheduledAt)
+    if (!r.ok) return res.status(500).json(r)
+    res.json(r)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Render any one day of the Magic Lantern for review. Used to proofread the
+// sequence before enabling it live. Optional ?name=X substitutes a first
+// name into the personalization slots.
+//   GET /api/capture-calc/from-the-van/nurture/preview?day=N&name=Mark&cohort=backfill|signup&as=email
+// Day 1 has two variants; cohort picks which one. Defaults to backfill (matches
+// the 1,410 currently enrolled records that predate the cohort field).
+// `as` sets the email the unsubscribe URL is signed for (default: preview@).
+captureCalcRouter.get('/from-the-van/nurture/preview', requireCronSecretFlex, async (req, res) => {
+  try {
+    const day = Number(req.query.day) || 1
+    const name = String(req.query.name || 'Mark')
+    const cohort = String(req.query.cohort || 'backfill') === 'signup' ? 'signup' : 'backfill'
+    const asEmail = String(req.query.as || 'preview@absoluteadas.com').trim().toLowerCase()
+    const fakeSub = { email: asEmail, name, cohort, enrolled_at: new Date().toISOString(), nurture_sent: [] }
+    const built = buildVanNurtureEmail(fakeSub, day)
+    if (!built) return res.status(400).json({ ok: false, error: `unknown day: ${day}` })
+    // Substitute unsubscribe placeholder with a real signed URL so Mark can
+    // click through and verify the whole flow works.
+    let unsubUrl
+    try { unsubUrl = vanUnsubscribeUrl(asEmail) } catch { unsubUrl = 'https://absoluteadas.com/#unsub-secret-missing' }
+    const html = String(built.html || '').split(VAN_UNSUB_PLACEHOLDER).join(unsubUrl)
+    const text = String(built.text || '')
+    res.json({ ok: true, day, cohort, unsubUrl, subject: built.subject, preview: built.preview, html, text })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Bulk-enroll every current audience member into the Magic Lantern. Used
+// once to seed the 1,410 existing subs. Idempotent — already-enrolled emails
+// return duplicate:true and are not re-added.
+//   POST /api/capture-calc/from-the-van/backfill-nurture (cron-secret)
+captureCalcRouter.post('/from-the-van/backfill-nurture', requireCronSecretFlex, async (req, res) => {
+  try {
+    const audience = await listVanSubscribers()
+    const contacts = audience.contacts || []
+    const out = { total_in_audience: contacts.length, enrolled: 0, duplicates: 0, invalid: 0 }
+
+    // Read the current list ONCE, batch every new record in memory, write ONCE.
+    // Avoids 1,410 individual read-modify-write cycles hitting Catalyst limits.
+    const list = await readVanEnrollments(req)
+    const existingEmails = new Set(list.map(e => e.email))
+    const nowIso = new Date().toISOString()
+
+    for (const c of contacts) {
+      const email = String(c.email || '').trim().toLowerCase()
+      if (!email || !/^\S+@\S+\.\S+$/.test(email)) { out.invalid++; continue }
+      if (existingEmails.has(email)) { out.duplicates++; continue }
+      const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim().slice(0, 40)
+      list.push({ email, name, enrolled_at: nowIso, nurture_sent: [], cohort: 'backfill' })
+      existingEmails.add(email)
+      out.enrolled++
+    }
+
+    if (out.enrolled > 0) await writeVanEnrollments(req, list)
+    res.json({ ok: true, ...out, total_enrolled_now: list.length })
+  } catch (e) {
+    console.error('[van backfill]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Cron handler: send each subscriber their day-N Magic Lantern email.
+// Runs once daily. Fires the next email in each sub's sequence based on
+// enrolled_at + days_since. Skips days already sent (nurture_sent tracks).
+//   POST /api/capture-calc/from-the-van/nurture/run (cron-secret)
+//   ?dry=1 to log what would send without actually sending
+captureCalcRouter.all('/from-the-van/nurture/run', heartbeatAttempt('capture_van_nurture'), requireCronSecretFlex, async (req, res) => {
+  const dry = req.query.dry === '1' || req.query.dry === 'true'
+  const out = []
+  try {
+    // KILL SWITCH — cache-backed with env var fallback. Flip via
+    // POST /from-the-van/flags {name:'nurture', value:true} when ready.
+    // Dry runs bypass the switch so previewing is always safe.
+    const seg0 = getSegment(req)
+    const nurtureOn = await isVanFlagEnabled(seg0, 'nurture')
+    if (!dry && !nurtureOn) {
+      return res.json({
+        ok: true,
+        paused: true,
+        reason: 'van_flag_nurture not set to true (and VAN_NURTURE_ENABLED env var not "true" either) — no emails will send. Flip via POST /from-the-van/flags {name:"nurture", value:true} when ready.',
+      })
+    }
+    const list = await readVanEnrollments(req)
+    let mutated = false
+
+    for (let i = 0; i < list.length; i++) {
+      const sub = list[i]
+      // Skip anyone who already opted out — belt AND suspenders (Resend also
+      // enforces this via the audience unsubscribed flag on Broadcasts, but
+      // this loop bypasses Broadcasts entirely).
+      if (sub.unsubscribed_at) continue
+
+      const day = vanNurtureDayFor(sub)
+      if (day < 1 || day > 7) continue
+      const sent = Array.isArray(sub.nurture_sent) ? sub.nurture_sent : []
+      if (sent.includes(day)) continue
+
+      const built = buildVanNurtureEmail(sub, day)
+      if (!built) continue
+
+      // Substitute the unsubscribe placeholder with a per-recipient signed URL.
+      // Without this, footer links go to `__VAN_UNSUB_URL__` literal string.
+      let unsubUrl
+      try { unsubUrl = vanUnsubscribeUrl(sub.email) } catch (e) {
+        console.error('[van nurture] cannot sign unsub URL — VAN_UNSUB_SECRET / BREW_CRON_SECRET missing:', e.message)
+        out.push({ email: sub.email, day, error: 'unsub-sign-failed' })
+        continue
+      }
+      const html = String(built.html).split(VAN_UNSUB_PLACEHOLDER).join(unsubUrl)
+      const text = String(built.text || '')
+
+      if (dry) {
+        out.push({ email: sub.email, day, subject: built.subject, unsubUrl, dry: true })
+        continue
+      }
+
+      const r = await sendBroadcast({
+        recipients: [sub.email],
+        subject: built.subject,
+        html,
+        text,
+        // brew@ has proven Gmail deliverability; mark@ was landing in
+        // Promotions or getting silently dropped during preview testing.
+        fromEmail: 'brew@absoluteadas.com',
+        fromName: 'Mark @ Absolute ADAS',
+        replyTo: 'mark@absoluteadas.com',
+        // Gmail one-click unsubscribe — the header URL must match the footer
+        // for CAN-SPAM compliance. Both point at our signed endpoint.
+        headersForRecipient: () => ({
+          'List-Unsubscribe': `<${unsubUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        }),
+      })
+      const ok = r.status === 'sent' || r.status === 'partial'
+      if (ok) {
+        list[i] = { ...sub, nurture_sent: [...sent, day] }
+        mutated = true
+      }
+      out.push({ email: sub.email, day, subject: built.subject, ok, status: r.status })
+    }
+
+    if (mutated) await writeVanEnrollments(req, list)
+    await stampSuccess(req, 'capture_van_nurture', { processed: out.length, dry })
+    res.json({ ok: true, dry, processed: out.length, results: out })
+  } catch (e) {
+    console.error('[van nurture]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, partial: out })
+  }
+})
+
+// Public unsubscribe endpoint. Accepts both GET (email footer click) and POST
+// (Gmail one-click via List-Unsubscribe-Post header). URL-signed with an HMAC
+// so recipients can only unsub themselves.
+//   GET  /api/capture-calc/from-the-van/unsubscribe?e=email&s=sig
+//   POST /api/capture-calc/from-the-van/unsubscribe?e=email&s=sig
+async function handleVanUnsubscribe(req, res) {
+  const email = String(req.query.e || '').trim().toLowerCase()
+  const sig = String(req.query.s || '').trim()
+  if (!email || !sig || !verifyUnsubSig(email, sig)) {
+    return res.status(400).send(renderUnsubPage({
+      ok: false,
+      title: 'Unsubscribe link expired or invalid',
+      message: 'That link doesn\'t match. Reply to any email from Mark with "unsub" and he\'ll take you off the list personally.',
+    }))
+  }
+  try {
+    // 1) Remove from Resend audience so future weekly Broadcasts skip them
+    const resendResult = await unsubscribeVanContact(email).catch(e => ({ ok: false, error: e.message }))
+    // 2) Mark unsubscribed_at in local enrollment so the Magic Lantern cron skips them
+    let localMarked = false
+    try {
+      const list = await readVanEnrollments(req)
+      let mutated = false
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].email === email && !list[i].unsubscribed_at) {
+          list[i] = { ...list[i], unsubscribed_at: new Date().toISOString() }
+          mutated = true
+          localMarked = true
+        }
+      }
+      if (mutated) await writeVanEnrollments(req, list)
+    } catch (e) {
+      console.warn('[van unsubscribe local]', e.message)
+    }
+    // Ping Mark so he sees who dropped
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+      `📤 FROM THE VAN — unsubscribe\n\nEmail: ${email}\nResend: ${resendResult.ok ? 'ok' : 'err — ' + resendResult.error}\nLocal enrollment: ${localMarked ? 'marked' : 'not found'}`
+    ).catch(() => {})
+
+    // For POST (Gmail one-click) just return 200. For GET show the confirmation page.
+    if (req.method === 'POST') return res.status(200).send('unsubscribed')
+    return res.status(200).send(renderUnsubPage({
+      ok: true,
+      title: "You're unsubscribed",
+      message: 'You won\'t get any more emails from the From the Van list. Thanks for the time you gave it.',
+    }))
+  } catch (e) {
+    console.error('[van unsubscribe]', e.message, e.stack)
+    return res.status(500).send(renderUnsubPage({
+      ok: false,
+      title: 'Something went wrong on our end',
+      message: 'Reply to any email from Mark with "unsub" and he\'ll take you off manually.',
+    }))
+  }
+}
+captureCalcRouter.get('/from-the-van/unsubscribe', handleVanUnsubscribe)
+captureCalcRouter.post('/from-the-van/unsubscribe', handleVanUnsubscribe)
+
+// Minimal branded confirmation page. Rendered by the unsubscribe endpoint.
+function renderUnsubPage({ ok, title, message }) {
+  const accent = ok ? '#CD4419' : '#8B0000'
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title}</title>
+<style>
+body{margin:0;padding:0;background:#faf9f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a1a;}
+.wrap{max-width:560px;margin:8vh auto 0;padding:32px 24px;background:#fff;border-top:4px solid ${accent};border-radius:10px;box-shadow:0 2px 30px rgba(0,0,0,0.04);}
+.tag{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#666;margin-bottom:16px;}
+h1{font-size:24px;line-height:1.25;margin:0 0 14px;}
+p{font-size:16px;line-height:1.55;color:#333;margin:0 0 14px;}
+.sig{color:#666;font-size:14px;margin-top:24px;}
+a{color:${accent};}
+</style></head><body>
+<div class="wrap">
+<div class="tag">From the Van · Absolute ADAS</div>
+<h1>${title}</h1>
+<p>${message}</p>
+<p class="sig">Mark Fowler<br>Absolute ADAS · Lake Stevens, WA</p>
+</div></body></html>`
+}
+
+// ─── From the Van weekly newsletter automation ─────────────────────────────
+
+// Public base URL used for the approve/kill links Mark receives in Cliq.
+const VAN_APPROVE_BASE = 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc'
+
+// Admin: submit a case note that the Sunday drafter will use.
+//   POST /api/capture-calc/from-the-van/case-notes  (cron-secret)
+//   Body: { note: string, source?: string }
+captureCalcRouter.post('/from-the-van/case-notes', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const note = String(req.body?.note || '').trim()
+    const source = String(req.body?.source || 'manual').trim()
+    if (note.length < 20) return res.status(400).json({ ok: false, error: 'note too short — need at least 20 chars' })
+    const seg = getSegment(req)
+    const entry = await addCaseNote(seg, { note, source })
+    res.json({ ok: true, entry })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: mark a case note used (retire it without a real send). Used when
+// a note is superseded by a better one, or when a note is no longer relevant.
+//   POST /api/capture-calc/from-the-van/case-notes/mark-used
+//   Body: { id: 'XXX' }
+captureCalcRouter.post('/from-the-van/case-notes/mark-used', requireCronSecretFlex, express.json({ limit: '2kb' }), async (req, res) => {
+  try {
+    const id = String(req.body?.id || '').trim()
+    if (!id) return res.status(400).json({ ok: false, error: 'id required' })
+    const seg = getSegment(req)
+    const done = await markCaseNoteUsed(seg, id, 0)  // issue 0 = manually retired, not published
+    res.json({ ok: true, marked: done })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: list case notes (both used + unused).
+//   GET /api/capture-calc/from-the-van/case-notes?secret=X
+captureCalcRouter.get('/from-the-van/case-notes', requireCronSecretFlex, async (req, res) => {
+  try {
+    const seg = getSegment(req)
+    const list = await readCaseNotes(seg)
+    res.json({ ok: true, total: list.length, unused: list.filter(n => !n.used).length, notes: list })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: read all Van feature flags (nurture, weekly, weekly_asks).
+//   GET /api/capture-calc/from-the-van/flags?secret=X
+// Response: { ok: true, flags: { nurture: bool, weekly: bool, weekly_asks: bool } }
+captureCalcRouter.get('/from-the-van/flags', requireCronSecretFlex, async (req, res) => {
+  try {
+    const seg = getSegment(req)
+    const flags = await readAllVanFlags(seg)
+    res.json({ ok: true, flags })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: flip a Van feature flag. Replaces the env-var-based kill switches
+// (VAN_NURTURE_ENABLED / VAN_WEEKLY_ENABLED / VAN_WEEKLY_ASKS_ENABLED) for
+// instances where the function's env var slots are full. Flag lives in the
+// Catalyst cache; missing = respect env var; env var also missing = false.
+//   POST /api/capture-calc/from-the-van/flags?secret=X
+//   Body: { name: 'nurture' | 'weekly' | 'weekly_asks', value: true | false }
+//   Also accepts convenience shortcut: { flip: 'nurture' } → toggles current value.
+captureCalcRouter.post('/from-the-van/flags', requireCronSecretFlex, express.json({ limit: '1kb' }), async (req, res) => {
+  try {
+    const validFlags = new Set(['nurture', 'weekly', 'weekly_asks'])
+    let name = String(req.body?.name || req.body?.flip || '').trim()
+    if (!validFlags.has(name)) {
+      return res.status(400).json({ ok: false, error: `name must be one of: ${[...validFlags].join(', ')}` })
+    }
+    const seg = getSegment(req)
+    let value
+    if (req.body?.flip) {
+      const current = await isVanFlagEnabled(seg, name)
+      value = !current
+    } else {
+      value = req.body?.value === true || req.body?.value === 'true'
+    }
+    const result = await setVanFlag(seg, name, value)
+    // Also send a Cliq DM so Mark has an audit trail when he flips these
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+      `🔧 VAN FLAG — \`${name}\` set to \`${value ? 'true' : 'false'}\`\n${name === 'nurture' && value ? '⚠️ Magic Lantern will start sending Day 1 at next 6am PT cron.' : ''}${name === 'weekly' && value ? '⚠️ Weekly drafter will auto-schedule Tuesday sends from now on.' : ''}`
+    ).catch(() => {})
+    res.json({ ok: true, ...result })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: reset the issue counter + ask-rotation state. Rarely needed;
+// exists so Mark can re-seed if he moves the Cadillac issue or wants to
+// restart the cycle.
+//   POST /api/capture-calc/from-the-van/reset-issue-state
+//   Body: { next_issue_number: number, next_ask_type_index?: number }
+captureCalcRouter.post('/from-the-van/reset-issue-state', requireCronSecretFlex, express.json({ limit: '2kb' }), async (req, res) => {
+  try {
+    const seg = getSegment(req)
+    const next_issue_number = Number(req.body?.next_issue_number) || 2
+    const next_ask_type_index = Number(req.body?.next_ask_type_index) || 0
+    const state = { next_issue_number, next_ask_type_index }
+    await writeIssueState(seg, state)
+    res.json({ ok: true, state })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Cron: Sunday 8am PT — draft next Tuesday's issue and DM Mark for approval.
+//   ALL /api/capture-calc/from-the-van/draft-weekly  (cron-secret)
+//   ?dry=1 — draft only, no Cliq DM, return the draft in the response
+captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_van_weekly_draft'), requireCronSecretFlex, async (req, res) => {
+  const dry = req.query.dry === '1' || req.query.dry === 'true'
+  try {
+    const seg = getSegment(req)
+    // Bail if a previous draft is still pending — don't clobber unread work.
+    const existing = await readPendingDraft(seg)
+    if (existing && !dry) {
+      const msg = [
+        '⚠️ FROM THE VAN — weekly drafter skipped',
+        '',
+        `Reason: pending draft from ${existing.drafted_at} is still awaiting your approval.`,
+        `Draft: "${existing.subject}"`,
+        '',
+        `Approve/kill it, or POST /from-the-van/clear-pending-draft to discard.`,
+      ].join('\n')
+      postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+      return res.json({ ok: true, skipped: true, reason: 'previous draft still pending', pending: existing })
+    }
+    // Pull the case note to use. If ?case_note_id=X is provided (used for
+    // manual triggering when Mark wants a specific note, not the oldest),
+    // pick that one; otherwise pickNextCaseNote returns the oldest unused.
+    const notes = await readCaseNotes(seg)
+    const forcedId = req.query.case_note_id ? String(req.query.case_note_id) : null
+    const nextNote = forcedId
+      ? notes.find(n => n.id === forcedId && !n.used) || null
+      : pickNextCaseNote(notes)
+    if (!nextNote) {
+      const msg = [
+        '⚠️ FROM THE VAN — weekly drafter skipped',
+        '',
+        'Reason: no unused case notes in the queue.',
+        '',
+        `Add one: POST /from-the-van/case-notes`,
+      ].join('\n')
+      if (!dry) postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+      return res.json({ ok: true, skipped: true, reason: 'no case notes queued' })
+    }
+    // Compute issue slot (number + cycle position + ask type). Ask injection
+    // is gated by the weekly_asks flag (cache-backed, env fallback).
+    const state = await readIssueState(seg)
+    const asksOn = await isVanFlagEnabled(seg, 'weekly_asks')
+    const slot = computeIssueSlot(state.next_issue_number, state.next_ask_type_index, asksOn)
+
+    // Draft
+    const drafted = await draftWeeklyIssue({
+      caseNote: nextNote.note,
+      issueNumber: state.next_issue_number,
+      forcedAskType: slot.askType,
+    })
+
+    // Render + build the pending draft record
+    const rendered = renderWeeklyIssue({
+      subject: drafted.subject,
+      previewText: drafted.preview_text,
+      bodyMarkdown: drafted.body_markdown,
+      issueNumber: state.next_issue_number,
+    })
+    const id = crypto.randomBytes(9).toString('base64url')
+    const scheduledFor = nextTuesday7amPT().toISOString()
+    const pending = {
+      id,
+      issue_number: state.next_issue_number,
+      cycle_position: slot.cyclePos,
+      type: drafted.type || slot.type,
+      ask_type: drafted.ask_type || slot.askType || null,
+      case_note_id: nextNote.id,
+      case_note_source: nextNote.source,
+      drafted_at: new Date().toISOString(),
+      scheduled_for: scheduledFor,
+      subject: rendered.subject,
+      preview_text: rendered.previewText,
+      body_markdown: drafted.body_markdown,
+      html: rendered.html,
+      text: rendered.text,
+      notes_for_mark: drafted.notes_for_mark || '',
+      status: 'pending',
+    }
+
+    if (dry) {
+      return res.json({ ok: true, dry: true, pending })
+    }
+
+    // Silence-approves pattern (matches ADAS Brew): when VAN_WEEKLY_ENABLED
+    // is set, the drafter creates + schedules the Resend Broadcast RIGHT NOW
+    // for Tuesday 7am PT. Mark's Cliq DM becomes a Kill/Preview card. No
+    // action = it ships. When the switch is off, we still create the
+    // Resend broadcast (as a draft) but wait for an explicit Approve click
+    // to schedule it.
+    const enabled = await isVanFlagEnabled(seg, 'weekly')
+    let broadcastId = null
+    let broadcastUrl = null
+    let scheduledStatus = 'paused'  // 'scheduled' | 'draft-only' | 'paused'
+
+    try {
+      const created = await createVanBroadcast({
+        subject: pending.subject,
+        html: pending.html,
+        text: pending.text,
+        previewText: pending.preview_text,
+        name: `From the Van #${pending.issue_number}${enabled ? '' : ' (paused draft)'}`,
+      })
+      if (!created.ok) throw new Error(created.error)
+      broadcastId = created.id
+      broadcastUrl = created.dashboardUrl
+      pending.broadcast_id = broadcastId
+      pending.broadcast_url = broadcastUrl
+      if (enabled) {
+        const sched = await sendVanBroadcast(broadcastId, pending.scheduled_for)
+        if (!sched.ok) throw new Error('schedule failed: ' + sched.error)
+        scheduledStatus = 'scheduled'
+        pending.status = 'auto_scheduled'
+      } else {
+        scheduledStatus = 'draft-only'
+        pending.status = 'paused_draft'
+      }
+    } catch (e) {
+      console.warn('[van weekly] broadcast create/schedule failed:', e.message)
+      pending.broadcast_error = e.message
+      // Still write the pending draft so Mark can retry approval manually
+    }
+
+    await writePendingDraft(seg, pending)
+
+    // URLs
+    const killUrl    = `${VAN_APPROVE_BASE}/from-the-van/kill-weekly?id=${id}&s=${signVanAction(id, 'kill')}`
+    const previewUrl = `${VAN_APPROVE_BASE}/from-the-van/preview-weekly?id=${id}&s=${signVanAction(id, 'preview')}`
+    // Approve URL only relevant in paused mode; keep it available in both cases as an "acknowledge/reviewed" no-op when already scheduled
+    const approveUrl = `${VAN_APPROVE_BASE}/from-the-van/approve-weekly?id=${id}&s=${signVanAction(id, 'approve')}`
+
+    const scheduledForLocal = new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })
+    const cliqMsg = [
+      scheduledStatus === 'scheduled'
+        ? `📰 FROM THE VAN #${state.next_issue_number} — SCHEDULED for ${scheduledForLocal}`
+        : scheduledStatus === 'draft-only'
+          ? `📰 FROM THE VAN #${state.next_issue_number} — DRAFT ready (paused: VAN_WEEKLY_ENABLED not set)`
+          : `⚠️ FROM THE VAN #${state.next_issue_number} — drafted but Resend create/schedule failed (see logs)`,
+      scheduledStatus === 'scheduled'
+        ? `Silence = ships. Kill or preview if you want to intervene.`
+        : `Approve to schedule it.`,
+      `${slot.type === 'soft-ask' ? `Ask type: ${slot.askType}` : 'Type: value'}   ·   Cycle pos ${slot.cyclePos}/4`,
+      '',
+      `SUBJECT: ${rendered.subject}`,
+      `PREVIEW: ${rendered.previewText}`,
+      '',
+      '───',
+      drafted.body_markdown.slice(0, 1800),
+      drafted.body_markdown.length > 1800 ? '…[truncated in Cliq — full body via preview link]' : '',
+      '───',
+      '',
+      drafted.notes_for_mark ? `📝 Notes: ${drafted.notes_for_mark}` : '',
+      pending.broadcast_error ? `❗ Broadcast error: ${pending.broadcast_error}` : '',
+      '',
+      `👀 Preview: ${previewUrl}`,
+      scheduledStatus === 'scheduled' ? `❌ Kill (cancels the scheduled send): ${killUrl}` : `✅ Approve (schedules the send): ${approveUrl}`,
+      scheduledStatus === 'scheduled' ? '' : `❌ Kill (discard): ${killUrl}`,
+      broadcastUrl ? `🔗 Resend broadcast: ${broadcastUrl}` : '',
+    ].filter(Boolean).join('\n').slice(0, 4000)
+
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e => console.warn('[van weekly cliq]', e.message))
+
+    // When auto-scheduled, advance the issue counter + retire the case note
+    // right away (silence = approve, so we commit immediately).
+    if (scheduledStatus === 'scheduled') {
+      await advanceIssueState(seg, pending).catch(e => console.warn('[van weekly advance]', e.message))
+      await markCaseNoteUsed(seg, pending.case_note_id, pending.issue_number).catch(e => console.warn('[van weekly mark case used]', e.message))
+    }
+
+    await stampSuccess(req, 'capture_van_weekly_draft', { issue: state.next_issue_number, id, scheduled: scheduledStatus === 'scheduled' })
+    res.json({ ok: true, issue_number: state.next_issue_number, id, approveUrl, killUrl, previewUrl, scheduledFor, scheduledStatus, broadcastId, broadcastUrl })
+  } catch (e) {
+    console.error('[van weekly draft]', e.message, e.stack)
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🛑 VAN WEEKLY DRAFT FAILED: ${e.message.slice(0, 500)}`).catch(() => {})
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Public — HMAC signed. Mark clicks from Cliq. GET returns the confirmation
+// page (no side effects until the confirm button POSTs the same URL).
+// This mirrors the pattern used by /approval/approve — Cliq/iMessage bots
+// often pre-GET URLs for previews, so real action lives in POST.
+async function handleVanApproveGet(req, res) {
+  const id = String(req.query.id || '')
+  const sig = String(req.query.s || '')
+  if (!verifyVanAction(id, 'approve', sig)) return res.status(401).type('html').send(vanApprovalPage({ ok: false, title: 'Link invalid or expired', message: 'This approve link doesn\'t match. If it was cut off in Cliq, tap the full URL from the DM.' }))
+  const seg = getSegment(req)
+  const pending = await readPendingDraft(seg)
+  if (!pending || pending.id !== id) return res.status(404).type('html').send(vanApprovalPage({ ok: false, title: 'Draft not found', message: 'This draft is no longer pending — it was already approved, killed, or replaced.' }))
+  const enabled = await isVanFlagEnabled(seg, 'weekly')
+  res.type('html').send(vanConfirmPage({ action: 'approve', pending, sig, enabled }))
+}
+async function handleVanKillGet(req, res) {
+  const id = String(req.query.id || '')
+  const sig = String(req.query.s || '')
+  if (!verifyVanAction(id, 'kill', sig)) return res.status(401).type('html').send(vanApprovalPage({ ok: false, title: 'Link invalid or expired', message: 'This kill link doesn\'t match.' }))
+  const seg = getSegment(req)
+  const pending = await readPendingDraft(seg)
+  if (!pending || pending.id !== id) return res.status(404).type('html').send(vanApprovalPage({ ok: false, title: 'Draft not found', message: 'This draft is no longer pending.' }))
+  res.type('html').send(vanConfirmPage({ action: 'kill', pending, sig, enabled: true }))
+}
+async function handleVanPreviewGet(req, res) {
+  const id = String(req.query.id || '')
+  const sig = String(req.query.s || '')
+  if (!verifyVanAction(id, 'preview', sig)) return res.status(401).type('html').send(vanApprovalPage({ ok: false, title: 'Link invalid or expired', message: 'This preview link doesn\'t match.' }))
+  const seg = getSegment(req)
+  const pending = await readPendingDraft(seg)
+  if (!pending || pending.id !== id) return res.status(404).type('html').send(vanApprovalPage({ ok: false, title: 'Draft not found', message: 'This draft is no longer pending.' }))
+  // Render the full email + approval controls above it
+  res.type('html').send(vanPreviewPage({ pending, sig }))
+}
+
+// POST — real action. Approve creates the Resend Broadcast + schedules it.
+async function handleVanApprovePost(req, res) {
+  const id = String(req.query.id || '')
+  const sig = String(req.query.s || '')
+  if (!verifyVanAction(id, 'approve', sig)) return res.status(401).type('html').send(vanApprovalPage({ ok: false, title: 'Link invalid or expired', message: '' }))
+  const seg = getSegment(req)
+  const pending = await readPendingDraft(seg)
+  if (!pending || pending.id !== id) return res.status(404).type('html').send(vanApprovalPage({ ok: false, title: 'Draft not found', message: 'Already handled.' }))
+
+  // Path 1: already auto-scheduled (silence-approves mode). Approve is a
+  // no-op acknowledgement — just clear the pending draft state.
+  if (pending.status === 'auto_scheduled' && pending.broadcast_id) {
+    await clearPendingDraft(seg)
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Acknowledged — Issue #${pending.issue_number} was already scheduled by the drafter. Nothing else to do.`).catch(() => {})
+    return res.type('html').send(vanApprovalPage({ ok: true, title: 'Acknowledged', message: `Issue #${pending.issue_number} is already scheduled for ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}. Silence approves, so no action needed — this just clears the pending state.` }))
+  }
+
+  // Path 2: paused-mode draft (broadcast created but not scheduled). Approve
+  // schedules it. If the broadcast was never created due to an earlier error,
+  // create it now, then schedule.
+  try {
+    let broadcastId = pending.broadcast_id
+    if (!broadcastId) {
+      const created = await createVanBroadcast({
+        subject: pending.subject, html: pending.html, text: pending.text,
+        previewText: pending.preview_text,
+        name: `From the Van #${pending.issue_number}`,
+      })
+      if (!created.ok) throw new Error(created.error)
+      broadcastId = created.id
+      pending.broadcast_url = created.dashboardUrl
+    }
+    const enabled = await isVanFlagEnabled(seg, 'weekly')
+    if (enabled) {
+      const sched = await sendVanBroadcast(broadcastId, pending.scheduled_for)
+      if (!sched.ok) throw new Error(sched.error)
+      await clearPendingDraft(seg)
+      await advanceIssueState(seg, pending)
+      await markCaseNoteUsed(seg, pending.case_note_id, pending.issue_number)
+      postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ SCHEDULED — Issue #${pending.issue_number} will send at ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}.\nBroadcast: ${pending.broadcast_url || broadcastId}`).catch(() => {})
+      return res.type('html').send(vanApprovalPage({ ok: true, title: 'Approved and scheduled', message: `Issue #${pending.issue_number} will send Tuesday at 7:00 AM PT.` }))
+    } else {
+      // Kill switch off — approve creates the Resend draft but doesn't schedule
+      await clearPendingDraft(seg)
+      await advanceIssueState(seg, pending)
+      await markCaseNoteUsed(seg, pending.case_note_id, pending.issue_number)
+      postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Approved — Issue #${pending.issue_number} created as DRAFT in Resend (not scheduled — VAN_WEEKLY_ENABLED not set).\nBroadcast: ${pending.broadcast_url || broadcastId}`).catch(() => {})
+      return res.type('html').send(vanApprovalPage({ ok: true, title: 'Approved (paused mode)', message: `Issue #${pending.issue_number} exists as a Resend draft. Scheduling was skipped because VAN_WEEKLY_ENABLED is not set. Open the Resend dashboard to schedule manually, or flip the env var.` }))
+    }
+  } catch (e) {
+    console.error('[van weekly approve]', e.message, e.stack)
+    return res.status(500).type('html').send(vanApprovalPage({ ok: false, title: 'Approve failed', message: `Error: ${e.message}` }))
+  }
+}
+async function handleVanKillPost(req, res) {
+  const id = String(req.query.id || '')
+  const sig = String(req.query.s || '')
+  if (!verifyVanAction(id, 'kill', sig)) return res.status(401).type('html').send(vanApprovalPage({ ok: false, title: 'Link invalid or expired', message: '' }))
+  const seg = getSegment(req)
+  const pending = await readPendingDraft(seg)
+  if (!pending || pending.id !== id) return res.status(404).type('html').send(vanApprovalPage({ ok: false, title: 'Draft not found', message: 'Already handled.' }))
+
+  // If the drafter already created + scheduled the broadcast (silence-approves
+  // mode), cancel the Resend send. Idempotent — a 404 from Resend is treated
+  // as success (already gone).
+  let broadcastCancelled = false
+  if (pending.broadcast_id) {
+    const del = await deleteVanBroadcast(pending.broadcast_id).catch(e => ({ ok: false, error: e.message }))
+    broadcastCancelled = del.ok
+    if (!del.ok) console.warn('[van weekly kill] Resend delete failed:', del.error)
+  }
+
+  // Roll back issue-state advance + case-note-used mark, since auto-schedule
+  // committed those and now we're cancelling.
+  try {
+    const state = await readIssueState(seg)
+    if (pending.status === 'auto_scheduled' && state.next_issue_number > pending.issue_number) {
+      const rolledBack = { next_issue_number: pending.issue_number, next_ask_type_index: state.next_ask_type_index }
+      if (pending.type === 'soft-ask') rolledBack.next_ask_type_index = (state.next_ask_type_index + 2) % 3  // undo advance
+      await writeIssueState(seg, rolledBack)
+    }
+  } catch (e) { console.warn('[van weekly kill] state rollback failed:', e.message) }
+  // Un-mark the case note as used
+  try {
+    const notes = await readCaseNotes(seg)
+    let mutated = false
+    for (let i = 0; i < notes.length; i++) {
+      if (notes[i].id === pending.case_note_id && notes[i].used_by_issue === pending.issue_number) {
+        notes[i] = { ...notes[i], used: false, used_at: null, used_by_issue: null }
+        mutated = true
+      }
+    }
+    if (mutated) {
+      try { await seg.update('van_case_notes', JSON.stringify(notes.slice(-500))) }
+      catch { await seg.put('van_case_notes', JSON.stringify(notes.slice(-500))) }
+    }
+  } catch (e) { console.warn('[van weekly kill] case-note un-mark failed:', e.message) }
+
+  await clearPendingDraft(seg)
+  postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+    `❌ Killed — Issue #${pending.issue_number} discarded.${pending.broadcast_id ? (broadcastCancelled ? ' Scheduled Resend send cancelled.' : ' ⚠️ Resend broadcast delete FAILED — check dashboard: ' + (pending.broadcast_url || '')) : ''} Case note is back in the queue.`
+  ).catch(() => {})
+  res.type('html').send(vanApprovalPage({ ok: true, title: 'Killed', message: `Draft discarded${pending.broadcast_id && broadcastCancelled ? ' and scheduled send cancelled' : ''}. The case note stays in the queue.` }))
+}
+
+// Cron-safe helper: bump issue counter + ask rotation forward after approval.
+async function advanceIssueState(seg, approvedPending) {
+  const state = await readIssueState(seg)
+  const nextIssueNumber = approvedPending.issue_number + 1
+  let askIdx = state.next_ask_type_index
+  if (approvedPending.type === 'soft-ask') askIdx = (askIdx + 1) % 3  // advance rotation only on ask
+  await writeIssueState(seg, { next_issue_number: nextIssueNumber, next_ask_type_index: askIdx })
+}
+
+// Admin — nuke the pending draft (used when Mark ignores it and needs to
+// start fresh).  POST /api/capture-calc/from-the-van/clear-pending-draft
+captureCalcRouter.post('/from-the-van/clear-pending-draft', requireCronSecretFlex, async (req, res) => {
+  const seg = getSegment(req)
+  await clearPendingDraft(seg)
+  res.json({ ok: true, cleared: true })
+})
+
+// Admin — read the current pending draft.
+captureCalcRouter.get('/from-the-van/pending-draft', requireCronSecretFlex, async (req, res) => {
+  const seg = getSegment(req)
+  const p = await readPendingDraft(seg)
+  res.json({ ok: true, pending: p })
+})
+
+captureCalcRouter.get('/from-the-van/approve-weekly',  handleVanApproveGet)
+captureCalcRouter.post('/from-the-van/approve-weekly', handleVanApprovePost)
+captureCalcRouter.get('/from-the-van/kill-weekly',     handleVanKillGet)
+captureCalcRouter.post('/from-the-van/kill-weekly',    handleVanKillPost)
+captureCalcRouter.get('/from-the-van/preview-weekly',  handleVanPreviewGet)
+
+// ─── Approval UI ───────────────────────────────────────────────────────────
+
+function vanApprovalPage({ ok, title, message }) {
+  const accent = ok ? '#CD4419' : '#8B0000'
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
+<style>body{margin:0;padding:0;background:#faf9f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a1a;}
+.wrap{max-width:560px;margin:8vh auto 0;padding:32px 24px;background:#fff;border-top:4px solid ${accent};border-radius:10px;box-shadow:0 2px 30px rgba(0,0,0,0.04);}
+.tag{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#666;margin-bottom:16px;}
+h1{font-size:24px;line-height:1.25;margin:0 0 14px;} p{font-size:16px;line-height:1.55;color:#333;margin:0 0 14px;}
+.sig{color:#666;font-size:14px;margin-top:24px;} a{color:${accent};}</style></head><body>
+<div class="wrap"><div class="tag">From the Van · Absolute ADAS</div>
+<h1>${title}</h1><p>${message || ''}</p>
+<p class="sig">Mark Fowler<br>Absolute ADAS · Lake Stevens, WA</p></div></body></html>`
+}
+
+function vanConfirmPage({ action, pending, sig, enabled }) {
+  const actionColor = action === 'approve' ? '#16a34a' : '#dc2626'
+  const actionVerb = action === 'approve' ? 'Schedule for Tuesday 7:00 AM PT' : 'Discard this draft'
+  const kickerColor = enabled ? '#16a34a' : '#c88a00'
+  const kickerLabel = enabled ? 'LIVE MODE — will schedule the send' : 'PAUSED MODE — will create Resend draft but NOT schedule'
+  const postUrl = `${VAN_APPROVE_BASE}/from-the-van/${action}-weekly?id=${pending.id}&s=${sig}`
+  const bodyHtml = pending.body_markdown
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .split(/\n\s*\n/).map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`).join('')
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${action === 'approve' ? 'Approve' : 'Kill'} — From the Van #${pending.issue_number}</title>
+<style>body{margin:0;padding:0;background:#faf9f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a1a;}
+.wrap{max-width:720px;margin:24px auto 60px;padding:0 16px;} .card{background:#fff;border-radius:10px;padding:24px 22px;border-top:4px solid #CD4419;box-shadow:0 2px 30px rgba(0,0,0,0.04);}
+.tag{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#666;} .kicker{font-size:12px;font-weight:600;letter-spacing:.06em;color:${kickerColor};margin:8px 0 14px;}
+h1{font-size:22px;margin:0 0 6px;line-height:1.3;} .meta{color:#666;font-size:13px;margin:0 0 20px;} .subject{font-size:17px;font-weight:700;margin:8px 0 6px;}
+.preview{color:#666;font-size:14px;font-style:italic;margin:0 0 20px;} .body{border-top:1px solid #e5e5e5;padding-top:16px;font-size:16px;line-height:1.6;color:#1a1a1a;}
+.body p{margin:0 0 14px;} form{margin:24px 0 0;text-align:center;} button{background:${actionColor};color:#fff;border:none;padding:14px 26px;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer;min-width:220px;}
+button:hover{opacity:0.92;} .notes{background:#fdf1ec;border-left:3px solid #CD4419;padding:14px 16px;margin:0 0 18px;font-size:14px;line-height:1.55;color:#333;}</style></head><body>
+<div class="wrap"><div class="card"><div class="tag">From the Van · Issue #${pending.issue_number}</div><div class="kicker">${kickerLabel}</div>
+<h1>${action === 'approve' ? 'Approve this issue?' : 'Kill this draft?'}</h1>
+<p class="meta">Scheduled for ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })} · Type: ${pending.type}${pending.ask_type ? ' · Ask: ' + pending.ask_type : ''}</p>
+${pending.notes_for_mark ? `<div class="notes"><strong>Notes from drafter:</strong> ${pending.notes_for_mark.replace(/</g,'&lt;')}</div>` : ''}
+<div class="subject">${pending.subject.replace(/</g,'&lt;')}</div>
+<p class="preview">${pending.preview_text.replace(/</g,'&lt;')}</p>
+<div class="body">${bodyHtml}</div>
+<form method="POST" action="${postUrl}"><button type="submit">${actionVerb}</button></form>
+</div></div></body></html>`
+}
+
+function vanPreviewPage({ pending, sig }) {
+  const approveUrl = `${VAN_APPROVE_BASE}/from-the-van/approve-weekly?id=${pending.id}&s=${signVanAction(pending.id, 'approve')}`
+  const killUrl    = `${VAN_APPROVE_BASE}/from-the-van/kill-weekly?id=${pending.id}&s=${signVanAction(pending.id, 'kill')}`
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Preview — From the Van #${pending.issue_number}</title>
+<style>body{margin:0;padding:0;background:#faf9f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#1a1a1a;}
+.wrap{max-width:720px;margin:24px auto 60px;padding:0 16px;} .bar{background:#fff;padding:16px 20px;border-radius:10px;box-shadow:0 2px 30px rgba(0,0,0,0.04);margin-bottom:20px;border-top:4px solid #CD4419;}
+.bar .tag{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#666;margin-bottom:8px;} .bar h1{margin:0 0 8px;font-size:18px;}
+.bar .meta{color:#666;font-size:13px;margin:0 0 12px;} .btnrow{display:flex;gap:10px;margin-top:12px;}
+.btnrow a{flex:1;text-align:center;padding:12px 16px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;}
+.approve{background:#16a34a;color:#fff;} .kill{background:#dc2626;color:#fff;}
+.frame{background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 30px rgba(0,0,0,0.04);}</style></head><body>
+<div class="wrap"><div class="bar"><div class="tag">Preview — Issue #${pending.issue_number}</div><h1>${pending.subject.replace(/</g,'&lt;')}</h1>
+<div class="meta">Scheduled: ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })} · ${pending.type}${pending.ask_type ? ' · ' + pending.ask_type : ''}</div>
+<div class="btnrow"><a class="approve" href="${approveUrl}">✅ Approve</a><a class="kill" href="${killUrl}">❌ Kill</a></div>
+</div><div class="frame">${pending.html.replace(/^[\s\S]*<body[^>]*>/, '').replace(/<\/body>[\s\S]*$/, '')}</div></div></body></html>`
+}
+
+// Admin: list current From the Van subscribers.
+captureCalcRouter.get('/from-the-van/subscribers', requireCronSecretFlex, async (req, res) => {
+  try {
+    const r = await listVanSubscribers()
+    res.json(r)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: bulk import a batch of email addresses into the audience. Used to
+// seed the initial list from the CRM Mailing Labels CSV. Body accepts either
+// { emails: ["a@b.com", ...] } for quick seeding, or an array of full contact
+// Pull one page of Zoho CRM Accounts (customer businesses) and add each to
+// the Resend From the Van audience. Accounts is the BUSINESSES module — one
+// row per shop Mark works with. Emails on Account records are typically the
+// primary shop contact for invoicing and scheduling.
+//
+// Existing customers already know Mark, so we SKIP the 7-day Magic Lantern
+// (which pitches Partnership Discount to warm leads — irrelevant for people
+// who already work with him). They go straight into the weekly newsletter.
+//
+//   POST /api/capture-calc/from-the-van/import-crm-accounts?secret=X
+//   Body (optional): { page: 1, per_page: 200 }
+//
+// Call repeatedly with incrementing page numbers until has_more:false.
+captureCalcRouter.post('/from-the-van/import-crm-accounts', requireCronSecretFlex, express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.body?.page) || 1)
+    const perPage = Math.min(200, Math.max(1, Number(req.body?.per_page) || 200))
+    const zoho = await fetchAccountsPage({ page, perPage })
+    const accounts = zoho.data || []
+    const hasMore = zoho.more === true
+    const out = {
+      page, per_page: perPage, has_more: hasMore,
+      fetched: accounts.length,
+      added: 0, duplicates: 0, invalid_or_no_email: 0, skipped_opt_out: 0,
+      errors: [],
+    }
+    for (const a of accounts) {
+      if (a.Email_Opt_Out === true) { out.skipped_opt_out++; continue }
+      const email = String(a.Email || '').trim().toLowerCase()
+      if (!email || !/^\S+@\S+\.\S+$/.test(email)) { out.invalid_or_no_email++; continue }
+      // Use the account name as the "firstName" for personalization since
+      // that's the shop's identity in the Van context — the weekly email
+      // greeting reads "Hey Body Shop Downtown" better than "Hey <no name>".
+      const shopName = String(a.Account_Name || '').trim().slice(0, 60)
+      const r = await addVanSubscriber({
+        email,
+        firstName: shopName || undefined,
+      })
+      if (r.duplicate) out.duplicates++
+      else if (r.ok)   out.added++
+      else { out.invalid_or_no_email++; if (out.errors.length < 5) out.errors.push({ email, error: r.error }) }
+      // Throttle so we stay well under Resend's rate limit
+      await new Promise(r => setTimeout(r, 90))
+    }
+    out.next_page = hasMore ? page + 1 : null
+    res.json({ ok: true, ...out })
+  } catch (e) {
+    console.error('[from-the-van import-crm-accounts]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
+// Debug — peek at one page of Zoho CRM Accounts. Used to verify field shape
+// (Email present? Account_Name populated?) before running the full import.
+//   GET /api/capture-calc/debug/accounts-page?secret=X&page=N&per_page=200
+captureCalcRouter.get('/debug/accounts-page', requireCronSecretFlex, async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const perPage = Math.min(200, Math.max(1, Number(req.query.per_page) || 200))
+    const fields = req.query.fields ? String(req.query.fields) : undefined
+    const r = await fetchAccountsPage({ page, perPage, fields })
+    res.json(r)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
+// Pull one page of Zoho CRM Contacts (customers) and add each to the Resend
+// From the Van audience. Existing customers already know Mark, so we SKIP
+// the 7-day Magic Lantern (which pitches Partnership Discount to warm leads
+// — irrelevant for people who already work with him). They go straight into
+// the weekly newsletter list.
+//
+//   POST /api/capture-calc/from-the-van/import-crm-contacts?secret=X
+//   Body (optional): { page: 1, per_page: 200 }
+//
+// Call repeatedly with incrementing page numbers until the response says
+// has_more:false. The 30s Catalyst gateway cap means we do one page per
+// request (~200 contacts) rather than walking the whole module in one call.
+captureCalcRouter.post('/from-the-van/import-crm-contacts', requireCronSecretFlex, express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.body?.page) || 1)
+    const perPage = Math.min(200, Math.max(1, Number(req.body?.per_page) || 200))
+    const zoho = await fetchContactsPage({ page, perPage })
+    const contacts = zoho.data || []
+    const hasMore = zoho.more === true || zoho.info?.more_records === true
+    // Hardcoded exclude-list of Account_Name substrings (case-insensitive).
+    // Anyone whose Account matches is skipped from the Van audience — Mark
+    // asked to keep Evergreen Calibration contacts out. Add more entries here
+    // as needed; kept in-code so the exclusion is version-controlled + obvious.
+    const excludedAccountSubstrings = ['evergreen calibration']
+    const out = {
+      page, per_page: perPage, has_more: hasMore,
+      fetched: contacts.length,
+      added: 0, duplicates: 0, invalid: 0,
+      skipped_personal: 0,    // no Account_Name = personal contact, not a shop
+      skipped_opt_out: 0,     // Email_Opt_Out flag set in CRM
+      skipped_excluded: 0,    // Account matches the excluded-list above
+      errors: [],
+    }
+    // Extract an Account_Name value from Zoho's contact record. Zoho returns
+    // this as either a string OR a { name, id } lookup object depending on
+    // API version + how the field is populated. Handle both.
+    const accountName = c => {
+      const a = c.Account_Name
+      if (!a) return ''
+      if (typeof a === 'string') return a.trim()
+      if (typeof a === 'object') return String(a.name || '').trim()
+      return ''
+    }
+    for (const c of contacts) {
+      // BUSINESS ONLY — skip personal contacts. Business contacts in Zoho
+      // are always linked to an Account (the shop/company). Personal contacts
+      // have no Account_Name.
+      const acct = accountName(c)
+      if (!acct) { out.skipped_personal++; continue }
+      // Skip accounts on the exclusion list (case-insensitive substring match).
+      const acctLower = acct.toLowerCase()
+      if (excludedAccountSubstrings.some(s => acctLower.includes(s))) {
+        out.skipped_excluded++
+        continue
+      }
+      // Respect Zoho's opt-out flag on the record.
+      if (c.Email_Opt_Out === true) { out.skipped_opt_out++; continue }
+
+      const email = String(c.Email || c.email || '').trim().toLowerCase()
+      if (!email || !/^\S+@\S+\.\S+$/.test(email)) { out.invalid++; continue }
+      const r = await addVanSubscriber({
+        email,
+        firstName: c.First_Name || c.first_name,
+        lastName:  c.Last_Name  || c.last_name,
+      })
+      if (r.duplicate) out.duplicates++
+      else if (r.ok)   out.added++
+      else { out.invalid++; if (out.errors.length < 5) out.errors.push({ email, error: r.error }) }
+      // Throttle so we stay well under Resend's rate limit
+      await new Promise(r => setTimeout(r, 90))
+    }
+    out.next_page = hasMore ? page + 1 : null
+    res.json({ ok: true, ...out })
+  } catch (e) {
+    console.error('[from-the-van import-crm-contacts]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
+// objects { email, first_name, last_name }.
+//   POST /api/capture-calc/from-the-van/bulk-import (cron-secret)
+captureCalcRouter.post('/from-the-van/bulk-import', requireCronSecretFlex, express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const raw = Array.isArray(req.body?.contacts) ? req.body.contacts
+              : Array.isArray(req.body?.emails)   ? req.body.emails.map(e => ({ email: e }))
+              : []
+    if (!raw.length) return res.status(400).json({ ok: false, error: 'contacts[] or emails[] required' })
+
+    const out = { added: 0, duplicates: 0, failed: 0, errors: [] }
+    for (const c of raw) {
+      const email = String(c.email || '').trim().toLowerCase()
+      if (!email || !/^\S+@\S+\.\S+$/.test(email)) { out.failed++; continue }
+      const r = await addVanSubscriber({
+        email,
+        firstName: c.first_name || c.firstName,
+        lastName:  c.last_name  || c.lastName,
+      })
+      if (r.duplicate) out.duplicates++
+      else if (r.ok)   out.added++
+      else { out.failed++; if (out.errors.length < 10) out.errors.push({ email, error: r.error }) }
+      // Small throttle so we don't hammer Resend
+      await new Promise(r => setTimeout(r, 100))
+    }
+    res.json({ ok: true, total_submitted: raw.length, ...out })
+  } catch (e) {
+    console.error('[from-the-van bulk-import]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// One-off test email send — used to preview From the Van issues before the
+// real Resend broadcast. Uses the existing sendBroadcast wrapper (Resend
+// under the hood).
+//   POST /api/capture-calc/debug/send-test-email  (cron-secret)
+//   Body: { to, subject, html, text?, from_email?, from_name?, reply_to? }
+captureCalcRouter.post('/debug/send-test-email', requireCronSecretFlex, express.json({ limit: '4mb' }), async (req, res) => {
+  try {
+    const to = String(req.body?.to || '').trim()
+    const subject = String(req.body?.subject || '').trim()
+    const html = String(req.body?.html || '')
+    if (!to || !subject || !html) return res.status(400).json({ ok: false, error: 'to, subject, html required' })
+    const fromEmail = String(req.body?.from_email || 'mark@absoluteadas.com')
+    const fromName = String(req.body?.from_name || 'Mark @ Absolute ADAS')
+    const replyTo = String(req.body?.reply_to || 'mark@absoluteadas.com')
+    const text = String(req.body?.text || '')
+    const r = await sendBroadcast({
+      recipients: [to],
+      subject, html, text: text || undefined,
+      fromEmail, fromName, replyTo,
+    })
+    res.json({ ok: true, to, sender: `${fromName} <${fromEmail}>`, resend: r })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
 // Paginated dump of Zoho CRM Leads. Pull one page at a time so the loop can
 // walk the entire module without hitting the 30s HTTP gateway timeout.
 //   GET /api/capture-calc/debug/leads-page?secret=X&page=N&per_page=200
@@ -2943,7 +4207,24 @@ captureCalcRouter.get('/debug/leads-page', requireCronSecretFlex, async (req, re
     const page = Math.max(1, Number(req.query.page) || 1)
     const perPage = Math.min(200, Math.max(1, Number(req.query.per_page) || 200))
     const fields = req.query.fields ? String(req.query.fields) : undefined
-    const r = await fetchLeadsPage({ page, perPage, fields })
+    const cvid = req.query.cvid ? String(req.query.cvid) : undefined
+    const r = await fetchLeadsPage({ page, perPage, fields, cvid })
+    res.json(r)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
+// Same pattern as /leads-page but for the Contacts module (the ~1,200 people
+// Mark has actually worked with — real emails, real relationships). This is
+// the source for the From the Van warm-list build.
+//   GET /api/capture-calc/debug/contacts-page?secret=X&page=N&per_page=200
+captureCalcRouter.get('/debug/contacts-page', requireCronSecretFlex, async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const perPage = Math.min(200, Math.max(1, Number(req.query.per_page) || 200))
+    const fields = req.query.fields ? String(req.query.fields) : undefined
+    const r = await fetchContactsPage({ page, perPage, fields })
     res.json(r)
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
