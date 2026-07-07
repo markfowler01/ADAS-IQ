@@ -278,12 +278,27 @@ router.post('/run', async (req, res) => {
     return res.status(500).json({ error: err.message, detail, processed, skipped, errors })
   }
 
+  // Morning-kickoff piggyback — Mark is out of Catalyst cron slots, so we
+  // use postscan-fetcher (hourly, already running) as the scheduler for the
+  // 7am team good-morning + Jayden sales digest. maybeFireMorningKickoff
+  // gates on a PT time window + a once-per-day Catalyst Cache dedup, so
+  // this cheaply no-ops on all the ticks outside 7-9am PT. Fully guarded —
+  // any failure inside is caught so postscan itself never breaks over it.
+  let kickoff = null
+  try {
+    const { maybeFireMorningKickoff } = await import('./dailyGreeting.js')
+    kickoff = await maybeFireMorningKickoff(req)
+  } catch (e) {
+    console.warn('[postscan] morning-kickoff piggyback failed (non-fatal):', e.message)
+  }
+
   res.json({
     ok: true,
     processed: processed.length,
     skipped: skipped.length,
     errors: errors.length,
     details: { processed, skipped, errors },
+    kickoff,
   })
 })
 

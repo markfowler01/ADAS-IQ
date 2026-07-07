@@ -20,6 +20,7 @@
 // Env var: MORNING_CRON_SECRET (falls back to 'morning-2026').
 
 import express from 'express'
+import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { listInvoicesForDateRange } from '../services/zoho.js'
 import {
@@ -227,6 +228,117 @@ export async function sendMorningKickoff(req) {
     })
   }
   return { date: dateStr, weekday, results }
+}
+
+// ── Piggyback scheduler ─────────────────────────────────────────────────────
+//
+// Mark is out of Catalyst cron slots, so we can't add a dedicated 7:30am
+// entry for this. Instead we ride on postscan-fetcher (hourly, already
+// running) via maybeFireMorningKickoff. Two guards keep it sane:
+//
+//   1. Time window — only fire 7:30–8:00 PT (Mark's ask 2026-07-07).
+//      The postscan cron ticks in that window, we send. Outside the
+//      window, no-op. If postscan happens to skip the window entirely
+//      on some tick, the greeting won't fire that day — widen the
+//      minute range below if that becomes a pattern.
+//   2. Once-per-day dedup — Catalyst Cache key `morning_kickoff_YYYY-MM-DD`.
+//      Once we send today's kickoff we stamp the key with a 25h TTL. The
+//      next postscan tick sees the key and skips. Rolls over naturally
+//      at midnight.
+//
+// Any failure inside is caught and logged — postscan never breaks over
+// this piggyback.
+const CATALYST_API = 'https://api.catalyst.zoho.com'
+
+// Delivery window (PT) — hour and minute inclusive on the low side,
+// exclusive on the high side. Currently 07:00 ≤ t < 08:00 (per Mark
+// 2026-07-07 — widened from 07:30 so any postscan cron minute in the
+// 7am hour will catch it).
+const KICKOFF_WINDOW_START_H = 7
+const KICKOFF_WINDOW_START_M = 0
+const KICKOFF_WINDOW_END_H   = 8
+const KICKOFF_WINDOW_END_M   = 0
+
+function catalystHeaders(req) {
+  const token = req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''
+  return { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }
+}
+function catalystProjectId(req) {
+  return req.headers['x-zc-projectid'] || process.env.CATALYST_PROJECT_ID || ''
+}
+
+function hourMinutePT() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date())
+  const hStr = parts.find(p => p.type === 'hour')?.value || '0'
+  const mStr = parts.find(p => p.type === 'minute')?.value || '0'
+  // Intl may return '24' at midnight — normalise to 0.
+  const h = parseInt(hStr, 10)
+  const m = parseInt(mStr, 10)
+  return { h: h === 24 ? 0 : h, m }
+}
+
+function isInKickoffWindow(h, m) {
+  const startTotal = KICKOFF_WINDOW_START_H * 60 + KICKOFF_WINDOW_START_M
+  const endTotal   = KICKOFF_WINDOW_END_H   * 60 + KICKOFF_WINDOW_END_M
+  const nowTotal   = h * 60 + m
+  return nowTotal >= startTotal && nowTotal < endTotal
+}
+
+async function readKickoffFiredKey(req, dateStr) {
+  const key = `morning_kickoff_${dateStr}`
+  const url = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache/${key}`
+  try {
+    const r = await axios.get(url, { headers: catalystHeaders(req) })
+    return r.data?.data?.cache_value || null
+  } catch (e) {
+    if (e.response?.status === 404) return null
+    throw e
+  }
+}
+
+async function stampKickoffFired(req, dateStr) {
+  const key = `morning_kickoff_${dateStr}`
+  const baseUrl = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache`
+  const headers = catalystHeaders(req)
+  const value = new Date().toISOString()
+  try {
+    await axios.put(`${baseUrl}/${key}`, { cache_value: value, expiry_in_hours: 25 }, { headers })
+  } catch (e) {
+    if (e.response?.status === 404) {
+      await axios.post(baseUrl, { cache_name: key, cache_value: value, expiry_in_hours: 25 }, { headers })
+    } else {
+      throw e
+    }
+  }
+}
+
+// Piggyback entry point — called from postscan.js /run (and any other
+// hourly cron we want as a fallback). Returns a small status object; all
+// exceptions are caught and returned as { fired: false, error }.
+export async function maybeFireMorningKickoff(req) {
+  const dateStr = todayPT()
+  const { h, m } = hourMinutePT()
+  if (!isInKickoffWindow(h, m)) {
+    return { fired: false, reason: `outside window (${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} PT)` }
+  }
+  try {
+    const already = await readKickoffFiredKey(req, dateStr)
+    if (already) return { fired: false, reason: 'already sent today', at: already }
+  } catch (e) {
+    console.warn('[kickoff-dedup] cache read failed, will send anyway:', e.message)
+  }
+  try {
+    const summary = await sendMorningKickoff(req)
+    try { await stampKickoffFired(req, dateStr) }
+    catch (e) { console.warn('[kickoff-dedup] cache stamp failed (kickoff sent OK):', e.message) }
+    return { fired: true, ...summary }
+  } catch (e) {
+    console.error('[kickoff] send failed:', e.message)
+    return { fired: false, error: e.message }
+  }
 }
 
 // Cron-fired endpoint.
