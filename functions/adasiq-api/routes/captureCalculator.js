@@ -20,6 +20,8 @@ import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadc
 import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER, buildGoodbyeEmail } from '../services/fromTheVanNurture.js'
 import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, unmarkCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
 import { renderWeeklyIssue } from '../services/vanWeeklyRender.js'
+import { computeCurrentStats, readVanStatsSnapshot, writeVanStatsSnapshot, buildDigestSMS } from '../services/vanDailyDigest.js'
+import { sendTwilioSMS, resolvePhoneConfig } from '../services/twilio.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
 import { buildColdEmail, COLD_HOOKS, COLD_DAYS } from '../services/coldOutreach.js'
 import { draftLinkedInWeek, draftSlotVariants, draftWeekVariants } from '../services/linkedInDrafter.js'
@@ -1535,11 +1537,14 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     const dayName = String(req.query.dayName || todayPT)
     const todayDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
 
-    // Concurrent-fire lock
+    // Concurrent-fire lock. Window is 3 min (was 10): Catalyst's cron daemon
+    // kills a handler at ~30s, so anything older than 3 min is dead — and the
+    // staggered retry crons (6:13/6:17/6:21) must get through, not bounce off
+    // a stale lock from a killed attempt.
     const LOCK_KEY = `meta_daily_inprogress_${todayDateStr}`
     if (req.query.force_relock !== '1') {
       const existingLock = await cacheGet(segment, LOCK_KEY, null)
-      if (existingLock && (Date.now() - new Date(existingLock.at).getTime()) < 600000) {
+      if (existingLock && (Date.now() - new Date(existingLock.at).getTime()) < 180000) {
         return res.json({ ok: true, skipped: true, reason: 'concurrent draft-day already in progress (lock held)', locked_at: existingLock.at })
       }
     }
@@ -1565,13 +1570,29 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     //      cached weekly story (that'd reuse the same shop/owner every day).
     //   3. Pass the last 10 stories to Claude as anti-examples and append the
     //      new one to history so tomorrow's run avoids today's owner/city.
-    let story = String(req.body?.story || '').trim()
+    // Early exit BEFORE the expensive work when every channel already has
+    // today's educational draft — retry crons on good days must return in
+    // ~2s (cron success), not re-run 60s of Claude/Gemini just to skip.
+    if (['facebook_page', 'instagram_business', 'linkedin_personal'].every(ch => channelsAlreadyDone.has(ch))) {
+      return res.json({ ok: true, skipped: true, reason: 'all channels already have today\'s educational draft' })
+    }
+
+    // RESUMABLE PIPELINE (2026-07-08): Catalyst's cron daemon kills the
+    // handler at the 30s gateway timeout, and this drafter takes 60-120s.
+    // Every expensive step persists its output to META_CONTENT_KEY so the
+    // staggered retry crons (6:13/6:17/6:21) resume instead of restarting:
+    // run 1 drafts the post (~25s, dies), run 2 reuses it + builds the image,
+    // run 3 enqueues. Same-day re-runs also ship the identical post.
+    const META_CONTENT_KEY = `meta_content_${todayDateStr}`
+    const metaCached = (await cacheGet(segment, META_CONTENT_KEY, null)) || {}
+
+    let story = String(req.body?.story || '').trim() || metaCached.story || ''
     let caseStudy = String(req.body?.caseStudy || '').trim()
     if (!caseStudy) {
       const blob = await cacheGet(segment, 'capture_weekly_case_study', null)
       caseStudy = String(blob?.value || '')
     }
-    let storySource = 'dropped'
+    let storySource = metaCached.story ? 'cached-same-day' : 'dropped'
     if (!story) {
       try {
         const recentBlob = await cacheGet(segment, 'capture_story_history', null)
@@ -1590,24 +1611,31 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     const todayType = String(req.query.type || UNIFIED_DAY_TYPE_FOR(dayName))
     const todayDateIso = new Date().toISOString()
     let unified
-    try {
-      unified = await draftUnifiedDailyPost({ story, caseStudy, type: todayType, targetDate: todayDateIso, day: dayName })
-    } catch (e) {
-      await reportCronFailure(req, 'capture_meta', e)
-      return res.json({ ok: false, error: `unified draft failed: ${e.message}` })
+    if (metaCached.unified?.body && metaCached.type === todayType) {
+      unified = metaCached.unified
+    } else {
+      try {
+        unified = await draftUnifiedDailyPost({ story, caseStudy, type: todayType, targetDate: todayDateIso, day: dayName })
+      } catch (e) {
+        await reportCronFailure(req, 'capture_meta', e)
+        return res.json({ ok: false, error: `unified draft failed: ${e.message}` })
+      }
+      await cacheSet(segment, META_CONTENT_KEY, { ...metaCached, story, type: todayType, unified }).catch(() => {})
     }
 
     // ── ONE image, shared across all 3 channels ────────────────────────────
-    let imageUrl = null
+    let imageUrl = metaCached.image_url || null
     let imageError = null
-    if (captureImagesEnabled()) {
+    if (!imageUrl && captureImagesEnabled()) {
       const batchSlug = `metaday-${todayDateStr}-${todayType}`
       const r = await generateCaptureImage(
         { headline: unified.headline, draftId: batchSlug },
         { segment, sceneOverride: unified.image_prompt }
       ).catch(e => ({ ok: false, error: e.message }))
-      if (r?.ok) imageUrl = r.url
-      else imageError = r?.error || 'image generation failed'
+      if (r?.ok) {
+        imageUrl = r.url
+        await cacheSet(segment, META_CONTENT_KEY, { ...metaCached, story, type: todayType, unified, image_url: imageUrl }).catch(() => {})
+      } else imageError = r?.error || 'image generation failed'
     }
 
     // ── Fan out to 3 channels at their prime times ─────────────────────────
@@ -1702,11 +1730,13 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     // runs draft for the wrong day and poison the next day's content cache.
     const todayDateStr = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
 
-    // Concurrent-fire lock (10-min TTL, same pattern as unified drafter)
+    // Concurrent-fire lock. Window is 3 min (was 10): Catalyst's cron daemon
+    // kills a handler at ~30s, and the staggered retry crons (6:01/6:05/6:09)
+    // must get through instead of bouncing off a stale lock from a killed run.
     const LOCK_KEY = `van_daily_inprogress_${todayDateStr}`
     if (req.query.force_relock !== '1') {
       const existingLock = await cacheGet(segment, LOCK_KEY, null)
-      if (existingLock && (Date.now() - new Date(existingLock.at).getTime()) < 600000) {
+      if (existingLock && (Date.now() - new Date(existingLock.at).getTime()) < 180000) {
         return res.json({ ok: true, skipped: true, reason: 'concurrent van draft-day already in progress (lock held)', locked_at: existingLock.at })
       }
     }
@@ -1726,6 +1756,12 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
       ptDay(d.scheduled_for) === todayDateStr
     ).map(d => d.channel))
 
+    // Early exit when every channel already has today's van post — the
+    // staggered retry crons (6:05/6:09) must return in ~2s on good days.
+    if (['facebook_page', 'instagram_business', 'linkedin_personal'].every(ch => channelsAlreadyDone.has(ch))) {
+      return res.json({ ok: true, skipped: true, reason: 'all channels already have today\'s van post' })
+    }
+
     // SAME-CONTENT GUARANTEE (Mark 2026-07-05: "they all need to be the same
     // exact pic"): the day's caption + image are cached on first successful
     // build. Any re-run the same day (channel repair, manual re-fire) REUSES
@@ -1740,6 +1776,18 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     const draft = (cachedContent?.body)
       ? { headline: cachedContent.headline, body: cachedContent.body, image_prompt: cachedContent.image_prompt, voice_score: cachedContent.voice_score || null, voice_deductions: [], angle: cachedContent.angle || 'cached' }
       : await draftVanPost({ dayName, targetDate: new Date().toISOString() })
+
+    // CAPTION-FIRST CACHE (2026-07-08): Catalyst's cron daemon kills the
+    // handler at the 30s gateway timeout (curl-initiated calls survive it,
+    // cron-initiated ones don't — the 6:01 aa_van_post died mid-image and left
+    // nothing behind). Persist the caption NOW so the staggered retry crons
+    // resume at the image step instead of redoing the Claude draft.
+    if (!cachedContent?.body) {
+      await cacheSet(segment, CONTENT_KEY, {
+        headline: draft.headline, body: draft.body, image_prompt: draft.image_prompt,
+        voice_score: draft.voice_score, angle: draft.angle, image_url: null, image_source: null,
+      }).catch(() => {})
+    }
 
     // 2. Pick a real van photo (LRU rotation) — skipped when reusing cache.
     vanStep = 'photo-pick'
@@ -2803,8 +2851,17 @@ captureCalcRouter.get('/debug/setup-crons', async (req, res) => {
         { cron_name: 'aa_hourly_publisher', path: 'run-scheduler',   type: 'periodic', intervalHours: 1 },
         { cron_name: 'aa_hourly_nurture',   path: 'nurture-run',     type: 'periodic', intervalHours: 1 },
         { cron_name: 'aa_hourly_monitor',   path: 'cron-monitor-run', type: 'periodic', intervalHours: 1 },
+        // Long drafters get 3 staggered attempts: Catalyst's cron daemon kills
+        // the handler at the 30s gateway timeout, but both routes persist
+        // progress (caption/story/image) to a same-day cache, so each attempt
+        // resumes where the last died. On good days attempts 2-3 hit the
+        // idempotence guard and return fast (which also resets failure streaks).
         { cron_name: 'aa_van_post',         path: 'van-draft-day',   type: 'daily', hour: 6, minute: 1 },
+        { cron_name: 'aa_van_post_r2',      path: 'van-draft-day',   type: 'daily', hour: 6, minute: 5 },
+        { cron_name: 'aa_van_post_r3',      path: 'van-draft-day',   type: 'daily', hour: 6, minute: 9 },
         { cron_name: 'aa_daily_drafters',   path: 'draft-meta-day',  type: 'daily', hour: 6, minute: 13 },
+        { cron_name: 'aa_drafters_r2',      path: 'draft-meta-day',  type: 'daily', hour: 6, minute: 17 },
+        { cron_name: 'aa_drafters_r3',      path: 'draft-meta-day',  type: 'daily', hour: 6, minute: 21 },
         { cron_name: 'aa_daily_tasks',      path: 'engagement-run',  type: 'daily', hour: 6, minute: 23 },
         { cron_name: 'aa_holiday_poster',   path: 'holiday-poster-run', type: 'daily', hour: 6, minute: 27 },
         { cron_name: 'aa_li_comments',      path: 'li-comments-check', type: 'daily', hour: 8, minute: 15 },
@@ -4129,6 +4186,65 @@ captureCalcRouter.get('/from-the-van/subscribers', requireCronSecretFlex, async 
 // Admin: bulk import a batch of email addresses into the audience. Used to
 // seed the initial list from the CRM Mailing Labels CSV. Body accepts either
 // { emails: ["a@b.com", ...] } for quick seeding, or an array of full contact
+// Cron: send Mark a daily SMS digest of Van + Magic Lantern activity.
+// Fires 8pm PT. Compares current stats to yesterday's snapshot to show
+// today's deltas. Also posts to Cliq as a backup in case SMS fails.
+// ?dry=1 returns the composed message + stats without sending anything.
+//   ALL /api/capture-calc/from-the-van/daily-digest  (cron-secret)
+captureCalcRouter.all('/from-the-van/daily-digest', heartbeatAttempt('capture_van_daily_digest'), requireCronSecretFlex, async (req, res) => {
+  const dry = req.query.dry === '1' || req.query.dry === 'true'
+  try {
+    const seg = getSegment(req)
+    // Collect state
+    const [enrollments, audience, caseNotes, pendingDraft] = await Promise.all([
+      readVanEnrollments(req),
+      listVanSubscribers().catch(() => ({ count: 0 })),
+      readCaseNotes(seg),
+      readPendingDraft(seg),
+    ])
+    const current = computeCurrentStats({
+      enrollments,
+      audienceCount: audience?.count || 0,
+      caseNotes,
+      pendingDraft,
+    })
+    const yesterday = await readVanStatsSnapshot(seg)
+    const smsBody = buildDigestSMS(current, yesterday)
+
+    if (dry) {
+      return res.json({ ok: true, dry: true, current, yesterday, sms_preview: smsBody })
+    }
+
+    // Resolve Mark's phone number from cache-backed config (env vars are maxed).
+    const cfg = await resolvePhoneConfig(req).catch(() => null)
+    const markNumber = cfg?.MARK_PHONE_NUMBER || process.env.MARK_PHONE_NUMBER
+    let smsResult = null
+    if (markNumber) {
+      try {
+        const r = await sendTwilioSMS({ to: markNumber, body: smsBody, from: 'local', cfg })
+        smsResult = { ok: true, sid: r?.sid || null }
+      } catch (e) {
+        smsResult = { ok: false, error: e.message }
+      }
+    } else {
+      smsResult = { ok: false, error: 'MARK_PHONE_NUMBER not configured (set via Phone Setup)' }
+    }
+
+    // Also post to Cliq as a backup — if SMS drops, Mark still sees it in the morning
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📮 Van daily digest\n\n${smsBody}`).catch(() => {})
+
+    // Snapshot today's numbers so tomorrow's digest can compute deltas
+    await writeVanStatsSnapshot(seg, current).catch(e => console.warn('[van digest snapshot]', e.message))
+    await stampSuccess(req, 'capture_van_daily_digest', { sent_sms: !!smsResult?.ok, chars: smsBody.length })
+    res.json({ ok: true, sms: smsResult, cliq: 'posted', current, delta_baseline: yesterday ? yesterday.date : 'first-run' })
+  } catch (e) {
+    console.error('[van daily digest]', e.message, e.stack)
+    // Cliq the failure so Mark knows the digest broke
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⚠️ Van daily digest FAILED: ${e.message.slice(0, 400)}`).catch(() => {})
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // Admin: silently remove subscribers from the Van audience. Used to scrub
 // competitors, spam signups, and anyone flagged for stealth removal. Marks
 // them unsubscribed in Resend (so no Broadcasts) and unsubscribed_at plus
