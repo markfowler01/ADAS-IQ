@@ -472,7 +472,7 @@ router.put('/:id', async (req, res) => {
           `🟢 *Ready to Invoice* · ${shop}`,
           `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
           `🏦 ${insurer}`,
-          extras ? `🚩 *EXTRA SERVICES TO ADD:*\n${extras}` : null,
+          extras ? `\n🚨 *ALERT — EXTRA SERVICES TO ADD TO INVOICE:*\n${extras}` : null,
         ].filter(Boolean).join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
           .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
@@ -584,7 +584,7 @@ router.patch('/:id', async (req, res) => {
           `🟢 *Ready to Invoice* · ${shop}`,
           `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
           `🏦 ${insurer}`,
-          extras ? `🚩 *EXTRA SERVICES TO ADD:*\n${extras}` : null,
+          extras ? `\n🚨 *ALERT — EXTRA SERVICES TO ADD TO INVOICE:*\n${extras}` : null,
         ].filter(Boolean).join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
           .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
