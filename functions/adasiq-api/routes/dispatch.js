@@ -52,10 +52,18 @@ router.get('/live', async (req, res) => {
       return { ...merged, coords: coords ? { lat: coords.lat, lng: coords.lng } : null }
     }
 
+    // Status → hand-off filter. Once a job is Ready-to-Invoice or Complete,
+    // the tech is done with it (Kat owns invoicing from there), so it
+    // shouldn't linger on the field view. Mark 2026-07-08.
+    const OPEN_STATUSES = new Set([
+      'need_dispatch', 'dispatched_jaden', 'dispatched_mark', 'pending_parts',
+    ])
+
     const techs = []
     for (const techName of TECHS) {
       const techJobs = todays
         .filter(j => isAssignedTo(j, techName))
+        .filter(j => OPEN_STATUSES.has(j.status))
         .map(decorate)
         .sort((a, b) => (a.drive_order ?? 999) - (b.drive_order ?? 999))
 
