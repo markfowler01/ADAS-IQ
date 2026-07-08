@@ -96,6 +96,11 @@ async function writeAllMessages(req, records) {
   catch { await segment.put(SMS_CACHE_KEY, val, 24 * RETENTION_DAYS) }
 }
 
+// Returns { ok, error, count } so callers can tell whether the write
+// actually succeeded. Previously the outer catch silently swallowed
+// write errors — the send endpoint would happily return "message sent"
+// while the persisted log never actually contained the message, so the
+// optimistic UI append disappeared on the next refresh.
 async function appendMessage(req, record) {
   let records = []
   try { records = await readAllMessages(req) } catch { records = [] }
@@ -105,13 +110,21 @@ async function appendMessage(req, record) {
     const t = new Date(r.timestamp || 0).getTime()
     return !Number.isNaN(t) && t > cutoff
   })
-  // Cache value cap is ~64-100KB. Trim from the oldest if we approach it.
-  const serialized = JSON.stringify(records)
-  if (serialized.length > 60_000) {
-    records = records.slice(-500) // keep the 500 most recent as a safety net
+  // Cache value cap is ~64-100KB. Trim iteratively (10% at a time from
+  // the oldest end) until we're comfortably under 45KB — leaves headroom
+  // for JSON overhead + the marginal record we're adding.
+  const MAX_BYTES = 45_000
+  while (records.length > 1 && JSON.stringify(records).length > MAX_BYTES) {
+    const dropCount = Math.max(1, Math.floor(records.length * 0.1))
+    records = records.slice(dropCount)
   }
-  try { await writeAllMessages(req, records) }
-  catch (e) { console.warn('[sms cache write]', e.message) }
+  try {
+    await writeAllMessages(req, records)
+    return { ok: true, count: records.length }
+  } catch (e) {
+    console.warn('[sms cache write]', e.message)
+    return { ok: false, error: e.message, count: records.length }
+  }
 }
 
 // ── Thread key & bucketing ──────────────────────────────────────────────────
@@ -405,7 +418,10 @@ auth.post('/send', async (req, res) => {
     const result = await sendTwilioSMS({ to, body, from, cfg })
     if (!result.ok) return res.status(422).json(result)
 
-    // Log outbound
+    // Log outbound. If cache write fails we STILL return 200 (Twilio
+    // accepted the send — customer should still receive), but surface
+    // the persistence failure so the UI can flag it instead of the
+    // "message pops up then disappears on refresh" symptom.
     const record = {
       message_sid: result.sid,
       direction:   'outbound',
@@ -416,8 +432,14 @@ auth.post('/send', async (req, res) => {
       line_type:   classifyTwilioNumber(result.from, cfg),
       sender:      req.user?.email || req.user?.techName || 'app',
     }
-    await appendMessage(req, record)
-    res.json({ ok: true, sid: result.sid, message: record })
+    const persist = await appendMessage(req, record)
+    res.json({
+      ok: true,
+      sid: result.sid,
+      message: record,
+      persisted: persist.ok,
+      persist_error: persist.ok ? undefined : persist.error,
+    })
   } catch (err) {
     console.error('[sms send]', err.message, err.stack)
     res.status(500).json({ error: err.message })

@@ -179,6 +179,13 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
       // Optimistic append + reload for authoritative state.
       setConversation(prev => [...prev, j.message])
       loadThreads()
+      // Twilio accepted, but if we couldn't persist to cache the
+      // conversation view will lose the message on next refresh.
+      // Surface it so the user knows the send worked but the log won't
+      // show it — instead of silently disappearing.
+      if (j.persisted === false) {
+        showToast(`⚠ Sent (Twilio SID ${j.sid}) but log-save failed: ${j.persist_error || 'unknown'}`)
+      }
     } catch (e) {
       showToast(`Send failed: ${e.message}`)
     } finally {
@@ -204,6 +211,9 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
       setShowNew(false)
       await loadThreads()
       if (j.message?.to_number) setSelectedPhone(j.message.to_number)
+      if (j.persisted === false) {
+        showToast(`⚠ Sent (Twilio SID ${j.sid}) but log-save failed: ${j.persist_error || 'unknown'}`)
+      }
     } catch (e) {
       showToast(`Send failed: ${e.message}`)
     } finally {
