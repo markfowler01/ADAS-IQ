@@ -96,9 +96,30 @@ async function verifyPhoneConfig(req) {
     if (!cfg.MARK_PHONE_NUMBER && !cfg.JAYDEN_PHONE_NUMBER && !cfg.KAT_PHONE_NUMBER) {
       problems.push('ring cascade has no targets')
     }
-    return { ok: problems.length === 0, problems }
+    return { ok: problems.length === 0, problems, cfg }
   } catch (e) {
     return { ok: false, problems: [`config load error: ${e.message}`] }
+  }
+}
+
+// Verify Twilio credentials are still accepted by hitting the read-only
+// Messages list endpoint. Catches the "Auth Token was rotated in Twilio
+// console, our stored value is now wrong" failure before it silently
+// blocks every outbound send.
+async function verifyTwilioAuth(cfg) {
+  if (!cfg?.TWILIO_ACCOUNT_SID || !cfg?.TWILIO_AUTH_TOKEN) {
+    return { ok: false, http: 0, reason: 'creds missing in config' }
+  }
+  const t0 = Date.now()
+  try {
+    const r = await axios.get(
+      `https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages.json?PageSize=1`,
+      { auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN }, timeout: 8000, validateStatus: () => true }
+    )
+    const ms = Date.now() - t0
+    return { ok: r.status === 200, http: r.status, ms, reason: r.status === 200 ? null : (r.data?.message || r.data?.detail || `HTTP ${r.status}`) }
+  } catch (e) {
+    return { ok: false, http: 0, ms: Date.now() - t0, reason: e.message }
   }
 }
 
@@ -110,7 +131,8 @@ router.get('/', async (req, res) => {
     return res.status(401).json({ error: 'Not authenticated' })
   }
   const [voice, sms, cfg] = await Promise.all([pingVoice(), pingSms(), verifyPhoneConfig(req)])
-  const allOk = voice.ok && sms.ok && cfg.ok
+  const twilioAuth = await verifyTwilioAuth(cfg.cfg)
+  const allOk = voice.ok && sms.ok && cfg.ok && twilioAuth.ok
 
   if (!allOk) {
     const failLines = [
@@ -118,6 +140,7 @@ router.get('/', async (req, res) => {
       voice.ok ? `✅ Voice endpoint: HTTP ${voice.http} · ${voice.ms}ms` : `❌ Voice endpoint: HTTP ${voice.http} · ${voice.ms}ms · ${voice.error || voice.body_preview || ''}`,
       sms.ok   ? `✅ SMS endpoint: HTTP ${sms.http} · ${sms.ms}ms`     : `❌ SMS endpoint: HTTP ${sms.http} · ${sms.ms}ms · ${sms.error || sms.body_preview || ''}`,
       cfg.ok   ? `✅ Phone config OK` : `❌ Phone config: ${(cfg.problems || []).join(', ')}`,
+      twilioAuth.ok ? `✅ Twilio auth OK` : `❌ Twilio auth: HTTP ${twilioAuth.http} · ${twilioAuth.reason}`,
       ``,
       `Customers may not be able to reach us right now.`,
     ].join('\n')
@@ -126,7 +149,15 @@ router.get('/', async (req, res) => {
     } catch (e) { console.warn('[phone-health cliq alert]', e.message) }
   }
 
-  res.json({ ok: allOk, voice, sms, config: cfg, checked_at: new Date().toISOString() })
+  // Don't leak the raw cfg back to the caller.
+  res.json({
+    ok: allOk,
+    voice,
+    sms,
+    config: { ok: cfg.ok, problems: cfg.problems },
+    twilio_auth: twilioAuth,
+    checked_at: new Date().toISOString(),
+  })
 })
 
 export { router as phoneHealthRouter }

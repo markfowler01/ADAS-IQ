@@ -147,35 +147,79 @@ export function pickFromNumber(preferred /* 'local' | 'tollfree' */, cfg) {
   return local || tollfree || null
 }
 
+// Twilio errors that make sense to retry — transient network / gateway
+// issues. 4xx errors are terminal (auth, bad number, blocked recipient,
+// A2P rejection) and would fail identically on retry, so we don't waste
+// time re-hitting the API.
+function isTransientTwilioError(err) {
+  if (!err) return false
+  const status = err.twilioStatus
+  if (typeof status === 'number' && status >= 500) return true
+  const msg = String(err.message || '').toLowerCase()
+  return /econnreset|econnrefused|etimedout|network|timeout|socket hang up/i.test(msg)
+}
+
+async function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
+
 /**
  * Send an SMS. Body params:
  *   to        — recipient (any format, normalized to E.164)
  *   body      — message text
  *   from      — optional 'local' | 'tollfree' | explicit E.164
  *   cfg       — optional resolved phone config (from resolvePhoneConfig)
- * Returns { ok, sid, error?, to, from }.
+ *   statusCallbackUrl — optional URL Twilio POSTs delivery updates to
+ * Returns { ok, sid, error?, twilio_status?, to, from, attempts }.
  */
-export async function sendTwilioSMS({ to, body, from = 'local', cfg }) {
+export async function sendTwilioSMS({ to, body, from = 'local', cfg, statusCallbackUrl }) {
   const normalized = normalizePhoneUS(to)
   if (!normalized) return { ok: false, error: `invalid phone: ${to}` }
   if (!body) return { ok: false, error: 'body required' }
 
-  let client
-  try { client = await getTwilioClient(cfg) }
-  catch (e) { return { ok: false, error: e.message } }
+  const { accountSid, authToken } = pickCfg(cfg)
+  if (!accountSid || !authToken) {
+    return { ok: false, error: 'Twilio not configured — set TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN via Phone Setup' }
+  }
   const fromNumber = String(from).startsWith('+') ? from : pickFromNumber(from, cfg)
   if (!fromNumber) return { ok: false, error: 'no Twilio From number configured' }
 
-  try {
-    const msg = await client.messages.create({
-      to: normalized,
-      from: fromNumber,
-      body: String(body).slice(0, 1600), // stay well under the 1600-char SMS/MMS body cap
-    })
-    return { ok: true, sid: msg.sid, to: normalized, from: fromNumber }
-  } catch (e) {
-    console.error('[twilio send]', e.message)
-    return { ok: false, error: e.message, to: normalized, from: fromNumber }
+  const form = {
+    To: normalized,
+    From: fromNumber,
+    Body: String(body).slice(0, 1600),
+  }
+  if (statusCallbackUrl) form.StatusCallback = statusCallbackUrl
+
+  // Up to 3 attempts on transient failures (5xx, connection errors).
+  // Terminal 4xx errors (auth, bad number, A2P block) fail immediately —
+  // no point retrying.
+  const MAX_ATTEMPTS = 3
+  let lastErr = null
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const d = await twilioPost(accountSid, authToken, 'Messages', form)
+      return {
+        ok: true,
+        sid: d.sid,
+        twilio_status: d.status || 'queued',
+        to: normalized,
+        from: fromNumber,
+        attempts: attempt,
+      }
+    } catch (e) {
+      lastErr = e
+      console.error(`[twilio send attempt ${attempt}/${MAX_ATTEMPTS}]`, e.message, e.twilioStatus || '')
+      if (!isTransientTwilioError(e) || attempt === MAX_ATTEMPTS) break
+      await sleep(300 * attempt)  // 300ms, 600ms
+    }
+  }
+  return {
+    ok: false,
+    error: lastErr?.message || 'send failed',
+    twilio_status_code: lastErr?.twilioStatus,
+    twilio_body: lastErr?.twilioBody,
+    to: normalized,
+    from: fromNumber,
+    attempts: MAX_ATTEMPTS,
   }
 }
 

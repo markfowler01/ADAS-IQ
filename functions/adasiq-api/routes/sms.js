@@ -404,6 +404,15 @@ router.get('/media/:sid/:idx', async (req, res) => {
 // ── Auth-gated router below ─────────────────────────────────────────────────
 const auth = express.Router()
 
+// Build the public URL Twilio should POST delivery-status updates to.
+// Uses the same env-override + Catalyst-public-host fallback pattern the
+// signature validator uses.
+function statusCallbackFor(req) {
+  const base = (process.env.TWILIO_WEBHOOK_BASE_URL || '').replace(/\/$/, '')
+    || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+  return `${base}/webhooks/twilio/sms/status`
+}
+
 // POST /api/sms/send { to, body, from? }
 // `from` is 'local' | 'tollfree' | explicit E.164 — defaults to 'local'.
 auth.post('/send', async (req, res) => {
@@ -412,11 +421,36 @@ auth.post('/send', async (req, res) => {
     if (!twilioConfigured(cfg)) {
       return res.status(503).json({ ok: false, error: 'Twilio not configured — set TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN in Phone Setup' })
     }
-    const { to, body, from } = req.body || {}
+    let { to, body, from } = req.body || {}
     if (!to || !body) return res.status(400).json({ ok: false, error: 'to and body required' })
+    to = String(to).trim()
+    body = String(body).trim()
+    if (!body) return res.status(400).json({ ok: false, error: 'body cannot be blank' })
 
-    const result = await sendTwilioSMS({ to, body, from, cfg })
-    if (!result.ok) return res.status(422).json(result)
+    const result = await sendTwilioSMS({
+      to, body, from, cfg,
+      statusCallbackUrl: statusCallbackFor(req),
+    })
+    if (!result.ok) {
+      // Loud failure — post to Cliq so Mark sees when a customer send
+      // outright fails at the Twilio API (auth, A2P block, invalid
+      // number, etc). Wrapped so a Cliq hiccup doesn't hide the real
+      // response.
+      try {
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        await postToCliqChannelById(
+          MARK_ALERT_CHANNEL_ID,
+          `🚨 *SMS SEND FAILED*\n` +
+          `to: ${result.to || to}\n` +
+          `from: ${result.from || from || 'local'}\n` +
+          `error: ${result.error}\n` +
+          `twilio_status: ${result.twilio_status_code || '—'}\n` +
+          `attempts: ${result.attempts || 1}\n` +
+          `body: "${body.slice(0, 200)}"`
+        ).catch(() => {})
+      } catch {}
+      return res.status(422).json(result)
+    }
 
     // Log outbound. If cache write fails we STILL return 200 (Twilio
     // accepted the send — customer should still receive), but surface
@@ -431,6 +465,8 @@ auth.post('/send', async (req, res) => {
       timestamp:   new Date().toISOString(),
       line_type:   classifyTwilioNumber(result.from, cfg),
       sender:      req.user?.email || req.user?.techName || 'app',
+      twilio_status: result.twilio_status || 'queued',
+      attempts:      result.attempts,
     }
     const persist = await appendMessage(req, record)
     res.json({
@@ -439,10 +475,69 @@ auth.post('/send', async (req, res) => {
       message: record,
       persisted: persist.ok,
       persist_error: persist.ok ? undefined : persist.error,
+      attempts: result.attempts,
+      twilio_status: result.twilio_status,
     })
   } catch (err) {
     console.error('[sms send]', err.message, err.stack)
     res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /webhooks/twilio/sms/status ────────────────────────────────────────
+// Twilio POSTs delivery-status updates here after each outbound message
+// (queued → sent → delivered / failed / undelivered). We update the
+// cached record with the latest status so the UI can show delivery
+// state, and we alert Cliq if a message ends in a failed / undelivered
+// state — that's the "Twilio accepted but carrier silently dropped"
+// case that used to look identical to a successful send.
+router.post('/status', async (req, res) => {
+  try {
+    const sid = String(req.body.MessageSid || req.body.SmsSid || '')
+    const status = String(req.body.MessageStatus || req.body.SmsStatus || '').toLowerCase()
+    const errCode = String(req.body.ErrorCode || '')
+    const errMsg  = String(req.body.ErrorMessage || '')
+    if (!sid || !status) return res.status(200).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+
+    // Update the persisted record with the new status.
+    try {
+      const all = await readAllMessages(req)
+      const idx = all.findIndex(m => m.message_sid === sid)
+      if (idx >= 0) {
+        all[idx] = { ...all[idx], twilio_status: status, twilio_error_code: errCode || undefined, twilio_error_message: errMsg || undefined }
+        await writeAllMessages(req, all)
+      }
+    } catch (e) { console.warn('[sms status log]', e.message) }
+
+    // Fire an alert on any terminal failure state. `undelivered` and
+    // `failed` are Twilio's final "we couldn't deliver this" states.
+    if (status === 'failed' || status === 'undelivered') {
+      try {
+        const rec = (await readAllMessages(req)).find(m => m.message_sid === sid)
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        await postToCliqChannelById(
+          MARK_ALERT_CHANNEL_ID,
+          `🚨 *SMS DELIVERY FAILED*\n` +
+          `sid: ${sid}\n` +
+          `status: ${status.toUpperCase()}\n` +
+          `to: ${rec?.to_number || 'unknown'}\n` +
+          `from: ${rec?.from_number || 'unknown'}\n` +
+          (errCode ? `twilio error: ${errCode} — ${errMsg}\n` : '') +
+          `body: "${(rec?.body || '').slice(0, 200)}"\n\n` +
+          `Common causes:\n` +
+          `• 30003 · handset unreachable\n` +
+          `• 30005 · unknown destination handset\n` +
+          `• 30006 · landline / unreachable carrier\n` +
+          `• 30007 · carrier violation (A2P block or filter)\n` +
+          `• 30008 · unknown carrier / unroutable`
+        ).catch(() => {})
+      } catch {}
+    }
+
+    res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+  } catch (err) {
+    console.error('[sms status webhook]', err.message)
+    res.status(500).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
   }
 })
 
