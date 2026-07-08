@@ -158,12 +158,15 @@ export function generateADASIQPdf(jobData) {
       const textColor   = isRequired ? GRAY_DARK    : '#aaa'
       const pillBg      = isRequired ? ORANGE       : '#c8c4c0'
 
+      const plainH = cal.plain_description
+        ? doc.heightOfString(cal.plain_description || '', { width: CONTENT_W - 40, fontSize: 8.5 }) + 12 : 0
       const justH = cal.justification
         ? doc.heightOfString(cal.justification || '', { width: CONTENT_W - 40, fontSize: 8 }) + 12 : 0
       const calLinks = Array.isArray(cal.links) ? cal.links.filter(l => l?.url) : []
-      const linksH   = calLinks.length > 0 ? 18 : 0
+      // 14px per link row, wrapped 2 per line — approximate
+      const linksH   = calLinks.length > 0 ? Math.ceil(calLinks.length / 2) * 14 + 12 : 0
       const hasChips = cal.cal_type || cal.trigger || cal.line_references
-      const rowH = 46 + (hasChips ? 22 : 4) + justH + linksH
+      const rowH = 46 + (hasChips ? 22 : 4) + plainH + justH + linksH
 
       if (y + rowH > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
 
@@ -184,15 +187,24 @@ export function generateADASIQPdf(jobData) {
       if (cal.trigger)         chipX += chip(doc, chipX, chipY, cal.trigger,         isRequired ? '#fff0eb' : '#e8e5e2', isRequired ? '#a33510' : '#999') + 5
       if (cal.line_references) chip(doc, chipX, chipY, `Lines ${cal.line_references}`, '#e8e5e2', '#777')
 
+      // Plain-language description ("third grader" style) — upright,
+      // slightly larger, easy for an insurance adjuster to skim.
+      let cursorY = y + (hasChips ? 54 : 36)
+      if (cal.plain_description) {
+        doc.font('Helvetica').fontSize(8.5).fillColor(GRAY_DARK)
+          .text(cal.plain_description, MARGIN + 14, cursorY, { width: CONTENT_W - 30 })
+        cursorY += doc.heightOfString(cal.plain_description, { width: CONTENT_W - 40, fontSize: 8.5 }) + 8
+      }
       if (cal.justification) {
-        const jy = y + (hasChips ? 54 : 36)
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(textColor)
-          .text(cal.justification, MARGIN + 14, jy, { width: CONTENT_W - 30 })
+          .text(cal.justification, MARGIN + 14, cursorY, { width: CONTENT_W - 30 })
+        cursorY += doc.heightOfString(cal.justification, { width: CONTENT_W - 40, fontSize: 8 }) + 6
       }
       if (calLinks.length > 0) {
-        const jy = y + (hasChips ? 54 : 36)
-        const afterJustH = cal.justification ? doc.heightOfString(cal.justification, { width: CONTENT_W - 40, fontSize: 8 }) + 6 : 0
-        let lx = MARGIN + 14, ly = jy + afterJustH + 2
+        doc.font('Helvetica-Bold').fontSize(7).fillColor(GRAY_MID)
+          .text('REFERENCE LINKS', MARGIN + 14, cursorY)
+        cursorY += 10
+        let lx = MARGIN + 14, ly = cursorY
         calLinks.forEach((link, idx) => {
           const label = link.label || `Reference ${idx + 1}`
           const lw = doc.widthOfString(label, { fontSize: 7.5 }) + 2

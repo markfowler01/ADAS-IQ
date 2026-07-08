@@ -89,7 +89,9 @@ async function generateAndUploadReport(req, { job, invoices }) {
       })
     }
 
-    const enrichedCals = finalCals.map(cal => {
+    // First pass — build the base calibration objects from invoice line
+    // items + rule metadata (OEM justification template).
+    const baseCals = finalCals.map(cal => {
       const rule = findRule(cal.name)
       const justification = rule?.justification_template
         ? rule.justification_template.replace(/\{make\}/gi, job.make || 'OEM').replace(/\{model\}/gi, job.model || 'vehicle')
@@ -101,13 +103,46 @@ async function generateAndUploadReport(req, { job, invoices }) {
         trigger: rule?.trigger_category?.replace(/_/g, ' ') || '',
         line_references: '',
         justification,
-        links: [],
       }
     })
 
-    // 4. Build invoice number string for the report filename
+    // Build invoice number string for the report filename (hoisted up
+    // so the share-link label below can use it).
     const invoiceNum = invoices.map(i => i.invoice_number).filter(Boolean).join('-') || roMatch || 'Invoice'
     const roNum = roMatch || invoiceNum
+
+    // Resolve the WorkDrive folder share link so the "Scan Report
+    // (WorkDrive)" reference points at the same folder the Kinetic scan
+    // sits in. Best-effort — reuses an existing public link on the job
+    // if present, otherwise mints a new one.
+    let folderShareUrl = ''
+    if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
+      folderShareUrl = job.folder_url
+    } else {
+      try {
+        const link = await createShareLink(folderId, `Job ${roNum}`.slice(0, 50), token)
+        if (link) folderShareUrl = link
+      } catch (e) {
+        console.warn('[report] share-link create failed (non-fatal):', e.message)
+      }
+    }
+
+    // Second pass — enrich each cal with a plain-language ("third
+    // grader" style) description via Claude Haiku + auto-generated
+    // reference links (ALLDATA / I-CAR / OEM Job Aid / Scan Report).
+    // Parallel across cals so total latency = slowest single Claude call.
+    const { enrichCalibration } = await import('../services/reportEnrichment.js')
+    const enrichedCals = await Promise.all(baseCals.map(async cal => {
+      const enrichment = await enrichCalibration(req, {
+        calibrationName: cal.calibration_name,
+        year:            job.year,
+        make:            job.make,
+        model:           job.model,
+        trigger:         cal.trigger,
+        folderShareUrl,
+      })
+      return { ...cal, plain_description: enrichment.plain_description, links: enrichment.links }
+    }))
 
     // 5. Generate the PDF
     const pdfBuffer = await generateADASIQPdf({
@@ -129,13 +164,11 @@ async function generateAndUploadReport(req, { job, invoices }) {
     await uploadFileToFolder(folderId, filename, pdfBuffer, token)
     console.log(`[report] ADAS IQ PDF uploaded: ${filename}`)
 
-    // 7. Save public share link back to job if we don't already have one
-    if (!job.folder_url || !job.folder_url.includes('zohoexternal.com')) {
+    // 7. Save public share link back to job — folderShareUrl was
+    //    resolved (or freshly minted) up above, so reuse it here.
+    if (folderShareUrl && (!job.folder_url || !job.folder_url.includes('zohoexternal.com'))) {
       try {
-        const shareLink = await createShareLink(folderId, filename, token)
-        if (shareLink) {
-          await updateJobPublic(req, job.id, { ...job, folder_url: shareLink })
-        }
+        await updateJobPublic(req, job.id, { ...job, folder_url: folderShareUrl })
       } catch {}
     }
   } catch (err) {
