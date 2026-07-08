@@ -25,13 +25,25 @@ export function normPhone(input) {
 // Build a { last10digits: {contact_name, shop_name, phone, source} } index
 // from the full shop list. Each shop can contribute multiple phones
 // (main phone + every person's phone).
+//
+// Contact-name resolution priority:
+//   1. Person-phone match → that person's name
+//   2. Shop-main match → shop.contact_name if set, else first named
+//      person in shop.people[] as a fallback ("Kirkland Auto Body"
+//      case, 2026-07-08 — the shop has people on file but the
+//      contact_name field wasn't populated, so the name was blank).
 export function buildPhoneIndex(shops) {
   const idx = new Map()
   for (const shop of shops || []) {
+    const firstNamedPerson = (shop.people || [])
+      .map(p => (p?.name || '').trim())
+      .find(n => n) || ''
+    const shopContactFallback = (shop.contact_name || '').trim() || firstNamedPerson
+
     const shopMain = normPhone(shop.phone)
     if (shopMain && !idx.has(shopMain)) {
       idx.set(shopMain, {
-        contact_name: shop.contact_name || '',
+        contact_name: shopContactFallback,
         shop_name:    shop.shop_name || '',
         phone:        shop.phone || '',
         source:       'shop_main',
@@ -42,7 +54,7 @@ export function buildPhoneIndex(shops) {
       const pn = normPhone(p?.phone)
       if (pn && !idx.has(pn)) {
         idx.set(pn, {
-          contact_name: p.name || shop.contact_name || '',
+          contact_name: (p.name || '').trim() || shopContactFallback,
           shop_name:    shop.shop_name || '',
           phone:        p.phone || '',
           source:       'person',
