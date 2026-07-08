@@ -12,6 +12,20 @@ const WORKDRIVE_API     = 'https://workdrive.zoho.com/api/v1'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Read a scalar (non-array) cache value — used for aa_phone_config which
+// is a single JSON object, not an array of records.
+async function readCacheScalar(segment, key) {
+  try {
+    const v = await segment.getValue(key)
+    if (!v) return null
+    try { return typeof v === 'string' ? JSON.parse(v) : v }
+    catch { return v }
+  } catch (e) {
+    console.warn(`[backup] scalar cache miss for ${key}:`, e.message)
+    return null
+  }
+}
+
 async function readCache(segment, key) {
   try {
     const val = await segment.getValue(key)
@@ -129,7 +143,8 @@ router.get('/run', async (req, res) => {
     }
 
     // Read everything in parallel
-    const [crmShops, jobHistory, jobs, calRules, booksInvoices, booksServices, booksExpenses, booksDeposits, pinnedShops] = await Promise.all([
+    const [crmShops, jobHistory, jobs, calRules, booksInvoices, booksServices, booksExpenses, booksDeposits, pinnedShops,
+           phoneConfig, smsThreads, callsLog, voicemails] = await Promise.all([
       readShopsForBackup(),
       readCache(segment, 'job_history'),
       readDatastore(app, 'Jobs'),
@@ -139,6 +154,13 @@ router.get('/run', async (req, res) => {
       readCache(segment, 'books_expenses'),
       readCache(segment, 'books_deposits'),
       readDatastore(app, 'PinnedShops'),
+      // Phone system (added 2026-07-08). All live in Catalyst Cache since
+      // env vars maxed out — critical to back up so a cache eviction
+      // doesn't lose Twilio credentials + ring cascade numbers.
+      readCacheScalar(segment, 'aa_phone_config'),
+      readCache(segment, 'sms_threads'),
+      readCache(segment, 'calls_log'),
+      readCache(segment, 'voicemails'),
     ])
 
     // Read invoice counter (scalar, not array)
@@ -162,6 +184,12 @@ router.get('/run', async (req, res) => {
         deposits:      Array.isArray(booksDeposits)  ? booksDeposits  : [],
         invoice_counter: booksCounter,
       },
+      phone: {
+        config:     phoneConfig || {},
+        sms_threads: Array.isArray(smsThreads) ? smsThreads : [],
+        calls_log:   Array.isArray(callsLog)   ? callsLog   : [],
+        voicemails:  Array.isArray(voicemails) ? voicemails : [],
+      },
       counts: {
         crm_shops:         Array.isArray(crmShops)       ? crmShops.length       : 0,
         job_history:       Array.isArray(jobHistory)     ? jobHistory.length     : 0,
@@ -171,6 +199,10 @@ router.get('/run', async (req, res) => {
         books_invoices:    Array.isArray(booksInvoices)  ? booksInvoices.length  : 0,
         books_expenses:    Array.isArray(booksExpenses)  ? booksExpenses.length  : 0,
         books_deposits:    Array.isArray(booksDeposits)  ? booksDeposits.length  : 0,
+        phone_config_keys: phoneConfig && typeof phoneConfig === 'object' ? Object.keys(phoneConfig).length : 0,
+        sms_threads:       Array.isArray(smsThreads) ? smsThreads.length : 0,
+        calls_log:         Array.isArray(callsLog)   ? callsLog.length   : 0,
+        voicemails:        Array.isArray(voicemails) ? voicemails.length : 0,
       },
     }
 
@@ -287,6 +319,24 @@ router.get('/restore/:fileId', async (req, res) => {
       if (backup.books.invoice_counter) {
         const val = String(backup.books.invoice_counter)
         try { await segment.update('books_counter', val) } catch { await segment.put('books_counter', val) }
+      }
+    }
+
+    // Restore phone system — critical because these values ONLY live in
+    // Catalyst Cache (env vars are maxed). Losing them means re-typing
+    // Twilio credentials + ring cascade numbers by hand.
+    if (backup.phone) {
+      if (backup.phone.config && Object.keys(backup.phone.config).length > 0) {
+        const val = JSON.stringify(backup.phone.config)
+        try { await segment.update('aa_phone_config', val) } catch { await segment.put('aa_phone_config', val) }
+        restored.aa_phone_config = Object.keys(backup.phone.config).length
+      }
+      for (const key of ['sms_threads', 'calls_log', 'voicemails']) {
+        if (Array.isArray(backup.phone[key]) && backup.phone[key].length > 0) {
+          const val = JSON.stringify(backup.phone[key])
+          try { await segment.update(key, val) } catch { await segment.put(key, val) }
+          restored[key] = backup.phone[key].length
+        }
       }
     }
 

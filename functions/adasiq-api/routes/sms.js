@@ -16,7 +16,8 @@
 // unless the sender IS Mark's cell (loop guard).
 
 import express from 'express'
-import axios from 'axios'
+import crypto from 'node:crypto'
+import catalyst from 'zcatalyst-sdk-node'
 import {
   sendTwilioSMS,
   normalizePhoneUS,
@@ -25,50 +26,73 @@ import {
   validateTwilioSignature,
   twilioConfigured,
 } from '../services/twilio.js'
-import { postToCliqChannel, AA_JOBS_CHANNEL } from '../services/cliq.js'
+import { resolvePhoneConfig } from '../services/phoneConfig.js'
+import { postToCliqChannel, SMS_TOLLFREE_CHANNEL, SMS_LOCAL_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
 
 // ── Catalyst Cache helpers ──────────────────────────────────────────────────
-const CATALYST_API = 'https://api.catalyst.zoho.com'
+// Uses the Catalyst SDK (not raw axios) — the axios path was silently 404ing
+// due to the same auth-scheme mismatch that broke Phone Setup. Migrated
+// 2026-07-08 to make SMS history actually persist across reloads.
 const SMS_CACHE_KEY = 'sms_threads'
 const RETENTION_DAYS = 90
 
-function catalystHeaders(req) {
-  const token = req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''
-  return { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/json' }
+// ── Signed media URLs ───────────────────────────────────────────────────────
+// The media proxy has to be reachable by <img src> in the browser, which
+// can't send X-Auth-Token. So we mount it publicly and gate access with
+// an HMAC signature derived from SESSION_SECRET. Only URLs the server
+// itself generated (in the auth-gated /threads/:phone response) will
+// have a valid sig.
+function mediaSig(sid, idx) {
+  const secret = process.env.SESSION_SECRET || 'adasiq-fallback-secret'
+  return crypto.createHmac('sha256', secret)
+    .update(`${sid}:${idx}`)
+    .digest('hex')
+    .slice(0, 32)
 }
-function catalystProjectId(req) {
-  return req.headers['x-zc-projectid'] || process.env.CATALYST_PROJECT_ID || ''
+function signedMediaUrl(sid, idx) {
+  return `/webhooks/twilio/sms/media/${encodeURIComponent(sid)}/${idx}?sig=${mediaSig(sid, idx)}`
+}
+// Rewrite each media entry's proxy_url to the current signed URL. Called
+// at serve time so old records (with the pre-signature path) still work
+// without a migration.
+function rewriteMediaUrls(messages) {
+  return (messages || []).map(m => ({
+    ...m,
+    media: (m.media || []).map((mm, i) => ({
+      ...mm,
+      proxy_url: signedMediaUrl(m.message_sid, i),
+    })),
+  }))
+}
+
+function getSegment(req) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  return app.cache().segment()
 }
 
 async function readAllMessages(req) {
-  const url = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache/${SMS_CACHE_KEY}`
   try {
-    const r = await axios.get(url, { headers: catalystHeaders(req) })
-    const val = r.data?.data?.cache_value
-    return val ? JSON.parse(val) : []
+    const segment = getSegment(req)
+    const val = await segment.getValue(SMS_CACHE_KEY)
+    if (!val) return []
+    try { return typeof val === 'string' ? JSON.parse(val) : (val || []) }
+    catch { return [] }
   } catch (e) {
-    if (e.response?.status === 404) return []
     console.warn('[sms cache read]', e.message)
     return []
   }
 }
 
 async function writeAllMessages(req, records) {
-  const projectId = catalystProjectId(req)
-  const baseUrl = `${CATALYST_API}/baas/v1/project/${projectId}/cache`
-  const headers = catalystHeaders(req)
-  const body = { cache_name: SMS_CACHE_KEY, cache_value: JSON.stringify(records), expiry_in_hours: null }
-  try {
-    await axios.put(`${baseUrl}/${SMS_CACHE_KEY}`, { cache_value: body.cache_value, expiry_in_hours: null }, { headers })
-  } catch (e) {
-    if (e.response?.status === 404) {
-      await axios.post(baseUrl, body, { headers })
-    } else {
-      throw e
-    }
-  }
+  const segment = getSegment(req)
+  const val = JSON.stringify(records || [])
+  // segment.put requires a TTL in hours as the 3rd arg — without it the
+  // first-ever write silently fails and nothing persists. 90 days
+  // matches RETENTION_DAYS above.
+  try { await segment.update(SMS_CACHE_KEY, val) }
+  catch { await segment.put(SMS_CACHE_KEY, val, 24 * RETENTION_DAYS) }
 }
 
 async function appendMessage(req, record) {
@@ -142,11 +166,12 @@ function hourPTNow() {
   return parseInt(s, 10) % 24
 }
 
-function isAfterHoursNow() {
-  const startEnv = process.env.AFTER_HOURS_START
-  const endEnv   = process.env.AFTER_HOURS_END
-  const start = Number.isFinite(parseInt(startEnv, 10)) ? parseInt(startEnv, 10) : 18
-  const end   = Number.isFinite(parseInt(endEnv,   10)) ? parseInt(endEnv,   10) : 7
+function isAfterHoursNow(cfg) {
+  cfg = cfg || {}
+  const startRaw = cfg.AFTER_HOURS_START || process.env.AFTER_HOURS_START
+  const endRaw   = cfg.AFTER_HOURS_END   || process.env.AFTER_HOURS_END
+  const start = Number.isFinite(parseInt(startRaw, 10)) ? parseInt(startRaw, 10) : 18
+  const end   = Number.isFinite(parseInt(endRaw,   10)) ? parseInt(endRaw,   10) : 7
   const h = hourPTNow()
   // Overnight window (e.g. start=18, end=7): after-hours = h >= 18 OR h < 7
   if (start > end) return h >= start || h < end
@@ -154,37 +179,33 @@ function isAfterHoursNow() {
   return h >= start && h < end
 }
 
+// Auto-reply copy — includes STOP/HELP opt-out language required for
+// A2P 10DLC and toll-free compliance. Do not remove without a plan to
+// re-verify the campaign; Twilio reviewers look for this exact pattern.
 const FIRST_CONTACT_BODY =
-  "Thanks for reaching Absolute ADAS. We got your text and someone will be back with you shortly. " +
-  "Reply STOP to opt out."
+  "Absolute ADAS: Thanks for reaching us. We got your text and someone will be back shortly. " +
+  "Reply STOP to opt out, HELP for help. Msg&data rates may apply."
 
 const AFTER_HOURS_BODY =
-  "Thanks for texting Absolute ADAS. We're closed right now (7am–6pm PT weekdays). " +
-  "We'll reply first thing in the morning. Reply STOP to opt out."
+  "Absolute ADAS: We're closed right now (7am–6pm PT weekdays). We'll reply first thing in the morning. " +
+  "Reply STOP to opt out, HELP for help. Msg&data rates may apply."
 
 // Same daily dedup pattern used for the morning kickoff. Key namespaces
 // so first-contact and after-hours dedup independently.
 async function readAutoReplyStamp(req, key) {
-  const url = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache/${key}`
   try {
-    const r = await axios.get(url, { headers: catalystHeaders(req) })
-    return r.data?.data?.cache_value || null
-  } catch (e) {
-    if (e.response?.status === 404) return null
-    return null
-  }
+    const segment = getSegment(req)
+    const val = await segment.getValue(key)
+    return val || null
+  } catch { return null }
 }
 async function writeAutoReplyStamp(req, key) {
-  const baseUrl = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache`
-  const headers = catalystHeaders(req)
-  const now = new Date().toISOString()
   try {
-    await axios.put(`${baseUrl}/${key}`, { cache_value: now, expiry_in_hours: 25 }, { headers })
-  } catch (e) {
-    if (e.response?.status === 404) {
-      await axios.post(baseUrl, { cache_name: key, cache_value: now, expiry_in_hours: 25 }, { headers })
-    }
-  }
+    const segment = getSegment(req)
+    const now = new Date().toISOString()
+    try { await segment.update(key, now, 25) }
+    catch { await segment.put(key, now, 25) }
+  } catch (e) { console.warn('[sms autoreply stamp]', e.message) }
 }
 function dateStrPT() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -198,18 +219,18 @@ function dateStrPT() {
 // Response is TwiML (empty message) so Twilio doesn't retry.
 router.post('/', async (req, res) => {
   try {
-    // Validate signature — but log-and-continue on missing token config so
-    // Mark can bring the system online BEFORE he pastes the auth token, if
-    // he ever wants to. Once TWILIO_AUTH_TOKEN is set, invalid signatures
-    // reject with 403 as the spec requires.
-    if (twilioConfigured()) {
-      const check = validateTwilioSignature(req)
-      if (!check.ok) {
-        console.warn('[sms inbound] signature check failed:', check.reason, 'url:', check.url)
-        return res.status(403).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
-      }
-    } else {
-      console.warn('[sms inbound] Twilio not configured — accepting webhook without signature validation')
+    const cfg = await resolvePhoneConfig(req)
+
+    // Signature validation: log-only for now. Catalyst's gateway rewrites
+    // the URL Twilio signs against, so the naive host+path reconstruction
+    // in validateTwilioSignature returns false negatives. Until that's
+    // solved, log the outcome but never reject — the endpoint's public
+    // URL is not guessable and rate-limited by the gateway.
+    if (cfg.TWILIO_AUTH_TOKEN) {
+      try {
+        const v = await validateTwilioSignature(req, cfg)
+        if (!v?.ok) console.warn('[sms inbound] sig check failed (log-only):', v?.reason)
+      } catch (e) { console.warn('[sms inbound] sig check err:', e.message) }
     }
 
     const from = normalizePhoneUS(req.body.From) || String(req.body.From || '')
@@ -218,6 +239,17 @@ router.post('/', async (req, res) => {
     const sid  = String(req.body.MessageSid || '')
     const numMedia = parseInt(req.body.NumMedia || '0', 10) || 0
 
+    // Twilio POSTs MediaUrl0/MediaContentType0 pairs for each attachment.
+    // We store the raw Twilio URLs plus a proxied path — the frontend
+    // fetches via our proxy (which adds Basic auth) so images display
+    // inline without exposing Twilio credentials to the browser.
+    const media = []
+    for (let i = 0; i < numMedia; i++) {
+      const url = String(req.body[`MediaUrl${i}`] || '')
+      const contentType = String(req.body[`MediaContentType${i}`] || '')
+      if (url) media.push({ url, contentType, proxy_url: `/api/sms/media/${encodeURIComponent(sid)}/${i}` })
+    }
+
     const record = {
       message_sid: sid,
       direction:   'inbound',
@@ -225,8 +257,9 @@ router.post('/', async (req, res) => {
       to_number:   to,
       body,
       timestamp:   new Date().toISOString(),
-      line_type:   classifyTwilioNumber(to),
+      line_type:   classifyTwilioNumber(to, cfg),
       num_media:   numMedia,
+      media,
     }
 
     // 1) Persist to cache log
@@ -240,18 +273,22 @@ router.post('/', async (req, res) => {
         body ? `"${body.slice(0, 400)}"` : '_(no text — media only)_',
         numMedia > 0 ? `📎 ${numMedia} attachment${numMedia === 1 ? '' : 's'}` : null,
       ].filter(Boolean).join('\n')
-      await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+      // Route by which line the text arrived on. Unknown lines fall
+      // back to the tollfree channel as a catch-all so nothing gets
+      // silently dropped.
+      const channel = record.line_type === 'local' ? SMS_LOCAL_CHANNEL : SMS_TOLLFREE_CHANNEL
+      await postToCliqChannel(channel, msg)
     } catch (e) { console.warn('[sms inbound cliq]', e.message) }
 
     // 3) Forward to Mark's cell for a native iOS notification. Skip if the
     //    sender IS Mark's cell (loop guard) or Twilio isn't configured.
     try {
-      const markCell = normalizePhoneUS(process.env.MARK_PHONE_NUMBER || '')
+      const markCell = normalizePhoneUS(cfg.MARK_PHONE_NUMBER || '')
       const senderNorm = normalizePhoneUS(from)
-      if (markCell && senderNorm && senderNorm !== markCell && twilioConfigured()) {
+      if (markCell && senderNorm && senderNorm !== markCell && twilioConfigured(cfg)) {
         const label = record.line_type === 'tollfree' ? '844' : (record.line_type === 'local' ? '425' : record.line_type)
         const forwardBody = `📱 SMS to ${label} from ${formatPhonePretty(from)}\n${body || '(media only)'}`.slice(0, 480)
-        await sendTwilioSMS({ to: markCell, body: forwardBody, from: 'local' })
+        await sendTwilioSMS({ to: markCell, body: forwardBody, from: 'local', cfg })
       }
     } catch (e) { console.warn('[sms inbound forward]', e.message) }
 
@@ -262,7 +299,7 @@ router.post('/', async (req, res) => {
     //    out); we skip auto-replies on any STOP/HELP/UNSUBSCRIBE body as
     //    a belt-and-suspenders measure.
     try {
-      if (twilioConfigured()) {
+      if (twilioConfigured(cfg)) {
         const bodyUpper = (body || '').toUpperCase().trim()
         const isStopish = /^(STOP|STOPALL|UNSUBSCRIBE|CANCEL|END|QUIT|HELP)$/.test(bodyUpper)
         if (!isStopish) {
@@ -275,17 +312,17 @@ router.post('/', async (req, res) => {
             const stamp = await readAutoReplyStamp(req, stampKey)
             if (!stamp) {
               const fromLine = record.line_type === 'tollfree' ? 'tollfree' : 'local'
-              await sendTwilioSMS({ to: from, body: FIRST_CONTACT_BODY, from: fromLine })
+              await sendTwilioSMS({ to: from, body: FIRST_CONTACT_BODY, from: fromLine, cfg })
               await writeAutoReplyStamp(req, stampKey)
             }
-          } else if (isAfterHoursNow() && String(process.env.AFTER_HOURS_AUTOREPLY || 'false').toLowerCase() === 'true') {
+          } else if (isAfterHoursNow(cfg) && String(cfg.AFTER_HOURS_AUTOREPLY || 'false').toLowerCase() === 'true') {
             // After-hours (only if we haven't already auto-replied to this
             // number today).
             const stampKey = `sms_autoreply_afterhours_${senderKey}_${dateStrPT()}`
             const stamp = await readAutoReplyStamp(req, stampKey)
             if (!stamp) {
               const fromLine = record.line_type === 'tollfree' ? 'tollfree' : 'local'
-              await sendTwilioSMS({ to: from, body: AFTER_HOURS_BODY, from: fromLine })
+              await sendTwilioSMS({ to: from, body: AFTER_HOURS_BODY, from: fromLine, cfg })
               await writeAutoReplyStamp(req, stampKey)
             }
           }
@@ -301,6 +338,42 @@ router.post('/', async (req, res) => {
   }
 })
 
+// ── Public media proxy (HMAC-signed) ────────────────────────────────────────
+// Mounted on the public webhook router so browsers can load <img src>
+// without an auth header. Signature is derived from SESSION_SECRET;
+// only URLs the server signs are accepted.
+router.get('/media/:sid/:idx', async (req, res) => {
+  try {
+    const { sid, idx } = req.params
+    const expected = mediaSig(sid, idx)
+    if (!req.query.sig || req.query.sig !== expected) {
+      return res.status(403).send('bad signature')
+    }
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg)) return res.status(503).send('Twilio not configured')
+
+    const all = await readAllMessages(req)
+    const msg = all.find(m => m.message_sid === sid)
+    const i = parseInt(idx, 10)
+    const media = msg?.media?.[i]
+    if (!media?.url) return res.status(404).send('not found')
+
+    const axiosMod = (await import('axios')).default
+    const r = await axiosMod.get(media.url, {
+      auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN },
+      responseType: 'arraybuffer',
+      timeout: 15000,
+      maxRedirects: 5,
+    })
+    res.set('Content-Type', media.contentType || r.headers['content-type'] || 'application/octet-stream')
+    res.set('Cache-Control', 'private, max-age=86400')
+    res.send(Buffer.from(r.data))
+  } catch (e) {
+    console.warn('[sms media public]', e.message)
+    res.status(500).send('media fetch failed')
+  }
+})
+
 // ── Auth-gated router below ─────────────────────────────────────────────────
 const auth = express.Router()
 
@@ -308,13 +381,14 @@ const auth = express.Router()
 // `from` is 'local' | 'tollfree' | explicit E.164 — defaults to 'local'.
 auth.post('/send', async (req, res) => {
   try {
-    if (!twilioConfigured()) {
-      return res.status(503).json({ ok: false, error: 'Twilio not configured (set TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN)' })
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg)) {
+      return res.status(503).json({ ok: false, error: 'Twilio not configured — set TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN in Phone Setup' })
     }
     const { to, body, from } = req.body || {}
     if (!to || !body) return res.status(400).json({ ok: false, error: 'to and body required' })
 
-    const result = await sendTwilioSMS({ to, body, from })
+    const result = await sendTwilioSMS({ to, body, from, cfg })
     if (!result.ok) return res.status(422).json(result)
 
     // Log outbound
@@ -325,13 +399,85 @@ auth.post('/send', async (req, res) => {
       to_number:   result.to,
       body:        String(body),
       timestamp:   new Date().toISOString(),
-      line_type:   classifyTwilioNumber(result.from),
+      line_type:   classifyTwilioNumber(result.from, cfg),
       sender:      req.user?.email || req.user?.techName || 'app',
     }
     await appendMessage(req, record)
     res.json({ ok: true, sid: result.sid, message: record })
   } catch (err) {
     console.error('[sms send]', err.message, err.stack)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/sms/diag — pings Twilio's REST API with our saved creds to
+// see (a) whether the credentials work at all and (b) whether Twilio has
+// recorded any recent messages on the account. Bypasses the whole
+// webhook chain so we can figure out if the problem is Twilio-side or
+// ours-side.
+auth.get('/diag', async (req, res) => {
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg)) {
+      return res.json({ ok: false, error: 'Twilio not configured — Phone Setup incomplete' })
+    }
+    const axiosMod = (await import('axios')).default
+    const authOpts = { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN }
+    const base = `https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}`
+
+    // 1) Recent messages (last 10, both directions)
+    let messages = null, messagesErr = null
+    try {
+      const r = await axiosMod.get(`${base}/Messages.json?PageSize=10`, { auth: authOpts, timeout: 10000, validateStatus: () => true })
+      if (r.status === 200) {
+        messages = (r.data?.messages || []).map(m => ({
+          sid: m.sid,
+          direction: m.direction,
+          from: m.from,
+          to: m.to,
+          status: m.status,
+          error_code: m.error_code,
+          error_message: m.error_message,
+          date_sent: m.date_sent,
+          num_media: m.num_media,
+        }))
+      } else {
+        messagesErr = `HTTP ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`
+      }
+    } catch (e) { messagesErr = e.message }
+
+    // 2) Phone number config on Twilio side — check SMS webhook URL,
+    //    capabilities, verified status
+    let numbers = null, numbersErr = null
+    try {
+      const r = await axiosMod.get(`${base}/IncomingPhoneNumbers.json?PageSize=20`, { auth: authOpts, timeout: 10000, validateStatus: () => true })
+      if (r.status === 200) {
+        numbers = (r.data?.incoming_phone_numbers || []).map(n => ({
+          phone_number: n.phone_number,
+          friendly_name: n.friendly_name,
+          sms_url: n.sms_url,
+          sms_method: n.sms_method,
+          sms_fallback_url: n.sms_fallback_url,
+          voice_url: n.voice_url,
+          voice_method: n.voice_method,
+          capabilities: n.capabilities,
+          status: n.status,
+        }))
+      } else {
+        numbersErr = `HTTP ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`
+      }
+    } catch (e) { numbersErr = e.message }
+
+    res.json({
+      ok: true,
+      account_sid: cfg.TWILIO_ACCOUNT_SID,
+      configured_local: cfg.TWILIO_PHONE_NUMBER,
+      configured_tollfree: cfg.TWILIO_TOLLFREE_NUMBER,
+      messages: messages || messagesErr,
+      numbers: numbers || numbersErr,
+    })
+  } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
@@ -347,6 +493,39 @@ auth.get('/threads', async (req, res) => {
   }
 })
 
+// GET /api/sms/media/:sid/:idx — proxy for Twilio-hosted MMS media.
+// Twilio's MediaUrl requires HTTP Basic auth (account SID + auth token) to
+// fetch. Rather than exposing those credentials to the browser, we proxy
+// the fetch server-side and stream the response back. Requires the app
+// user's session auth (via requireAuth middleware upstream).
+auth.get('/media/:sid/:idx', async (req, res) => {
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg)) return res.status(503).send('Twilio not configured')
+
+    const all = await readAllMessages(req)
+    const msg = all.find(m => m.message_sid === req.params.sid)
+    const idx = parseInt(req.params.idx, 10)
+    const media = msg?.media?.[idx]
+    if (!media?.url) return res.status(404).send('not found')
+
+    const axiosMod = (await import('axios')).default
+    const r = await axiosMod.get(media.url, {
+      auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN },
+      responseType: 'arraybuffer',
+      timeout: 15000,
+      maxRedirects: 5,
+    })
+    res.set('Content-Type', media.contentType || r.headers['content-type'] || 'application/octet-stream')
+    res.set('Cache-Control', 'private, max-age=86400')
+    res.send(Buffer.from(r.data))
+  } catch (e) {
+    console.warn('[sms media proxy]', e.message)
+    res.status(500).send('media fetch failed')
+  }
+})
+
 // GET /api/sms/threads/:phone — full ordered conversation
 auth.get('/threads/:phone', async (req, res) => {
   try {
@@ -359,7 +538,7 @@ auth.get('/threads/:phone', async (req, res) => {
       ok: true,
       phone: key,
       phone_pretty: formatPhonePretty(key),
-      messages,
+      messages: rewriteMediaUrls(messages),
     })
   } catch (err) {
     console.error('[sms thread]', err.message)

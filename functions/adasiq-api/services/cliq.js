@@ -35,6 +35,16 @@ export const AA_JOBS_CHANNEL = 'aajobs'
 // the schedule, not buried in the shared jobs feed.
 export const DISPATCH_CHANNEL = 'dispatch'
 
+// SMS-inbound channels — routed by which line the text came to. Each
+// line gets its own dedicated channel so team can subscribe based on
+// which numbers they own.
+//   844-FIX-ADAS traffic → #1-844-FIX-ADAS (SMS)  → unique name 'fixadassms'
+//   425-675-1329 traffic → #4256751329 (SMS)       → unique name 'raw'
+export const SMS_TOLLFREE_CHANNEL = 'fixadassms'
+export const SMS_LOCAL_CHANNEL    = 'raw'
+// Kept for backward-compat with any older imports.
+export const SMS_INBOUND_CHANNEL  = SMS_TOLLFREE_CHANNEL
+
 // Stub for a rich Cliq action-button. captureCalculator.js imports
 // `cliqUrlButton(label, url, style?)` and passes the return value into
 // message payloads that presumably support a `buttons` array. The real

@@ -9,25 +9,101 @@
 //   TWILIO_TOLLFREE_NUMBER      (844 number, E.164)
 //   MARK_PHONE_NUMBER           (Mark's cell for inbound-SMS forward)
 
-import twilio from 'twilio'
+// NO twilio SDK dependency. Catalyst kept refusing to install it despite
+// package-lock.json + package.json entries (Linux-x64 sharp variant blocks
+// clean local installs; Catalyst's install pipeline then can't reproduce
+// the environment). We hit Twilio's REST API directly with axios and
+// implement HMAC-SHA1 signature validation with node's built-in crypto.
+import axios from 'axios'
+import crypto from 'node:crypto'
+import { resolvePhoneConfig } from './phoneConfig.js'
 
-// Lazy client so the module doesn't crash on cold container start when the
-// env vars aren't populated. First send/validate call will throw a clear
-// error naming the missing var.
-let cached = null
-export function getTwilioClient() {
-  if (cached) return cached
-  const sid = process.env.TWILIO_ACCOUNT_SID
-  const token = process.env.TWILIO_AUTH_TOKEN
-  if (!sid || !token) {
-    throw new Error('Twilio not configured — set TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN in Catalyst env vars')
+const TWILIO_BASE = 'https://api.twilio.com/2010-04-01/Accounts'
+
+// Every helper below takes a `cfg` object built from resolvePhoneConfig(req).
+// That object merges Catalyst env vars (highest priority) with the in-app
+// phone-config cache (fallback), so Mark can set Twilio credentials via
+// the Phone Setup page even though env vars are maxed out.
+//
+// Callers do:
+//   const cfg = await resolvePhoneConfig(req)
+//   const r = await sendTwilioSMS({ to, body, from, cfg })
+//
+// Legacy callers that pass no cfg still work — the helpers fall through
+// to process.env, matching the pre-2026-07-08 behavior.
+
+function pickCfg(cfg) {
+  cfg = cfg || {}
+  return {
+    accountSid: cfg.TWILIO_ACCOUNT_SID     || process.env.TWILIO_ACCOUNT_SID     || '',
+    authToken:  cfg.TWILIO_AUTH_TOKEN      || process.env.TWILIO_AUTH_TOKEN      || '',
+    local:      cfg.TWILIO_PHONE_NUMBER    || process.env.TWILIO_PHONE_NUMBER    || '',
+    tollfree:   cfg.TWILIO_TOLLFREE_NUMBER || process.env.TWILIO_TOLLFREE_NUMBER || '',
   }
-  cached = twilio(sid, token)
-  return cached
 }
 
-export function twilioConfigured() {
-  return !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN)
+// Direct REST client — just the two endpoints we use. Twilio's REST API
+// uses HTTP Basic auth with (accountSid, authToken).
+function twilioAuth(sid, token) {
+  return { username: sid, password: token }
+}
+
+async function twilioPost(sid, token, resource, form) {
+  const url = `${TWILIO_BASE}/${sid}/${resource}.json`
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(form || {})) {
+    if (v === undefined || v === null) continue
+    if (Array.isArray(v)) v.forEach(item => params.append(k, String(item)))
+    else params.append(k, String(v))
+  }
+  const r = await axios.post(url, params.toString(), {
+    auth: twilioAuth(sid, token),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 15000,
+    validateStatus: () => true,  // handle 4xx/5xx ourselves
+  })
+  if (r.status < 200 || r.status >= 300) {
+    const errMsg = r.data?.message || r.data?.error_message || `Twilio ${r.status}`
+    const err = new Error(errMsg)
+    err.twilioStatus = r.status
+    err.twilioBody = r.data
+    throw err
+  }
+  return r.data
+}
+
+export function checkTwilioReady(cfg) {
+  const { accountSid, authToken } = pickCfg(cfg)
+  if (!accountSid || !authToken) {
+    throw new Error('Twilio not configured — set TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN via Phone Setup')
+  }
+  return { accountSid, authToken }
+}
+
+// Backward-compat shim so existing callers of getTwilioClient don't break.
+// Returns a wrapper with .messages.create + .calls.create matching the
+// twilio-node SDK shape we were using.
+export async function getTwilioClient(cfg) {
+  const { accountSid, authToken } = checkTwilioReady(cfg)
+  return {
+    messages: {
+      create: (opts) => twilioPost(accountSid, authToken, 'Messages', {
+        To: opts.to, From: opts.from, Body: opts.body,
+      }).then(d => ({ sid: d.sid, ...d })),
+    },
+    calls: {
+      create: (opts) => twilioPost(accountSid, authToken, 'Calls', {
+        To: opts.to, From: opts.from, Url: opts.url, Method: opts.method || 'POST',
+        StatusCallback: opts.statusCallback, StatusCallbackMethod: opts.statusCallbackMethod || 'POST',
+        StatusCallbackEvent: opts.statusCallbackEvent, Timeout: opts.timeout,
+      }).then(d => ({ sid: d.sid, ...d })),
+    },
+  }
+}
+
+export function twilioConfigured(cfg) {
+  const { accountSid, authToken } = pickCfg(cfg)
+  return !!(accountSid && authToken)
 }
 
 // Normalize any US phone into E.164 (+1XXXXXXXXXX). Accepts 10 digits,
@@ -53,19 +129,19 @@ export function formatPhonePretty(input) {
 // Which Twilio number did the message come to? Used to pick the right
 // From number when replying so the customer sees the same thread.
 // Returns 'local' | 'tollfree' | 'unknown'.
-export function classifyTwilioNumber(twilioNumber) {
+export function classifyTwilioNumber(twilioNumber, cfg) {
+  const { local, tollfree } = pickCfg(cfg)
   const e = normalizePhoneUS(twilioNumber) || String(twilioNumber || '')
-  if (e === normalizePhoneUS(process.env.TWILIO_TOLLFREE_NUMBER)) return 'tollfree'
-  if (e === normalizePhoneUS(process.env.TWILIO_PHONE_NUMBER))    return 'local'
+  if (e === normalizePhoneUS(tollfree)) return 'tollfree'
+  if (e === normalizePhoneUS(local))    return 'local'
   return 'unknown'
 }
 
 // Pick the correct From number for an outbound reply. Defaults to the
 // local 425 number when we don't know which line the customer texted
 // (matches Mark's preference — shop-facing traffic goes through local).
-export function pickFromNumber(preferred /* 'local' | 'tollfree' */) {
-  const local = process.env.TWILIO_PHONE_NUMBER
-  const tollfree = process.env.TWILIO_TOLLFREE_NUMBER
+export function pickFromNumber(preferred /* 'local' | 'tollfree' */, cfg) {
+  const { local, tollfree } = pickCfg(cfg)
   if (preferred === 'tollfree' && tollfree) return tollfree
   if (preferred === 'local'    && local)    return local
   return local || tollfree || null
@@ -76,15 +152,18 @@ export function pickFromNumber(preferred /* 'local' | 'tollfree' */) {
  *   to        — recipient (any format, normalized to E.164)
  *   body      — message text
  *   from      — optional 'local' | 'tollfree' | explicit E.164
+ *   cfg       — optional resolved phone config (from resolvePhoneConfig)
  * Returns { ok, sid, error?, to, from }.
  */
-export async function sendTwilioSMS({ to, body, from = 'local' }) {
+export async function sendTwilioSMS({ to, body, from = 'local', cfg }) {
   const normalized = normalizePhoneUS(to)
   if (!normalized) return { ok: false, error: `invalid phone: ${to}` }
   if (!body) return { ok: false, error: 'body required' }
 
-  const client = getTwilioClient()
-  const fromNumber = String(from).startsWith('+') ? from : pickFromNumber(from)
+  let client
+  try { client = await getTwilioClient(cfg) }
+  catch (e) { return { ok: false, error: e.message } }
+  const fromNumber = String(from).startsWith('+') ? from : pickFromNumber(from, cfg)
   if (!fromNumber) return { ok: false, error: 'no Twilio From number configured' }
 
   try {
@@ -100,23 +179,30 @@ export async function sendTwilioSMS({ to, body, from = 'local' }) {
   }
 }
 
-// Verify Twilio's request signature so nobody but Twilio can hit our
-// inbound webhook. `req` is an Express request; `url` is the full public
-// URL of the endpoint (Twilio signs against the exact URL). We build the
-// URL from proto/host headers plus originalUrl so it matches the Catalyst
-// gateway view of the request.
-export function validateTwilioSignature(req) {
-  const token = process.env.TWILIO_AUTH_TOKEN
-  if (!token) return { ok: false, reason: 'TWILIO_AUTH_TOKEN not set' }
+// Verify Twilio's request signature. Native HMAC-SHA1 implementation of
+// Twilio's algorithm: hash the URL + sorted key/value pairs of the body,
+// compare to the X-Twilio-Signature header. Docs:
+// https://www.twilio.com/docs/usage/webhooks/webhooks-security
+export async function validateTwilioSignature(req, cfg) {
+  const { authToken } = pickCfg(cfg)
+  if (!authToken) return { ok: false, reason: 'auth token not configured' }
   const signature = req.headers['x-twilio-signature']
   if (!signature) return { ok: false, reason: 'missing x-twilio-signature' }
   const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
   const host  = req.headers['x-forwarded-host']  || req.headers['host']
   const url   = `${proto}://${host}${req.originalUrl}`
   try {
-    const ok = twilio.validateRequest(token, signature, url, req.body || {})
+    const body = req.body || {}
+    const keys = Object.keys(body).sort()
+    let toHash = url
+    for (const k of keys) toHash += k + body[k]
+    const expected = crypto.createHmac('sha1', authToken).update(toHash, 'utf-8').digest('base64')
+    const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
     return { ok, reason: ok ? null : 'signature mismatch', url }
   } catch (e) {
     return { ok: false, reason: e.message }
   }
 }
+
+// Re-export for callers that want everything in one import.
+export { resolvePhoneConfig }

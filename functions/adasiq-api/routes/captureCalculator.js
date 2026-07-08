@@ -15,9 +15,9 @@ import catalyst from 'zcatalyst-sdk-node'
 import { computeCaptureNumbers, generateCaptureReportPdf } from '../services/captureReportPdf.js'
 import { sendBroadcast } from '../services/brewResend.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
-import { syncNewsletterSubscriberToCrm, fetchLeadsPage, fetchContactsPage, fetchAccountsPage } from '../services/zohoCrm.js'
+import { syncNewsletterSubscriberToCrm, fetchLeadsPage, fetchContactsPage, fetchAccountsPage, createLeadFlat, deleteLead } from '../services/zohoCrm.js'
 import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadcast, sendVanBroadcast, deleteVanBroadcast, unsubscribeVanContact, signUnsubEmail, verifyUnsubSig, vanUnsubscribeUrl } from '../services/fromTheVan.js'
-import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER } from '../services/fromTheVanNurture.js'
+import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER, buildGoodbyeEmail } from '../services/fromTheVanNurture.js'
 import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, unmarkCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
 import { renderWeeklyIssue } from '../services/vanWeeklyRender.js'
 import { buildNurtureEmail, nurtureDayFor, NURTURE_DAYS } from '../services/captureNurture.js'
@@ -3360,13 +3360,60 @@ captureCalcRouter.all('/from-the-van/nurture/run', heartbeatAttempt('capture_van
     }
     const list = await readVanEnrollments(req)
     let mutated = false
+    let sentCount = 0
+    let capReached = false
+
+    // Belt-and-suspenders unsubscribe filter: fetch the Resend audience once
+    // and build a Set of emails Resend has flagged unsubscribed. The cron uses
+    // /emails (transactional) instead of Broadcasts, so Resend does not enforce
+    // audience-level unsubscribes for us — we have to filter locally. Anyone
+    // Resend marks but our local record doesn't get back-filled here so future
+    // runs are fast without the API call.
+    let resendUnsubSet = new Set()
+    try {
+      const audience = await listVanSubscribers()
+      const contacts = audience?.contacts || []
+      for (const c of contacts) {
+        if (c.unsubscribed === true) {
+          const em = String(c.email || '').trim().toLowerCase()
+          if (em) resendUnsubSet.add(em)
+        }
+      }
+    } catch (e) {
+      // If Resend is unreachable, fall back to local-only tracking. Better than aborting.
+      console.warn('[van nurture] Resend audience fetch failed, using local-only unsub check:', e.message)
+    }
+
+    // Send-cap + mid-loop persistence — prevents Catalyst function timeouts
+    // from silently losing sent state. On 1,411 subs the previous
+    // write-at-end pattern would time out mid-way and lose everything past
+    // the killpoint. Now we cap per-fire and flush state every N sends.
+    //   MAX_SENDS_PER_FIRE  — hard ceiling per cron invocation. If more
+    //                        subs are owed, they roll to tomorrow.
+    //   FLUSH_EVERY         — write nurture_sent[] to cache every N ok sends
+    //                        so a mid-loop kill only loses this batch.
+    // Numbers chosen so 400 sends × 400ms max = 160s well under Catalyst
+    // gateway (30s HTTP) and function (300-540s) caps. Flushing every 25
+    // keeps worst-case duplicate risk to 25 recipients.
+    const MAX_SENDS_PER_FIRE = 400
+    const FLUSH_EVERY = 25
 
     for (let i = 0; i < list.length; i++) {
+      if (sentCount >= MAX_SENDS_PER_FIRE) {
+        capReached = true
+        break
+      }
       const sub = list[i]
-      // Skip anyone who already opted out — belt AND suspenders (Resend also
-      // enforces this via the audience unsubscribed flag on Broadcasts, but
-      // this loop bypasses Broadcasts entirely).
+      // Local unsubscribe flag — set by our own /from-the-van/unsubscribe endpoint.
       if (sub.unsubscribed_at) continue
+      // Resend audience flag — set by our endpoint AND by Gmail's List-Unsubscribe
+      // header, plus any direct Resend dashboard action. Back-fill local so
+      // future runs can skip via the fast local check.
+      if (resendUnsubSet.has(sub.email)) {
+        list[i] = { ...sub, unsubscribed_at: new Date().toISOString(), unsubscribed_source: 'resend-sync' }
+        mutated = true
+        continue
+      }
 
       const day = vanNurtureDayFor(sub)
       if (day < 1 || day > 7) continue
@@ -3413,13 +3460,20 @@ captureCalcRouter.all('/from-the-van/nurture/run', heartbeatAttempt('capture_van
       if (ok) {
         list[i] = { ...sub, nurture_sent: [...sent, day] }
         mutated = true
+        sentCount++
+        // Flush state periodically so a mid-loop kill loses AT MOST the
+        // last FLUSH_EVERY sends worth of "already-sent" tracking.
+        if (sentCount % FLUSH_EVERY === 0) {
+          try { await writeVanEnrollments(req, list) }
+          catch (e) { console.warn('[van nurture] mid-loop flush failed:', e.message) }
+        }
       }
       out.push({ email: sub.email, day, subject: built.subject, ok, status: r.status })
     }
 
     if (mutated) await writeVanEnrollments(req, list)
-    await stampSuccess(req, 'capture_van_nurture', { processed: out.length, dry })
-    res.json({ ok: true, dry, processed: out.length, results: out })
+    await stampSuccess(req, 'capture_van_nurture', { processed: out.length, sent: sentCount, capReached, dry })
+    res.json({ ok: true, dry, processed: out.length, sent: sentCount, capReached, cap: MAX_SENDS_PER_FIRE, results: out })
   } catch (e) {
     console.error('[van nurture]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message, partial: out })
@@ -3444,25 +3498,68 @@ async function handleVanUnsubscribe(req, res) {
   try {
     // 1) Remove from Resend audience so future weekly Broadcasts skip them
     const resendResult = await unsubscribeVanContact(email).catch(e => ({ ok: false, error: e.message }))
-    // 2) Mark unsubscribed_at in local enrollment so the Magic Lantern cron skips them
+    // 2) Mark unsubscribed_at in local enrollment so the Magic Lantern cron skips them.
+    // Also decide whether to send the goodbye email (idempotent: only if
+    // goodbye_sent flag isn't already set on the record — protects against
+    // Gmail preview auto-GETs, double-clicks, etc.).
     let localMarked = false
+    let shouldSendGoodbye = true  // default: send. If we find a record with goodbye_sent, flip off.
     try {
       const list = await readVanEnrollments(req)
       let mutated = false
       for (let i = 0; i < list.length; i++) {
-        if (list[i].email === email && !list[i].unsubscribed_at) {
-          list[i] = { ...list[i], unsubscribed_at: new Date().toISOString() }
-          mutated = true
-          localMarked = true
+        if (list[i].email === email) {
+          if (list[i].goodbye_sent) shouldSendGoodbye = false
+          if (!list[i].unsubscribed_at) {
+            list[i] = { ...list[i], unsubscribed_at: new Date().toISOString() }
+            mutated = true
+            localMarked = true
+          }
         }
       }
       if (mutated) await writeVanEnrollments(req, list)
     } catch (e) {
       console.warn('[van unsubscribe local]', e.message)
     }
+
+    // 3) Send the "Van Is Sad" goodbye email. Fires once, from brew@ (proven
+    // deliverability), no unsubscribe link (they already are). Idempotent via
+    // goodbye_sent flag on the enrollment record. Errors are non-fatal — the
+    // unsubscribe itself already succeeded above.
+    let goodbyeSent = false
+    if (shouldSendGoodbye) {
+      try {
+        const g = buildGoodbyeEmail()
+        const r = await sendBroadcast({
+          recipients: [email],
+          subject: g.subject,
+          html: g.html,
+          text: g.text,
+          fromEmail: 'brew@absoluteadas.com',
+          fromName: 'Mark @ Absolute ADAS',
+          replyTo: 'mark@absoluteadas.com',
+        })
+        goodbyeSent = r.status === 'sent' || r.status === 'partial'
+        // Flag it as sent so a subsequent unsub click doesn't re-fire.
+        if (goodbyeSent) {
+          try {
+            const list2 = await readVanEnrollments(req)
+            let mut = false
+            for (let i = 0; i < list2.length; i++) {
+              if (list2[i].email === email && !list2[i].goodbye_sent) {
+                list2[i] = { ...list2[i], goodbye_sent: true, goodbye_sent_at: new Date().toISOString() }
+                mut = true
+              }
+            }
+            if (mut) await writeVanEnrollments(req, list2)
+          } catch (e) { console.warn('[van goodbye flag write]', e.message) }
+        }
+      } catch (e) { console.warn('[van goodbye send]', e.message) }
+    }
+
     // Ping Mark so he sees who dropped
     postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `📤 FROM THE VAN — unsubscribe\n\nEmail: ${email}\nResend: ${resendResult.ok ? 'ok' : 'err — ' + resendResult.error}\nLocal enrollment: ${localMarked ? 'marked' : 'not found'}`
+      `📤 FROM THE VAN — unsubscribe\n\nEmail: ${email}\nResend: ${resendResult.ok ? 'ok' : 'err — ' + resendResult.error}\nLocal enrollment: ${localMarked ? 'marked' : 'not found'}\nGoodbye email: ${goodbyeSent ? 'sent' : (shouldSendGoodbye ? 'attempted but failed' : 'skipped (already sent)')}`
     ).catch(() => {})
 
     // For POST (Gmail one-click) just return 200. For GET show the confirmation page.
@@ -4032,6 +4129,147 @@ captureCalcRouter.get('/from-the-van/subscribers', requireCronSecretFlex, async 
 // Admin: bulk import a batch of email addresses into the audience. Used to
 // seed the initial list from the CRM Mailing Labels CSV. Body accepts either
 // { emails: ["a@b.com", ...] } for quick seeding, or an array of full contact
+// Admin: silently remove subscribers from the Van audience. Used to scrub
+// competitors, spam signups, and anyone flagged for stealth removal. Marks
+// them unsubscribed in Resend (so no Broadcasts) and unsubscribed_at plus
+// admin_removed=true in local enrollments (so no Magic Lantern cron sends).
+// Does NOT fire the "Van Is Sad" goodbye email. Does NOT ping Cliq. The
+// point is they never know they were removed.
+//
+//   POST /api/capture-calc/from-the-van/silent-remove  (cron-secret)
+//   Body: { emails: ['x@y.com', ...], reason?: 'competitor sweep' }
+captureCalcRouter.post('/from-the-van/silent-remove', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const emails = (req.body?.emails || []).map(e => String(e).trim().toLowerCase()).filter(Boolean)
+    const reason = String(req.body?.reason || 'silent removal').slice(0, 80)
+    if (!emails.length) return res.status(400).json({ ok: false, error: 'emails[] required' })
+    const seg = getSegment(req)
+    const results = []
+    // Snapshot the local enrollments once, mutate in-place, write once at the end
+    const list = await readVanEnrollments(req)
+    let mutated = false
+    for (const email of emails) {
+      // 1. Resend audience — mark unsubscribed
+      const resendResult = await unsubscribeVanContact(email).catch(e => ({ ok: false, error: e.message }))
+      // 2. Local enrollments — mark unsubscribed_at + admin_removed so cron skips
+      //    AND set goodbye_sent so the unsubscribe endpoint would skip its email too
+      let localFound = false
+      for (let i = 0; i < list.length; i++) {
+        if (list[i].email === email) {
+          localFound = true
+          list[i] = {
+            ...list[i],
+            unsubscribed_at: list[i].unsubscribed_at || new Date().toISOString(),
+            admin_removed: true,
+            admin_removed_reason: reason,
+            goodbye_sent: true,  // block future goodbye email if they hit unsubscribe URL
+          }
+          mutated = true
+        }
+      }
+      results.push({ email, resend: resendResult.ok ? 'ok' : `err:${resendResult.error}`, local: localFound ? 'marked' : 'not-in-local' })
+    }
+    if (mutated) await writeVanEnrollments(req, list)
+    res.json({ ok: true, total: emails.length, results, reason })
+  } catch (e) {
+    console.error('[van silent-remove]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: purge leads from Zoho CRM matching any of the given criteria. Walks
+// every page of Leads, filters by email-domain match OR company-substring match
+// (both case-insensitive), and deletes each hit. Returns a full report so
+// nothing is deleted invisibly.
+//
+//   POST /api/capture-calc/leads/purge?dry=1  (cron-secret)
+//   Body: { email_domains: ['accurateab.com', ...], company_substrings: ['calibration', ...] }
+//   ?dry=1 lists matches without deleting.
+captureCalcRouter.post('/leads/purge', requireCronSecretFlex, express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const dry = req.query.dry === '1' || req.query.dry === 'true'
+    const emailDomains = (req.body?.email_domains || []).map(d => String(d).trim().toLowerCase()).filter(Boolean)
+    const companySubs = (req.body?.company_substrings || []).map(s => String(s).trim().toLowerCase()).filter(Boolean)
+    if (!emailDomains.length && !companySubs.length) {
+      return res.status(400).json({ ok: false, error: 'email_domains[] or company_substrings[] required' })
+    }
+    const matches = []
+    // Walk pages up to 10 (2,000 leads cap — Zoho's DISCRETE_PAGINATION_LIMIT).
+    // Beyond 2,000 leads we'd need to switch to page_token-based pagination.
+    for (let page = 1; page <= 10; page++) {
+      const zoho = await fetchLeadsPage({ page, perPage: 200 })
+      const leads = zoho.data || []
+      for (const l of leads) {
+        const email = String(l.Email || '').trim().toLowerCase()
+        const company = String(l.Company || '').trim().toLowerCase()
+        const domain = email.split('@')[1] || ''
+        const emailMatch = emailDomains.some(d => domain === d || domain.endsWith('.' + d))
+        const companyMatch = companySubs.some(s => company.includes(s))
+        if (emailMatch || companyMatch) {
+          matches.push({
+            id: l.id, email: l.Email, company: l.Company,
+            first_name: l.First_Name, last_name: l.Last_Name,
+            reason: emailMatch ? `domain:${domain}` : `company:${company}`,
+          })
+        }
+      }
+      if (!zoho.more) break
+    }
+    if (dry) {
+      return res.json({ ok: true, dry: true, matched: matches.length, matches })
+    }
+    // Actually delete
+    let deleted = 0, failed = 0, errors = []
+    for (const m of matches) {
+      const r = await deleteLead(m.id)
+      if (r.ok) deleted++
+      else { failed++; if (errors.length < 10) errors.push({ id: m.id, email: m.email, error: r.error }) }
+      await new Promise(r => setTimeout(r, 150))  // throttle
+    }
+    res.json({ ok: true, matched: matches.length, deleted, failed, errors, matches })
+  } catch (e) {
+    console.error('[leads purge]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
+// Admin: bulk-add leads to Zoho CRM Leads module with flat contact-shaped
+// fields. Used for one-off harvests (OOO reply team lists, event attendee
+// lists, etc.) where each person from one company becomes its own lead.
+//   POST /api/capture-calc/leads/bulk-create (cron-secret)
+//   Body: { leads: [{ company, first_name, last_name, email, phone, title, lead_source, description }, ...] }
+captureCalcRouter.post('/leads/bulk-create', requireCronSecretFlex, express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const leads = Array.isArray(req.body?.leads) ? req.body.leads : []
+    if (!leads.length) return res.status(400).json({ ok: false, error: 'leads[] required' })
+    const results = []
+    let created = 0
+    let duplicates = 0
+    let failed = 0
+    for (const l of leads) {
+      const r = await createLeadFlat({
+        company:      l.company,
+        firstName:    l.first_name || l.firstName,
+        lastName:     l.last_name  || l.lastName,
+        email:        l.email,
+        phone:        l.phone,
+        title:        l.title,
+        leadSource:   l.lead_source || l.leadSource,
+        description:  l.description,
+      })
+      if (r.duplicate) duplicates++
+      else if (r.ok)   created++
+      else             failed++
+      results.push({ email: l.email, ok: r.ok, id: r.id, duplicate: r.duplicate, error: r.error })
+      await new Promise(r => setTimeout(r, 150))  // small throttle for Zoho rate limits
+    }
+    res.json({ ok: true, total: leads.length, created, duplicates, failed, results })
+  } catch (e) {
+    console.error('[leads bulk-create]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
 // Pull one page of Zoho CRM Accounts (customer businesses) and add each to
 // the Resend From the Van audience. Accounts is the BUSINESSES module — one
 // row per shop Mark works with. Emails on Account records are typically the

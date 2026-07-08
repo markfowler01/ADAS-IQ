@@ -13,7 +13,8 @@ import salespersonsRouter from './routes/salespersons.js'
 import techStatsRouter from './routes/techStats.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
 import { smsWebhookRouter, smsAuthRouter } from './routes/sms.js'
-import { voiceWebhookRouter, voicemailsAuthRouter } from './routes/voice.js'
+import { voiceWebhookRouter, voicemailsAuthRouter, callsAuthRouter } from './routes/voice.js'
+import phoneConfigRouter from './routes/phoneConfig.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
 import historyRouter from './routes/history.js'
@@ -200,6 +201,8 @@ app.use('/webhooks/twilio/voice',
   voiceWebhookRouter,
 )
 app.use('/api/voicemails', requireAuth, voicemailsAuthRouter)
+app.use('/api/calls', requireAuth, callsAuthRouter)
+app.use('/api/phone-config', requireAuth, phoneConfigRouter)
 
 // Simple health check — quick way to confirm each Twilio + Cliq env is set.
 app.get('/api/health/phone', requireAuth, (req, res) => {

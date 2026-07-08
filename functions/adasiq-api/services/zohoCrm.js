@@ -37,6 +37,101 @@ function crmHeaders(token) {
 }
 
 /**
+ * Fetch one page of Leads (up to 200). Used by the /debug/leads-dump loop
+ * to pull the whole module — the sync path avoids the 30s HTTP gateway
+ * timeout that would blow up on a full one-shot export.
+ *
+ * @param {Object} args
+ * @param {number} [args.page]      1-indexed, default 1
+ * @param {number} [args.perPage]   max 200 (Zoho hard cap), default 200
+ * @param {string} [args.fields]    comma-separated field list, default all standard
+ * @returns {Promise<{ok, page, count, more, data: any[]}>}
+ */
+export async function fetchLeadsPage({ page = 1, perPage = 200, fields, cvid } = {}) {
+  const token = await getCrmAccessToken()
+  const defaultFields = [
+    'id', 'Last_Name', 'First_Name', 'Company', 'Email',
+    'Phone', 'Mobile', 'Street', 'City', 'State', 'Zip_Code', 'Country',
+    'Lead_Source', 'Lead_Status', 'Industry', 'Created_Time', 'Owner',
+  ].join(',')
+  const params = { fields: fields || defaultFields, page, per_page: Math.min(200, perPage) }
+  if (cvid) params.cvid = String(cvid)
+  const res = await axios.get(`${CRM_API}/Leads`, {
+    headers: crmHeaders(token),
+    params,
+    timeout: 20000,
+    validateStatus: s => s === 200 || s === 204,
+  })
+  if (res.status === 204) return { ok: true, page, count: 0, more: false, data: [] }
+  return {
+    ok: true,
+    page,
+    count: (res.data.data || []).length,
+    more: !!res.data.info?.more_records,
+    data: res.data.data || [],
+  }
+}
+
+/**
+ * Fetch one page of Contacts. Mirrors fetchLeadsPage — Contacts is the
+ * "converted leads / real people" module, and the warm-list starting point
+ * for the From the Van newsletter.
+ */
+export async function fetchContactsPage({ page = 1, perPage = 200, fields } = {}) {
+  const token = await getCrmAccessToken()
+  const defaultFields = [
+    'id', 'Last_Name', 'First_Name', 'Full_Name', 'Account_Name', 'Email',
+    'Phone', 'Mobile', 'Mailing_Street', 'Mailing_City', 'Mailing_State',
+    'Mailing_Zip', 'Mailing_Country', 'Title', 'Department',
+    'Lead_Source', 'Email_Opt_Out', 'Created_Time', 'Owner',
+  ].join(',')
+  const res = await axios.get(`${CRM_API}/Contacts`, {
+    headers: crmHeaders(token),
+    params: { fields: fields || defaultFields, page, per_page: Math.min(200, perPage) },
+    timeout: 20000,
+    validateStatus: s => s === 200 || s === 204,
+  })
+  if (res.status === 204) return { ok: true, page, count: 0, more: false, data: [] }
+  return {
+    ok: true,
+    page,
+    count: (res.data.data || []).length,
+    more: !!res.data.info?.more_records,
+    data: res.data.data || [],
+  }
+}
+
+/**
+ * Fetch one page of Accounts. Accounts is the "businesses" module in Zoho —
+ * each row is a shop/company Mark has done work with. Emails on the Account
+ * record (when populated) are typically the primary shop contact for
+ * invoicing/scheduling and are the right target for the weekly newsletter.
+ */
+export async function fetchAccountsPage({ page = 1, perPage = 200, fields } = {}) {
+  const token = await getCrmAccessToken()
+  const defaultFields = [
+    'id', 'Account_Name', 'Website', 'Phone', 'Email',
+    'Billing_Street', 'Billing_City', 'Billing_State', 'Billing_Code',
+    'Industry', 'Account_Type', 'Owner', 'Created_Time',
+    'Email_Opt_Out',
+  ].join(',')
+  const res = await axios.get(`${CRM_API}/Accounts`, {
+    headers: crmHeaders(token),
+    params: { fields: fields || defaultFields, page, per_page: Math.min(200, perPage) },
+    timeout: 20000,
+    validateStatus: s => s === 200 || s === 204,
+  })
+  if (res.status === 204) return { ok: true, page, count: 0, more: false, data: [] }
+  return {
+    ok: true,
+    page,
+    count: (res.data.data || []).length,
+    more: !!res.data.info?.more_records,
+    data: res.data.data || [],
+  }
+}
+
+/**
  * Search for an existing Lead by company name.
  */
 export async function findLeadByName(companyName) {
@@ -58,6 +153,52 @@ export async function findLeadByName(companyName) {
 /**
  * Create a Lead in Zoho CRM from an ADAS IQ shop.
  */
+/**
+ * Delete a Lead by id. Idempotent — a 404 returns ok:true (already gone).
+ */
+export async function deleteLead(leadId) {
+  if (!leadId) return { ok: false, error: 'id required' }
+  const token = await getCrmAccessToken()
+  try {
+    const res = await axios.delete(`${CRM_API}/Leads/${leadId}`, {
+      headers: crmHeaders(token), timeout: 10000, validateStatus: s => s < 500,
+    })
+    if (res.status === 200 && res.data?.data?.[0]?.code === 'SUCCESS') return { ok: true, id: leadId }
+    if (res.status === 404) return { ok: true, id: leadId, alreadyGone: true }
+    return { ok: false, error: `Zoho ${res.status}: ${JSON.stringify(res.data).slice(0, 300)}` }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
+/**
+ * Create a lead with FLAT contact-shaped fields (bypasses the shop-shaped
+ * schema expected by createLead()). Used when adding individual people to
+ * a company (e.g., harvesting an out-of-office reply that lists a team).
+ * Fields map directly to Zoho CRM Lead columns.
+ */
+export async function createLeadFlat({ company, firstName, lastName, email, phone, title, leadSource, description }) {
+  const token = await getCrmAccessToken()
+  const lead = {
+    Company:     company || 'Unknown',
+    First_Name:  firstName || '',
+    Last_Name:   lastName || firstName || company || 'Unknown',
+    Email:       email || '',
+    Phone:       phone || '',
+    Title:       title || '',
+    Lead_Source: leadSource || 'Manual',
+    Lead_Status: 'Not Contacted',
+    Description: description || '',
+  }
+  const res = await axios.post(`${CRM_API}/Leads`, { data: [lead] }, {
+    headers: crmHeaders(token), timeout: 10000, validateStatus: s => s < 500,
+  })
+  const created = res.data?.data?.[0]
+  if (created?.code === 'SUCCESS') return { ok: true, id: created.details?.id, email }
+  if (created?.code === 'DUPLICATE_DATA') return { ok: true, duplicate: true, id: created.details?.id, email }
+  return { ok: false, error: `${created?.code || 'unknown'}: ${created?.message || JSON.stringify(res.data)}` }
+}
+
 export async function createLead(shop) {
   const token = await getCrmAccessToken()
   const primaryContact = shop.people?.[0] || {}

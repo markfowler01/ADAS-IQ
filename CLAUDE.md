@@ -266,6 +266,7 @@ Report generation MOVED from quote creation to post-invoice.
 - **WorkDrive URL format**: workspace browser URLs use `/folders/` (plural). Regex must be `/folders?/`.
 - **Cliq self-DM**: `buddies_self_message_restricted` when token user tries to DM themselves. Use channel post for Mark.
 - **Catalyst cache admin token**: `catalystHeaders()` must use `Catalyst-Cred-Token` scheme for admin tokens (not `Zoho-oauthtoken`). Wrong scheme → 403 on cache POST.
+- **Catalyst `segment.put()` requires a TTL**: 3rd arg is expiry in hours. Without it the first-ever write silently fails and nothing persists. Pattern: `try update; catch → put(key, val, hoursTtl)`. Bit us on SMS threads 2026-07-08 — Twilio was delivering, Cliq alerts fired, but the SMS Log stayed empty because writeAllMessages was calling `segment.put(key, val)` with no TTL.
 - **ROWID precision**: Catalyst Datastore ROWIDs > MAX_SAFE_INTEGER. Never `Number(rowId)` — always string.
 - **Zoho Mail large IDs**: same precision issue — use `safeParseMailResponse()` before JSON.parse.
 - **No FF after response**: `await Promise.all([email, cliq])` before `res.json()` — don't fire-and-forget.
