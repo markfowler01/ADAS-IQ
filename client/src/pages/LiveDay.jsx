@@ -310,6 +310,58 @@ function TechCard({ tech, viewerRole, onReadyToInvoice }) {
   )
 }
 
+function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
+  const [text, setText] = useState('')
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      <div className="rounded-2xl bg-white w-full max-w-md p-5">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider font-semibold"
+              style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
+              Ready to Invoice
+            </div>
+            <div className="font-bold text-base mt-0.5" style={{ color: '#1a1a1a' }}>
+              {job.shop_name || 'Job'}
+            </div>
+            <div className="text-xs" style={{ color: '#666' }}>
+              {job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ') || ''}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-xl px-1" style={{ color: '#888' }}>×</button>
+        </div>
+
+        <div className="text-sm mb-2" style={{ color: '#1a1a1a' }}>
+          Any other services to add? Kat will pull these into the invoice.
+        </div>
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={4}
+          autoFocus
+          placeholder="e.g. Programmed new key fob, replaced windshield trim, extra travel mileage…"
+          className="w-full rounded-xl p-3 text-sm"
+          style={{ border: '1px solid #e0dbd6', outline: 'none', resize: 'vertical' }}
+        />
+
+        <div className="flex gap-2 mt-3">
+          <button
+            onClick={() => onSubmit('')}
+            className="flex-1 rounded-xl py-2.5 text-sm font-semibold"
+            style={{ backgroundColor: 'white', color: '#666', border: '1px solid #e0dbd6' }}
+          >Skip · No extras</button>
+          <button
+            onClick={() => onSubmit(text)}
+            className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white"
+            style={{ backgroundColor: '#7e22ce' }}
+          >{text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
@@ -389,6 +441,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [toast, setToast] = useState('')
   const [jobRequestOpen,   setJobRequestOpen]   = useState(false)
   const [quoteRequestOpen, setQuoteRequestOpen] = useState(false)
+  const [readyInvoiceJob,  setReadyInvoiceJob]  = useState(null)
   const refreshTimerRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -501,18 +554,28 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     await load()
   }
 
-  // Flips the current job to ready_invoice. The backend PATCH handler
-  // fans a "🟢 Ready to Invoice" post to both #aajobs and #Dispatch (added
-  // 2026-07-08 so dispatch sees invoicing coming). Reloads Live Day so
-  // the card disappears from Up Next.
-  async function handleReadyToInvoice(job) {
+  // Opens the Ready-to-Invoice modal so the tech can jot any extra
+  // services before the job flips. Actual PATCH happens in the modal's
+  // Submit / Skip handlers below.
+  function handleReadyToInvoice(job) {
     if (!job?.id) return
-    if (!confirm(`Mark "${job.shop_name || 'this job'}" as Ready to Invoice?`)) return
+    setReadyInvoiceJob(job)
+  }
+
+  // Called by the modal — flips the job to ready_invoice, optionally
+  // attaching extra_services text that surfaces on the Kanban card + in
+  // the Cliq #Dispatch alert so Kat can pull them into the invoice.
+  async function submitReadyToInvoice(extraServices) {
+    const job = readyInvoiceJob
+    if (!job?.id) return
+    setReadyInvoiceJob(null)
     try {
+      const body = { status: 'ready_invoice' }
+      if (extraServices && extraServices.trim()) body.extra_services = extraServices.trim()
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'ready_invoice' }),
+        body: JSON.stringify(body),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
@@ -699,6 +762,14 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           suggestions={suggestions}
           onAssign={handleAssign}
           onClose={() => { setInsertJob(null); setSuggestions(null) }}
+        />
+      )}
+
+      {readyInvoiceJob && (
+        <ReadyToInvoiceModal
+          job={readyInvoiceJob}
+          onSubmit={submitReadyToInvoice}
+          onClose={() => setReadyInvoiceJob(null)}
         />
       )}
 

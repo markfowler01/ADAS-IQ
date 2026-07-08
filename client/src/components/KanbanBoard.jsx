@@ -709,6 +709,21 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
 
+      {/* Extra services flag — from the Live Day Ready-to-Invoice modal.
+          Bright red so Kat sees it in the Ready-to-Invoice column. */}
+      {job.extra_services && String(job.extra_services).trim() && (
+        <div className="rounded-lg p-2 mb-2"
+          style={{ backgroundColor: '#fef2f2', border: '2px solid #dc2626' }}>
+          <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+            style={{ color: '#dc2626', fontFamily: 'IBM Plex Mono, monospace' }}>
+            🚩 Extra Services to Add
+          </div>
+          <div className="text-xs whitespace-pre-wrap" style={{ color: '#991b1b' }}>
+            {job.extra_services}
+          </div>
+        </div>
+      )}
+
 
       {/* Footer row */}
       <div className="flex items-center justify-between mt-1 mb-2">

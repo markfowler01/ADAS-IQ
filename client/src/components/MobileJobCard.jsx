@@ -212,6 +212,22 @@ export default function MobileJobCard({
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
 
+      {/* Extra services flag — tech typed extras in the Live Day
+          Ready-to-Invoice modal. Bright red block so Kat can't miss it
+          when scanning the Ready-to-Invoice column. */}
+      {job.extra_services && String(job.extra_services).trim() && (
+        <div className="rounded-lg p-2 mb-2"
+          style={{ backgroundColor: '#fef2f2', border: '2px solid #dc2626' }}>
+          <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+            style={{ color: '#dc2626', fontFamily: 'IBM Plex Mono, monospace' }}>
+            🚩 Extra Services to Add
+          </div>
+          <div className="text-xs whitespace-pre-wrap" style={{ color: '#991b1b' }}>
+            {job.extra_services}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mt-1 mb-2">
         {dateStr ? <span className="text-xs" style={{ color: '#9ca3af' }}>{dateStr}</span> : <span />}
         <div className="flex items-center gap-2">

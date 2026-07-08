@@ -90,7 +90,34 @@ function logJobHistory(req, job, trigger) {
 
 // ─── Row ↔ Job Mapping ────────────────────────────────────────────────────────
 
+// Extra-services piggyback marker. Extras added by the Live Day
+// Ready-to-Invoice modal live inside `notes` between these markers so
+// no Catalyst Datastore column change is required. Parse out for display
+// and Cliq alerts; keep the raw block hidden from techs typing regular
+// notes.
+const EXTRA_START = '<<EXTRAS>>'
+const EXTRA_END   = '<</EXTRAS>>'
+const EXTRA_RE = new RegExp(`\\n*${EXTRA_START}([\\s\\S]*?)${EXTRA_END}\\n*`, 'g')
+
+function splitNotes(rawNotes) {
+  const raw = String(rawNotes || '')
+  let extras = ''
+  const m = raw.match(new RegExp(`${EXTRA_START}([\\s\\S]*?)${EXTRA_END}`))
+  if (m) extras = m[1].trim()
+  const cleanNotes = raw.replace(EXTRA_RE, '').trim()
+  return { cleanNotes, extras }
+}
+
+function joinNotes(cleanNotes, extras) {
+  const base = String(cleanNotes || '').trim()
+  const ex = String(extras || '').trim()
+  if (!ex) return base
+  const block = `${EXTRA_START}${ex}${EXTRA_END}`
+  return base ? `${base}\n\n${block}` : block
+}
+
 function rowToJob(row) {
+  const { cleanNotes, extras } = splitNotes(row.notes)
   return {
     id:               String(row.ROWID),
     shop_name:        row.shop_name        || '',
@@ -104,7 +131,8 @@ function rowToJob(row) {
     region:           row.region           || '',
     scheduled_date:   row.scheduled_date   || '',
     calibrations:     row.calibrations     || '[]',
-    notes:            row.notes            || '',
+    notes:            cleanNotes,
+    extra_services:   extras,
     report_url:       row.report_url       || '',
     status:           row.status           || 'need_dispatch',
     invoiced:         row.invoiced === 'true',
@@ -121,6 +149,10 @@ function rowToJob(row) {
 function jobToRow(job) {
   // Only include columns that exist in the Catalyst Datastore Jobs table schema.
   // Do not spread unknown/new fields — Catalyst returns an error for unknown column names.
+  // extra_services piggybacks inside `notes` via joinNotes so no schema change
+  // is required.
+  const cleanNotes = String(job.notes || '').replace(EXTRA_RE, '').trim()
+  const notesWithExtras = joinNotes(cleanNotes, job.extra_services)
   return {
     shop_name:        job.shop_name        || '',
     vehicle:          job.vehicle          || '',
@@ -132,7 +164,7 @@ function jobToRow(job) {
     technician:       job.technician       || '',
     scheduled_date:   job.scheduled_date   || '',
     calibrations:     typeof job.calibrations === 'string' ? job.calibrations : JSON.stringify(job.calibrations || []),
-    notes:            job.notes            || '',
+    notes:            notesWithExtras,
     report_url:       job.report_url       || '',
     status:           job.status           || 'need_dispatch',
     invoiced:         String(Boolean(job.invoiced)),
@@ -435,11 +467,13 @@ router.put('/:id', async (req, res) => {
         const shop = updated.shop_name || 'Job'
         const insurer = updated.insurer || 'Customer Pay (CP)'
         const tech = updated.technician ? ` · 👤 ${updated.technician}` : ''
+        const extras = String(updated.extra_services || '').trim()
         const msg = [
           `🟢 *Ready to Invoice* · ${shop}`,
           `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
           `🏦 ${insurer}`,
-        ].join('\n')
+          extras ? `🚩 *EXTRA SERVICES TO ADD:*\n${extras}` : null,
+        ].filter(Boolean).join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
           .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
         // Also fan to #Dispatch so the scheduling side sees ready-to-invoice
@@ -449,8 +483,8 @@ router.put('/:id', async (req, res) => {
         await createNotification(req, {
           to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
           type: 'job_ready_invoice',
-          title: `Ready to invoice: ${shop}`,
-          body: '',
+          title: `Ready to invoice: ${shop}${extras ? ' (+ extras)' : ''}`,
+          body: extras ? `🚩 Extras: ${extras}` : '',
           jobId: updated.id, job: updated,
           skipCliq: true, skipTechChannel: true,
         }).catch(e => console.warn('[notif job_ready_invoice inbox]', e.message))
@@ -543,11 +577,15 @@ router.patch('/:id', async (req, res) => {
         const shop = updated.shop_name || 'Job'
         const insurer = updated.insurer || 'Customer Pay (CP)'
         const tech = updated.technician ? ` · 👤 ${updated.technician}` : ''
+        // Extra services line — set from the Live Day Ready-to-Invoice modal.
+        // Prefixed with 🚩 so Kat can't miss it in the channel scroll.
+        const extras = String(updated.extra_services || '').trim()
         const msg = [
           `🟢 *Ready to Invoice* · ${shop}`,
           `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
           `🏦 ${insurer}`,
-        ].join('\n')
+          extras ? `🚩 *EXTRA SERVICES TO ADD:*\n${extras}` : null,
+        ].filter(Boolean).join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
           .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
         // Also fan to #Dispatch so the scheduling side sees ready-to-invoice
@@ -557,8 +595,8 @@ router.patch('/:id', async (req, res) => {
         await createNotification(req, {
           to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
           type: 'job_ready_invoice',
-          title: `Ready to invoice: ${shop}`,
-          body: '',
+          title: `Ready to invoice: ${shop}${extras ? ' (+ extras)' : ''}`,
+          body: extras ? `🚩 Extras: ${extras}` : '',
           jobId: updated.id, job: updated,
           skipCliq: true, skipTechChannel: true,
         }).catch(e => console.warn('[notif job_ready_invoice inbox]', e.message))
