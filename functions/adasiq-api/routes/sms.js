@@ -93,7 +93,7 @@ async function writeAllMessages(req, records) {
   // first-ever write silently fails and nothing persists. 90 days
   // matches RETENTION_DAYS above.
   try { await segment.update(SMS_CACHE_KEY, val) }
-  catch { await segment.put(SMS_CACHE_KEY, val, 24 * RETENTION_DAYS) }
+  catch { await segment.put(SMS_CACHE_KEY, val, 48 /* Catalyst Cache max */) }
 }
 
 // Returns { ok, error, count } so callers can tell whether the write
