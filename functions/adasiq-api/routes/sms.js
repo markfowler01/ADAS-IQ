@@ -28,6 +28,7 @@ import {
 } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
 import { postToCliqChannel, SMS_TOLLFREE_CHANNEL, SMS_LOCAL_CHANNEL } from '../services/cliq.js'
+import { loadPhoneIndex, normPhone, contactLabel, findContactByPhone } from '../services/crmContacts.js'
 
 const router = express.Router()
 
@@ -265,11 +266,21 @@ router.post('/', async (req, res) => {
     // 1) Persist to cache log
     await appendMessage(req, record)
 
+    // CRM contact lookup — best-effort. If the sender's phone matches a
+    // shop or person on file, we surface the name/shop in both the Cliq
+    // alert and the forward SMS to Mark's cell.
+    let contact = null
+    try { contact = await findContactByPhone(req, from) } catch { contact = null }
+    const contactStr = contactLabel(contact)
+
     // 2) Post to #aajobs so the team sees it
     try {
       const label = record.line_type === 'tollfree' ? '844' : (record.line_type === 'local' ? '425' : 'unknown')
+      const senderStr = contactStr
+        ? `👤 ${contactStr} · ${formatPhonePretty(from)}`
+        : formatPhonePretty(from)
       const msg = [
-        `📩 *SMS in* · ${formatPhonePretty(from)} → ${label}`,
+        `📩 *SMS in* · ${senderStr} → ${label}`,
         body ? `"${body.slice(0, 400)}"` : '_(no text — media only)_',
         numMedia > 0 ? `📎 ${numMedia} attachment${numMedia === 1 ? '' : 's'}` : null,
       ].filter(Boolean).join('\n')
@@ -287,7 +298,10 @@ router.post('/', async (req, res) => {
       const senderNorm = normalizePhoneUS(from)
       if (markCell && senderNorm && senderNorm !== markCell && twilioConfigured(cfg)) {
         const label = record.line_type === 'tollfree' ? '844' : (record.line_type === 'local' ? '425' : record.line_type)
-        const forwardBody = `📱 SMS to ${label} from ${formatPhonePretty(from)}\n${body || '(media only)'}`.slice(0, 480)
+        const senderPart = contactStr
+          ? `${contactStr} (${formatPhonePretty(from)})`
+          : formatPhonePretty(from)
+        const forwardBody = `📱 SMS to ${label} from ${senderPart}\n${body || '(media only)'}`.slice(0, 480)
         await sendTwilioSMS({ to: markCell, body: forwardBody, from: 'local', cfg })
       }
     } catch (e) { console.warn('[sms inbound forward]', e.message) }
@@ -485,8 +499,17 @@ auth.get('/diag', async (req, res) => {
 // GET /api/sms/threads — list of conversations, newest first
 auth.get('/threads', async (req, res) => {
   try {
-    const all = await readAllMessages(req)
-    res.json({ ok: true, threads: bucketByThread(all) })
+    const [all, phoneIdx] = await Promise.all([
+      readAllMessages(req),
+      loadPhoneIndex(req),
+    ])
+    const threads = bucketByThread(all).map(t => {
+      const contact = phoneIdx.get(normPhone(t.phone)) || null
+      return contact
+        ? { ...t, contact_name: contact.contact_name, shop_name: contact.shop_name, shop_id: contact.shop_id }
+        : t
+    })
+    res.json({ ok: true, threads })
   } catch (err) {
     console.error('[sms threads]', err.message)
     res.status(500).json({ error: err.message })
@@ -530,7 +553,10 @@ auth.get('/media/:sid/:idx', async (req, res) => {
 auth.get('/threads/:phone', async (req, res) => {
   try {
     const key = normalizePhoneUS(req.params.phone) || String(req.params.phone || '')
-    const all = await readAllMessages(req)
+    const [all, contact] = await Promise.all([
+      readAllMessages(req),
+      findContactByPhone(req, key),
+    ])
     const messages = all
       .filter(m => threadKey(m) === key)
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
@@ -538,6 +564,9 @@ auth.get('/threads/:phone', async (req, res) => {
       ok: true,
       phone: key,
       phone_pretty: formatPhonePretty(key),
+      contact_name: contact?.contact_name || '',
+      shop_name:    contact?.shop_name    || '',
+      shop_id:      contact?.shop_id      || '',
       messages: rewriteMediaUrls(messages),
     })
   } catch (err) {

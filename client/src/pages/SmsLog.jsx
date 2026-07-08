@@ -115,6 +115,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
     }
   }, [])
 
+  const [convoContact, setConvoContact] = useState({ contact_name: '', shop_name: '', shop_id: '' })
   const loadConversation = useCallback(async (phone, { silent = false } = {}) => {
     if (!phone) return
     if (!silent) setConvoLoading(true)
@@ -123,6 +124,11 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
       setConversation(j.messages || [])
+      setConvoContact({
+        contact_name: j.contact_name || '',
+        shop_name:    j.shop_name    || '',
+        shop_id:      j.shop_id      || '',
+      })
     } catch (e) {
       if (!silent) showToast(`Load failed: ${e.message}`)
     } finally {
@@ -429,12 +435,18 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <div className="font-semibold text-sm truncate" style={{ color: '#1a1a1a' }}>
-                      {t.phone_pretty || fmtPhone(t.phone)}
+                      {t.contact_name || t.phone_pretty || fmtPhone(t.phone)}
                     </div>
                     <div className="text-[10px] flex-shrink-0" style={{ color: '#888' }}>
                       {fmtTime(t.last_timestamp)}
                     </div>
                   </div>
+                  {(t.contact_name || t.shop_name) && (
+                    <div className="text-[11px] truncate" style={{ color: '#888' }}>
+                      {t.shop_name || t.phone_pretty || fmtPhone(t.phone)}
+                      {t.contact_name && t.shop_name ? ` · ${t.phone_pretty || fmtPhone(t.phone)}` : ''}
+                    </div>
+                  )}
                   <div className="text-xs truncate mt-0.5" style={{ color: '#666' }}>
                     {t.last_direction === 'outbound' ? '↗ ' : '↘ '}{t.last_body || '(media)'}
                   </div>
@@ -455,14 +467,31 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
               <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid #f0ece8' }}>
                 <div>
                   <div className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>
-                    {fmtPhone(selectedPhone)}
+                    {convoContact.contact_name || fmtPhone(selectedPhone)}
                   </div>
-                  <div className="text-[10px]" style={{ color: '#888' }}>{selectedPhone}</div>
+                  {convoContact.shop_name && (
+                    <div className="text-xs font-medium" style={{ color: ORANGE }}>
+                      {convoContact.shop_name}
+                    </div>
+                  )}
+                  <div className="text-[10px]" style={{ color: '#888' }}>
+                    {convoContact.contact_name ? `${fmtPhone(selectedPhone)} · ` : ''}{selectedPhone}
+                  </div>
                 </div>
-                <a href={`tel:${selectedPhone}`}
-                  className="text-xs font-semibold px-2.5 py-1 rounded-lg"
-                  style={{ color: ORANGE, border: `1px solid ${ORANGE}` }}
-                >📞 Call</a>
+                <div className="flex items-center gap-2">
+                  {convoContact.shop_id && onNavigate && (
+                    <button
+                      onClick={() => onNavigate('crm')}
+                      className="text-xs font-semibold px-2.5 py-1 rounded-lg"
+                      style={{ color: '#0e7490', border: '1px solid #0e7490' }}
+                      title={`Open CRM (shop: ${convoContact.shop_name})`}
+                    >📇 CRM</button>
+                  )}
+                  <a href={`tel:${selectedPhone}`}
+                    className="text-xs font-semibold px-2.5 py-1 rounded-lg"
+                    style={{ color: ORANGE, border: `1px solid ${ORANGE}` }}
+                  >📞 Call</a>
+                </div>
               </div>
 
               {convoLoading ? (
