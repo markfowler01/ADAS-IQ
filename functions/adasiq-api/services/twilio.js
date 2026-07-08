@@ -181,27 +181,87 @@ export async function sendTwilioSMS({ to, body, from = 'local', cfg }) {
 
 // Verify Twilio's request signature. Native HMAC-SHA1 implementation of
 // Twilio's algorithm: hash the URL + sorted key/value pairs of the body,
-// compare to the X-Twilio-Signature header. Docs:
+// compare to the X-Twilio-Signature header.
 // https://www.twilio.com/docs/usage/webhooks/webhooks-security
+//
+// Catalyst's gateway rewrites paths and hosts before the request lands
+// in the function, so a naive `${proto}://${host}${req.originalUrl}`
+// reconstruction can't match what Twilio actually signed. We instead
+// build every plausible URL candidate — Twilio only signed ONE, so if
+// any of them hashes to the header, we accept. The set covers:
+//   1. What the request looks like inside the function
+//   2. The X-Forwarded-Host + originalUrl combo
+//   3. TWILIO_WEBHOOK_BASE_URL env override + path (learning knob)
+//   4. Hard-coded Catalyst public host + /server/adasiq-api/<path>
+//   5. Any of the above with a trailing slash toggled
+function computeCandidateUrls(req) {
+  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
+  const fwdHost = req.headers['x-forwarded-host'] || ''
+  const rawHost = req.headers['host'] || ''
+  const path = req.originalUrl || req.url || ''
+
+  // Public Catalyst URL (dev environment). Overridable via env if a prod
+  // deployment moves off this host — set TWILIO_WEBHOOK_BASE_URL to the
+  // scheme+host+function-prefix Twilio actually POSTs to
+  // (no trailing slash).
+  const CATALYST_PUBLIC = 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+  const envBase = (process.env.TWILIO_WEBHOOK_BASE_URL || '').replace(/\/$/, '')
+
+  const bases = [
+    envBase,
+    CATALYST_PUBLIC,
+    fwdHost ? `${proto}://${fwdHost}` : '',
+    rawHost ? `${proto}://${rawHost}` : '',
+  ].filter(Boolean)
+
+  const paths = new Set()
+  paths.add(path)
+  // Some Catalyst configs strip the function prefix from originalUrl.
+  // Add both forms so we cover strip + no-strip.
+  if (!path.startsWith('/server/adasiq-api')) paths.add(`/server/adasiq-api${path}`)
+  else paths.add(path.replace(/^\/server\/adasiq-api/, ''))
+
+  const candidates = new Set()
+  for (const base of bases) {
+    for (const p of paths) {
+      // Preserve query string exactly as it arrived; Twilio signs it.
+      candidates.add(`${base}${p}`)
+      candidates.add(`${base}${p.replace(/\/$/, '')}`)
+      candidates.add(`${base}${p}${p.endsWith('/') ? '' : '/'}`)
+    }
+  }
+  return [...candidates].filter(Boolean)
+}
+
 export async function validateTwilioSignature(req, cfg) {
   const { authToken } = pickCfg(cfg)
   if (!authToken) return { ok: false, reason: 'auth token not configured' }
   const signature = req.headers['x-twilio-signature']
   if (!signature) return { ok: false, reason: 'missing x-twilio-signature' }
-  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
-  const host  = req.headers['x-forwarded-host']  || req.headers['host']
-  const url   = `${proto}://${host}${req.originalUrl}`
-  try {
-    const body = req.body || {}
-    const keys = Object.keys(body).sort()
+  const body = req.body || {}
+  const keys = Object.keys(body).sort()
+
+  const candidates = computeCandidateUrls(req)
+  let sigBuf
+  try { sigBuf = Buffer.from(signature) } catch { return { ok: false, reason: 'bad signature encoding' } }
+
+  const tried = []
+  for (const url of candidates) {
     let toHash = url
     for (const k of keys) toHash += k + body[k]
-    const expected = crypto.createHmac('sha1', authToken).update(toHash, 'utf-8').digest('base64')
-    const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))
-    return { ok, reason: ok ? null : 'signature mismatch', url }
-  } catch (e) {
-    return { ok: false, reason: e.message }
+    let expected
+    try {
+      expected = crypto.createHmac('sha1', authToken).update(toHash, 'utf-8').digest('base64')
+    } catch (e) { continue }
+    tried.push(url)
+    try {
+      const expBuf = Buffer.from(expected)
+      if (expBuf.length === sigBuf.length && crypto.timingSafeEqual(expBuf, sigBuf)) {
+        return { ok: true, url, tried }
+      }
+    } catch { /* mismatched lengths — try next candidate */ }
   }
+  return { ok: false, reason: `no candidate URL matched signature (tried ${tried.length})`, tried }
 }
 
 // Re-export for callers that want everything in one import.
