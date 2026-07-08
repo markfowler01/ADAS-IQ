@@ -14,6 +14,7 @@ import techStatsRouter from './routes/techStats.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
 import { smsWebhookRouter, smsAuthRouter } from './routes/sms.js'
 import { voiceWebhookRouter, voicemailsAuthRouter, callsAuthRouter } from './routes/voice.js'
+import { phoneHealthRouter } from './routes/phoneHealth.js'
 import phoneConfigRouter from './routes/phoneConfig.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
@@ -184,6 +185,11 @@ app.use('/api/customers', requireAuth, customersRouter)
 app.use('/api/salespersons', requireAuth, salespersonsRouter)
 app.use('/api/tech-stats', requireAuth, techStatsRouter)
 app.use('/api/cron/daily-greeting', dailyGreetingRouter)
+// Phone-system self-test cron. Every 5 minutes hits the voice + SMS
+// webhooks with a synthetic Twilio payload; if either 5xx's, 403's, or
+// returns invalid TwiML, fires a Cliq alert to Mark's channel so a
+// broken phone system never survives one interval unnoticed.
+app.use('/api/cron/phone-health', phoneHealthRouter)
 
 // SMS routes — inbound webhook is public (Twilio signature-validated),
 // send + threads endpoints require auth.

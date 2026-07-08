@@ -204,6 +204,44 @@ function nextCascadeTwiML(req, order) {
 </Response>`.trim()
 }
 
+// Fallback TwiML — the LAST-RESORT response we send back when anything
+// in the primary handler throws. Sends the caller to voicemail with a
+// clear message so we never leave a customer listening to dead air.
+// Twilio treats a 200 + valid TwiML as success no matter what, so this
+// guarantees the caller always gets *something*.
+function fallbackVoicemailTwiML(req) {
+  const vmUrl = `${baseUrl(req)}/webhooks/twilio/voice/voicemail`
+  return `<Response><Redirect method="POST">${esc(vmUrl)}</Redirect></Response>`
+}
+
+// Wrapper — every Twilio-facing handler runs through this so an
+// uncaught throw returns a fallback TwiML instead of a 500. On any
+// crash we also fire a bright red Cliq alert to Mark's channel so the
+// system is impossible to miss when it starts misbehaving.
+function safeVoiceHandler(handler, opName) {
+  return async (req, res) => {
+    try {
+      await handler(req, res)
+    } catch (err) {
+      console.error(`[voice ${opName}] fatal:`, err.message, err.stack)
+      try {
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        await postToCliqChannelById(
+          MARK_ALERT_CHANNEL_ID,
+          `🚨 *PHONE ALERT* — voice handler crashed\n` +
+          `handler: \`${opName}\`\n` +
+          `error: \`${err.message}\`\n` +
+          `caller: ${req.body?.From || 'unknown'} → ${req.body?.To || 'unknown'}\n` +
+          `Falling back to voicemail so caller isn't stranded.`
+        ).catch(() => {})
+      } catch {}
+      if (!res.headersSent) {
+        res.type('text/xml').send(xml(fallbackVoicemailTwiML(req)))
+      }
+    }
+  }
+}
+
 // ── POST /webhooks/twilio/voice ─────────────────────────────────────────────
 // Inbound call. Starts the ring cascade immediately. Recording is enabled
 // on the <Dial> verb (see nextCascadeTwiML) without a spoken disclosure —
@@ -211,7 +249,7 @@ function nextCascadeTwiML(req, order) {
 // out-of-state calls only"). No disclosure announcement is played. Logs
 // an initial "ringing" call-log entry so we have a record even if nobody
 // picks up and the voicemail lands separately.
-router.post('/', requireTwilioSignature, async (req, res) => {
+router.post('/', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
   try {
     await upsertCall(req, {
       call_sid:    String(req.body.CallSid || ''),
@@ -224,7 +262,7 @@ router.post('/', requireTwilioSignature, async (req, res) => {
     })
   } catch (e) { console.warn('[voice inbound log]', e.message) }
   res.type('text/xml').send(xml(nextCascadeTwiML(req, 0)))
-})
+}, 'inbound'))
 
 // After each cascade step Twilio POSTs the DialCallStatus. If the call
 // was answered (completed) we're done; otherwise advance to the next
@@ -239,9 +277,9 @@ function cascadeContinueHandler(nextOrder) {
   }
 }
 
-router.post('/after-mark',   requireTwilioSignature, cascadeContinueHandler(1))
-router.post('/after-jayden', requireTwilioSignature, cascadeContinueHandler(2))
-router.post('/after-kat',    requireTwilioSignature, cascadeContinueHandler(3))
+router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(1), 'after-mark'))
+router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(2), 'after-jayden'))
+router.post('/after-kat',    requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(3), 'after-kat'))
 
 // ── POST /webhooks/twilio/voice/voicemail ───────────────────────────────────
 // Records the voicemail. Twilio calls transcription webhook when done.
