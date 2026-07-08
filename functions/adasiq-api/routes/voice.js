@@ -124,15 +124,19 @@ async function upsertVoicemail(req, record) {
 }
 
 // ── Signature validation gate ───────────────────────────────────────────────
+// LOG-ONLY 2026-07-08. Catalyst's gateway rewrites the URL that Twilio
+// signs against, so the naive host+path reconstruction in
+// validateTwilioSignature returns false negatives and 403s every real
+// call. Rejection = customer hears nothing = phone appears broken.
+// Match SMS webhook's log-only stance until URL reconstruction is fixed.
 async function requireTwilioSignature(req, res, next) {
   const cfg = await resolvePhoneConfig(req)
   req.phoneCfg = cfg  // stash so downstream handlers can reuse without re-reading cache
-  if (!twilioConfigured(cfg)) return next()  // Pre-config: log-and-continue.
-  const check = await validateTwilioSignature(req, cfg)
-  if (!check.ok) {
-    console.warn('[voice] signature check failed:', check.reason, 'url:', check.url)
-    return res.status(403).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
-  }
+  if (!twilioConfigured(cfg)) return next()
+  try {
+    const check = await validateTwilioSignature(req, cfg)
+    if (!check?.ok) console.warn('[voice] sig check failed (log-only):', check?.reason)
+  } catch (e) { console.warn('[voice] sig check err:', e.message) }
   next()
 }
 
