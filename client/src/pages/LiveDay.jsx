@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
+import MobileJobCard from '../components/MobileJobCard.jsx'
 import JobRequestModal from '../components/JobRequestModal.jsx'
 import QuoteRequestModal from '../components/QuoteRequestModal.jsx'
 
@@ -288,20 +289,14 @@ function TechCard({ tech, viewerRole, onReadyToInvoice }) {
         </div>
       ) : null}
 
-      {/* Next job */}
+      {/* Next job — same Kanban-card layout used on the board */}
       {next && (
-        <div className="rounded-xl p-3" style={{ backgroundColor: 'white', border: '1px dashed #ddd' }}>
-          <div className="text-[10px] uppercase tracking-wider font-semibold mb-0.5"
+        <div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1"
             style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-            Next
+            Next{next.time_window_start ? ` · ETA ${next.time_window_start}` : ''}
           </div>
-          <div className="font-semibold text-sm truncate" style={{ color: '#1a1a1a' }}>
-            {next.shop_name || 'Unknown'}
-          </div>
-          <div className="text-xs mt-0.5" style={{ color: '#666' }}>
-            {next.vehicle || ''}
-            {next.time_window_start && ` · ETA ${next.time_window_start}`}
-          </div>
+          <MobileJobCard job={next} onMoveToReadyInvoice={onReadyToInvoice} />
         </div>
       )}
 
@@ -600,6 +595,14 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               style={{ backgroundColor: '#7c2d12', color: 'white' }}
               title="Open Identifix"
             >Identifix</a>
+            <a
+              href="https://opusccp.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: '#4c1d95', color: 'white' }}
+              title="Open Opus CCP"
+            >Opus CCP</a>
             <button
               onClick={load}
               className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"

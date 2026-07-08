@@ -39,11 +39,15 @@ const CASH_ZERO_FRAGMENTS = [
 ]
 
 // Returns true when the job should be treated as a cash / self-pay customer.
-// Cash = no insurer, or insurer is one of the standard "self-pay" markers.
+// Cash = insurer explicitly matches a self-pay marker. Blank insurer is
+// NOT cash (2026-07-08 — Mark: "if there's an insurance company it's not
+// cash; blank alone shouldn't apply cash pricing"). Previously blank
+// insurer defaulted to cash, which was silently zeroing PCSI/Post-Scan
+// on jobs where the insurer was just not filled in yet.
 export function isCashCustomer(job) {
   if (!job) return false
   const insurer = String(job.insurer || '').trim()
-  if (!insurer) return true
+  if (!insurer) return false
   return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(insurer)
 }
 

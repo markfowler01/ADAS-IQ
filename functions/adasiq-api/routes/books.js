@@ -1230,9 +1230,16 @@ router.post('/invoices/from-job', async (req, res) => {
     invoices.push(...createdInvoices)
     await writeInvoices(req, invoices)
 
-    // Generate + upload ADAS IQ calibration report (non-blocking — don't delay response)
-    generateAndUploadReport(req, { job, invoices: createdInvoices })
-      .catch(e => console.warn('[report] background upload failed:', e.message))
+    // Generate + upload ADAS IQ calibration report BEFORE res.json.
+    // Was fire-and-forget, but Catalyst kills the container the moment
+    // res.json returns — killing the PDF generation mid-run. Stopped
+    // reports from ever finishing. Awaited now, with the whole call
+    // wrapped so a report failure never 500s the invoicing response.
+    try {
+      await generateAndUploadReport(req, { job, invoices: createdInvoices })
+    } catch (e) {
+      console.warn('[report] generation failed (non-fatal):', e.message)
+    }
 
     // Respond with the created invoices — maintain backwards-compatible shape
     const insuranceInvoice = createdInvoices.find(i => i.invoice_type === 'insurance') || null

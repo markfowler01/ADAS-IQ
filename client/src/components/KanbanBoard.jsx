@@ -24,7 +24,7 @@ const ORANGE = '#CD4419'
 function isCashCustomerJob(job) {
   if (!job) return false
   const ins = String(job.insurer || '').trim()
-  if (!ins) return true
+  if (!ins) return false
   return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(ins)
 }
 
