@@ -6,6 +6,7 @@ import CRMImportModal from './CRMImportModal'
 import GooglePlacesModal from './GooglePlacesModal'
 import CRMBroadcastModal from './CRMBroadcastModal'
 import ShopDetailPanel from './ShopDetailPanel'
+import VanContactModal from './VanContactModal'
 
 const ORANGE = '#CD4419'
 
@@ -462,6 +463,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [showFindShops, setShowFindShops] = useState(false)
   const [crmSyncing, setCrmSyncing] = useState(false)
   const [showBroadcast, setShowBroadcast] = useState(false)
+  const [showVanContact, setShowVanContact] = useState(false)
   const [syncing,       setSyncing]       = useState(false)
   const [calCounts,     setCalCounts]     = useState({})
 
@@ -594,6 +596,14 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
                 onFocus={e => e.target.style.borderColor = ORANGE}
                 onBlur={e => e.target.style.borderColor = '#e0dbd6'} />
             </div>
+
+            {/* Van Contact — one-tap: adds to CRM shop record AND enrolls in Van newsletter */}
+            <button onClick={() => setShowVanContact(true)}
+              className="text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 text-white"
+              style={{ backgroundColor: ORANGE }}
+              title="Add a shop contact to CRM + Van newsletter">
+              📨<span className="hidden sm:inline">Van Contact</span>
+            </button>
 
             {/* Broadcast */}
             <button onClick={() => setShowBroadcast(true)}
@@ -904,6 +914,22 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
       {/* Broadcast Modal */}
       {showBroadcast && (
         <CRMBroadcastModal shops={shops} onClose={() => setShowBroadcast(false)} />
+      )}
+
+      {/* Van Contact Modal — CRM row + Van newsletter enrollment in one submit */}
+      {showVanContact && (
+        <VanContactModal
+          shops={shops}
+          onClose={() => setShowVanContact(false)}
+          onSaved={data => {
+            const bits = [
+              data.shop_created ? 'Shop added' : 'Shop updated',
+              data.van_subscribed ? 'newsletter ✓' : (data.van_error ? 'newsletter skipped' : ''),
+            ].filter(Boolean).join(' · ')
+            showToast(`✅ ${data.shop_name} — ${bits}`, true)
+            fetchShops()
+          }}
+        />
       )}
 
       {toast && (

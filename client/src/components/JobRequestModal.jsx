@@ -73,10 +73,13 @@ export default function JobRequestModal({ onClose, onSubmit }) {
 
       let fieldsFound = 0
 
-      if (data.ro_number) { setRoNumber(data.ro_number); fieldsFound++ }
-      if (data.year)      { setYear(data.year);           fieldsFound++ }
-      if (data.make)      { setMake(data.make);           fieldsFound++ }
-      if (data.model)     { setModel(data.model);         fieldsFound++ }
+      // Coerce every Claude-returned field to a string. Claude sometimes
+      // returns model years / RO#s as numbers, and calling .trim() on a
+      // number later blows up with "R.trim is not a function" at submit.
+      if (data.ro_number != null && data.ro_number !== '') { setRoNumber(String(data.ro_number)); fieldsFound++ }
+      if (data.year      != null && data.year      !== '') { setYear(String(data.year));           fieldsFound++ }
+      if (data.make      != null && data.make      !== '') { setMake(String(data.make));           fieldsFound++ }
+      if (data.model     != null && data.model     !== '') { setModel(String(data.model));         fieldsFound++ }
       if (data.vin) {
         const v = String(data.vin).replace(/\s/g, '')
         setLastFourVin(v.slice(-4).toUpperCase())
@@ -120,13 +123,16 @@ export default function JobRequestModal({ onClose, onSubmit }) {
     try {
       await onSubmit({
         shop_name:  selected.contact_name,
-        ro_number:  roNumber.trim(),
-        year:       year.trim(),
-        make:       make.trim(),
-        model:      model.trim(),
+        // Belt-and-suspenders: coerce to string in case a setter ever
+        // slips through with a non-string value again (Claude scan,
+        // future paste/autofill, etc.).
+        ro_number:  String(roNumber || '').trim(),
+        year:       String(year     || '').trim(),
+        make:       String(make     || '').trim(),
+        model:      String(model    || '').trim(),
         vin:        lastFourVin ? `****${lastFourVin.toUpperCase()}` : '',
         technician: technician,
-        notes:      notes.trim(),
+        notes:      String(notes || '').trim(),
         status:     'job_requested',
       })
       onClose()

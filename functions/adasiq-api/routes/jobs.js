@@ -442,6 +442,10 @@ router.put('/:id', async (req, res) => {
         ].join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
           .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
+        // Also fan to #Dispatch so the scheduling side sees ready-to-invoice
+        // events without having to also subscribe to #aajobs.
+        await postToCliqChannel(DISPATCH_CHANNEL, msg)
+          .catch(e => console.warn('[dispatch job_ready_invoice]', e.message))
         await createNotification(req, {
           to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
           type: 'job_ready_invoice',
@@ -546,6 +550,10 @@ router.patch('/:id', async (req, res) => {
         ].join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
           .catch(e => console.warn('[aajobs job_ready_invoice]', e.message))
+        // Also fan to #Dispatch so the scheduling side sees ready-to-invoice
+        // events without having to also subscribe to #aajobs.
+        await postToCliqChannel(DISPATCH_CHANNEL, msg)
+          .catch(e => console.warn('[dispatch job_ready_invoice]', e.message))
         await createNotification(req, {
           to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
           type: 'job_ready_invoice',
@@ -633,16 +641,35 @@ router.patch('/:id/complete', async (req, res) => {
     const merged = { ...current, ...patch }
     const updated = await updateJob(req, jobId, merged)
 
-    // Fire the existing Kat notification (mirrors PATCH /:id ready_invoice branch)
+    // Mirror the PATCH /:id ready_invoice branch: post to #aajobs and
+    // #Dispatch, drop an inbox row for Kat, fire the cash-customer
+    // reminder if applicable. Was previously missing the channel posts
+    // (only inbox notification fired), so a tech tapping "Complete"
+    // didn't ping Cliq — fixed 2026-07-08.
     if (current.status !== 'ready_invoice') {
+      const vehicle = updated.vehicle || [updated.year, updated.make, updated.model].filter(Boolean).join(' ')
+      const roNum = updated.quote_number || (updated.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+      const shop = updated.shop_name || 'Job'
+      const insurer = updated.insurer || 'Customer Pay (CP)'
+      const tech = updated.technician ? ` · 👤 ${updated.technician}` : ''
+      const msg = [
+        `🟢 *Ready to Invoice* · ${shop}`,
+        `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
+        `🏦 ${insurer}`,
+      ].join('\n')
+      await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+        .catch(e => console.warn('[aajobs job_ready_invoice complete]', e.message))
+      await postToCliqChannel(DISPATCH_CHANNEL, msg)
+        .catch(e => console.warn('[dispatch job_ready_invoice complete]', e.message))
       await createNotification(req, {
         to: 'Kath',
         toEmail: 'k.belmonte@absoluteadas.com',
         type: 'job_ready_invoice',
-        title: `Ready to invoice: ${updated.shop_name || 'Job'}`,
+        title: `Ready to invoice: ${shop}`,
         body: '',
         jobId: updated.id,
         job: updated,
+        skipCliq: true, skipTechChannel: true,
       }).catch(e => console.warn('[notifications complete]', e.message))
       await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice complete]', e.message))
     }

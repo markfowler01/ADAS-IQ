@@ -26,6 +26,7 @@ import KanbanBoard from './components/KanbanBoard'
 import RepairEstimateScreen from './components/RepairEstimateScreen'
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
+import SmsLog from './pages/SmsLog'
 import BooksScreen from './components/BooksScreen'
 import OpsHub from './components/OpsHub'
 import MessageCenter from './components/MessageCenter'
@@ -278,6 +279,9 @@ function MainApp() {
       )}
       {screen === 'crm' && (
         <CRMScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'sms' && (
+        <SmsLog {...navProps} />
       )}
       {screen === 'books' && (
         <BooksScreen onBack={() => setScreen('upload')} {...navProps} />

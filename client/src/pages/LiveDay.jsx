@@ -209,7 +209,7 @@ function CapacityBar({ tech }) {
   )
 }
 
-function TechCard({ tech, viewerRole }) {
+function TechCard({ tech, viewerRole, onReadyToInvoice }) {
   const color = TECH_COLOR[tech.name] || '#999'
   const jobsToday = tech.used || 0
   const hitTarget = jobsToday >= GOAL_TARGET
@@ -261,12 +261,22 @@ function TechCard({ tech, viewerRole }) {
           <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>
             {current.shop_name || 'Unknown'}
           </div>
-          <div className="text-xs mt-0.5" style={{ color: '#555' }}>
+          <div className="text-xs mt-0.5 mb-2" style={{ color: '#555' }}>
             {current.vehicle || ''}
             {current.started_at
               ? ` · ✓ Done by ${projectedDoneBy(current.started_at)}`
               : current.time_window_start ? ` · ETA ${current.time_window_start}` : ''}
           </div>
+          {/* Ready to Invoice — flips job status, which moves it to the
+              Ready to Invoice column on the Kanban and posts to #aajobs +
+              #Dispatch (Cliq fan-out lives in routes/jobs.js). */}
+          <button
+            onClick={() => onReadyToInvoice && onReadyToInvoice(current)}
+            className="w-full text-sm font-bold rounded-lg py-2 text-white"
+            style={{ backgroundColor: '#7e22ce' }}
+          >
+            🟢 Ready to Invoice
+          </button>
         </div>
       ) : tech.status === 'done' ? (
         <div className="text-sm py-2 text-center" style={{ color: '#15803d' }}>
@@ -496,6 +506,28 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     await load()
   }
 
+  // Flips the current job to ready_invoice. The backend PATCH handler
+  // fans a "🟢 Ready to Invoice" post to both #aajobs and #Dispatch (added
+  // 2026-07-08 so dispatch sees invoicing coming). Reloads Live Day so
+  // the card disappears from Up Next.
+  async function handleReadyToInvoice(job) {
+    if (!job?.id) return
+    if (!confirm(`Mark "${job.shop_name || 'this job'}" as Ready to Invoice?`)) return
+    try {
+      const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'ready_invoice' }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      showToast(`🟢 ${job.shop_name || 'Job'} → Ready to Invoice`)
+      await load()
+    } catch (e) {
+      showToast(`Failed: ${e.message}`)
+    }
+  }
+
   async function handleAssign(jobId, tech) {
     try {
       const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}`, {
@@ -607,7 +639,14 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
         {/* Tech cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {(data?.techs || []).map(t => <TechCard key={t.name} tech={t} viewerRole={data?.viewer_role} />)}
+          {(data?.techs || []).map(t => (
+            <TechCard
+              key={t.name}
+              tech={t}
+              viewerRole={data?.viewer_role}
+              onReadyToInvoice={handleReadyToInvoice}
+            />
+          ))}
         </div>
 
         {/* Unassigned same-day jobs */}

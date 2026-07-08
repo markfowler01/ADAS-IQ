@@ -10,6 +10,7 @@ const PRIMARY_LINKS = [
   { id: 'kanban',  label: 'Jobs' },
   { id: 'dispatch-map', label: 'Map', adminOnly: true },
   { id: 'crm',     label: 'CRM' },
+  { id: 'sms',     label: 'SMS' },
   { id: 'books',   label: 'Books' },
 ]
 

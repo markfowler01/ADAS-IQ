@@ -6,11 +6,14 @@ import authRouter, { verifyToken } from './routes/auth.js'
 import demoRouter from './routes/demo.js'
 import extractRouter from './routes/extract.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
+import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
 import salespersonsRouter from './routes/salespersons.js'
 import techStatsRouter from './routes/techStats.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
+import { smsWebhookRouter, smsAuthRouter } from './routes/sms.js'
+import { voiceWebhookRouter, voicemailsAuthRouter } from './routes/voice.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
 import historyRouter from './routes/history.js'
@@ -34,6 +37,7 @@ import calendarRouter from './routes/calendar.js'
 import garminRouter from './routes/garmin.js'
 import mailAgentRouter from './routes/mail-agent.js'
 import plannerBrainDumpRouter from './routes/planner-brain-dump.js'
+import plannerObsidianRouter from './routes/planner-obsidian.js'
 import plannerDelegationsRouter from './routes/planner-delegations.js'
 import expensesRouter from './routes/expenses.js'
 import notificationsRouter from './routes/notifications.js'
@@ -173,11 +177,49 @@ app.get('/debug/cache', requireAuth, async (req, res) => {
 // Protected API routes (rate limiters applied to AI-heavy endpoints)
 app.use('/api/extract', requireAuth, extractLimiter, extractRouter)
 app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)
+app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
 app.use('/api/salespersons', requireAuth, salespersonsRouter)
 app.use('/api/tech-stats', requireAuth, techStatsRouter)
 app.use('/api/cron/daily-greeting', dailyGreetingRouter)
+
+// SMS routes — inbound webhook is public (Twilio signature-validated),
+// send + threads endpoints require auth.
+app.use('/webhooks/twilio/sms',
+  express.urlencoded({ extended: false }),  // Twilio POSTs application/x-www-form-urlencoded
+  smsWebhookRouter,
+)
+app.use('/api/sms', requireAuth, smsAuthRouter)
+
+// Voice routes — every Twilio voice callback (IVR gather, dial-done,
+// voicemail recording, transcription) lives under /webhooks/twilio/voice/*
+// so a single mount handles them all.
+app.use('/webhooks/twilio/voice',
+  express.urlencoded({ extended: false }),
+  voiceWebhookRouter,
+)
+app.use('/api/voicemails', requireAuth, voicemailsAuthRouter)
+
+// Simple health check — quick way to confirm each Twilio + Cliq env is set.
+app.get('/api/health/phone', requireAuth, (req, res) => {
+  res.json({
+    ok: true,
+    twilio: {
+      account_sid_set:     !!process.env.TWILIO_ACCOUNT_SID,
+      auth_token_set:      !!process.env.TWILIO_AUTH_TOKEN,
+      local_number_set:    !!process.env.TWILIO_PHONE_NUMBER,
+      tollfree_number_set: !!process.env.TWILIO_TOLLFREE_NUMBER,
+      mark_cell_set:       !!process.env.MARK_PHONE_NUMBER,
+      jayden_cell_set:     !!process.env.JAYDEN_PHONE_NUMBER,
+      kat_cell_set:        !!process.env.KAT_PHONE_NUMBER,
+    },
+    cliq: {
+      refresh_token_set:   !!process.env.ZOHO_CLIQ_REFRESH_TOKEN,
+    },
+    time: new Date().toISOString(),
+  })
+})
 app.use('/api/report', requireAuth, reportRouter)
 app.use('/api/audit', requireAuth, auditLimiter, auditRouter)
 app.use('/api/history', requireAuth, historyRouter)
@@ -717,6 +759,7 @@ app.use('/api/mail-agent', mailAgentRouter)
 // Planner brain-dump — public (planner is a separate app); takes free text, returns structured planner draft
 app.use('/api/planner', plannerBrainDumpRouter)
 app.use('/api/planner', plannerDelegationsRouter) // GET /delegations — action items from mail/Cliq
+app.use('/api/planner-obsidian', plannerObsidianRouter) // POST /sync-day, /store-token, GET /debug
 app.use('/api/expenses', requireAuth, expensesRouter)
 app.use('/api/notifications', requireAuth, notificationsRouter)
 app.use('/api/crm-sync', requireAuth, crmSyncRouter)

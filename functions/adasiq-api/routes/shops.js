@@ -210,6 +210,112 @@ router.get('/', async (req, res) => {
   }
 })
 
+// POST /api/shops/van-contact
+// Single-entry contact capture. Adds the person to the matching CRM shop
+// (creating the shop if it doesn't exist yet) AND enrolls their email
+// into the From-the-Van Resend audience. Both operations are best-effort
+// so a Resend hiccup never blocks the CRM row from saving; the response
+// tells the caller which side succeeded.
+//
+// Body: { first_name, last_name, email, phone, shop_name, notes? }
+// Response: { ok, shop_id, shop_created, van_subscribed, van_error? }
+router.post('/van-contact', async (req, res) => {
+  try {
+    const body = req.body || {}
+    const first_name = String(body.first_name || '').trim()
+    const last_name  = String(body.last_name  || '').trim()
+    const email      = String(body.email      || '').trim().toLowerCase()
+    const phone      = String(body.phone      || '').trim()
+    const shopName   = String(body.shop_name  || '').trim()
+    const notes      = String(body.notes      || '').trim()
+
+    if (!shopName)        return res.status(400).json({ error: 'shop_name is required' })
+    if (!email && !phone) return res.status(400).json({ error: 'email or phone is required' })
+
+    const fullName = [first_name, last_name].filter(Boolean).join(' ')
+
+    // ── 1) CRM side — find or create shop, upsert person by email ───────────
+    const all = await getAllShops(req)
+    const shopKey = shopName.toLowerCase()
+    let shop = all.find(s => String(s.shop_name || '').toLowerCase().trim() === shopKey)
+    let shop_created = false
+
+    const newPerson = {
+      name:  fullName || undefined,
+      email: email    || undefined,
+      phone: phone    || undefined,
+      source: 'van-contact-form',
+      added_at: new Date().toISOString(),
+    }
+    // Strip undefined so we don't store empty keys.
+    Object.keys(newPerson).forEach(k => newPerson[k] === undefined && delete newPerson[k])
+
+    if (!shop) {
+      // Brand new shop — bootstrap with this person as person[0].
+      const inserted = await insertShop(req, {
+        shop_name: shopName,
+        phone: phone || '',
+        email: email || '',
+        pipeline_stage: 'target',
+        people: [newPerson],
+        notes: notes ? `Van-form: ${notes}` : '',
+        referral_source: 'From the Van sign-up',
+      })
+      shop = inserted
+      shop_created = true
+    } else {
+      // Existing shop — dedup people by email (case-insensitive). If a
+      // matching person already exists, patch their fields; otherwise
+      // append. Shop-level phone/email left alone to avoid clobbering
+      // primary-contact data.
+      const people = Array.isArray(shop.people) ? [...shop.people] : []
+      const emailKey = email.toLowerCase()
+      const idx = emailKey ? people.findIndex(p => String(p.email || '').toLowerCase() === emailKey) : -1
+      if (idx >= 0) people[idx] = { ...people[idx], ...newPerson }
+      else people.push(newPerson)
+
+      // Append the note as an activity entry instead of overwriting shop.notes.
+      const activities = Array.isArray(shop.activities) ? [...shop.activities] : []
+      if (notes || fullName || email || phone) {
+        activities.unshift({
+          type: 'van-contact-signup',
+          summary: `Added van newsletter contact${fullName ? ' — ' + fullName : ''}${email ? ' (' + email + ')' : ''}${notes ? ' — ' + notes : ''}`,
+          at: new Date().toISOString(),
+        })
+      }
+      await updateShop(req, shop.id, { ...shop, people, activities })
+    }
+
+    // ── 2) Van newsletter side — Resend enrollment (idempotent) ─────────────
+    let van_subscribed = false
+    let van_error = null
+    if (email) {
+      try {
+        const { addVanSubscriber } = await import('../services/fromTheVan.js')
+        const r = await addVanSubscriber({ email, firstName: first_name, lastName: last_name })
+        if (r?.ok) van_subscribed = true
+        else van_error = r?.error || 'unknown addVanSubscriber failure'
+      } catch (e) {
+        van_error = e.message
+      }
+    } else {
+      van_error = 'no email provided — newsletter enrollment skipped'
+    }
+
+    res.json({
+      ok: true,
+      shop_id: shop.id,
+      shop_name: shop.shop_name,
+      shop_created,
+      van_subscribed,
+      ...(van_error ? { van_error } : {}),
+    })
+  } catch (err) {
+    console.error('[shops van-contact]', err.message, err.stack)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /api/shops
 router.post('/', async (req, res) => {
   try {
