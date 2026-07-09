@@ -469,6 +469,23 @@ auth.post('/send', async (req, res) => {
       attempts:      result.attempts,
     }
     const persist = await appendMessage(req, record)
+    if (!persist.ok) {
+      // Loud alert — send succeeded but our local mirror broke. Customer
+      // still receives the text but the log won't show it until we fix
+      // the storage layer.
+      try {
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        await postToCliqChannelById(
+          MARK_ALERT_CHANNEL_ID,
+          `⚠ *SMS log-save failed*\n` +
+          `sid: ${result.sid}\n` +
+          `to: ${result.to}\n` +
+          `from: ${result.from}\n` +
+          `error: \`${persist.error}\`\n` +
+          `Customer DID receive the text — only the local log missed it.`
+        ).catch(() => {})
+      } catch {}
+    }
     res.json({
       ok: true,
       sid: result.sid,
