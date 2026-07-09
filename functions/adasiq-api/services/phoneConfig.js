@@ -73,10 +73,12 @@ async function writePhoneCache(req, obj) {
   const val = JSON.stringify(obj || {})
   // SDK's `update` fails if the key doesn't exist; `put` creates it. Try
   // update first, fall back to put on failure.
+  // TTL MUST be 1-48 hours — anything outside that range is silently
+  // rejected by Catalyst. 48 is the max the platform allows.
   try {
     await segment.update(CACHE_KEY, val)
   } catch (e) {
-    await segment.put(CACHE_KEY, val)
+    await segment.put(CACHE_KEY, val, 48)
   }
 }
 
