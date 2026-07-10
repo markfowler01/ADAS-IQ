@@ -153,10 +153,16 @@ function esc(s) {
     .replace(/'/g, '&apos;')
 }
 
-function baseUrl(req) {
-  const proto = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim()
-  const host  = req.headers['x-forwarded-host']  || req.headers['host']
-  return `${proto}://${host}`
+// Public base for every URL we hand to Twilio (whisper, voicemail
+// redirect, cascade action callbacks, recording/transcription
+// callbacks). MUST include the /server/adasiq-api function prefix —
+// reconstructing from Host headers loses it, the resulting bare-host
+// URL 404s, and Twilio speaks "an application error has occurred" into
+// the call (Mark heard exactly this on 2026-07-10). Same env-override
+// pattern as sms.js statusCallbackFor and phoneHealth.js HEALTH_BASE.
+function baseUrl(_req) {
+  return (process.env.TWILIO_WEBHOOK_BASE_URL || '').replace(/\/$/, '')
+    || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
 }
 
 // ── Cascade helpers ─────────────────────────────────────────────────────────
@@ -297,12 +303,11 @@ router.post('/after-kat',    requireTwilioSignature, safeVoiceHandler(cascadeCon
 // tells you which line the call came in on. Twilio fetches this URL the
 // moment the tech picks up (the url attribute on <Number>).
 router.post('/whisper', requireTwilioSignature, (req, res) => {
-  const line = String(req.query.line || '')
-  const label = line === 'tollfree' ? 'eight four four'
-    : line === 'local' ? 'four two five'
-    : 'business'
+  // Shortened to just the business name per Mark 2026-07-10 ("something
+  // a little quicker"). The ?line= param still arrives if we ever want
+  // the line callout back.
   res.type('text/xml').send(xml(
-    `<Response><Say voice="Polly.Matthew">Absolute A D A S call on the ${label} line.</Say></Response>`
+    `<Response><Say voice="Polly.Matthew">Absolute A D A S.</Say></Response>`
   ))
 })
 
