@@ -51,76 +51,32 @@ const router = express.Router()
 
 // ── Catalyst Cache ──────────────────────────────────────────────────────────
 // Migrated to SDK 2026-07-08 (same silent-404 bug as sms.js/phoneConfig).
-const VM_CACHE_KEY = 'voicemails'
-const CALLS_CACHE_KEY = 'calls_log'
-const RETENTION_DAYS = 90
-
-function getSegment(req) {
-  const app = catalyst.initialize(req, { type: 'advancedio' })
-  return app.cache().segment()
-}
+// Storage moved from Catalyst Cache → Datastore 2026-07-09. Cache had a
+// 48h TTL cap AND a ~40KB per-key size cap that silently rejected writes
+// once we accumulated enough call history. Datastore has neither — it's
+// row-based, no size cap, no eviction, real persistence. Table names +
+// schemas defined in services/datastoreCallLog.js + datastoreVoicemails.js.
+import { upsertCall as dsUpsertCall, listCalls as dsListCalls } from '../services/datastoreCallLog.js'
+import { upsertVoicemail as dsUpsertVoicemail, listVoicemails as dsListVoicemails } from '../services/datastoreVoicemails.js'
 
 async function readVoicemails(req) {
-  try {
-    const segment = getSegment(req)
-    const val = await segment.getValue(VM_CACHE_KEY)
-    if (!val) return []
-    try { return typeof val === 'string' ? JSON.parse(val) : (val || []) }
-    catch { return [] }
-  } catch (e) {
-    console.warn('[voice cache read]', e.message)
-    return []
-  }
+  try { return await dsListVoicemails(req) }
+  catch (e) { console.warn('[voicemails read]', e.message); return [] }
 }
-async function writeVoicemails(req, records) {
-  const segment = getSegment(req)
-  const val = JSON.stringify(records || [])
-  try { await segment.update(VM_CACHE_KEY, val) }
-  catch { await segment.put(VM_CACHE_KEY, val) }
-}
-// ── Call log helpers (mirror the voicemail pattern) ────────────────────────
+
 async function readCalls(req) {
-  try {
-    const segment = getSegment(req)
-    const val = await segment.getValue(CALLS_CACHE_KEY)
-    if (!val) return []
-    try { return typeof val === 'string' ? JSON.parse(val) : (val || []) }
-    catch { return [] }
-  } catch (e) {
-    console.warn('[calls cache read]', e.message)
-    return []
-  }
+  try { return await dsListCalls(req) }
+  catch (e) { console.warn('[calls read]', e.message); return [] }
 }
-async function writeCalls(req, records) {
-  const segment = getSegment(req)
-  const val = JSON.stringify(records || [])
-  try { await segment.update(CALLS_CACHE_KEY, val) }
-  catch { await segment.put(CALLS_CACHE_KEY, val) }
-}
+
 async function upsertCall(req, record) {
-  let records = []
-  try { records = await readCalls(req) } catch { records = [] }
-  const idx = records.findIndex(r => r.call_sid === record.call_sid)
-  if (idx >= 0) records[idx] = { ...records[idx], ...record }
-  else records.push(record)
-  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
-  records = records.filter(r => new Date(r.timestamp || 0).getTime() > cutoff)
-  if (JSON.stringify(records).length > 60_000) records = records.slice(-300)
-  try { await writeCalls(req, records) }
-  catch (e) { console.warn('[calls cache write]', e.message) }
+  try { return await dsUpsertCall(req, record) }
+  catch (e) { console.warn('[calls write]', e.message); return null }
 }
 
 async function upsertVoicemail(req, record) {
-  let records = []
-  try { records = await readVoicemails(req) } catch { records = [] }
-  const idx = records.findIndex(r => r.call_sid === record.call_sid)
-  if (idx >= 0) records[idx] = { ...records[idx], ...record }
-  else records.push(record)
-  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
-  records = records.filter(r => new Date(r.timestamp || 0).getTime() > cutoff)
-  if (JSON.stringify(records).length > 60_000) records = records.slice(-200)
-  try { await writeVoicemails(req, records) }
-  catch (e) { console.warn('[voice cache write]', e.message) }
+  try { return await dsUpsertVoicemail(req, record) }
+  catch (e) { console.warn('[voicemails write]', e.message); return null }
 }
 
 // ── Signature validation gate ───────────────────────────────────────────────
