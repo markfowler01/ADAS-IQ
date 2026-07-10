@@ -36,6 +36,7 @@
 //   Recording → transcription callback → Cliq post + cache entry
 
 import express from 'express'
+import crypto from 'node:crypto'
 import catalyst from 'zcatalyst-sdk-node'
 import {
   normalizePhoneUS,
@@ -495,13 +496,68 @@ router.post('/bridge', requireTwilioSignature, async (req, res) => {
   res.type('text/xml').send(xml(twiml))
 })
 
+// ── Signed recording URLs ───────────────────────────────────────────────────
+// Twilio recording URLs require HTTP Basic auth (account SID + token) —
+// clicking one in the browser pops a username/password prompt (Mark hit
+// this 2026-07-10). Same fix as MMS media: rewrite to an HMAC-signed
+// public proxy URL at serve time; the proxy fetches from Twilio with
+// Basic auth server-side and streams the mp3 back. Credentials never
+// reach the browser, and only server-generated URLs pass the signature.
+function recordingSig(rsid) {
+  const secret = process.env.SESSION_SECRET || 'adasiq-fallback-secret'
+  return crypto.createHmac('sha256', secret).update(`rec:${rsid}`).digest('hex').slice(0, 32)
+}
+
+function signedRecordingUrl(recordingUrl) {
+  const m = String(recordingUrl || '').match(/Recordings\/(RE[a-zA-Z0-9]+)/)
+  if (!m) return recordingUrl || ''
+  const rsid = m[1]
+  return `${baseUrl()}/webhooks/twilio/voice/recording/${rsid}?sig=${recordingSig(rsid)}`
+}
+
+function withSignedRecordings(records) {
+  return (records || []).map(r => ({
+    ...r,
+    recording_url: r.recording_url ? signedRecordingUrl(r.recording_url) : r.recording_url,
+  }))
+}
+
+// Public, HMAC-gated recording proxy. Tolerates a trailing ".mp3" on
+// the sig param — the frontend historically appended ".mp3" to
+// recording URLs.
+router.get('/recording/:rsid', async (req, res) => {
+  try {
+    const rsid = String(req.params.rsid || '').replace(/\.mp3$/, '')
+    const sig = String(req.query.sig || '').replace(/\.mp3$/, '')
+    if (!sig || sig !== recordingSig(rsid)) return res.status(403).send('bad signature')
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg)) return res.status(503).send('Twilio not configured')
+    const axiosMod = (await import('axios')).default
+    const r = await axiosMod.get(
+      `https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Recordings/${encodeURIComponent(rsid)}.mp3`,
+      {
+        auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN },
+        responseType: 'arraybuffer',
+        timeout: 20000,
+        maxRedirects: 5,
+      }
+    )
+    res.set('Content-Type', 'audio/mpeg')
+    res.set('Cache-Control', 'private, max-age=86400')
+    res.send(Buffer.from(r.data))
+  } catch (e) {
+    console.warn('[recording proxy]', e.message)
+    res.status(500).send('recording fetch failed')
+  }
+})
+
 // ── Auth-gated: list voicemails + calls ─────────────────────────────────────
 const auth = express.Router()
 auth.get('/', async (req, res) => {
   try {
     const all = await readVoicemails(req)
     all.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    res.json({ ok: true, voicemails: all })
+    res.json({ ok: true, voicemails: withSignedRecordings(all) })
   } catch (err) {
     console.error('[voicemails GET]', err.message)
     res.status(500).json({ error: err.message })
@@ -513,7 +569,7 @@ callsAuth.get('/', async (req, res) => {
   try {
     const all = await readCalls(req)
     all.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    res.json({ ok: true, calls: all })
+    res.json({ ok: true, calls: withSignedRecordings(all) })
   } catch (err) {
     console.error('[calls GET]', err.message)
     res.status(500).json({ error: err.message })

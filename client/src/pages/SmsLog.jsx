@@ -339,7 +339,8 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                     </div>
                     <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
                       {c.recording_url && (
-                        <a href={`${c.recording_url}.mp3`} target="_blank" rel="noopener noreferrer"
+                        <a href={c.recording_url.includes('?') ? c.recording_url : `${c.recording_url}.mp3`}
+                          target="_blank" rel="noopener noreferrer"
                           className="text-xs font-semibold px-2.5 py-1 rounded-lg"
                           style={{ color: '#7e22ce', border: '1px solid #7e22ce' }}
                           title={`Play recording (${c.recording_duration_sec || '?'}s)`}
@@ -398,7 +399,8 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                     )}
                     <div className="flex gap-2 mt-2">
                       {v.recording_url && (
-                        <a href={`${v.recording_url}.mp3`} target="_blank" rel="noopener noreferrer"
+                        <a href={v.recording_url.includes('?') ? v.recording_url : `${v.recording_url}.mp3`}
+                          target="_blank" rel="noopener noreferrer"
                           className="text-xs font-semibold px-2.5 py-1 rounded-lg"
                           style={{ color: ORANGE, border: `1px solid ${ORANGE}` }}
                         >▶ Play</a>
