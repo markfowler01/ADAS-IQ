@@ -1,63 +1,29 @@
-// Datastore-backed phone config. Uses a dedicated `phone_config` table
-// (columns: config_key varchar UNIQUE, config_value text) — Mark's
-// schema 2026-07-09. Same pattern as datastoreCallLog / datastoreSms.
+// Durable phone-config storage in the `phone_config` Datastore table
+// (config_key varchar UNIQUE mandatory, config_value text mandatory —
+// Mark's schema 2026-07-09). Datastore rows never expire, unlike
+// Catalyst Cache's hard 48h TTL cap that caused the July 9 outage of
+// Twilio credentials.
 //
-// This is the DURABLE source of truth. Cache (services/phoneConfig.js)
-// is a fast read-through layer that auto-refreshes TTL on every read;
-// Datastore is what makes the config survive cache eviction, a
-// container restart, or anything else.
+// services/phoneConfig.js layers this under its cache: cache is the
+// fast path, Datastore is what survives eviction/expiry.
 
 import catalyst from 'zcatalyst-sdk-node'
 
 const TABLE = 'phone_config'
 
-function getTable(req) {
-  const app = catalyst.initialize(req, { type: 'advancedio' })
-  return app.datastore().table(TABLE)
+function app(req) {
+  return catalyst.initialize(req, { type: 'advancedio' })
 }
 
-async function findRowByKey(req, key) {
-  const app = catalyst.initialize(req, { type: 'advancedio' })
-  const safe = String(key).replace(/'/g, "''")
-  const q = `SELECT ROWID, config_key, config_value FROM ${TABLE} WHERE config_key = '${safe}' LIMIT 1`
-  const rows = await app.zcql().executeZCQLQuery(q)
-  const r = rows?.[0]?.[TABLE] || rows?.[0] || null
-  return r?.ROWID ? { rowid: String(r.ROWID), key: r.config_key || '', value: r.config_value || '' } : null
+function esc(s) {
+  return String(s).replace(/'/g, "''")
 }
 
-// UPSERT by config_key.
-export async function setConfigValue(req, key, value) {
-  if (!key) throw new Error('setConfigValue: key required')
-  const table = getTable(req)
-  const existing = await findRowByKey(req, key)
-  if (existing) {
-    await table.updateRow({
-      ROWID: existing.rowid,
-      config_key: String(key),
-      config_value: String(value == null ? '' : value),
-    })
-  } else {
-    await table.insertRow({
-      config_key: String(key),
-      config_value: String(value == null ? '' : value),
-    })
-  }
-}
-
-export async function getConfigValue(req, key) {
-  const r = await findRowByKey(req, key)
-  return r?.value ?? null
-}
-
-// Bulk read of all phone-config keys in one Datastore round trip.
-// Returns { KEY: value, ... } shaped like resolvePhoneConfig output so
-// callers can drop it in without reshaping.
-export async function readAllPhoneConfig(req, keys) {
-  if (!Array.isArray(keys) || keys.length === 0) return {}
-  const app = catalyst.initialize(req, { type: 'advancedio' })
-  const list = keys.map(k => `'${String(k).replace(/'/g, "''")}'`).join(',')
-  const q = `SELECT config_key, config_value FROM ${TABLE} WHERE config_key IN (${list})`
-  const rows = await app.zcql().executeZCQLQuery(q)
+// All rows → { KEY: value }. Table holds ~10 rows so a full scan is cheap.
+export async function readAllFromDatastore(req) {
+  const rows = await app(req).zcql().executeZCQLQuery(
+    `SELECT config_key, config_value FROM ${TABLE}`
+  )
   const out = {}
   for (const row of rows || []) {
     const r = row[TABLE] || row
@@ -66,18 +32,33 @@ export async function readAllPhoneConfig(req, keys) {
   return out
 }
 
-// Bulk write. Same order-agnostic upsert per key.
-export async function writeAllPhoneConfig(req, obj) {
-  const entries = Object.entries(obj || {})
-  for (const [k, v] of entries) {
-    await setConfigValue(req, k, v)
+async function findRowId(req, key) {
+  const rows = await app(req).zcql().executeZCQLQuery(
+    `SELECT ROWID FROM ${TABLE} WHERE config_key = '${esc(key)}' LIMIT 1`
+  )
+  const r = rows?.[0]?.[TABLE] || rows?.[0] || null
+  return r?.ROWID ? String(r.ROWID) : null
+}
+
+// Upsert one key. Empty value = delete the row (config_value is a
+// mandatory column, so we don't store blanks).
+export async function setInDatastore(req, key, value) {
+  const table = app(req).datastore().table(TABLE)
+  const rowid = await findRowId(req, key)
+  const val = String(value == null ? '' : value)
+  if (!val) {
+    if (rowid) await table.deleteRow(rowid)
+    return
+  }
+  if (rowid) {
+    await table.updateRow({ ROWID: rowid, config_key: String(key), config_value: val })
+  } else {
+    await table.insertRow({ config_key: String(key), config_value: val })
   }
 }
 
-// Delete a single key (used when Mark clears a Phone Setup field).
-export async function deleteConfigValue(req, key) {
-  const existing = await findRowByKey(req, key)
-  if (!existing) return
-  const table = getTable(req)
-  await table.deleteRow(existing.rowid)
+export async function deleteFromDatastore(req, key) {
+  const table = app(req).datastore().table(TABLE)
+  const rowid = await findRowId(req, key)
+  if (rowid) await table.deleteRow(rowid)
 }

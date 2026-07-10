@@ -11,6 +11,11 @@
 // values fill the gaps.
 
 import catalyst from 'zcatalyst-sdk-node'
+import {
+  readAllFromDatastore,
+  setInDatastore,
+  deleteFromDatastore,
+} from './datastorePhoneConfig.js'
 
 const CACHE_KEY = 'aa_phone_config'
 
@@ -82,18 +87,28 @@ async function writePhoneCache(req, obj) {
   }
 }
 
-// Upsert a single key.
+// Upsert a single key. Datastore first (durable — a failure here fails
+// the save loudly), then cache (fast path — best-effort).
 export async function setPhoneConfigValue(req, key, value) {
   const known = PHONE_CONFIG_KEYS.find(k => k.key === key)
   if (!known) throw new Error(`Unknown phone config key: ${key}`)
-  const current = await readPhoneCache(req)
-  const next = { ...current, [key]: String(value == null ? '' : value) }
-  await writePhoneCache(req, next)
+  const strVal = String(value == null ? '' : value)
+  await setInDatastore(req, key, strVal)
+  let next = { [key]: strVal }
+  try {
+    const current = await readPhoneCache(req)
+    next = { ...current, [key]: strVal }
+    await writePhoneCache(req, next)
+  } catch (e) {
+    console.warn('[phone-config cache write]', e.message)
+  }
   return next
 }
 
-// Wipe a single key (fall back to env / default).
+// Wipe a single key from both stores (fall back to env / default).
 export async function deletePhoneConfigValue(req, key) {
+  try { await deleteFromDatastore(req, key) }
+  catch (e) { console.warn('[phone-config ds delete]', e.message) }
   const current = await readPhoneCache(req)
   const next = { ...current }
   delete next[key]
@@ -101,10 +116,26 @@ export async function deletePhoneConfigValue(req, key) {
   return next
 }
 
-// The main lookup — merges env > cache > default and returns everything
-// callers need in one shot. Called at the top of every SMS/voice handler.
+// The main lookup — merges env > cache > default. Called at the top of
+// every SMS/voice handler, so the hot path stays cache-only. When the
+// cache blob is missing (expired 48h TTL, eviction, console wipe — the
+// July 9 failure mode), we fall back to the phone_config Datastore
+// table and write what we find back into cache, so the system self-heals
+// on the first request instead of silently losing Twilio credentials.
 export async function resolvePhoneConfig(req) {
-  const cache = await readPhoneCache(req)
+  let cache = await readPhoneCache(req)
+  if (Object.keys(cache).length === 0) {
+    try {
+      const ds = await readAllFromDatastore(req)
+      if (Object.keys(ds).length > 0) {
+        cache = ds
+        try { await writePhoneCache(req, ds) }
+        catch (e) { console.warn('[phone-config cache repair]', e.message) }
+      }
+    } catch (e) {
+      console.warn('[phone-config ds read]', e.message)
+    }
+  }
   const out = {}
   for (const { key } of PHONE_CONFIG_KEYS) {
     const envVal = process.env[key]
