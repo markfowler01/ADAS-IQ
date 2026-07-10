@@ -177,6 +177,15 @@ function nextCascadeTwiML(req, order) {
     { key: 'kat',    number: normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''), afterUrl: '/webhooks/twilio/voice/after-kat' },
   ]
   const recCbUrl = `${baseUrl(req)}/webhooks/twilio/voice/recording-done`
+  // Caller-ID passthrough (Mark 2026-07-10): show the CUSTOMER's real
+  // number on the tech's phone so their saved contact card matches,
+  // instead of the shared 844/425 line. Twilio permits reusing the
+  // inbound caller's ID on <Dial> within the same call. The line
+  // indicator moves to a whisper — a short announcement only the
+  // answering tech hears before the call bridges.
+  const callerNumber = normalizePhoneUS(req.body.From) || String(req.body.From || '')
+  const lineType = classifyTwilioNumber(req.body.To, cfg)
+  const whisperUrl = `${baseUrl(req)}/webhooks/twilio/voice/whisper?line=${encodeURIComponent(lineType)}`
   // Find the first configured target at or after the requested step.
   for (let i = order; i < targets.length; i++) {
     if (targets[i].number) {
@@ -188,11 +197,11 @@ function nextCascadeTwiML(req, order) {
   <Dial timeout="${CASCADE_RING_TIMEOUT_SEC}"
         action="${esc(url)}"
         method="POST"
-        callerId="${esc(req.body.To || '')}"
+        callerId="${esc(callerNumber || req.body.To || '')}"
         record="record-from-answer"
         recordingStatusCallback="${esc(recCbUrl)}"
         recordingStatusCallbackEvent="completed">
-    <Number>${esc(targets[i].number)}</Number>
+    <Number url="${esc(whisperUrl)}">${esc(targets[i].number)}</Number>
   </Dial>
 </Response>`.trim()
     }
@@ -280,6 +289,22 @@ function cascadeContinueHandler(nextOrder) {
 router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(1), 'after-mark'))
 router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(2), 'after-jayden'))
 router.post('/after-kat',    requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(3), 'after-kat'))
+
+// ── Whisper — plays ONLY to the tech who answers a cascade leg, before
+// the call bridges. The customer keeps hearing ringback during it.
+// Needed because caller ID now shows the customer's real number (so the
+// tech's contact card matches), which means the phone itself no longer
+// tells you which line the call came in on. Twilio fetches this URL the
+// moment the tech picks up (the url attribute on <Number>).
+router.post('/whisper', requireTwilioSignature, (req, res) => {
+  const line = String(req.query.line || '')
+  const label = line === 'tollfree' ? 'eight four four'
+    : line === 'local' ? 'four two five'
+    : 'business'
+  res.type('text/xml').send(xml(
+    `<Response><Say voice="Polly.Matthew">Absolute A D A S call on the ${label} line.</Say></Response>`
+  ))
+})
 
 // ── POST /webhooks/twilio/voice/voicemail ───────────────────────────────────
 // Records the voicemail. Twilio calls transcription webhook when done.
