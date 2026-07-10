@@ -311,9 +311,14 @@ router.post('/whisper', requireTwilioSignature, (req, res) => {
 router.post('/voicemail', requireTwilioSignature, async (req, res) => {
   const doneUrl = `${baseUrl(req)}/webhooks/twilio/voice/voicemail-done`
   const txUrl   = `${baseUrl(req)}/webhooks/twilio/voice/transcription`
+  // Professional greeting (Mark 2026-07-10). Brand voice: plain and
+  // direct — identifies the business, explains why nobody picked up
+  // (techs are in the field), and asks for exactly what dispatch needs
+  // to call back ready: name, number, shop, vehicle. Mentions texting
+  // since the same numbers take SMS.
   const twiml = `
 <Response>
-  <Say voice="Polly.Matthew">Please leave your name, number, and the shop or vehicle. Beep.</Say>
+  <Say voice="Polly.Matthew">You've reached Absolute A D A S, mobile A D A S calibration and diagnostics. Our techs are out on calibrations right now. Leave your name, number, your shop, and the vehicle you're calling about, and we'll get back to you as soon as we're clear. You can also text this number. Leave your message after the beep.</Say>
   <Record
     maxLength="180"
     playBeep="true"
@@ -324,7 +329,7 @@ router.post('/voicemail', requireTwilioSignature, async (req, res) => {
     transcribeCallback="${esc(txUrl)}"
     trim="trim-silence"
   />
-  <Say voice="Polly.Matthew">We didn't get anything. Please call back or send us a text. Goodbye.</Say>
+  <Say voice="Polly.Matthew">We didn't catch anything. Give us a call back or send us a text. Thanks.</Say>
   <Hangup/>
 </Response>`.trim()
   res.type('text/xml').send(xml(twiml))
