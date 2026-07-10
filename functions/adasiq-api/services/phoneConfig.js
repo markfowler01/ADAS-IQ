@@ -11,11 +11,6 @@
 // values fill the gaps.
 
 import catalyst from 'zcatalyst-sdk-node'
-import {
-  readAllPhoneConfig as dsReadAll,
-  setConfigValue as dsSet,
-  deleteConfigValue as dsDelete,
-} from './datastorePhoneConfig.js'
 
 const CACHE_KEY = 'aa_phone_config'
 
@@ -60,29 +55,13 @@ function getSegment(req) {
 // Raw cache blob — no env-var merging. Used by the Setup UI to know
 // what's in the cache specifically (so it can distinguish "unset" from
 // "set at env-var layer").
-//
-// Auto-refresh: every successful read pushes TTL back to 48h so
-// credentials never expire as long as SOMETHING (SMS webhook, voice
-// webhook, phone-health cron, etc) reads them within any 2-day window.
-// Datastore layer above still owns durability; this is defense in depth.
 export async function readPhoneCache(req) {
   try {
     const segment = getSegment(req)
     const val = await segment.getValue(CACHE_KEY)
     if (!val) return {}
-    let obj
-    try { obj = typeof val === 'string' ? JSON.parse(val) : (val || {}) }
+    try { return typeof val === 'string' ? JSON.parse(val) : (val || {}) }
     catch { return {} }
-    // Fire-and-forget TTL refresh. If update fails (key doesn't exist)
-    // fall back to put. Errors swallowed — this is best-effort.
-    Promise.resolve().then(async () => {
-      try { await segment.update(CACHE_KEY, typeof val === 'string' ? val : JSON.stringify(obj)) }
-      catch {
-        try { await segment.put(CACHE_KEY, typeof val === 'string' ? val : JSON.stringify(obj), 48) }
-        catch {}
-      }
-    })
-    return obj
   } catch (e) {
     console.warn('[phone-config read]', e.message)
     return {}
@@ -103,80 +82,34 @@ async function writePhoneCache(req, obj) {
   }
 }
 
-// Upsert a single key. Writes to Datastore (durable source of truth) +
-// cache (fast tier) so a subsequent read is hot either way.
+// Upsert a single key.
 export async function setPhoneConfigValue(req, key, value) {
   const known = PHONE_CONFIG_KEYS.find(k => k.key === key)
   if (!known) throw new Error(`Unknown phone config key: ${key}`)
-  const strVal = String(value == null ? '' : value)
-  // Datastore first — if it fails, the whole save fails loudly.
-  await dsSet(req, key, strVal)
-  // Cache next — best-effort; if it errors, the next read will
-  // repopulate from Datastore anyway.
-  try {
-    const current = await readPhoneCache(req)
-    const next = { ...current, [key]: strVal }
-    await writePhoneCache(req, next)
-  } catch (e) {
-    console.warn('[phone-config cache write]', e.message)
-  }
-  return await resolvePhoneConfig(req)
+  const current = await readPhoneCache(req)
+  const next = { ...current, [key]: String(value == null ? '' : value) }
+  await writePhoneCache(req, next)
+  return next
 }
 
-// Wipe a single key from both stores.
+// Wipe a single key (fall back to env / default).
 export async function deletePhoneConfigValue(req, key) {
-  try { await dsDelete(req, key) } catch (e) { console.warn('[phone-config ds delete]', e.message) }
-  try {
-    const current = await readPhoneCache(req)
-    const next = { ...current }
-    delete next[key]
-    await writePhoneCache(req, next)
-  } catch (e) { console.warn('[phone-config cache delete]', e.message) }
-  return await resolvePhoneConfig(req)
+  const current = await readPhoneCache(req)
+  const next = { ...current }
+  delete next[key]
+  await writePhoneCache(req, next)
+  return next
 }
 
-// The main lookup — env > Datastore > cache > default. Datastore is
-// authoritative (never expires); cache is a fast tier that auto-heals
-// on miss. Every read repopulates cache so it stays hot.
+// The main lookup — merges env > cache > default and returns everything
+// callers need in one shot. Called at the top of every SMS/voice handler.
 export async function resolvePhoneConfig(req) {
-  const keys = PHONE_CONFIG_KEYS.map(k => k.key)
-  // Kick off both reads in parallel — cache usually wins the race.
-  const [dsVals, cacheVals] = await Promise.all([
-    (async () => {
-      try { return await dsReadAll(req, keys) }
-      catch (e) { console.warn('[phone-config ds read]', e.message); return {} }
-    })(),
-    readPhoneCache(req),
-  ])
-
+  const cache = await readPhoneCache(req)
   const out = {}
-  const needsCacheRepair = {}
-  for (const key of keys) {
+  for (const { key } of PHONE_CONFIG_KEYS) {
     const envVal = process.env[key]
-    if (envVal !== undefined && envVal !== '') {
-      out[key] = envVal
-      continue
-    }
-    // Datastore wins over cache — it's the source of truth. If the two
-    // disagree, cache was probably stale.
-    if (dsVals[key] !== undefined && dsVals[key] !== '') {
-      out[key] = dsVals[key]
-      if (cacheVals[key] !== dsVals[key]) needsCacheRepair[key] = dsVals[key]
-      continue
-    }
-    out[key] = cacheVals[key] || ''
+    out[key] = (envVal !== undefined && envVal !== '') ? envVal : (cache[key] || '')
   }
-
-  // Best-effort cache repair — silences on failure.
-  if (Object.keys(needsCacheRepair).length > 0) {
-    Promise.resolve().then(async () => {
-      try {
-        const merged = { ...cacheVals, ...needsCacheRepair }
-        await writePhoneCache(req, merged)
-      } catch {}
-    })
-  }
-
   return out
 }
 
