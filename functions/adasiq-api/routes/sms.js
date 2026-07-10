@@ -32,12 +32,16 @@ import { loadPhoneIndex, normPhone, contactLabel, findContactByPhone } from '../
 
 const router = express.Router()
 
-// ── Catalyst Cache helpers ──────────────────────────────────────────────────
-// Uses the Catalyst SDK (not raw axios) — the axios path was silently 404ing
-// due to the same auth-scheme mismatch that broke Phone Setup. Migrated
-// 2026-07-08 to make SMS history actually persist across reloads.
-const SMS_CACHE_KEY = 'sms_threads'
-const RETENTION_DAYS = 90
+// Datastore-backed SMS storage. Replaces the sms_threads cache blob
+// after cache hit both a 48h TTL cap and a ~40KB per-key size cap that
+// silently rejected writes. Table: SmsMessages. Full schema + shape
+// translation in services/datastoreSms.js.
+import {
+  upsertMessage as dsUpsertMessage,
+  listMessages as dsListMessages,
+  listMessagesForPhone as dsListMessagesForPhone,
+  updateMessageStatus as dsUpdateMessageStatus,
+} from '../services/datastoreSms.js'
 
 // ── Signed media URLs ───────────────────────────────────────────────────────
 // The media proxy has to be reachable by <img src> in the browser, which
@@ -68,66 +72,31 @@ function rewriteMediaUrls(messages) {
   }))
 }
 
-function getSegment(req) {
-  const app = catalyst.initialize(req, { type: 'advancedio' })
-  return app.cache().segment()
-}
-
+// One row per message, no size cap, no 48h TTL. Autoreply-stamp keys
+// (line 220 area) still use cache — those are tiny + short-lived.
 async function readAllMessages(req) {
-  try {
-    const segment = getSegment(req)
-    const val = await segment.getValue(SMS_CACHE_KEY)
-    if (!val) return []
-    try { return typeof val === 'string' ? JSON.parse(val) : (val || []) }
-    catch { return [] }
-  } catch (e) {
-    console.warn('[sms cache read]', e.message)
-    return []
-  }
+  try { return await dsListMessages(req, { limit: 2000 }) }
+  catch (e) { console.warn('[sms datastore read]', e.message); return [] }
 }
 
-async function writeAllMessages(req, records) {
-  const segment = getSegment(req)
-  const val = JSON.stringify(records || [])
-  // segment.put requires a TTL in hours as the 3rd arg — without it the
-  // first-ever write silently fails and nothing persists. 90 days
-  // matches RETENTION_DAYS above.
-  try { await segment.update(SMS_CACHE_KEY, val) }
-  catch { await segment.put(SMS_CACHE_KEY, val, 48 /* Catalyst Cache max */) }
+// Kept for the /webhooks/twilio/sms/status handler which needs to write
+// specific fields via updateMessageStatus. The old writeAllMessages is
+// gone — updates go through updateMessageStatus, appends through
+// appendMessage.
+async function writeAllMessages(_req, _records) {
+  // no-op — retained only so any stray reference still compiles.
+  return
 }
 
-// Returns { ok, error, count } so callers can tell whether the write
-// actually succeeded. Previously the outer catch silently swallowed
-// write errors — the send endpoint would happily return "message sent"
-// while the persisted log never actually contained the message, so the
-// optimistic UI append disappeared on the next refresh.
+// Insert a new message into Datastore. Returns {ok, error} so callers
+// can surface persistence failures to the UI or Cliq.
 async function appendMessage(req, record) {
-  let records = []
-  try { records = await readAllMessages(req) } catch { records = [] }
-  records.push(record)
-  const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
-  records = records.filter(r => {
-    const t = new Date(r.timestamp || 0).getTime()
-    return !Number.isNaN(t) && t > cutoff
-  })
-  // Catalyst cache value length is capped lower than the docs suggest —
-  // hit "Length of the cache value reached its max length" at ~45KB
-  // 2026-07-09. Trim aggressively to 20KB and keep only the most recent
-  // 100 records max. Persistent storage is moving to Datastore; this is
-  // the interim floor.
-  const MAX_BYTES = 20_000
-  const MAX_RECORDS = 100
-  if (records.length > MAX_RECORDS) records = records.slice(-MAX_RECORDS)
-  while (records.length > 1 && JSON.stringify(records).length > MAX_BYTES) {
-    const dropCount = Math.max(1, Math.floor(records.length * 0.1))
-    records = records.slice(dropCount)
-  }
   try {
-    await writeAllMessages(req, records)
-    return { ok: true, count: records.length }
+    await dsUpsertMessage(req, record)
+    return { ok: true }
   } catch (e) {
-    console.warn('[sms cache write]', e.message)
-    return { ok: false, error: e.message, count: records.length }
+    console.warn('[sms datastore write]', e.message)
+    return { ok: false, error: e.message }
   }
 }
 
@@ -336,8 +305,8 @@ router.post('/', async (req, res) => {
         if (!isStopish) {
           const senderKey = (from || '').replace(/[^0-9+]/g, '')
           // First-contact: is this the ONLY message we have on this number?
-          const all = await readAllMessages(req)
-          const messagesForNumber = all.filter(m => (m.from_number === from) || (m.to_number === from))
+          // Direct-index Datastore query on thread_key.
+          const messagesForNumber = await dsListMessagesForPhone(req, from, { limit: 2 })
           if (messagesForNumber.length <= 1) {
             const stampKey = `sms_autoreply_first_${senderKey}`
             const stamp = await readAutoReplyStamp(req, stampKey)
@@ -383,20 +352,24 @@ router.get('/media/:sid/:idx', async (req, res) => {
     const cfg = await resolvePhoneConfig(req)
     if (!twilioConfigured(cfg)) return res.status(503).send('Twilio not configured')
 
-    const all = await readAllMessages(req)
-    const msg = all.find(m => m.message_sid === sid)
-    const i = parseInt(idx, 10)
-    const media = msg?.media?.[i]
-    if (!media?.url) return res.status(404).send('not found')
-
+    // Datastore doesn't store MMS metadata; look up from Twilio API.
     const axiosMod = (await import('axios')).default
-    const r = await axiosMod.get(media.url, {
-      auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN },
+    const authOpts = { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN }
+    const listUrl = `https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages/${encodeURIComponent(sid)}/Media.json?PageSize=20`
+    const listResp = await axiosMod.get(listUrl, { auth: authOpts, timeout: 10000, validateStatus: () => true })
+    if (listResp.status !== 200) return res.status(404).send('media list not found')
+    const items = listResp.data?.media_list || listResp.data?.media || []
+    const item = items[parseInt(idx, 10)]
+    if (!item) return res.status(404).send('media index out of range')
+    const mediaHref = `https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages/${encodeURIComponent(sid)}/Media/${encodeURIComponent(item.sid)}`
+
+    const r = await axiosMod.get(mediaHref, {
+      auth: authOpts,
       responseType: 'arraybuffer',
       timeout: 15000,
       maxRedirects: 5,
     })
-    res.set('Content-Type', media.contentType || r.headers['content-type'] || 'application/octet-stream')
+    res.set('Content-Type', item.content_type || r.headers['content-type'] || 'application/octet-stream')
     res.set('Cache-Control', 'private, max-age=86400')
     res.send(Buffer.from(r.data))
   } catch (e) {
@@ -520,21 +493,18 @@ router.post('/status', async (req, res) => {
     const errMsg  = String(req.body.ErrorMessage || '')
     if (!sid || !status) return res.status(200).type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
 
-    // Update the persisted record with the new status.
+    // Update the persisted record with the new status. Datastore call
+    // is a single-row UPDATE by message_sid; no read-modify-write dance.
+    let updatedRec = null
     try {
-      const all = await readAllMessages(req)
-      const idx = all.findIndex(m => m.message_sid === sid)
-      if (idx >= 0) {
-        all[idx] = { ...all[idx], twilio_status: status, twilio_error_code: errCode || undefined, twilio_error_message: errMsg || undefined }
-        await writeAllMessages(req, all)
-      }
+      updatedRec = await dsUpdateMessageStatus(req, sid, { status, errorCode: errCode, errorMessage: errMsg })
     } catch (e) { console.warn('[sms status log]', e.message) }
 
     // Fire an alert on any terminal failure state. `undelivered` and
     // `failed` are Twilio's final "we couldn't deliver this" states.
     if (status === 'failed' || status === 'undelivered') {
       try {
-        const rec = (await readAllMessages(req)).find(m => m.message_sid === sid)
+        const rec = updatedRec
         const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
         await postToCliqChannelById(
           MARK_ALERT_CHANNEL_ID,
@@ -665,15 +635,23 @@ auth.get('/media/:sid/:idx', async (req, res) => {
     const cfg = await resolvePhoneConfig(req)
     if (!twilioConfigured(cfg)) return res.status(503).send('Twilio not configured')
 
-    const all = await readAllMessages(req)
-    const msg = all.find(m => m.message_sid === req.params.sid)
-    const idx = parseInt(req.params.idx, 10)
-    const media = msg?.media?.[idx]
-    if (!media?.url) return res.status(404).send('not found')
-
+    // Datastore doesn't store MMS metadata; fetch media list from Twilio
+    // by MessageSid, then pick by index.
     const axiosMod = (await import('axios')).default
-    const r = await axiosMod.get(media.url, {
-      auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN },
+    const authOpts = { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN }
+    const idx = parseInt(req.params.idx, 10)
+    const listUrl = `https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages/${encodeURIComponent(req.params.sid)}/Media.json?PageSize=20`
+    const listResp = await axiosMod.get(listUrl, { auth: authOpts, timeout: 10000, validateStatus: () => true })
+    if (listResp.status !== 200) return res.status(404).send('media list not found')
+    const items = listResp.data?.media_list || listResp.data?.media || []
+    const item = items[idx]
+    if (!item) return res.status(404).send('media index out of range')
+    // Twilio Media resource has a URI like /Accounts/.../Messages/.../Media/ME... — resolve to the actual binary URL.
+    const mediaHref = `https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages/${encodeURIComponent(req.params.sid)}/Media/${encodeURIComponent(item.sid)}`
+    const contentType = item.content_type || ''
+
+    const r = await axiosMod.get(mediaHref, {
+      auth: authOpts,
       responseType: 'arraybuffer',
       timeout: 15000,
       maxRedirects: 5,
@@ -687,17 +665,17 @@ auth.get('/media/:sid/:idx', async (req, res) => {
   }
 })
 
-// GET /api/sms/threads/:phone — full ordered conversation
+// GET /api/sms/threads/:phone — full ordered conversation. Uses the
+// Datastore's precomputed thread_key column for a direct-index query
+// instead of loading all messages and filtering in memory.
 auth.get('/threads/:phone', async (req, res) => {
   try {
     const key = normalizePhoneUS(req.params.phone) || String(req.params.phone || '')
-    const [all, contact] = await Promise.all([
-      readAllMessages(req),
+    const [messages, contact] = await Promise.all([
+      dsListMessagesForPhone(req, key, { limit: 500 }),
       findContactByPhone(req, key),
     ])
-    const messages = all
-      .filter(m => threadKey(m) === key)
-      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    // Datastore returns in CREATEDTIME ASC — no client-side sort needed.
     res.json({
       ok: true,
       phone: key,
