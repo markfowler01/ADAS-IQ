@@ -110,10 +110,14 @@ async function appendMessage(req, record) {
     const t = new Date(r.timestamp || 0).getTime()
     return !Number.isNaN(t) && t > cutoff
   })
-  // Cache value cap is ~64-100KB. Trim iteratively (10% at a time from
-  // the oldest end) until we're comfortably under 45KB — leaves headroom
-  // for JSON overhead + the marginal record we're adding.
-  const MAX_BYTES = 45_000
+  // Catalyst cache value length is capped lower than the docs suggest —
+  // hit "Length of the cache value reached its max length" at ~45KB
+  // 2026-07-09. Trim aggressively to 20KB and keep only the most recent
+  // 100 records max. Persistent storage is moving to Datastore; this is
+  // the interim floor.
+  const MAX_BYTES = 20_000
+  const MAX_RECORDS = 100
+  if (records.length > MAX_RECORDS) records = records.slice(-MAX_RECORDS)
   while (records.length > 1 && JSON.stringify(records).length > MAX_BYTES) {
     const dropCount = Math.max(1, Math.floor(records.length * 0.1))
     records = records.slice(dropCount)
