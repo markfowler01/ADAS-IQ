@@ -829,7 +829,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           invoices open prefilled from this card, and on success the
           requested card completes + leaves the board. */}
       {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
-        <UploadReportButton job={job} onUploaded={onUploadReport} />
+        <UploadReportButton job={job} onUploadReport={onUploadReport} />
       )}
     </div>
   )
@@ -926,18 +926,44 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
   const [invoicingJob, setInvoicingJob] = useState(null)
-  // Set when the invoice modal was opened by the Upload Report flow on a
-  // job_requested card — on invoice success that card is deleted from
-  // the board instead of just marked complete (Mark 2026-07-10).
-  const [reportFlowJobId, setReportFlowJobId] = useState(null)
 
-  // Upload Report → Invoice chain for tech-requested jobs: the report is
-  // already in WorkDrive by the time this fires; open Create Invoices
-  // prefilled from the card.
-  function handleReportUploaded(job) {
-    setReportFlowJobId(job.id)
-    setInvoicingJob(job)
-    showToast('📄 Report uploaded — creating invoices from this job')
+  // Upload Report → Invoice for tech-requested jobs (Mark 2026-07-10):
+  // runs the report PDF through the SAME AI-extract pipeline as the
+  // toolbar Upload Report button, then completes + deletes the request
+  // card and switches to the review/invoice-creation screen. The review
+  // screen carries all job info forward from the extracted report.
+  async function handleCardReportUpload(job, file) {
+    if (!onExtracted) { showToast('Upload not available here.'); return }
+    try {
+      const formData = new FormData()
+      formData.append('pdf', file)
+      const res = await apiFetch(`${API_BASE}/api/extract`, { method: 'POST', body: formData })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        const msg = err.error || `Server error ${res.status}`
+        showToast(msg.includes('rate limit') || msg.includes('Too many')
+          ? 'Too many requests — wait a few minutes and try again.'
+          : msg)
+        return
+      }
+      const data = await res.json()
+      // Extraction succeeded → the request card's job is done. Complete
+      // (logs history/completions) then delete so the board stays clean.
+      // Only after a good extraction — a failed upload leaves the card.
+      try {
+        await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'complete' }),
+        })
+        await apiFetch(`${API_BASE}/api/jobs/${job.id}`, { method: 'DELETE' })
+      } catch (e) {
+        console.warn('request-card cleanup failed (non-fatal):', e.message)
+      }
+      onExtracted(data, file)
+    } catch (e) {
+      showToast(e.message || 'Upload failed — check your connection and try again.')
+    }
   }
   const [calReviewJob, setCalReviewJob] = useState(null)
   const [search, setSearch] = useState('')
@@ -1551,7 +1577,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                       onEdit={openEdit}
                       onMoveToReadyInvoice={handleMoveToReadyInvoice}
                       onCreateInvoices={setInvoicingJob}
-                      onUploadReport={handleReportUploaded}
+                      onUploadReport={handleCardReportUpload}
                     />
                   ))
                 )}
@@ -1583,7 +1609,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onRefreshShareLink={handleRefreshShareLink}
                   onCreateInvoices={setInvoicingJob}
                   onMoveToReadyInvoice={handleMoveToReadyInvoice}
-                  onUploadReport={handleReportUploaded}
+                  onUploadReport={handleCardReportUpload}
                   dragOverCol={dragOverCol}
                 />
               ))}
@@ -1625,9 +1651,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       {invoicingJob && (
         <CreateInvoicesModal
           job={invoicingJob}
-          onClose={() => { setInvoicingJob(null); setReportFlowJobId(null) }}
+          onClose={() => setInvoicingJob(null)}
           onCreated={async (invoiceNums) => {
-            const fromReportFlow = reportFlowJobId && reportFlowJobId === invoicingJob.id
             // Auto-mark the job as invoiced + complete
             try {
               const patch = { invoiced: true, status: 'complete' }
@@ -1641,24 +1666,11 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(patch),
               })
-              // Upload-Report flow: the requested card's work is fully
-              // done (report in WorkDrive, invoices created, completion
-              // logged by the PATCH above) — remove the card from the
-              // board entirely per Mark 2026-07-10. Deliberately AFTER
-              // invoice success so cancelling the modal never destroys
-              // the job.
-              if (fromReportFlow) {
-                await apiFetch(`${API_BASE}/api/jobs/${invoicingJob.id}`, { method: 'DELETE' })
-                  .catch(e => console.warn('report-flow cleanup delete failed:', e.message))
-              }
             } catch (e) {
               console.warn('Could not auto-mark job invoiced:', e.message)
             }
             setInvoicingJob(null)
-            setReportFlowJobId(null)
-            showToast(fromReportFlow
-              ? '✅ Report uploaded, invoices created — request card cleared!'
-              : '✅ Invoices created — job marked complete & invoiced!')
+            showToast('✅ Invoices created — job marked complete & invoiced!')
             fetchJobs()
           }}
         />
@@ -1752,38 +1764,28 @@ function UploadButton({ job }) {
 }
 
 // Report-upload → invoice flow for tech-requested jobs (Mark 2026-07-10).
-// Full-width button on job_requested cards: pick the calibration report,
-// it uploads to the job's WorkDrive folder, then onUploaded(job) chains
-// straight into the Create Invoices modal prefilled from this card. On
-// invoice success the requested card is completed + removed from the
-// board (see onCreated in the main component).
-function UploadReportButton({ job, onUploaded }) {
-  const [uploading, setUploading] = useState(false)
+// Full-width button on job_requested cards. Feeds the SAME pipeline as
+// the toolbar Upload Report button: the report PDF goes through the AI
+// extractor and the app switches to the review/invoice-creation screen
+// (Zoho customer, salesperson, calibration toggles). The parent handler
+// also completes + deletes the requested card once extraction succeeds
+// — the review screen carries everything forward from the report.
+function UploadReportButton({ job, onUploadReport }) {
+  const [busy, setBusy] = useState(false)
   const inputRef = useRef(null)
 
-  async function handleFiles(e) {
-    const files = Array.from(e.target.files || [])
-    if (!files.length) return
-    setUploading(true)
-    try {
-      for (const file of files) {
-        const formData = new FormData()
-        formData.append('file', file)
-        const jobId = String(job.ROWID || job.id || '')
-        const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}/upload-photo`, {
-          method: 'POST',
-          body: formData,
-        })
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}))
-          throw new Error(d.error || 'Upload failed')
-        }
-      }
-      onUploaded && onUploaded(job)
-    } catch (err) {
-      alert('Report upload failed: ' + err.message)
-    } finally {
-      setUploading(false)
+  async function handleFile(e) {
+    const file = (e.target.files || [])[0]
+    if (!file) return
+    if (file.type !== 'application/pdf') {
+      alert('Please choose the report PDF.')
+      if (inputRef.current) inputRef.current.value = ''
+      return
+    }
+    setBusy(true)
+    try { await onUploadReport(job, file) }
+    finally {
+      setBusy(false)
       if (inputRef.current) inputRef.current.value = ''
     }
   }
@@ -1793,26 +1795,25 @@ function UploadReportButton({ job, onUploaded }) {
       <input
         ref={inputRef}
         type="file"
-        accept="image/*,application/pdf"
-        multiple
+        accept="application/pdf"
         style={{ display: 'none' }}
-        onChange={handleFiles}
+        onChange={handleFile}
       />
       <button
         onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}
-        disabled={uploading}
+        disabled={busy}
         className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
         style={{
           backgroundColor: '#eff6ff',
           border: '1.5px solid #bfdbfe',
           padding: '10px 0',
           minHeight: '44px',
-          opacity: uploading ? 0.6 : 1,
+          opacity: busy ? 0.6 : 1,
         }}
-        title="Upload the calibration report — then invoices are created from this card's info"
+        title="Upload the report PDF — opens invoice creation prefilled, and clears this request card"
       >
         <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>
-          {uploading ? '⏳ Uploading report…' : '📄 Upload Report → Invoice'}
+          {busy ? '⏳ Extracting report…' : '📄 Upload Report → Invoice'}
         </span>
       </button>
     </>
@@ -1925,7 +1926,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices, on
       {/* Upload Report → Invoice — same request-flow shortcut as the
           desktop card. */}
       {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
-        <UploadReportButton job={job} onUploaded={onUploadReport} />
+        <UploadReportButton job={job} onUploadReport={onUploadReport} />
       )}
     </div>
   )
