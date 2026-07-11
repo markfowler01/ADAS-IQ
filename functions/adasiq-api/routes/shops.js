@@ -213,14 +213,31 @@ function normShopName(name) {
     .trim()
 }
 
+// Storage: the AppConfig Datastore table (config_key varchar /
+// config_value text — schema verified 2026-07-09). One row per shop,
+// key `card_note:<normalized name>`. NOT on CRMShops — that table's
+// live schema doesn't actually have the billing_rules column the code
+// maps ("Invalid input value for column name" = unknown column).
+const CARD_NOTE_PREFIX = 'card_note:'
+const APP_CONFIG_TABLE = 'AppConfig'
+
+function cardNoteKey(shopName) {
+  return (CARD_NOTE_PREFIX + normShopName(shopName)).slice(0, 64)
+}
+
 // GET /api/shops/card-notes → { notes: { "<normalized name>": "note" } }
 router.get('/card-notes', async (req, res) => {
   try {
-    const shops = await getAllShops(req)
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const rows = await app.zcql().executeZCQLQuery(
+      `SELECT config_key, config_value FROM ${APP_CONFIG_TABLE} WHERE config_key LIKE '${CARD_NOTE_PREFIX}%'`
+    )
     const notes = {}
-    for (const s of shops) {
-      const note = s.billing_rules?.card_note
-      if (note && String(note).trim()) notes[normShopName(s.shop_name)] = String(note).trim()
+    for (const row of rows || []) {
+      const r = row[APP_CONFIG_TABLE] || row
+      if (r?.config_key && r.config_value) {
+        notes[String(r.config_key).slice(CARD_NOTE_PREFIX.length)] = String(r.config_value)
+      }
     }
     res.json({ ok: true, notes })
   } catch (err) {
@@ -230,30 +247,26 @@ router.get('/card-notes', async (req, res) => {
 })
 
 // POST /api/shops/card-note { shop_name, note } — empty note clears it.
-// If the shop has no CRM row yet, a minimal one is created so the note
-// still sticks.
 router.post('/card-note', async (req, res) => {
   try {
     const shopName = String(req.body?.shop_name || '').trim()
     const note = String(req.body?.note || '').trim()
     if (!shopName) return res.status(400).json({ error: 'shop_name required' })
-    const shops = await getAllShops(req)
-    const target = shops.find(s => normShopName(s.shop_name) === normShopName(shopName))
-    if (target) {
-      const rules = (target.billing_rules && typeof target.billing_rules === 'object') ? { ...target.billing_rules } : {}
-      if (note) rules.card_note = note
-      else delete rules.card_note
-      // Partial update — ONLY the billing_rules column. Round-tripping
-      // the full row through shopToRow tripped Catalyst's column
-      // validation ("Invalid input value for column ...") on some rows;
-      // a targeted single-column update sidesteps whatever legacy value
-      // the row is carrying.
-      await getTable(req).updateRow({
-        ROWID: String(target.id),
-        billing_rules: JSON.stringify(rules),
-      })
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const key = cardNoteKey(shopName)
+    const rows = await app.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM ${APP_CONFIG_TABLE} WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+    )
+    const existing = rows?.[0]?.[APP_CONFIG_TABLE] || rows?.[0] || null
+    const table = app.datastore().table(APP_CONFIG_TABLE)
+    if (existing?.ROWID) {
+      if (note) {
+        await table.updateRow({ ROWID: String(existing.ROWID), config_key: key, config_value: note })
+      } else {
+        await table.deleteRow(String(existing.ROWID))
+      }
     } else if (note) {
-      await insertShop(req, { shop_name: shopName, pipeline_stage: 'customer', billing_rules: { card_note: note } })
+      await table.insertRow({ config_key: key, config_value: note })
     }
     res.json({ ok: true, shop_name: shopName, note })
   } catch (err) {
