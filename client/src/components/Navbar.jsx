@@ -44,6 +44,7 @@ const MORE_GROUPS = [
   ]},
   { label: 'Admin', links: [
     { id: 'ops',         label: 'Ops', adminOnly: true },
+    { id: 'scaling',     label: 'Scaling', adminOnly: true },
     { id: 'branding',    label: 'Branding', adminOnly: true },
     { id: 'zoho-import', label: 'Import from Zoho', adminOnly: true },
   ]},

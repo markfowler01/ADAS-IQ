@@ -49,6 +49,7 @@ import CustomerExperienceScreen from './components/CustomerExperienceScreen'
 import NPSScreen from './components/NPSScreen'
 import IntelligenceScreen from './components/IntelligenceScreen'
 import PayrollScreen from './components/PayrollScreen'
+import ScalingScreen from './components/ScalingScreen'
 import TechToday from './pages/TechToday'
 import DispatchMap from './pages/DispatchMap'
 import LiveDay from './pages/LiveDay'
@@ -336,6 +337,9 @@ function MainApp() {
       )}
       {screen === 'payroll' && (
         <PayrollScreen {...navProps} />
+      )}
+      {screen === 'scaling' && (
+        <ScalingScreen {...navProps} />
       )}
     </div>
   )

@@ -67,6 +67,7 @@ import intelligenceRouter from './routes/intelligence.js'
 import operationsRouter from './routes/operations.js'
 import booksFromExtractRouter from './routes/books-from-extract.js'
 import payrollRouter from './routes/payroll.js'
+import scalingRouter from './routes/scaling.js'
 import briefingRouter, { sendDailyBriefing } from './routes/briefing.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
@@ -802,6 +803,7 @@ app.use('/api/intelligence', requireAuth, intelligenceRouter)
 app.use('/api/operations', requireAuth, operationsRouter)
 app.use('/api/books', requireAuth, booksFromExtractRouter)
 app.use('/api/payroll', requireAuth, payrollRouter)
+app.use('/api/scaling', requireAuth, scalingRouter)
 
 // Ops daily briefing — endpoints self-gate on x-cron-secret (no requireAuth)
 app.use('/api/briefing', briefingRouter)
