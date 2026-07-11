@@ -243,7 +243,15 @@ router.post('/card-note', async (req, res) => {
       const rules = (target.billing_rules && typeof target.billing_rules === 'object') ? { ...target.billing_rules } : {}
       if (note) rules.card_note = note
       else delete rules.card_note
-      await updateShop(req, target.id, { ...target, billing_rules: rules })
+      // Partial update — ONLY the billing_rules column. Round-tripping
+      // the full row through shopToRow tripped Catalyst's column
+      // validation ("Invalid input value for column ...") on some rows;
+      // a targeted single-column update sidesteps whatever legacy value
+      // the row is carrying.
+      await getTable(req).updateRow({
+        ROWID: String(target.id),
+        billing_rules: JSON.stringify(rules),
+      })
     } else if (note) {
       await insertShop(req, { shop_name: shopName, pipeline_stage: 'customer', billing_rules: { card_note: note } })
     }
