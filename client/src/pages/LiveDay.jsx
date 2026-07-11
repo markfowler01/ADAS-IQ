@@ -210,8 +210,10 @@ function CapacityBar({ tech }) {
   )
 }
 
-function TechCard({ tech, viewerRole, onReadyToInvoice }) {
+function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, techList }) {
   const color = TECH_COLOR[tech.name] || '#999'
+  // Every tech on the board except this card's owner — reassign targets.
+  const otherTechs = (techList || []).filter(n => n && n !== tech.name)
   const jobsToday = tech.used || 0
   const hitTarget = jobsToday >= GOAL_TARGET
   const bonus = Math.max(0, jobsToday - GOAL_TARGET)
@@ -278,6 +280,16 @@ function TechCard({ tech, viewerRole, onReadyToInvoice }) {
           >
             🟢 Ready to Invoice
           </button>
+          {onReassign && otherTechs.map(n => (
+            <button
+              key={n}
+              onClick={() => onReassign(current, n)}
+              className="w-full text-xs font-semibold rounded-lg py-1.5 mt-1.5"
+              style={{ color: '#555', border: '1px solid #ddd', backgroundColor: 'white' }}
+            >
+              🔁 Reassign to {n}
+            </button>
+          ))}
         </div>
       ) : tech.status === 'done' ? (
         <div className="text-sm py-2 text-center" style={{ color: '#15803d' }}>
@@ -297,6 +309,16 @@ function TechCard({ tech, viewerRole, onReadyToInvoice }) {
             Next{next.time_window_start ? ` · ETA ${next.time_window_start}` : ''}
           </div>
           <MobileJobCard job={next} onMoveToReadyInvoice={onReadyToInvoice} />
+          {onReassign && otherTechs.map(n => (
+            <button
+              key={n}
+              onClick={() => onReassign(next, n)}
+              className="w-full text-xs font-semibold rounded-lg py-1.5 mt-1.5"
+              style={{ color: '#555', border: '1px solid #ddd', backgroundColor: 'white' }}
+            >
+              🔁 Reassign to {n}
+            </button>
+          ))}
         </div>
       )}
 
@@ -586,6 +608,33 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     }
   }
 
+  // Reassign a job to a different tech straight from Live Day (Mark
+  // 2026-07-09: "sometimes they get mis-assigned, or Jayden will take
+  // a job over that I was going to do"). Keeps the Kanban column in
+  // sync — a dispatched_* job moves to the new tech's column. Backend
+  // fires the tech-change Cliq DM + pushes salesperson to Zoho.
+  async function handleReassign(job, newTech) {
+    if (!job?.id || !newTech) return
+    if (!confirm(`Reassign ${job.shop_name || 'this job'} to ${newTech}?`)) return
+    try {
+      const body = { technician: newTech }
+      if (String(job.status || '').startsWith('dispatched_')) {
+        body.status = newTech.toLowerCase().startsWith('jay') ? 'dispatched_jaden' : 'dispatched_mark'
+      }
+      const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      showToast(`🔁 ${job.shop_name || 'Job'} → ${newTech}`)
+      await load()
+    } catch (e) {
+      showToast(`Reassign failed: ${e.message}`)
+    }
+  }
+
   async function handleAssign(jobId, tech) {
     try {
       const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}`, {
@@ -703,41 +752,31 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           </button>
         </div>
 
-        {/* Tech cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {(data?.techs || []).map(t => (
-            <TechCard
-              key={t.name}
-              tech={t}
-              viewerRole={data?.viewer_role}
-              onReadyToInvoice={handleReadyToInvoice}
-            />
-          ))}
-        </div>
-
-        {/* Unassigned same-day jobs */}
-        <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #ebebeb' }}>
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs uppercase tracking-wider font-semibold"
-              style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-              Unassigned today ({(data?.unassigned_today || []).length})
+        {/* Needs-Dispatch alert — moved to TOP + red styled 2026-07-09
+            per Mark: "jobs that need to be dispatched, I want them at
+            the top and red." Hidden entirely when empty so it doesn't
+            waste header space. */}
+        {(data?.unassigned_today || []).length > 0 && (
+          <div className="rounded-2xl p-4"
+            style={{ backgroundColor: '#fef2f2', border: '2px solid #dc2626' }}>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs uppercase tracking-wider font-bold flex items-center gap-2"
+                style={{ color: '#dc2626', fontFamily: 'IBM Plex Mono, monospace' }}>
+                🚨 Needs Dispatch ({data.unassigned_today.length})
+              </div>
             </div>
-          </div>
-          {(data?.unassigned_today || []).length === 0 ? (
-            <p className="text-sm py-1" style={{ color: '#bbb' }}>None.</p>
-          ) : (
             <ul className="space-y-2">
               {data.unassigned_today.map(j => {
                 const ro = parseRO(j.notes)
                 const cals = parseCals(j.calibrations)
                 return (
                   <li key={j.id} className="flex items-center justify-between gap-2 rounded-lg p-2"
-                    style={{ backgroundColor: '#fafaf9', border: '1px solid #f0ece8' }}>
+                    style={{ backgroundColor: '#ffffff', border: '1px solid #fca5a5' }}>
                     <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-sm truncate" style={{ color: '#1a1a1a' }}>
+                      <div className="font-bold text-sm truncate" style={{ color: '#7f1d1d' }}>
                         {j.shop_name}
                       </div>
-                      <div className="text-xs truncate" style={{ color: '#666' }}>
+                      <div className="text-xs truncate" style={{ color: '#991b1b' }}>
                         {j.vehicle || ''}
                         {ro && ` · RO# ${ro}`}
                         {cals.length > 0 && ` · 🔧 ${cals.length}`}
@@ -746,13 +785,27 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                     <button
                       onClick={() => openInsertFor(j)}
                       className="text-xs font-bold rounded-lg px-3 py-2 text-white flex-shrink-0"
-                      style={{ backgroundColor: ORANGE }}
-                    >Fit it in →</button>
+                      style={{ backgroundColor: '#dc2626' }}
+                    >Assign →</button>
                   </li>
                 )
               })}
             </ul>
-          )}
+          </div>
+        )}
+
+        {/* Tech cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {(data?.techs || []).map(t => (
+            <TechCard
+              key={t.name}
+              tech={t}
+              viewerRole={data?.viewer_role}
+              onReadyToInvoice={handleReadyToInvoice}
+              onReassign={handleReassign}
+              techList={(data?.techs || []).map(x => x.name)}
+            />
+          ))}
         </div>
       </div>
 
