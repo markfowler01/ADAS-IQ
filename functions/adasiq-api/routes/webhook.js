@@ -1,5 +1,5 @@
 import express from 'express'
-import { readJobsPublic, updateJobPublic, performSyncQuotes } from './jobs.js'
+import { readJobsPublic, updateJobPublic, deleteJobPublic, performSyncQuotes } from './jobs.js'
 import { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, TECHNICIANS_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
@@ -110,6 +110,12 @@ router.post('/zoho-books', async (req, res) => {
     // Don't re-notify on a status-change re-fire (sent → viewed → paid).
     if (wasAlreadyInvoiced) {
       console.log('[webhook] Job was already invoiced — skipping duplicate alert')
+      // Still clear it off the board (Mark 2026-07-10: invoiced-out jobs
+      // disappear). Covers jobs invoiced before this change whose later
+      // viewed/paid webhook re-fires.
+      await deleteJobPublic(req, matchedJob.id)
+        .then(() => console.log(`[webhook] Removed already-invoiced job ${matchedJob.id} from board`))
+        .catch(e => console.warn('[webhook] board cleanup failed (non-fatal):', e.message))
       return res.json({ success: true, job_id: matchedJob.id, invoice_number: invoiceNumber, message: 'already invoiced' })
     }
 
@@ -146,6 +152,15 @@ router.post('/zoho-books', async (req, res) => {
     ].join('\n')
     await postToCliqChannel(TECHNICIANS_CHANNEL, techMsg).catch(e =>
       console.warn('[webhook] #technicians alert failed (non-fatal):', e.message))
+
+    // Invoice is out the door — the job's lifecycle on the board is over.
+    // Remove the card entirely (Mark 2026-07-10). Invoice lives in Zoho
+    // Books; completion + history were logged when the job completed;
+    // the row above was marked invoiced first so the alert dedup and any
+    // in-flight readers see a consistent state before the delete.
+    await deleteJobPublic(req, matchedJob.id)
+      .then(() => console.log(`[webhook] Removed invoiced job ${matchedJob.id} from board`))
+      .catch(e => console.warn('[webhook] board cleanup failed (non-fatal):', e.message))
 
     res.json({ success: true, job_id: matchedJob.id, invoice_number: invoiceNumber })
 

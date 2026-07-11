@@ -1201,5 +1201,5 @@ router.post('/:id/refresh-share-link', async (req, res) => {
 })
 
 // ─── Exports for webhook.js ───────────────────────────────────────────────────
-export { getAllJobs as readJobsPublic, updateJob as updateJobPublic }
+export { getAllJobs as readJobsPublic, updateJob as updateJobPublic, deleteJob as deleteJobPublic }
 export default router
