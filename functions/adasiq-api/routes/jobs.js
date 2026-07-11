@@ -234,10 +234,12 @@ async function notifyNeedsDispatch(req, job) {
   const shop = job.shop_name || 'Unknown shop'
   const scheduled = job.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
 
+  const tesla = isTeslaJob(job)
   const msg = [
-    `📋 *Needs Dispatch* · ${shop}`,
+    `📋 *${tesla ? '⚡ TESLA · ' : ''}Needs Dispatch* · ${shop}`,
     `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${scheduled}`,
-  ].join('\n')
+    tesla ? `⚡ TESLA — use Tesla pricing.` : null,
+  ].filter(Boolean).join('\n')
   await postToCliqChannel(AA_JOBS_CHANNEL, msg)
     .catch(e => console.warn('[aajobs needs_dispatch]', e.message))
 
@@ -282,10 +284,13 @@ async function notifyJobDispatched(req, job) {
   const shop = job.shop_name || 'Unknown shop'
   const scheduled = job.scheduled_date ? ` · 📅 ${job.scheduled_date}` : ''
   const cashTag = isCash ? '💵 CASH · ' : ''
+  const tesla = isTeslaJob(job)
+  const teslaTag = tesla ? '⚡ TESLA · ' : ''
 
   const msg = [
-    `🚐 *${cashTag}Dispatched to ${job.technician}* · ${shop}`,
+    `🚐 *${teslaTag}${cashTag}Dispatched to ${job.technician}* · ${shop}`,
     `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${scheduled}`,
+    tesla ? `⚡ TESLA — use Tesla pricing.` : null,
     isCash ? `💵 CASH — max $${CASH_MAX_OUT_OF_POCKET} out of pocket. Only static cals + SAS + SWS billed.` : null,
   ].filter(Boolean).join('\n')
   await postToCliqChannel(AA_JOBS_CHANNEL, msg)
@@ -296,7 +301,7 @@ async function notifyJobDispatched(req, job) {
   await createNotification(req, {
     to: job.technician, toEmail: '',
     type: 'job_dispatched',
-    title: `${cashTag}Job dispatched to ${job.technician}: ${shop}`,
+    title: `${teslaTag}${cashTag}Job dispatched to ${job.technician}: ${shop}`,
     body: `${vehicle || 'Vehicle TBD'} — ${shop}${job.scheduled_date ? ' on ' + job.scheduled_date : ''}${cashBody}`,
     jobId: job.id, job,
     skipCliq: true, skipTechChannel: true,
@@ -330,6 +335,29 @@ async function notifyReadyToInvoiceCash(req, job) {
   ].join('\n')
   try { await postToCliqChannel(AA_JOBS_CHANNEL, msg) }
   catch (e) { console.warn('[aajobs ready_invoice cash]', e.message) }
+}
+
+// Tesla jobs bill on Tesla pricing (Mark 2026-07-10). Matches on the
+// make OR the combined vehicle string so imports that only fill
+// `vehicle` still trigger.
+export function isTeslaJob(job) {
+  if (!job) return false
+  return /tesla/i.test(String(job.make || '')) || /tesla/i.test(String(job.vehicle || ''))
+}
+
+// Tesla-pricing reminder to Kat when a Tesla hits ready_invoice — same
+// fire-alongside pattern as the cash reminder above.
+async function notifyReadyToInvoiceTesla(req, job) {
+  if (!isTeslaJob(job)) return
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const roNum = job.quote_number || (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || ''
+  const msg = [
+    `⚡ *TESLA — Ready to Invoice*`,
+    `${job.shop_name || 'Job'}${vehicle ? ' · ' + vehicle : ''}${roNum ? ' · RO# ' + roNum : ''}`,
+    `⚠️ *Use TESLA PRICING on this invoice.*`,
+  ].join('\n')
+  try { await postToCliqChannel(AA_JOBS_CHANNEL, msg) }
+  catch (e) { console.warn('[aajobs ready_invoice tesla]', e.message) }
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
@@ -491,6 +519,7 @@ router.put('/:id', async (req, res) => {
       })()
       // Extra "zero these" DM to Kat on cash jobs — no-op for insurance jobs.
       await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice PUT]', e.message))
+      await notifyReadyToInvoiceTesla(req, updated).catch(e => console.warn('[tesla ready_invoice PUT]', e.message))
     }
 
     res.json(updated)
@@ -602,6 +631,7 @@ router.patch('/:id', async (req, res) => {
         }).catch(e => console.warn('[notif job_ready_invoice inbox]', e.message))
       })()
       await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice PATCH]', e.message))
+      await notifyReadyToInvoiceTesla(req, updated).catch(e => console.warn('[tesla ready_invoice PATCH]', e.message))
     }
 
     res.json(updated)
@@ -710,6 +740,7 @@ router.patch('/:id/complete', async (req, res) => {
         skipCliq: true, skipTechChannel: true,
       }).catch(e => console.warn('[notifications complete]', e.message))
       await notifyReadyToInvoiceCash(req, updated).catch(e => console.warn('[cash ready_invoice complete]', e.message))
+      await notifyReadyToInvoiceTesla(req, updated).catch(e => console.warn('[tesla ready_invoice complete]', e.message))
     }
 
     // 3) Recompute remaining drive_order for this tech's day

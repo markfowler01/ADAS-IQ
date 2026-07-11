@@ -28,6 +28,13 @@ function isCashCustomerJob(job) {
   return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(ins)
 }
 
+// Tesla jobs bill on Tesla pricing (Mark 2026-07-10). Match make OR the
+// combined vehicle string so imports that only fill `vehicle` still flag.
+function isTeslaJob(job) {
+  if (!job) return false
+  return /tesla/i.test(String(job.make || '')) || /tesla/i.test(String(job.vehicle || ''))
+}
+
 const COLUMNS = [
   { id: 'job_requested',    label: 'Job Requested' },
   { id: 'need_dispatch',    label: 'Need to Dispatch' },
@@ -658,6 +665,18 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         <p className="text-xs font-medium mb-1" style={{ color: '#6b7280' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
           {job.invoice_number || job.quote_number}
+        </p>
+      )}
+
+      {/* Tesla badge — Tesla-red pill so Kat uses Tesla pricing on the
+          invoice. Independent of cash/insurer (a Tesla can be either). */}
+      {isTeslaJob(job) && (
+        <p className="mb-1">
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            style={{ background: '#E82127', color: '#fff', letterSpacing: '0.06em' }}
+            title="Tesla — use Tesla pricing on this invoice"
+          >⚡ TESLA · Tesla pricing</span>
         </p>
       )}
 
@@ -1741,6 +1760,13 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices }) 
       <div className="flex items-center gap-3 text-xs mb-2 flex-wrap" style={{ color: '#aaa' }}>
         {job.technician && <span>👤 {job.technician}</span>}
         {job.scheduled_date && <span>📅 {job.scheduled_date}</span>}
+        {isTeslaJob(job) && (
+          <span
+            className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+            style={{ background: '#E82127', color: '#fff', fontSize: 10, letterSpacing: '0.06em' }}
+            title="Tesla — use Tesla pricing"
+          >⚡ TESLA</span>
+        )}
         {isCashCustomerJob(job) ? (
           <span
             className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"

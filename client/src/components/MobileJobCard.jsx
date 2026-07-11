@@ -28,6 +28,13 @@ export function isCashCustomerJob(job) {
   return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(ins)
 }
 
+// Tesla jobs bill on Tesla pricing (Mark 2026-07-10). Match make OR the
+// combined vehicle string so imports that only fill `vehicle` still flag.
+export function isTeslaJob(job) {
+  if (!job) return false
+  return /tesla/i.test(String(job.make || '')) || /tesla/i.test(String(job.vehicle || ''))
+}
+
 function UploadButton({ job }) {
   const [uploading, setUploading] = useState(false)
   const [done, setDone] = useState(false)
@@ -169,6 +176,16 @@ export default function MobileJobCard({
         <p className="text-xs font-medium mb-1" style={{ color: '#6b7280' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
           {job.invoice_number || job.quote_number}
+        </p>
+      )}
+
+      {isTeslaJob(job) && (
+        <p className="mb-1">
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            style={{ background: '#E82127', color: '#fff', letterSpacing: '0.06em' }}
+            title="Tesla — use Tesla pricing on this invoice"
+          >⚡ TESLA · Tesla pricing</span>
         </p>
       )}
 
