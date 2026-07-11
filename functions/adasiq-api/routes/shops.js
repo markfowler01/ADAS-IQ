@@ -226,17 +226,22 @@ function cardNoteKey(shopName) {
 }
 
 // GET /api/shops/card-notes → { notes: { "<normalized name>": "note" } }
+// Full-table read + JS prefix filter — AppConfig holds a few dozen rows
+// at most, and ZCQL LIKE support proved unreliable (empty results in
+// prod 2026-07-11), while plain SELECTs are proven by the phone-config
+// reads.
 router.get('/card-notes', async (req, res) => {
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
     const rows = await app.zcql().executeZCQLQuery(
-      `SELECT config_key, config_value FROM ${APP_CONFIG_TABLE} WHERE config_key LIKE '${CARD_NOTE_PREFIX}%'`
+      `SELECT config_key, config_value FROM ${APP_CONFIG_TABLE} LIMIT 500`
     )
     const notes = {}
     for (const row of rows || []) {
       const r = row[APP_CONFIG_TABLE] || row
-      if (r?.config_key && r.config_value) {
-        notes[String(r.config_key).slice(CARD_NOTE_PREFIX.length)] = String(r.config_value)
+      const key = String(r?.config_key || '')
+      if (key.startsWith(CARD_NOTE_PREFIX) && r.config_value) {
+        notes[key.slice(CARD_NOTE_PREFIX.length)] = String(r.config_value)
       }
     }
     res.json({ ok: true, notes })
