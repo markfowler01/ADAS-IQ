@@ -546,7 +546,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport }) {
   const [finding, setFinding] = useState(false)
 
   async function handleOpenWorkDrive(e) {
@@ -823,12 +823,20 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
         </button>
       )}
+
+      {/* Upload Report → Invoice — tech-requested jobs skip the whole
+          dispatch dance when the work's already done: upload the report,
+          invoices open prefilled from this card, and on success the
+          requested card completes + leaves the board. */}
+      {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
+        <UploadReportButton job={job} onUploaded={onUploadReport} />
+      )}
     </div>
   )
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -894,6 +902,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onRefreshShareLink={onRefreshShareLink}
             onCreateInvoices={onCreateInvoices}
             onMoveToReadyInvoice={onMoveToReadyInvoice}
+            onUploadReport={onUploadReport}
           />
         ))}
         {jobs.length === 0 && !isOver && (
@@ -917,6 +926,19 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
   const [invoicingJob, setInvoicingJob] = useState(null)
+  // Set when the invoice modal was opened by the Upload Report flow on a
+  // job_requested card — on invoice success that card is deleted from
+  // the board instead of just marked complete (Mark 2026-07-10).
+  const [reportFlowJobId, setReportFlowJobId] = useState(null)
+
+  // Upload Report → Invoice chain for tech-requested jobs: the report is
+  // already in WorkDrive by the time this fires; open Create Invoices
+  // prefilled from the card.
+  function handleReportUploaded(job) {
+    setReportFlowJobId(job.id)
+    setInvoicingJob(job)
+    showToast('📄 Report uploaded — creating invoices from this job')
+  }
   const [calReviewJob, setCalReviewJob] = useState(null)
   const [search, setSearch] = useState('')
   const [regionFilter, setRegionFilter] = useState('')
@@ -1529,6 +1551,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                       onEdit={openEdit}
                       onMoveToReadyInvoice={handleMoveToReadyInvoice}
                       onCreateInvoices={setInvoicingJob}
+                      onUploadReport={handleReportUploaded}
                     />
                   ))
                 )}
@@ -1560,6 +1583,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onRefreshShareLink={handleRefreshShareLink}
                   onCreateInvoices={setInvoicingJob}
                   onMoveToReadyInvoice={handleMoveToReadyInvoice}
+                  onUploadReport={handleReportUploaded}
                   dragOverCol={dragOverCol}
                 />
               ))}
@@ -1601,8 +1625,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       {invoicingJob && (
         <CreateInvoicesModal
           job={invoicingJob}
-          onClose={() => setInvoicingJob(null)}
+          onClose={() => { setInvoicingJob(null); setReportFlowJobId(null) }}
           onCreated={async (invoiceNums) => {
+            const fromReportFlow = reportFlowJobId && reportFlowJobId === invoicingJob.id
             // Auto-mark the job as invoiced + complete
             try {
               const patch = { invoiced: true, status: 'complete' }
@@ -1616,11 +1641,24 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(patch),
               })
+              // Upload-Report flow: the requested card's work is fully
+              // done (report in WorkDrive, invoices created, completion
+              // logged by the PATCH above) — remove the card from the
+              // board entirely per Mark 2026-07-10. Deliberately AFTER
+              // invoice success so cancelling the modal never destroys
+              // the job.
+              if (fromReportFlow) {
+                await apiFetch(`${API_BASE}/api/jobs/${invoicingJob.id}`, { method: 'DELETE' })
+                  .catch(e => console.warn('report-flow cleanup delete failed:', e.message))
+              }
             } catch (e) {
               console.warn('Could not auto-mark job invoiced:', e.message)
             }
             setInvoicingJob(null)
-            showToast('✅ Invoices created — job marked complete & invoiced!')
+            setReportFlowJobId(null)
+            showToast(fromReportFlow
+              ? '✅ Report uploaded, invoices created — request card cleared!'
+              : '✅ Invoices created — job marked complete & invoiced!')
             fetchJobs()
           }}
         />
@@ -1713,7 +1751,75 @@ function UploadButton({ job }) {
   )
 }
 
-function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices }) {
+// Report-upload → invoice flow for tech-requested jobs (Mark 2026-07-10).
+// Full-width button on job_requested cards: pick the calibration report,
+// it uploads to the job's WorkDrive folder, then onUploaded(job) chains
+// straight into the Create Invoices modal prefilled from this card. On
+// invoice success the requested card is completed + removed from the
+// board (see onCreated in the main component).
+function UploadReportButton({ job, onUploaded }) {
+  const [uploading, setUploading] = useState(false)
+  const inputRef = useRef(null)
+
+  async function handleFiles(e) {
+    const files = Array.from(e.target.files || [])
+    if (!files.length) return
+    setUploading(true)
+    try {
+      for (const file of files) {
+        const formData = new FormData()
+        formData.append('file', file)
+        const jobId = String(job.ROWID || job.id || '')
+        const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}/upload-photo`, {
+          method: 'POST',
+          body: formData,
+        })
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          throw new Error(d.error || 'Upload failed')
+        }
+      }
+      onUploaded && onUploaded(job)
+    } catch (err) {
+      alert('Report upload failed: ' + err.message)
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+  }
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,application/pdf"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleFiles}
+      />
+      <button
+        onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}
+        disabled={uploading}
+        className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
+        style={{
+          backgroundColor: '#eff6ff',
+          border: '1.5px solid #bfdbfe',
+          padding: '10px 0',
+          minHeight: '44px',
+          opacity: uploading ? 0.6 : 1,
+        }}
+        title="Upload the calibration report — then invoices are created from this card's info"
+      >
+        <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>
+          {uploading ? '⏳ Uploading report…' : '📄 Upload Report → Invoice'}
+        </span>
+      </button>
+    </>
+  )
+}
+
+function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices, onUploadReport }) {
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const statusLabel = COLUMNS.find(c => c.id === job.status)?.label || job.status
 
@@ -1814,6 +1920,12 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices }) 
             <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
           </button>
         )
+      )}
+
+      {/* Upload Report → Invoice — same request-flow shortcut as the
+          desktop card. */}
+      {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
+        <UploadReportButton job={job} onUploaded={onUploadReport} />
       )}
     </div>
   )
