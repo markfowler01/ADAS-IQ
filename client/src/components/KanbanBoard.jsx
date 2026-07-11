@@ -35,6 +35,17 @@ function isTeslaJob(job) {
   return /tesla/i.test(String(job.make || '')) || /tesla/i.test(String(job.vehicle || ''))
 }
 
+// Shop-name normalizer for customer card notes — must mirror
+// normShopName in routes/shops.js so lookups hit.
+function normShopName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[,.]?\s*(inc|llc|corp|co)\.?\s*$/i, '')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 const COLUMNS = [
   { id: 'job_requested',    label: 'Job Requested' },
   { id: 'need_dispatch',    label: 'Need to Dispatch' },
@@ -546,7 +557,8 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport, customerNotes, onEditCustomerNote }) {
+  const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
 
   async function handleOpenWorkDrive(e) {
@@ -612,6 +624,15 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
+          {/* Customer note — set once per shop, shows on every card */}
+          {onEditCustomerNote && job.shop_name && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEditCustomerNote(job) }}
+              title={customerNote ? `Edit customer note: ${customerNote}` : 'Add a customer note (shows on every card for this shop)'}
+              className="w-6 h-6 rounded flex items-center justify-center transition-colors hover:bg-amber-50"
+              style={{ color: customerNote ? '#b45309' : '#d4d4d4' }}
+            >📌</button>
+          )}
           {/* Delete button */}
           <button
             onClick={(e) => { e.stopPropagation(); if (window.confirm('Delete this job?')) onDelete(job) }}
@@ -666,6 +687,14 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
           {job.invoice_number || job.quote_number}
         </p>
+      )}
+
+      {/* Customer note — amber sticky, one per shop, set via the 📌 */}
+      {customerNote && (
+        <div className="text-xs rounded-md px-2 py-1.5 mb-1.5"
+          style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+          📌 {customerNote}
+        </div>
       )}
 
       {/* Tesla badge — Tesla-red pill so Kat uses Tesla pricing on the
@@ -836,7 +865,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport, customerNotes, onEditCustomerNote, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -903,6 +932,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onCreateInvoices={onCreateInvoices}
             onMoveToReadyInvoice={onMoveToReadyInvoice}
             onUploadReport={onUploadReport}
+            customerNotes={customerNotes}
+            onEditCustomerNote={onEditCustomerNote}
           />
         ))}
         {jobs.length === 0 && !isOver && (
@@ -926,6 +957,43 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
   const [invoicingJob, setInvoicingJob] = useState(null)
+
+  // Customer card notes — one sticky note per shop, shows on every card
+  // for that shop (Mark 2026-07-10). Stored on the CRM shop row in
+  // Datastore; keyed here by normalized shop name.
+  const [customerNotes, setCustomerNotes] = useState({})
+  const fetchCustomerNotes = useCallback(async () => {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/card-notes`)
+      const j = await r.json()
+      if (r.ok) setCustomerNotes(j.notes || {})
+    } catch { /* non-critical */ }
+  }, [])
+  useEffect(() => { fetchCustomerNotes() }, [fetchCustomerNotes])
+
+  async function handleEditCustomerNote(job) {
+    const current = customerNotes[normShopName(job.shop_name)] || ''
+    const next = window.prompt(
+      `Customer note for ${job.shop_name} — shows on every card for this shop. Clear the text to remove it.`,
+      current
+    )
+    if (next === null) return  // cancelled
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/card-note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop_name: job.shop_name, note: next }),
+      })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}))
+        throw new Error(j.error || `HTTP ${r.status}`)
+      }
+      await fetchCustomerNotes()
+      showToast(next.trim() ? `📌 Note saved for ${job.shop_name}` : `📌 Note cleared for ${job.shop_name}`)
+    } catch (e) {
+      showToast(`Note save failed: ${e.message}`)
+    }
+  }
 
   // Upload Report → Invoice for tech-requested jobs (Mark 2026-07-10):
   // runs the report PDF through the SAME AI-extract pipeline as the
@@ -1578,6 +1646,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                       onMoveToReadyInvoice={handleMoveToReadyInvoice}
                       onCreateInvoices={setInvoicingJob}
                       onUploadReport={handleCardReportUpload}
+                      customerNotes={customerNotes}
                     />
                   ))
                 )}
@@ -1610,6 +1679,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onCreateInvoices={setInvoicingJob}
                   onMoveToReadyInvoice={handleMoveToReadyInvoice}
                   onUploadReport={handleCardReportUpload}
+                  customerNotes={customerNotes}
+                  onEditCustomerNote={handleEditCustomerNote}
                   dragOverCol={dragOverCol}
                 />
               ))}
@@ -1820,7 +1891,8 @@ function UploadReportButton({ job, onUploadReport }) {
   )
 }
 
-function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices, onUploadReport }) {
+function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices, onUploadReport, customerNotes }) {
+  const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const statusLabel = COLUMNS.find(c => c.id === job.status)?.label || job.status
 
@@ -1862,6 +1934,14 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices, on
       <p className="text-sm mb-1 cursor-pointer" style={{ color: '#555' }} onClick={() => onEdit(job)}>
         {vehicle || 'Unknown vehicle'}
       </p>
+
+      {/* Customer note — amber sticky, one per shop */}
+      {customerNote && (
+        <div className="text-xs rounded-md px-2 py-1.5 mb-2"
+          style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+          📌 {customerNote}
+        </div>
+      )}
 
       {/* Technician + date row. Cash badge takes over the insurer slot. */}
       <div className="flex items-center gap-3 text-xs mb-2 flex-wrap" style={{ color: '#aaa' }}>

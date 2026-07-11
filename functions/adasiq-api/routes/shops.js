@@ -199,6 +199,61 @@ router.get('/cal-counts', async (req, res) => {
   }
 })
 
+// ── Customer card notes (Mark 2026-07-10) ──────────────────────────────────
+// Per-customer sticky info that shows on every Kanban card for that
+// shop — set once, saved on the CRM shop row (billing_rules.card_note;
+// the billing engine only reads its own keys so this is inert to it).
+// Matching is by normalized shop name since jobs only carry shop_name.
+function normShopName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[,.]?\s*(inc|llc|corp|co)\.?\s*$/i, '')  // "L-M Body Shop, Inc." ≈ "L-M Body Shop"
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// GET /api/shops/card-notes → { notes: { "<normalized name>": "note" } }
+router.get('/card-notes', async (req, res) => {
+  try {
+    const shops = await getAllShops(req)
+    const notes = {}
+    for (const s of shops) {
+      const note = s.billing_rules?.card_note
+      if (note && String(note).trim()) notes[normShopName(s.shop_name)] = String(note).trim()
+    }
+    res.json({ ok: true, notes })
+  } catch (err) {
+    console.error('[shops card-notes]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/shops/card-note { shop_name, note } — empty note clears it.
+// If the shop has no CRM row yet, a minimal one is created so the note
+// still sticks.
+router.post('/card-note', async (req, res) => {
+  try {
+    const shopName = String(req.body?.shop_name || '').trim()
+    const note = String(req.body?.note || '').trim()
+    if (!shopName) return res.status(400).json({ error: 'shop_name required' })
+    const shops = await getAllShops(req)
+    const target = shops.find(s => normShopName(s.shop_name) === normShopName(shopName))
+    if (target) {
+      const rules = (target.billing_rules && typeof target.billing_rules === 'object') ? { ...target.billing_rules } : {}
+      if (note) rules.card_note = note
+      else delete rules.card_note
+      await updateShop(req, target.id, { ...target, billing_rules: rules })
+    } else if (note) {
+      await insertShop(req, { shop_name: shopName, pipeline_stage: 'customer', billing_rules: { card_note: note } })
+    }
+    res.json({ ok: true, shop_name: shopName, note })
+  } catch (err) {
+    console.error('[shops card-note save]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/shops
 router.get('/', async (req, res) => {
   try {
