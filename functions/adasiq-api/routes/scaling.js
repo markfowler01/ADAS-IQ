@@ -3,6 +3,10 @@
 // table (name varchar mandatory, target_date varchar, status varchar,
 // data_json text — holds the task board + cost tracker as JSON).
 // Datastore, not Cache: pipelines run for months, far past the 48h TTL cap.
+//
+// NOTE: the table must be created by hand in the Catalyst console (Data
+// Store → Create Table) — Catalyst has no public API for table creation.
+// Until it exists, GET / returns a 500 with a clear setup message.
 
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
