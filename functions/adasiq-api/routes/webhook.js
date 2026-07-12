@@ -1,6 +1,40 @@
 import express from 'express'
+import catalyst from 'zcatalyst-sdk-node'
 import { readJobsPublic, updateJobPublic, deleteJobPublic, performSyncQuotes } from './jobs.js'
-import { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, TECHNICIANS_CHANNEL } from '../services/cliq.js'
+import { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, TECHNICIANS_CHANNEL, DISPATCH_CHANNEL } from '../services/cliq.js'
+
+// Running per-day invoiced total for the #Dispatch summary (Mark
+// 2026-07-11). One AppConfig row per PT day:
+//   config_key  invoiced_day_total:<YYYY-MM-DD>
+//   config_value {"total":1234.56,"count":3}
+// Read-modify-write is fine at invoice frequency (a handful per day).
+const DAY_TOTAL_TABLE = 'AppConfig'
+function dayKeyPT() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+async function bumpDayInvoiceTotal(req, amount) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const key = `invoiced_day_total:${dayKeyPT()}`
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT ROWID, config_value FROM ${DAY_TOTAL_TABLE} WHERE config_key = '${key}' LIMIT 1`
+  )
+  const r = rows?.[0]?.[DAY_TOTAL_TABLE] || rows?.[0] || null
+  let acc = { total: 0, count: 0 }
+  if (r?.config_value) {
+    try { acc = JSON.parse(r.config_value) } catch { acc = { total: 0, count: 0 } }
+  }
+  acc.total = Math.round((Number(acc.total || 0) + amount) * 100) / 100
+  acc.count = Number(acc.count || 0) + 1
+  const table = app.datastore().table(DAY_TOTAL_TABLE)
+  if (r?.ROWID) {
+    await table.updateRow({ ROWID: String(r.ROWID), config_key: key, config_value: JSON.stringify(acc) })
+  } else {
+    await table.insertRow({ config_key: key, config_value: JSON.stringify(acc) })
+  }
+  return acc
+}
 
 const router = express.Router()
 
@@ -152,6 +186,22 @@ router.post('/zoho-books', async (req, res) => {
     ].join('\n')
     await postToCliqChannel(TECHNICIANS_CHANNEL, techMsg).catch(e =>
       console.warn('[webhook] #technicians alert failed (non-fatal):', e.message))
+
+    // #Dispatch invoice summary + running day total (Mark 2026-07-11):
+    // shop, year/make/model, invoice total, and where the day stands.
+    try {
+      const acc = await bumpDayInvoiceTotal(req, Number(total) || 0)
+      const dispatchMsg = [
+        `💰 *Invoiced* · ${matchedJob.shop_name || customerName || 'Unknown shop'}`,
+        vehicle ? `🚗 ${vehicle}` : null,
+        totalStr ? `💵 ${totalStr}` : null,
+        `──────────`,
+        `📊 *Today: $${Number(acc.total).toFixed(2)}* · ${acc.count} invoice${acc.count === 1 ? '' : 's'}`,
+      ].filter(Boolean).join('\n')
+      await postToCliqChannel(DISPATCH_CHANNEL, dispatchMsg)
+    } catch (e) {
+      console.warn('[webhook] #Dispatch day-total alert failed (non-fatal):', e.message)
+    }
 
     // Invoice is out the door — the job's lifecycle on the board is over.
     // Remove the card entirely (Mark 2026-07-10). Invoice lives in Zoho
