@@ -370,7 +370,10 @@ async function notifyReadyToInvoiceTesla(req, job) {
 router.post('/clean-invoiced', async (req, res) => {
   try {
     const jobs = await getAllJobs(req)
-    const targets = jobs.filter(j => j.invoiced === true)
+    // Scope: invoiced jobs IN THE COMPLETED COLUMN only (Mark
+    // 2026-07-12) — an invoiced job still sitting in another column is
+    // there for a reason and stays put.
+    const targets = jobs.filter(j => j.invoiced === true && j.status === 'complete')
     const batch = targets.slice(0, 100)
     let removed = 0
     for (const j of batch) {

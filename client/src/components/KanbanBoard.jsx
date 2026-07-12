@@ -999,14 +999,21 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // the Books webhook started auto-deleting on invoice-sent (Mark
   // 2026-07-11). Confirm shows the count; invoices in Books untouched.
   async function handleCleanInvoiced() {
-    const count = jobs.filter(j => j.invoiced).length
-    if (!count) { showToast('No invoiced jobs on the board.'); return }
-    if (!confirm(`Remove ${count} invoiced job${count === 1 ? '' : 's'} from the board? The invoices in Zoho Books are not affected.`)) return
+    const count = jobs.filter(j => j.invoiced && j.status === 'complete').length
+    if (!count) { showToast('No invoiced jobs in the Completed column.'); return }
+    if (!confirm(`Remove all ${count} invoiced job${count === 1 ? '' : 's'} from the Completed column? The invoices in Zoho Books are not affected.`)) return
     try {
-      const r = await apiFetch(`${API_BASE}/api/jobs/clean-invoiced`, { method: 'POST' })
-      const j = await r.json()
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      showToast(`🧹 Removed ${j.removed} invoiced job${j.removed === 1 ? '' : 's'}${j.remaining > 0 ? ` — ${j.remaining} left, run it again` : ''}`)
+      // Loop until the server reports none remaining, so one click
+      // clears everything even past the per-call batch cap.
+      let removed = 0
+      for (let pass = 0; pass < 10; pass++) {
+        const r = await apiFetch(`${API_BASE}/api/jobs/clean-invoiced`, { method: 'POST' })
+        const j = await r.json()
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+        removed += j.removed
+        if (!j.remaining) break
+      }
+      showToast(`🧹 Removed ${removed} invoiced job${removed === 1 ? '' : 's'} from Completed`)
       fetchJobs()
     } catch (e) {
       showToast(`Clean out failed: ${e.message}`)
@@ -1479,14 +1486,14 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   </button>
                 )}
                 {/* Clean Out — only shows when invoiced leftovers exist */}
-                {jobs.some(j => j.invoiced) && (
+                {jobs.some(j => j.invoiced && j.status === 'complete') && (
                   <button
                     onClick={handleCleanInvoiced}
                     className="flex text-xs font-medium px-3 py-1.5 rounded-lg items-center gap-1.5"
                     style={{ color: '#555', border: '1px solid #e0dbd6', backgroundColor: 'white', flexShrink: 0 }}
-                    title="Remove all already-invoiced jobs from the board (Zoho Books invoices are not affected)"
+                    title="Remove ALL invoiced jobs from the Completed column (Zoho Books invoices are not affected)"
                   >
-                    🧹 Clean Out ({jobs.filter(j => j.invoiced).length})
+                    🧹 Clean Out ({jobs.filter(j => j.invoiced && j.status === 'complete').length})
                   </button>
                 )}
                 {!error && (
