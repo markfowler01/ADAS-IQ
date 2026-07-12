@@ -2975,6 +2975,21 @@ captureCalcRouter.get('/debug/catalyst-crons', async (req, res) => {
   }
 })
 
+// Watchdog alert relay — lets the external daily pipeline-watchdog (Claude
+// scheduled routine) post a short status line to Mark's Cliq alert channel.
+// No-auth like the rest of /debug/*; message is length-capped and prefixed so
+// it can't impersonate other alert types.  GET /debug/alert-mark?msg=...
+captureCalcRouter.get('/debug/alert-mark', async (req, res) => {
+  try {
+    const msg = String(req.query.msg || '').slice(0, 500).trim()
+    if (!msg) return res.status(400).json({ ok: false, error: 'msg required' })
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🤖 *Pipeline watchdog:* ${msg}`)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // GitHub Actions health check — reports the marketing-crons workflow state
 // (active vs disabled) and its recent runs, so a silent scheduler morning is
 // diagnosable without the gh CLI.  GET /debug/gh-actions-status
