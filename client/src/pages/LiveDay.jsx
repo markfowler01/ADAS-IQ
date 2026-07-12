@@ -637,16 +637,24 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
   async function handleAssign(jobId, tech) {
     try {
+      // Assigning from Live IS dispatching (Mark 2026-07-11): flip the
+      // status to the tech's dispatched_* column so the job moves on the
+      // Kanban, fires the tech-change Cliq DM, and leaves the red
+      // Needs-Dispatch box instead of lingering as job_requested.
+      const body = {
+        technician: tech,
+        status: tech.toLowerCase().startsWith('jay') ? 'dispatched_jaden' : 'dispatched_mark',
+      }
       const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ technician: tech }),
+        body: JSON.stringify(body),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
       setInsertJob(null)
       setSuggestions(null)
-      showToast(`✓ Assigned to ${tech}`)
+      showToast(`✓ Dispatched to ${tech}`)
       await load()
     } catch (e) {
       showToast(`Assign failed: ${e.message}`)

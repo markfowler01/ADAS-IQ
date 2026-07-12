@@ -92,8 +92,16 @@ router.get('/live', async (req, res) => {
       })
     }
 
-    const unassigned_today = todays
-      .filter(j => !j.technician || j.status === 'need_dispatch')
+    // Needs-Dispatch feed (Mark 2026-07-11): anything pre-dispatch shows
+    // regardless of scheduled_date — a fresh job request has NO date yet
+    // and was invisible here, which is exactly when it most needs eyes.
+    // Plus anything scheduled today that's open but unassigned.
+    const unassigned_today = allJobs
+      .filter(j => {
+        const s = j.status || ''
+        if (s === 'need_dispatch' || s === 'job_requested') return true
+        return (j.scheduled_date || '') === dateISO && !j.technician && OPEN_STATUSES.has(s)
+      })
       .map(decorate)
 
     res.json({ ok: true, date: dateISO, techs, unassigned_today })
