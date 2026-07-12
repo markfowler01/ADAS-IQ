@@ -213,6 +213,28 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
           </div>
         </nav>
 
+        {/* Reference-tool shortcuts — same four links as the Live Day
+            header, one click from anywhere (Mark 2026-07-11). Desktop
+            only; wide screens (lg) so the primary nav never crowds. */}
+        <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
+          <a href="https://my.alldata.com/migrate/#/home" target="_blank" rel="noopener noreferrer"
+            className="text-[11px] px-2 py-1 rounded-md font-semibold"
+            style={{ backgroundColor: '#1e40af', color: 'white' }}
+            title="Open AllData">AllData</a>
+          <a href="https://ops.kinetic.auto/id/" target="_blank" rel="noopener noreferrer"
+            className="text-[11px] px-2 py-1 rounded-md font-semibold"
+            style={{ backgroundColor: '#0e7490', color: 'white' }}
+            title="Open Kinetic">Kinetic</a>
+          <a href="https://dh.identifix.com/Default/LogOnIdentifix?sessionTerminated=True" target="_blank" rel="noopener noreferrer"
+            className="text-[11px] px-2 py-1 rounded-md font-semibold"
+            style={{ backgroundColor: '#7c2d12', color: 'white' }}
+            title="Open Identifix">Identifix</a>
+          <a href="https://opusccp.com/" target="_blank" rel="noopener noreferrer"
+            className="text-[11px] px-2 py-1 rounded-md font-semibold"
+            style={{ backgroundColor: '#4c1d95', color: 'white' }}
+            title="Open Opus CCP">Opus CCP</a>
+        </div>
+
         {/* Right: Avatar + actions + mobile hamburger */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {user && (
