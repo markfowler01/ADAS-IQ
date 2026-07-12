@@ -362,6 +362,28 @@ async function notifyReadyToInvoiceTesla(req, job) {
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
+// POST /api/jobs/clean-invoiced — bulk-remove every already-invoiced
+// job from the board (Mark 2026-07-11). One-click cleanup for leftovers
+// from before the Books webhook started auto-deleting on invoice-sent.
+// Capped per call to stay well inside the 30s gateway limit; the
+// response says how many remain so the UI can offer another pass.
+router.post('/clean-invoiced', async (req, res) => {
+  try {
+    const jobs = await getAllJobs(req)
+    const targets = jobs.filter(j => j.invoiced === true)
+    const batch = targets.slice(0, 100)
+    let removed = 0
+    for (const j of batch) {
+      try { await deleteJob(req, j.id); removed++ }
+      catch (e) { console.warn('[clean-invoiced] delete failed', j.id, e.message) }
+    }
+    res.json({ ok: true, removed, remaining: targets.length - removed })
+  } catch (err) {
+    console.error('[clean-invoiced]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/jobs/completions — tech completion log (last 90 days)
 router.get('/completions', async (req, res) => {
   try {

@@ -203,6 +203,33 @@ router.get('/run', async (req, res) => {
   }
 
   try {
+    // Weekdays only + once per day (Mark 2026-07-12: was arriving twice
+    // daily). The guard lives HERE, not in cron config, so duplicate or
+    // over-eager cron registrations can never double-send. The sent
+    // stamp is a per-day AppConfig row — durable, self-resetting.
+    const catalystMod = (await import('zcatalyst-sdk-node')).default
+    const dayPT = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date())
+    const dowPT = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles', weekday: 'short',
+    }).format(new Date())
+    if (dowPT === 'Sat' || dowPT === 'Sun') {
+      return res.json({ ok: true, skipped: `weekend (${dowPT})` })
+    }
+    const capp = catalystMod.initialize(req, { type: 'advancedio' })
+    const stampKey = `crm_briefing_sent:${dayPT}`
+    const stampRows = await capp.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM AppConfig WHERE config_key = '${stampKey}' LIMIT 1`
+    )
+    if (stampRows?.[0]) {
+      return res.json({ ok: true, skipped: 'already sent today' })
+    }
+    await capp.datastore().table('AppConfig').insertRow({
+      config_key: stampKey,
+      config_value: new Date().toISOString(),
+    })
+
     const shops = await readShops(req)
     const today = todayString()
 
