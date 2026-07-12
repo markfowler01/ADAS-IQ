@@ -641,10 +641,17 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       // status to the tech's dispatched_* column so the job moves on the
       // Kanban, fires the tech-change Cliq DM, and leaves the red
       // Needs-Dispatch box instead of lingering as job_requested.
+      // Also stamp today's PT date if the job is undated — you're
+      // putting it on today's plate from the LIVE DAY screen.
+      const todayPT = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date())
+      const job = (data?.unassigned_today || []).find(j => j.id === jobId)
       const body = {
         technician: tech,
         status: tech.toLowerCase().startsWith('jay') ? 'dispatched_jaden' : 'dispatched_mark',
       }
+      if (!job?.scheduled_date) body.scheduled_date = todayPT
       const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
