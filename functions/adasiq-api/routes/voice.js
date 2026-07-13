@@ -197,6 +197,7 @@ function cascadeTargets(req) {
 // answered and later hung up — we hang up too. Everything else (no-answer,
 // busy, failed, canceled) means keep hunting.
 function nextCascadeTwiML(req, order) {
+  const cfg = req.phoneCfg || {}
   const targets = cascadeTargets(req)
   const recCbUrl = `${baseUrl(req)}/webhooks/twilio/voice/recording-done`
   // Caller-ID passthrough (Mark 2026-07-10): show the CUSTOMER's real
