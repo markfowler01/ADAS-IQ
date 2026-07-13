@@ -94,6 +94,7 @@ export default function MobileJobCard({
   job,
   onEdit,
   onMoveToReadyInvoice,
+  onMoveToPendingParts,
   onCreateInvoices,
   onToggleInvoiced,
   onOpenWorkDrive,
@@ -284,6 +285,20 @@ export default function MobileJobCard({
           {finding ? 'Finding folder…' : 'Open in WorkDrive'}
         </span>
       </button>
+
+      {/* Waiting-on-Parts (Mark 2026-07-13): techs park a job on the
+          Pending/Waiting-on-Parts column straight from the card. Only
+          shows while the job is in a tech's hands. */}
+      {onMoveToPendingParts && !job.invoiced && job.status !== 'pending_parts' && !canInvoice && (
+        <button
+          onClick={e => { e.stopPropagation(); onMoveToPendingParts(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
+          style={{ backgroundColor: '#fff7ed', border: '1.5px solid #fed7aa', padding: '10px 0', minHeight: '44px' }}
+        >
+          <span style={{ fontSize: '14px' }}>⏳</span>
+          <span className="text-sm font-semibold" style={{ color: '#c2410c' }}>Waiting on Parts</span>
+        </button>
+      )}
 
       {!job.invoiced && (
         canInvoice && onCreateInvoices ? (

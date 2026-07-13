@@ -557,7 +557,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport, customerNotes, onEditCustomerNote }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, customerNotes, onEditCustomerNote }) {
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
 
@@ -853,6 +853,21 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </button>
       )}
 
+      {/* Waiting on Parts (Mark 2026-07-13) — one tap moves the job to
+          the Pending/Waiting-on-Parts column. Hidden once it's already
+          there or past the tech's hands. */}
+      {onMoveToPendingParts && !job.invoiced &&
+        job.status !== 'pending_parts' && job.status !== 'ready_invoice' && job.status !== 'complete' && (
+        <button
+          onClick={e => { e.stopPropagation(); onMoveToPendingParts(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
+          style={{ backgroundColor: '#fff7ed', border: '1.5px solid #fed7aa', padding: '10px 0', minHeight: '44px' }}
+        >
+          <span style={{ fontSize: '14px' }}>⏳</span>
+          <span className="text-sm font-semibold" style={{ color: '#c2410c' }}>Waiting on Parts</span>
+        </button>
+      )}
+
       {/* Upload Report → Invoice — tech-requested jobs skip the whole
           dispatch dance when the work's already done: upload the report,
           invoices open prefilled from this card, and on success the
@@ -865,7 +880,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onUploadReport, customerNotes, onEditCustomerNote, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, customerNotes, onEditCustomerNote, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -931,6 +946,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onRefreshShareLink={onRefreshShareLink}
             onCreateInvoices={onCreateInvoices}
             onMoveToReadyInvoice={onMoveToReadyInvoice}
+            onMoveToPendingParts={onMoveToPendingParts}
             onUploadReport={onUploadReport}
             customerNotes={customerNotes}
             onEditCustomerNote={onEditCustomerNote}
@@ -1221,6 +1237,28 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // Opens the calibration review modal — actual status change happens after confirmation
   function handleMoveToReadyInvoice(job) {
     setCalReviewJob(job)
+  }
+
+  // Waiting on Parts (Mark 2026-07-13): one tap parks the job on the
+  // Pending/Waiting-on-Parts column — no drag needed, works on mobile.
+  async function handleMoveToPendingParts(job) {
+    const prev = jobs
+    setJobs(p => p.map(j => j.id === job.id ? { ...j, status: 'pending_parts' } : j))
+    try {
+      const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'pending_parts' }),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || 'Update failed')
+      }
+      showToast(`⏳ ${job.shop_name || 'Job'} → Waiting on Parts`)
+    } catch (e) {
+      setJobs(prev)
+      showToast(e.message || 'Failed to move job. Changes reverted.')
+    }
   }
 
   // Called by CalibrationReviewModal "Done" button with the final calibration list
@@ -1680,6 +1718,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                       job={job}
                       onEdit={openEdit}
                       onMoveToReadyInvoice={handleMoveToReadyInvoice}
+                      onMoveToPendingParts={handleMoveToPendingParts}
                       onCreateInvoices={setInvoicingJob}
                       onUploadReport={handleCardReportUpload}
                       customerNotes={customerNotes}
@@ -1714,6 +1753,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onRefreshShareLink={handleRefreshShareLink}
                   onCreateInvoices={setInvoicingJob}
                   onMoveToReadyInvoice={handleMoveToReadyInvoice}
+                  onMoveToPendingParts={handleMoveToPendingParts}
                   onUploadReport={handleCardReportUpload}
                   customerNotes={customerNotes}
                   onEditCustomerNote={handleEditCustomerNote}
@@ -1927,7 +1967,7 @@ function UploadReportButton({ job, onUploadReport }) {
   )
 }
 
-function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices, onUploadReport, customerNotes }) {
+function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts, onCreateInvoices, onUploadReport, customerNotes }) {
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const statusLabel = COLUMNS.find(c => c.id === job.status)?.label || job.status
@@ -2037,6 +2077,18 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onCreateInvoices, on
             <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
           </button>
         )
+      )}
+
+      {/* Waiting on Parts — same one-tap park as the desktop card. */}
+      {onMoveToPendingParts && !job.invoiced && !canInvoice && job.status !== 'pending_parts' && (
+        <button
+          onClick={e => { e.stopPropagation(); onMoveToPendingParts(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
+          style={{ backgroundColor: '#fff7ed', border: '1.5px solid #fed7aa', padding: '10px 0', minHeight: '44px' }}
+        >
+          <span style={{ fontSize: '14px' }}>⏳</span>
+          <span className="text-sm font-semibold" style={{ color: '#c2410c' }}>Waiting on Parts</span>
+        </button>
       )}
 
       {/* Upload Report → Invoice — same request-flow shortcut as the

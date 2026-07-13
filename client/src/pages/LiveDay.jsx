@@ -210,7 +210,7 @@ function CapacityBar({ tech }) {
   )
 }
 
-function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, techList }) {
+function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList }) {
   const color = TECH_COLOR[tech.name] || '#999'
   // Every tech on the board except this card's owner — reassign targets.
   const otherTechs = (techList || []).filter(n => n && n !== tech.name)
@@ -222,7 +222,6 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, techList }) 
     : `${GOAL_TARGET - jobsToday} TO GET SOME!!!`
   const capColor = hitTarget ? '#15803d' : color
   const current = tech.current_job
-  const next = tech.next_job
 
   return (
     <div className="rounded-2xl bg-white p-4 shadow-sm"
@@ -280,6 +279,15 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, techList }) 
           >
             🟢 Ready to Invoice
           </button>
+          {onPendingParts && current.status !== 'pending_parts' && (
+            <button
+              onClick={() => onPendingParts(current)}
+              className="w-full text-sm font-bold rounded-lg py-2 mt-1.5"
+              style={{ backgroundColor: '#fff7ed', color: '#c2410c', border: '1.5px solid #fed7aa' }}
+            >
+              ⏳ Waiting on Parts
+            </button>
+          )}
           {onReassign && otherTechs.map(n => (
             <button
               key={n}
@@ -301,33 +309,33 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, techList }) 
         </div>
       ) : null}
 
-      {/* Next job — same Kanban-card layout used on the board */}
-      {next && (
-        <div>
-          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1"
-            style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-            Next{next.time_window_start ? ` · ETA ${next.time_window_start}` : ''}
+      {/* Every other job on this tech's board (Mark 2026-07-13 —
+          "whatever job is in their job board needs to be in the live
+          view"). Same Kanban-card layout used on the board. */}
+      {(tech.jobs || [])
+        .filter(j => !current || j.id !== current.id)
+        .map((j, i) => (
+          <div key={j.id || i} className={i > 0 ? 'mt-2' : ''}>
+            <div className="text-[10px] uppercase tracking-wider font-semibold mb-1"
+              style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
+              {i === 0 ? `Next${j.time_window_start ? ` · ETA ${j.time_window_start}` : ''}`
+                : j.status === 'pending_parts' ? '⏳ Waiting on Parts' : 'On the board'}
+            </div>
+            <MobileJobCard job={j}
+              onMoveToReadyInvoice={onReadyToInvoice}
+              onMoveToPendingParts={onPendingParts} />
+            {onReassign && otherTechs.map(n => (
+              <button
+                key={n}
+                onClick={() => onReassign(j, n)}
+                className="w-full text-xs font-semibold rounded-lg py-1.5 mt-1.5"
+                style={{ color: '#555', border: '1px solid #ddd', backgroundColor: 'white' }}
+              >
+                🔁 Reassign to {n}
+              </button>
+            ))}
           </div>
-          <MobileJobCard job={next} onMoveToReadyInvoice={onReadyToInvoice} />
-          {onReassign && otherTechs.map(n => (
-            <button
-              key={n}
-              onClick={() => onReassign(next, n)}
-              className="w-full text-xs font-semibold rounded-lg py-1.5 mt-1.5"
-              style={{ color: '#555', border: '1px solid #ddd', backgroundColor: 'white' }}
-            >
-              🔁 Reassign to {n}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Remaining slots count */}
-      {(tech.jobs?.length || 0) > 2 && (
-        <div className="text-[11px] mt-2 text-center" style={{ color: '#999' }}>
-          + {tech.jobs.length - 2} more on the schedule
-        </div>
-      )}
+        ))}
     </div>
   )
 }
@@ -635,6 +643,25 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     }
   }
 
+  // Waiting on Parts (Mark 2026-07-13): techs park a job on the
+  // Pending/Waiting-on-Parts Kanban column straight from the card.
+  async function handlePendingParts(job) {
+    if (!job?.id) return
+    try {
+      const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'pending_parts' }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      showToast(`⏳ ${job.shop_name || 'Job'} → Waiting on Parts`)
+      await load()
+    } catch (e) {
+      showToast(`Failed: ${e.message}`)
+    }
+  }
+
   async function handleAssign(jobId, tech) {
     try {
       // Assigning from Live IS dispatching (Mark 2026-07-11): flip the
@@ -818,6 +845,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               viewerRole={data?.viewer_role}
               onReadyToInvoice={handleReadyToInvoice}
               onReassign={handleReassign}
+              onPendingParts={handlePendingParts}
               techList={(data?.techs || []).map(x => x.name)}
             />
           ))}
