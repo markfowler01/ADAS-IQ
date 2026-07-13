@@ -17,7 +17,7 @@
 import express from 'express'
 import axios from 'axios'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
-import { resolvePhoneConfig } from '../services/phoneConfig.js'
+import { resolvePhoneConfig, parseCascadeOrder } from '../services/phoneConfig.js'
 
 const router = express.Router()
 
@@ -158,7 +158,7 @@ router.get('/', async (req, res) => {
     sms,
     config: { ok: cfg.ok, problems: cfg.problems },
     cascade: {
-      order: ['jayden', 'mark', 'kat'],
+      order: parseCascadeOrder(cfg.cfg || {}),
       jayden: last4(cfg.cfg?.JAYDEN_PHONE_NUMBER),
       mark:   last4(cfg.cfg?.MARK_PHONE_NUMBER),
       kat:    last4(cfg.cfg?.KAT_PHONE_NUMBER),

@@ -32,11 +32,13 @@ export const PHONE_CONFIG_KEYS = [
   { key: 'TWILIO_TOLLFREE_NUMBER', label: 'Toll-free 844 number',    secret: false, required: false,
     help: 'E.164, e.g. +18443492327' },
   { key: 'MARK_PHONE_NUMBER',      label: "Mark's cell",             secret: false, required: false,
-    help: 'E.164 — ring cascade step 1' },
+    help: 'E.164 — ring cascade' },
   { key: 'JAYDEN_PHONE_NUMBER',    label: "Jayden's cell",           secret: false, required: false,
-    help: 'E.164 — ring cascade step 2' },
+    help: 'E.164 — ring cascade' },
   { key: 'KAT_PHONE_NUMBER',       label: "Kat's phone",             secret: false, required: false,
-    help: 'E.164 — ring cascade step 3 (WhatsApp number)' },
+    help: 'E.164 — ring cascade (WhatsApp number)' },
+  { key: 'CASCADE_ORDER',          label: 'Ring cascade order',      secret: false, required: false,
+    help: 'Comma-separated, first rings first: jayden, mark, kat. Leave a name out to skip them. Default: jayden, mark, kat' },
   { key: 'AFTER_HOURS_AUTOREPLY',  label: 'After-hours auto-reply',  secret: false, required: false,
     help: '"true" or "false"' },
   { key: 'AFTER_HOURS_START',      label: 'After-hours start (PT)',  secret: false, required: false,
@@ -158,4 +160,24 @@ export function maskSecret(v) {
   const s = String(v)
   if (s.length <= 8) return '•'.repeat(s.length)
   return s.slice(0, 4) + '•'.repeat(Math.max(4, s.length - 8)) + s.slice(-4)
+}
+
+// Ring-cascade order — configurable from Phone Setup via CASCADE_ORDER
+// ("jayden, mark, kat"). Unknown names are ignored, duplicates collapse,
+// and a name left out means that person is skipped entirely. Empty or
+// all-invalid input falls back to the default so a typo can never leave
+// the phone system with zero ring targets.
+export const CASCADE_DEFAULT_ORDER = ['jayden', 'mark', 'kat']
+
+export function parseCascadeOrder(cfg) {
+  const raw = String((cfg && cfg.CASCADE_ORDER) || process.env.CASCADE_ORDER || '').toLowerCase()
+  const seen = new Set()
+  const order = []
+  for (const tok of raw.split(/[,\s]+/)) {
+    if (CASCADE_DEFAULT_ORDER.includes(tok) && !seen.has(tok)) {
+      seen.add(tok)
+      order.push(tok)
+    }
+  }
+  return order.length ? order : CASCADE_DEFAULT_ORDER
 }

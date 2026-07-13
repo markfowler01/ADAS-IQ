@@ -45,7 +45,7 @@ import {
   validateTwilioSignature,
   twilioConfigured,
 } from '../services/twilio.js'
-import { resolvePhoneConfig } from '../services/phoneConfig.js'
+import { resolvePhoneConfig, parseCascadeOrder } from '../services/phoneConfig.js'
 import { postToCliqChannel, AA_JOBS_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
@@ -171,22 +171,33 @@ function baseUrl(_req) {
 // missing, the step is skipped so we don't create dead-air pauses.
 const CASCADE_RING_TIMEOUT_SEC = 12
 
+// Build the ring targets in the order set by the CASCADE_ORDER config
+// key (Phone Setup → "Ring cascade order"). Default: Jayden first
+// (Mark's ask 2026-07-13 — Jayden is the primary line now), then Mark,
+// then Kat. If Jayden's number is missing from config/env, fall back to
+// his known cell so his step never silently disappears. Someone with no
+// number configured is skipped at dial time (see nextCascadeTwiML).
+function cascadeTargets(req) {
+  const cfg = req.phoneCfg || {}
+  const numbers = {
+    jayden: normalizePhoneUS(cfg.JAYDEN_PHONE_NUMBER || process.env.JAYDEN_PHONE_NUMBER || '+14257379022'),
+    mark:   normalizePhoneUS(cfg.MARK_PHONE_NUMBER   || process.env.MARK_PHONE_NUMBER   || ''),
+    kat:    normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''),
+  }
+  return parseCascadeOrder(cfg).map(key => ({
+    key,
+    number: numbers[key],
+    afterUrl: `/webhooks/twilio/voice/after-${key}`,
+  }))
+}
+
 // Given the current cascade step, return the next TwiML: either dial the
 // next configured contact or redirect to voicemail. Twilio always POSTs
 // DialCallStatus for the previous <Dial>; 'completed' means the call was
 // answered and later hung up — we hang up too. Everything else (no-answer,
 // busy, failed, canceled) means keep hunting.
 function nextCascadeTwiML(req, order) {
-  const cfg = req.phoneCfg || {}
-  // Cascade order: Jayden first (Mark's ask 2026-07-13 — Jayden is the
-  // primary line now), then Mark, then Kat. If Jayden's number is missing
-  // from config/env, fall back to his known cell so step 1 never silently
-  // disappears.
-  const targets = [
-    { key: 'jayden', number: normalizePhoneUS(cfg.JAYDEN_PHONE_NUMBER || process.env.JAYDEN_PHONE_NUMBER || '+14257379022'), afterUrl: '/webhooks/twilio/voice/after-jayden' },
-    { key: 'mark',   number: normalizePhoneUS(cfg.MARK_PHONE_NUMBER   || process.env.MARK_PHONE_NUMBER   || ''), afterUrl: '/webhooks/twilio/voice/after-mark' },
-    { key: 'kat',    number: normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''), afterUrl: '/webhooks/twilio/voice/after-kat' },
-  ]
+  const targets = cascadeTargets(req)
   const recCbUrl = `${baseUrl(req)}/webhooks/twilio/voice/recording-done`
   // Caller-ID passthrough (Mark 2026-07-10): show the CUSTOMER's real
   // number on the tech's phone so their saved contact card matches,
@@ -287,21 +298,25 @@ router.post('/', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
 // After each cascade step Twilio POSTs the DialCallStatus. If the call
 // was answered (completed) we're done; otherwise advance to the next
 // target in the cascade.
-function cascadeContinueHandler(nextOrder) {
+function cascadeContinueHandler(personKey) {
   return async (req, res) => {
     const status = String(req.body.DialCallStatus || '').toLowerCase()
     if (status === 'completed' || status === 'answered') {
       return res.type('text/xml').send(xml('<Response><Hangup/></Response>'))
     }
+    // Continue after this person's slot in the CONFIGURED order. If they
+    // were removed from the order mid-call, skip to voicemail rather
+    // than restarting the hunt from the top.
+    const order = parseCascadeOrder(req.phoneCfg || {})
+    const idx = order.indexOf(personKey)
+    const nextOrder = idx === -1 ? order.length : idx + 1
     res.type('text/xml').send(xml(nextCascadeTwiML(req, nextOrder)))
   }
 }
 
-// nextOrder = the index in `targets` to try after this leg goes unanswered.
-// Order is Jayden(0) → Mark(1) → Kat(2) → voicemail.
-router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(1), 'after-jayden'))
-router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(2), 'after-mark'))
-router.post('/after-kat',    requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(3), 'after-kat'))
+router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('jayden'), 'after-jayden'))
+router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('mark'),   'after-mark'))
+router.post('/after-kat',    requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('kat'),    'after-kat'))
 
 // ── Whisper — plays ONLY to the tech who answers a cascade leg, before
 // the call bridges. The customer keeps hearing ringback during it.
