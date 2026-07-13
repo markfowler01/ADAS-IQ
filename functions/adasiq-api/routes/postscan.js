@@ -292,6 +292,21 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] morning-kickoff piggyback failed (non-fatal):', e.message)
   }
 
+  // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
+  // the Books invoice webhook. Every hourly tick, sweep the last two PT
+  // days of sent invoices; the per-invoice dedup stamp makes repeated
+  // sweeps free, so anything the webhook missed alerts within the hour.
+  let invoiceSweep = null
+  try {
+    const { sweepSentInvoices } = await import('./webhook.js')
+    const results = await sweepSentInvoices(req)
+    const acted = results.filter(r => r.action === 'alerted' || r.action === 'no-match-alerted')
+    invoiceSweep = { checked: results.length, alerted: acted.length }
+    if (acted.length) console.log('[postscan] invoice sweep alerted:', JSON.stringify(acted))
+  } catch (e) {
+    console.warn('[postscan] invoice-sweep piggyback failed (non-fatal):', e.message)
+  }
+
   res.json({
     ok: true,
     processed: processed.length,
