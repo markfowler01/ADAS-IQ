@@ -46,7 +46,9 @@ import {
   twilioConfigured,
 } from '../services/twilio.js'
 import { resolvePhoneConfig, parseCascadeOrder } from '../services/phoneConfig.js'
-import { postToCliqChannel, AA_JOBS_CHANNEL } from '../services/cliq.js'
+// Voicemail alerts + transcripts go to #1-844-FIX-ADAS (SMS) alongside
+// the 844 text traffic — Mark's ask 2026-07-13 (was #aajobs before).
+import { postToCliqChannel, SMS_TOLLFREE_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
 
@@ -392,7 +394,7 @@ router.post('/voicemail-done', requireTwilioSignature, async (req, res) => {
         `🎧 ${rec.recording_url}.mp3`,
         '_Transcription pending…_',
       ].join('\n')
-      await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+      await postToCliqChannel(SMS_TOLLFREE_CHANNEL, msg)
     } catch (e) { console.warn('[voicemail-done cliq]', e.message) }
 
     res.type('text/xml').send(xml(`<Response><Hangup/></Response>`))
@@ -432,7 +434,7 @@ router.post('/transcription', requireTwilioSignature, async (req, res) => {
           `📝 *Voicemail transcript* · ${formatPhonePretty(from)} → ${label}`,
           `"${transcriptText.slice(0, 600)}"`,
         ].join('\n')
-        await postToCliqChannel(AA_JOBS_CHANNEL, msg)
+        await postToCliqChannel(SMS_TOLLFREE_CHANNEL, msg)
       } catch (e) { console.warn('[transcription cliq]', e.message) }
     }
 
