@@ -149,12 +149,20 @@ router.get('/', async (req, res) => {
     } catch (e) { console.warn('[phone-health cliq alert]', e.message) }
   }
 
-  // Don't leak the raw cfg back to the caller.
+  // Don't leak the raw cfg back to the caller — cascade numbers are
+  // masked to last-4 so we can verify ring order without exposing cells.
+  const last4 = n => (n ? `…${String(n).slice(-4)}` : null)
   res.json({
     ok: allOk,
     voice,
     sms,
     config: { ok: cfg.ok, problems: cfg.problems },
+    cascade: {
+      order: ['jayden', 'mark', 'kat'],
+      jayden: last4(cfg.cfg?.JAYDEN_PHONE_NUMBER),
+      mark:   last4(cfg.cfg?.MARK_PHONE_NUMBER),
+      kat:    last4(cfg.cfg?.KAT_PHONE_NUMBER),
+    },
     twilio_auth: twilioAuth,
     checked_at: new Date().toISOString(),
   })

@@ -178,9 +178,13 @@ const CASCADE_RING_TIMEOUT_SEC = 12
 // busy, failed, canceled) means keep hunting.
 function nextCascadeTwiML(req, order) {
   const cfg = req.phoneCfg || {}
+  // Cascade order: Jayden first (Mark's ask 2026-07-13 — Jayden is the
+  // primary line now), then Mark, then Kat. If Jayden's number is missing
+  // from config/env, fall back to his known cell so step 1 never silently
+  // disappears.
   const targets = [
+    { key: 'jayden', number: normalizePhoneUS(cfg.JAYDEN_PHONE_NUMBER || process.env.JAYDEN_PHONE_NUMBER || '+14257379022'), afterUrl: '/webhooks/twilio/voice/after-jayden' },
     { key: 'mark',   number: normalizePhoneUS(cfg.MARK_PHONE_NUMBER   || process.env.MARK_PHONE_NUMBER   || ''), afterUrl: '/webhooks/twilio/voice/after-mark' },
-    { key: 'jayden', number: normalizePhoneUS(cfg.JAYDEN_PHONE_NUMBER || process.env.JAYDEN_PHONE_NUMBER || ''), afterUrl: '/webhooks/twilio/voice/after-jayden' },
     { key: 'kat',    number: normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''), afterUrl: '/webhooks/twilio/voice/after-kat' },
   ]
   const recCbUrl = `${baseUrl(req)}/webhooks/twilio/voice/recording-done`
@@ -293,8 +297,10 @@ function cascadeContinueHandler(nextOrder) {
   }
 }
 
-router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(1), 'after-mark'))
-router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(2), 'after-jayden'))
+// nextOrder = the index in `targets` to try after this leg goes unanswered.
+// Order is Jayden(0) → Mark(1) → Kat(2) → voicemail.
+router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(1), 'after-jayden'))
+router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(2), 'after-mark'))
 router.post('/after-kat',    requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler(3), 'after-kat'))
 
 // ── Whisper — plays ONLY to the tech who answers a cascade leg, before
