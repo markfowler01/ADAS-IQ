@@ -39,7 +39,6 @@ async function bumpDayInvoiceTotal(req, amount) {
 
 const router = express.Router()
 
-const JOB_BOARD_URL = 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html'
 
 // ── Shared invoice pipeline ─────────────────────────────────────────────────
 // One code path for BOTH delivery mechanisms:
@@ -145,7 +144,6 @@ export async function processSentInvoice(req, invoice, jobsCache) {
       referenceNumber ? `📋 RO#: ${referenceNumber}` : null,
       totalStr ? `💵 Total: ${totalStr}` : null,
       `⚠️ No matching job found in Absolute ADAS`,
-      `\n🗂 Job Board: ${JOB_BOARD_URL}`,
     ].filter(l => l !== null).join('\n')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e =>
       console.warn('[invoice] Cliq alert failed (non-fatal):', e.message))
@@ -187,7 +185,6 @@ export async function processSentInvoice(req, invoice, jobsCache) {
       : `⚠️ Job NOT marked complete (status: ${(matchedJob.status || 'unknown').replace(/_/g, ' ')})`,
     totalStr ? `💵 Total: ${totalStr}` : null,
     acc ? `📊 Today's revenue: $${Number(acc.total).toFixed(2)} · ${acc.count} invoice${acc.count === 1 ? '' : 's'}` : null,
-    `\n🗂 Job Board: ${JOB_BOARD_URL}`,
   ].filter(l => l !== null).join('\n')
 
   await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e =>
