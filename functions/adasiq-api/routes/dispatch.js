@@ -96,19 +96,27 @@ router.get('/live', async (req, res) => {
       })
     }
 
-    // Needs-Dispatch feed (Mark 2026-07-11): anything pre-dispatch shows
-    // regardless of scheduled_date — a fresh job request has NO date yet
-    // and was invisible here, which is exactly when it most needs eyes.
-    // Plus anything scheduled today that's open but unassigned.
+    // Needs-Dispatch feed (Mark 2026-07-11): anything at need_dispatch
+    // shows regardless of scheduled_date, plus anything scheduled today
+    // that's open but unassigned. Tech-requested jobs are NOT dispatch
+    // work (Mark 2026-07-13) — they go in the Waiting-for-Kat list below.
     const unassigned_today = allJobs
       .filter(j => {
         const s = j.status || ''
-        if (s === 'need_dispatch' || s === 'job_requested') return true
+        if (s === 'need_dispatch') return true
+        if (s === 'job_requested') return false
         return (j.scheduled_date || '') === dateISO && !j.technician && OPEN_STATUSES.has(s)
       })
       .map(decorate)
 
-    res.json({ ok: true, date: dateISO, techs, unassigned_today })
+    // Waiting-for-Kat feed (Mark 2026-07-13): tech-requested jobs sit
+    // here until Kat turns them into an invoice — any status change
+    // (or the Upload-Report flow deleting the card) drops them off.
+    const waiting_for_kat = allJobs
+      .filter(j => (j.status || '') === 'job_requested')
+      .map(decorate)
+
+    res.json({ ok: true, date: dateISO, techs, unassigned_today, waiting_for_kat })
   } catch (err) {
     console.error('[dispatch live]', err.message, err.stack)
     res.status(500).json({ error: err.message })

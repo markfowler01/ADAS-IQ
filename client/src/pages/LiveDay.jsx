@@ -836,6 +836,34 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           </div>
         )}
 
+        {/* Waiting for Kat (Mark 2026-07-13): tech-requested jobs park
+            here — not dispatch work. Kat creates the invoice from the
+            request; once she does, the real card shows up and this
+            entry disappears on its own. Read-only list, no buttons. */}
+        {(data?.waiting_for_kat || []).length > 0 && (
+          <div className="rounded-2xl p-4"
+            style={{ backgroundColor: '#fffbeb', border: '2px solid #f59e0b' }}>
+            <div className="text-xs uppercase tracking-wider font-bold mb-2 flex items-center gap-2"
+              style={{ color: '#b45309', fontFamily: 'IBM Plex Mono, monospace' }}>
+              ⏳ Waiting for Kat ({data.waiting_for_kat.length})
+            </div>
+            <ul className="space-y-2">
+              {data.waiting_for_kat.map(j => (
+                <li key={j.id} className="rounded-lg p-2"
+                  style={{ backgroundColor: '#ffffff', border: '1px solid #fde68a' }}>
+                  <div className="font-bold text-sm truncate" style={{ color: '#78350f' }}>
+                    {j.shop_name || 'No shop'}
+                  </div>
+                  <div className="text-xs truncate" style={{ color: '#92400e' }}>
+                    {j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'}
+                    {j.technician && ` · 👤 ${j.technician}`}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         {/* Tech cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {(data?.techs || []).map(t => (
