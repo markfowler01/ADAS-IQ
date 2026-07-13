@@ -862,10 +862,20 @@ export async function performSyncQuotes(req) {
   const existingEstimateIds = new Set(jobs.map(j => j.zoho_estimate_id).filter(Boolean))
   // Import draft + sent + accepted quotes — these are all "active" estimates that should be in the app
   const IMPORT_STATUSES = new Set(['draft', 'sent', 'accepted'])
+  // Age cutoff (2026-07-13): Books keeps abandoned quotes in "sent"
+  // forever, and listAllEstimates pages through ALL of history — on
+  // 2026-07-12 that flooded the board with 33 dead quotes, some years
+  // old. A quote that hasn't moved in 2 weeks isn't a dispatchable job.
+  // An estimate with no date is treated as too old.
+  const SYNC_MAX_AGE_DAYS = 14
+  const cutoffDate = new Date(Date.now() - SYNC_MAX_AGE_DAYS * 24 * 60 * 60 * 1000)
+    .toISOString().split('T')[0]
+  const estimateTooOld = est => !est.date || est.date < cutoffDate
 
   let created = 0
   for (const est of estimates) {
     if (!IMPORT_STATUSES.has(est.status)) continue
+    if (estimateTooOld(est)) continue
     if (existingEstimateIds.has(est.estimate_id)) continue
 
     // Fetch line items from the full estimate detail
@@ -906,7 +916,9 @@ export async function performSyncQuotes(req) {
   for (const job of jobs) {
     if (!job.zoho_estimate_id) continue
     const est = estimateMap.get(job.zoho_estimate_id)
-    if (!est || !IMPORT_STATUSES.has(est.status)) {
+    // A job whose estimate vanished, left the active statuses, or aged
+    // past the cutoff comes off the board (need_dispatch only).
+    if (!est || !IMPORT_STATUSES.has(est.status) || estimateTooOld(est)) {
       // Only auto-remove if the job is still sitting in Need to Dispatch
       // (hasn't been dispatched or worked on). Progressed jobs stay even if
       // the estimate was voided/declined in Zoho.

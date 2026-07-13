@@ -752,6 +752,7 @@ export async function listAllEstimates() {
         estimate_number: est.estimate_number,
         customer_name: est.customer_name,
         status: est.status, // draft, sent, accepted, declined, invoiced, void, expired
+        date: est.date || '', // estimate date YYYY-MM-DD — used for the sync age cutoff
         salesperson_name: est.salesperson_name || '',
         quote_url: `https://books.zoho.com/app#/estimates/${est.estimate_id}?organization_id=${orgId}`,
         ...cf,

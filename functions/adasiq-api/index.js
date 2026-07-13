@@ -436,6 +436,38 @@ app.post('/api/cron/cleanup-name-fallback', async (req, res) => {
 // Reads Zoho Books customers + CRM Shops + current geocache and returns the
 // chain we'd use, so we can see why a shop is "ambiguous" or "name-fallback".
 // Protected by BILLING_CRON_SECRET.
+// Diagnostic for the Live-view "needs dispatch" pileup (2026-07-13):
+// lists every pre-dispatch job so we can see what's stale and why.
+app.get('/api/cron/predispatch-debug', async (req, res) => {
+  const cronSecret = process.env.BACKUP_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { readJobsPublic } = await import('./routes/jobs.js')
+    const jobs = await readJobsPublic(req)
+    const pre = jobs
+      .filter(j => j.status === 'need_dispatch' || j.status === 'job_requested')
+      .map(j => ({
+        id: j.id,
+        status: j.status,
+        shop: j.shop_name || '',
+        vehicle: [j.year, j.make, j.model].filter(Boolean).join(' '),
+        quote_number: j.quote_number || '',
+        zoho_estimate_id: j.zoho_estimate_id || '',
+        technician: j.technician || '',
+        scheduled_date: j.scheduled_date || '',
+        created_at: j.created_at || '',
+        invoiced: !!j.invoiced,
+      }))
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+    res.json({ count: pre.length, jobs: pre })
+  } catch (err) {
+    console.error('[predispatch-debug]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 app.get('/api/cron/address-debug', async (req, res) => {
   const cronSecret = process.env.BILLING_CRON_SECRET
   if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
