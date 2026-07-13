@@ -39,6 +39,8 @@ export const PHONE_CONFIG_KEYS = [
     help: 'E.164 — ring cascade (WhatsApp number)' },
   { key: 'CASCADE_ORDER',          label: 'Ring cascade order',      secret: false, required: false,
     help: 'Comma-separated, first rings first: jayden, mark, kat. Leave a name out to skip them. Default: jayden, mark, kat' },
+  { key: 'VM_GREETING_URL',        label: 'Voicemail greeting audio', secret: false, required: false,
+    help: 'Public MP3/WAV URL played as the voicemail greeting (your real voice). Blank = built-in spoken greeting.' },
   { key: 'AFTER_HOURS_AUTOREPLY',  label: 'After-hours auto-reply',  secret: false, required: false,
     help: '"true" or "false"' },
   { key: 'AFTER_HOURS_START',      label: 'After-hours start (PT)',  secret: false, required: false,

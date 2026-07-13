@@ -346,9 +346,17 @@ router.post('/voicemail', requireTwilioSignature, async (req, res) => {
   // (techs are in the field), and asks for exactly what dispatch needs
   // to call back ready: name, number, shop, vehicle. Mentions texting
   // since the same numbers take SMS.
+  //
+  // VM_GREETING_URL (Mark 2026-07-13): when set to a public MP3/WAV,
+  // <Play> Mark's real voice instead of the Polly robot. The spoken
+  // greeting stays as the fallback when the key is blank.
+  const greetingUrl = String((req.phoneCfg || {}).VM_GREETING_URL || '').trim()
+  const greetingVerb = greetingUrl
+    ? `<Play>${esc(greetingUrl)}</Play>`
+    : `<Say voice="Polly.Matthew">You've reached Absolute A D A S, mobile A D A S calibration and diagnostics. Our techs are out on calibrations right now. Leave your name, number, your shop, and the vehicle you're calling about, and we'll get back to you as soon as we're clear. You can also text this number. Leave your message after the beep.</Say>`
   const twiml = `
 <Response>
-  <Say voice="Polly.Matthew">You've reached Absolute A D A S, mobile A D A S calibration and diagnostics. Our techs are out on calibrations right now. Leave your name, number, your shop, and the vehicle you're calling about, and we'll get back to you as soon as we're clear. You can also text this number. Leave your message after the beep.</Say>
+  ${greetingVerb}
   <Record
     maxLength="180"
     playBeep="true"
