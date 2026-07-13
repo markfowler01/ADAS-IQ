@@ -360,6 +360,18 @@ async function notifyReadyToInvoiceTesla(req, job) {
   catch (e) { console.warn('[aajobs ready_invoice tesla]', e.message) }
 }
 
+// Parts-waiting notice to #aajobs (Mark 2026-07-13): when a job moves
+// into Pending/Waiting-on-Parts — shop, year make model, and the move.
+async function notifyPartsWaiting(req, job) {
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const msg = [
+    `⏳ *Moved to Parts Waiting* · ${job.shop_name || 'Job'}`,
+    `🚗 ${vehicle || 'Vehicle TBD'}`,
+  ].join('\n')
+  try { await postToCliqChannel(AA_JOBS_CHANNEL, msg) }
+  catch (e) { console.warn('[aajobs parts_waiting]', e.message) }
+}
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
 // POST /api/jobs/clean-invoiced — bulk-remove every already-invoiced
@@ -500,6 +512,11 @@ router.put('/:id', async (req, res) => {
       await notifyNeedsDispatch(req, updated)
     }
 
+    // Tell #aajobs when a job parks on Waiting-on-Parts
+    if (updated.status === 'pending_parts' && prevStatus !== 'pending_parts') {
+      await notifyPartsWaiting(req, updated)
+    }
+
     // Notify the assigned tech + #technicians when a job is dispatched (tech assigned)
     const newTech = updated.technician
     const techChanged = newTech && newTech !== prevTech
@@ -588,6 +605,11 @@ router.patch('/:id', async (req, res) => {
     }
 
     // Notify dispatchers when a job lands in need_dispatch
+    // Tell #aajobs when a job parks on Waiting-on-Parts
+    if (updated.status === 'pending_parts' && currentJob.status !== 'pending_parts') {
+      await notifyPartsWaiting(req, updated)
+    }
+
     if (updated.status === 'need_dispatch' && currentJob.status !== 'need_dispatch') {
       await notifyNeedsDispatch(req, updated)
     }
