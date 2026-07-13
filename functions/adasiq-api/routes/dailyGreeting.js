@@ -63,8 +63,11 @@ function todayPT() {
   }).format(new Date())
 }
 function yesterdayPT(todayStr) {
+  return daysAgoPT(todayStr, 1)
+}
+function daysAgoPT(todayStr, n) {
   const d = new Date(todayStr + 'T12:00:00Z')
-  d.setUTCDate(d.getUTCDate() - 1)
+  d.setUTCDate(d.getUTCDate() - n)
   return d.toISOString().slice(0, 10)
 }
 function monthStartPT(todayStr) {
@@ -132,9 +135,11 @@ function buildGreetingMessage({ name, opener }) {
   ].join('\n')
 }
 
-// Sales digest for a technician. Adds yesterday's + MTD $ and today's
-// dispatched jobs on top of the DOW opener.
-function buildTechDigestMessage({ techName, opener, yesterday, mtd, goal, jobsToday }) {
+// Sales digest for a technician. Adds the reference day's sales + MTD $
+// and today's dispatched jobs on top of the DOW opener. On Mondays the
+// reference day is FRIDAY (yesterday = Sunday = automatic goose egg,
+// Mark 2026-07-13) and a last-week total rides along.
+function buildTechDigestMessage({ techName, opener, refLabel, refSales, weekTotal, mtd, goal, jobsToday }) {
   const pct = Math.min(100, Math.round((mtd / Math.max(1, goal)) * 100))
   const goalGap = Math.max(0, goal - mtd)
   const cheer =
@@ -149,7 +154,8 @@ function buildTechDigestMessage({ techName, opener, yesterday, mtd, goal, jobsTo
   return [
     `${opener} Morning ${techName}.`,
     ``,
-    `📈 Yesterday's sales: *${fmtUSD(yesterday)}*`,
+    `📈 ${refLabel} sales: *${fmtUSD(refSales)}*`,
+    ...(weekTotal != null ? [`🗓 Last week's total: *${fmtUSD(weekTotal)}*`] : []),
     `📊 MTD: *${fmtUSD(mtd)}* of ${fmtUSD(goal)} (${pct}%)`,
     jobsLine,
     ``,
@@ -195,25 +201,39 @@ export async function sendMorningKickoff(req) {
   // Skip weekends entirely. Sat/Sun = shop closed; no need to bug the team.
   if (!opener) return { date: dateStr, weekday, skipped: 'weekend', results: [] }
 
-  // One Zoho fetch covers every tech.
-  const invoices = await listInvoicesForDateRange(monthStart, dateStr)
+  // Monday special-case (Mark 2026-07-13): yesterday is Sunday — always
+  // a goose egg. Report FRIDAY's sales instead, plus a total for the
+  // week that just ended (last Monday through Sunday).
+  const isMonday = weekday === 'Monday'
+  const refDay = isMonday ? daysAgoPT(dateStr, 3) : yesterday
+  const refLabel = isMonday ? "Friday's" : "Yesterday's"
+  const lastMonday = daysAgoPT(dateStr, 7)
+
+  // One Zoho fetch covers every tech. On Mondays the window widens to
+  // cover last week even when it crosses a month boundary; MTD sums are
+  // still gated to monthStart below.
+  const fetchStart = (isMonday && lastMonday < monthStart) ? lastMonday : monthStart
+  const invoices = await listInvoicesForDateRange(fetchStart, dateStr)
 
   const results = []
   for (const r of RECIPIENTS) {
     let msg
-    let mtd = 0, yesterdaySales = 0, jobsToday = 0
+    let mtd = 0, refSales = 0, weekTotal = 0, jobsToday = 0
     if (r.type === 'tech') {
       for (const inv of invoices) {
         if (!invoiceBelongsToTech(inv, r.name)) continue
         const t = Number(inv.total || 0) || 0
-        mtd += t
-        if (String(inv.date || '').slice(0, 10) === yesterday) yesterdaySales += t
+        const d = String(inv.date || '').slice(0, 10)
+        if (d >= monthStart) mtd += t
+        if (d === refDay) refSales += t
+        if (isMonday && d >= lastMonday && d <= yesterday) weekTotal += t
       }
       jobsToday = await countTodaysJobsForTech(req, r.name, dateStr)
       msg = buildTechDigestMessage({
         techName: r.name, opener,
-        yesterday: yesterdaySales, mtd,
-        goal: DEFAULT_MONTHLY_GOAL, jobsToday,
+        refLabel, refSales,
+        weekTotal: isMonday ? weekTotal : null,
+        mtd, goal: DEFAULT_MONTHLY_GOAL, jobsToday,
       })
     } else {
       msg = buildGreetingMessage({ name: r.name, opener })
@@ -223,7 +243,7 @@ export async function sendMorningKickoff(req) {
     results.push({
       recipient: r.name,
       type: r.type,
-      ...(r.type === 'tech' ? { mtd, yesterday: yesterdaySales, jobsToday } : {}),
+      ...(r.type === 'tech' ? { mtd, refDay, refSales, ...(isMonday ? { weekTotal } : {}), jobsToday } : {}),
       ...outcome,
     })
   }
