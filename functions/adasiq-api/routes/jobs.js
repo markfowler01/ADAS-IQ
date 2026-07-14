@@ -692,6 +692,31 @@ router.patch('/:id', async (req, res) => {
 // DELETE /api/jobs/:id
 router.delete('/:id', async (req, res) => {
   try {
+    // Tombstone the linked estimate BEFORE deleting (Mark 2026-07-14:
+    // "when I delete a job it doesn't stay deleted") — otherwise the
+    // quote sync sees an active Books estimate with no job row and
+    // recreates the card on the next webhook. AppConfig row
+    // `deleted_estimate:<id>` tells performSyncQuotes to skip it.
+    try {
+      const app = catalyst.initialize(req, { type: 'advancedio' })
+      const rows = await app.zcql().executeZCQLQuery(
+        `SELECT zoho_estimate_id FROM Jobs WHERE ROWID = '${String(req.params.id).replace(/'/g, "''")}' LIMIT 1`
+      )
+      const estId = rows?.[0]?.Jobs?.zoho_estimate_id
+      if (estId) {
+        const key = `deleted_estimate:${estId}`.slice(0, 64)
+        const existing = await app.zcql().executeZCQLQuery(
+          `SELECT ROWID FROM AppConfig WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+        )
+        if (!existing?.[0]) {
+          await app.datastore().table('AppConfig').insertRow({
+            config_key: key, config_value: new Date().toISOString(),
+          })
+        }
+      }
+    } catch (e) {
+      console.warn('[jobs DELETE] tombstone failed (non-fatal):', e.message)
+    }
     await deleteJob(req, req.params.id)
     res.json({ success: true })
   } catch (err) {
@@ -894,11 +919,29 @@ export async function performSyncQuotes(req) {
     .toISOString().split('T')[0]
   const estimateTooOld = est => !est.date || est.date < cutoffDate
 
+  // Deleted-on-the-board tombstones (Mark 2026-07-14): a job deleted in
+  // the app must STAY deleted even though its estimate is still active
+  // in Books. Exact-key lookup per import candidate — usually 0-2/sync.
+  const isTombstoned = async (estimateId) => {
+    try {
+      const app = catalyst.initialize(req, { type: 'advancedio' })
+      const key = `deleted_estimate:${estimateId}`.slice(0, 64)
+      const rows = await app.zcql().executeZCQLQuery(
+        `SELECT ROWID FROM AppConfig WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+      )
+      return !!rows?.[0]
+    } catch (e) {
+      console.warn('[jobs sync] tombstone check failed:', e.message)
+      return false
+    }
+  }
+
   let created = 0
   for (const est of estimates) {
     if (!IMPORT_STATUSES.has(est.status)) continue
     if (estimateTooOld(est)) continue
     if (existingEstimateIds.has(est.estimate_id)) continue
+    if (await isTombstoned(est.estimate_id)) continue
 
     // Fetch line items from the full estimate detail
     const lineItems = await getEstimateLineItems(est.estimate_id)
