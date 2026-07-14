@@ -20,11 +20,11 @@ import { buildAndPublishVoiceMemo } from '../services/voiceMemo.js'
 import { generateCarrierOfWeek } from '../services/carrierOfWeek.js'
 import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
-import { postToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost } from '../services/brewLinkedIn.js'
+import { postToLinkedIn, postImageToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost, pickLiCommentVariant } from '../services/brewLinkedIn.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { commitFile, commitBinaryFile, deleteFile, wrapIssueHtmlForArchive, renderArchiveIndex, githubConfigured, getMaxArchivedIssueNumber } from '../services/brewArchive.js'
 import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
-import { generateCoverImage, nanoBananaConfigured } from '../services/nanoBanana.js'
+import { generateCoverImage, generateTipCardImage, nanoBananaConfigured } from '../services/nanoBanana.js'
 import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia } from '../services/metaPosting.js'
 
 const router = express.Router()
@@ -1776,26 +1776,35 @@ async function executeDailyPipeline(req) {
     }
   }
 
-  // 4. PARALLEL STAGE A: image gen + LinkedIn post (LinkedIn doesn't need image)
+  // 4. PARALLEL STAGE A: cover image gen + LinkedIn PHOTO gen + LinkedIn DRAFT
+  // (all three slow, all three independent). The LinkedIn POST happens after
+  // we have the photo buffer so we can attach it as a native LinkedIn asset.
+  //
+  // TWO images per issue:
+  //   - COVER   → editorial magazine layout with the headline typography baked
+  //               in. Used as the email cover art. Committed to GitHub.
+  //   - PHOTO   → moody documentary automotive photograph, no text. Used only
+  //               for the LinkedIn post (scroll-stops in the feed better than
+  //               the small-type editorial cover). Sent to LinkedIn as raw
+  //               bytes — no GitHub commit needed.
   const imageGenPromise = !isStepOk(status.image)
     ? generateCoverImage({ issueNumber, dateISO: isoDate, headline: rendered.subject }).catch(e => ({ ok: false, error: e.message }))
     : Promise.resolve(null)
 
-  const liPromise = !isStepOk(status.linkedin)
-    ? (async () => {
-        try {
-          const liText = renderLinkedIn(digest).body
-          const r = await postToLinkedIn({ text: liText })
-          if (r?.ok && r.id) {
-            await commentOnLinkedInPost(r.id, 'Sign up for ADAS Brew → absoluteadas.com/brew').catch(() => {})
-            return { ok: true, id: r.id }
-          }
-          return { ok: false, error: r?.error || 'unknown' }
-        } catch (e) { return { ok: false, error: e.message } }
-      })()
+  const liPhotoPromise = !isStepOk(status.linkedin)
+    ? generateTipCardImage({
+        photoSubject: `A dramatic moody scene illustrating this story: "${String(rendered.subject || '').slice(0, 120)}". Automotive editorial photography, low-key cinematic lighting, dark blues and gunmetal palette, shallow depth of field. Photo-realistic. No text, no logos, no watermarks.`
+      }).catch(e => ({ ok: false, error: e.message }))
     : Promise.resolve(null)
 
-  const [imageGenResult, liResult] = await Promise.all([imageGenPromise, liPromise])
+  const liDraftPromise = !isStepOk(status.linkedin)
+    ? digestToLinkedInPost(digest).catch(e => {
+        console.warn('[brew linkedin draft]', e.message)
+        return null  // let step-6 skip LI post gracefully
+      })
+    : Promise.resolve(null)
+
+  const [imageGenResult, liPhotoResult, liText] = await Promise.all([imageGenPromise, liPhotoPromise, liDraftPromise])
 
   let imageBuffer = null
   if (imageGenResult !== null) {
@@ -1808,12 +1817,15 @@ async function executeDailyPipeline(req) {
       status.image = `failed:${imageGenResult.error || 'unknown'}`
     }
   }
-  if (liResult !== null) {
-    await updateRunStatus(req, dateISO, { linkedin: liResult.ok ? 'ok' : `failed:${liResult.error}` })
-    status.linkedin = liResult.ok ? 'ok' : `failed:${liResult.error}`
+
+  // The LinkedIn-only photo buffer — no commit, only used for the LI post below.
+  // If gen failed, we'll fall back to the cover URL for LinkedIn.
+  const liPhotoBuffer = (liPhotoResult && liPhotoResult.ok && liPhotoResult.buffer) ? liPhotoResult.buffer : null
+  if (liPhotoResult && !liPhotoResult.ok) {
+    console.warn('[brew linkedin photo]', liPhotoResult.error || 'unknown')
   }
 
-  // 5. IMAGE COMMIT (depends on image buffer; reconstruct URL on retry)
+  // 5. IMAGE COMMIT (must happen before LinkedIn post so we have an imageUrl)
   let imageUrl = null
   if (isStepOk(status.image_commit)) {
     imageUrl = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/brew/images/issue-${issueNumber}.png`
@@ -1836,6 +1848,38 @@ async function executeDailyPipeline(req) {
       await updateRunStatus(req, dateISO, { image_commit: `failed:${e.message}` })
       status.image_commit = `failed:${e.message}`
     }
+  }
+
+  // 5b. LINKEDIN POST — prefer the photo buffer (moody documentary, better
+  // scroll-stop in the feed). Fall back to the cover URL if photo gen failed,
+  // then text-only as a last resort. Auto-comment the rotating Hormozi CTA
+  // on the fresh post.
+  if (!isStepOk(status.linkedin) && typeof liText === 'string') {
+    try {
+      let r
+      if (liPhotoBuffer) {
+        r = await postImageToLinkedIn({ imageBuffer: liPhotoBuffer, text: liText })
+      } else if (imageUrl) {
+        r = await postImageToLinkedIn({ imageUrl, text: liText })
+      } else {
+        r = await postToLinkedIn({ text: liText })
+      }
+      if (r?.ok && r.id) {
+        const commentText = pickLiCommentVariant(issueNumber)
+        await commentOnLinkedInPost(r.id, commentText).catch(e => console.warn('[brew linkedin comment]', e.message))
+        await updateRunStatus(req, dateISO, { linkedin: 'ok' })
+        status.linkedin = 'ok'
+      } else {
+        await updateRunStatus(req, dateISO, { linkedin: `failed:${r?.error || 'unknown'}` })
+        status.linkedin = `failed:${r?.error || 'unknown'}`
+      }
+    } catch (e) {
+      await updateRunStatus(req, dateISO, { linkedin: `failed:${e.message}` })
+      status.linkedin = `failed:${e.message}`
+    }
+  } else if (!isStepOk(status.linkedin) && liText === null) {
+    await updateRunStatus(req, dateISO, { linkedin: 'failed:draft returned null' })
+    status.linkedin = 'failed:draft returned null'
   }
 
   // 6. PARALLEL STAGE B: archive HTML commit + FB post + IG post

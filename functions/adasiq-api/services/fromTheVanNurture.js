@@ -296,7 +296,11 @@ export const VAN_NURTURE_DAYS = {
 export function vanNurtureDayFor(sub, now = Date.now()) {
   const enrolledAt = new Date(sub?.enrolled_at || 0).getTime()
   if (!Number.isFinite(enrolledAt) || enrolledAt === 0) return 0
-  const daysSince = Math.floor((now - enrolledAt) / 86400000)
+  // Optional per-subscriber delay so a welcome email fires first before Day 1.
+  // Set to 1 on new signups (source-based) so their Day 1 lands the day AFTER
+  // signup, not same-day. Missing/0 on backfilled subs — unchanged cadence.
+  const delayMs = Number(sub?.nurture_delay_days || 0) * 86400000
+  const daysSince = Math.floor((now - enrolledAt - delayMs) / 86400000)
   return daysSince + 1
 }
 

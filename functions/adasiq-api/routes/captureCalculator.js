@@ -18,6 +18,7 @@ import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { syncNewsletterSubscriberToCrm, fetchLeadsPage, fetchContactsPage, fetchAccountsPage, createLeadFlat, deleteLead } from '../services/zohoCrm.js'
 import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadcast, sendVanBroadcast, deleteVanBroadcast, unsubscribeVanContact, signUnsubEmail, verifyUnsubSig, vanUnsubscribeUrl } from '../services/fromTheVan.js'
 import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER, buildGoodbyeEmail } from '../services/fromTheVanNurture.js'
+import { buildWelcomeEmail } from '../services/vanWelcome.js'
 import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, unmarkCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
 import { renderWeeklyIssue } from '../services/vanWeeklyRender.js'
 import { computeCurrentStats, readVanStatsSnapshot, writeVanStatsSnapshot, buildDigestSMS } from '../services/vanDailyDigest.js'
@@ -3232,7 +3233,7 @@ async function writeVanEnrollments(req, list) {
   })
 }
 
-async function enrollVanSubscriber(req, { email, name, shop, cohort }) {
+async function enrollVanSubscriber(req, { email, name, shop, cohort, source }) {
   const clean = String(email || '').trim().toLowerCase()
   if (!clean || !/^\S+@\S+\.\S+$/.test(clean)) return { ok: false, error: 'valid email required' }
   const list = await readVanEnrollments(req)
@@ -3247,6 +3248,11 @@ async function enrollVanSubscriber(req, { email, name, shop, cohort }) {
     // 'signup' → future contacts Mark just met in person, gets Day-1 signup variant
     // 'backfill' → seeded from an existing warm list (default), gets Day-1 backfill variant
     cohort: cohort === 'signup' ? 'signup' : 'backfill',
+    source: String(source || '').slice(0, 40),
+    // NEW signups get their Magic Lantern Day 1 delayed 24h so the welcome
+    // email + pricing sheet lands first. Backfilled subs (imported 2026-07-06)
+    // have no delay set → their cadence stays exactly as-is.
+    nurture_delay_days: cohort === 'signup' ? 1 : 0,
   }
   list.push(entry)
   await writeVanEnrollments(req, list.slice(-10000))
@@ -3303,10 +3309,53 @@ captureCalcRouter.post('/from-the-van/subscribe', express.json({ limit: '16kb' }
       .catch(e => console.warn('[from-the-van crm]', e.message))
 
     // Auto-enroll in the 7-day Magic Lantern (Partnership Discount pitch).
-    // Day 1 fires the next time capture_van_nurture cron runs.
+    // New signups get `nurture_delay_days: 1` set internally — Day 1 fires
+    // the day AFTER signup, so today's welcome + pricing sheet lands first.
     // cohort='signup' → warm handoff Day 1 ("thanks for the minute at your shop today").
-    await enrollVanSubscriber(req, { email, name, shop, cohort: 'signup' })
+    await enrollVanSubscriber(req, { email, name, shop, cohort: 'signup', source })
       .catch(e => console.warn('[van nurture enroll]', e.message))
+
+    // Send the instant welcome email with the pricing-sheet button. Idempotent —
+    // only fires on first-time subscribers (duplicates skip). Opener variant is
+    // picked from `source`: self-signup → "Grabbed your info off the form",
+    // anything else → "Great meeting you today". Non-fatal — a failed send
+    // doesn't block the subscription (they still get Day 1 next morning).
+    if (!r.duplicate) {
+      try {
+        const unsubUrl = vanUnsubscribeUrl(email)
+        const welcome = buildWelcomeEmail({ email, name, source }, unsubUrl)
+        const sendResult = await sendBroadcast({
+          recipients: [email],
+          subject: welcome.subject,
+          html: welcome.html,
+          text: welcome.text,
+          fromEmail: 'brew@absoluteadas.com',
+          fromName: 'Mark @ Absolute ADAS',
+          replyTo: 'mark@absoluteadas.com',
+          headersForRecipient: () => ({
+            'List-Unsubscribe': `<${unsubUrl}>`,
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          }),
+        })
+        const ok = sendResult?.status === 'sent' || sendResult?.status === 'partial'
+        if (ok) {
+          // Flip welcome_sent on the enrollment record so we never send twice
+          try {
+            const list = await readVanEnrollments(req)
+            let mut = false
+            for (let i = 0; i < list.length; i++) {
+              if (list[i].email === email && !list[i].welcome_sent) {
+                list[i] = { ...list[i], welcome_sent: true, welcome_sent_at: new Date().toISOString() }
+                mut = true
+              }
+            }
+            if (mut) await writeVanEnrollments(req, list)
+          } catch (e) { console.warn('[van welcome flag write]', e.message) }
+        } else {
+          console.warn('[van welcome send]', sendResult?.results?.[0]?.error || 'unknown')
+        }
+      } catch (e) { console.warn('[van welcome]', e.message) }
+    }
 
     res.json({ ok: true, message: r.duplicate ? 'Already subscribed.' : 'Subscribed.', duplicate: !!r.duplicate })
   } catch (e) {
@@ -4361,6 +4410,39 @@ captureCalcRouter.post('/leads/purge', requireCronSecretFlex, express.json({ lim
   } catch (e) {
     console.error('[leads purge]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
+// TEMP DEBUG — generate a sample cover image so Mark can preview both styles
+// (editorial-typography vs. moody-photo) before deciding which to ship on
+// the LinkedIn post. Returns raw PNG bytes with the correct Content-Type.
+//   GET /api/capture-calc/debug/brew-image-sample?secret=X&style=cover|photo&subject=...
+captureCalcRouter.get('/debug/brew-image-sample', requireCronSecretFlex, async (req, res) => {
+  try {
+    const style = String(req.query.style || 'photo').toLowerCase()
+    const { generateCoverImage, generateTipCardImage } = await import('../services/nanoBanana.js')
+    let result
+    if (style === 'cover') {
+      result = await generateCoverImage({
+        issueNumber: String(req.query.issue || '49'),
+        dateISO: String(req.query.date || new Date().toISOString().slice(0, 10)),
+        headline: String(req.query.headline || 'Rhode Island just made it harder to total a car'),
+      })
+    } else {
+      // Photo-only style — no text baked in, LinkedIn scroll-stopper
+      result = await generateTipCardImage({
+        photoSubject: String(req.query.subject || '')
+          || 'A heavily damaged late-model sedan sitting in an appraiser bay, moody low-key lighting, shop paperwork on a clipboard in the foreground, dark blue and gunmetal palette, cinematic automotive editorial photography',
+      })
+    }
+    if (!result?.ok) {
+      return res.status(500).json({ ok: false, error: result?.error || 'unknown' })
+    }
+    res.setHeader('Content-Type', result.mimeType || 'image/png')
+    res.setHeader('Cache-Control', 'no-store')
+    res.status(200).send(result.buffer)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
   }
 })
 
