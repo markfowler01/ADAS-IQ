@@ -61,13 +61,13 @@ router.get('/live', async (req, res) => {
 
     const techs = []
     for (const techName of TECHS) {
-      // A tech's card shows EVERY open job assigned to them, no date
-      // filter (Mark 2026-07-13 — "whatever job is in their job board
-      // needs to be in the live view"). The board is the source of
-      // truth; a job leaves the card when it hits ready_invoice/complete.
+      // A tech's card shows every job in their DISPATCHED column, no
+      // date filter (Mark 2026-07-13/14). pending_parts jobs come off
+      // the live view (they're parked, not workable) and return when
+      // moved back to dispatched. ready_invoice/complete stay hidden.
       const techJobs = allJobs
         .filter(j => isAssignedTo(j, techName))
-        .filter(j => OPEN_STATUSES.has(j.status))
+        .filter(j => /^dispatched_/.test(j.status || ''))
         .map(decorate)
         .sort((a, b) => (a.drive_order ?? 999) - (b.drive_order ?? 999))
 
