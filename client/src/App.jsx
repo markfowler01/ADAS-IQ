@@ -87,6 +87,7 @@ function MainApp() {
   })
   const [jobData, setJobData] = useState(null)
   const [pdfFile, setPdfFile] = useState(null)
+  const [manualPrefill, setManualPrefill] = useState(null)
 
   const [sessionWarning, setSessionWarning] = useState(false) // < 15 min remaining
   const warningTimerRef = useRef(null)
@@ -174,6 +175,14 @@ function MainApp() {
     setScreen('review')
   }
 
+  // Requested-job "Without Kinetic Report (Manual)" path (Mark
+  // 2026-07-14): opens the Manual Invoice screen seeded from the
+  // request's own fields.
+  function handleManualInvoice(data) {
+    setManualPrefill(data || null)
+    setScreen('manual')
+  }
+
   function handleReset() {
     setJobData(null)
     setPdfFile(null)
@@ -235,7 +244,7 @@ function MainApp() {
           user={user}
           onExtracted={handleExtracted}
           onAudit={() => setScreen('audit')}
-          onManual={() => setScreen('manual')}
+          onManual={() => { setManualPrefill(null); setScreen('manual') }}
           onHistory={() => setScreen('history')}
           onJobBoard={() => setScreen('kanban')}
           onLogout={handleLogout}
@@ -249,7 +258,12 @@ function MainApp() {
         <AuditScreen onBack={() => setScreen('upload')} {...navProps} />
       )}
       {screen === 'manual' && (
-        <ManualQuoteScreen onBack={() => setScreen('upload')} {...navProps} />
+        <ManualQuoteScreen
+          key={manualPrefill ? `prefill-${manualPrefill.shop}-${manualPrefill.ro_number}` : 'blank'}
+          prefill={manualPrefill}
+          onBack={() => { setManualPrefill(null); setScreen('upload') }}
+          {...navProps}
+        />
       )}
       {screen === 'history' && (
         <HistoryScreen onBack={() => setScreen('upload')} {...navProps} />
@@ -260,6 +274,7 @@ function MainApp() {
           onBack={() => setScreen('upload')}
           onLogout={handleLogout}
           onExtracted={handleExtracted}
+          onManualInvoice={handleManualInvoice}
           {...navProps}
         />
       )}

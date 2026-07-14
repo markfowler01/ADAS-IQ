@@ -964,7 +964,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
 }
 
 // ─── Main Kanban Board ─────────────────────────────────────────────────────────
-export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onNavigate, onExtracted }) {
+export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onNavigate, onExtracted, onManualInvoice }) {
   const isMobile = useIsMobile()
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1082,40 +1082,36 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     }
   }
 
-  // Create-from-Job-Info (Mark 2026-07-14): no Kinetic report — build the
-  // review-screen payload straight from the request card's own fields.
-  // Same cleanup + same review screen as the PDF path, so Kat has one flow.
+  // Without-Kinetic-Report path (Mark 2026-07-14): open the Manual
+  // Invoice screen seeded from the request card's own fields. Same
+  // cleanup as the PDF path — Kat has taken the request over.
   async function handleInvoiceFromJob(job) {
-    if (!onExtracted) { showToast('Invoice creation not available here.'); return }
-    let cals = []
+    if (!onManualInvoice) { showToast('Manual invoice not available here.'); return }
+    let calNames = []
     if (job.calibrations) {
       try {
         const parsed = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : job.calibrations
         if (Array.isArray(parsed)) {
-          cals = parsed.map(c => ({
-            calibration_name: (typeof c === 'string' ? c : (c.name || c.calibration_name || c.type || '')),
-            enabled: true,
-            quantity: 1,
-            description: '',
-          })).filter(c => c.calibration_name)
+          calNames = parsed
+            .map(c => (typeof c === 'string' ? c : (c.name || c.calibration_name || c.type || '')))
+            .filter(Boolean)
         }
-      } catch { cals = [] }
+      } catch { calNames = [] }
     }
     const data = {
       shop:      job.shop_name || '',
       ro_number: job.ro_number || job.quote_number || (job.notes || '').match(/RO#[:\s]*([^\s|,]+)/i)?.[1] || '',
       insurer:   job.insurer || '',
       vin:       job.vin || '',
-      vehicle:   job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' '),
       year:      job.year || '',
       make:      job.make || '',
       model:     job.model || '',
       claim:     job.claim || '',
-      calibrations: cals,
-      document_links: job.folder_url ? [job.folder_url] : [],
+      calibrations: calNames,
+      notes:     job.notes || '',
     }
     await cleanupRequestCard(job)
-    onExtracted(data, null)
+    onManualInvoice(data)
   }
   const [calReviewJob, setCalReviewJob] = useState(null)
   const [search, setSearch] = useState('')
@@ -2003,25 +1999,27 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob }) {
           style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
           onClick={e => { e.stopPropagation(); if (e.target === e.currentTarget) setShowChooser(false) }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
-            <h3 className="text-base font-bold mb-1" style={{ color: '#1a1a1a' }}>Create Invoice</h3>
+            <h3 className="text-base font-bold mb-1" style={{ color: '#1a1a1a' }}>Create Job</h3>
             <p className="text-xs mb-4" style={{ color: '#888' }}>
               {job.shop_name || 'Job'}{job.vehicle ? ` · ${job.vehicle}` : ''}
             </p>
             <button
               onClick={e => { e.stopPropagation(); setShowChooser(false); inputRef.current?.click() }}
-              className="w-full flex flex-col items-start rounded-xl p-3 mb-2 transition-all hover:opacity-80 active:opacity-60"
+              className="w-full flex items-center justify-between rounded-xl p-3 mb-2 transition-all hover:opacity-80 active:opacity-60"
               style={{ backgroundColor: '#eff6ff', border: '1.5px solid #bfdbfe', textAlign: 'left' }}
             >
-              <span className="text-sm font-bold" style={{ color: '#1d4ed8' }}>📄 Upload Kinetic Report</span>
-              <span className="text-xs mt-0.5" style={{ color: '#3b82f6' }}>AI reads the PDF and prefills everything</span>
+              <span className="text-sm font-bold" style={{ color: '#1d4ed8' }}>📄 With Kinetic Report</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                style={{ backgroundColor: '#1d4ed8', color: 'white' }}>Auto</span>
             </button>
             <button
               onClick={async e => { e.stopPropagation(); setShowChooser(false); setBusy(true); try { await onInvoiceFromJob(job) } finally { setBusy(false) } }}
-              className="w-full flex flex-col items-start rounded-xl p-3 transition-all hover:opacity-80 active:opacity-60"
+              className="w-full flex items-center justify-between rounded-xl p-3 transition-all hover:opacity-80 active:opacity-60"
               style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0', textAlign: 'left' }}
             >
-              <span className="text-sm font-bold" style={{ color: '#16a34a' }}>✍️ Create from Job Info</span>
-              <span className="text-xs mt-0.5" style={{ color: '#22c55e' }}>No report — prefills from what the tech entered</span>
+              <span className="text-sm font-bold" style={{ color: '#16a34a' }}>✍️ Without Kinetic Report</span>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
+                style={{ backgroundColor: '#16a34a', color: 'white' }}>Manual</span>
             </button>
             <button
               onClick={e => { e.stopPropagation(); setShowChooser(false) }}
@@ -2045,7 +2043,7 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob }) {
         title="Upload the report PDF — opens invoice creation prefilled, and clears this request card"
       >
         <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>
-          {busy ? '⏳ Working…' : '🧾 Create Invoice'}
+          {busy ? '⏳ Working…' : '🧾 Create Job'}
         </span>
       </button>
     </>

@@ -128,30 +128,49 @@ const STANDARD_CALS = [
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ManualQuoteScreen({ onBack, user, onLogout, currentScreen, onNavigate }) {
+export default function ManualQuoteScreen({ onBack, user, onLogout, currentScreen, onNavigate, prefill }) {
+  // Optional prefill (Mark 2026-07-14): the requested-job "Without
+  // Kinetic Report (Manual)" path opens this screen seeded with what
+  // the tech already entered on the request.
+  const p = prefill || {}
+
   // Job fields
-  const [roNumber, setRoNumber] = useState('')
-  const [insurer,  setInsurer]  = useState('')
-  const [claim,    setClaim]    = useState('')
+  const [roNumber, setRoNumber] = useState(p.ro_number || '')
+  const [insurer,  setInsurer]  = useState(p.insurer || '')
+  const [claim,    setClaim]    = useState(p.claim || '')
 
   // Vehicle fields
-  const [year,  setYear]  = useState('')
-  const [make,  setMake]  = useState('')
-  const [model, setModel] = useState('')
-  const [vin,   setVin]   = useState('')
+  const [year,  setYear]  = useState(p.year || '')
+  const [make,  setMake]  = useState(p.make || '')
+  const [model, setModel] = useState(p.model || '')
+  const [vin,   setVin]   = useState(p.vin || '')
 
   // Zoho pickers
   const [selectedCustomer,    setSelectedCustomer]    = useState(null)
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
 
-  // Calibrations — pre-populated, all off
-  const [calibrations, setCalibrations] = useState(
-    STANDARD_CALS.map((name, i) => ({ _id: i, calibration_name: name, enabled: false, quantity: 1, description: '' }))
-  )
+  // Calibrations — standard list with the request's picks pre-checked;
+  // anything the tech chose that isn't standard is appended enabled.
+  const [calibrations, setCalibrations] = useState(() => {
+    const wanted = new Set((p.calibrations || []).map(n => String(n).toLowerCase()))
+    const base = STANDARD_CALS.map((name, i) => ({
+      _id: i, calibration_name: name,
+      enabled: wanted.has(name.toLowerCase()),
+      quantity: 1, description: '',
+    }))
+    const known = new Set(STANDARD_CALS.map(n => n.toLowerCase()))
+    const extras = (p.calibrations || [])
+      .filter(n => n && !known.has(String(n).toLowerCase()))
+      .map((name, i) => ({
+        _id: STANDARD_CALS.length + i, calibration_name: String(name),
+        enabled: true, quantity: 1, description: '',
+      }))
+    return [...base, ...extras]
+  })
   const [customInput, setCustomInput] = useState('')
 
   // Notes / story field
-  const [notes, setNotes] = useState('')
+  const [notes, setNotes] = useState(p.notes || '')
 
   // Submit state
   const [submitting,   setSubmitting]   = useState(false)
@@ -334,7 +353,7 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
         {/* Customer */}
         <Section title="Customer">
           <CustomerPicker
-            shopName=""
+            shopName={p.shop || ''}
             onSelect={(c) => setSelectedCustomer(c || null)}
           />
         </Section>
