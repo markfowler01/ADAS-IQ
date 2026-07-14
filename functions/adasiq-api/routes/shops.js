@@ -226,23 +226,29 @@ function cardNoteKey(shopName) {
 }
 
 // GET /api/shops/card-notes → { notes: { "<normalized name>": "note" } }
-// Full-table read + JS prefix filter — AppConfig holds a few dozen rows
-// at most, and ZCQL LIKE support proved unreliable (empty results in
-// prod 2026-07-11), while plain SELECTs are proven by the phone-config
-// reads.
+// Paginated full-table read + JS prefix filter. AppConfig grows daily
+// now (invoice-alert stamps, day totals, delete tombstones), so the old
+// single `LIMIT 500` window silently dropped notes once the table
+// passed 500 rows (Mark hit this 2026-07-14: "note is saved but it
+// doesn't pop on the Kanban card"). ZCQL LIKE stays off the table —
+// it returned empty results in prod 2026-07-11.
 router.get('/card-notes', async (req, res) => {
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
-    const rows = await app.zcql().executeZCQLQuery(
-      `SELECT config_key, config_value FROM ${APP_CONFIG_TABLE} LIMIT 500`
-    )
     const notes = {}
-    for (const row of rows || []) {
-      const r = row[APP_CONFIG_TABLE] || row
-      const key = String(r?.config_key || '')
-      if (key.startsWith(CARD_NOTE_PREFIX) && r.config_value) {
-        notes[key.slice(CARD_NOTE_PREFIX.length)] = String(r.config_value)
+    const PAGE = 300
+    for (let offset = 0; offset < 20000; offset += PAGE) {
+      const rows = await app.zcql().executeZCQLQuery(
+        `SELECT config_key, config_value FROM ${APP_CONFIG_TABLE} LIMIT ${PAGE} OFFSET ${offset}`
+      )
+      for (const row of rows || []) {
+        const r = row[APP_CONFIG_TABLE] || row
+        const key = String(r?.config_key || '')
+        if (key.startsWith(CARD_NOTE_PREFIX) && r.config_value) {
+          notes[key.slice(CARD_NOTE_PREFIX.length)] = String(r.config_value)
+        }
       }
+      if (!rows || rows.length < PAGE) break
     }
     res.json({ ok: true, notes })
   } catch (err) {

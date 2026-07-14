@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
-import MobileJobCard from '../components/MobileJobCard.jsx'
+import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox } from '../components/MobileJobCard.jsx'
 import JobRequestModal from '../components/JobRequestModal.jsx'
 import QuoteRequestModal from '../components/QuoteRequestModal.jsx'
 
@@ -210,7 +210,7 @@ function CapacityBar({ tech }) {
   )
 }
 
-function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList }) {
+function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList, customerNotes }) {
   const color = TECH_COLOR[tech.name] || '#999'
   // Every tech on the board except this card's owner — reassign targets.
   const otherTechs = (techList || []).filter(n => n && n !== tech.name)
@@ -269,6 +269,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
               ? ` · ✓ Done by ${projectedDoneBy(current.started_at)}`
               : current.time_window_start ? ` · ETA ${current.time_window_start}` : ''}
           </div>
+          <CustomerNoteBox items={parseNoteItems(customerNotes?.[normShopName(current.shop_name)])} />
           {/* Ready to Invoice — flips job status, which moves it to the
               Ready to Invoice column on the Kanban and posts to #aajobs +
               #Dispatch (Cliq fan-out lives in routes/jobs.js). */}
@@ -323,7 +324,8 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
             </div>
             <MobileJobCard job={j}
               onMoveToReadyInvoice={onReadyToInvoice}
-              onMoveToPendingParts={onPendingParts} />
+              onMoveToPendingParts={onPendingParts}
+              customerNotes={customerNotes} />
             {onReassign && otherTechs.map(n => (
               <button
                 key={n}
@@ -486,6 +488,17 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // Customer sticky notes — same per-shop notes as the Kanban cards
+  // (Mark 2026-07-14: "every job we do for that client needs to have
+  // all those things"). Fetched once per visit; card components parse.
+  const [customerNotes, setCustomerNotes] = useState({})
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/shops/card-notes`)
+      .then(r => r.json())
+      .then(j => setCustomerNotes(j.notes || {}))
+      .catch(() => {})
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -875,6 +888,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               onReassign={handleReassign}
               onPendingParts={handlePendingParts}
               techList={(data?.techs || []).map(x => x.name)}
+              customerNotes={customerNotes}
             />
           ))}
         </div>

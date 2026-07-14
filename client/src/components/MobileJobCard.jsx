@@ -35,6 +35,45 @@ export function isTeslaJob(job) {
   return /tesla/i.test(String(job.make || '')) || /tesla/i.test(String(job.vehicle || ''))
 }
 
+// Shop-name normalizer for customer card notes — must mirror
+// normShopName in routes/shops.js so lookups hit.
+export function normShopName(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[,.]?\s*(inc|llc|corp|co)\.?\s*$/i, '')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Customer notes are stored per shop as a JSON array of items (Mark
+// 2026-07-14: "each shop has four or five specific things we need to
+// note"). Older notes are plain text — treat newlines as items.
+export function parseNoteItems(raw) {
+  const s = String(raw || '').trim()
+  if (!s) return []
+  if (s.startsWith('[')) {
+    try {
+      const a = JSON.parse(s)
+      if (Array.isArray(a)) return a.map(x => String(x).trim()).filter(Boolean)
+    } catch { /* fall through to plain text */ }
+  }
+  return s.split('\n').map(x => x.trim()).filter(Boolean)
+}
+
+// Amber sticky-note block shared by every card variant.
+export function CustomerNoteBox({ items }) {
+  if (!items || items.length === 0) return null
+  return (
+    <div className="text-xs rounded-md px-2 py-1.5 mb-2"
+      style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+      {items.map((it, i) => (
+        <div key={i} className={i > 0 ? 'mt-1' : ''}>📌 {it}</div>
+      ))}
+    </div>
+  )
+}
+
 function UploadButton({ job }) {
   const [uploading, setUploading] = useState(false)
   const [done, setDone] = useState(false)
@@ -98,8 +137,10 @@ export default function MobileJobCard({
   onCreateInvoices,
   onToggleInvoiced,
   onOpenWorkDrive,
+  customerNotes,
 }) {
   const [finding, setFinding] = useState(false)
+  const noteItems = parseNoteItems(customerNotes?.[normShopName(job.shop_name)])
 
   async function handleOpenWorkDrive(e) {
     e.stopPropagation()
@@ -179,6 +220,8 @@ export default function MobileJobCard({
           {job.invoice_number || job.quote_number}
         </p>
       )}
+
+      <CustomerNoteBox items={noteItems} />
 
       {isTeslaJob(job) && (
         <p className="mb-1">

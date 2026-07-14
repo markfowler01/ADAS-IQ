@@ -4,6 +4,7 @@ import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
 import CalibrationReviewModal from './CalibrationReviewModal.jsx'
+import { parseNoteItems, CustomerNoteBox } from './MobileJobCard.jsx'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -689,13 +690,8 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </p>
       )}
 
-      {/* Customer note — amber sticky, one per shop, set via the 📌 */}
-      {customerNote && (
-        <div className="text-xs rounded-md px-2 py-1.5 mb-1.5"
-          style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
-          📌 {customerNote}
-        </div>
-      )}
+      {/* Customer notes — amber sticky, per shop, set via the 📌 */}
+      <CustomerNoteBox items={parseNoteItems(customerNote)} />
 
       {/* Tesla badge — Tesla-red pill so Kat uses Tesla pricing on the
           invoice. Independent of cash/insurer (a Tesla can be either). */}
@@ -988,25 +984,27 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   }, [])
   useEffect(() => { fetchCustomerNotes() }, [fetchCustomerNotes])
 
-  async function handleEditCustomerNote(job) {
-    const current = customerNotes[normShopName(job.shop_name)] || ''
-    const next = window.prompt(
-      `Customer note for ${job.shop_name} — shows on every card for this shop. Clear the text to remove it.`,
-      current
-    )
-    if (next === null) return  // cancelled
+  // Multi-item notes editor (Mark 2026-07-14: "each shop has four or
+  // five specific things"). Opens the modal; save posts a JSON array.
+  const [noteEditJob, setNoteEditJob] = useState(null)
+  function handleEditCustomerNote(job) {
+    setNoteEditJob(job)
+  }
+
+  async function saveCustomerNote(job, items) {
+    const clean = (items || []).map(s => String(s).trim()).filter(Boolean)
     try {
       const r = await apiFetch(`${API_BASE}/api/shops/card-note`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop_name: job.shop_name, note: next }),
+        body: JSON.stringify({ shop_name: job.shop_name, note: clean.length ? JSON.stringify(clean) : '' }),
       })
       if (!r.ok) {
         const j = await r.json().catch(() => ({}))
         throw new Error(j.error || `HTTP ${r.status}`)
       }
       await fetchCustomerNotes()
-      showToast(next.trim() ? `📌 Note saved for ${job.shop_name}` : `📌 Note cleared for ${job.shop_name}`)
+      showToast(clean.length ? `📌 ${clean.length} note${clean.length === 1 ? '' : 's'} saved for ${job.shop_name}` : `📌 Notes cleared for ${job.shop_name}`)
     } catch (e) {
       showToast(`Note save failed: ${e.message}`)
     }
@@ -1819,6 +1817,16 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
         />
       )}
 
+      {/* Customer Notes editor — per-shop list, shows on every card */}
+      {noteEditJob && (
+        <CustomerNoteModal
+          job={noteEditJob}
+          initialItems={parseNoteItems(customerNotes[normShopName(noteEditJob.shop_name)])}
+          onSave={async (items) => { setNoteEditJob(null); await saveCustomerNote(noteEditJob, items) }}
+          onClose={() => setNoteEditJob(null)}
+        />
+      )}
+
       {/* Job Request Modal — opened via "+" on the Need to Dispatch column */}
       {showRequestModal && (
         <JobRequestModal
@@ -1961,6 +1969,65 @@ function UploadButton({ job }) {
 // (Zoho customer, salesperson, calibration toggles). The parent handler
 // also completes + deletes the requested card once extraction succeeds
 // — the review screen carries everything forward from the report.
+// ─── Customer Notes Modal ────────────────────────────────────────────────────
+// Per-shop list of standing notes (billing rules, gate codes, contact
+// quirks…). Every item shows on every card for that shop, forever,
+// until edited here. Empty list = notes cleared.
+function CustomerNoteModal({ job, initialItems, onSave, onClose }) {
+  const [items, setItems] = useState(() => (initialItems?.length ? [...initialItems] : ['']))
+
+  function setItem(i, val) {
+    setItems(prev => prev.map((x, idx) => (idx === i ? val : x)))
+  }
+  function removeItem(i) {
+    setItems(prev => prev.filter((_, idx) => idx !== i))
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+      onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5" style={{ maxHeight: '85vh', overflowY: 'auto' }}>
+        <h3 className="text-base font-bold" style={{ color: '#1a1a1a' }}>📌 Customer Notes</h3>
+        <p className="text-xs mt-0.5 mb-4" style={{ color: '#888' }}>
+          {job.shop_name} — every note shows on every job card for this shop.
+        </p>
+        <div className="flex flex-col gap-2 mb-3">
+          {items.map((it, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={it}
+                onChange={e => setItem(i, e.target.value)}
+                placeholder="e.g. 💵 Cash only, max $700 · gate code 4411 · see Dave"
+                autoFocus={i === items.length - 1 && !it}
+                className="flex-1 px-3 py-2 rounded-lg text-sm"
+                style={{ border: '1px solid #fde68a', backgroundColor: '#fffbeb', color: '#92400e' }}
+              />
+              <button onClick={() => removeItem(i)}
+                className="text-sm px-2 py-2 rounded" style={{ color: '#bbb' }}
+                title="Remove this note">✕</button>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => setItems(prev => [...prev, ''])}
+          className="text-sm font-semibold mb-4"
+          style={{ color: ORANGE }}
+        >+ Add another note</button>
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm font-semibold"
+            style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
+          <button onClick={() => onSave(items)}
+            className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
+            style={{ backgroundColor: ORANGE }}>Save Notes</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function UploadReportButton({ job, onUploadReport, onInvoiceFromJob }) {
   const [busy, setBusy] = useState(false)
   const [showChooser, setShowChooser] = useState(false)
@@ -2094,13 +2161,8 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
         {vehicle || 'Unknown vehicle'}
       </p>
 
-      {/* Customer note — amber sticky, one per shop */}
-      {customerNote && (
-        <div className="text-xs rounded-md px-2 py-1.5 mb-2"
-          style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
-          📌 {customerNote}
-        </div>
-      )}
+      {/* Customer notes — amber sticky, per shop */}
+      <CustomerNoteBox items={parseNoteItems(customerNote)} />
 
       {/* Technician + date row. Cash badge takes over the insurer slot. */}
       <div className="flex items-center gap-3 text-xs mb-2 flex-wrap" style={{ color: '#aaa' }}>
