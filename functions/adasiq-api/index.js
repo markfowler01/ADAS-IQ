@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit'
 import authRouter, { verifyToken } from './routes/auth.js'
 import demoRouter from './routes/demo.js'
 import extractRouter from './routes/extract.js'
+import { cleanDescriptionsRouter } from './routes/cleanDescriptions.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
@@ -179,6 +180,7 @@ app.get('/debug/cache', requireAuth, async (req, res) => {
 
 // Protected API routes (rate limiters applied to AI-heavy endpoints)
 app.use('/api/extract', requireAuth, extractLimiter, extractRouter)
+app.use('/api/clean-descriptions', requireAuth, extractLimiter, cleanDescriptionsRouter)
 app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, invoiceRouter)

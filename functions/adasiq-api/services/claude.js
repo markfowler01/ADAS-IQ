@@ -400,3 +400,46 @@ export async function extractRulesFromJobAid(pdfBuffer) {
 
   return rules
 }
+
+/**
+ * Clean up per-calibration justification notes on the Manual Invoice
+ * screen (Mark 2026-07-14). Techs type shorthand like "lines 12 and 14"
+ * (= flagged lines on the CCC estimate they're reading) — turn each into
+ * a short professional justification with the OEM reasoning and the
+ * standard repair trigger for that calibration type.
+ *
+ * @param {Object} params { year, make, model, items: [{ name, description }] }
+ * @returns {Promise<string[]>} cleaned descriptions, same order as items
+ */
+export async function cleanCalibrationDescriptions({ year, make, model, items }) {
+  const vehicle = [year, make, model].filter(Boolean).join(' ') || 'the vehicle'
+  const list = items.map((it, i) =>
+    `${i + 1}. Calibration: ${it.name}\n   Tech's note: "${String(it.description || '').trim() || '(blank)'}"`
+  ).join('\n')
+
+  const message = await getClient().messages.create({
+    model: 'claude-opus-4-7',
+    max_tokens: 1500,
+    messages: [{
+      role: 'user',
+      content: `You write invoice line-item justifications for an ADAS calibration company (Absolute ADAS). Vehicle: ${vehicle}.
+
+For each calibration below, rewrite the technician's shorthand note into ONE professional sentence (two max) explaining why the calibration was required. Rules:
+- "lines 12 and 14" or similar = those line numbers on the CCC ONE collision estimate flagged operations requiring this calibration. Phrase as: "Required per CCC estimate lines 12 and 14 — <operation> necessitates <calibration> calibration per ${make || 'OEM'} service information."
+- Infer the standard repair trigger for the calibration type when not stated: front camera → windshield R&I/replacement; rear camera → tailgate/rear glass or rear-end repair; blind spot / rear radar → rear bumper R&I; front radar → front bumper/grille R&I; parking sensors → bumper R&I; 360/surround view → mirror or bumper repair; steering angle sensor → alignment or suspension repair.
+- Cite the OEM requirement generically ("per ${make || 'OEM'} service information/position statement") — do NOT invent specific document numbers.
+- Keep the tech's factual details; drop filler. Professional insurance-adjuster-friendly tone. No exclamation points.
+- If the note is blank, write the standard justification for that calibration type from the repair-trigger rules above.
+
+${list}
+
+Return ONLY a JSON array of ${items.length} strings, same order, no markdown fences.`,
+    }],
+  })
+  const raw = message.content[0].text.trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim()
+  const arr = JSON.parse(raw)
+  if (!Array.isArray(arr) || arr.length !== items.length) {
+    throw new Error(`Expected ${items.length} descriptions, got ${Array.isArray(arr) ? arr.length : typeof arr}`)
+  }
+  return arr.map(s => String(s))
+}

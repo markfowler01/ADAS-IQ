@@ -172,6 +172,32 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
   // Notes / story field
   const [notes, setNotes] = useState(p.notes || '')
 
+  // AI cleanup of line-item justifications (Mark 2026-07-14)
+  const [cleaning, setCleaning] = useState(false)
+  async function handleAiCleanup() {
+    const targets = calibrations.filter(c => c.enabled)
+    if (targets.length === 0) return
+    setCleaning(true)
+    try {
+      const res = await apiFetch(`${API_BASE}/api/clean-descriptions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          year, make, model,
+          items: targets.map(c => ({ name: c.calibration_name, description: c.description || '' })),
+        }),
+      })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`)
+      const map = new Map(targets.map((c, i) => [c._id, j.descriptions[i]]))
+      setCalibrations(prev => prev.map(c => (map.has(c._id) ? { ...c, description: map.get(c._id) } : c)))
+    } catch (e) {
+      alert('AI cleanup failed: ' + e.message)
+    } finally {
+      setCleaning(false)
+    }
+  }
+
   // Submit state
   const [submitting,   setSubmitting]   = useState(false)
   const [submitError,  setSubmitError]  = useState(null)
@@ -407,6 +433,23 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
 
         {/* Calibrations */}
         <Section title={enabledCount > 0 ? `Line Items (${enabledCount} selected)` : 'Line Items — toggle on what you need'}>
+          {/* AI cleanup — rewrites each selected item's note into a
+              professional justification (CCC line refs + OEM reasoning) */}
+          {enabledCount > 0 && (
+            <button
+              onClick={handleAiCleanup}
+              disabled={cleaning}
+              className="w-full flex items-center justify-center gap-2 rounded-xl mb-3 transition-all hover:opacity-80 active:opacity-60"
+              style={{
+                backgroundColor: '#faf5ff', border: '1.5px solid #e9d5ff',
+                padding: '10px 0', minHeight: '44px', opacity: cleaning ? 0.6 : 1,
+              }}
+            >
+              <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>
+                {cleaning ? '⏳ Writing justifications…' : '✨ AI Clean Up Descriptions'}
+              </span>
+            </button>
+          )}
           <div className="flex flex-col gap-2 mb-3">
             {calibrations.map((item) => (
               <div key={item._id}
