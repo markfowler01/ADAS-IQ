@@ -437,6 +437,28 @@ app.post('/api/cron/cleanup-name-fallback', async (req, res) => {
 // One-time diagnostic: show how every job-shop's address would be resolved.
 // Reads Zoho Books customers + CRM Shops + current geocache and returns the
 // chain we'd use, so we can see why a shop is "ambiguous" or "name-fallback".
+// Verify SMS Datastore persistence (2026-07-15): last few rows straight
+// from the sms_threads TABLE — proves messages survive the cache TTL.
+app.get('/api/cron/sms-datastore-debug', async (req, res) => {
+  const cronSecret = process.env.BACKUP_CRON_SECRET
+  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  try {
+    const { listMessages } = await import('./services/datastoreSms.js')
+    const rows = await listMessages(req, { limit: 5 })
+    res.json({
+      count: rows.length,
+      rows: rows.map(r => ({
+        sid: r.message_sid, dir: r.direction, from: r.from_number,
+        to: r.to_number, body: String(r.body || '').slice(0, 60), at: r.timestamp,
+      })),
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // Protected by BILLING_CRON_SECRET.
 // Diagnostic for the Live-view "needs dispatch" pileup (2026-07-13):
 // lists every pre-dispatch job so we can see what's stale and why.
