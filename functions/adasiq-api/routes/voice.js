@@ -63,7 +63,7 @@ function getSegment(req) {
   return app.cache().segment()
 }
 
-async function readVoicemails(req) {
+async function readVoicemailsCache(req) {
   try {
     const segment = getSegment(req)
     const val = await segment.getValue(VM_CACHE_KEY)
@@ -81,8 +81,30 @@ async function writeVoicemails(req, records) {
   try { await segment.update(VM_CACHE_KEY, val) }
   catch { await segment.put(VM_CACHE_KEY, val) }
 }
+// Durable view (Mark 2026-07-15, same fix as SMS): Datastore `voicemails`
+// table is the source of truth; the cache overlays recent records and
+// wins on call_sid clash. Merged, chronological.
+async function readVoicemails(req) {
+  const cacheRecs = await readVoicemailsCache(req)
+  let dsRecs = []
+  try {
+    const { listVoicemails } = await import('../services/datastoreVoicemails.js')
+    dsRecs = await listVoicemails(req, { limit: 500 })
+  } catch (e) {
+    console.warn('[voicemails ds read — cache only]', e.message)
+    return cacheRecs
+  }
+  if (!dsRecs.length) return cacheRecs
+  const merged = new Map()
+  let seq = 0
+  for (const r of dsRecs) merged.set(r.call_sid || `ds-${seq++}`, r)
+  for (const r of cacheRecs) merged.set(r.call_sid || `c-${seq++}`, r)
+  return [...merged.values()].sort(
+    (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+  )
+}
 // ── Call log helpers (mirror the voicemail pattern) ────────────────────────
-async function readCalls(req) {
+async function readCallsCache(req) {
   try {
     const segment = getSegment(req)
     const val = await segment.getValue(CALLS_CACHE_KEY)
@@ -100,9 +122,36 @@ async function writeCalls(req, records) {
   try { await segment.update(CALLS_CACHE_KEY, val) }
   catch { await segment.put(CALLS_CACHE_KEY, val) }
 }
+async function readCalls(req) {
+  const cacheRecs = await readCallsCache(req)
+  let dsRecs = []
+  try {
+    const { listCalls } = await import('../services/datastoreCallLog.js')
+    dsRecs = await listCalls(req, { limit: 500 })
+  } catch (e) {
+    console.warn('[calls ds read — cache only]', e.message)
+    return cacheRecs
+  }
+  if (!dsRecs.length) return cacheRecs
+  const merged = new Map()
+  let seq = 0
+  for (const r of dsRecs) merged.set(r.call_sid || `ds-${seq++}`, r)
+  for (const r of cacheRecs) merged.set(r.call_sid || `c-${seq++}`, r)
+  return [...merged.values()].sort(
+    (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+  )
+}
 async function upsertCall(req, record) {
+  // Durable write FIRST — merges onto the existing Datastore row by
+  // call_sid so ringing → completed → recording updates land on one row.
+  try {
+    const { upsertCall: dsUpsertCall } = await import('../services/datastoreCallLog.js')
+    await dsUpsertCall(req, record)
+  } catch (e) {
+    console.warn('[calls ds write (non-fatal)]', e.message)
+  }
   let records = []
-  try { records = await readCalls(req) } catch { records = [] }
+  try { records = await readCallsCache(req) } catch { records = [] }
   const idx = records.findIndex(r => r.call_sid === record.call_sid)
   if (idx >= 0) records[idx] = { ...records[idx], ...record }
   else records.push(record)
@@ -114,8 +163,14 @@ async function upsertCall(req, record) {
 }
 
 async function upsertVoicemail(req, record) {
+  try {
+    const { upsertVoicemail: dsUpsertVoicemail } = await import('../services/datastoreVoicemails.js')
+    await dsUpsertVoicemail(req, record)
+  } catch (e) {
+    console.warn('[voicemails ds write (non-fatal)]', e.message)
+  }
   let records = []
-  try { records = await readVoicemails(req) } catch { records = [] }
+  try { records = await readVoicemailsCache(req) } catch { records = [] }
   const idx = records.findIndex(r => r.call_sid === record.call_sid)
   if (idx >= 0) records[idx] = { ...records[idx], ...record }
   else records.push(record)
