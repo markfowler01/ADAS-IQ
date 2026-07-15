@@ -558,7 +558,8 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, customerNotes, onEditCustomerNote }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote }) {
+  const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
 
@@ -822,6 +823,25 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </span>
       </button>
 
+      {/* ADAS Report — generate + download the OEM-justification PDF
+          from the card's fields; also lands in the WorkDrive folder. */}
+      {onDownloadReport && (
+        <button
+          onClick={e => { e.stopPropagation(); onDownloadReport(job) }}
+          disabled={reportBusy}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
+          style={{
+            backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd',
+            padding: '10px 0', minHeight: '44px', opacity: reportBusy ? 0.6 : 1,
+          }}
+        >
+          <span style={{ fontSize: '14px' }}>{reportBusy ? '⏳' : '📄'}</span>
+          <span className="text-sm font-semibold" style={{ color: '#0369a1' }}>
+            {reportBusy ? 'Generating report…' : 'ADAS Report'}
+          </span>
+        </button>
+      )}
+
       {/* Create Invoices button — only on ready_invoice or complete */}
       {job.invoiced ? (
         <div className="w-full flex items-center justify-center gap-2 rounded-xl mt-2"
@@ -876,7 +896,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, customerNotes, onEditCustomerNote, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -945,6 +965,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onMoveToPendingParts={onMoveToPendingParts}
             onUploadReport={onUploadReport}
             onInvoiceFromJob={onInvoiceFromJob}
+            onDownloadReport={onDownloadReport}
+            reportBusyId={reportBusyId}
             customerNotes={customerNotes}
             onEditCustomerNote={onEditCustomerNote}
           />
@@ -1274,6 +1296,37 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // Opens the calibration review modal — actual status change happens after confirmation
   function handleMoveToReadyInvoice(job) {
     setCalReviewJob(job)
+  }
+
+  // On-demand Absolute ADAS report (Mark 2026-07-15): generates the
+  // enriched OEM-justification PDF from the card's fields, saves it to
+  // the job's WorkDrive folder, and downloads it.
+  const [reportBusyId, setReportBusyId] = useState(null)
+  async function handleDownloadAdasReport(job) {
+    if (reportBusyId) return
+    setReportBusyId(job.id)
+    showToast('📄 Generating ADAS report… (takes ~15s)')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/books/adas-report/${job.id}`, { method: 'POST' })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}))
+        throw new Error(j.error || `HTTP ${r.status}`)
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `ADAS-IQ-Report-${job.quote_number || job.ro_number || job.id}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      showToast('✅ Report downloaded + saved to WorkDrive')
+    } catch (e) {
+      showToast(`Report failed: ${e.message}`)
+    } finally {
+      setReportBusyId(null)
+    }
   }
 
   // Waiting on Parts (Mark 2026-07-13): one tap parks the job on the
@@ -1762,6 +1815,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                       onCreateInvoices={setInvoicingJob}
                       onUploadReport={handleCardReportUpload}
                       onInvoiceFromJob={handleInvoiceFromJob}
+                      onDownloadReport={handleDownloadAdasReport}
+                      reportBusyId={reportBusyId}
                       customerNotes={customerNotes}
                     />
                   ))
@@ -1797,6 +1852,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onMoveToPendingParts={handleMoveToPendingParts}
                   onUploadReport={handleCardReportUpload}
                   onInvoiceFromJob={handleInvoiceFromJob}
+                  onDownloadReport={handleDownloadAdasReport}
+                  reportBusyId={reportBusyId}
                   customerNotes={customerNotes}
                   onEditCustomerNote={handleEditCustomerNote}
                   dragOverCol={dragOverCol}
@@ -2117,7 +2174,8 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob }) {
   )
 }
 
-function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts, onCreateInvoices, onUploadReport, onInvoiceFromJob, customerNotes }) {
+function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts, onCreateInvoices, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes }) {
+  const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const statusLabel = COLUMNS.find(c => c.id === job.status)?.label || job.status
@@ -2233,6 +2291,21 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
         >
           <span style={{ fontSize: '14px' }}>⏳</span>
           <span className="text-sm font-semibold" style={{ color: '#c2410c' }}>Waiting on Parts</span>
+        </button>
+      )}
+
+      {/* ADAS Report — same generate + download as the desktop card. */}
+      {onDownloadReport && (
+        <button
+          onClick={e => { e.stopPropagation(); onDownloadReport(job) }}
+          disabled={reportBusy}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
+          style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', padding: '10px 0', minHeight: '44px', opacity: reportBusy ? 0.6 : 1 }}
+        >
+          <span style={{ fontSize: '14px' }}>{reportBusy ? '⏳' : '📄'}</span>
+          <span className="text-sm font-semibold" style={{ color: '#0369a1' }}>
+            {reportBusy ? 'Generating report…' : 'ADAS Report'}
+          </span>
         </button>
       )}
 

@@ -62,8 +62,9 @@ export async function generateAndUploadReport(req, { job, invoices }) {
       } catch {}
     }
     if (!folderId) {
-      console.warn('[report] Could not resolve WorkDrive folder — skipping PDF upload')
-      return
+      // Still generate the PDF (the download button needs it) — just
+      // skip the WorkDrive upload steps below.
+      console.warn('[report] Could not resolve WorkDrive folder — generating without upload')
     }
 
     // 2. Collect all invoice line items (insurance + shop) as the source of truth
@@ -121,7 +122,7 @@ export async function generateAndUploadReport(req, { job, invoices }) {
     let folderShareUrl = ''
     if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       folderShareUrl = job.folder_url
-    } else {
+    } else if (folderId) {
       try {
         const link = await createShareLink(folderId, `Job ${roNum}`.slice(0, 50), token)
         if (link) folderShareUrl = link
@@ -162,20 +163,25 @@ export async function generateAndUploadReport(req, { job, invoices }) {
       document_links: [],
     })
 
-    // 6. Upload to WorkDrive
+    // 6. Upload to WorkDrive (when a folder resolved)
     const filename = `ADAS-IQ-Report-${roNum}.pdf`
-    await uploadFileToFolder(folderId, filename, pdfBuffer, token)
-    console.log(`[report] ADAS IQ PDF uploaded: ${filename}`)
+    if (folderId) {
+      await uploadFileToFolder(folderId, filename, pdfBuffer, token)
+      console.log(`[report] ADAS IQ PDF uploaded: ${filename}`)
+    }
 
     // 7. Save public share link back to job — folderShareUrl was
     //    resolved (or freshly minted) up above, so reuse it here.
-    if (folderShareUrl && (!job.folder_url || !job.folder_url.includes('zohoexternal.com'))) {
+    if (folderShareUrl && job.id && (!job.folder_url || !job.folder_url.includes('zohoexternal.com'))) {
       try {
         await updateJobPublic(req, job.id, { ...job, folder_url: folderShareUrl })
       } catch {}
     }
+
+    return { pdfBuffer, filename, uploaded: !!folderId }
   } catch (err) {
     console.error('[report] generateAndUploadReport failed (non-fatal):', err.message)
+    return null
   }
 }
 
@@ -1641,6 +1647,51 @@ router.get('/report', async (req, res) => {
     })
   } catch (err) {
     console.error('[books report]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/books/adas-report/:jobId ──────────────────────────────────────
+// On-demand Absolute ADAS report from a job card (Mark 2026-07-15):
+// builds the full enriched OEM-justification PDF from the job's own
+// fields + calibrations, uploads it to the job's WorkDrive folder, and
+// streams the PDF back for download.
+router.post('/adas-report/:jobId', async (req, res) => {
+  try {
+    const jobs = await readJobsPublic(req)
+    const job = jobs.find(j => String(j.id) === String(req.params.jobId))
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+
+    let cals = []
+    try {
+      const parsed = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : job.calibrations
+      if (Array.isArray(parsed)) cals = parsed
+    } catch { cals = [] }
+    const lineItems = cals
+      .map(c => ({
+        description: (typeof c === 'string' ? c : (c.name || c.calibration_name || c.type || '')),
+        qty: 1, rate: 0,
+      }))
+      .filter(li => li.description)
+    if (!lineItems.length) {
+      return res.status(400).json({ error: 'This job has no calibrations to report on — add them to the card first.' })
+    }
+
+    const result = await generateAndUploadReport(req, {
+      job,
+      invoices: [{
+        invoice_number: job.invoice_number || job.quote_number || '',
+        line_items: lineItems,
+      }],
+    })
+    if (!result?.pdfBuffer) {
+      return res.status(500).json({ error: 'Report generation failed — check the function logs.' })
+    }
+    res.type('application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`)
+    res.send(result.pdfBuffer)
+  } catch (err) {
+    console.error('[books adas-report]', err.message)
     res.status(500).json({ error: err.message })
   }
 })
