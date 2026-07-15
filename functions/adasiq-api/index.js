@@ -446,13 +446,22 @@ app.get('/api/cron/sms-datastore-debug', async (req, res) => {
   }
   try {
     const { listMessages } = await import('./services/datastoreSms.js')
-    const rows = await listMessages(req, { limit: 5 })
+    const { listCalls } = await import('./services/datastoreCallLog.js')
+    const { listVoicemails } = await import('./services/datastoreVoicemails.js')
+    const [sms, calls, vms] = await Promise.all([
+      listMessages(req, { limit: 5 }),
+      listCalls(req, { limit: 5 }).catch(e => ({ error: e.message })),
+      listVoicemails(req, { limit: 5 }).catch(e => ({ error: e.message })),
+    ])
+    const slim = (r) => ({
+      sid: r.message_sid || r.call_sid, dir: r.direction, from: r.from_number,
+      to: r.to_number, body: String(r.body || r.transcription || '').slice(0, 60),
+      status: r.status, at: r.timestamp,
+    })
     res.json({
-      count: rows.length,
-      rows: rows.map(r => ({
-        sid: r.message_sid, dir: r.direction, from: r.from_number,
-        to: r.to_number, body: String(r.body || '').slice(0, 60), at: r.timestamp,
-      })),
+      sms:        Array.isArray(sms)   ? { count: sms.length,   rows: sms.map(slim) }   : sms,
+      calls:      Array.isArray(calls) ? { count: calls.length, rows: calls.map(slim) } : calls,
+      voicemails: Array.isArray(vms)   ? { count: vms.length,   rows: vms.map(slim) }   : vms,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
