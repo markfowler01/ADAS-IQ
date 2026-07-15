@@ -73,7 +73,8 @@ function getSegment(req) {
   return app.cache().segment()
 }
 
-async function readAllMessages(req) {
+// Cache blob only — see readAllMessages for the merged view.
+async function readCacheMessages(req) {
   try {
     const segment = getSegment(req)
     const val = await segment.getValue(SMS_CACHE_KEY)
@@ -84,6 +85,31 @@ async function readAllMessages(req) {
     console.warn('[sms cache read]', e.message)
     return []
   }
+}
+
+// Durable message history (Mark 2026-07-15: "all of my conversations
+// are gone" — the cache's 48h TTL wiped the log). Datastore
+// `sms_threads` is the source of truth; the cache blob overlays the
+// most recent messages because it carries fields the table doesn't
+// persist (MMS media URLs, delivery status). Cache wins on SID clash.
+async function readAllMessages(req) {
+  const cacheRecs = await readCacheMessages(req)
+  let dsRecs = []
+  try {
+    const { listMessages } = await import('../services/datastoreSms.js')
+    dsRecs = await listMessages(req, { limit: 1000 })
+  } catch (e) {
+    console.warn('[sms ds read — cache only]', e.message)
+    return cacheRecs
+  }
+  if (!dsRecs.length) return cacheRecs
+  const merged = new Map()
+  let seq = 0
+  for (const r of dsRecs) merged.set(r.message_sid || `ds-${seq++}`, r)
+  for (const r of cacheRecs) merged.set(r.message_sid || `c-${seq++}`, r)
+  return [...merged.values()].sort(
+    (a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0)
+  )
 }
 
 async function writeAllMessages(req, records) {
@@ -102,8 +128,16 @@ async function writeAllMessages(req, records) {
 // while the persisted log never actually contained the message, so the
 // optimistic UI append disappeared on the next refresh.
 async function appendMessage(req, record) {
+  // Durable write FIRST — Datastore has no TTL and no size cap. The
+  // cache write below stays as the fast overlay (media/status fields).
+  try {
+    const { upsertMessage } = await import('../services/datastoreSms.js')
+    await upsertMessage(req, record)
+  } catch (e) {
+    console.warn('[sms ds write (non-fatal)]', e.message)
+  }
   let records = []
-  try { records = await readAllMessages(req) } catch { records = [] }
+  try { records = await readCacheMessages(req) } catch { records = [] }
   records.push(record)
   const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000
   records = records.filter(r => {
