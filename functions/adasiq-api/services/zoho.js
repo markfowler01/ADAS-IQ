@@ -1087,3 +1087,25 @@ export async function getMileageTrips({ page = 1, per_page = 50 } = {}) {
     }
   }
 }
+
+// Fetch one invoice WITH line items by its invoice number (the job rows
+// store invoice_number, not invoice_id). Two calls: list-filter to find
+// the id, then detail for line_items. Returns null when not found.
+export async function getInvoiceByNumber(invoiceNumber) {
+  if (!invoiceNumber) return null
+  const token = await getAccessToken()
+  const list = await axios.get(`${ZOHO_API_BASE}/invoices`, {
+    headers: zohoHeaders(token),
+    params: { ...orgParam(), invoice_number: String(invoiceNumber) },
+    timeout: 15000,
+  })
+  const candidates = list.data?.invoices || []
+  const inv = candidates.find(i => i.invoice_number === String(invoiceNumber)) || candidates[0]
+  if (!inv) return null
+  const detail = await axios.get(`${ZOHO_API_BASE}/invoices/${inv.invoice_id}`, {
+    headers: zohoHeaders(token),
+    params: orgParam(),
+    timeout: 15000,
+  })
+  return detail.data?.invoice || null
+}

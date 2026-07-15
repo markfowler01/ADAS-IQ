@@ -1662,17 +1662,40 @@ router.post('/adas-report/:jobId', async (req, res) => {
     const job = jobs.find(j => String(j.id) === String(req.params.jobId))
     if (!job) return res.status(404).json({ error: 'Job not found' })
 
-    let cals = []
-    try {
-      const parsed = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : job.calibrations
-      if (Array.isArray(parsed)) cals = parsed
-    } catch { cals = [] }
-    const lineItems = cals
-      .map(c => ({
-        description: (typeof c === 'string' ? c : (c.name || c.calibration_name || c.type || '')),
-        qty: 1, rate: 0,
-      }))
-      .filter(li => li.description)
+    // Source of truth (Mark 2026-07-15: "I want the report to match the
+    // invoice sent out 100%"): when the job has a Zoho Books invoice,
+    // build the report from that invoice's ACTUAL line items — including
+    // anything Kat added in Books after the card was made. Cards without
+    // an invoice yet fall back to their own calibrations.
+    let lineItems = []
+    if (job.invoice_number) {
+      try {
+        const { getInvoiceByNumber } = await import('../services/zoho.js')
+        const inv = await getInvoiceByNumber(job.invoice_number)
+        if (inv?.line_items?.length) {
+          lineItems = inv.line_items.map(li => ({
+            description: li.description || li.name || '',
+            qty: Number(li.quantity || 1),
+            rate: Number(li.rate || 0),
+          })).filter(li => li.description)
+        }
+      } catch (e) {
+        console.warn('[books adas-report] Books invoice fetch failed, falling back to card:', e.message)
+      }
+    }
+    if (!lineItems.length) {
+      let cals = []
+      try {
+        const parsed = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : job.calibrations
+        if (Array.isArray(parsed)) cals = parsed
+      } catch { cals = [] }
+      lineItems = cals
+        .map(c => ({
+          description: (typeof c === 'string' ? c : (c.name || c.calibration_name || c.type || '')),
+          qty: 1, rate: 0,
+        }))
+        .filter(li => li.description)
+    }
     if (!lineItems.length) {
       return res.status(400).json({ error: 'This job has no calibrations to report on — add them to the card first.' })
     }
