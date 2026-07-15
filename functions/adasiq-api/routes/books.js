@@ -21,7 +21,10 @@ const CHUNK_SIZE = 30
  * actual line items and upload it to the job's WorkDrive folder.
  * Called after from-job invoice creation succeeds.
  */
-async function generateAndUploadReport(req, { job, invoices }) {
+// Exported 2026-07-15 — the Kinetic-extract and Manual-invoice paths
+// generate the same report (Mark: "should be running for jobs created
+// with kinetic reports or manual jobs").
+export async function generateAndUploadReport(req, { job, invoices }) {
   try {
     const token = await getWdToken()
 

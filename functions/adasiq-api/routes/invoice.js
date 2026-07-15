@@ -142,6 +142,42 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Absolute ADAS calibration report (Mark 2026-07-15): manual jobs
+    // get the same OEM-justification PDF as Kinetic jobs, built from
+    // whatever's in the boxes. Awaited before res.json (Catalyst kills
+    // the container after responding) but never fails quote creation.
+    try {
+      const { generateAndUploadReport } = await import('./books.js')
+      const enabledCals = (cleanedCalibrations || []).filter(c => c.enabled !== false)
+      if (enabledCals.length) {
+        await generateAndUploadReport(req, {
+          job: {
+            shop_name:    shop || customerName || '',
+            quote_number: ro_number || result.estimate_number || '',
+            notes:        ro_number ? `RO# ${ro_number}` : '',
+            vin:          vin || '',
+            vehicle:      vehicle || [year, make, model].filter(Boolean).join(' '),
+            year:         year || '',
+            make:         make || '',
+            model:        model || '',
+            insurer:      insurer || '',
+            claim_number: claim || '',
+            folder_url:   result.workdrive_url || '',
+          },
+          invoices: [{
+            invoice_number: result.estimate_number || '',
+            line_items: enabledCals.map(c => ({
+              description: c.calibration_name || c.name || '',
+              qty: c.quantity || 1,
+              rate: c.rate || 0,
+            })),
+          }],
+        })
+      }
+    } catch (e) {
+      console.warn('[invoice] report generation failed (non-fatal):', e.message)
+    }
+
     // History is written by the client (ToggleBoard / ManualQuoteScreen) after this response,
     // so we do NOT write it here — that would create duplicate history entries.
     res.json(result)

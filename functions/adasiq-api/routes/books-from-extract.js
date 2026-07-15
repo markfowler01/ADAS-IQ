@@ -246,6 +246,33 @@ router.post('/from-extract', async (req, res) => {
     invoices.push(invoice)
     await writeInvoices(req, invoices)
 
+    // Absolute ADAS calibration report (Mark 2026-07-15): same OEM-
+    // justification PDF the from-job path generates, built from this
+    // invoice's line items and uploaded to the job's WorkDrive folder.
+    // Awaited (Catalyst kills the container after res.json) but never
+    // fails the invoicing response.
+    try {
+      const { generateAndUploadReport } = await import('./books.js')
+      await generateAndUploadReport(req, {
+        job: {
+          shop_name:    invoice.customer_name,
+          quote_number: payload.ro_number || invoice.invoice_number || '',
+          notes:        payload.ro_number ? `RO# ${payload.ro_number}` : '',
+          vin:          payload.vin || '',
+          vehicle:      payload.vehicle || [payload.year, payload.make, payload.model].filter(Boolean).join(' '),
+          year:         payload.year || '',
+          make:         payload.make || '',
+          model:        payload.model || '',
+          insurer:      payload.insurer || '',
+          claim_number: payload.claim || '',
+          folder_url:   '',
+        },
+        invoices: [invoice],
+      })
+    } catch (e) {
+      console.warn('[books/from-extract] report generation failed (non-fatal):', e.message)
+    }
+
     res.json({
       ok: true,
       invoice,
