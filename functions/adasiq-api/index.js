@@ -458,10 +458,23 @@ app.get('/api/cron/sms-datastore-debug', async (req, res) => {
       to: r.to_number, body: String(r.body || r.transcription || '').slice(0, 60),
       status: r.status, at: r.timestamp,
     })
+    // Also run the exact /api/sms/threads pipeline so a UI-blank report
+    // can be diagnosed without a login session.
+    let threadsCheck
+    try {
+      const { readAllSmsMessages, bucketSmsThreads } = await import('./routes/sms.js')
+      const all = await readAllSmsMessages(req)
+      const threads = bucketSmsThreads(all)
+      threadsCheck = { merged_messages: all.length, threads: threads.length,
+        first_thread: threads[0] ? `${threads[0].phone} (${threads[0].message_count} msgs)` : null }
+    } catch (e) {
+      threadsCheck = { error: e.message, stack: String(e.stack || '').split('\n')[1] || '' }
+    }
     res.json({
       sms:        Array.isArray(sms)   ? { count: sms.length,   rows: sms.map(slim) }   : sms,
       calls:      Array.isArray(calls) ? { count: calls.length, rows: calls.map(slim) } : calls,
       voicemails: Array.isArray(vms)   ? { count: vms.length,   rows: vms.map(slim) }   : vms,
+      threads_pipeline: threadsCheck,
     })
   } catch (err) {
     res.status(500).json({ error: err.message })

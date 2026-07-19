@@ -747,4 +747,4 @@ auth.get('/threads/:phone', async (req, res) => {
   }
 })
 
-export { router as smsWebhookRouter, auth as smsAuthRouter }
+export { router as smsWebhookRouter, auth as smsAuthRouter, readAllMessages as readAllSmsMessages, bucketByThread as bucketSmsThreads }
