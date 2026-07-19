@@ -94,10 +94,19 @@ export async function upsertVoicemail(req, rec) {
 
 // List, newest first.
 export async function listVoicemails(req, { limit = 200 } = {}) {
+  // Paged — ZCQL rejects large single LIMITs (see datastoreSms.js).
   const app = catalyst.initialize(req, { type: 'advancedio' })
-  const q = `SELECT * FROM ${TABLE} ORDER BY CREATEDTIME DESC LIMIT ${Math.min(Math.max(1, limit), 1000)}`
-  const rows = await app.zcql().executeZCQLQuery(q)
-  return (rows || []).map(fromRow)
+  const cap = Math.min(Math.max(1, limit), 1000)
+  const PAGE = 250
+  const out = []
+  for (let offset = 0; offset < cap; offset += PAGE) {
+    const take = Math.min(PAGE, cap - offset)
+    const q = `SELECT * FROM ${TABLE} ORDER BY CREATEDTIME DESC LIMIT ${take} OFFSET ${offset}`
+    const rows = await app.zcql().executeZCQLQuery(q)
+    out.push(...(rows || []).map(fromRow))
+    if (!rows || rows.length < take) break
+  }
+  return out
 }
 
 export async function getVoicemailBySid(req, callSid) {

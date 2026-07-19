@@ -119,10 +119,20 @@ export async function upsertMessage(req, rec) {
 // List all messages, newest first. Bounded at 2000 for safety; the UI
 // paginates from there.
 export async function listMessages(req, { limit = 500 } = {}) {
+  // ZCQL rejects large LIMIT values (a single LIMIT 1000 query throws,
+  // which silently blanked the SMS page on 2026-07-15) — page at 250.
   const app = catalyst.initialize(req, { type: 'advancedio' })
-  const q = `SELECT * FROM ${TABLE} ORDER BY CREATEDTIME DESC LIMIT ${Math.min(Math.max(1, limit), 2000)}`
-  const rows = await app.zcql().executeZCQLQuery(q)
-  return (rows || []).map(fromRow)
+  const cap = Math.min(Math.max(1, limit), 2000)
+  const PAGE = 250
+  const out = []
+  for (let offset = 0; offset < cap; offset += PAGE) {
+    const take = Math.min(PAGE, cap - offset)
+    const q = `SELECT * FROM ${TABLE} ORDER BY CREATEDTIME DESC LIMIT ${take} OFFSET ${offset}`
+    const rows = await app.zcql().executeZCQLQuery(q)
+    out.push(...(rows || []).map(fromRow))
+    if (!rows || rows.length < take) break
+  }
+  return out
 }
 
 // Full conversation with one phone number. Uses the precomputed
@@ -132,7 +142,7 @@ export async function listMessagesForPhone(req, phoneNorm, { limit = 500 } = {})
   if (!phoneNorm) return []
   const safe = String(phoneNorm).replace(/'/g, "''")
   const app = catalyst.initialize(req, { type: 'advancedio' })
-  const q = `SELECT * FROM ${TABLE} WHERE thread_key = '${safe}' ORDER BY CREATEDTIME ASC LIMIT ${Math.min(Math.max(1, limit), 2000)}`
+  const q = `SELECT * FROM ${TABLE} WHERE thread_key = '${safe}' ORDER BY CREATEDTIME ASC LIMIT ${Math.min(Math.max(1, limit), 250)}`
   const rows = await app.zcql().executeZCQLQuery(q)
   return (rows || []).map(fromRow)
 }

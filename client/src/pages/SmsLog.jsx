@@ -67,7 +67,12 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
   const [newBody,   setNewBody]   = useState('')
 
   // From-number selector: 'local' (425) or 'tollfree' (844).
+  // 425 sending is HIDDEN until the A2P campaign is approved (Mark
+  // 2026-07-15) — carriers block its outbound texts, so offering it is
+  // a trap. Flip SHOW_LOCAL_LINE back to true when the campaign clears.
+  const SHOW_LOCAL_LINE = false
   const [fromLine, setFromLine] = useState(() => {
+    if (!SHOW_LOCAL_LINE) return 'tollfree'
     try { return localStorage.getItem('aa_sms_from_line') || 'local' } catch { return 'local' }
   })
   useEffect(() => {
@@ -241,11 +246,13 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
           <div className="flex items-center gap-2 flex-wrap">
             {/* From-number selector */}
             <div className="rounded-lg overflow-hidden text-xs font-semibold flex" style={{ border: `1px solid ${ORANGE}` }}>
+              {SHOW_LOCAL_LINE && (
               <button
                 onClick={() => setFromLine('local')}
                 className="px-3 py-1.5"
                 style={{ backgroundColor: fromLine === 'local' ? ORANGE : 'white', color: fromLine === 'local' ? 'white' : ORANGE }}
               >Local (425)</button>
+              )}
               <button
                 onClick={() => setFromLine('tollfree')}
                 className="px-3 py-1.5"
@@ -717,11 +724,13 @@ function DialModal({ fromLine, setFromLine, onClose, showToast, onDialed }) {
           <div>
             <label className="text-[11px] uppercase tracking-wider font-semibold" style={{ color: '#666' }}>Caller ID</label>
             <div className="rounded-lg overflow-hidden text-sm font-semibold flex mt-1" style={{ border: `1px solid ${ORANGE}` }}>
+              {SHOW_LOCAL_LINE && (
               <button
                 onClick={() => setFromLine('local')}
                 className="flex-1 py-2"
                 style={{ backgroundColor: fromLine === 'local' ? ORANGE : 'white', color: fromLine === 'local' ? 'white' : ORANGE }}
               >Local (425)</button>
+              )}
               <button
                 onClick={() => setFromLine('tollfree')}
                 className="flex-1 py-2"
