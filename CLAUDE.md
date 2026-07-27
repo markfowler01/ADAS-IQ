@@ -273,3 +273,8 @@ Report generation MOVED from quote creation to post-invoice.
 - **ROWID precision**: Catalyst Datastore ROWIDs > MAX_SAFE_INTEGER. Never `Number(rowId)` — always string.
 - **Zoho Mail large IDs**: same precision issue — use `safeParseMailResponse()` before JSON.parse.
 - **No FF after response**: `await Promise.all([email, cliq])` before `res.json()` — don't fire-and-forget.
+
+## Deploys (updated 2026-07-24)
+- **Prefer targeted deploys** — `catalyst deploy --only functions:adasiq-api` (backend) or `--only client` (frontend). Full 3-target deploys via `npm run deploy:staging` hang frequently on Zoho's upload service; targeted ones are fast and reliable. CLI upgraded to 1.27.0.
+- **`--only client` needs `client/dist/client-package.json`** — `npm run build` in client/ copies it; a bare `npx vite build` does NOT. If the deploy errors "client-package.json does not exist": `cp client/client-package.json client/dist/`.
+- Deploy watch pattern: background the deploy, kill + retry if no "DEPLOYMENT SUCCESSFUL" after ~12 min. Watch for "skipping deploy … 401, invalid oauth token" — an expired CLI token silently skips the function while the rest "succeeds".
