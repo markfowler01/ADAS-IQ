@@ -360,6 +360,18 @@ async function notifyReadyToInvoiceTesla(req, job) {
   catch (e) { console.warn('[aajobs ready_invoice tesla]', e.message) }
 }
 
+// Auto-dispatch (Mark 2026-07-24): a job created WITH a technician goes
+// straight into that tech's dispatched column — "Needs Dispatch" is
+// only for genuinely unassigned work. Matches full Zoho names too
+// ("Jayden Goshorn", "Mark Fowler"/"Mark Folwer"). Unknown names (Kat,
+// blank) return null → normal unassigned flow.
+function dispatchedStatusFor(technician) {
+  const t = String(technician || '').toLowerCase().trim()
+  if (t.startsWith('jay')) return 'dispatched_jaden'
+  if (t.startsWith('mark')) return 'dispatched_mark'
+  return null
+}
+
 // Parts-waiting notice to #aajobs (Mark 2026-07-13): when a job moves
 // into Pending/Waiting-on-Parts — shop, year make model, and the move.
 async function notifyPartsWaiting(req, job) {
@@ -424,7 +436,24 @@ router.get('/', async (req, res) => {
 // POST /api/jobs
 router.post('/', async (req, res) => {
   try {
-    const newJob = await insertJob(req, req.body)
+    // Auto-dispatch on create (Mark 2026-07-24): a technician on the
+    // job (Kat picked one creating it, or the quote carried one) sends
+    // it straight to their column with today's date — skipping the
+    // Needs Dispatch step. Tech-requested cards (via_request) keep
+    // their job_requested status for the Waiting-for-Kat flow.
+    const body = { ...req.body }
+    const autoStatus = dispatchedStatusFor(body.technician)
+    const autoDispatched = !body.via_request && autoStatus &&
+      (!body.status || body.status === 'need_dispatch')
+    if (autoDispatched) {
+      body.status = autoStatus
+      if (!body.scheduled_date) {
+        body.scheduled_date = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date())
+      }
+    }
+    const newJob = await insertJob(req, body)
 
     // Request from the Live Day "Request a Job" or "Request a Quote" form
     // → post to #aajobs. request_type: 'quote' | 'job' distinguishes them
@@ -462,7 +491,11 @@ router.post('/', async (req, res) => {
 
     // Notify dispatchers (Mark + Kat) + #technicians when a new job arrives at need_dispatch
     // (covers: Upload Report → Create Zoho Invoice, ManualQuoteScreen, any other direct job creation)
-    if (!req.body.via_request && (newJob.status === 'need_dispatch' || (!newJob.status && req.body.status === 'need_dispatch'))) {
+    if (autoDispatched) {
+      // Straight-to-tech: DM the assigned tech + #technicians instead
+      // of the Needs Dispatch alert.
+      await notifyJobDispatched(req, newJob)
+    } else if (!req.body.via_request && (newJob.status === 'need_dispatch' || (!newJob.status && req.body.status === 'need_dispatch'))) {
       await notifyNeedsDispatch(req, newJob)
     }
 
@@ -946,6 +979,11 @@ export async function performSyncQuotes(req) {
     // Fetch line items from the full estimate detail
     const lineItems = await getEstimateLineItems(est.estimate_id)
 
+    // Auto-dispatch (Mark 2026-07-24): a quote whose salesperson is a
+    // technician lands directly in that tech's column for the day.
+    // Only quotes with no recognizable tech hit Needs Dispatch.
+    const syncAutoStatus = dispatchedStatusFor(est.salesperson_name)
+
     const vehicle = [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' ')
     const newJob = await insertJob(req, {
       zoho_estimate_id: est.estimate_id,
@@ -961,16 +999,21 @@ export async function performSyncQuotes(req) {
       calibrations: JSON.stringify(lineItems),
       notes:        `Quote: ${est.estimate_number}`,
       report_url:   est.quote_url      || '',
-      status:       'need_dispatch',
+      status:       syncAutoStatus || 'need_dispatch',
       quote_number: est.estimate_number || '',
       quote_url:    est.quote_url       || '',
       folder_url:   est.cf_scan_report_and_documentation || '',
     })
     created++
 
-    // Notify dispatchers (Mark + Kat) + #technicians that a new job is ready to dispatch
+    // Assigned quote → DM the tech + #technicians. Unassigned → the
+    // Needs Dispatch alert to Mark + Kat.
     try {
-      await notifyNeedsDispatch(req, { ...newJob, vehicle })
+      if (syncAutoStatus) {
+        await notifyJobDispatched(req, { ...newJob, vehicle })
+      } else {
+        await notifyNeedsDispatch(req, { ...newJob, vehicle })
+      }
     } catch (notifErr) {
       console.warn('[jobs sync] notification failed:', notifErr.message)
     }
