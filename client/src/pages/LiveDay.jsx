@@ -210,7 +210,79 @@ function CapacityBar({ tech }) {
   )
 }
 
-function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList, customerNotes }) {
+// Checkable to-do list on each tech card (Mark 2026-07-24). Everyone
+// can view; tapping the circle toggles done; ✕ removes; input adds.
+function TodoSection({ techName, items, onSave }) {
+  const [draft, setDraft] = useState('')
+  const list = Array.isArray(items) ? items : []
+
+  function toggle(id) {
+    onSave(techName, list.map(t => (t.id === id ? { ...t, done: !t.done } : t)))
+  }
+  function remove(id) {
+    onSave(techName, list.filter(t => t.id !== id))
+  }
+  function add() {
+    const text = draft.trim()
+    if (!text) return
+    setDraft('')
+    onSave(techName, [...list, {
+      id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      text, done: false, created_at: new Date().toISOString(),
+    }])
+  }
+
+  const openCount = list.filter(t => !t.done).length
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#fafaf9', border: '1px solid #ebebeb' }}>
+      <div className="text-[10px] uppercase tracking-wider font-semibold mb-2"
+        style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
+        ✅ To-Do{openCount > 0 ? ` · ${openCount} open` : ''}
+      </div>
+      {list.length === 0 && (
+        <div className="text-xs mb-2" style={{ color: '#bbb' }}>Nothing on the list.</div>
+      )}
+      <div className="flex flex-col gap-1.5 mb-2">
+        {list.map(t => (
+          <div key={t.id} className="flex items-center gap-2">
+            <button
+              onClick={() => toggle(t.id)}
+              className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px]"
+              style={{
+                border: `2px solid ${t.done ? '#15803d' : '#ccc'}`,
+                backgroundColor: t.done ? '#15803d' : 'white',
+                color: 'white',
+              }}
+              title={t.done ? 'Mark not done' : 'Mark done'}
+            >{t.done ? '✓' : ''}</button>
+            <span className="flex-1 text-sm" style={{
+              color: t.done ? '#aaa' : '#1a1a1a',
+              textDecoration: t.done ? 'line-through' : 'none',
+            }}>{t.text}</span>
+            <button onClick={() => remove(t.id)}
+              className="text-xs px-1" style={{ color: '#ccc' }} title="Remove">✕</button>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') add() }}
+          placeholder="Add a task…"
+          className="flex-1 px-2.5 py-1.5 rounded-lg text-sm"
+          style={{ border: '1px solid #e5e7eb', backgroundColor: 'white' }}
+        />
+        <button onClick={add}
+          className="text-sm font-bold px-3 py-1.5 rounded-lg text-white"
+          style={{ backgroundColor: '#CD4419' }}>+</button>
+      </div>
+    </div>
+  )
+}
+
+function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList, customerNotes, techTodos, onSaveTodos }) {
   const color = TECH_COLOR[tech.name] || '#999'
   // Every tech on the board except this card's owner — reassign targets.
   const otherTechs = (techList || []).filter(n => n && n !== tech.name)
@@ -240,6 +312,15 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
 
       {/* Monthly bonus goal + jobs-today scoreboard */}
       <TechScoreboard tech={tech} viewerRole={viewerRole} />
+
+      {/* Per-tech to-do list — checkable from the card */}
+      {onSaveTodos && (
+        <TodoSection
+          techName={tech.name}
+          items={techTodos?.[String(tech.name || '').toLowerCase()]}
+          onSave={onSaveTodos}
+        />
+      )}
 
       {/* Capacity bar — progress toward the GET SOME!!! target */}
       <div className="mb-3">
@@ -500,6 +581,34 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       .then(j => setCustomerNotes(j.notes || {}))
       .catch(() => {})
   }, [])
+
+  // Per-tech to-do lists (Mark 2026-07-24) — keyed by lowercase tech
+  // name, checkable from the card, stored durably in AppConfig.
+  const [techTodos, setTechTodos] = useState({})
+  const loadTodos = useCallback(async () => {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/tech-todos`)
+      const j = await r.json()
+      if (r.ok) setTechTodos(j.todos || {})
+    } catch { /* non-critical */ }
+  }, [])
+  useEffect(() => { loadTodos() }, [loadTodos])
+
+  async function saveTodos(techName, items) {
+    const key = String(techName || '').toLowerCase()
+    setTechTodos(prev => ({ ...prev, [key]: items }))  // optimistic
+    try {
+      const r = await apiFetch(`${API_BASE}/api/tech-todos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ technician: techName, todos: items }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    } catch (e) {
+      showToast(`To-do save failed: ${e.message}`)
+      await loadTodos()  // resync on failure
+    }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -889,6 +998,8 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               onPendingParts={handlePendingParts}
               techList={(data?.techs || []).map(x => x.name)}
               customerNotes={customerNotes}
+              techTodos={techTodos}
+              onSaveTodos={saveTodos}
             />
           ))}
         </div>

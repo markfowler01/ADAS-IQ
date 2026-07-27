@@ -6,6 +6,7 @@ import authRouter, { verifyToken } from './routes/auth.js'
 import demoRouter from './routes/demo.js'
 import extractRouter from './routes/extract.js'
 import { cleanDescriptionsRouter } from './routes/cleanDescriptions.js'
+import { techTodosRouter } from './routes/techTodos.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
@@ -244,6 +245,7 @@ app.use('/api/feedback', requireAuth, feedbackRouter)
 app.use('/api/estimates', requireAuth, estimatesRouter)
 app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
+app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/books', requireAuth, booksRouter)
 
 // Webhook routes — no auth required (called by Zoho Books servers)
