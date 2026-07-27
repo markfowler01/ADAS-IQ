@@ -23,6 +23,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import crypto from 'crypto'
+import { getVal, setVal, deleteVal, readChunkedArray, writeChunkedArray } from './vanDatastore.js'
 
 // ─── HMAC signing for approve / kill URLs ─────────────────────────────────
 function hmacSecret() {
@@ -73,6 +74,16 @@ Collision shop owners and estimators. Busy, skeptical of vendors, drowning in em
 3. Not getting burned — liability, comebacks, missed calibrations
 Every email must connect to at least one of these three.
 
+Write for the person who signs the RO and fights the adjuster, not the person turning wrenches. If a takeaway reads like "when you calibrate, check X" — reframe it as "when you sublet a calibration, ask your shop about X." The reader hires ADAS work out. Never talk down to them.
+
+NARRATIVE PURPOSE (locked)
+The purpose of this newsletter is to turn shop owners and estimators into ADAS calibration customers — without ever pitching. The mechanism is Alex Hormozi-style value stacking: every issue delivers so much applied expertise for free that the reader eventually concludes "I need this person as my calibration partner" on their own.
+
+- Value stack per issue: one denied supplement caught, one bad-module swap avoided, one TSB nobody knew existed, one adjuster-defense line. Any one of those is worth $500+ to a shop. Over a year, that's 50+ five-hundred-dollar decisions handed over for zero cost. The reader must feel that trade in their gut.
+- Every issue should implicitly answer: "if I'm this shop, what do I lose by NOT having a calibration partner who thinks like this?"
+- NEVER pitch. Never say "hire us," "consider Absolute ADAS," "we can help." Every story demonstrates the specificity + judgment + industry access that IS what a shop would want from their calibration partner. The pitch IS the story.
+- Villain framing (per Marketing Master Prompt v3.1 doctrine): the villain is list-price sublet vendors who use the shop's bay, charge full retail, and hand the shop zero margin. Mark is the alternative. Let the stories imply it. Never state it outright.
+
 VOICE RULES
 - Write as Mark, first person, like he's talking to a shop owner across the counter. Plainspoken, direct, zero corporate polish.
 - Short sentences. Short paragraphs (1-3 sentences max).
@@ -115,10 +126,19 @@ Issue 4 of every cycle: include ONE soft ask, woven in naturally at the end (2-3
 You will be told the current issue number and, if it's an ask issue, which ask type to use.
 
 GUARDRAILS
-- Never fabricate cases, vehicles, shops, statistics, or OEM procedures.
+- Never fabricate cases, vehicles, shops, statistics, or OEM procedures WHEN A CASE NOTE IS PROVIDED. The case note is the ground truth.
 - Never name a client shop or identifiable customer unless explicitly given permission.
 - Never trash-talk competitors, insurers, or specific adjusters by name.
 - Reference OEM position statements or procedures only if provided in the case note. If uncertain, flag as [VERIFY: source needed].
+- Synthetic composites are permitted ONLY when explicitly told this is a NO-CASE-NOTE fallback (see SYNTHETIC MODE below). Every fabricated case must be based on real, common industry patterns Mark has seen many times (documented cases: Honda 2013-2016 camera solder failures, Toyota Prius no-DTC ROB data traps, Corolla Cross hybrid battery coolant, GM 2024+ BSM communication faults, Jeep GC L PEB/FCW lamp after radio update, Lexus BSM angle-off-in-metal-rich-cal-bay). In synthetic mode, DO NOT invent specific shop names, technician names, or fake OEM TSB numbers — describe the pattern generically so a real shop owner recognizes it as something they've likely seen.
+
+SYNTHETIC MODE (fallback when no case note is provided)
+When you are told "SYNTHETIC MODE — no case note provided," you are drafting a composite based on common ADAS field patterns Mark has seen. The route handler treats synthetic drafts identically to real ones — silence-approves, only a Kill click stops the send. Rules:
+- Draw from documented composite patterns (Honda camera solder failures, Toyota no-DTC ROB traps, GM 2024+ BSM comm faults, hybrid coolant surprises, etc). Pick ONE pattern.
+- Set is_synthetic to true in your response so Mark can tell at a glance.
+- Set notes_for_mark to begin with "🤖 SYNTHETIC — no case note provided this week. Composite draft based on the [pattern name] pattern Mark has seen many times." Then flag anything worth verifying.
+- The quality bar is HIGH — this draft ships by default unless Mark kills it. Write like you're one Kill click from an embarrassing send.
+- Voice + structure rules are unchanged.
 
 OUTPUT FORMAT — raw JSON only, no markdown fences:
 {
@@ -126,8 +146,9 @@ OUTPUT FORMAT — raw JSON only, no markdown fences:
   "preview_text": "string, 35-90 characters",
   "type": "value" or "soft-ask",
   "ask_type": null OR one of ["capacity","capability","referral"],
+  "is_synthetic": true only in SYNTHETIC MODE, otherwise false,
   "body_markdown": "string with the full email body. Use markdown-style bold with **word** for emphasis. Use double newlines between paragraphs. Do NOT include the subject, preview text, sign-off, footer, or unsubscribe language — those are added by the renderer.",
-  "notes_for_mark": "string, 1-3 sentences flagging anything Mark should verify, edit, or watch for. If the case note was thin, say so."
+  "notes_for_mark": "string, 1-3 sentences flagging anything Mark should verify, edit, or watch for. If the case note was thin, say so. In synthetic mode, begin with the 🤖 SYNTHETIC prefix (see SYNTHETIC MODE rules)."
 }`
 
 function client() {
@@ -146,11 +167,23 @@ function client() {
  * @returns {Promise<{subject, preview_text, type, ask_type, body_markdown, notes_for_mark}>}
  */
 export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType }) {
-  if (!caseNote || String(caseNote).trim().length < 20) {
-    throw new Error('case note too thin — need at least 20 chars of real field material')
-  }
+  const isSynthetic = !caseNote || String(caseNote).trim().length < 20
   const isAsk = Boolean(forcedAskType)
   const cyclePos = ((issueNumber - 1) % 4) + 1
+
+  const noteBlock = isSynthetic
+    ? [
+        `SYNTHETIC MODE — no case note provided.`,
+        `Generate a composite based on ONE common ADAS field pattern from the guardrails list.`,
+        `Set is_synthetic to true. Begin notes_for_mark with "🤖 SYNTHETIC — ..." per the SYNTHETIC MODE rules.`,
+      ].join('\n')
+    : [
+        `CASE NOTE FROM MARK:`,
+        `"""`,
+        String(caseNote).trim().slice(0, 3000),
+        `"""`,
+        `Set is_synthetic to false — this is Mark's own case (per feedback_van_cases_are_marks memory).`,
+      ].join('\n')
 
   const userMsg = [
     `THIS IS ISSUE #${issueNumber} — cycle position ${cyclePos} of 4.`,
@@ -158,10 +191,7 @@ export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType })
       ? `This is an ASK issue. Use ask_type "${forcedAskType}". Weave in ONE soft ask at the end (2-3 sentences), naturally.`
       : `This is a VALUE issue. No ask, no CTA. Set type to "value" and ask_type to null.`,
     ``,
-    `CASE NOTE FROM MARK:`,
-    `"""`,
-    String(caseNote).trim().slice(0, 3000),
-    `"""`,
+    noteBlock,
     ``,
     `Draft the issue now. Return raw JSON, no markdown fence.`,
   ].join('\n')
@@ -188,11 +218,14 @@ export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType })
   }
 }
 
-// ─── Case-note queue ──────────────────────────────────────────────────────
-// Chunk-free — cases are short (a few sentences each). Single blob under
-// `van_case_notes` in the cache segment the caller passes in.
+// ─── Case-note queue (Datastore) ──────────────────────────────────────────
+// Chunked under keys `van_case_notes_meta` + `van_case_notes_chunk_<N>` in
+// the VanKV Datastore table. Notes run 3-5KB each with framing; 5 per chunk
+// keeps each chunk well under the 30KB safe cap.
 
-export async function addCaseNote(segment, { note, source }) {
+const CASE_NOTE_CHUNK_SIZE = 5
+
+export async function addCaseNote(req, { note, source }) {
   const entry = {
     id: crypto.randomBytes(6).toString('base64url'),
     note: String(note || '').trim().slice(0, 5000),
@@ -203,73 +236,19 @@ export async function addCaseNote(segment, { note, source }) {
     used_by_issue: null,
   }
   if (entry.note.length < 20) throw new Error('note too short')
-  const list = await readCaseNotes(segment)
+  const list = await readCaseNotes(req)
   list.push(entry)
-  await writeCaseNotes(segment, list)
+  await writeCaseNotes(req, list)
   return entry
 }
 
-// Case notes are stored CHUNKED to stay under Catalyst's ~64KB per-value cap.
-// Meta lives at `van_case_notes` = {chunks, updated_at}, actual notes at
-// `van_case_notes_0`, `van_case_notes_1`, etc. Small chunk size (10 notes)
-// because notes are 2-4KB each with framing.
-// Empirically tuned: case notes run 3-5KB each with framing, and Catalyst's
-// actual cache value cap is well under the 64KB advertised. 3 per chunk keeps
-// each chunk around 10-15KB, safely under the limit.
-const CASE_NOTE_CHUNK_SIZE = 3
-
-export async function readCaseNotes(segment) {
-  try {
-    // Legacy single-blob path: try direct read first, fall through to chunked
-    // if the value is meta-shaped rather than an array. This lets us upgrade
-    // in place without a migration script.
-    const raw = await segment.getValue('van_case_notes')
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed)) return parsed  // legacy — will get re-chunked on next write
-    if (parsed && typeof parsed === 'object' && Number.isInteger(parsed.chunks)) {
-      const all = []
-      for (let i = 0; i < parsed.chunks; i++) {
-        try {
-          const chunkRaw = await segment.getValue(`van_case_notes_${i}`)
-          if (chunkRaw) {
-            const chunk = JSON.parse(chunkRaw)
-            if (Array.isArray(chunk)) all.push(...chunk)
-          }
-        } catch (e) {
-          if (!(e?.statusCode === 404 || e?.errorInfo?.statusCode === 404)) throw e
-        }
-      }
-      return all
-    }
-    return []
-  } catch (e) {
-    if (e?.statusCode === 404 || e?.errorInfo?.statusCode === 404) return []
-    throw e
-  }
+export async function readCaseNotes(req) {
+  return await readChunkedArray(req, 'van_case_notes')
 }
 
-async function writeCaseNotes(segment, list) {
-  // Hard-cap at 500 entries so the queue never grows unbounded.
-  const trimmed = list.slice(-500)
-  const chunks = Math.max(1, Math.ceil(trimmed.length / CASE_NOTE_CHUNK_SIZE))
-  for (let i = 0; i < chunks; i++) {
-    const chunk = trimmed.slice(i * CASE_NOTE_CHUNK_SIZE, (i + 1) * CASE_NOTE_CHUNK_SIZE)
-    const key = `van_case_notes_${i}`
-    const body = JSON.stringify(chunk)
-    try { await segment.update(key, body) }
-    catch { await segment.put(key, body) }
-  }
-  // Also clean up any stale chunks that used to exist but no longer do
-  // (e.g. after a big purge). Best-effort, ignore 404s.
-  for (let i = chunks; i < chunks + 10; i++) {
-    try { await segment.delete(`van_case_notes_${i}`) } catch { /* not there */ }
-  }
-  // Write meta last so a reader mid-write sees consistent state.
-  const meta = { chunks, count: trimmed.length, updated_at: new Date().toISOString() }
-  const metaBody = JSON.stringify(meta)
-  try { await segment.update('van_case_notes', metaBody) }
-  catch { await segment.put('van_case_notes', metaBody) }
+async function writeCaseNotes(req, list) {
+  const trimmed = Array.isArray(list) ? list.slice(-500) : []  // hard cap
+  return await writeChunkedArray(req, 'van_case_notes', trimmed, { chunkSize: CASE_NOTE_CHUNK_SIZE })
 }
 
 /**
@@ -284,8 +263,8 @@ export function pickNextCaseNote(list) {
   return unused[0]
 }
 
-export async function markCaseNoteUsed(segment, id, issueNumber) {
-  const list = await readCaseNotes(segment)
+export async function markCaseNoteUsed(req, id, issueNumber) {
+  const list = await readCaseNotes(req)
   let mutated = false
   for (let i = 0; i < list.length; i++) {
     if (list[i].id === id && !list[i].used) {
@@ -293,7 +272,7 @@ export async function markCaseNoteUsed(segment, id, issueNumber) {
       mutated = true
     }
   }
-  if (mutated) await writeCaseNotes(segment, list)
+  if (mutated) await writeCaseNotes(req, list)
   return mutated
 }
 
@@ -302,8 +281,8 @@ export async function markCaseNoteUsed(segment, id, issueNumber) {
  * auto-scheduled draft's committed state so the case note returns to the
  * queue for the next Sunday.
  */
-export async function unmarkCaseNoteUsed(segment, id, previousIssueNumber) {
-  const list = await readCaseNotes(segment)
+export async function unmarkCaseNoteUsed(req, id, previousIssueNumber) {
+  const list = await readCaseNotes(req)
   let mutated = false
   for (let i = 0; i < list.length; i++) {
     if (list[i].id === id && list[i].used_by_issue === previousIssueNumber) {
@@ -311,31 +290,25 @@ export async function unmarkCaseNoteUsed(segment, id, previousIssueNumber) {
       mutated = true
     }
   }
-  if (mutated) await writeCaseNotes(segment, list)
+  if (mutated) await writeCaseNotes(req, list)
   return mutated
 }
 
-// ─── Issue counter + ask rotation ─────────────────────────────────────────
+// ─── Issue counter + ask rotation (Datastore) ─────────────────────────────
 // `van_issue_state`: { next_issue_number, next_ask_type_index }
 // next_ask_type_index cycles through ASK_TYPES on every ask-issue send.
 
 const ASK_TYPES = ['capacity', 'capability', 'referral']
 
-export async function readIssueState(segment) {
-  try {
-    const v = await segment.getValue('van_issue_state')
-    if (v) return JSON.parse(v)
-  } catch (e) {
-    if (!(e?.statusCode === 404 || e?.errorInfo?.statusCode === 404)) throw e
-  }
+export async function readIssueState(req) {
+  const v = await getVal(req, 'van_issue_state')
+  if (v && typeof v === 'object') return v
   // Fresh install: Issue #1 already sent as Cadillac Lyriq, so next is #2.
-  // If Mark wants to reset, POST /van/reset-issue-state.
   return { next_issue_number: 2, next_ask_type_index: 0 }
 }
 
-export async function writeIssueState(segment, state) {
-  try { await segment.update('van_issue_state', JSON.stringify(state)) }
-  catch { await segment.put('van_issue_state', JSON.stringify(state)) }
+export async function writeIssueState(req, state) {
+  return await setVal(req, 'van_issue_state', state)
 }
 
 /**
@@ -356,30 +329,25 @@ export function computeIssueSlot(issueNumber, askIndex, asksOn = false) {
   return { cyclePos, type: 'value', askType: null }
 }
 
-// ─── Cache-backed feature flags ───────────────────────────────────────────
-// The env-var-driven kill switches (`VAN_NURTURE_ENABLED`, `VAN_WEEKLY_ENABLED`,
-// `VAN_WEEKLY_ASKS_ENABLED`) work fine when there's headroom in the function's
-// env var slots. On instances where env vars are maxed out, the same booleans
-// are stored under `van_flag_<name>` in the Catalyst cache and flipped via
-// POST /from-the-van/flags. Cache overrides env var; missing = false.
+// ─── Datastore-backed feature flags ───────────────────────────────────────
+// All three flags live in a single JSON blob under key `van_flags` in the
+// VanKV Datastore table (see services/vanDatastore.js). Datastore is used
+// instead of Cache because cache values expire at 48h max — flags flipped
+// last week silently reverted, killing all Van sends between then and now.
+// Env vars are still honored as a FALLBACK when the Datastore value is
+// missing, for backwards compatibility.
 
-/**
- * Read a Van feature flag. Priority: cache value → env var → false.
- * @param {*} segment Catalyst cache segment
- * @param {string} flagName one of 'nurture', 'weekly', 'weekly_asks'
- */
-export async function isVanFlagEnabled(segment, flagName) {
-  const key = `van_flag_${flagName}`
-  try {
-    const v = await segment.getValue(key)
-    if (v === 'true') return true
-    if (v === 'false') return false
-    // any other value = fall through to env
-  } catch (e) {
-    if (!(e?.statusCode === 404 || e?.errorInfo?.statusCode === 404)) {
-      console.warn(`[vanFlag ${flagName}] cache read error, falling back to env:`, e.message)
-    }
-  }
+const FLAG_NAMES = ['nurture', 'weekly', 'weekly_asks']
+
+async function readFlagsBlob(req) {
+  const v = await getVal(req, 'van_flags')
+  return v && typeof v === 'object' ? v : {}
+}
+
+/** Check a single Van feature flag. Datastore → env var → false. */
+export async function isVanFlagEnabled(req, flagName) {
+  const flags = await readFlagsBlob(req)
+  if (typeof flags[flagName] === 'boolean') return flags[flagName]
   const envName = flagName === 'weekly_asks' ? 'VAN_WEEKLY_ASKS_ENABLED'
                 : flagName === 'weekly'      ? 'VAN_WEEKLY_ENABLED'
                 : flagName === 'nurture'     ? 'VAN_NURTURE_ENABLED'
@@ -387,54 +355,42 @@ export async function isVanFlagEnabled(segment, flagName) {
   return String(process.env[envName] || '').toLowerCase() === 'true'
 }
 
-/**
- * Write a Van feature flag to the cache. Value is normalized to 'true'/'false'.
- */
-export async function setVanFlag(segment, flagName, value) {
-  const key = `van_flag_${flagName}`
-  const v = value === true || value === 'true' ? 'true' : 'false'
-  try { await segment.update(key, v) }
-  catch { await segment.put(key, v) }
-  return { flag: flagName, value: v === 'true' }
+/** Set a single Van feature flag. Persists to Datastore. */
+export async function setVanFlag(req, flagName, value) {
+  const bool = value === true || value === 'true'
+  const flags = await readFlagsBlob(req)
+  flags[flagName] = bool
+  await setVal(req, 'van_flags', flags)
+  return { flag: flagName, value: bool }
 }
 
-/**
- * Read ALL supported Van flags at once — used by the /flags admin endpoint.
- */
-export async function readAllVanFlags(segment) {
-  const flags = ['nurture', 'weekly', 'weekly_asks']
+/** Read ALL supported Van flags — used by the /flags admin endpoint. */
+export async function readAllVanFlags(req) {
+  const flags = await readFlagsBlob(req)
   const out = {}
-  for (const f of flags) {
-    out[f] = await isVanFlagEnabled(segment, f)
+  for (const f of FLAG_NAMES) {
+    out[f] = typeof flags[f] === 'boolean' ? flags[f] : await isVanFlagEnabled(req, f)
   }
   return out
 }
 
-// ─── Pending draft I/O ────────────────────────────────────────────────────
+// ─── Pending draft I/O (Datastore) ────────────────────────────────────────
 // Only ONE draft can be pending at a time. If Mark hasn't acted on last
 // week's draft when Sunday rolls around, we bail loudly rather than
 // silently overwriting.
 
 const PENDING_KEY = 'van_pending_draft'
 
-export async function readPendingDraft(segment) {
-  try {
-    const v = await segment.getValue(PENDING_KEY)
-    return v ? JSON.parse(v) : null
-  } catch (e) {
-    if (e?.statusCode === 404 || e?.errorInfo?.statusCode === 404) return null
-    throw e
-  }
+export async function readPendingDraft(req) {
+  return await getVal(req, PENDING_KEY)
 }
 
-export async function writePendingDraft(segment, draft) {
-  try { await segment.update(PENDING_KEY, JSON.stringify(draft)) }
-  catch { await segment.put(PENDING_KEY, JSON.stringify(draft)) }
+export async function writePendingDraft(req, draft) {
+  return await setVal(req, PENDING_KEY, draft)
 }
 
-export async function clearPendingDraft(segment) {
-  try { await segment.delete(PENDING_KEY) }
-  catch { /* already gone */ }
+export async function clearPendingDraft(req) {
+  await deleteVal(req, PENDING_KEY)
 }
 
 // ─── Scheduling helpers ───────────────────────────────────────────────────

@@ -254,6 +254,54 @@ export async function sendVanBroadcast(id, scheduledAt) {
 }
 
 /**
+ * List recent emails sent via Resend's /emails endpoint. Paginated —
+ * fetches up to `maxPages` pages of `limit` results. Used to reconstruct
+ * Magic Lantern nurture_sent state after Cache evaporation lost it.
+ *
+ * @param {Object} opts
+ * @param {number} [opts.limit=100]    per-page cap (Resend max)
+ * @param {number} [opts.maxPages=20]  hard stop so we never run forever
+ * @param {number} [opts.sinceDaysAgo] skip pages older than N days (rough — filters after fetch)
+ * @returns {Promise<Array<{id, to, from, subject, created_at, last_event}>>}
+ */
+export async function listRecentResendSends({ limit = 100, maxPages = 20, sinceDaysAgo = 30 } = {}) {
+  const all = []
+  let after = null
+  const cutoff = sinceDaysAgo ? Date.now() - sinceDaysAgo * 86400000 : 0
+  for (let page = 0; page < maxPages; page++) {
+    const params = { limit }
+    if (after) params.after = after
+    const res = await axios.get(`${RESEND_API}/emails`, {
+      headers: auth(),
+      params,
+      timeout: 15000,
+      validateStatus: s => s < 500,
+    })
+    if (res.status !== 200 || !Array.isArray(res.data?.data)) {
+      // Not fatal — some Resend accounts don't have list-emails enabled
+      return all.length ? all : { ok: false, error: `Resend ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}` }
+    }
+    const rows = res.data.data
+    for (const r of rows) {
+      const created = Date.parse(r.created_at || 0)
+      if (created && cutoff && created < cutoff) return all  // past the cutoff — stop
+      all.push({
+        id: r.id,
+        to: Array.isArray(r.to) ? r.to : [r.to],
+        from: r.from,
+        subject: r.subject,
+        created_at: r.created_at,
+        last_event: r.last_event,
+      })
+    }
+    if (!res.data.has_more) break
+    after = rows[rows.length - 1]?.id
+    if (!after) break
+  }
+  return all
+}
+
+/**
  * List all subscribers in the "From the Van" audience.
  */
 export async function listVanSubscribers() {
