@@ -2504,6 +2504,86 @@ captureCalcRouter.all('/debug/run-scheduler', async (req, res) => {
 // function's own secret. Whitelisted to the recovery-relevant cron endpoints
 // so it can't be used to invoke arbitrary auth-gated routes.
 // REMOVE on or after 2026-06-09 (debug endpoints kept for 14 days post-outage).
+// ── LINKEDIN OUTREACH (wingman, not a bot) ─────────────────────────────────
+// Weekday-morning Cliq card: ~10 CRM shops to connect with, each with a
+// LinkedIn people-search link + ready-to-paste invite note in Mark's voice.
+// MARK sends everything by hand on linkedin.com — nothing here automates
+// LinkedIn (that's how the IG account died). See services/linkedInOutreach.js.
+captureCalcRouter.all('/li-outreach/run', heartbeatAttempt('li_outreach'), requireCronSecretFlex, async (req, res) => {
+  try {
+    const dayPt = new Date().toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+    if (['Sat', 'Sun'].includes(dayPt) && req.query.force !== '1') {
+      await stampSuccess(req, 'li_outreach', { skipped: 'weekend' })
+      return res.json({ ok: true, skipped: true, reason: 'weekend' })
+    }
+    const { pickOutreachBatch, draftInviteNotes, formatOutreachCard, readOutreachState, writeOutreachState } =
+      await import('../services/linkedInOutreach.js')
+    const { getAllShops } = await import('./shops.js')
+
+    const dry = req.query.dry === '1'
+    const count = Math.max(1, Math.min(15, Number(req.query.count) || 10))
+    const shops = await getAllShops(req)
+    const state = await readOutreachState(req)
+    const batch = pickOutreachBatch({ shops, state, count })
+    if (!batch.length) {
+      await stampSuccess(req, 'li_outreach', { skipped: 'list exhausted' })
+      return res.json({ ok: true, skipped: true, reason: 'no un-suggested shops left', total_shops: shops.length })
+    }
+    const items = await draftInviteNotes({ targets: batch })
+    const card = formatOutreachCard({ items })
+    if (!dry) {
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, card)
+      const suggested = { ...(state.suggested || {}) }
+      const now = new Date().toISOString()
+      for (const t of items) suggested[t.shop_id] = now
+      await writeOutreachState(req, { ...state, suggested })
+    }
+    await stampSuccess(req, 'li_outreach', { sent: items.length, dry })
+    res.json({ ok: true, dry, count: items.length, items: dry ? items : items.map(t => ({ shop: t.shop_name, contact: t.contact_name })) })
+  } catch (e) {
+    await reportCronFailure(req, 'li_outreach', e)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Phone-friendly form: paste a new connection's name, get a welcome DM draft
+// to copy into LinkedIn. Text generation only — no auth needed, nothing to leak.
+captureCalcRouter.all('/debug/li-welcome', async (req, res) => {
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  let draftHtml = ''
+  const name = String(req.body?.name || req.query.name || '').trim()
+  const company = String(req.body?.company || req.query.company || '').trim()
+  const context = String(req.body?.context || req.query.context || '').trim()
+  if (name) {
+    try {
+      const { draftWelcomeMessage } = await import('../services/linkedInOutreach.js')
+      const message = await draftWelcomeMessage({ name, company, context })
+      draftHtml = `<label>Draft — long-press to copy</label>
+        <textarea id="out" rows="5" readonly onclick="this.select()">${esc(message)}</textarea>
+        <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('out').value).then(()=>this.textContent='Copied ✓')">Copy</button>`
+    } catch (e) {
+      draftHtml = `<p style="color:#b91c1c">Draft failed: ${esc(e.message)}</p>`
+    }
+  }
+  res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LinkedIn Welcome — Absolute ADAS</title><style>
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#f5f5f5;margin:0;padding:24px;max-width:520px;margin:0 auto}
+h1{font-size:20px}h1 span{color:#CD4419}
+label{display:block;font-size:13px;color:#9ca3af;margin:14px 0 4px}
+input,textarea{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #333;background:#1a1a1a;color:#f5f5f5;font-size:16px}
+button{margin-top:14px;width:100%;padding:14px;border:0;border-radius:8px;background:#CD4419;color:#fff;font-size:16px;font-weight:700}
+</style></head><body>
+<h1>Absolute <span>ADAS</span> — LinkedIn welcome</h1>
+<form method="POST">
+<label>Their name</label><input name="name" value="${esc(name)}" placeholder="Jake Arnold" required>
+<label>Company (optional)</label><input name="company" value="${esc(company)}" placeholder="Gerber Collision, Tacoma">
+<label>Anything to work in? (optional)</label><input name="context" value="${esc(context)}" placeholder="commented on the van post">
+<button type="submit">Draft the message</button>
+</form>
+${draftHtml}
+</body></html>`)
+})
+
 const DEBUG_FORWARD_WHITELIST = {
   'draft-meta-week':     '/api/capture-calc/meta/draft-week?force=1',
   'draft-meta-day':      '/api/capture-calc/meta/draft-day',
@@ -2517,6 +2597,7 @@ const DEBUG_FORWARD_WHITELIST = {
   'van-draft-day':       '/api/capture-calc/van/draft-day',
   'weekly-run':          '/api/capture-calc/report/weekly?force=1',
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
+  'li-outreach-run':     '/api/capture-calc/li-outreach/run',
 }
 async function debugForward(req, res, target) {
   const secret = process.env.BREW_CRON_SECRET
@@ -2581,6 +2662,7 @@ captureCalcRouter.all('/debug/brew-run-bonus',      (req, res) => debugForward(r
 captureCalcRouter.all('/debug/van-draft-day',       (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['van-draft-day']))
 captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
+captureCalcRouter.all('/debug/li-outreach-run',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-outreach-run']))
 
 // TEMP DEBUG — generate one meta-drafter slot and return text + image_prompt.
 // No enqueue, no image gen, no cost beyond one Claude call. Used to verify
@@ -2864,6 +2946,7 @@ captureCalcRouter.get('/debug/setup-crons', async (req, res) => {
         { cron_name: 'aa_drafters_r2',      path: 'draft-meta-day',  type: 'daily', hour: 6, minute: 17 },
         { cron_name: 'aa_drafters_r3',      path: 'draft-meta-day',  type: 'daily', hour: 6, minute: 21 },
         { cron_name: 'aa_daily_tasks',      path: 'engagement-run',  type: 'daily', hour: 6, minute: 23 },
+        { cron_name: 'aa_li_outreach',      path: 'li-outreach-run', type: 'daily', hour: 7, minute: 45 },
         { cron_name: 'aa_holiday_poster',   path: 'holiday-poster-run', type: 'daily', hour: 6, minute: 27 },
         { cron_name: 'aa_li_comments',      path: 'li-comments-check', type: 'daily', hour: 8, minute: 15 },
         { cron_name: 'aa_weekly_report',    path: 'weekly-run',      type: 'weekly', hour: 7, minute: 17, weekDay: 6 }, // Catalyst week_day: 1=Sun … 6=Fri

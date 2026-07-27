@@ -32,6 +32,7 @@ export const CRON_NAMES = [
   'cron_monitor',
   'holiday_poster',
   'li_comments',
+  'li_outreach',
   'van_post',
 ]
 
