@@ -209,6 +209,29 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     setCreatingJob(true)
     setInvoiceError(null)
     try {
+      // Carry the Kinetic source PDF along (Mark 2026-07-27) so the
+      // server can drop it in the job's WorkDrive folder next to the
+      // Absolute ADAS report — this path used to lose it.
+      let pdfBase64 = null
+      let pdfFilename = null
+      if (pdfFile) {
+        try {
+          pdfBase64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => {
+              const result = reader.result || ''
+              const base64 = result.includes(',') ? result.split(',')[1] : result
+              base64 ? resolve(base64) : reject(new Error('empty PDF read'))
+            }
+            reader.onerror = reject
+            reader.readAsDataURL(pdfFile)
+          })
+          pdfFilename = pdfFile.name
+        } catch (e) {
+          console.warn('PDF read failed — creating job without Kinetic upload:', e.message)
+        }
+      }
+
       const payload = {
         customerName: selectedCustomer?.name || null,
         shop: jobData.shop,
@@ -220,6 +243,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         make: jobData.make,
         model: jobData.model,
         calibrations: selected.map(({ _id, ...rest }) => rest),
+        pdfBase64,
+        pdfFilename,
       }
       const res = await apiFetch(`${API_BASE}/api/books/from-extract`, {
         method: 'POST',

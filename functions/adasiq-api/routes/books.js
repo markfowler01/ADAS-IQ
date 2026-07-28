@@ -178,7 +178,7 @@ export async function generateAndUploadReport(req, { job, invoices }) {
       } catch {}
     }
 
-    return { pdfBuffer, filename, uploaded: !!folderId }
+    return { pdfBuffer, filename, uploaded: !!folderId, folderId: folderId || null }
   } catch (err) {
     console.error('[report] generateAndUploadReport failed (non-fatal):', err.message)
     return null

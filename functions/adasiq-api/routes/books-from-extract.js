@@ -253,7 +253,7 @@ router.post('/from-extract', async (req, res) => {
     // fails the invoicing response.
     try {
       const { generateAndUploadReport } = await import('./books.js')
-      await generateAndUploadReport(req, {
+      const reportResult = await generateAndUploadReport(req, {
         job: {
           shop_name:    invoice.customer_name,
           quote_number: payload.ro_number || invoice.invoice_number || '',
@@ -269,6 +269,25 @@ router.post('/from-extract', async (req, res) => {
         },
         invoices: [invoice],
       })
+
+      // Kinetic source report (Mark 2026-07-27: "I want both the Kinetic
+      // report and the Absolute ADAS report in the WorkDrive folder") —
+      // upload the original scan PDF into the SAME folder the ADAS
+      // report just landed in.
+      if (payload.pdfBase64 && reportResult?.folderId) {
+        try {
+          const { uploadFileToFolder } = await import('../services/workdrive.js')
+          const { getAccessToken } = await import('../services/zoho.js')
+          const token = await getAccessToken()
+          const kineticName = String(payload.pdfFilename || '').trim()
+            || `Kinetic-Report-${payload.ro_number || invoice.invoice_number || 'scan'}.pdf`
+          const buf = Buffer.from(String(payload.pdfBase64), 'base64')
+          await uploadFileToFolder(reportResult.folderId, kineticName, buf, token)
+          console.log(`[books/from-extract] Kinetic PDF uploaded: ${kineticName}`)
+        } catch (e) {
+          console.warn('[books/from-extract] Kinetic PDF upload failed (non-fatal):', e.message)
+        }
+      }
     } catch (e) {
       console.warn('[books/from-extract] report generation failed (non-fatal):', e.message)
     }
