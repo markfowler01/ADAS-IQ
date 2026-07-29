@@ -307,6 +307,18 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] invoice-sweep piggyback failed (non-fatal):', e.message)
   }
 
+  // WorkDrive link watchdog (Mark 2026-07-27: "make sure this is fixed
+  // once and for all") — hourly piggyback; the dedicated endpoint was
+  // never scheduled in the console. Alerts Mark's channel on internal-
+  // only OR missing folder links; silent when healthy.
+  try {
+    const { runWorkdriveHealth } = await import('../services/workdriveHealth.js')
+    const wd = await runWorkdriveHealth(req)
+    if (wd.broken || wd.missing) console.log('[postscan] workdrive health:', JSON.stringify(wd))
+  } catch (e) {
+    console.warn('[postscan] workdrive-health piggyback failed (non-fatal):', e.message)
+  }
+
   res.json({
     ok: true,
     processed: processed.length,

@@ -298,51 +298,11 @@ app.post('/api/cron/workdrive-health', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' })
   }
   try {
-    // Alert delivery FIXED 2026-07-27: this used to postToCliqUser(Mark)
-    // which ALWAYS silently failed (Cliq blocks self-DMs from Mark's own
-    // token) — the watchdog barked into the void. Post to Mark's alert
-    // channel instead.
-    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./services/cliq.js')
-    const jobs = await readJobsPublic(req)
-
-    // Jobs with internal WorkDrive URLs — public link was never created or failed
-    const broken = jobs.filter(j =>
-      j.folder_url &&
-      j.folder_url.includes('workdrive.zoho.com/folder/') &&
-      !j.folder_url.includes('zohoexternal.com')
-    )
-
-    // NEW 2026-07-27: active jobs with NO folder link at all — the
-    // failure mode the old check couldn't see (from-extract jobs were
-    // created without folder_url, so nothing looked "broken").
-    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000
-    const missing = jobs.filter(j =>
-      !j.folder_url &&
-      /^(dispatched_|pending_parts|ready_invoice|complete)/.test(j.status || '') &&
-      new Date(j.created_at || 0).getTime() > cutoff
-    )
-
-    if (broken.length > 0 || missing.length > 0) {
-      const line = j => {
-        const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
-        return `• ${j.shop_name || 'Unknown'} — ${vehicle} (RO# ${j.invoice_number || j.quote_number || j.id})`
-      }
-      const msg = [
-        `⚠️ *WorkDrive health check*`,
-        broken.length ? `${broken.length} job${broken.length > 1 ? 's' : ''} with internal-only links (not public):` : null,
-        ...broken.slice(0, 8).map(line),
-        missing.length ? `${missing.length} active job${missing.length > 1 ? 's' : ''} with NO folder link:` : null,
-        ...missing.slice(0, 8).map(line),
-        '',
-        'Tap "Open in WorkDrive" on each card to create/repair the public link.',
-      ].filter(l => l !== null).join('\n')
-      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg)
-      console.log(`[workdrive-health] broken=${broken.length} missing=${missing.length} — Cliq alert sent`)
-    } else {
-      console.log('[workdrive-health] All job WorkDrive links look healthy ✅')
-    }
-
-    res.json({ ok: true, broken: broken.length, missing: missing.length })
+    // Logic lives in services/workdriveHealth.js so the hourly postscan
+    // cron runs the same check (this endpoint was never scheduled).
+    const { runWorkdriveHealth } = await import('./services/workdriveHealth.js')
+    const result = await runWorkdriveHealth(req)
+    res.json({ ok: true, ...result })
   } catch (err) {
     console.error('[workdrive-health]', err.message)
     res.status(500).json({ error: err.message })
