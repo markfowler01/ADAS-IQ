@@ -273,6 +273,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             scheduled_date: new Date().toISOString().split('T')[0],
             calibrations: JSON.stringify(calList),
             notes: `RO#: ${jobData.ro_number || ''} | Absolute ADAS Invoice: ${data.invoice?.invoice_number || ''}`,
+            // Reuse the EXACT folder the reports just landed in (Mark
+            // 2026-07-27) — public zohoexternal link, so the card's
+            // WorkDrive button never hunts for (or creates) a second
+            // folder and outside users can open it.
+            folder_url: data.folder_url || '',
+            quote_number: jobData.ro_number || '',
             status: 'need_dispatch',
           }),
         })

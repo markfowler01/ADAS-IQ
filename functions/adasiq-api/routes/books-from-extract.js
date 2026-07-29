@@ -243,6 +243,9 @@ router.post('/from-extract', async (req, res) => {
       created_at: now.toISOString(),
     }
 
+    let folderUrl = ''
+    let folderId = null
+
     invoices.push(invoice)
     await writeInvoices(req, invoices)
 
@@ -274,6 +277,9 @@ router.post('/from-extract', async (req, res) => {
       // report and the Absolute ADAS report in the WorkDrive folder") —
       // upload the original scan PDF into the SAME folder the ADAS
       // report just landed in.
+      folderUrl = reportResult?.folderShareUrl || ''
+      folderId  = reportResult?.folderId || null
+
       if (payload.pdfBase64 && reportResult?.folderId) {
         try {
           const { uploadFileToFolder } = await import('../services/workdrive.js')
@@ -292,9 +298,24 @@ router.post('/from-extract', async (req, res) => {
       console.warn('[books/from-extract] report generation failed (non-fatal):', e.message)
     }
 
+    // Stamp the PUBLIC folder link on the invoice record (Mark
+    // 2026-07-27: "the link added to the invoice needs to be an
+    // external link") so anything rendering the invoice links the
+    // zohoexternal.com URL outside users can open.
+    if (folderUrl) {
+      try {
+        invoice.folder_url = folderUrl
+        await writeInvoices(req, invoices)  // invoices array already holds this invoice by reference
+      } catch (e) {
+        console.warn('[books/from-extract] invoice folder_url stamp failed (non-fatal):', e.message)
+      }
+    }
+
     res.json({
       ok: true,
       invoice,
+      folder_url: folderUrl,
+      folder_id: folderId ? String(folderId) : '',
       matched_shop: shop ? { id: shop.id, shop_name: shop.shop_name } : null,
       applied_billing_rules: !!rules,
       unmatched_calibrations: lineItems

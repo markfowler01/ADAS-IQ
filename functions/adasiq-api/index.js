@@ -298,7 +298,11 @@ app.post('/api/cron/workdrive-health', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' })
   }
   try {
-    const { postToCliqUser, TECH_CLIQ_IDS } = await import('./services/cliq.js')
+    // Alert delivery FIXED 2026-07-27: this used to postToCliqUser(Mark)
+    // which ALWAYS silently failed (Cliq blocks self-DMs from Mark's own
+    // token) — the watchdog barked into the void. Post to Mark's alert
+    // channel instead.
+    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./services/cliq.js')
     const jobs = await readJobsPublic(req)
 
     // Jobs with internal WorkDrive URLs — public link was never created or failed
@@ -308,25 +312,37 @@ app.post('/api/cron/workdrive-health', async (req, res) => {
       !j.folder_url.includes('zohoexternal.com')
     )
 
-    if (broken.length > 0) {
-      const lines = broken.slice(0, 10).map(j => {
+    // NEW 2026-07-27: active jobs with NO folder link at all — the
+    // failure mode the old check couldn't see (from-extract jobs were
+    // created without folder_url, so nothing looked "broken").
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000
+    const missing = jobs.filter(j =>
+      !j.folder_url &&
+      /^(dispatched_|pending_parts|ready_invoice|complete)/.test(j.status || '') &&
+      new Date(j.created_at || 0).getTime() > cutoff
+    )
+
+    if (broken.length > 0 || missing.length > 0) {
+      const line = j => {
         const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
         return `• ${j.shop_name || 'Unknown'} — ${vehicle} (RO# ${j.invoice_number || j.quote_number || j.id})`
-      })
+      }
       const msg = [
-        `⚠️ WorkDrive health check: ${broken.length} job${broken.length > 1 ? 's' : ''} have internal-only links (no public access).`,
+        `⚠️ *WorkDrive health check*`,
+        broken.length ? `${broken.length} job${broken.length > 1 ? 's' : ''} with internal-only links (not public):` : null,
+        ...broken.slice(0, 8).map(line),
+        missing.length ? `${missing.length} active job${missing.length > 1 ? 's' : ''} with NO folder link:` : null,
+        ...missing.slice(0, 8).map(line),
         '',
-        ...lines,
-        '',
-        'Open each job card in Absolute ADAS and tap "Fix Link" to regenerate the public URL.',
-      ].join('\n')
-      await postToCliqUser(TECH_CLIQ_IDS.Mark, msg)
-      console.log(`[workdrive-health] Found ${broken.length} jobs with broken share links — Cliq alert sent`)
+        'Tap "Open in WorkDrive" on each card to create/repair the public link.',
+      ].filter(l => l !== null).join('\n')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg)
+      console.log(`[workdrive-health] broken=${broken.length} missing=${missing.length} — Cliq alert sent`)
     } else {
       console.log('[workdrive-health] All job WorkDrive links look healthy ✅')
     }
 
-    res.json({ ok: true, broken: broken.length })
+    res.json({ ok: true, broken: broken.length, missing: missing.length })
   } catch (err) {
     console.error('[workdrive-health]', err.message)
     res.status(500).json({ error: err.message })
