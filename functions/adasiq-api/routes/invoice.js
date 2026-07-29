@@ -94,7 +94,7 @@ async function appendHistory(entry, req) {
 }
 
 router.post('/', async (req, res) => {
-  const { customerId, customerName, salespersonId, salespersonName, shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, pdfBase64, pdfFilename, notes } = req.body
+  const { customerId, customerName, salespersonId, salespersonName, shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, pdfBase64, pdfFilename, notes, known_folder_id, known_folder_url } = req.body
 
   // Demo mode — return a realistic-looking fake invoice without hitting Zoho Books
   if (req.user?.demo) {
@@ -132,6 +132,8 @@ router.post('/', async (req, res) => {
       pdfBase64: pdfBase64 || null,
       pdfFilename: pdfFilename || null,
       notes: notes || null,
+      known_folder_id: known_folder_id || null,
+      known_folder_url: known_folder_url || null,
     })
 
     // Auto-save enabled calibrations as rules to grow the DB over time (non-blocking)

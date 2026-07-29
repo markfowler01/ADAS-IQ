@@ -29,6 +29,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
   const [kanbanWarning, setKanbanWarning] = useState(null)
+  // One WorkDrive folder per job (Mark 2026-07-29): whichever button
+  // runs first records the folder here; the other button reuses it.
+  const [sharedFolder, setSharedFolder] = useState(null)
 
   const selected = calibrations.filter((c) => c.enabled)
   const removed = calibrations.filter((c) => !c.enabled)
@@ -124,6 +127,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         calibrations: selected.map(({ _id, ...rest }) => rest),
         pdfBase64,
         pdfFilename,
+        known_folder_id: sharedFolder?.id || null,
+        known_folder_url: sharedFolder?.url || null,
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
@@ -133,6 +138,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`)
       setInvoiceResult(data)
+      if (data.folderId || data.shareLink || data.folderUrl) {
+        setSharedFolder({ id: data.folderId || null, url: data.shareLink || data.folderUrl || '' })
+      }
 
       // Save to server history (fire-and-forget)
       try {
@@ -245,6 +253,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         calibrations: selected.map(({ _id, ...rest }) => rest),
         pdfBase64,
         pdfFilename,
+        folder_id: sharedFolder?.id || null,
+        folder_url: sharedFolder?.url || null,
       }
       const res = await apiFetch(`${API_BASE}/api/books/from-extract`, {
         method: 'POST',
@@ -254,6 +264,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`)
       setJobResult(data)
+      if (data.folder_id || data.folder_url) {
+        setSharedFolder(prev => ({ id: data.folder_id || prev?.id || null, url: data.folder_url || prev?.url || '' }))
+      }
 
       // Also auto-create a Kanban ticket so the job flows like any other
       try {
@@ -277,7 +290,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             // 2026-07-27) — public zohoexternal link, so the card's
             // WorkDrive button never hunts for (or creates) a second
             // folder and outside users can open it.
-            folder_url: data.folder_url || '',
+            folder_url: data.folder_url || sharedFolder?.url || '',
             quote_number: jobData.ro_number || '',
             status: 'need_dispatch',
           }),

@@ -28,8 +28,9 @@ export async function generateAndUploadReport(req, { job, invoices }) {
   try {
     const token = await getWdToken()
 
-    // 1. Resolve WorkDrive folder — use existing or search for one
-    let folderId = null
+    // 1. Resolve WorkDrive folder — explicit id from the caller wins
+    // (the other create-button's folder), then existing, then search.
+    let folderId = job.workdrive_folder_id ? String(job.workdrive_folder_id) : null
     let folderUrl = job.folder_url || ''
 
     if (folderUrl && folderUrl.includes('zohoexternal.com')) {
@@ -53,9 +54,13 @@ export async function generateAndUploadReport(req, { job, invoices }) {
       } catch {}
     }
     if (!folderId) {
-      // Create a new folder
-      const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
-      const folderName = `${roMatch || 'Job'} — ${job.shop_name || ''} — ${vehicle}`.slice(0, 80)
+      // Create a new folder. Name with the FULL RO (e.g. "24626.1", not
+      // the regex-truncated digits) and strip the scan-timestamp junk
+      // the extractor sometimes leaves in the vehicle string.
+      const fullRO = String(job.quote_number || roMatch || '').trim() || roMatch
+      const vehicle = (job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' '))
+        .replace(/\s*\d{2}-\d{2}-\d{4}[\s\d:.]*$/, '').trim()
+      const folderName = `${fullRO || 'Job'} — ${job.shop_name || ''} — ${vehicle}`.slice(0, 80)
       try {
         const f = await createJobFolder(folderName, token)
         if (f?.folderId) folderId = f.folderId

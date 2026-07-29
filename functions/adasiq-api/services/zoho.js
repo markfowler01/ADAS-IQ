@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { createJobFolder, uploadFileToFolder } from './workdrive.js'
+import { createJobFolder, uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from './workdrive.js'
 import { generateADASIQPdf } from './pdf.js'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
@@ -355,6 +355,8 @@ export async function createDraftQuote({
   calibrations,
   pdfBase64,
   pdfFilename,
+  known_folder_id,
+  known_folder_url,
   notes: userNotes,
 }) {
   const token = await getAccessToken()
@@ -581,12 +583,40 @@ export async function createDraftQuote({
     [year, make, model].filter(Boolean).join(' '),
   ].filter(Boolean).join(' — ')
 
+  // ONE folder per job (Mark 2026-07-29: "it is still creating 2
+  // folders") — reuse the folder the Create-a-Job path already made
+  // (passed as known_folder_id), else search by RO / shop+vehicle,
+  // and only create when nothing exists.
   let workdriveResult = null
   try {
-    workdriveResult = await createJobFolder(folderName, token)
-    console.log('[workdrive] Folder created:', workdriveResult.folderUrl)
+    const roDigits = (String(finalRO).match(/\d{4,}/) || [String(finalRO)])[0]
+    if (known_folder_id) {
+      let share = known_folder_url && known_folder_url.includes('zohoexternal.com') ? known_folder_url : ''
+      if (!share) {
+        try { share = await createShareLink(known_folder_id, `Job ${roDigits}`.slice(0, 50), token) } catch {}
+      }
+      workdriveResult = { folderId: known_folder_id, folderUrl: known_folder_url || '', shareLink: share || '' }
+      console.log('[workdrive] Reusing folder passed from Create-a-Job:', known_folder_id)
+    }
+    if (!workdriveResult) {
+      let existing = null
+      try { existing = await findFolderByRO(roDigits, token) } catch {}
+      if (!existing) {
+        try { existing = await findFolderByShopVehicle(shop, [year, make, model].filter(Boolean).join(' '), token) } catch {}
+      }
+      if (existing?.id) {
+        let share = ''
+        try { share = await createShareLink(existing.id, `Job ${roDigits}`.slice(0, 50), token) } catch {}
+        workdriveResult = { folderId: existing.id, folderUrl: '', shareLink: share || '' }
+        console.log('[workdrive] Reusing existing folder for RO', roDigits)
+      }
+    }
+    if (!workdriveResult) {
+      workdriveResult = await createJobFolder(folderName, token)
+      console.log('[workdrive] Folder created:', workdriveResult.folderUrl)
+    }
   } catch (wdErr) {
-    console.warn('[workdrive] Folder creation failed (non-fatal):', wdErr.message)
+    console.warn('[workdrive] Folder resolution failed (non-fatal):', wdErr.message)
   }
 
   // Upload the Kinetic PDF into the folder if provided
@@ -629,6 +659,7 @@ export async function createDraftQuote({
     quoteNumber: estimate.estimate_number,
     quoteUrl: `https://books.zoho.com/app#/estimates/${estimateId}?organization_id=${orgId}`,
     folderUrl: workdriveResult?.folderUrl || null,
+    folderId: workdriveResult?.folderId ? String(workdriveResult.folderId) : null,
     shareLink: workdriveResult?.shareLink || null,
     unmatchedItems: unmatchedItems.length > 0 ? unmatchedItems : null,
   }

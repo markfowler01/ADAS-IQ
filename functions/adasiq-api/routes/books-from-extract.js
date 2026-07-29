@@ -268,7 +268,8 @@ router.post('/from-extract', async (req, res) => {
           model:        payload.model || '',
           insurer:      payload.insurer || '',
           claim_number: payload.claim || '',
-          folder_url:   '',
+          folder_url:   payload.folder_url || '',
+          workdrive_folder_id: payload.folder_id || '',
         },
         invoices: [invoice],
       })
