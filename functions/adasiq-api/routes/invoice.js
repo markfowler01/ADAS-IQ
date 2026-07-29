@@ -164,7 +164,13 @@ router.post('/', async (req, res) => {
             model:        model || '',
             insurer:      insurer || '',
             claim_number: claim || '',
-            folder_url:   result.workdrive_url || '',
+            // Pass the EXACT folder createDraftQuote just used — this
+            // call previously got `result.workdrive_url` (a field that
+            // doesn't exist), searched with a truncated RO, missed, and
+            // created a SECOND folder on every single invoice (Mark's
+            // 24626 / 24626.1 duplicate, 2026-07-29).
+            folder_url:   result.shareLink || result.folderUrl || '',
+            workdrive_folder_id: result.folderId || '',
           },
           invoices: [{
             invoice_number: result.estimate_number || '',
