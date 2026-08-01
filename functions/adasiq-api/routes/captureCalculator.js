@@ -16,7 +16,7 @@ import { computeCaptureNumbers, generateCaptureReportPdf } from '../services/cap
 import { sendBroadcast } from '../services/brewResend.js'
 import { postToCliqUser, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { syncNewsletterSubscriberToCrm, fetchLeadsPage, fetchContactsPage, fetchAccountsPage, createLeadFlat, deleteLead } from '../services/zohoCrm.js'
-import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadcast, sendVanBroadcast, deleteVanBroadcast, unsubscribeVanContact, signUnsubEmail, verifyUnsubSig, vanUnsubscribeUrl, listRecentResendSends } from '../services/fromTheVan.js'
+import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadcast, sendVanBroadcast, deleteVanBroadcast, unsubscribeVanContact, hardDeleteVanContact, signUnsubEmail, verifyUnsubSig, vanUnsubscribeUrl, listRecentResendSends } from '../services/fromTheVan.js'
 import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER, buildGoodbyeEmail } from '../services/fromTheVanNurture.js'
 import { buildWelcomeEmail } from '../services/vanWelcome.js'
 import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, unmarkCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
@@ -2077,17 +2077,40 @@ captureCalcRouter.all('/engagement/run', heartbeatAttempt('capture_engagement'),
   try {
     const segment = getSegment(req)
     const published = await listQueue(req, { status: 'published' })
-    for (const draft of published) {
-      // Skip stale (>30 days) — we won't get new analytics value
-      const ageMs = Date.now() - new Date(draft.published_at || draft.created_at).getTime()
-      if (ageMs > 30 * 86400000) continue
+
+    // TIME-BOXED (2026-08-01): this used to walk EVERY published draft
+    // from the last 30 days sequentially — one external API call each —
+    // and blew Catalyst's 30s gateway cap every run. 20 consecutive
+    // timeouts got the cron auto-disabled. Now each run takes the
+    // least-recently-checked posts, caps the batch, and returns fast;
+    // the hourly schedule rotates through the rest.
+    const RUN_STARTED = Date.now()
+    const TIME_BUDGET_MS = 20_000
+    const MAX_PER_RUN = 8
+    const eligible = published
+      .filter(d => (Date.now() - new Date(d.published_at || d.created_at).getTime()) <= 30 * 86400000)
+      .sort((a, b) =>
+        new Date(a.engagement_checked_at || a.engagement?.checked_at || 0) -
+        new Date(b.engagement_checked_at || b.engagement?.checked_at || 0))
+    let attempted = 0
+
+    for (const draft of eligible) {
+      if (attempted >= MAX_PER_RUN || (Date.now() - RUN_STARTED) > TIME_BUDGET_MS) break
+      attempted++
+      const stampNow = new Date().toISOString()
 
       const engagement = await collectForDraft(draft)
-      if (!engagement) { out.push({ id: draft.id, channel: draft.channel, skipped: 'no_data' }); continue }
+      if (!engagement) {
+        // Still stamp the check — otherwise no-data drafts sit at the
+        // front of the least-recently-checked queue and hog every batch.
+        await updateDraft(req, draft.id, { engagement_checked_at: stampNow })
+        out.push({ id: draft.id, channel: draft.channel, skipped: 'no_data' })
+        continue
+      }
 
       // Apply kill rules
       const killCheck = applyKillRules({ ...draft, engagement })
-      const patch = { engagement }
+      const patch = { engagement, engagement_checked_at: stampNow }
       if (killCheck.kill) {
         patch.status = 'killed_by_engagement'
         patch.kill_reason = killCheck.reason
@@ -2095,8 +2118,8 @@ captureCalcRouter.all('/engagement/run', heartbeatAttempt('capture_engagement'),
       await updateDraft(req, draft.id, patch)
       out.push({ id: draft.id, channel: draft.channel, killed: !!killCheck.kill, reason: killCheck.reason })
     }
-    await stampSuccess(req, 'capture_engagement', { processed: out.length })
-    res.json({ ok: true, processed: out.length, results: out })
+    await stampSuccess(req, 'capture_engagement', { processed: out.length, of: eligible.length })
+    res.json({ ok: true, processed: out.length, of: eligible.length, results: out })
   } catch (e) {
     await reportCronFailure(req, 'capture_engagement', e)
     res.json({ ok: false, error: e.message, partial: out })
@@ -3798,6 +3821,273 @@ a{color:${accent};}
 // Public base URL used for the approve/kill links Mark receives in Cliq.
 const VAN_APPROVE_BASE = 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc'
 
+// Weekly BLAST endpoint — sends the current pending draft to all Van
+// enrollments via /emails (transactional Pro tier, bypasses the Marketing
+// contacts cap that blocks Resend Broadcasts). Same reliability pattern as
+// the Magic Lantern nurture cron:
+//   - 400-send cap per fire (well under the 30s Catalyst gateway cap)
+//   - Mid-loop persistence every 25 sends so a kill mid-loop loses at most 25
+//   - Per-recipient signed unsub URL + Gmail List-Unsubscribe header
+//   - Sync from Resend audience unsub flag before send
+//   - Skips subscribers already sent this issue (tracked on pending draft)
+//   - When complete, commits archive HTML to absoluteadas.com/van/issues/N.html
+//
+// Fires from:
+//   1. Manual invocation (Mark can hit it anytime to force send now)
+//   2. Safety-net cron detects pending draft past scheduled_for → triggers
+//   3. Dedicated Tuesday-morning cron (optional)
+//
+//   ALL /api/capture-calc/from-the-van/weekly-blast?secret=X
+//   ?dry=1  → count who would get emailed, no actual sends
+//   ?force=1 → send even if scheduled_for hasn't arrived (for manual override)
+captureCalcRouter.all('/from-the-van/weekly-blast', heartbeatAttempt('capture_van_weekly_blast'), requireCronSecretFlex, async (req, res) => {
+  const dry   = req.query.dry === '1' || req.query.dry === 'true'
+  const force = req.query.force === '1' || req.query.force === 'true'
+  try {
+    const pending = await readPendingDraft(req)
+    if (!pending) return res.json({ ok: true, skipped: true, reason: 'no pending draft' })
+    if (pending.status === 'blast_complete') return res.json({ ok: true, skipped: true, reason: 'already sent', pending })
+    // Time gate — don't send early unless force=1
+    const nowMs = Date.now()
+    const scheduledMs = Date.parse(pending.scheduled_for || 0)
+    if (!force && Number.isFinite(scheduledMs) && nowMs < scheduledMs) {
+      return res.json({ ok: true, skipped: true, reason: 'not yet scheduled', scheduled_for: pending.scheduled_for })
+    }
+
+    // Load enrollments + Resend audience unsub set (belt + suspenders)
+    const enrollments = await readVanEnrollments(req)
+    let resendUnsubSet = new Set()
+    try {
+      const audience = await listVanSubscribers()
+      for (const c of (audience?.contacts || [])) {
+        if (c.unsubscribed === true) {
+          const em = String(c.email || '').trim().toLowerCase()
+          if (em) resendUnsubSet.add(em)
+        }
+      }
+    } catch (e) { console.warn('[weekly-blast] audience fetch failed, local-only:', e.message) }
+
+    // Already-sent-this-issue set — persisted on pending.blast_sent_emails[]
+    const sentSet = new Set((pending.blast_sent_emails || []).map(e => String(e).toLowerCase()))
+
+    // The email content is baked into pending.html/pending.text/pending.subject
+    // but the unsub URL is a placeholder — substitute per-recipient
+    const { VAN_UNSUB_PLACEHOLDER } = await import('../services/fromTheVanNurture.js')
+
+    const MAX_PER_FIRE = 400
+    const FLUSH_EVERY = 25
+    const results = { eligible: 0, sent: 0, skipped_unsub: 0, skipped_already_sent: 0, skipped_bad_email: 0, failed: 0, capReached: false, errors: [] }
+
+    for (const sub of enrollments) {
+      if (results.sent >= MAX_PER_FIRE) { results.capReached = true; break }
+      const email = String(sub.email || '').trim().toLowerCase()
+      if (!email || !/^\S+@\S+\.\S+$/.test(email)) { results.skipped_bad_email++; continue }
+      if (sentSet.has(email)) { results.skipped_already_sent++; continue }
+      if (sub.unsubscribed_at) { results.skipped_unsub++; continue }
+      if (resendUnsubSet.has(email)) {
+        results.skipped_unsub++
+        // Backfill local unsub so we don't keep re-checking
+        sub.unsubscribed_at = new Date().toISOString()
+        sub.unsubscribed_source = 'resend-sync'
+        continue
+      }
+      results.eligible++
+
+      let unsubUrl
+      try { unsubUrl = vanUnsubscribeUrl(email) } catch (e) {
+        results.failed++
+        results.errors.push({ email, error: 'unsub-sign-failed' })
+        continue
+      }
+      const html = String(pending.html || '').split(VAN_UNSUB_PLACEHOLDER).join(unsubUrl)
+      const text = String(pending.text || '').split(VAN_UNSUB_PLACEHOLDER).join(unsubUrl)
+
+      if (dry) { results.sent++; continue }
+
+      const r = await sendBroadcast({
+        recipients: [email],
+        subject: pending.subject,
+        html, text,
+        fromEmail: 'brew@absoluteadas.com',
+        fromName: 'Mark @ Absolute ADAS',
+        replyTo: 'mark@absoluteadas.com',
+        headersForRecipient: () => ({
+          'List-Unsubscribe': `<${unsubUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        }),
+      })
+      if (r?.status === 'sent' || r?.status === 'partial') {
+        results.sent++
+        sentSet.add(email)
+        if (results.sent % FLUSH_EVERY === 0) {
+          // Mid-loop flush — persist progress so a mid-loop kill loses at most FLUSH_EVERY
+          try {
+            const flushed = { ...pending, blast_sent_emails: Array.from(sentSet), status: 'blast_in_progress' }
+            await writePendingDraft(req, flushed)
+          } catch (e) { console.warn('[weekly-blast] mid-loop flush failed:', e.message) }
+        }
+      } else {
+        results.failed++
+        if (results.errors.length < 10) results.errors.push({ email, error: r?.error || 'unknown' })
+      }
+    }
+
+    if (!dry) {
+      const done = !results.capReached
+      const patched = {
+        ...pending,
+        blast_sent_emails: Array.from(sentSet),
+        status: done ? 'blast_complete' : 'blast_in_progress',
+        blast_last_run_at: new Date().toISOString(),
+      }
+      await writePendingDraft(req, patched)
+
+      // On completion: advance issue state, retire case note, publish archive
+      if (done) {
+        await advanceIssueState(req, pending).catch(e => console.warn('[blast] advance state:', e.message))
+        if (pending.case_note_id) {
+          await markCaseNoteUsed(req, pending.case_note_id, pending.issue_number).catch(e => console.warn('[blast] mark case used:', e.message))
+        }
+        try {
+          const { commitFile } = await import('../services/brewArchive.js')
+          const archiveHtml = wrapVanIssueForArchive(pending)
+          await commitFile({
+            path: `van/issues/${pending.issue_number}.html`,
+            content: archiveHtml,
+            message: `From the Van #${pending.issue_number}: ${String(pending.subject).slice(0, 80)}`,
+          })
+        } catch (e) { console.warn('[blast] archive commit:', e.message) }
+        // Clear pending so next Sunday's drafter starts fresh
+        await clearPendingDraft(req).catch(() => {})
+        postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+          `✅ FROM THE VAN #${pending.issue_number} — SENT COMPLETE.\nSent: ${results.sent} · Skipped unsub: ${results.skipped_unsub} · Failed: ${results.failed}\nArchive: absoluteadas.com/van/issues/${pending.issue_number}.html`
+        ).catch(() => {})
+      } else {
+        // Cap hit — still more to send next fire
+        postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+          `📮 FROM THE VAN #${pending.issue_number} — batch sent (cap reached). ${results.sent} this fire. Continues next hour.`
+        ).catch(() => {})
+      }
+    }
+
+    await stampSuccess(req, 'capture_van_weekly_blast', { sent: results.sent, capReached: results.capReached })
+    res.json({ ok: true, dry, ...results })
+  } catch (e) {
+    console.error('[weekly-blast]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Van safety-net endpoint — hourly reliability layer that catches every way
+// the Van pipeline can silently fail. Three concurrent responsibilities:
+//
+// 1. RETRY PENDING BROADCAST — if a pending draft has broadcast_error set
+//    (typically Resend 403 during quota hiccup), retry sendVanBroadcast every
+//    hour until it succeeds. Cliq alerts on success.
+//
+// 2. TRIGGER MISSED WEEKLY DRAFTER — if today is Sun/Mon after 8am PT AND
+//    capture_van_weekly_draft heartbeat is >7 days old, fire the drafter
+//    now. Cliq alerts on the auto-trigger.
+//
+// 3. TRIGGER MISSED NURTURE — if now is between 6am-noon PT AND
+//    capture_van_nurture heartbeat is >24h old, fire the nurture cron.
+//    Cliq alerts on auto-trigger.
+//
+// Mark schedules this endpoint as an HOURLY Catalyst cron. Even if the
+// dedicated Van crons are broken/disabled/misconfigured, this safety net
+// picks up the slack — and its own heartbeat proves IT is firing.
+//
+//   ALL /api/capture-calc/from-the-van/safety-net  (cron-secret)
+captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_safety_net'), requireCronSecretFlex, async (req, res) => {
+  const out = { actions: [], skipped: [] }
+  try {
+    const nowMs = Date.now()
+    const heartbeats = await readAllHeartbeats(req)
+    // Compute PT day + hour from server UTC
+    const pt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }))
+    const dayPt = pt.getDay()   // 0=Sun ... 6=Sat
+    const hourPt = pt.getHours()
+
+    // ─── 1. RETRY PENDING BROADCAST SCHEDULE (if broadcast_error is set) ──
+    try {
+      const pending = await readPendingDraft(req)
+      if (pending && pending.broadcast_id && pending.broadcast_error && pending.scheduled_for) {
+        const scheduledMs = Date.parse(pending.scheduled_for)
+        if (Number.isFinite(scheduledMs) && scheduledMs > nowMs) {
+          // Still in the future — worth retrying
+          const sched = await sendVanBroadcast(pending.broadcast_id, pending.scheduled_for)
+          if (sched.ok) {
+            const patched = { ...pending, broadcast_error: null, status: 'auto_scheduled', safety_net_scheduled_at: new Date().toISOString() }
+            await writePendingDraft(req, patched)
+            const msg = `🛡️ Safety-net RESCHEDULED Issue #${pending.issue_number} for ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}.\nBroadcast: ${pending.broadcast_url || pending.broadcast_id}`
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+            out.actions.push({ action: 'retry_schedule', ok: true, broadcast_id: pending.broadcast_id })
+          } else {
+            out.actions.push({ action: 'retry_schedule', ok: false, error: sched.error })
+          }
+        }
+      }
+    } catch (e) { console.warn('[van safety-net retry]', e.message) }
+
+    // ─── 2. TRIGGER MISSED WEEKLY DRAFTER (Sun/Mon after 8am PT) ──────────
+    // Weekly drafter should fire Sunday ~8am PT. Check if it happened.
+    const canTriggerWeekly = (dayPt === 0 && hourPt >= 8) || (dayPt === 1 && hourPt >= 0)
+    if (canTriggerWeekly) {
+      const wk = heartbeats['capture_van_weekly_draft']
+      const lastMs = wk?.last_success ? Date.parse(wk.last_success) : 0
+      const daysStale = lastMs ? (nowMs - lastMs) / 86400000 : 999
+      if (daysStale >= 6.5) {
+        // Trigger via internal call to the drafter endpoint
+        try {
+          const secret = process.env.BREW_CRON_SECRET || ''
+          const url = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/from-the-van/draft-weekly?secret=${encodeURIComponent(secret)}`
+          const r = await axios.post(url, {}, { timeout: 180000, validateStatus: () => true })
+          const msg = `🛡️ Safety-net TRIGGERED weekly drafter (dedicated cron missed — heartbeat was ${daysStale.toFixed(1)} days stale).\nResult: ${r.data?.ok ? `Issue #${r.data.issue_number} status=${r.data.scheduledStatus}` : `error: ${JSON.stringify(r.data).slice(0, 200)}`}`
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+          out.actions.push({ action: 'trigger_weekly_drafter', http_status: r.status, ok: !!r.data?.ok })
+        } catch (e) {
+          console.warn('[van safety-net trigger weekly]', e.message)
+          out.actions.push({ action: 'trigger_weekly_drafter', ok: false, error: e.message })
+        }
+      } else {
+        out.skipped.push({ check: 'weekly_drafter', reason: `fresh heartbeat ${daysStale.toFixed(1)}d ago` })
+      }
+    } else {
+      out.skipped.push({ check: 'weekly_drafter', reason: `not Sun/Mon (day_pt=${dayPt}, hour_pt=${hourPt})` })
+    }
+
+    // ─── 3. TRIGGER MISSED NURTURE CRON (any day 6am-noon PT) ─────────────
+    if (hourPt >= 6 && hourPt <= 12) {
+      const nu = heartbeats['capture_van_nurture']
+      const lastMs = nu?.last_success ? Date.parse(nu.last_success) : 0
+      const hoursStale = lastMs ? (nowMs - lastMs) / 3600000 : 999
+      if (hoursStale >= 23) {
+        try {
+          const secret = process.env.BREW_CRON_SECRET || ''
+          const url = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/from-the-van/nurture/run?secret=${encodeURIComponent(secret)}`
+          const r = await axios.post(url, {}, { timeout: 180000, validateStatus: () => true })
+          const msg = `🛡️ Safety-net TRIGGERED nurture cron (dedicated cron missed — heartbeat was ${hoursStale.toFixed(0)}h stale).\nResult: sent=${r.data?.sent || 0}, processed=${r.data?.processed || 0}`
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+          out.actions.push({ action: 'trigger_nurture', ok: !!r.data?.ok, sent: r.data?.sent })
+        } catch (e) {
+          console.warn('[van safety-net trigger nurture]', e.message)
+          out.actions.push({ action: 'trigger_nurture', ok: false, error: e.message })
+        }
+      } else {
+        out.skipped.push({ check: 'nurture', reason: `fresh heartbeat ${hoursStale.toFixed(1)}h ago` })
+      }
+    } else {
+      out.skipped.push({ check: 'nurture', reason: `outside 6am-noon PT window (hour_pt=${hourPt})` })
+    }
+
+    await stampSuccess(req, 'capture_van_safety_net', { actions: out.actions.length, skipped: out.skipped.length })
+    res.json({ ok: true, day_pt: dayPt, hour_pt: hourPt, ...out })
+  } catch (e) {
+    console.error('[van safety-net]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message, partial: out })
+  }
+})
+
 // Admin: submit a case note that the Sunday drafter will use.
 //   POST /api/capture-calc/from-the-van/case-notes  (cron-secret)
 //   Body: { note: string, source?: string }
@@ -4654,6 +4944,27 @@ captureCalcRouter.all('/from-the-van/daily-digest', heartbeatAttempt('capture_va
     console.error('[van daily digest]', e.message, e.stack)
     // Cliq the failure so Mark knows the digest broke
     postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⚠️ Van daily digest FAILED: ${e.message.slice(0, 400)}`).catch(() => {})
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: HARD DELETE contacts from Resend audience. Removes them entirely
+// (vs. silent-remove which just flags as unsubscribed). Used to purge test
+// @example.com contacts that block Broadcast validation with a 422 error.
+//   POST /api/capture-calc/from-the-van/hard-delete
+//   Body: { emails: ['x@y.com', ...] }
+captureCalcRouter.post('/from-the-van/hard-delete', requireCronSecretFlex, express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const emails = (req.body?.emails || []).map(e => String(e).trim().toLowerCase()).filter(Boolean)
+    if (!emails.length) return res.status(400).json({ ok: false, error: 'emails[] required' })
+    const results = []
+    for (const em of emails) {
+      const r = await hardDeleteVanContact(em)
+      results.push({ email: em, ...r })
+      await new Promise(r => setTimeout(r, 120))  // throttle for Resend
+    }
+    res.json({ ok: true, total: emails.length, results })
+  } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
 })
