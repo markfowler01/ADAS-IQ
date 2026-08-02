@@ -2,16 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "adas-iq-client",
-      "runtimeExecutable": "/usr/local/bin/npm",
-      "runtimeArgs": ["run", "dev"],
+      "name": "adas-client",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "/Users/marks/dev/adas-iq/client"],
       "port": 5173
-    },
-    {
-      "name": "signature-preview",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["serve", "-p", "5200", "."],
-      "port": 5200
     }
   ]
 }

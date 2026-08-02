@@ -19,7 +19,32 @@
     />
   </head>
   <body>
-    <div id="root"></div>
+    <!-- Boot splash — shows instantly while the app JS downloads; React
+         replaces #root's contents the moment it mounts. Mirrors
+         src/components/LoadingSplash.jsx. -->
+    <style>
+      @keyframes aa-wave { 0% { transform: scale(0.55); opacity: 0.55; } 80% { opacity: 0.08; } 100% { transform: scale(1.55); opacity: 0; } }
+      @keyframes aa-sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      @keyframes aa-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+    </style>
+    <div id="root">
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f3f0;font-family:'IBM Plex Sans',system-ui,sans-serif;">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:20px;">
+          <div style="position:relative;width:148px;height:148px;">
+            <div style="position:absolute;inset:0;border-radius:50%;border:2.5px solid #CD4419;animation:aa-wave 2.4s cubic-bezier(0.2,0.6,0.4,1) 0s infinite;"></div>
+            <div style="position:absolute;inset:0;border-radius:50%;border:2.5px solid #CD4419;animation:aa-wave 2.4s cubic-bezier(0.2,0.6,0.4,1) 0.8s infinite;"></div>
+            <div style="position:absolute;inset:0;border-radius:50%;border:2.5px solid #CD4419;animation:aa-wave 2.4s cubic-bezier(0.2,0.6,0.4,1) 1.6s infinite;"></div>
+            <div style="position:absolute;inset:10px;border-radius:50%;background:conic-gradient(from 0deg, transparent 0deg, transparent 300deg, #CD441933 330deg, #CD4419 360deg);-webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 5px), black calc(100% - 4px));mask:radial-gradient(farthest-side, transparent calc(100% - 5px), black calc(100% - 4px));animation:aa-sweep 1.8s linear infinite;"></div>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;animation:aa-breathe 2.4s ease-in-out infinite;">
+              <img src="/logo.png" alt="Absolute ADAS" style="width:64px;height:64px;object-fit:contain;" />
+            </div>
+          </div>
+          <div style="font-weight:800;font-size:15px;letter-spacing:0.14em;text-transform:uppercase;color:#1a1a1a;">
+            Absolute <span style="color:#CD4419;">ADAS</span>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

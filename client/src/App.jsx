@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import LoadingSplash from './components/LoadingSplash.jsx'
 import { API_BASE, apiFetch, setToken, getToken } from './utils/api.js'
 
 function getTokenExpiry() {
@@ -190,14 +191,7 @@ function MainApp() {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#f5f3f0' }}>
-        <div className="flex flex-col items-center gap-3">
-          <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-14 h-14 object-contain" />
-          <p className="text-gray-400 text-sm">Loading…</p>
-        </div>
-      </div>
-    )
+    return <LoadingSplash />
   }
 
   if (!user) {
