@@ -5,9 +5,16 @@
 
 const ORANGE = '#CD4419'
 
-export default function LoadingSplash({ label = 'Calibrating systems' }) {
+// `overlay` renders it as a translucent full-screen layer on TOP of the
+// current screen — used while the AI is scrubbing a report or creating
+// a job (Mark 2026-08-02) instead of replacing the page.
+export default function LoadingSplash({ label = 'Calibrating systems', overlay = false }) {
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#f5f3f0' }}>
+    <div
+      className={overlay
+        ? 'fixed inset-0 z-50 flex items-center justify-center'
+        : 'min-h-screen flex items-center justify-center'}
+      style={{ backgroundColor: overlay ? 'rgba(245,243,240,0.94)' : '#f5f3f0' }}>
       <style>{`
         @keyframes aa-wave {
           0%   { transform: scale(0.55); opacity: 0.55; }

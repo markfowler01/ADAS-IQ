@@ -7,6 +7,7 @@ import SummaryBar from './SummaryBar'
 import CustomerPicker from './CustomerPicker'
 import SalespersonPicker from './SalespersonPicker'
 import Navbar from './Navbar'
+import LoadingSplash from './LoadingSplash.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -315,6 +316,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      {submitting && <LoadingSplash overlay label="Creating invoice" />}
+      {creatingJob && <LoadingSplash overlay label="Creating job" />}
 
       <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-5">
 

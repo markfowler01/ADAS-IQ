@@ -1,6 +1,7 @@
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState, useRef } from 'react'
 import Navbar from './Navbar'
+import LoadingSplash from './LoadingSplash.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -52,6 +53,7 @@ export default function UploadScreen({ onExtracted, onAudit, onManual, onHistory
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'white' }}>
 
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      {loading && <LoadingSplash overlay label="Scrubbing report" />}
 
       {/* ── Upload area ── */}
       <main className="flex-1 flex flex-col items-center justify-center px-6 py-16">

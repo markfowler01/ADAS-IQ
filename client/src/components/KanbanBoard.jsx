@@ -5,6 +5,7 @@ import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
 import CalibrationReviewModal from './CalibrationReviewModal.jsx'
 import { parseNoteItems, CustomerNoteBox } from './MobileJobCard.jsx'
+import LoadingSplash from './LoadingSplash.jsx'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -1062,8 +1063,10 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // toolbar Upload Report button, then completes + deletes the request
   // card and switches to the review/invoice-creation screen. The review
   // screen carries all job info forward from the extracted report.
+  const [scrubbing, setScrubbing] = useState(false)
   async function handleCardReportUpload(job, file) {
     if (!onExtracted) { showToast('Upload not available here.'); return }
+    setScrubbing(true)
     try {
       const formData = new FormData()
       formData.append('pdf', file)
@@ -1084,6 +1087,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       onExtracted(data, file)
     } catch (e) {
       showToast(e.message || 'Upload failed — check your connection and try again.')
+    } finally {
+      setScrubbing(false)
     }
   }
 
@@ -1864,6 +1869,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           </>
         )}
       </main>
+
+      {/* AI-scrub overlay — calibrating animation while a report is read */}
+      {scrubbing && <LoadingSplash overlay label="Scrubbing report" />}
 
       {/* Calibration Review Modal — intercepts "Ready to Invoice" click */}
       {calReviewJob && (
