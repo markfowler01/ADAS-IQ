@@ -1,17 +1,19 @@
 {
   "name": "adas-iq",
   "version": "1.0.0",
-  "description": "ADAS IQ — Kinetic calibration report extractor and Zoho invoice creator",
+  "description": "ADAS IQ \u2014 Kinetic calibration report extractor and Zoho invoice creator",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "catalyst serve",
     "dev:ui": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "deploy:staging": "npm run build && catalyst deploy",
-    "deploy:prod": "npm run build && catalyst deploy && echo '\\n✅ Build deployed to Development. Go to console.zoho.com/catalyst → DevOps → Deploy to Production to push to Production.'",
+    "deploy:staging": "./scripts/deploy-gate.sh && npm run build && catalyst deploy",
+    "deploy:prod": "npm run build && catalyst deploy && echo '\\n\u2705 Build deployed to Development. Go to console.zoho.com/catalyst \u2192 DevOps \u2192 Deploy to Production to push to Production.'",
     "server": "node --watch server/index.js",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "deploy:function": "./scripts/deploy-gate.sh && catalyst deploy --only functions:adasiq-api",
+    "deploy:client": "npm run build && catalyst deploy --only client"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
