@@ -353,7 +353,19 @@ captureCalcRouter.all('/nurture/run', heartbeatAttempt('capture_nurture'), requi
     const list = (await cacheGet(seg, SUBMISSIONS_KEY, [])) || []
     let mutated = false
 
+    // TIME-BOXED (2026-08-07): sequential Zoho Mail sends blew the 30s
+    // gateway cap when enough nurture emails were due — 20 consecutive
+    // gateway timeouts auto-disabled this cron (same failure mode as
+    // capture_engagement). Cap sends per run; the hourly schedule
+    // drains the rest, and per-day nurture_sent tracking keeps re-runs
+    // safe.
+    const RUN_STARTED = Date.now()
+    const TIME_BUDGET_MS = 20_000
+    const MAX_SENDS_PER_RUN = 10
+    let sends = 0
+
     for (let i = 0; i < list.length; i++) {
+      if (!dry && (sends >= MAX_SENDS_PER_RUN || (Date.now() - RUN_STARTED) > TIME_BUDGET_MS)) break
       const sub = list[i]
       const day = nurtureDayFor(sub)
       if (day < 1 || day > 7) continue
@@ -367,6 +379,7 @@ captureCalcRouter.all('/nurture/run', heartbeatAttempt('capture_nurture'), requi
         out.push({ email: sub.email, shop: sub.shopName, day, subject: email.subject, dry: true })
         continue
       }
+      sends++
 
       const r = await sendBroadcast({
         recipients: [sub.email],
@@ -4787,6 +4800,96 @@ captureCalcRouter.post('/from-the-van/reconstruct-nurture-from-resend', requireC
     })
   } catch (e) {
     console.error('[van reconstruct]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Admin: edit the pending draft's body markdown, re-render, and swap the
+// scheduled Resend Broadcast in-place. Used when Mark wants to hand-edit the
+// draft after the drafter has already created + scheduled the Broadcast.
+//
+//   POST /api/capture-calc/from-the-van/edit-pending-body?secret=X
+//   Body: { body_markdown, subject? , preview_text? }
+captureCalcRouter.post('/from-the-van/edit-pending-body', requireCronSecretFlex, express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const newBody = String(req.body?.body_markdown || '').trim()
+    const newSubject = req.body?.subject ? String(req.body.subject).trim() : null
+    const newPreview = req.body?.preview_text ? String(req.body.preview_text).trim() : null
+    if (!newBody) return res.status(400).json({ ok: false, error: 'body_markdown required' })
+
+    const pending = await readPendingDraft(req)
+    if (!pending) return res.status(404).json({ ok: false, error: 'no pending draft to edit' })
+
+    // Re-render html + text from the new body
+    const subject = newSubject || pending.subject
+    const preview = newPreview || pending.preview_text
+    const rendered = renderWeeklyIssue({
+      subject,
+      previewText: preview,
+      bodyMarkdown: newBody,
+      issueNumber: pending.issue_number,
+    })
+
+    // Delete the OLD Resend Broadcast (if one exists)
+    if (pending.broadcast_id) {
+      const del = await deleteVanBroadcast(pending.broadcast_id).catch(e => ({ ok: false, error: e.message }))
+      if (!del.ok) console.warn('[edit-pending-body] delete old broadcast:', del.error)
+    }
+
+    // Create a NEW broadcast with the edited content
+    const created = await createVanBroadcast({
+      subject: rendered.subject,
+      html: rendered.html,
+      text: rendered.text,
+      previewText: rendered.previewText,
+      name: `From the Van #${pending.issue_number} (edited)`,
+    })
+    if (!created.ok) return res.status(500).json({ ok: false, error: `create failed: ${created.error}` })
+
+    // Reschedule for the same scheduled_for as before
+    const sched = await sendVanBroadcast(created.id, pending.scheduled_for)
+    if (!sched.ok) {
+      // Broadcast exists but couldn't be scheduled — save the ID so safety-net can retry
+      const patched = {
+        ...pending,
+        subject: rendered.subject,
+        preview_text: rendered.previewText,
+        body_markdown: newBody,
+        html: rendered.html,
+        text: rendered.text,
+        broadcast_id: created.id,
+        broadcast_url: created.dashboardUrl,
+        broadcast_error: `reschedule failed: ${sched.error}`,
+        status: 'pending',
+      }
+      await writePendingDraft(req, patched)
+      return res.status(500).json({ ok: false, error: `schedule failed: ${sched.error}`, broadcast_id: created.id })
+    }
+
+    // Success — update pending draft with new content + cleared error
+    const patched = {
+      ...pending,
+      subject: rendered.subject,
+      preview_text: rendered.previewText,
+      body_markdown: newBody,
+      html: rendered.html,
+      text: rendered.text,
+      broadcast_id: created.id,
+      broadcast_url: created.dashboardUrl,
+      broadcast_error: null,
+      status: 'auto_scheduled',
+      hand_edited_at: new Date().toISOString(),
+    }
+    await writePendingDraft(req, patched)
+    res.json({
+      ok: true,
+      issue_number: pending.issue_number,
+      scheduled_for: pending.scheduled_for,
+      broadcast_id: created.id,
+      broadcast_url: created.dashboardUrl,
+    })
+  } catch (e) {
+    console.error('[edit-pending-body]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message })
   }
 })
