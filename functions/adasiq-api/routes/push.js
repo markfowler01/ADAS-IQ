@@ -56,7 +56,24 @@ export async function ensureVapidKeys(req) {
   return { publicKey: keys.publicKey, privateKey: keys.privateKey }
 }
 
-async function readAllSubscriptions(req) {
+// The subscription list is read on EVERY inbound text, so it's cached
+// (48h max TTL) and only falls back to the paginated AppConfig scan on a
+// cache miss. subscribe/unsubscribe invalidate the cache.
+const SUBS_CACHE_KEY = 'aa_push_subs'
+
+function cacheSegment(req) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  return app.cache().segment()
+}
+
+async function invalidateSubsCache(req) {
+  try {
+    const segment = cacheSegment(req)
+    await segment.update(SUBS_CACHE_KEY, '')
+  } catch { /* cache miss path will rebuild */ }
+}
+
+async function scanSubscriptions(req) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
   const subs = []
   const PAGE = 250
@@ -78,6 +95,25 @@ async function readAllSubscriptions(req) {
     }
     if (!rows || rows.length < PAGE) break
   }
+  return subs
+}
+
+async function readAllSubscriptions(req) {
+  try {
+    const segment = cacheSegment(req)
+    const val = await segment.getValue(SUBS_CACHE_KEY)
+    if (val) {
+      const arr = typeof val === 'string' ? JSON.parse(val) : val
+      if (Array.isArray(arr)) return arr
+    }
+  } catch { /* fall through to scan */ }
+  const subs = await scanSubscriptions(req)
+  try {
+    const segment = cacheSegment(req)
+    const val = JSON.stringify(subs)
+    try { await segment.update(SUBS_CACHE_KEY, val) }
+    catch { await segment.put(SUBS_CACHE_KEY, val, 48) }
+  } catch (e) { console.warn('[push] subs cache write:', e.message) }
   return subs
 }
 
@@ -105,7 +141,7 @@ export async function sendPushToAll(req, { title, body, url, tag }) {
       } catch (e) {
         const code = e?.statusCode
         if (code === 404 || code === 410) {
-          try { await deleteSubscriptionRow(req, s.rowid) } catch { /* best-effort */ }
+          try { await deleteSubscriptionRow(req, s.rowid); await invalidateSubsCache(req) } catch { /* best-effort */ }
           console.log('[push] pruned dead subscription', s.key)
         } else {
           console.warn('[push] send failed:', code, e.message)
@@ -152,6 +188,7 @@ router.post('/subscribe', async (req, res) => {
     } else {
       await table.insertRow({ config_key: key, config_value: value })
     }
+    await invalidateSubsCache(req)
     res.json({ ok: true })
   } catch (err) {
     console.error('[push subscribe]', err.message)
@@ -169,7 +206,7 @@ router.post('/unsubscribe', async (req, res) => {
       `SELECT ROWID FROM ${TABLE} WHERE config_key = '${key}' LIMIT 1`
     )
     const existing = rows?.[0]?.[TABLE] || rows?.[0] || null
-    if (existing?.ROWID) await deleteSubscriptionRow(req, existing.ROWID)
+    if (existing?.ROWID) { await deleteSubscriptionRow(req, existing.ROWID); await invalidateSubsCache(req) }
     res.json({ ok: true, removed: !!existing?.ROWID })
   } catch (err) {
     console.error('[push unsubscribe]', err.message)
