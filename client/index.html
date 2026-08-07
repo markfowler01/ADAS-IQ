@@ -7,6 +7,14 @@
     <meta name="description" content="Absolute ADAS — mobile ADAS calibration & diagnostics operations platform. Job board, invoicing, and reporting." />
     <link rel="icon" type="image/png" href="/logo.png" />
     <link rel="apple-touch-icon" href="/logo.png" />
+    <!-- PWA — manifest + standalone mode make iOS treat the home-screen
+         app as installable, which is required for Web Push (iOS 16.4+). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="ADAS IQ" />
+    <meta name="theme-color" content="#f5f3f0" />
     <!-- Open Graph -->
     <meta property="og:title" content="Absolute ADAS Platform" />
     <meta property="og:description" content="Mobile ADAS calibration & diagnostics — job board, invoicing, and reporting." />

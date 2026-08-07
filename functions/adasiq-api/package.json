@@ -22,6 +22,7 @@
     "stripe": "^22.0.2",
     "svix": "^1.40.0",
     "twilio": "^5.3.5",
+    "web-push": "^3.6.7",
     "zcatalyst-sdk-node": "^3.3.0"
   }
 }

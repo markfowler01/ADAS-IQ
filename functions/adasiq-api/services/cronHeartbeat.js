@@ -34,6 +34,9 @@ export const CRON_NAMES = [
   'li_comments',
   'li_outreach',
   'van_post',
+  'capture_van_nurture',       // Magic Lantern daily sender
+  'capture_van_weekly_draft',  // Sunday drafter for the weekly Van newsletter
+  'capture_van_safety_net',    // hourly safety-net that retries broadcasts + triggers stale crons
 ]
 
 export const HB_ATTEMPT_KEY = name => `capture_hb_attempt_${name}`

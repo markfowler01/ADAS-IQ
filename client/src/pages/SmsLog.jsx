@@ -11,6 +11,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { getPushState, enablePush, disablePush } from '../utils/push.js'
 import Navbar from '../components/Navbar.jsx'
 
 const ORANGE = '#CD4419'
@@ -59,6 +60,30 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
   const [draft,         setDraft]         = useState('')
   const [sending,       setSending]       = useState(false)
   const [toast,         setToast]         = useState('')
+  // Full-screen MMS image viewer (tap a picture to open, tap to close).
+  const [viewerSrc,     setViewerSrc]     = useState(null)
+
+  // Web Push toggle — 'unsupported' | 'denied' | 'off' | 'on' | 'busy'
+  const [pushState, setPushState] = useState('off')
+  useEffect(() => { getPushState().then(setPushState).catch(() => {}) }, [])
+  async function togglePush() {
+    const prev = pushState
+    setPushState('busy')
+    try {
+      if (prev === 'on') {
+        await disablePush()
+        setPushState('off')
+        showToast('Notifications off')
+      } else {
+        await enablePush()
+        setPushState('on')
+        showToast('🔔 Notifications on — new texts will alert this device')
+      }
+    } catch (e) {
+      setPushState(prev)
+      showToast(e.message)
+    }
+  }
 
   // New-conversation composer (when no threads exist or user wants a
   // fresh recipient).
@@ -80,6 +105,10 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
   }, [fromLine])
 
   const refreshTimerRef = useRef(null)
+  // Keeps the conversation pinned to the newest message — jump instantly
+  // when opening a thread, smooth-scroll when a new message arrives.
+  const convoScrollRef  = useRef(null)
+  const prevConvoKeyRef = useRef('')
 
   const loadCalls = useCallback(async () => {
     try {
@@ -147,6 +176,18 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
     loadVoicemails()
   }, [loadThreads, loadCalls, loadVoicemails])
   useEffect(() => {
+    // Deep link handoff from App.jsx (?thread=… on a Cliq alert) — open
+    // that conversation directly.
+    try {
+      const t = sessionStorage.getItem('aa_sms_deeplink')
+      if (t) {
+        sessionStorage.removeItem('aa_sms_deeplink')
+        setTab('messages')
+        setSelectedPhone(t)
+      }
+    } catch { /* non-critical */ }
+  }, [])
+  useEffect(() => {
     // Auto-refresh all four feeds every 10s. Includes the currently-open
     // conversation so new inbound messages appear without having to
     // re-tap the thread.
@@ -162,6 +203,16 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
   useEffect(() => {
     if (selectedPhone) loadConversation(selectedPhone)
   }, [selectedPhone, loadConversation])
+
+  useEffect(() => {
+    if (!selectedPhone || conversation.length === 0) return
+    const key = `${selectedPhone}:${conversation.length}`
+    if (key === prevConvoKeyRef.current) return
+    const openedNewThread = !prevConvoKeyRef.current.startsWith(`${selectedPhone}:`)
+    prevConvoKeyRef.current = key
+    const el = convoScrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: openedNewThread ? 'instant' : 'smooth' })
+  }, [selectedPhone, conversation])
 
   function showToast(m) {
     setToast(m)
@@ -230,8 +281,9 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
-      {/* Header */}
-      <div className="sticky top-0 z-10 px-4 py-3"
+      {/* Header. Hidden on phones while a conversation is open — the
+          thread needs every pixel so the reply box stays on screen. */}
+      <div className={`sticky top-0 z-10 px-4 py-3 ${tab === 'messages' && selectedPhone ? 'hidden md:block' : ''}`}
         style={{ backgroundColor: '#f5f3f0', borderBottom: '1px solid #e8e4e0' }}>
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-2 flex-wrap">
           <div>
@@ -277,6 +329,15 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
               title="Click-to-call — Twilio rings your cell then bridges you"
             >📞 Dial</button>
             <button
+              onClick={togglePush}
+              disabled={pushState === 'busy'}
+              className="text-xs font-semibold rounded-lg px-3 py-1.5"
+              style={pushState === 'on'
+                ? { color: 'white', backgroundColor: '#15803d', border: '1px solid #15803d' }
+                : { color: '#666', border: '1px solid #e0dbd6', backgroundColor: 'white' }}
+              title="Push notifications for new texts on this device (on iPhone: install to Home Screen first)"
+            >{pushState === 'busy' ? '…' : pushState === 'on' ? '🔔 On' : '🔔 Alerts'}</button>
+            <button
               onClick={() => setShowSetup(true)}
               className="text-xs font-semibold rounded-lg px-3 py-1.5"
               style={{ color: '#666', border: '1px solid #e0dbd6', backgroundColor: 'white' }}
@@ -286,8 +347,8 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="max-w-6xl w-full mx-auto px-4 pt-2 flex gap-1 text-sm font-semibold">
+      {/* Tab bar — also hidden on phones while a conversation is open */}
+      <div className={`max-w-6xl w-full mx-auto px-4 pt-2 gap-1 text-sm font-semibold ${tab === 'messages' && selectedPhone ? 'hidden md:flex' : 'flex'}`}>
         {[
           { id: 'messages',   label: `💬 Messages${threads.length      ? ' · ' + threads.length      : ''}` },
           { id: 'calls',      label: `📞 Calls${calls.length           ? ' · ' + calls.length         : ''}` },
@@ -432,8 +493,11 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
       {tab === 'messages' && (<>
 
 
-        {/* Threads list */}
-        <div className="rounded-2xl bg-white p-2 md:col-span-1 flex flex-col" style={{ border: '1px solid #ebebeb', maxHeight: '75vh' }}>
+        {/* Threads list. On phones this is the whole screen — once a
+            thread is selected it hides and the conversation takes over
+            (back button returns here). Desktop keeps the two-pane grid. */}
+        <div className={`rounded-2xl bg-white p-2 md:col-span-1 flex-col ${selectedPhone ? 'hidden md:flex' : 'flex'}`}
+          style={{ border: '1px solid #ebebeb', maxHeight: '75vh' }}>
           {loading ? (
             <div className="text-sm p-4" style={{ color: '#888' }}>Loading…</div>
           ) : err ? (
@@ -475,17 +539,28 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
           )}
         </div>
 
-        {/* Conversation pane */}
-        <div className="rounded-2xl bg-white md:col-span-2 flex flex-col" style={{ border: '1px solid #ebebeb', maxHeight: '75vh' }}>
+        {/* Conversation pane. Mobile: full-screen with back button, fixed
+            height so the reply box stays pinned at the bottom and only the
+            message list scrolls. */}
+        <div className={`rounded-2xl bg-white md:col-span-2 flex-col ${selectedPhone ? 'flex' : 'hidden md:flex'} h-[calc(100dvh-110px)] md:h-auto md:max-h-[75vh]`}
+          style={{ border: '1px solid #ebebeb' }}>
           {!selectedPhone ? (
             <div className="flex-1 flex items-center justify-center text-sm p-4" style={{ color: '#888' }}>
               Select a conversation on the left, or start a new one.
             </div>
           ) : (
             <>
-              <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid #f0ece8' }}>
-                <div>
-                  <div className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>
+              <div className="px-3 md:px-4 py-3 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid #f0ece8' }}>
+                <div className="flex items-center gap-1 min-w-0">
+                  {/* Back to thread list — phones only */}
+                  <button
+                    onClick={() => setSelectedPhone(null)}
+                    className="md:hidden flex-shrink-0 text-2xl leading-none px-1.5 py-1 -ml-1"
+                    style={{ color: ORANGE }}
+                    aria-label="Back to conversations"
+                  >‹</button>
+                  <div className="min-w-0">
+                  <div className="font-semibold text-sm truncate" style={{ color: '#1a1a1a' }}>
                     {convoContact.contact_name || fmtPhone(selectedPhone)}
                   </div>
                   {convoContact.shop_name && (
@@ -493,11 +568,12 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                       {convoContact.shop_name}
                     </div>
                   )}
-                  <div className="text-[10px]" style={{ color: '#888' }}>
+                  <div className="text-[10px] truncate" style={{ color: '#888' }}>
                     {convoContact.contact_name ? `${fmtPhone(selectedPhone)} · ` : ''}{selectedPhone}
                   </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   {convoContact.shop_id && onNavigate && (
                     <button
                       onClick={() => onNavigate('crm')}
@@ -516,7 +592,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
               {convoLoading ? (
                 <div className="flex-1 p-4 text-sm" style={{ color: '#888' }}>Loading conversation…</div>
               ) : (
-                <div className="flex-1 overflow-y-auto p-3 space-y-2" style={{ minHeight: 0 }}>
+                <div ref={convoScrollRef} className="flex-1 overflow-y-auto p-3 space-y-2" style={{ minHeight: 0 }}>
                   {conversation.map(m => {
                     const isOut = m.direction === 'outbound'
                     return (
@@ -539,12 +615,21 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                                 const src = `${API_BASE}${media.proxy_url}`
                                 const isImg = String(media.contentType || '').startsWith('image/')
                                 return isImg ? (
-                                  <a key={i} href={src} target="_blank" rel="noopener noreferrer"
-                                    className="block rounded-lg overflow-hidden"
+                                  <button key={i} type="button" onClick={() => setViewerSrc(src)}
+                                    className="block rounded-lg overflow-hidden w-full"
                                     style={{ backgroundColor: 'rgba(0,0,0,0.05)' }}>
                                     <img src={src} alt="MMS attachment"
+                                      // Images load after the auto-scroll fires and push the
+                                      // newest messages off-screen — re-pin to the bottom if the
+                                      // user was already there.
+                                      onLoad={() => {
+                                        const el = convoScrollRef.current
+                                        if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 300) {
+                                          el.scrollTop = el.scrollHeight
+                                        }
+                                      }}
                                       style={{ display: 'block', maxWidth: '100%', maxHeight: 200, objectFit: 'cover' }} />
-                                  </a>
+                                  </button>
                                 ) : (
                                   <a key={i} href={src} target="_blank" rel="noopener noreferrer"
                                     className="block text-xs underline"
@@ -580,8 +665,10 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                   }}
                   placeholder={`Reply from ${fromLine === 'tollfree' ? '844-FIX-ADAS' : 'Local (425)'}…`}
                   rows={1}
-                  className="flex-1 px-3 py-2 rounded-lg text-sm resize-none"
-                  style={{ border: '1px solid #e5e7eb', backgroundColor: '#fafaf9' }}
+                  className="flex-1 px-3 py-2 rounded-lg resize-none"
+                  // 16px font — anything smaller makes iOS Safari zoom the
+                  // whole page when the box gets focus.
+                  style={{ border: '1px solid #e5e7eb', backgroundColor: '#fafaf9', fontSize: 16 }}
                 />
                 <button
                   onClick={sendReply}
@@ -595,6 +682,28 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
         </div>
       </>)}
       </main>
+
+      {/* Full-screen MMS image viewer — tap anywhere to close */}
+      {viewerSrc && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-2"
+          style={{ backgroundColor: 'rgba(0,0,0,0.92)' }}
+          onClick={() => setViewerSrc(null)}>
+          <img src={viewerSrc} alt="MMS attachment"
+            className="max-w-full max-h-full rounded-lg"
+            style={{ objectFit: 'contain' }} />
+          <button
+            onClick={() => setViewerSrc(null)}
+            className="absolute top-3 right-3 text-3xl leading-none w-11 h-11 rounded-full"
+            style={{ color: 'white', backgroundColor: 'rgba(255,255,255,0.15)' }}
+            aria-label="Close image"
+          >×</button>
+          <a href={viewerSrc} target="_blank" rel="noopener noreferrer"
+            onClick={e => e.stopPropagation()}
+            className="absolute bottom-4 text-xs font-semibold px-3 py-1.5 rounded-lg"
+            style={{ color: 'white', border: '1px solid rgba(255,255,255,0.4)' }}
+          >Open full size ↗</a>
+        </div>
+      )}
 
       {/* New-message modal */}
       {showNew && (

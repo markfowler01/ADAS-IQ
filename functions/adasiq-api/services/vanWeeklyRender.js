@@ -11,6 +11,7 @@
 // per-recipient signed URLs because it sends via `/emails`.
 
 const BREW_URL = 'https://absoluteadas.com/brew'
+const CALCULATOR_URL = 'https://absoluteadas.com/calculator'
 const MAILING_ADDRESS = '2307 Cedar Rd · Lake Stevens, WA 98258'
 
 function escapeHtml(s) {
@@ -68,7 +69,8 @@ ${bodyHtml}
 <p style="margin:0 0 24px 0;color:#666;font-size:14px;">Absolute ADAS &nbsp;|&nbsp; Lake Stevens, WA</p>
 </td></tr>
 <tr><td style="border-top:1px solid #e5e5e5;padding-top:16px;margin-top:24px;font-size:13px;line-height:1.55;color:#666;">
-<p style="margin:20px 0 10px 0;">Want the daily version? ADAS Brew delivers industry news every morning: <a href="${BREW_URL}" style="color:#CD4419;">absoluteadas.com/brew</a></p>
+<p style="margin:20px 0 10px 0;">See what your shop would pay: <a href="${CALCULATOR_URL}" style="color:#CD4419;">Partnership Discount pricing sheet</a> (15-25% off list, insurance-approved).</p>
+<p style="margin:0 0 10px 0;">Want the daily version? ADAS Brew delivers industry news every morning: <a href="${BREW_URL}" style="color:#CD4419;">absoluteadas.com/brew</a></p>
 <p style="margin:0 0 6px 0;">${MAILING_ADDRESS}</p>
 <p style="margin:0;"><a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#666;text-decoration:underline;">Unsubscribe</a></p>
 </td></tr>
@@ -82,6 +84,8 @@ ${bodyHtml}
 
 — Mark
 Absolute ADAS | Lake Stevens, WA
+
+See what your shop would pay — Partnership Discount pricing sheet (15-25% off list, insurance-approved): ${CALCULATOR_URL}
 
 Want the daily version? ADAS Brew delivers industry news every morning: ${BREW_URL}
 

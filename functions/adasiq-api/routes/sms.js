@@ -330,10 +330,15 @@ router.post('/', async (req, res) => {
       const senderStr = contactStr
         ? `👤 ${contactStr} · ${formatPhonePretty(from)}`
         : formatPhonePretty(from)
+      // Deep link straight into this conversation — App.jsx reads
+      // ?thread= and opens the SMS screen on that thread (mobile gets
+      // the full-screen conversation view).
+      const threadUrl = `https://adas-iq-904191467.development.catalystserverless.com/app/index.html?thread=${encodeURIComponent(from)}`
       const msg = [
         `📩 *SMS in* · ${senderStr} → ${label}`,
         body ? `"${body.slice(0, 400)}"` : '_(no text — media only)_',
         numMedia > 0 ? `📎 ${numMedia} attachment${numMedia === 1 ? '' : 's'}` : null,
+        `[💬 Reply in app](${threadUrl})`,
       ].filter(Boolean).join('\n')
       // Route by which line the text arrived on. Unknown lines fall
       // back to the tollfree channel as a catch-all so nothing gets
@@ -356,6 +361,19 @@ router.post('/', async (req, res) => {
         await sendTwilioSMS({ to: markCell, body: forwardBody, from: 'local', cfg })
       }
     } catch (e) { console.warn('[sms inbound forward]', e.message) }
+
+    // 3b) Web Push to every subscribed PWA device — tapping the
+    //     notification deep-links into this conversation. Best-effort.
+    try {
+      const { sendPushToAll } = await import('./push.js')
+      const senderPart = contactStr ? `${contactStr} · ${formatPhonePretty(from)}` : formatPhonePretty(from)
+      await sendPushToAll(req, {
+        title: `💬 ${senderPart}`,
+        body: (body || (numMedia > 0 ? `📎 ${numMedia} picture${numMedia === 1 ? '' : 's'}` : '(no text)')).slice(0, 180),
+        url: `/app/index.html?thread=${encodeURIComponent(from)}`,
+        tag: `sms-${normalizePhoneUS(from) || from}`,
+      })
+    } catch (e) { console.warn('[sms inbound push]', e.message) }
 
     // 4) Auto-reply logic — first-contact + after-hours. Both are gated by
     //    Catalyst Cache stamps keyed by phone + day so a customer never

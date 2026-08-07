@@ -98,6 +98,29 @@ export async function getVanAudienceId() {
 }
 
 /**
+ * HARD DELETE a subscriber from the Resend audience — removes the record
+ * entirely (vs. unsubscribe which just flags them). Used to clear test
+ * contacts (`@example.com` addresses) that block Broadcast validation.
+ */
+export async function hardDeleteVanContact(email) {
+  const clean = String(email || '').trim().toLowerCase()
+  if (!clean) return { ok: false, error: 'email required' }
+  try {
+    const audienceId = await getVanAudienceId()
+    // Resend accepts either contact ID or email in the delete path
+    const res = await axios.delete(
+      `${RESEND_API}/audiences/${audienceId}/contacts/${encodeURIComponent(clean)}`,
+      { headers: auth(), timeout: 10000, validateStatus: s => s < 500 }
+    )
+    if (res.status >= 200 && res.status < 300) return { ok: true, email: clean, deleted: true }
+    if (res.status === 404) return { ok: true, email: clean, notInAudience: true }
+    return { ok: false, error: `Resend ${res.status}: ${JSON.stringify(res.data).slice(0, 200)}` }
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
+/**
  * Mark a subscriber as unsubscribed in the Resend audience. Two-step:
  *   1. Look up the contact by email (Resend requires the contact id for PATCH)
  *   2. PATCH unsubscribed=true so future Broadcasts skip them

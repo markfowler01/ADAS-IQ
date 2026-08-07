@@ -97,6 +97,23 @@ function MainApp() {
   const isDemo = window.location.hostname.includes('demo.adas-iq') ||
                  new URLSearchParams(window.location.search).get('demo') === '1'
 
+  // SMS deep link (?thread=+14255551234) — Cliq inbound-text alerts link
+  // here so Mark can tap straight into the conversation on his phone.
+  // Handoff via sessionStorage because SmsLog mounts after the param is
+  // stripped from the URL.
+  useEffect(() => {
+    try {
+      const thread = new URLSearchParams(window.location.search).get('thread')
+      if (thread) {
+        sessionStorage.setItem('aa_sms_deeplink', thread)
+        setScreen('sms')
+        const url = new URL(window.location.href)
+        url.searchParams.delete('thread')
+        window.history.replaceState({}, '', url)
+      }
+    } catch { /* non-critical */ }
+  }, [])
+
   // On mount, check for Zoho OAuth code OR existing session
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
