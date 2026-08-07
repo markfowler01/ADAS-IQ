@@ -195,7 +195,21 @@ router.post('/run', async (req, res) => {
     let drafted = 0
     let alerted = 0
 
+    // TIME-BOXED (2026-08-07): triaging every unread email with a
+    // Claude call each blew the 30s gateway cap — the run completed
+    // internally but Catalyst logged an error response every hour, and
+    // 20 straight got mailagenthourly auto-disabled. Cap the batch;
+    // the hourly schedule + per-message cache drain the backlog.
+    const RUN_STARTED = Date.now()
+    const TIME_BUDGET_MS = 20_000
+    const MAX_TRIAGE_PER_RUN = 5
+    let triaged = 0
+
     for (const msg of allMessages) {
+      if (triaged >= MAX_TRIAGE_PER_RUN || (Date.now() - RUN_STARTED) > TIME_BUDGET_MS) {
+        results.push({ status: 'deferred-to-next-run', remaining: allMessages.length - results.length })
+        break
+      }
       const msgId = String(msg.messageId)
       const accountId = msg._accountId
       const cacheKey = `mail_agent_drafted_${msgId}`
