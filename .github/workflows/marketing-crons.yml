@@ -165,21 +165,24 @@ jobs:
           if [ "$code" -ge 500 ]; then exit 1; fi
           exit 0
 
-      - name: wait 3 min then verify via heartbeat
+      # Verify by asking the definitive question — "does today's post
+      # exist?" — instead of racing the heartbeat clock. The staggered
+      # aa_van_post crons (6:01/6:05/6:09) can legitimately take ~10+
+      # minutes end-to-end, which made the old 3-min heartbeat check a
+      # false-alarm machine (fired Mark's personal email 2026-08-07).
+      - name: verify today's post exists (retry over ~12 min)
         run: |
-          sleep 180
-          curl -sS --max-time 30 \
-            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug/heartbeats" \
-            | python3 -c "
-          import json, sys
-          d = json.load(sys.stdin)['heartbeats']
-          hb = d.get('van_post', {})
-          age = hb.get('last_success_age_min')
-          if age is None or age > 10:
-              print(f'❌ van_post: last_success_age_min={age} — drafter did not complete')
-              sys.exit(1)
-          print(f'✅ van_post: last_success_age_min={age}m')
-          "
+          for attempt in 1 2 3 4; do
+            sleep 180
+            resp=$(curl -sS --max-time 40 "$BASE/van-draft-day" 2>/dev/null)
+            echo "attempt $attempt: $(echo "$resp" | head -c 300)"
+            if echo "$resp" | grep -q "already have today's van post"; then
+              echo "✅ van_post: today's post exists on all channels"
+              exit 0
+            fi
+          done
+          echo "❌ van_post: today's post still missing after ~12 minutes"
+          exit 1
 
   # ── SUNDAY LINKEDIN DRAFTER — DISABLED 2026-07-03 ─────────────────────────
   # The daily unified drafter creates today's LI post automatically, and this
