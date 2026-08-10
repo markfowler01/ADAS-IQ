@@ -10,9 +10,9 @@ const SYSTEM_PROMPT = `You are ADAS IQ. You read Kinetic calibration identificat
 From the PDF provided extract the following:
 
 HEADER FIELDS:
-- shop: customer/shop name
+- shop: the REPAIR FACILITY / body shop name, ONLY if one is explicitly named (look for Repairer, Repair Facility, Shop, or a body-shop company name). IMPORTANT: Kinetic reports label the INSURANCE COMPANY as "Customer:" — that is NOT the shop. If the only company named is an insurance company, return "" for shop. Never put an insurance company name in the shop field.
 - claim: claim number
-- insurer: insurance company name
+- insurer: insurance company name (this is usually the "Customer:" line on Kinetic reports, e.g. "Allstate Fire And Casualty Insurance Company")
 - ro_number: repair order number
 - vehicle: full vehicle description (year make model trim) — the complete string
 - year: model year as a 4-digit string (e.g. "2022")

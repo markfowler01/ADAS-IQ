@@ -16,20 +16,29 @@ function normalizeName(str) {
     .trim()
 }
 
+// Kinetic reports put the INSURANCE company on the "Customer:" line — if
+// that leaks through as the shop name, auto-matching it against the Books
+// customer list picks a random shop. Insurer-looking names never auto-match;
+// Kat picks by hand instead.
+const INSURER_RE = /insurance|allstate|state farm|geico|progressive|farmers|liberty mutual|usaa|nationwide|travelers|american family|safeco|mercury|pemco/i
+
 function fuzzyMatch(shopName, customers) {
   if (!shopName || customers.length === 0) return null
+  if (INSURER_RE.test(shopName)) return null
   const needle = normalizeName(shopName)
 
   // 1. Exact normalized match
   const exact = customers.find((c) => normalizeName(c.contact_name) === needle)
   if (exact) return exact
 
-  // 2. One contains the other
-  const contains = customers.find(
-    (c) =>
-      normalizeName(c.contact_name).includes(needle) ||
-      needle.includes(normalizeName(c.contact_name))
-  )
+  // 2. One contains the other — but only for names long enough that
+  // containment means something (a 3-letter customer name appearing
+  // inside a long string is coincidence, not a match)
+  const contains = customers.find((c) => {
+    const hay = normalizeName(c.contact_name)
+    if (hay.length < 6 || needle.length < 6) return false
+    return hay.includes(needle) || needle.includes(hay)
+  })
   if (contains) return contains
 
   // 3. Word overlap — best scoring match above 50%

@@ -285,11 +285,29 @@ export function findBestMatchExported(calName, exactMap, allItems, insurerPrefix
   return findBestMatch(calName, exactMap, allItems, insurerPrefix)
 }
 
-function findBestMatch(calName, exactMap, allItems, insurerPrefix = null) {
-  // Filter candidate pool based on insurer (SF/AS/standard)
-  const candidateItems = filterItemsByInsurer(allItems, insurerPrefix)
+// Kinetic reports name sensors, not services — translate the common ones
+// to catalog wording BEFORE matching so fuzzy scoring has words to work
+// with ("Around View Camera" shares nothing with "360 Camera System").
+// Applied as an extra match attempt, never replacing the raw name.
+export const KINETIC_ALIASES = {
+  'around view camera':      '360 camera system calibration',
+  'surround view camera':    '360 camera system calibration',
+  'birds eye view camera':   '360 camera system calibration',
+  'front radar':             'front radar calibration',
+  'front windshield camera': 'front camera calibration',
+  'windshield camera':       'front camera calibration',
+  'rear blind spot radar':   'blind spot monitor calibration',
+  'blind spot radar':        'blind spot monitor calibration',
+  'park distance sensor':    'parking assist calibration',
+  'parking sensors':         'parking assist calibration',
+  'steering angle sensor':   'steering angle sensor calibration',
+}
 
-  // 1. Exact match first (within filtered pool)
+export function aliasFor(calName) {
+  return KINETIC_ALIASES[String(calName || '').trim().toLowerCase()] || null
+}
+
+function exactInPool(calName, candidateItems) {
   const exactKey = calName.trim().toLowerCase()
   const normalKey = normalizeItemName(calName)
   for (const item of candidateItems) {
@@ -297,8 +315,10 @@ function findBestMatch(calName, exactMap, allItems, insurerPrefix = null) {
       return { item_id: item.item_id, matchedName: item.name, score: 1, rate: item.rate || 0 }
     }
   }
+  return null
+}
 
-  // 2. Fuzzy match — score only within filtered candidate pool
+function fuzzyInPool(calName, candidateItems) {
   let bestScore = 0
   let bestItem = null
   for (const item of candidateItems) {
@@ -308,12 +328,50 @@ function findBestMatch(calName, exactMap, allItems, insurerPrefix = null) {
       bestItem = item
     }
   }
-
   // Require at least 0.5 overlap to accept a match
   if (bestItem && bestScore >= 0.5) {
     return { item_id: bestItem.item_id, matchedName: bestItem.name, score: bestScore, rate: bestItem.rate || 0 }
   }
+  return null
+}
 
+function findBestMatch(calName, exactMap, allItems, insurerPrefix = null) {
+  const insurerPool = filterItemsByInsurer(allItems, insurerPrefix)
+  const standardPool = insurerPrefix ? filterItemsByInsurer(allItems, null) : null
+  const names = [calName, aliasFor(calName)].filter(Boolean)
+
+  // ALL exact attempts before ANY fuzzy attempt — a precise standard-pool
+  // hit ("Front Radar Calibration" $195) must beat a sloppy insurer-pool
+  // fuzzy ("AS - Front CAMERA Calibration"). Insurer pool still wins ties.
+  for (const n of names) {
+    const m = exactInPool(n, insurerPool)
+    if (m) return m
+  }
+  if (standardPool) {
+    for (const n of names) {
+      const m = exactInPool(n, standardPool)
+      if (m) {
+        console.warn(`[zoho] "${calName}" has no ${insurerPrefix}-priced item — using standard "${m.matchedName}" ($${m.rate})`)
+        return { ...m, fallback: 'standard' }
+      }
+    }
+  }
+  for (const n of names) {
+    const m = fuzzyInPool(n, insurerPool)
+    if (m) return m
+  }
+  // Standard-pool fallback so an item is never silently dropped from the
+  // invoice (Aug 10: an Allstate job lost 4 line items — including both
+  // fixed items — because only 2 catalog entries had AS- versions).
+  if (standardPool) {
+    for (const n of names) {
+      const m = fuzzyInPool(n, standardPool)
+      if (m) {
+        console.warn(`[zoho] "${calName}" has no ${insurerPrefix}-priced item — using standard "${m.matchedName}" ($${m.rate})`)
+        return { ...m, fallback: 'standard' }
+      }
+    }
+  }
   return null
 }
 

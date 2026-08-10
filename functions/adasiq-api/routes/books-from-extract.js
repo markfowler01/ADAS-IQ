@@ -10,6 +10,7 @@
 
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import { aliasFor } from '../services/zoho.js'
 
 const router = express.Router()
 const CHUNK_SIZE = 30
@@ -97,8 +98,11 @@ async function getInvoiceNumber(req) {
   return `INV-${String(next).padStart(4, '0')}`
 }
 
-// Match a calibration name to the services catalog (fuzzy)
-function matchService(calName, services) {
+// Match a calibration name to the services catalog (fuzzy). Kinetic
+// reports name SENSORS ("Around View Camera"), not services ("360 Camera
+// System Calibration") — try the shared alias translation when the raw
+// name doesn't land.
+function matchServiceRaw(calName, services) {
   if (!calName) return null
   const target = String(calName).toLowerCase().trim()
   const exact = services.find(s => (s.name || '').toLowerCase().trim() === target)
@@ -113,6 +117,13 @@ function matchService(calName, services) {
     if (overlap > bestScore) { bestScore = overlap; best = s }
   }
   return bestScore >= 1 ? best : null
+}
+
+function matchService(calName, services) {
+  const direct = matchServiceRaw(calName, services)
+  if (direct) return direct
+  const alias = aliasFor(calName)
+  return alias ? matchServiceRaw(alias, services) : null
 }
 
 function matchShop(payload, shops) {
