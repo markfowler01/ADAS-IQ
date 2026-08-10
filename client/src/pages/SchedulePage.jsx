@@ -56,6 +56,9 @@ function fmtShort(iso) {
   const [, m, d] = iso.split('-')
   return `${Number(m)}/${Number(d)}`
 }
+// scheduled_date can carry a time suffix ("2026-08-05T08:00") — compare
+// on the date part only.
+function dateOf(j) { return String(j.scheduled_date || '').slice(0, 10) }
 function vehicleOf(j) {
   return j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
 }
@@ -119,10 +122,10 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
 
   const requests = useMemo(() => board.jobs.filter(j => j.status === REQ), [board.jobs])
   const jobs     = useMemo(() => board.jobs.filter(j => isActiveJob(j.status)), [board.jobs])
-  const unscheduled = useMemo(() => requests.filter(j => !j.scheduled_date), [requests])
-  const overdue = useMemo(() => requests.filter(j => j.scheduled_date && j.scheduled_date < today), [requests, today])
+  const unscheduled = useMemo(() => requests.filter(j => !dateOf(j)), [requests])
+  const overdue = useMemo(() => requests.filter(j => dateOf(j) && dateOf(j) < today), [requests, today])
   const unconfirmedCount = useMemo(() =>
-    requests.filter(j => j.scheduled_date && j.scheduled_date >= today && !board.meta[j.id]?.confirmed).length,
+    requests.filter(j => dateOf(j) && dateOf(j) >= today && !board.meta[j.id]?.confirmed).length,
   [requests, board.meta, today])
 
   const cityOf = useCallback(j => board.shops[normShop(j.shop_name)]?.city || '', [board.shops])
@@ -194,7 +197,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
   const markersRef = useRef([])
   const visibleRequests = useMemo(() => {
     const days = new Set([...week1, ...week2])
-    return requests.filter(j => !j.scheduled_date || days.has(j.scheduled_date))
+    return requests.filter(j => !dateOf(j) || days.has(dateOf(j)))
   }, [requests, week1, week2])
 
   useEffect(() => {
@@ -218,14 +221,14 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
       const geo = board.shops[normShop(j.shop_name)]
       if (!geo || geo.lat == null) continue
       const el = document.createElement('div')
-      const overdueP = j.scheduled_date && j.scheduled_date < today
-      const unsched = !j.scheduled_date
+      const overdueP = dateOf(j) && dateOf(j) < today
+      const unsched = !dateOf(j)
       el.style.cssText = `width:16px;height:16px;border-radius:50%;border:3px solid ${overdueP ? '#dc2626' : ORANGE};background:${unsched ? 'white' : (overdueP ? '#dc2626' : ORANGE)};box-shadow:0 1px 5px rgba(0,0,0,.3);cursor:pointer;`
       const marker = new mapboxgl.Marker({ element: el })
         .setLngLat([geo.lng, geo.lat])
         .setPopup(new mapboxgl.Popup({ offset: 12, closeButton: false }).setHTML(
           `<div style="font:600 12px 'IBM Plex Sans',sans-serif">${j.shop_name}<br>` +
-          `<span style="font-weight:400;color:#666">${vehicleOf(j)}${j.scheduled_date ? ' · ' + fmtShort(j.scheduled_date) : ' · unscheduled'}</span></div>`))
+          `<span style="font-weight:400;color:#666">${vehicleOf(j)}${dateOf(j) ? ' · ' + fmtShort(dateOf(j)) : ' · unscheduled'}</span></div>`))
         .addTo(map)
       markersRef.current.push(marker)
       bounds.extend([geo.lng, geo.lat])
@@ -241,8 +244,8 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
     const isToday = date === today
     const past = date < today
     const wkend = isWeekend(date)
-    const dayReqs = requests.filter(j => j.scheduled_date === date)
-    const dayJobs = jobs.filter(j => j.scheduled_date === date)
+    const dayReqs = requests.filter(j => dateOf(j) === date)
+    const dayJobs = jobs.filter(j => dateOf(j) === date)
     const empty = dayReqs.length === 0 && dayJobs.length === 0
     const perTech = {}
     for (const j of [...dayReqs, ...dayJobs]) {
@@ -297,8 +300,8 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
   }
 
   // ── Day panel ──
-  const panelReqs = dayOpen ? requests.filter(j => j.scheduled_date === dayOpen) : []
-  const panelJobs = dayOpen ? jobs.filter(j => j.scheduled_date === dayOpen) : []
+  const panelReqs = dayOpen ? requests.filter(j => dateOf(j) === dayOpen) : []
+  const panelJobs = dayOpen ? jobs.filter(j => dateOf(j) === dayOpen) : []
 
   function checklist(j) {
     const missing = []

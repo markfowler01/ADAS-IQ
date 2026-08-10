@@ -77,10 +77,10 @@ async function readKV(req, key) {
 // confirmed flags, and per-shop city + coords for the cards and the map.
 router.get('/board', async (req, res) => {
   try {
-    const { readGeocache, normalizeKey } = await import('../services/geocoding.js')
+    const { readGeocache, normalizeKey, geocodeAddress, readGeocacheRaw, writeGeocache } = await import('../services/geocoding.js')
     const app = catalyst.initialize(req, { type: 'advancedio' })
 
-    const [jobs, meta, geocache] = await Promise.all([
+    let [jobs, meta, geocache] = await Promise.all([
       readJobsPublic(req),
       scanScheduleMeta(req),
       readGeocache(req).catch(() => ({})),
@@ -89,6 +89,7 @@ router.get('/board', async (req, res) => {
     // Shop → city from CRMShops addresses ("123 Main St, Everett, WA 98201"
     // → "Everett"). Paginated like every other big-table read.
     const shops = {}
+    const addresses = {}
     const PAGE = 250
     for (let offset = 0; offset < 10000; offset += PAGE) {
       const rows = await app.zcql().executeZCQLQuery(
@@ -104,6 +105,7 @@ router.get('/board', async (req, res) => {
           : (parts.length === 2 ? parts[1].replace(/\s+[A-Z]{2}\s*\d*$/, '') : '')
         const norm = normalizeKey(name)
         const geo = geocache[norm]
+        addresses[norm] = String(r?.address || '')
         shops[norm] = {
           city: city || '',
           lat: geo?.lat ?? null,
@@ -111,6 +113,34 @@ router.get('/board', async (req, res) => {
         }
       }
       if (!rows || rows.length < PAGE) break
+    }
+
+    // The geocache is Catalyst-Cache-only (48h TTL) so it can come back
+    // empty. Re-geocode request shops on demand — bounded to 5 per call,
+    // written back so the next load is a cache hit.
+    const needGeo = [...new Set(
+      jobs.filter(j => (j.status || '') === 'job_requested')
+        .map(j => normalizeKey(j.shop_name))
+        .filter(n => n && shops[n] && shops[n].lat == null && addresses[n])
+    )].slice(0, 5)
+    if (needGeo.length > 0) {
+      let cacheDirty = false
+      let rawCache = null
+      for (const norm of needGeo) {
+        try {
+          const geo = await geocodeAddress(addresses[norm])
+          if (geo?.lat != null) {
+            shops[norm].lat = geo.lat
+            shops[norm].lng = geo.lng
+            if (!rawCache) rawCache = await readGeocacheRaw(req).catch(() => ({}))
+            rawCache[norm] = { ...geo, geocoded_at: new Date().toISOString() }
+            cacheDirty = true
+          }
+        } catch (e) { console.warn('[schedule board geocode]', norm, e.message) }
+      }
+      if (cacheDirty && rawCache) {
+        await writeGeocache(req, rawCache).catch(e => console.warn('[schedule board geocache write]', e.message))
+      }
     }
 
     res.json({
@@ -175,6 +205,10 @@ function fmtShort(iso) {
 
 const ACTIVE_JOB = s => /^dispatched_|^need_dispatch$|^pending_parts$/.test(s || '')
 
+// scheduled_date is usually YYYY-MM-DD but some rows carry a time suffix
+// ("2026-08-05T08:00") — compare on the date part only.
+const dateOnly = v => String(v || '').slice(0, 10)
+
 export async function buildScheduleDigest(req) {
   const [jobs, meta] = await Promise.all([readJobsPublic(req), scanScheduleMeta(req)])
   const today = todayPT()
@@ -190,14 +224,14 @@ export async function buildScheduleDigest(req) {
   }
   const horizonSet = new Set(horizon)
 
-  const count = (list, date) => list.filter(j => (j.scheduled_date || '') === date).length
+  const count = (list, date) => list.filter(j => dateOnly(j.scheduled_date) === date).length
   const label = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
-  const unscheduled = requests.filter(j => !j.scheduled_date)
-  const overdue = requests.filter(j => j.scheduled_date && j.scheduled_date < today)
+  const unscheduled = requests.filter(j => !dateOnly(j.scheduled_date))
+  const overdue = requests.filter(j => dateOnly(j.scheduled_date) && dateOnly(j.scheduled_date) < today)
   const unconfirmed = requests.filter(j =>
-    j.scheduled_date && j.scheduled_date >= today && !meta[String(j.id)]?.confirmed)
-  const horizonRequests = requests.filter(j => horizonSet.has(j.scheduled_date || ''))
+    dateOnly(j.scheduled_date) && dateOnly(j.scheduled_date) >= today && !meta[String(j.id)]?.confirmed)
+  const horizonRequests = requests.filter(j => horizonSet.has(dateOnly(j.scheduled_date)))
 
   const lines = [
     `📅 *Schedule* — ${fmtShort(today)}`,
@@ -208,7 +242,7 @@ export async function buildScheduleDigest(req) {
   if (unconfirmed.length) lines.push(`⏳ Unconfirmed: ${unconfirmed.length}`)
   for (const j of overdue.slice(0, 5)) {
     const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
-    lines.push(`🔴 Overdue: ${j.shop_name || 'Unknown shop'} · ${vehicle || 'Vehicle TBD'} · was ${fmtShort(j.scheduled_date)}`)
+    lines.push(`🔴 Overdue: ${j.shop_name || 'Unknown shop'} · ${vehicle || 'Vehicle TBD'} · was ${fmtShort(dateOnly(j.scheduled_date))}`)
   }
   if (unscheduled.length) lines.push(`📥 Unscheduled: ${unscheduled.length}`)
 

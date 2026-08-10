@@ -71,7 +71,7 @@ router.get('/live', async (req, res) => {
       const techJobs = allJobs
         .filter(j => isAssignedTo(j, techName))
         .filter(j => /^dispatched_/.test(j.status || ''))
-        .filter(j => !j.scheduled_date || j.scheduled_date <= dateISO)
+        .filter(j => !j.scheduled_date || String(j.scheduled_date).slice(0, 10) <= dateISO)
         .map(decorate)
         .sort((a, b) => (a.drive_order ?? 999) - (b.drive_order ?? 999))
 
@@ -109,7 +109,7 @@ router.get('/live', async (req, res) => {
         const s = j.status || ''
         // Future-dated need_dispatch jobs are parked on the Schedule
         // calendar until their morning.
-        if (s === 'need_dispatch') return !j.scheduled_date || j.scheduled_date <= dateISO
+        if (s === 'need_dispatch') return !j.scheduled_date || String(j.scheduled_date).slice(0, 10) <= dateISO
         if (s === 'job_requested') return false
         return (j.scheduled_date || '') === dateISO && !j.technician && OPEN_STATUSES.has(s)
       })
