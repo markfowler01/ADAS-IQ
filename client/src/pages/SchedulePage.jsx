@@ -337,6 +337,18 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
         .sched-load.full i.f { background:#d97706; }
         .sched-grid { display:grid; grid-template-columns:repeat(5,1fr) 0.55fr 0.55fr; gap:8px; }
         @media (max-width:700px){ .sched-grid { grid-template-columns:1fr; } .sched-grid .sched-cell.weekend.empty { display:none; } }
+        /* Phone: everything stacks, Unscheduled lane rides on top so the
+           tap-card-then-tap-day flow doesn't need scrolling round-trips.
+           Desktop: map | grid | lane. */
+        .sched-layout { display:grid; gap:16px; align-items:start; grid-template-columns:1fr; }
+        .sched-lane { order:-1; }
+        .sched-maparea { display:none; }
+        @media (min-width:1024px){
+          .sched-layout.with-map { grid-template-columns:minmax(220px,260px) 1fr minmax(200px,240px); }
+          .sched-layout.no-map { grid-template-columns:1fr minmax(200px,240px); }
+          .sched-lane { order:0; position:sticky; top:12px; }
+          .sched-maparea { display:block; position:sticky; top:12px; }
+        }
       `}</style>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
@@ -390,10 +402,10 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
           </div>
         )}
 
-        {/* Layout: map | grid | lane */}
-        <div className="grid gap-4 items-start" style={{ gridTemplateColumns: mapOpen ? 'minmax(220px,260px) 1fr minmax(200px,240px)' : '1fr minmax(200px,240px)' }}>
+        {/* Layout: map | grid | lane (phone: lane on top, then days) */}
+        <div className={`sched-layout ${mapOpen ? 'with-map' : 'no-map'}`}>
           {mapOpen && (
-            <div className="rounded-2xl bg-white p-3 hidden lg:block" style={{ border: '1px solid #ebebeb', position: 'sticky', top: 12 }}>
+            <div className="sched-maparea rounded-2xl bg-white p-3" style={{ border: '1px solid #ebebeb' }}>
               <div className="text-xs font-bold uppercase tracking-wide mb-2">🗺 This window's ground</div>
               {MAPBOX_TOKEN ? (
                 <div ref={mapDiv} style={{ height: 380, borderRadius: 10, overflow: 'hidden' }} />
@@ -416,7 +428,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
           </div>
 
           {/* Unscheduled lane */}
-          <div className="rounded-2xl bg-white p-4" style={{ border: '1px solid #ebebeb', position: 'sticky', top: 12 }}>
+          <div className="sched-lane rounded-2xl bg-white p-4" style={{ border: '1px solid #ebebeb' }}>
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold uppercase tracking-wide">📥 Unscheduled</span>
               <span className="text-[11px] font-bold text-white rounded-full px-2 py-0.5" style={{ backgroundColor: ORANGE }}>{unscheduled.length}</span>
