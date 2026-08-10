@@ -17,6 +17,9 @@ export default function JobRequestModal({ onClose, onSubmit }) {
   const [model,       setModel]       = useState('')
   const [lastFourVin, setLastFourVin] = useState('')
   const [notes,       setNotes]       = useState('')
+  // Optional — a dated request lands on the Schedule calendar that day;
+  // no date puts it in the Unscheduled lane for Kat to place.
+  const [schedDate,   setSchedDate]   = useState('')
 
   // Photo scanner state
   const [imagePreview, setImagePreview] = useState(null)
@@ -133,6 +136,7 @@ export default function JobRequestModal({ onClose, onSubmit }) {
         vin:        lastFourVin ? `****${lastFourVin.toUpperCase()}` : '',
         technician: technician,
         notes:      String(notes || '').trim(),
+        scheduled_date: schedDate || '',
         status:     'job_requested',
       })
       onClose()
@@ -417,6 +421,25 @@ export default function JobRequestModal({ onClose, onSubmit }) {
               onFocus={e => (e.target.style.borderColor = ORANGE)}
               onBlur={e  => (e.target.style.borderColor = '#ddd')}
             />
+          </div>
+
+          {/* Scheduled date (optional) */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">
+              Scheduled Date <span style={{ color: '#bbb', textTransform: 'none' }}>(if known)</span>
+            </label>
+            <input
+              type="date"
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+              style={{ borderColor: '#ddd' }}
+              value={schedDate}
+              onChange={e => setSchedDate(e.target.value)}
+              onFocus={e => (e.target.style.borderColor = ORANGE)}
+              onBlur={e  => (e.target.style.borderColor = '#ddd')}
+            />
+            <p className="text-[11px] mt-1" style={{ color: '#aaa' }}>
+              Leave blank and it goes to the Unscheduled list on the Schedule calendar.
+            </p>
           </div>
 
           {/* What's needed */}

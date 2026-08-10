@@ -292,6 +292,18 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] morning-kickoff piggyback failed (non-fatal):', e.message)
   }
 
+  // Schedule-digest piggyback (Mark 2026-08-10) — 6am PT daily calendar
+  // digest to #dispatch (today/tomorrow/10-day/unconfirmed/overdue/
+  // unscheduled). Own time-window + once-per-day dedup inside; weekend
+  // and all-quiet days skip silently.
+  try {
+    const { maybeFireScheduleDigest } = await import('./schedule.js')
+    const sd = await maybeFireScheduleDigest(req)
+    if (sd.fired) console.log('[postscan] schedule digest:', JSON.stringify(sd))
+  } catch (e) {
+    console.warn('[postscan] schedule-digest piggyback failed (non-fatal):', e.message)
+  }
+
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
   // the Books invoice webhook. Every hourly tick, sweep the last two PT
   // days of sent invoices; the per-invoice dedup stamp makes repeated

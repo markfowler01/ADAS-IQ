@@ -1521,6 +1521,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       technician:   data.technician  || '',
       notes,
       quote_number: data.ro_number   || '',
+      scheduled_date: data.scheduled_date || '',
       status:       'job_requested',
       calibrations: '[]',
       via_request:  true,

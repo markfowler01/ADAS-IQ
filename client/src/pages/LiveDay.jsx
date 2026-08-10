@@ -657,6 +657,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       technician:   formData.technician   || '',
       notes,
       quote_number: formData.ro_number    || '',
+      scheduled_date: formData.scheduled_date || '',
       status:       'job_requested',
       calibrations: '[]',
       via_request:  true,

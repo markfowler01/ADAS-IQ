@@ -65,9 +65,13 @@ router.get('/live', async (req, res) => {
       // date filter (Mark 2026-07-13/14). pending_parts jobs come off
       // the live view (they're parked, not workable) and return when
       // moved back to dispatched. ready_invoice/complete stay hidden.
+      // Schedule calendar (2026-08-10): FUTURE-dated jobs are parked on
+      // the calendar — they join the live view the morning their date
+      // arrives. No-date and past-date jobs still show (carryover work).
       const techJobs = allJobs
         .filter(j => isAssignedTo(j, techName))
         .filter(j => /^dispatched_/.test(j.status || ''))
+        .filter(j => !j.scheduled_date || j.scheduled_date <= dateISO)
         .map(decorate)
         .sort((a, b) => (a.drive_order ?? 999) - (b.drive_order ?? 999))
 
@@ -103,7 +107,9 @@ router.get('/live', async (req, res) => {
     const unassigned_today = allJobs
       .filter(j => {
         const s = j.status || ''
-        if (s === 'need_dispatch') return true
+        // Future-dated need_dispatch jobs are parked on the Schedule
+        // calendar until their morning.
+        if (s === 'need_dispatch') return !j.scheduled_date || j.scheduled_date <= dateISO
         if (s === 'job_requested') return false
         return (j.scheduled_date || '') === dateISO && !j.technician && OPEN_STATUSES.has(s)
       })

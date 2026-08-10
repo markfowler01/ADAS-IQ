@@ -28,6 +28,7 @@ import RepairEstimateScreen from './components/RepairEstimateScreen'
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
+import SchedulePage from './pages/SchedulePage'
 import BooksScreen from './components/BooksScreen'
 import OpsHub from './components/OpsHub'
 import MessageCenter from './components/MessageCenter'
@@ -291,6 +292,9 @@ function MainApp() {
       )}
       {screen === 'today' && (
         <TechToday user={user} onLogout={handleLogout} {...navProps} />
+      )}
+      {screen === 'schedule' && (
+        <SchedulePage user={user} onLogout={handleLogout} {...navProps} />
       )}
       {screen === 'dispatch-map' && (
         <DispatchMap user={user} onLogout={handleLogout} {...navProps} />
