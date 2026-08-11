@@ -19,7 +19,7 @@ import { syncNewsletterSubscriberToCrm, fetchLeadsPage, fetchContactsPage, fetch
 import { addVanSubscriber, listVanSubscribers, getVanAudienceId, createVanBroadcast, sendVanBroadcast, deleteVanBroadcast, unsubscribeVanContact, hardDeleteVanContact, signUnsubEmail, verifyUnsubSig, vanUnsubscribeUrl, listRecentResendSends } from '../services/fromTheVan.js'
 import { VAN_NURTURE_DAYS, vanNurtureDayFor, buildVanNurtureEmail, VAN_UNSUB_PLACEHOLDER, buildGoodbyeEmail } from '../services/fromTheVanNurture.js'
 import { buildWelcomeEmail } from '../services/vanWelcome.js'
-import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, unmarkCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags } from '../services/vanWeekly.js'
+import { draftWeeklyIssue, addCaseNote, readCaseNotes, pickNextCaseNote, markCaseNoteUsed, unmarkCaseNoteUsed, readIssueState, writeIssueState, computeIssueSlot, readPendingDraft, writePendingDraft, clearPendingDraft, signVanAction, verifyVanAction, nextTuesday7amPT, isVanFlagEnabled, setVanFlag, readAllVanFlags, runVanReliabilityChecks } from '../services/vanWeekly.js'
 import { renderWeeklyIssue } from '../services/vanWeeklyRender.js'
 import { computeCurrentStats, readVanStatsSnapshot, writeVanStatsSnapshot, buildDigestSMS } from '../services/vanDailyDigest.js'
 import { sendTwilioSMS, resolvePhoneConfig } from '../services/twilio.js'
@@ -3698,7 +3698,20 @@ captureCalcRouter.all('/from-the-van/nurture/run', heartbeatAttempt('capture_van
 
     if (mutated) await writeVanEnrollments(req, list)
     await stampSuccess(req, 'capture_van_nurture', { processed: out.length, sent: sentCount, capReached, dry })
-    res.json({ ok: true, dry, processed: out.length, sent: sentCount, capReached, cap: MAX_SENDS_PER_FIRE, results: out })
+
+    // Piggyback the weekly-drafter + safety-net logic onto this daily cron
+    // so autonomous weekly sends don't depend on `capture_van_weekly_draft`
+    // or `capture_van_safety_net` crons that would need separate Console setup.
+    // All checks are non-fatal — nurture success is the priority.
+    let piggyback = null
+    try {
+      piggyback = await runVanReliabilityChecks(req, {
+        triggerDrafter: async () => runVanWeeklyDrafterInline(req),
+        alertCliq: (msg) => postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {}),
+      })
+    } catch (e) { console.warn('[van piggyback]', e.message, e.stack) }
+
+    res.json({ ok: true, dry, processed: out.length, sent: sentCount, capReached, cap: MAX_SENDS_PER_FIRE, results: out, piggyback })
   } catch (e) {
     console.error('[van nurture]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message, partial: out })
@@ -4069,12 +4082,16 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
       out.skipped.push({ check: 'weekly_drafter', reason: `not Sun/Mon (day_pt=${dayPt}, hour_pt=${hourPt})` })
     }
 
-    // ─── 3. TRIGGER MISSED NURTURE CRON (any day 6am-noon PT) ─────────────
-    if (hourPt >= 6 && hourPt <= 12) {
+    // ─── 3. TRIGGER MISSED NURTURE CRON (any hour of any day) ─────────────
+    // Widened from 6am-noon PT + 23h to any-time + 2h staleness after
+    // 2026-08-11 outage — nurture stalled 5h mid-day without wakeup because
+    // the old threshold required 23h stale. Nurture fires hourly, so 2h+
+    // stale = it missed at least one fire and is worth waking.
+    {
       const nu = heartbeats['capture_van_nurture']
       const lastMs = nu?.last_success ? Date.parse(nu.last_success) : 0
       const hoursStale = lastMs ? (nowMs - lastMs) / 3600000 : 999
-      if (hoursStale >= 23) {
+      if (hoursStale >= 2) {
         try {
           const secret = process.env.BREW_CRON_SECRET || ''
           const url = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/from-the-van/nurture/run?secret=${encodeURIComponent(secret)}`
@@ -4089,8 +4106,29 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
       } else {
         out.skipped.push({ check: 'nurture', reason: `fresh heartbeat ${hoursStale.toFixed(1)}h ago` })
       }
-    } else {
-      out.skipped.push({ check: 'nurture', reason: `outside 6am-noon PT window (hour_pt=${hourPt})` })
+    }
+
+    // ─── 4. AUTO-CLEAR STALE PENDING DRAFT ─────────────────────────────────
+    // If pending draft's scheduled_for is 2h+ in the past, Resend has already
+    // sent it — clear the pending record so next Sun/Mon drafter isn't blocked.
+    // Safety-net redundant with the same check in runVanReliabilityChecks
+    // (called from nurture piggyback); either catches it.
+    try {
+      const pending = await readPendingDraft(req)
+      if (pending && pending.scheduled_for) {
+        const scheduledMs = Date.parse(pending.scheduled_for)
+        if (Number.isFinite(scheduledMs) && scheduledMs < nowMs - 2 * 3600 * 1000) {
+          await clearPendingDraft(req)
+          out.actions.push({ action: 'clear_stale_pending', issue: pending.issue_number, was_scheduled: pending.scheduled_for })
+        } else {
+          out.skipped.push({ check: 'stale_pending_clear', reason: pending.scheduled_for ? `still future or fresh (scheduled ${pending.scheduled_for})` : 'no scheduled_for' })
+        }
+      } else {
+        out.skipped.push({ check: 'stale_pending_clear', reason: 'no pending draft' })
+      }
+    } catch (e) {
+      console.warn('[van safety-net stale pending]', e.message)
+      out.actions.push({ action: 'clear_stale_pending', ok: false, error: e.message })
     }
 
     await stampSuccess(req, 'capture_van_safety_net', { actions: out.actions.length, skipped: out.skipped.length })
@@ -4250,11 +4288,22 @@ captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_va
     const asksOn = await isVanFlagEnabled(req, 'weekly_asks')
     const slot = computeIssueSlot(state.next_issue_number, state.next_ask_type_index, asksOn)
 
+    // Recent subjects for de-dup (auto-tracked in advanceIssueState +
+    // one-off override via ?avoid=<comma,list>).
+    const { getVal: _getVal } = await import('../services/vanDatastore.js')
+    const persistedRecent = (await _getVal(req, 'van_recent_subjects').catch(() => null)) || []
+    const overrideAvoid = String(req.query.avoid || '').split(',').map(s => s.trim()).filter(Boolean)
+    const recentSubjects = [
+      ...overrideAvoid,
+      ...persistedRecent.map(x => `Issue #${x.issue}: ${x.subject}`),
+    ]
+
     // Draft — if no case note, drafter enters SYNTHETIC MODE and generates a composite
     const drafted = await draftWeeklyIssue({
       caseNote: nextNote?.note,   // undefined triggers synthetic mode in the drafter
       issueNumber: state.next_issue_number,
       forcedAskType: slot.askType,
+      recentSubjects,
     })
 
     // Render + build the pending draft record
@@ -4586,13 +4635,164 @@ ${bodyInner}
 }
 
 // Cron-safe helper: bump issue counter + ask rotation forward after approval.
+// Piggyback drafter — invoked from the daily nurture cron via
+// runVanReliabilityChecks. Same building blocks as the /from-the-van/draft-weekly
+// route but stripped down: no query params, no HTTP shape, always uses
+// synthetic mode when no case note exists (Mark's v1 queue rarely has notes).
+// Reuses draftWeeklyIssue → renderWeeklyIssue → createVanBroadcast →
+// sendVanBroadcast → advanceIssueState so behavior stays aligned with the
+// human-invoked route.
+async function runVanWeeklyDrafterInline(req) {
+  const state = await readIssueState(req)
+  const asksOn = await isVanFlagEnabled(req, 'weekly_asks')
+  const slot = computeIssueSlot(state.next_issue_number, state.next_ask_type_index, asksOn)
+
+  // De-dup: read the rolling recent-subjects log
+  const { getVal } = await import('../services/vanDatastore.js')
+  const persistedRecent = (await getVal(req, 'van_recent_subjects').catch(() => null)) || []
+  const recentSubjects = persistedRecent.map(x => `Issue #${x.issue}: ${x.subject}`)
+
+  // Case note (rare in Mark's usage — synthetic is the norm)
+  const notes = await readCaseNotes(req).catch(() => [])
+  const nextNote = pickNextCaseNote(notes)
+
+  const drafted = await draftWeeklyIssue({
+    caseNote: nextNote?.note,
+    issueNumber: state.next_issue_number,
+    forcedAskType: slot.askType,
+    recentSubjects,
+  })
+
+  const rendered = renderWeeklyIssue({
+    subject: drafted.subject,
+    previewText: drafted.preview_text,
+    bodyMarkdown: drafted.body_markdown,
+    issueNumber: state.next_issue_number,
+  })
+
+  const id = crypto.randomBytes(9).toString('base64url')
+  const pending = {
+    id,
+    issue_number: state.next_issue_number,
+    cycle_position: slot.cyclePos,
+    type: drafted.type || slot.type,
+    ask_type: drafted.ask_type || slot.askType || null,
+    case_note_id: nextNote?.id || null,
+    case_note_source: nextNote?.source || (drafted.is_synthetic ? 'synthetic-composite' : ''),
+    is_synthetic: Boolean(drafted.is_synthetic),
+    drafted_at: new Date().toISOString(),
+    scheduled_for: nextTuesday7amPT().toISOString(),
+    subject: rendered.subject,
+    preview_text: rendered.previewText,
+    body_markdown: drafted.body_markdown,
+    html: rendered.html,
+    text: rendered.text,
+    notes_for_mark: drafted.notes_for_mark || '',
+    status: 'pending',
+  }
+
+  const enabled = await isVanFlagEnabled(req, 'weekly')
+  let scheduled = false
+  try {
+    const created = await createVanBroadcast({
+      subject: pending.subject,
+      html: pending.html,
+      text: pending.text,
+      previewText: pending.preview_text,
+      name: `From the Van #${pending.issue_number}${pending.is_synthetic ? ' 🤖' : ''}${enabled ? '' : ' (paused)'}`,
+    })
+    if (!created.ok) throw new Error(created.error)
+    pending.broadcast_id = created.id
+    pending.broadcast_url = created.dashboardUrl
+    if (enabled) {
+      const sched = await sendVanBroadcast(created.id, pending.scheduled_for)
+      if (!sched.ok) throw new Error('schedule failed: ' + sched.error)
+      pending.status = 'auto_scheduled'
+      scheduled = true
+    } else {
+      pending.status = 'paused_draft'
+    }
+  } catch (e) {
+    console.warn('[van piggyback drafter] broadcast fail:', e.message)
+    pending.broadcast_error = e.message
+  }
+
+  await writePendingDraft(req, pending)
+
+  if (scheduled) {
+    await advanceIssueState(req, pending).catch(e => console.warn('[van piggyback advance]', e.message))
+    if (pending.case_note_id) {
+      await markCaseNoteUsed(req, pending.case_note_id, pending.issue_number).catch(e => console.warn('[van piggyback markCaseNoteUsed]', e.message))
+    }
+    // Archive to website
+    try {
+      const { commitFile } = await import('../services/brewArchive.js')
+      const archiveHtml = wrapVanIssueForArchive(pending)
+      await commitFile({
+        path: `van/issues/${pending.issue_number}.html`,
+        content: archiveHtml,
+        message: `From the Van #${pending.issue_number}: ${String(pending.subject).slice(0, 80)}`,
+      }).catch(e => console.warn('[van piggyback archive]', e.message))
+    } catch (e) { console.warn('[van piggyback archive import]', e.message) }
+  }
+
+  // Cliq notify — same shape as the route handler
+  const scheduledForLocal = new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })
+  const previewUrl = `${VAN_APPROVE_BASE}/from-the-van/preview-weekly?id=${id}&s=${signVanAction(id, 'preview')}`
+  const killUrl = `${VAN_APPROVE_BASE}/from-the-van/kill-weekly?id=${id}&s=${signVanAction(id, 'kill')}`
+  const cliqMsg = [
+    scheduled
+      ? `📰 FROM THE VAN #${pending.issue_number}${pending.is_synthetic ? ' 🤖' : ''} — AUTO-SCHEDULED for ${scheduledForLocal} (via nurture-piggyback drafter)`
+      : `⚠️ FROM THE VAN #${pending.issue_number} — drafted via piggyback but broadcast failed: ${pending.broadcast_error || 'unknown'}`,
+    `SUBJECT: ${pending.subject}`,
+    `PREVIEW: ${pending.preview_text}`,
+    '',
+    pending.body_markdown.slice(0, 1600),
+    pending.body_markdown.length > 1600 ? '…[truncated]' : '',
+    '',
+    `👀 Preview: ${previewUrl}`,
+    scheduled ? `❌ Kill: ${killUrl}` : '',
+  ].filter(Boolean).join('\n').slice(0, 4000)
+  await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e => console.warn('[van piggyback cliq]', e.message))
+
+  return { ok: true, issue: pending.issue_number, subject: pending.subject, scheduled_for: pending.scheduled_for, scheduled }
+}
+
 async function advanceIssueState(req, approvedPending) {
   const state = await readIssueState(req)
   const nextIssueNumber = approvedPending.issue_number + 1
   let askIdx = state.next_ask_type_index
   if (approvedPending.type === 'soft-ask') askIdx = (askIdx + 1) % 3  // advance rotation only on ask
   await writeIssueState(req, { next_issue_number: nextIssueNumber, next_ask_type_index: askIdx })
+  // Keep a rolling 8-week window of recent subjects so the drafter can dedup.
+  try {
+    const { getVal, setVal } = await import('../services/vanDatastore.js')
+    const list = (await getVal(req, 'van_recent_subjects')) || []
+    const entry = { issue: approvedPending.issue_number, subject: approvedPending.subject, at: new Date().toISOString() }
+    const updated = [entry, ...list.filter(x => x.issue !== approvedPending.issue_number)].slice(0, 8)
+    await setVal(req, 'van_recent_subjects', updated)
+  } catch (e) { console.warn('[van recent-subjects]', e.message) }
 }
+
+// Admin — read/seed the rolling recent-subjects log (used for drafter dedup)
+captureCalcRouter.get('/from-the-van/recent-subjects', requireCronSecretFlex, async (req, res) => {
+  const { getVal } = await import('../services/vanDatastore.js')
+  res.json({ ok: true, subjects: (await getVal(req, 'van_recent_subjects')) || [] })
+})
+captureCalcRouter.post('/from-the-van/recent-subjects', requireCronSecretFlex, express.json({ limit: '8kb' }), async (req, res) => {
+  const { getVal, setVal } = await import('../services/vanDatastore.js')
+  const incoming = Array.isArray(req.body?.add) ? req.body.add : []
+  const cleaned = incoming.map(x => ({
+    issue: Number(x.issue) || 0,
+    subject: String(x.subject || '').slice(0, 200),
+    at: x.at || new Date().toISOString(),
+  })).filter(x => x.issue > 0 && x.subject)
+  const current = (await getVal(req, 'van_recent_subjects')) || []
+  const merged = [...cleaned, ...current.filter(c => !cleaned.some(n => n.issue === c.issue))]
+    .sort((a, b) => b.issue - a.issue).slice(0, 8)
+  await setVal(req, 'van_recent_subjects', merged)
+  res.json({ ok: true, subjects: merged })
+})
 
 // Admin — nuke the pending draft (used when Mark ignores it and needs to
 // start fresh).  POST /api/capture-calc/from-the-van/clear-pending-draft
@@ -4812,13 +5012,15 @@ captureCalcRouter.post('/from-the-van/reconstruct-nurture-from-resend', requireC
 //   Body: { body_markdown, subject? , preview_text? }
 captureCalcRouter.post('/from-the-van/edit-pending-body', requireCronSecretFlex, express.json({ limit: '256kb' }), async (req, res) => {
   try {
-    const newBody = String(req.body?.body_markdown || '').trim()
-    const newSubject = req.body?.subject ? String(req.body.subject).trim() : null
-    const newPreview = req.body?.preview_text ? String(req.body.preview_text).trim() : null
-    if (!newBody) return res.status(400).json({ ok: false, error: 'body_markdown required' })
-
     const pending = await readPendingDraft(req)
     if (!pending) return res.status(404).json({ ok: false, error: 'no pending draft to edit' })
+
+    // body_markdown optional — if omitted, reuse current pending body (pure reschedule)
+    const newBody = req.body?.body_markdown ? String(req.body.body_markdown).trim() : pending.body_markdown
+    const newSubject = req.body?.subject ? String(req.body.subject).trim() : null
+    const newPreview = req.body?.preview_text ? String(req.body.preview_text).trim() : null
+    const newScheduledFor = req.body?.scheduled_for ? new Date(req.body.scheduled_for).toISOString() : pending.scheduled_for
+    if (!newBody) return res.status(400).json({ ok: false, error: 'body_markdown required (or leave pending draft to reuse it)' })
 
     // Re-render html + text from the new body
     const subject = newSubject || pending.subject
@@ -4846,8 +5048,8 @@ captureCalcRouter.post('/from-the-van/edit-pending-body', requireCronSecretFlex,
     })
     if (!created.ok) return res.status(500).json({ ok: false, error: `create failed: ${created.error}` })
 
-    // Reschedule for the same scheduled_for as before
-    const sched = await sendVanBroadcast(created.id, pending.scheduled_for)
+    // Reschedule for the new scheduled_for (or reuse if not provided)
+    const sched = await sendVanBroadcast(created.id, newScheduledFor)
     if (!sched.ok) {
       // Broadcast exists but couldn't be scheduled — save the ID so safety-net can retry
       const patched = {
@@ -4874,6 +5076,7 @@ captureCalcRouter.post('/from-the-van/edit-pending-body', requireCronSecretFlex,
       body_markdown: newBody,
       html: rendered.html,
       text: rendered.text,
+      scheduled_for: newScheduledFor,
       broadcast_id: created.id,
       broadcast_url: created.dashboardUrl,
       broadcast_error: null,
@@ -4884,7 +5087,7 @@ captureCalcRouter.post('/from-the-van/edit-pending-body', requireCronSecretFlex,
     res.json({
       ok: true,
       issue_number: pending.issue_number,
-      scheduled_for: pending.scheduled_for,
+      scheduled_for: newScheduledFor,
       broadcast_id: created.id,
       broadcast_url: created.dashboardUrl,
     })

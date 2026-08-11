@@ -166,10 +166,20 @@ function client() {
  * @param {string} [input.forcedAskType]    for cycle position 4: 'capacity'|'capability'|'referral'
  * @returns {Promise<{subject, preview_text, type, ask_type, body_markdown, notes_for_mark}>}
  */
-export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType }) {
+export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType, recentSubjects }) {
   const isSynthetic = !caseNote || String(caseNote).trim().length < 20
   const isAsk = Boolean(forcedAskType)
   const cyclePos = ((issueNumber - 1) % 4) + 1
+
+  const avoidBlock = Array.isArray(recentSubjects) && recentSubjects.length > 0
+    ? [
+        ``,
+        `RECENT ISSUES — DO NOT REPEAT any of these vehicles, systems, or patterns:`,
+        ...recentSubjects.slice(0, 8).map((s, i) => `  ${i + 1}. ${s}`),
+        `Pick a different vehicle brand AND a different failure pattern than any of the above. If synthetic, pick a different documented pattern than the ones these issues used.`,
+        ``,
+      ].join('\n')
+    : ''
 
   const noteBlock = isSynthetic
     ? [
@@ -192,7 +202,7 @@ export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType })
       : `This is a VALUE issue. No ask, no CTA. Set type to "value" and ask_type to null.`,
     ``,
     noteBlock,
-    ``,
+    avoidBlock,
     `Draft the issue now. Return raw JSON, no markdown fence.`,
   ].join('\n')
 
@@ -402,6 +412,82 @@ export async function clearPendingDraft(req) {
  * bump the hour by one before returning. Simplification for now: compute
  * from a `now` param and use Intl for correctness.
  */
+/**
+ * Reliability piggyback — invoked from the daily nurture cron so we don't
+ * depend on `capture_van_weekly_draft` or `capture_van_safety_net` crons
+ * that Mark needs to register in the Catalyst Console (he never has).
+ *
+ * Does three things, all wrapped in individual try/catches so any one
+ * failure never kills nurture:
+ *   1. Auto-clear the pending draft if its scheduled_for is in the past
+ *      (broadcast already shipped, Resend handled the send, our
+ *      pending record is now stale and blocks the next Sunday drafter).
+ *   2. On Sun/Mon PT, if no pending draft exists, invoke the weekly
+ *      drafter internally so Issue N+1 gets created + scheduled for
+ *      the coming Tuesday 7am PT.
+ *   3. If a pending draft has broadcast_error set, alert Mark via Cliq
+ *      so he can hand-fix (auto-retry is risky — better to page him).
+ *
+ * The caller passes a `triggerDrafter` function so this file doesn't
+ * need to import the route module (would create a circular import).
+ */
+export async function runVanReliabilityChecks(req, { triggerDrafter, alertCliq }) {
+  const results = { checked_at: new Date().toISOString(), actions: [], skipped: [] }
+  const nowLa = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }))
+  const dowLa = nowLa.getDay()  // 0=Sun 1=Mon 2=Tue ... 6=Sat
+
+  // Check 1 — stale pending clear
+  try {
+    const p = await readPendingDraft(req)
+    if (p && p.scheduled_for) {
+      const sched = new Date(p.scheduled_for).getTime()
+      const nowMs = Date.now()
+      // 2h buffer past the schedule time — Resend fires within the minute so
+      // 2h is generously safe against clock skew.
+      if (sched < nowMs - 2 * 3600 * 1000) {
+        await clearPendingDraft(req)
+        results.actions.push({ check: 'stale_pending_clear', issue: p.issue_number, was_scheduled: p.scheduled_for })
+      } else {
+        results.skipped.push({ check: 'stale_pending_clear', reason: `pending draft still in future (issue #${p.issue_number}, ${p.scheduled_for})` })
+      }
+    } else {
+      results.skipped.push({ check: 'stale_pending_clear', reason: 'no pending draft' })
+    }
+  } catch (e) { results.actions.push({ check: 'stale_pending_clear', error: e.message }) }
+
+  // Check 2 — weekly drafter trigger on Sun/Mon
+  try {
+    if (dowLa === 0 || dowLa === 1) {
+      const p = await readPendingDraft(req)  // re-read after possible clear above
+      if (!p) {
+        if (typeof triggerDrafter === 'function') {
+          const drafterResult = await triggerDrafter()
+          results.actions.push({ check: 'weekly_drafter_trigger', day: dowLa === 0 ? 'Sun' : 'Mon', result: drafterResult })
+        } else {
+          results.skipped.push({ check: 'weekly_drafter_trigger', reason: 'no triggerDrafter callback provided' })
+        }
+      } else {
+        results.skipped.push({ check: 'weekly_drafter_trigger', reason: `pending draft exists (issue #${p.issue_number}) — will re-check next cron` })
+      }
+    } else {
+      results.skipped.push({ check: 'weekly_drafter_trigger', reason: `not Sun/Mon (dowLa=${dowLa})` })
+    }
+  } catch (e) { results.actions.push({ check: 'weekly_drafter_trigger', error: e.message }) }
+
+  // Check 3 — broadcast_error alert
+  try {
+    const p = await readPendingDraft(req)
+    if (p?.broadcast_error && typeof alertCliq === 'function') {
+      await alertCliq(`⚠️ FROM THE VAN — pending draft #${p.issue_number} has broadcast_error: ${p.broadcast_error}. Hand-fix via /from-the-van/edit-pending-body or /from-the-van/kill-weekly.`)
+      results.actions.push({ check: 'broadcast_error_alert', issue: p.issue_number, error: p.broadcast_error })
+    } else {
+      results.skipped.push({ check: 'broadcast_error_alert', reason: p?.broadcast_error ? 'no alertCliq callback' : 'no broadcast error' })
+    }
+  } catch (e) { results.actions.push({ check: 'broadcast_error_alert', error: e.message }) }
+
+  return results
+}
+
 export function nextTuesday7amPT(now = new Date()) {
   // Build a UTC time for Tuesday 07:00 America/Los_Angeles.
   // Simplest robust approach: find the next Tuesday's date in LA time,
