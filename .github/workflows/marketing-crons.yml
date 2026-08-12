@@ -250,5 +250,10 @@ jobs:
           cat /tmp/r.json | head -c 1500; echo
           [ "$code" -lt 400 ] || exit 1
 
-      # holiday_poster step REMOVED 2026-08-13 — /api/holiday-poster/run was
-      # never actually implemented (404). Re-add when the feature ships.
+      - name: holiday_poster — draft tomorrow's holiday post (if any)
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 120 \
+            "$BASE/holiday-poster-run")
+          echo "HTTP $code"
+          cat /tmp/r.json | head -c 1000; echo
+          [ "$code" -lt 400 ] || exit 1

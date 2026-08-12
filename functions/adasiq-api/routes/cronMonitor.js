@@ -37,6 +37,7 @@ const EXPECTATIONS = {
   van_post:                 26 * 60,       // daily van post
   capture_van_nurture:      26 * 60,       // daily Magic Lantern sender
   li_comments:              30 * 60,       // daily
+  holiday_poster:           30 * 60,       // daily (built for real 2026-08-13)
   li_outreach:              80 * 60,       // weekdays only — spans weekends
   capture_weekly:           9 * 24 * 60,   // weekly Friday report
   capture_van_weekly_draft: 9 * 24 * 60,   // weekly Sunday drafter

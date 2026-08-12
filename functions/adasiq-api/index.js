@@ -11,6 +11,7 @@ import { pushRouter } from './routes/push.js'
 import { scheduleRouter } from './routes/schedule.js'
 import { itemMapRouter } from './routes/itemMap.js'
 import { softphoneRouter } from './routes/softphone.js'
+import { holidayPosterRouter } from './routes/holidayPoster.js'
 import { cronMonitorRouter } from './routes/cronMonitor.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
@@ -261,6 +262,7 @@ app.use('/api/schedule', (req, res, next) => {
 }, scheduleRouter)
 // Own secret gate (BREW_CRON_SECRET) — no session auth, crons call it.
 app.use('/api/cron-monitor', cronMonitorRouter)
+app.use('/api/holiday-poster', holidayPosterRouter)
 app.use('/api/books', requireAuth, booksRouter)
 
 // Webhook routes — no auth required (called by Zoho Books servers)
