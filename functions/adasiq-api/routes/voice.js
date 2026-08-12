@@ -345,6 +345,23 @@ function safeVoiceHandler(handler, opName) {
   }
 }
 
+// ── Business-hours gate (Mark 2026-08-13) ───────────────────────────────────
+// Before 7am, after 6pm, and all day Sat/Sun → straight to voicemail,
+// nobody's phone rings. Hours come from the same AFTER_HOURS_START/END
+// config the SMS auto-reply uses (defaults 18 and 7), so Phone Setup
+// changes both behaviors together.
+function isAfterHoursPT(cfg) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false, weekday: 'short',
+  }).formatToParts(new Date())
+  const hour = Number(parts.find(p => p.type === 'hour')?.value)
+  const weekday = parts.find(p => p.type === 'weekday')?.value
+  if (weekday === 'Sat' || weekday === 'Sun') return true
+  const start = Number(cfg?.AFTER_HOURS_START || process.env.AFTER_HOURS_START || 18)
+  const end   = Number(cfg?.AFTER_HOURS_END   || process.env.AFTER_HOURS_END   || 7)
+  return hour >= start || hour < end
+}
+
 // ── POST /webhooks/twilio/voice ─────────────────────────────────────────────
 // Inbound call. Starts the ring cascade immediately. Recording is enabled
 // on the <Dial> verb (see nextCascadeTwiML) without a spoken disclosure —
@@ -364,6 +381,10 @@ router.post('/', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
       timestamp:   new Date().toISOString(),
     })
   } catch (e) { console.warn('[voice inbound log]', e.message) }
+  // Nights + weekends: straight to voicemail, no cascade.
+  if (isAfterHoursPT(req.phoneCfg)) {
+    return res.type('text/xml').send(xml(fallbackVoicemailTwiML(req)))
+  }
   res.type('text/xml').send(xml(nextCascadeTwiML(req, 0)))
 }, 'inbound'))
 
