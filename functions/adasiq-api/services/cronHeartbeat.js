@@ -31,6 +31,7 @@ export const CRON_NAMES = [
   'capture_weekly',
   'cron_monitor',
   'holiday_poster',
+  'mail_agent',                // inbox triage — GH-hourly since 2026-08-13
   'li_comments',
   'li_outreach',
   'van_post',
