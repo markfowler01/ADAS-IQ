@@ -22,7 +22,11 @@ function fmtPhone(input) {
   return input || ''
 }
 
-export default function SoftphonePanel() {
+// `showControls` — the on-duty pill + dialer render only on the SMS
+// page (Mark 2026-08-12: "I want this on the same page as the SMS").
+// The Device stays registered app-wide so an incoming call still pops
+// its banner on ANY screen — only the idle controls are page-scoped.
+export default function SoftphonePanel({ showControls = true }) {
   const [duty, setDuty] = useState(false)        // backend flag
   const [phase, setPhase] = useState('off')      // off|starting|ready|incoming|incall|error
   const [call, setCall] = useState(null)         // active/incoming Twilio Call
@@ -199,7 +203,7 @@ export default function SoftphonePanel() {
       )}
 
       {/* Dialer popover */}
-      {open && phase === 'ready' && (
+      {showControls && open && phase === 'ready' && (
         <div className="rounded-2xl p-3 shadow-2xl bg-white" style={{ border: '1px solid #ebebeb', minWidth: 240 }}>
           <div className="text-[11px] uppercase tracking-widest mb-2" style={{ color: '#888' }}>Call from 844 line</div>
           <div className="flex gap-2">
@@ -219,8 +223,8 @@ export default function SoftphonePanel() {
         </div>
       )}
 
-      {/* Status pill */}
-      <div className="flex items-center gap-2">
+      {/* Status pill — SMS page only */}
+      {showControls && <div className="flex items-center gap-2">
         {(phase === 'ready') && (
           <button onClick={() => setOpen(o => !o)}
             className="w-10 h-10 rounded-full shadow-lg text-lg bg-white" style={{ border: '1px solid #ebebeb' }}
@@ -236,7 +240,7 @@ export default function SoftphonePanel() {
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: duty ? '#86efac' : '#d1d5db' }} />
           {phase === 'starting' ? 'Connecting…' : duty ? 'On duty — desk rings first' : '📞 Desk phone off'}
         </button>
-      </div>
+      </div>}
     </div>
   )
 }

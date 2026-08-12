@@ -240,9 +240,11 @@ function MainApp() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
-      {/* Browser softphone — floating on every screen for admins (Kat
-          answers the 844 line at her computer). Techs don't get it. */}
-      {user?.role !== 'technician' && !isDemo && <SoftphonePanel />}
+      {/* Browser softphone — stays MOUNTED app-wide so an incoming call
+          pops its banner on any screen, but the idle controls (on-duty
+          toggle + dialer) live on the SMS page: all phone + text in one
+          place (Mark 2026-08-12). Techs don't get it. */}
+      {user?.role !== 'technician' && !isDemo && <SoftphonePanel showControls={screen === 'sms'} />}
       {/* Session expiry warning banner */}
       {sessionWarning && (
         <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3 text-sm font-medium"
