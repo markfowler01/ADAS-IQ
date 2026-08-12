@@ -10,6 +10,7 @@ import { techTodosRouter } from './routes/techTodos.js'
 import { pushRouter } from './routes/push.js'
 import { scheduleRouter } from './routes/schedule.js'
 import { itemMapRouter } from './routes/itemMap.js'
+import { softphoneRouter } from './routes/softphone.js'
 import { cronMonitorRouter } from './routes/cronMonitor.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
@@ -252,6 +253,7 @@ app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/push', requireAuth, pushRouter)
 app.use('/api/item-map', requireAuth, itemMapRouter)
+app.use('/api/softphone', requireAuth, softphoneRouter)
 // /digest-run inside carries its own cron-secret gate; the rest is auth'd.
 app.use('/api/schedule', (req, res, next) => {
   if (req.path === '/digest-run') return next()

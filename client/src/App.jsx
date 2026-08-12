@@ -30,6 +30,7 @@ import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
+import SoftphonePanel from './components/SoftphonePanel'
 import BooksScreen from './components/BooksScreen'
 import OpsHub from './components/OpsHub'
 import MessageCenter from './components/MessageCenter'
@@ -239,6 +240,9 @@ function MainApp() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
+      {/* Browser softphone — floating on every screen for admins (Kat
+          answers the 844 line at her computer). Techs don't get it. */}
+      {user?.role !== 'technician' && !isDemo && <SoftphonePanel />}
       {/* Session expiry warning banner */}
       {sessionWarning && (
         <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3 text-sm font-medium"

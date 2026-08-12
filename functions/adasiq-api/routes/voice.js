@@ -241,11 +241,19 @@ function cascadeTargets(req) {
     mark:   normalizePhoneUS(cfg.MARK_PHONE_NUMBER   || process.env.MARK_PHONE_NUMBER   || ''),
     kat:    normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''),
   }
-  return parseCascadeOrder(cfg).map(key => ({
+  const targets = parseCascadeOrder(cfg).map(key => ({
     key,
     number: numbers[key],
     afterUrl: `/webhooks/twilio/voice/after-${key}`,
   }))
+  // Desk-first softphone (Mark 2026-08-12: "I want it to ring Kat's
+  // computer"): when the browser softphone is on duty, it rings BEFORE
+  // the cell cascade. Off duty (or browser closed → no registered
+  // client, leg fails fast) and the cascade behaves exactly as before.
+  if (String(cfg.DESK_PHONE_ON || '').toLowerCase() === 'true') {
+    targets.unshift({ key: 'desk', client: 'aa-desk', afterUrl: '/webhooks/twilio/voice/after-desk' })
+  }
+  return targets
 }
 
 // Given the current cascade step, return the next TwiML: either dial the
@@ -268,20 +276,26 @@ function nextCascadeTwiML(req, order) {
   const whisperUrl = `${baseUrl(req)}/webhooks/twilio/voice/whisper?line=${encodeURIComponent(lineType)}`
   // Find the first configured target at or after the requested step.
   for (let i = order; i < targets.length; i++) {
-    if (targets[i].number) {
+    if (targets[i].number || targets[i].client) {
       const url = `${baseUrl(req)}${targets[i].afterUrl}`
+      const noun = targets[i].client
+        ? `<Client>${esc(targets[i].client)}</Client>`
+        : `<Number url="${esc(whisperUrl)}">${esc(targets[i].number)}</Number>`
       // record="record-from-answer" captures both sides after answer;
       // recordingStatusCallback fires when the file is finalized.
+      // Desk (browser) legs ring a bit longer than cells — no telco
+      // pickup delay, but Kat needs time to reach the Answer button.
+      const timeout = targets[i].client ? 15 : CASCADE_RING_TIMEOUT_SEC
       return `
 <Response>
-  <Dial timeout="${CASCADE_RING_TIMEOUT_SEC}"
+  <Dial timeout="${timeout}"
         action="${esc(url)}"
         method="POST"
         callerId="${esc(callerNumber || req.body.To || '')}"
         record="record-from-answer"
         recordingStatusCallback="${esc(recCbUrl)}"
         recordingStatusCallbackEvent="completed">
-    <Number url="${esc(whisperUrl)}">${esc(targets[i].number)}</Number>
+    ${noun}
   </Dial>
 </Response>`.trim()
     }
@@ -365,16 +379,52 @@ function cascadeContinueHandler(personKey) {
     // Continue after this person's slot in the CONFIGURED order. If they
     // were removed from the order mid-call, skip to voicemail rather
     // than restarting the hunt from the top.
-    const order = parseCascadeOrder(req.phoneCfg || {})
-    const idx = order.indexOf(personKey)
-    const nextOrder = idx === -1 ? order.length : idx + 1
+    const keys = cascadeTargets(req).map(t => t.key)
+    const idx = keys.indexOf(personKey)
+    const nextOrder = idx === -1 ? keys.length : idx + 1
     res.type('text/xml').send(xml(nextCascadeTwiML(req, nextOrder)))
   }
 }
 
+router.post('/after-desk',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('desk'),   'after-desk'))
 router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('jayden'), 'after-jayden'))
 router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('mark'),   'after-mark'))
 router.post('/after-kat',    requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('kat'),    'after-kat'))
+
+// ── POST /webhooks/twilio/voice/client-outgoing ────────────────────────────
+// The TwiML App's Voice URL — fires when the browser softphone dials
+// out (device.connect({ params: { To } })). Calls out from the 844 line
+// so shops see the business number. Logged like every other call.
+router.post('/client-outgoing', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
+  const cfg = req.phoneCfg || {}
+  const to = normalizePhoneUS(req.body.To) || String(req.body.To || '')
+  const callerId = normalizePhoneUS(cfg.TWILIO_TOLLFREE_NUMBER || process.env.TWILIO_TOLLFREE_NUMBER || '') ||
+                   normalizePhoneUS(cfg.TWILIO_PHONE_NUMBER || process.env.TWILIO_PHONE_NUMBER || '')
+  if (!to) {
+    return res.type('text/xml').send(xml('<Response><Say>No number to dial.</Say></Response>'))
+  }
+  try {
+    await upsertCall(req, {
+      call_sid:    String(req.body.CallSid || ''),
+      direction:   'outbound',
+      from_number: callerId,
+      to_number:   to,
+      line_type:   'tollfree',
+      status:      'initiated',
+      timestamp:   new Date().toISOString(),
+    })
+  } catch (e) { console.warn('[voice client-outgoing log]', e.message) }
+  const recCbUrl = `${baseUrl(req)}/webhooks/twilio/voice/recording-done`
+  res.type('text/xml').send(xml(`
+<Response>
+  <Dial callerId="${esc(callerId)}"
+        record="record-from-answer"
+        recordingStatusCallback="${esc(recCbUrl)}"
+        recordingStatusCallbackEvent="completed">
+    <Number>${esc(to)}</Number>
+  </Dial>
+</Response>`.trim()))
+}, 'client-outgoing'))
 
 // ── Whisper — plays ONLY to the tech who answers a cascade leg, before
 // the call bridges. The customer keeps hearing ringback during it.
