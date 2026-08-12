@@ -97,6 +97,18 @@ jobs:
           # Non-fatal: a LinkedIn API hiccup shouldn't fail the whole hourly
           [ "$code" -lt 500 ] || exit 1
 
+      - name: mail_agent — triage inboxes, draft replies (408 = still working)
+        run: |
+          set +e
+          code=$(curl -sS -X POST -o /tmp/r.json -w '%{http_code}' --max-time 45 \
+            "$BASE/mailagent-run")
+          curl_exit=$?
+          echo "HTTP $code (curl exit $curl_exit) — 408/timeout tolerated, triage continues server-side"
+          cat /tmp/r.json 2>/dev/null | head -c 500; echo
+          if [ "$curl_exit" -eq 28 ] || [ -z "$code" ] || [ "$code" = "000" ]; then exit 0; fi
+          if [ "$code" -ge 500 ]; then exit 1; fi
+          exit 0
+
       - name: cron_monitor — scan inbox for Catalyst auto-disable emails
         run: |
           code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 60 \
