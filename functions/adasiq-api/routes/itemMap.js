@@ -25,11 +25,24 @@ router.get('/', async (req, res) => {
         return { allItems: [] }
       }),
     ])
+    // Diagnostic: AppConfig total rows. Full-table scans cap at 20k —
+    // if this number approaches that, card notes / tech to-dos / push
+    // subs need the same index-row treatment this map now uses.
+    let table_rows = null
+    try {
+      const catalystMod = (await import('zcatalyst-sdk-node')).default
+      const app = catalystMod.initialize(req, { type: 'advancedio' })
+      const r = await app.zcql().executeZCQLQuery('SELECT COUNT(ROWID) FROM AppConfig')
+      const row = r?.[0]?.AppConfig || r?.[0] || {}
+      table_rows = Number(Object.values(row)[0]) || null
+    } catch { /* diagnostic only */ }
+
     res.json({
       ok: true,
       map,
       books_items: (catalog.allItems || []).sort((a, b) => a.name.localeCompare(b.name)),
       vocab: KINETIC_SENSOR_VOCAB,
+      table_rows,
     })
   } catch (err) {
     console.error('[item-map GET]', err.message)

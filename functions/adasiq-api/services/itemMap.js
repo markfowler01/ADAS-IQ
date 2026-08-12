@@ -35,22 +35,68 @@ async function invalidateCache(req) {
   try { await segment(req).update(CACHE_KEY, '') } catch { /* rebuilt on next read */ }
 }
 
-async function scanMap(req) {
+// Exact-key read — full-table LIMIT/OFFSET scans of AppConfig proved
+// unreliable (seeded rows invisible on read-back, 2026-08-11), so the map
+// keeps its own index row listing every kinetic key and reads each row
+// with WHERE config_key = '...'. Deterministic regardless of table size.
+const INDEX_KEY = 'item_map_index'
+
+async function readRow(req, key) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
-  const out = {}
-  const PAGE = 250
-  for (let offset = 0; offset < 20000; offset += PAGE) {
-    const rows = await app.zcql().executeZCQLQuery(
-      `SELECT config_key, config_value FROM ${TABLE} LIMIT ${PAGE} OFFSET ${offset}`
-    )
-    for (const row of rows || []) {
-      const r = row[TABLE] || row
-      const key = String(r?.config_key || '')
-      if (key.startsWith(PREFIX) && r.config_value) {
-        try { out[key.slice(PREFIX.length)] = JSON.parse(r.config_value) } catch { /* skip */ }
-      }
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT config_value FROM ${TABLE} WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+  )
+  const r = rows?.[0]?.[TABLE] || rows?.[0] || null
+  return r?.config_value || null
+}
+
+async function readIndex(req) {
+  try {
+    const val = await readRow(req, INDEX_KEY)
+    const arr = val ? JSON.parse(val) : []
+    return Array.isArray(arr) ? arr : []
+  } catch { return [] }
+}
+
+async function writeIndex(req, keys) {
+  await upsertRow(req, INDEX_KEY, JSON.stringify([...new Set(keys)].sort()))
+}
+
+async function upsertRow(req, key, value) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT ROWID FROM ${TABLE} WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+  )
+  const existing = rows?.[0]?.[TABLE] || rows?.[0] || null
+  const table = app.datastore().table(TABLE)
+  if (existing?.ROWID) {
+    await table.updateRow({ ROWID: String(existing.ROWID), config_key: key, config_value: value })
+  } else {
+    await table.insertRow({ config_key: key, config_value: value })
+  }
+}
+
+async function scanMap(req) {
+  // Index-driven read; self-heals by probing the vocab keys if the index
+  // is empty (covers rows seeded before the index existed).
+  let keys = await readIndex(req)
+  if (keys.length === 0) {
+    const probes = KINETIC_SENSOR_VOCAB.map(normalizeMapKey)
+    const found = []
+    for (const k of probes) {
+      try { if (await readRow(req, PREFIX + k)) found.push(k) } catch { /* skip */ }
     }
-    if (!rows || rows.length < PAGE) break
+    if (found.length > 0) {
+      keys = found
+      try { await writeIndex(req, keys) } catch (e) { console.warn('[item-map] index rebuild:', e.message) }
+    }
+  }
+  const out = {}
+  for (const k of keys) {
+    try {
+      const val = await readRow(req, PREFIX + k)
+      if (val) out[k] = JSON.parse(val)
+    } catch { /* skip */ }
   }
   return out
 }
@@ -82,17 +128,10 @@ export async function upsertMapping(req, kineticName, { item_name, item_id, sour
     source,
     updated_at: new Date().toISOString(),
   })
-  const app = catalyst.initialize(req, { type: 'advancedio' })
-  const rows = await app.zcql().executeZCQLQuery(
-    `SELECT ROWID FROM ${TABLE} WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
-  )
-  const existing = rows?.[0]?.[TABLE] || rows?.[0] || null
-  const table = app.datastore().table(TABLE)
-  if (existing?.ROWID) {
-    await table.updateRow({ ROWID: String(existing.ROWID), config_key: key, config_value: value })
-  } else {
-    await table.insertRow({ config_key: key, config_value: value })
-  }
+  await upsertRow(req, key, value)
+  const idx = await readIndex(req)
+  const norm = normalizeMapKey(kineticName)
+  if (!idx.includes(norm)) await writeIndex(req, [...idx, norm])
   await invalidateCache(req)
 }
 
@@ -105,6 +144,8 @@ export async function deleteMapping(req, kineticName) {
   const existing = rows?.[0]?.[TABLE] || rows?.[0] || null
   if (existing?.ROWID) {
     await app.datastore().table(TABLE).deleteRow(String(existing.ROWID))
+    const idx = await readIndex(req)
+    await writeIndex(req, idx.filter(k => k !== normalizeMapKey(kineticName)))
     await invalidateCache(req)
     return true
   }
