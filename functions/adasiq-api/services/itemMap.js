@@ -107,7 +107,9 @@ export async function readItemMap(req) {
     const val = await segment(req).getValue(CACHE_KEY)
     if (val) {
       const parsed = typeof val === 'string' ? JSON.parse(val) : val
-      if (parsed && typeof parsed === 'object') return parsed
+      // An EMPTY cached map is treated as a miss — the pre-index code
+      // cached {} and serving it forever would hide every mapping.
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) return parsed
     }
   } catch { /* fall through */ }
   const map = await scanMap(req)
