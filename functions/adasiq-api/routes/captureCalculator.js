@@ -2983,7 +2983,6 @@ captureCalcRouter.get('/debug/setup-crons', async (req, res) => {
         { cron_name: 'aa_drafters_r3',      path: 'draft-meta-day',  type: 'daily', hour: 6, minute: 21 },
         { cron_name: 'aa_daily_tasks',      path: 'engagement-run',  type: 'daily', hour: 6, minute: 23 },
         { cron_name: 'aa_li_outreach',      path: 'li-outreach-run', type: 'daily', hour: 7, minute: 45 },
-        { cron_name: 'aa_holiday_poster',   path: 'holiday-poster-run', type: 'daily', hour: 6, minute: 27 },
         { cron_name: 'aa_li_comments',      path: 'li-comments-check', type: 'daily', hour: 8, minute: 15 },
         { cron_name: 'aa_weekly_report',    path: 'weekly-run',      type: 'weekly', hour: 7, minute: 17, weekDay: 6 }, // Catalyst week_day: 1=Sun … 6=Fri
       ]

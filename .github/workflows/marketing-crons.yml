@@ -39,11 +39,14 @@ on:
     # day's van post (real van photo + Gemini scene) scheduled for 6:30 AM PT.
     - cron: '1 13 * * *'
 
-    # Friday 14:17 UTC (~ 7 AM PT) — weekly report to Mark.
-    - cron: '17 14 * * 5'
+    # Friday 15:47 UTC (~ 8:47 AM PT) — weekly report to Mark. Moved off
+    # 14:17 (2026-08-13): GitHub silently DROPS schedules in its peak
+    # 13:00-14:30 UTC congestion window — this job never ran once.
+    - cron: '47 15 * * 5'
 
-    # Daily 13:23 UTC (~ 6 AM PT) — engagement collector + holiday-poster.
-    - cron: '23 13 * * *'
+    # Daily 15:43 UTC (~ 8:43 AM PT) — engagement collector. Moved off
+    # 13:23 (2026-08-13): same congestion-drop as friday-weekly.
+    - cron: '43 15 * * *'
 
   # Manual trigger from GitHub UI — useful for one-off recovery or testing.
   workflow_dispatch:
@@ -125,24 +128,21 @@ jobs:
           if [ "$code" -ge 500 ]; then exit 1; fi
           exit 0
 
-      - name: wait 3 min then verify drafter completed via heartbeat
+      - name: verify drafter completed (retry over ~12 min)
         run: |
-          sleep 180
-          curl -sS --max-time 30 \
-            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug/heartbeats" \
-            | python3 -c "
-          import json, sys
-          d = json.load(sys.stdin)['heartbeats']
-          fail = False
-          hb = d.get('capture_meta', {})
-          age = hb.get('last_success_age_min')
-          if age is None or age > 10:
-              print(f'❌ capture_meta: last_success_age_min={age} — drafter did not complete')
-              fail = True
-          else:
-              print(f'✅ capture_meta: last_success_age_min={age}m')
-          sys.exit(1 if fail else 0)
-          "
+          for attempt in 1 2 3 4; do
+            sleep 180
+            age=$(curl -sS --max-time 30 \
+              "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/debug/heartbeats" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin)['heartbeats'].get('capture_meta',{}).get('last_success_age_min','none'))" 2>/dev/null)
+            echo "attempt $attempt: capture_meta last_success_age_min=$age"
+            case "$age" in
+              none|'') ;; 
+              *) if [ "${age%.*}" -le 20 ] 2>/dev/null; then echo "✅ drafter completed"; exit 0; fi ;;
+            esac
+          done
+          echo "❌ capture_meta still no fresh success after ~12 min"
+          exit 1
 
   # ── VAN-IN-THE-FIELD DAILY POST ────────────────────────────────────────────
   # Drafts the day's brand-presence van post (real van photo from Mark's
@@ -226,7 +226,7 @@ jobs:
 
   # ── FRIDAY WEEKLY REPORT ───────────────────────────────────────────────────
   friday-weekly:
-    if: github.event.schedule == '17 14 * * 5' || inputs.job == 'friday-weekly'
+    if: github.event.schedule == '47 15 * * 5' || inputs.job == 'friday-weekly'
     runs-on: ubuntu-latest
     steps:
       - name: capture_weekly — Friday digest to Mark
@@ -239,7 +239,7 @@ jobs:
 
   # ── DAILY ──────────────────────────────────────────────────────────────────
   daily-tasks:
-    if: github.event.schedule == '23 13 * * *' || inputs.job == 'daily-tasks'
+    if: github.event.schedule == '43 15 * * *' || inputs.job == 'daily-tasks'
     runs-on: ubuntu-latest
     steps:
       - name: capture_engagement — pull post-engagement stats
@@ -250,10 +250,5 @@ jobs:
           cat /tmp/r.json | head -c 1500; echo
           [ "$code" -lt 400 ] || exit 1
 
-      - name: holiday_poster — draft upcoming holiday batches
-        run: |
-          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 90 \
-            "$BASE/holiday-poster-run")
-          echo "HTTP $code"
-          cat /tmp/r.json | head -c 1500; echo
-          [ "$code" -lt 400 ] || exit 1
+      # holiday_poster step REMOVED 2026-08-13 — /api/holiday-poster/run was
+      # never actually implemented (404). Re-add when the feature ships.

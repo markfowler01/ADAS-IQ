@@ -289,10 +289,10 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
           <div>
             <div className="text-xs uppercase tracking-wider"
               style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-              SMS Log
+              Phone
             </div>
             <div className="text-base font-bold" style={{ color: '#1a1a1a' }}>
-              Text messages
+              Calls, texts & voicemail
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
