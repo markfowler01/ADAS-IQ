@@ -118,11 +118,22 @@ router.get('/live', async (req, res) => {
     // Waiting-for-Kat feed (Mark 2026-07-13): tech-requested jobs sit
     // here until Kat turns them into an invoice — any status change
     // (or the Upload-Report flow deleting the card) drops them off.
+    // Schedule calendar (Mark 2026-08-11): FUTURE-dated requests live on
+    // the calendar only — this box holds what needs Kat NOW (undated,
+    // today, or overdue). They roll back in the morning of their date.
     const waiting_for_kat = allJobs
       .filter(j => (j.status || '') === 'job_requested')
+      .filter(j => !j.scheduled_date || String(j.scheduled_date).slice(0, 10) <= dateISO)
       .map(decorate)
 
-    res.json({ ok: true, date: dateISO, techs, unassigned_today, waiting_for_kat })
+    // Count of requests parked on the calendar for later — the Live view
+    // shows a "📅 N scheduled" breadcrumb so they're never invisible.
+    const scheduled_future = allJobs.filter(j =>
+      (j.status || '') === 'job_requested' &&
+      j.scheduled_date && String(j.scheduled_date).slice(0, 10) > dateISO
+    ).length
+
+    res.json({ ok: true, date: dateISO, techs, unassigned_today, waiting_for_kat, scheduled_future })
   } catch (err) {
     console.error('[dispatch live]', err.message, err.stack)
     res.status(500).json({ error: err.message })

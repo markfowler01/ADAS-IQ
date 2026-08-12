@@ -963,13 +963,24 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             here — not dispatch work. Kat creates the invoice from the
             request; once she does, the real card shows up and this
             entry disappears on its own. Read-only list, no buttons. */}
-        {(data?.waiting_for_kat || []).length > 0 && (
+        {((data?.waiting_for_kat || []).length > 0 || (data?.scheduled_future || 0) > 0) && (
           <div className="rounded-2xl p-4"
             style={{ backgroundColor: '#fffbeb', border: '2px solid #f59e0b' }}>
-            <div className="text-xs uppercase tracking-wider font-bold mb-2 flex items-center gap-2"
+            <div className="text-xs uppercase tracking-wider font-bold mb-2 flex items-center justify-between gap-2"
               style={{ color: '#b45309', fontFamily: 'IBM Plex Mono, monospace' }}>
-              ⏳ Waiting for Kat ({data.waiting_for_kat.length})
+              <span>⏳ Waiting for Kat ({data.waiting_for_kat.length})</span>
+              {(data?.scheduled_future || 0) > 0 && onNavigate && (
+                <button onClick={() => onNavigate('schedule')}
+                  className="text-[11px] font-bold rounded-full px-2.5 py-1 normal-case tracking-normal"
+                  style={{ backgroundColor: 'white', color: '#b45309', border: '1.5px solid #f59e0b', fontFamily: 'IBM Plex Sans, sans-serif' }}
+                >📅 {data.scheduled_future} scheduled →</button>
+              )}
             </div>
+            {(data?.waiting_for_kat || []).length === 0 && (
+              <div className="text-xs" style={{ color: '#92400e' }}>
+                Nothing needs Kat right now — upcoming requests are on the Schedule.
+              </div>
+            )}
             <ul className="space-y-2">
               {data.waiting_for_kat.map(j => (
                 <li key={j.id} className="rounded-lg p-2"

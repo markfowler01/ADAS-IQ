@@ -19,7 +19,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { readJobsPublic } from './jobs.js'
 import { todayPT } from '../services/dispatch.js'
-import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
+import { postToCliqChannel, DISPATCH_CHANNEL, TECHNICIANS_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
 const TABLE = 'AppConfig'
@@ -248,9 +248,35 @@ export async function buildScheduleDigest(req) {
 
   const nothingToSay = !unconfirmed.length && !overdue.length && !unscheduled.length &&
     horizonRequests.length === 0 && count(requests, today) === 0
-  return { text: lines.join('\n'), counts: {
+
+  // Tech-facing post — "what's on the board today" so nothing gets
+  // missed (Mark 2026-08-11). Grouped by tech, requests flagged so the
+  // crew knows Kat still has to promote them.
+  const todayItems = [...active, ...requests].filter(j => dateOnly(j.scheduled_date) === today)
+  let techText = null
+  if (todayItems.length > 0) {
+    const byTech = {}
+    for (const j of todayItems) {
+      const t = j.technician ? String(j.technician) : 'Unassigned'
+      ;(byTech[t] = byTech[t] || []).push(j)
+    }
+    const techLines = [`🔧 *Today's schedule* — ${fmtShort(today)} · ${todayItems.length} on the board`]
+    for (const [tech, list] of Object.entries(byTech)) {
+      techLines.push(`*${tech}*`)
+      for (const j of list) {
+        const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
+        const ro = j.invoice_number || j.quote_number
+        const isReq = (j.status || '') === 'job_requested'
+        techLines.push(`• ${j.shop_name || 'Unknown shop'} — ${vehicle || 'Vehicle TBD'}${ro ? ` (RO# ${ro})` : ''}${isReq ? ' · 🟠 request, not promoted yet' : ''}`)
+      }
+    }
+    techText = techLines.join('\n')
+  }
+
+  return { text: lines.join('\n'), techText, counts: {
     today_jobs: count(active, today), overdue: overdue.length,
     unconfirmed: unconfirmed.length, unscheduled: unscheduled.length,
+    today_total: todayItems.length,
   }, quiet: nothingToSay }
 }
 
@@ -272,8 +298,14 @@ export async function maybeFireScheduleDigest(req) {
   try {
     const digest = await buildScheduleDigest(req)
     if (!digest.quiet) await postToCliqChannel(DISPATCH_CHANNEL, digest.text)
+    // Tech-facing "today's board" — only posts when something is
+    // actually scheduled today; a quiet day posts nothing.
+    if (digest.techText) {
+      await postToCliqChannel(TECHNICIANS_CHANNEL, digest.techText)
+        .catch(e => console.warn('[sched-digest] tech post failed:', e.message))
+    }
     await upsertKV(req, stampKey, new Date().toISOString())
-    return { fired: !digest.quiet, ...digest.counts }
+    return { fired: !digest.quiet || !!digest.techText, ...digest.counts }
   } catch (e) {
     console.error('[sched-digest]', e.message)
     return { fired: false, error: e.message }
@@ -288,7 +320,8 @@ router.post('/digest-run', async (req, res) => {
   try {
     const digest = await buildScheduleDigest(req)
     await postToCliqChannel(DISPATCH_CHANNEL, digest.text)
-    res.json({ ok: true, ...digest.counts })
+    if (digest.techText) await postToCliqChannel(TECHNICIANS_CHANNEL, digest.techText)
+    res.json({ ok: true, tech_posted: !!digest.techText, ...digest.counts })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
