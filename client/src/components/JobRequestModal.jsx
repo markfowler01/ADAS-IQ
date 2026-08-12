@@ -3,7 +3,7 @@ import { API_BASE, apiFetch } from '../utils/api.js'
 
 const ORANGE = '#CD4419'
 
-export default function JobRequestModal({ onClose, onSubmit }) {
+export default function JobRequestModal({ onClose, onSubmit, defaultDate }) {
   const [customers,    setCustomers]    = useState([])
   const [custLoading,  setCustLoading]  = useState(true)
   const [custSearch,   setCustSearch]   = useState('')
@@ -18,8 +18,9 @@ export default function JobRequestModal({ onClose, onSubmit }) {
   const [lastFourVin, setLastFourVin] = useState('')
   const [notes,       setNotes]       = useState('')
   // Optional — a dated request lands on the Schedule calendar that day;
-  // no date puts it in the Unscheduled lane for Kat to place.
-  const [schedDate,   setSchedDate]   = useState('')
+  // no date puts it in the Unscheduled lane for Kat to place. The
+  // Schedule page pre-fills this when adding straight onto a day.
+  const [schedDate,   setSchedDate]   = useState(defaultDate || '')
 
   // Photo scanner state
   const [imagePreview, setImagePreview] = useState(null)

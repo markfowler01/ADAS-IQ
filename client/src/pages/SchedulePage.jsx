@@ -17,6 +17,7 @@ import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
+import JobRequestModal from '../components/JobRequestModal.jsx'
 
 const ORANGE = '#CD4419'
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN
@@ -87,6 +88,9 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
   const [armedId, setArmedId] = useState(null)      // tap-to-schedule request id
   const [movingId, setMovingId] = useState(null)    // request id awaiting new date
   const [toast, setToast] = useState('')
+  // "+ New" scheduled request straight from the calendar (Mark
+  // 2026-08-13). Holds the prefill date ('' = no date → Unscheduled).
+  const [requestFor, setRequestFor] = useState(null)
   const [mapOpen, setMapOpen] = useState(() => {
     try { return localStorage.getItem('aa_sched_map') !== '0' } catch { return true }
   })
@@ -159,6 +163,39 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
       })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
     } catch (e) { showToast(`Save failed: ${e.message}`); loadBoard() }
+  }
+
+  async function submitRequest(formData) {
+    const notes = [formData.ro_number ? `RO# ${formData.ro_number}` : '', formData.notes || ''].filter(Boolean).join('\n')
+    const payload = {
+      shop_name:    formData.shop_name || '',
+      year:         formData.year  || '',
+      make:         formData.make  || '',
+      model:        formData.model || '',
+      vehicle:      [formData.year, formData.make, formData.model].filter(Boolean).join(' '),
+      vin:          formData.vin || '',
+      technician:   formData.technician || '',
+      notes,
+      quote_number: formData.ro_number || '',
+      scheduled_date: formData.scheduled_date || '',
+      status:       'job_requested',
+      calibrations: '[]',
+      via_request:  true,
+      request_type: 'job',
+    }
+    const r = await apiFetch(`${API_BASE}/api/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}))
+      throw new Error(d.error || 'Failed to create request')
+    }
+    showToast(formData.scheduled_date
+      ? `📅 ${payload.shop_name} booked for ${fmtShort(formData.scheduled_date)}`
+      : `📥 ${payload.shop_name} added to Unscheduled`)
+    await loadBoard()
   }
 
   // ── Drag & drop ──
@@ -360,6 +397,10 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
             <h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>Schedule</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={() => setRequestFor('')}
+              className="text-xs font-bold rounded-lg px-3.5 py-2 text-white"
+              style={{ backgroundColor: ORANGE }}
+            >+ New</button>
             <button onClick={() => setMapOpen(v => !v)}
               className="text-xs font-semibold rounded-lg px-3 py-2"
               style={{ color: mapOpen ? 'white' : '#666', backgroundColor: mapOpen ? '#0e7490' : 'white', border: '1px solid #e0dbd6' }}
@@ -471,6 +512,10 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
               </h2>
               <button onClick={() => setDayOpen(null)} className="w-9 h-9 rounded-full text-xl" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>×</button>
             </div>
+            <button onClick={() => { setRequestFor(dayOpen); setDayOpen(null) }}
+              className="w-full text-xs font-bold rounded-xl px-3 py-2.5 mb-3"
+              style={{ color: ORANGE, border: `1.5px dashed ${ORANGE}`, backgroundColor: '#fff5f0' }}
+            >+ Add a job to this day</button>
             {panelReqs.length === 0 && panelJobs.length === 0 && (
               <div className="text-sm py-6 text-center" style={{ color: '#888' }}>Nothing scheduled this day.</div>
             )}
@@ -521,6 +566,14 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
             ))}
           </div>
         </div>
+      )}
+
+      {requestFor !== null && (
+        <JobRequestModal
+          defaultDate={requestFor || ''}
+          onClose={() => setRequestFor(null)}
+          onSubmit={submitRequest}
+        />
       )}
 
       {toast && (
