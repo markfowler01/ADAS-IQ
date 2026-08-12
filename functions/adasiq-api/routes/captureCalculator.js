@@ -2634,6 +2634,7 @@ const DEBUG_FORWARD_WHITELIST = {
   'weekly-run':          '/api/capture-calc/report/weekly?force=1',
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
   'li-outreach-run':     '/api/capture-calc/li-outreach/run',
+  'mailagent-run':       '/api/mail-agent/run',
 }
 async function debugForward(req, res, target) {
   const secret = process.env.BREW_CRON_SECRET
@@ -2699,6 +2700,7 @@ captureCalcRouter.all('/debug/van-draft-day',       (req, res) => debugForward(r
 captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
 captureCalcRouter.all('/debug/li-outreach-run',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-outreach-run']))
+captureCalcRouter.all('/debug/mailagent-run',       (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['mailagent-run']))
 
 // TEMP DEBUG — generate one meta-drafter slot and return text + image_prompt.
 // No enqueue, no image gen, no cost beyond one Claude call. Used to verify

@@ -148,10 +148,20 @@ function buildClientAlert({ kind, fromAddr, subject, summary, shopName, contactN
 
 // POST /api/mail-agent/run — cron-triggered: read ALL inboxes (primary + group), alert on client emails via Cliq, draft replies
 router.post('/run', async (req, res) => {
-  const cronSecret = process.env.MAIL_AGENT_CRON_SECRET
-  if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
+  // Accept the dedicated secret OR the BREW cron secret (the debug
+  // forward injects BREW — that's how the GH Actions hourly job drives
+  // this after the Catalyst cron got auto-disabled 2026-08-12).
+  const clean = v => String(v || '').replace(/[^a-zA-Z0-9]/g, '')
+  const got = clean(req.headers['x-cron-secret'] || req.headers['x_cron_secret'] || req.query.secret)
+  const okDedicated = process.env.MAIL_AGENT_CRON_SECRET && got === clean(process.env.MAIL_AGENT_CRON_SECRET)
+  const okBrew = process.env.BREW_CRON_SECRET && got === clean(process.env.BREW_CRON_SECRET)
+  if ((process.env.MAIL_AGENT_CRON_SECRET || process.env.BREW_CRON_SECRET) && !okDedicated && !okBrew) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
+  try {
+    const { heartbeatAttempt } = await import('../services/cronHeartbeat.js')
+    await new Promise(r => heartbeatAttempt('mail_agent')(req, null, r))
+  } catch { /* heartbeat is best-effort */ }
 
   try {
     const token = await getMailAccessToken()
@@ -320,6 +330,10 @@ router.post('/run', async (req, res) => {
       }
     }
 
+    try {
+      const { stampSuccess } = await import('../services/cronHeartbeat.js')
+      await stampSuccess(req, 'mail_agent', { triaged: (results || []).length })
+    } catch { /* best-effort */ }
     res.json({ ok: true, accounts: accounts.length, scanned: allMessages.length, drafted, alerted, crmContactsKnown: crmLookup.size, results })
   } catch (err) {
     console.error('[mail-agent] failed:', err.response?.data || err.message)
