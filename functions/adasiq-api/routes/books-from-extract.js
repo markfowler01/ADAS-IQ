@@ -11,6 +11,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { aliasFor } from '../services/zoho.js'
+import { readItemMap, lookupMapping } from '../services/itemMap.js'
 
 const router = express.Router()
 const CHUNK_SIZE = 30
@@ -119,7 +120,16 @@ function matchServiceRaw(calName, services) {
   return bestScore >= 1 ? best : null
 }
 
-function matchService(calName, services) {
+function matchService(calName, services, itemMap = null) {
+  // Item Map first — deterministic, Mark-owned (More → Item Mapping).
+  if (itemMap) {
+    const entry = lookupMapping(itemMap, calName)
+    if (entry?.item_name) {
+      const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+      const svc = services.find(s => norm(s.name) === norm(entry.item_name))
+      if (svc) return svc
+    }
+  }
   const direct = matchServiceRaw(calName, services)
   if (direct) return direct
   const alias = aliasFor(calName)
@@ -170,8 +180,9 @@ router.post('/from-extract', async (req, res) => {
       return res.status(400).json({ error: 'At least one calibration required' })
     }
 
-    const [invoices, services, shops] = await Promise.all([
+    const [invoices, services, shops, itemMap] = await Promise.all([
       readInvoices(req), readServices(req), readShops(req),
+      readItemMap(req).catch(() => null),
     ])
 
     const shop = matchShop(payload, shops)
@@ -180,7 +191,7 @@ router.post('/from-extract', async (req, res) => {
     // Build line items from calibrations — match to catalog where possible
     const lineItems = payload.calibrations.map((cal, idx) => {
       const calName = cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${idx + 1}`
-      const matched = matchService(calName, services)
+      const matched = matchService(calName, services, itemMap)
       let rate = 0
       // Custom-priced in billing_rules?
       if (matched && rules?.custom_prices?.[matched.id] !== undefined) {

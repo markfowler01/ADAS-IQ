@@ -411,6 +411,41 @@ export async function extractRulesFromJobAid(pdfBuffer) {
  * @param {Object} params { year, make, model, items: [{ name, description }] }
  * @returns {Promise<string[]>} cleaned descriptions, same order as items
  */
+// Propose Item Map pairings: Kinetic sensor names → Zoho Books catalog
+// items. Seeds the More → Item Mapping table; Mark reviews/corrects.
+export async function proposeItemMap({ kineticNames, catalogItems }) {
+  const catalog = catalogItems.map(i => `- ${i.name} ($${i.rate || 0}) [id ${i.item_id}]`).join('\n')
+  const names = kineticNames.map((n, i) => `${i + 1}. ${n}`).join('\n')
+
+  const message = await getClient().messages.create({
+    model: 'claude-opus-4-7',
+    max_tokens: 2500,
+    messages: [{
+      role: 'user',
+      content: `You map ADAS sensor names from Kinetic calibration reports to a calibration company's Zoho Books item catalog.
+
+ZOHO BOOKS ITEM CATALOG (the only valid targets — use exact names and ids from this list; prefer NON-prefixed items; ignore items starting with "AS", "SF", "SFP", "CP" — those are insurer price variants handled separately):
+${catalog}
+
+KINETIC SENSOR NAMES to map:
+${names}
+
+Rules:
+- Map each sensor to the catalog item that BILLS for calibrating it (e.g. "Around View Camera" → a 360/surround camera calibration item; "Front Windshield Camera" → front camera calibration; "Rear Blind Spot Radar" → blind spot calibration).
+- Directional words matter: never map a front sensor to a rear item or radar to camera.
+- If no catalog item plausibly covers a sensor, use null for that entry — do NOT force a bad match.
+- Fixed report/inspection items map to their same-named catalog items when present.
+
+Return ONLY a JSON array, same order, no markdown fences:
+[{"kinetic_name": "...", "item_name": "..." or null, "item_id": "..." or null, "confidence": "high"|"low"}]`,
+    }],
+  })
+  const raw = message.content[0].text.trim().replace(/^```(json)?/i, '').replace(/```$/, '').trim()
+  const arr = JSON.parse(raw)
+  if (!Array.isArray(arr)) throw new Error('proposeItemMap: expected JSON array')
+  return arr
+}
+
 export async function cleanCalibrationDescriptions({ year, make, model, items }) {
   const vehicle = [year, make, model].filter(Boolean).join(' ') || 'the vehicle'
   const list = items.map((it, i) =>

@@ -134,6 +134,7 @@ router.post('/', async (req, res) => {
       notes: notes || null,
       known_folder_id: known_folder_id || null,
       known_folder_url: known_folder_url || null,
+      req,
     })
 
     // Auto-save enabled calibrations as rules to grow the DB over time (non-blocking)

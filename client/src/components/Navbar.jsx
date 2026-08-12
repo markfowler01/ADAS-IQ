@@ -41,6 +41,7 @@ const MORE_GROUPS = [
     { id: 'planner',   label: 'My Day Planner' },
     { id: 'projects',  label: 'Projects' },
     { id: 'rules',     label: 'Calibration Rules' },
+    { id: 'item-map',  label: 'Item Mapping', adminOnly: true },
     { id: 'messages',  label: 'Messages' },
   ]},
   { label: 'Admin', links: [

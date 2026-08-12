@@ -255,8 +255,9 @@ function getInsurerPrefix(insurer) {
  * - null              → exclude ALL prefixed items (regular pricing only)
  * Falls back to standard items if no prefixed items exist for that insurer.
  */
+const PREFIXED = /^(SF|SFP|AS|CP)\s*[-\s]/i
+
 function filterItemsByInsurer(allItems, insurerPrefix) {
-  const PREFIXED = /^(SF|SFP|AS|CP)\s*[-\s]/i
 
   if (insurerPrefix === 'SF') {
     const sfItems = allItems.filter(i => /^(SF|SFP)\s*[-\s]/i.test(i.name))
@@ -281,8 +282,8 @@ function filterItemsByInsurer(allItems, insurerPrefix) {
  * Returns { item_id, matchedName, score } or null if no confident match.
  * Exported so the audit route can reuse the same logic.
  */
-export function findBestMatchExported(calName, exactMap, allItems, insurerPrefix = null) {
-  return findBestMatch(calName, exactMap, allItems, insurerPrefix)
+export function findBestMatchExported(calName, exactMap, allItems, insurerPrefix = null, itemMap = null) {
+  return findBestMatch(calName, exactMap, allItems, insurerPrefix, itemMap)
 }
 
 // Kinetic reports name sensors, not services — translate the common ones
@@ -335,7 +336,33 @@ function fuzzyInPool(calName, candidateItems) {
   return null
 }
 
-function findBestMatch(calName, exactMap, allItems, insurerPrefix = null) {
+// Resolve an Item Map entry to a concrete catalog item. Insurer-prefixed
+// variant of the mapped item wins when one exists; standard otherwise.
+function resolveMappedItem(mapping, allItems, insurerPrefix) {
+  if (!mapping || (!mapping.item_id && !mapping.item_name)) return null
+  let base = mapping.item_id ? allItems.find(i => String(i.item_id) === String(mapping.item_id)) : null
+  if (!base && mapping.item_name) {
+    const nk = normalizeItemName(mapping.item_name)
+    base = allItems.find(i => normalizeItemName(i.name) === nk && !PREFIXED.test(i.name)) ||
+           allItems.find(i => normalizeItemName(i.name) === nk)
+  }
+  if (!base) return null
+  if (insurerPrefix) {
+    const pool = filterItemsByInsurer(allItems, insurerPrefix)
+    const variant = pool.find(i => normalizeItemName(i.name) === normalizeItemName(base.name))
+    if (variant) return { item_id: variant.item_id, matchedName: variant.name, score: 1, rate: variant.rate || 0, via: 'map' }
+  }
+  return { item_id: base.item_id, matchedName: base.name, score: 1, rate: base.rate || 0, via: 'map' }
+}
+
+function findBestMatch(calName, exactMap, allItems, insurerPrefix = null, itemMap = null) {
+  // 0. Item Map — deterministic, Mark-owned, wins over every guess.
+  if (itemMap) {
+    const key = String(calName || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+    const mapped = resolveMappedItem(itemMap[key], allItems, insurerPrefix)
+    if (mapped) return mapped
+  }
+
   const insurerPool = filterItemsByInsurer(allItems, insurerPrefix)
   const standardPool = insurerPrefix ? filterItemsByInsurer(allItems, null) : null
   const names = [calName, aliasFor(calName)].filter(Boolean)
@@ -416,8 +443,20 @@ export async function createDraftQuote({
   known_folder_id,
   known_folder_url,
   notes: userNotes,
+  req,
 }) {
   const token = await getAccessToken()
+
+  // Item Map — deterministic kinetic-name → Books item lookup (needs the
+  // Catalyst req for Datastore access; callers without one fall back to
+  // the legacy matchers).
+  let itemMap = null
+  if (req) {
+    try {
+      const { readItemMap } = await import('./itemMap.js')
+      itemMap = await readItemMap(req)
+    } catch (e) { console.warn('[zoho] item map unavailable:', e.message) }
+  }
 
   // 1. Fetch item catalog and build matched line items
   let exactMap = new Map()
@@ -445,7 +484,7 @@ export async function createDraftQuote({
   console.log(`[zoho] Insurer: "${insurer || 'none'}" → prefix: ${insurerPrefix || 'standard'}`)
 
   function buildLineItem(name, description, quantity = 1) {
-    const match = findBestMatch(name, exactMap, allItems, insurerPrefix)
+    const match = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
     if (match) {
       console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)}, rate $${match.rate})`)
       if (!match.rate || match.rate === 0) {
@@ -455,8 +494,11 @@ export async function createDraftQuote({
       return { item_id: match.item_id, description: description || '', quantity }
     } else {
       unmatchedItems.push(name)
-      console.warn(`[zoho] ✗ No match for: "${name}" — will appear in quote notes`)
-      return null
+      console.warn(`[zoho] ✗ No match for: "${name}" — adding as $0 line (never drop a calibration)`)
+      // Ad-hoc line — Zoho accepts name+rate without item_id. $0 so the
+      // total can't be wrong-high; the ⚠ makes it impossible to send
+      // without noticing.
+      return { name: `⚠ ${String(name).slice(0, 90)}`, description: description || 'NEEDS PRICE — not in Zoho item catalog or Item Map', rate: 0, quantity }
     }
   }
 
@@ -710,6 +752,20 @@ export async function createDraftQuote({
     } catch (updateErr) {
       console.warn('[zoho] Could not update estimate with WorkDrive link (non-fatal):', updateErr.message)
     }
+  }
+
+  // Loud flag when anything went on at $0 — a silent short invoice is
+  // how FAB 2020.1 went out at $47.50 (Aug 10). Non-fatal on Cliq errors.
+  if (unmatchedItems.length > 0) {
+    try {
+      const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, [
+        `⚠️ *Invoice ${estimate.estimate_number} has ${unmatchedItems.length} item${unmatchedItems.length > 1 ? 's' : ''} at $0* (no catalog/Item Map match):`,
+        ...unmatchedItems.map(n => `• ${n}`),
+        '',
+        'Fix the price in Zoho Books before sending, then add the mapping in More → Item Mapping so it never happens again.',
+      ].join('\n'))
+    } catch (e) { console.warn('[zoho] unmatched-items alert failed:', e.message) }
   }
 
   return {

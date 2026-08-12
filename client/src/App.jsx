@@ -29,6 +29,7 @@ import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
 import SchedulePage from './pages/SchedulePage'
+import ItemMapScreen from './pages/ItemMapScreen'
 import BooksScreen from './components/BooksScreen'
 import OpsHub from './components/OpsHub'
 import MessageCenter from './components/MessageCenter'
@@ -295,6 +296,9 @@ function MainApp() {
       )}
       {screen === 'schedule' && (
         <SchedulePage user={user} onLogout={handleLogout} {...navProps} />
+      )}
+      {screen === 'item-map' && (
+        <ItemMapScreen user={user} onLogout={handleLogout} {...navProps} />
       )}
       {screen === 'dispatch-map' && (
         <DispatchMap user={user} onLogout={handleLogout} {...navProps} />
