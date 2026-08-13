@@ -385,6 +385,31 @@ router.post('/', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
   if (isAfterHoursPT(req.phoneCfg)) {
     return res.type('text/xml').send(xml(fallbackVoicemailTwiML(req)))
   }
+
+  // Push heads-up to subscribed PWA devices the instant the phone starts
+  // ringing (Mark 2026-08-13). Time-capped so a slow push service can
+  // never delay call setup — Twilio is waiting on this response to ring.
+  try {
+    const from = normalizePhoneUS(req.body.From) || String(req.body.From || '')
+    const pushWork = (async () => {
+      let who = ''
+      try {
+        const { findContactByPhone } = await import('../services/crmContacts.js')
+        const c = await findContactByPhone(req, from)
+        who = [c?.contact_name, c?.shop_name].filter(Boolean).join(' · ')
+      } catch { /* number-only is fine */ }
+      const { sendPushToAll } = await import('./push.js')
+      const pretty = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3')
+      await sendPushToAll(req, {
+        title: `📞 Incoming call${who ? ' — ' + who : ''}`,
+        body: `${pretty || from} is calling the 844 line now`,
+        url: `/app/index.html?thread=${encodeURIComponent(from)}`,
+        tag: `call-${String(req.body.CallSid || '').slice(-10)}`,
+      })
+    })()
+    await Promise.race([pushWork, new Promise(r => setTimeout(r, 2000))])
+  } catch (e) { console.warn('[voice inbound push]', e.message) }
+
   res.type('text/xml').send(xml(nextCascadeTwiML(req, 0)))
 }, 'inbound'))
 
