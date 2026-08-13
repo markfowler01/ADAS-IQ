@@ -38,6 +38,57 @@ export default function SoftphonePanel({ showControls = true }) {
   const [err, setErr] = useState('')
   const deviceRef = useRef(null)
   const timerRef = useRef(null)
+  // Audible ring — generated with WebAudio (no asset needed) so a call
+  // is HEARD even when the app tab is buried behind other windows.
+  const ringRef = useRef(null)
+
+  function startRinging() {
+    stopRinging()
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)()
+      const ring = { ctx, timer: null, stopped: false }
+      const burst = () => {
+        if (ring.stopped) return
+        // Classic dual-tone ring: 440+480 Hz, 1.2s on
+        for (const freq of [440, 480]) {
+          const osc = ctx.createOscillator()
+          const gain = ctx.createGain()
+          osc.frequency.value = freq
+          gain.gain.setValueAtTime(0.08, ctx.currentTime)
+          gain.gain.setValueAtTime(0, ctx.currentTime + 1.2)
+          osc.connect(gain).connect(ctx.destination)
+          osc.start()
+          osc.stop(ctx.currentTime + 1.25)
+        }
+      }
+      burst()
+      ring.timer = setInterval(burst, 3000)  // ring every 3s like a phone
+      ringRef.current = ring
+    } catch { /* no audio available — banner still shows */ }
+  }
+  function stopRinging() {
+    const r = ringRef.current
+    if (!r) return
+    r.stopped = true
+    clearInterval(r.timer)
+    try { r.ctx.close() } catch {}
+    ringRef.current = null
+  }
+
+  // Desktop notification — surfaces the call when the tab is buried.
+  function notifyIncoming(label) {
+    try {
+      if (!('Notification' in window)) return
+      const show = () => {
+        const n = new Notification('📞 Incoming call — 844 line', {
+          body: label || 'Unknown caller', tag: 'aa-incoming-call', requireInteraction: true,
+        })
+        n.onclick = () => { window.focus(); n.close() }
+      }
+      if (Notification.permission === 'granted') show()
+      else if (Notification.permission !== 'denied') Notification.requestPermission().then(p => p === 'granted' && show())
+    } catch { /* banner still shows */ }
+  }
 
   // Backend duty flag on load — resume registration if Kat was on duty.
   useEffect(() => {
@@ -63,6 +114,8 @@ export default function SoftphonePanel({ showControls = true }) {
       setPhase('incoming')
       const from = c.parameters?.From || ''
       setCallerLabel(fmtPhone(from))
+      startRinging()
+      notifyIncoming(fmtPhone(from))
       apiFetch(`${API_BASE}/api/softphone/lookup?phone=${encodeURIComponent(from)}`)
         .then(r => r.json())
         .then(j => {
@@ -70,11 +123,11 @@ export default function SoftphonePanel({ showControls = true }) {
           if (name) setCallerLabel(`${name} — ${fmtPhone(from)}`)
         }).catch(() => {})
     }
-    c.on('accept', () => { setPhase('incall'); startTimer() })
-    c.on('disconnect', () => { setPhase('ready'); setCall(null); stopTimer() })
-    c.on('cancel', () => { setPhase('ready'); setCall(null); stopTimer() })
-    c.on('reject', () => { setPhase('ready'); setCall(null) })
-    c.on('error', e => { console.warn('[softphone call]', e.message); setPhase('ready'); setCall(null); stopTimer() })
+    c.on('accept', () => { stopRinging(); setPhase('incall'); startTimer() })
+    c.on('disconnect', () => { stopRinging(); setPhase('ready'); setCall(null); stopTimer() })
+    c.on('cancel', () => { stopRinging(); setPhase('ready'); setCall(null); stopTimer() })
+    c.on('reject', () => { stopRinging(); setPhase('ready'); setCall(null) })
+    c.on('error', e => { console.warn('[softphone call]', e.message); stopRinging(); setPhase('ready'); setCall(null); stopTimer() })
   }, [])
 
   async function fetchToken() {
@@ -113,6 +166,7 @@ export default function SoftphonePanel({ showControls = true }) {
 
   function stopDevice() {
     stopTimer()
+    stopRinging()
     try { deviceRef.current?.destroy() } catch {}
     deviceRef.current = null
     setCall(null)
