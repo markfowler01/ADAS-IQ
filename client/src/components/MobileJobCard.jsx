@@ -41,9 +41,9 @@ export function isTeslaJob(job) {
 export function insurerPricingBadge(job) {
   const ins = String(job?.insurer || '').toLowerCase()
   if (!ins) return null
-  if (/state\s*farm/.test(ins)) return { label: '🏦 STATE FARM · SFP pricing', bg: '#b91c1c' }
-  if (/allstate|u\.?s\.?\s*general|integon|national\s*general/.test(ins)) return { label: '🏦 ALLSTATE · AS pricing', bg: '#1d4ed8' }
-  if (/american\s*family|amfam/.test(ins)) return { label: '🏦 AM FAM · AMFAM pricing', bg: '#0e7490' }
+  if (/state\s*farm/.test(ins)) return { label: '🏦 STATE FARM PRICING', bg: '#b91c1c' }
+  if (/allstate|u\.?s\.?\s*general|integon|national\s*general/.test(ins)) return { label: '🏦 ALLSTATE PRICING', bg: '#1d4ed8' }
+  if (/american\s*family|amfam/.test(ins)) return { label: '🏦 AM FAM PRICING', bg: '#0e7490' }
   return null
 }
 
