@@ -244,7 +244,14 @@ function getInsurerPrefix(insurer) {
   if (!insurer) return null
   const ins = insurer.toLowerCase()
   if (ins.includes('state farm')) return 'SF'
-  if (ins.includes('allstate'))   return 'AS'
+  // Allstate family (Mark 2026-08-13): National General and its
+  // subsidiaries (US General, Integon) bill at Allstate pricing.
+  if (ins.includes('allstate'))         return 'AS'
+  if (ins.includes('us general'))       return 'AS'
+  if (ins.includes('u.s. general'))     return 'AS'
+  if (ins.includes('integon'))          return 'AS'
+  if (ins.includes('national general')) return 'AS'
+  if (ins.includes('american family') || ins.includes('amfam')) return 'AMFAM'
   return null
 }
 
@@ -255,7 +262,7 @@ function getInsurerPrefix(insurer) {
  * - null              → exclude ALL prefixed items (regular pricing only)
  * Falls back to standard items if no prefixed items exist for that insurer.
  */
-const PREFIXED = /^(SF|SFP|AS|CP)\s*[-\s]/i
+const PREFIXED = /^(SF|SFP|AS|CP|AMFAM)\s*[-\s]/i
 
 function filterItemsByInsurer(allItems, insurerPrefix) {
 
@@ -270,6 +277,12 @@ function filterItemsByInsurer(allItems, insurerPrefix) {
     const asItems = allItems.filter(i => /^AS\s*[-\s]/i.test(i.name))
     if (asItems.length > 0) return asItems
     // No AS items in catalog — fall back to standard
+    return allItems.filter(i => !PREFIXED.test(i.name))
+  }
+
+  if (insurerPrefix === 'AMFAM') {
+    const amItems = allItems.filter(i => /^AMFAM\s*[-\s]/i.test(i.name))
+    if (amItems.length > 0) return amItems
     return allItems.filter(i => !PREFIXED.test(i.name))
   }
 

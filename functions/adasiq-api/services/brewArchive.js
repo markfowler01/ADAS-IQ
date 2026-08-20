@@ -11,6 +11,7 @@
 //   GITHUB_BRANCH         — default: main
 
 import axios from 'axios'
+import { retryOnTransient } from './httpRetry.js'
 
 const GH_API = 'https://api.github.com'
 
@@ -102,10 +103,13 @@ export async function commitFile({ path, content, message }) {
   if (sha) body.sha = sha
 
   try {
-    const res = await axios.put(
-      `${GH_API}/repos/${e.owner}/${e.repo}/contents/${encodeURIPath(path)}`,
-      body,
-      { headers: ghHeaders(e.token), timeout: 20000, validateStatus: s => s < 500 }
+    const res = await retryOnTransient(
+      () => axios.put(
+        `${GH_API}/repos/${e.owner}/${e.repo}/contents/${encodeURIPath(path)}`,
+        body,
+        { headers: ghHeaders(e.token), timeout: 20000, validateStatus: s => s < 600 }
+      ),
+      { label: `github commit ${path}` }
     )
     if (res.status >= 200 && res.status < 300) {
       return { ok: true, sha: res.data?.content?.sha, url: res.data?.content?.html_url }
@@ -138,10 +142,13 @@ export async function commitBinaryFile({ path, buffer, message }) {
   if (sha) body.sha = sha
 
   try {
-    const res = await axios.put(
-      `${GH_API}/repos/${e.owner}/${e.repo}/contents/${encodeURIPath(path)}`,
-      body,
-      { headers: ghHeaders(e.token), timeout: 30000, validateStatus: s => s < 500 }
+    const res = await retryOnTransient(
+      () => axios.put(
+        `${GH_API}/repos/${e.owner}/${e.repo}/contents/${encodeURIPath(path)}`,
+        body,
+        { headers: ghHeaders(e.token), timeout: 30000, validateStatus: s => s < 600 }
+      ),
+      { label: `github binary commit ${path}` }
     )
     if (res.status >= 200 && res.status < 300) {
       const rawUrl = `https://raw.githubusercontent.com/${e.owner}/${e.repo}/${e.branch}/${encodeURIPath(path)}`

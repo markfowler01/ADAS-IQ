@@ -4057,27 +4057,31 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     } catch (e) { console.warn('[van safety-net retry]', e.message) }
 
     // ─── 2. TRIGGER MISSED WEEKLY DRAFTER (Sun/Mon after 8am PT) ──────────
-    // Weekly drafter should fire Sunday ~8am PT. Check if it happened.
+    // Weekly drafter should fire Sunday ~8am PT. But the heartbeat itself
+    // lives in Catalyst Cache (48h TTL) — so for a weekly cron the heartbeat
+    // ALWAYS looks 999-days-stale between fires. Better signal: pending draft
+    // for the coming Tuesday. If one exists, drafter already ran this week.
     const canTriggerWeekly = (dayPt === 0 && hourPt >= 8) || (dayPt === 1 && hourPt >= 0)
     if (canTriggerWeekly) {
-      const wk = heartbeats['capture_van_weekly_draft']
-      const lastMs = wk?.last_success ? Date.parse(wk.last_success) : 0
-      const daysStale = lastMs ? (nowMs - lastMs) / 86400000 : 999
-      if (daysStale >= 6.5) {
-        // Trigger via internal call to the drafter endpoint
+      const pendingNow = await readPendingDraft(req).catch(() => null)
+      const pendingIsForThisWeek = pendingNow?.scheduled_for && (Date.parse(pendingNow.scheduled_for) - nowMs) < 4 * 86400000 && (Date.parse(pendingNow.scheduled_for) - nowMs) > -2 * 3600000
+      if (pendingIsForThisWeek) {
+        out.skipped.push({ check: 'weekly_drafter', reason: `pending draft #${pendingNow.issue_number} already scheduled for this week (${pendingNow.scheduled_for})` })
+      } else {
+        // No pending for this week's Tuesday — safe to trigger
         try {
           const secret = process.env.BREW_CRON_SECRET || ''
           const url = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/from-the-van/draft-weekly?secret=${encodeURIComponent(secret)}`
           const r = await axios.post(url, {}, { timeout: 180000, validateStatus: () => true })
-          const msg = `🛡️ Safety-net TRIGGERED weekly drafter (dedicated cron missed — heartbeat was ${daysStale.toFixed(1)} days stale).\nResult: ${r.data?.ok ? `Issue #${r.data.issue_number} status=${r.data.scheduledStatus}` : `error: ${JSON.stringify(r.data).slice(0, 200)}`}`
+          const issueNumFromResp = r.data?.issue_number || r.data?.pending?.issue_number || '?'
+          const statusFromResp = r.data?.scheduledStatus || (r.data?.skipped ? 'skipped' : r.data?.pending?.status) || 'unknown'
+          const msg = `🛡️ Safety-net TRIGGERED weekly drafter (no pending for this week).\nResult: ${r.data?.ok ? `Issue #${issueNumFromResp} status=${statusFromResp}` : `error: ${JSON.stringify(r.data).slice(0, 200)}`}`
           await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
-          out.actions.push({ action: 'trigger_weekly_drafter', http_status: r.status, ok: !!r.data?.ok })
+          out.actions.push({ action: 'trigger_weekly_drafter', http_status: r.status, ok: !!r.data?.ok, issue: issueNumFromResp, status: statusFromResp })
         } catch (e) {
           console.warn('[van safety-net trigger weekly]', e.message)
           out.actions.push({ action: 'trigger_weekly_drafter', ok: false, error: e.message })
         }
-      } else {
-        out.skipped.push({ check: 'weekly_drafter', reason: `fresh heartbeat ${daysStale.toFixed(1)}d ago` })
       }
     } else {
       out.skipped.push({ check: 'weekly_drafter', reason: `not Sun/Mon (day_pt=${dayPt}, hour_pt=${hourPt})` })
@@ -4108,6 +4112,43 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
         out.skipped.push({ check: 'nurture', reason: `fresh heartbeat ${hoursStale.toFixed(1)}h ago` })
       }
     }
+
+    // ─── 3b. ZOMBIE BROADCAST SWEEP ────────────────────────────────────────
+    // Look for any Resend broadcast in "scheduled" state whose ID does NOT
+    // match the current pending draft's broadcast_id — those are zombies from
+    // a previous clearPendingDraft() that only nuked local state (bit us on
+    // Aug 18 2026 when a killed Aug 11 draft zombie-fired to 1,399 subs).
+    // Delete the zombie and Cliq alert.
+    try {
+      const currentPending = await readPendingDraft(req).catch(() => null)
+      const expectedId = currentPending?.broadcast_id || null
+      const axios = (await import('axios')).default
+      const token = process.env.RESEND_API_KEY || ''
+      if (token) {
+        const list = await axios.get('https://api.resend.com/broadcasts', {
+          headers: { Authorization: `Bearer ${token}` }, timeout: 15000, validateStatus: () => true,
+        })
+        const broadcasts = Array.isArray(list.data?.data) ? list.data.data : []
+        const zombies = broadcasts.filter(b =>
+          b.status === 'scheduled' && b.id !== expectedId
+        )
+        for (const z of zombies) {
+          try {
+            const del = await deleteVanBroadcast(z.id)
+            const msg = `🧟 Van zombie broadcast deleted: "${z.name || z.subject || z.id}" (scheduled ${z.scheduled_at}, was created ${z.created_at}). ${del.ok ? 'Deleted OK.' : 'Delete failed: ' + del.error}`
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+            out.actions.push({ action: 'delete_zombie', id: z.id, name: z.name, ok: del.ok })
+          } catch (e) {
+            out.actions.push({ action: 'delete_zombie', id: z.id, ok: false, error: e.message })
+          }
+        }
+        if (zombies.length === 0) {
+          out.skipped.push({ check: 'zombie_sweep', reason: `no zombie scheduled broadcasts (${broadcasts.length} total in account, ${expectedId ? 'expected id=' + expectedId : 'no active pending'})` })
+        }
+      } else {
+        out.skipped.push({ check: 'zombie_sweep', reason: 'RESEND_API_KEY not set' })
+      }
+    } catch (e) { console.warn('[van safety-net zombie sweep]', e.message) }
 
     // ─── 4. AUTO-CLEAR STALE PENDING DRAFT ─────────────────────────────────
     // If pending draft's scheduled_for is 2h+ in the past, Resend has already
@@ -4775,6 +4816,64 @@ async function advanceIssueState(req, approvedPending) {
   } catch (e) { console.warn('[van recent-subjects]', e.message) }
 }
 
+// Debug — inspect Resend broadcasts to diagnose Van send failures.
+//   GET /debug/resend-broadcast?id=X → single broadcast status
+//   GET /debug/resend-broadcasts?limit=20 → list recent broadcasts (subject + status + scheduled_at + sent_at)
+captureCalcRouter.get('/debug/resend-broadcast', requireCronSecretFlex, async (req, res) => {
+  const id = String(req.query.id || '')
+  if (!id) return res.status(400).json({ ok: false, error: 'id query param required' })
+  try {
+    const axios = (await import('axios')).default
+    const token = process.env.RESEND_API_KEY || ''
+    if (!token) return res.status(500).json({ ok: false, error: 'RESEND_API_KEY not set' })
+    const r = await axios.get(`https://api.resend.com/broadcasts/${id}`, {
+      headers: { Authorization: `Bearer ${token}` }, timeout: 15000, validateStatus: () => true,
+    })
+    res.json({ ok: r.status < 300, http_status: r.status, data: r.data })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+captureCalcRouter.get('/debug/resend-broadcasts', requireCronSecretFlex, async (req, res) => {
+  try {
+    const axios = (await import('axios')).default
+    const token = process.env.RESEND_API_KEY || ''
+    if (!token) return res.status(500).json({ ok: false, error: 'RESEND_API_KEY not set' })
+    const r = await axios.get(`https://api.resend.com/broadcasts`, {
+      headers: { Authorization: `Bearer ${token}` }, timeout: 15000, validateStatus: () => true,
+    })
+    // Sort by scheduled_at or created_at desc, take top N
+    const limit = Number(req.query.limit) || 20
+    const list = Array.isArray(r.data?.data) ? r.data.data : []
+    const sorted = list.slice().sort((a, b) => {
+      const at = new Date(a.scheduled_at || a.created_at || 0).getTime()
+      const bt = new Date(b.scheduled_at || b.created_at || 0).getTime()
+      return bt - at
+    }).slice(0, limit)
+    res.json({ ok: r.status < 300, http_status: r.status, count: list.length, showing: sorted.length, broadcasts: sorted })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Debug — fire a Cliq test message to MARK_ALERT_CHANNEL_ID, surface errors
+// so we can tell whether Cliq delivery is broken vs the calling code is broken.
+captureCalcRouter.get('/debug/cliq-test', requireCronSecretFlex, async (req, res) => {
+  const msg = String(req.query.msg || `🧪 Cliq test ping from adasiq-api at ${new Date().toISOString()}`)
+  try {
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg)
+    res.json({ ok: true, sent: true, channel: MARK_ALERT_CHANNEL_ID, msg })
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      channel: MARK_ALERT_CHANNEL_ID,
+      error: e.message,
+      response_status: e.response?.status,
+      response_data: e.response?.data ? JSON.stringify(e.response.data).slice(0, 500) : null,
+    })
+  }
+})
+
 // Admin — read/seed the rolling recent-subjects log (used for drafter dedup)
 captureCalcRouter.get('/from-the-van/recent-subjects', requireCronSecretFlex, async (req, res) => {
   const { getVal } = await import('../services/vanDatastore.js')
@@ -4797,10 +4896,26 @@ captureCalcRouter.post('/from-the-van/recent-subjects', requireCronSecretFlex, e
 
 // Admin — nuke the pending draft (used when Mark ignores it and needs to
 // start fresh).  POST /api/capture-calc/from-the-van/clear-pending-draft
+//
+// CRITICAL: also deletes the associated Resend broadcast if one exists and
+// hasn't been sent yet. Without this, killing the local pending record leaves
+// a "scheduled" broadcast in Resend that fires on its scheduled_for date —
+// bit us Aug 18 2026 when a killed Aug 11 draft zombie-fired to 1,399 subs.
 captureCalcRouter.post('/from-the-van/clear-pending-draft', requireCronSecretFlex, async (req, res) => {
-  const seg = getSegment(req)
+  const pending = await readPendingDraft(req).catch(() => null)
+  let broadcastDeletion = null
+  if (pending?.broadcast_id) {
+    try {
+      const del = await deleteVanBroadcast(pending.broadcast_id)
+      broadcastDeletion = del.ok
+        ? { ok: true, broadcast_id: pending.broadcast_id, alreadyGone: !!del.alreadyGone }
+        : { ok: false, broadcast_id: pending.broadcast_id, error: del.error }
+    } catch (e) {
+      broadcastDeletion = { ok: false, broadcast_id: pending.broadcast_id, error: e.message }
+    }
+  }
   await clearPendingDraft(req)
-  res.json({ ok: true, cleared: true })
+  res.json({ ok: true, cleared: true, previous_issue: pending?.issue_number || null, broadcast_deletion: broadcastDeletion })
 })
 
 // Admin — read the current pending draft.

@@ -4,7 +4,7 @@ import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
 import CalibrationReviewModal from './CalibrationReviewModal.jsx'
-import { parseNoteItems, CustomerNoteBox } from './MobileJobCard.jsx'
+import { parseNoteItems, CustomerNoteBox, insurerPricingBadge } from './MobileJobCard.jsx'
 import LoadingSplash from './LoadingSplash.jsx'
 
 function useIsMobile() {
@@ -697,6 +697,15 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 
       {/* Tesla badge — Tesla-red pill so Kat uses Tesla pricing on the
           invoice. Independent of cash/insurer (a Tesla can be either). */}
+      {insurerPricingBadge(job) && (
+        <p className="mb-1">
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
+            title="This insurer bills on a special price list — use the matching prefixed items"
+          >{insurerPricingBadge(job).label}</span>
+        </p>
+      )}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
@@ -2235,6 +2244,12 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
       <div className="flex items-center gap-3 text-xs mb-2 flex-wrap" style={{ color: '#aaa' }}>
         {job.technician && <span>👤 {job.technician}</span>}
         {job.scheduled_date && <span>📅 {job.scheduled_date}</span>}
+        {insurerPricingBadge(job) && (
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
+          >{insurerPricingBadge(job).label}</span>
+        )}
         {isTeslaJob(job) && (
           <span
             className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"

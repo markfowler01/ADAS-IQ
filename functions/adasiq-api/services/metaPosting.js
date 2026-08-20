@@ -12,6 +12,7 @@
 // need refreshing.
 
 import axios from 'axios'
+import { retryOnTransient } from './httpRetry.js'
 
 const GRAPH_API = 'https://graph.facebook.com/v22.0'
 
@@ -234,14 +235,17 @@ export async function postToInstagram({ imageUrl, caption }) {
   // 1. Create the media container
   let creationId
   try {
-    const createRes = await axios.post(
-      `${GRAPH_API}/${igUserId}/media`,
-      null,
-      {
-        params: { image_url: imageUrl, caption: trimmedCaption, access_token: pageToken },
-        timeout: 25000,
-        validateStatus: s => s < 500,
-      }
+    const createRes = await retryOnTransient(
+      () => axios.post(
+        `${GRAPH_API}/${igUserId}/media`,
+        null,
+        {
+          params: { image_url: imageUrl, caption: trimmedCaption, access_token: pageToken },
+          timeout: 25000,
+          validateStatus: s => s < 600,
+        }
+      ),
+      { label: 'IG media create' }
     )
     if (createRes.status >= 400 || createRes.data?.error) {
       return {
@@ -291,14 +295,17 @@ export async function postToInstagram({ imageUrl, caption }) {
 
   // 3. Publish the container
   try {
-    const pubRes = await axios.post(
-      `${GRAPH_API}/${igUserId}/media_publish`,
-      null,
-      {
-        params: { creation_id: creationId, access_token: pageToken },
-        timeout: 25000,
-        validateStatus: s => s < 500,
-      }
+    const pubRes = await retryOnTransient(
+      () => axios.post(
+        `${GRAPH_API}/${igUserId}/media_publish`,
+        null,
+        {
+          params: { creation_id: creationId, access_token: pageToken },
+          timeout: 25000,
+          validateStatus: s => s < 600,
+        }
+      ),
+      { label: 'IG media publish' }
     )
     if (pubRes.status >= 400 || pubRes.data?.error) {
       return {

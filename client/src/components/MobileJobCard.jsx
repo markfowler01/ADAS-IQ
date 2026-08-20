@@ -35,6 +35,18 @@ export function isTeslaJob(job) {
   return /tesla/i.test(String(job.make || '')) || /tesla/i.test(String(job.vehicle || ''))
 }
 
+// Insurer pricing families (Mark 2026-08-13: "a pill on the kanban card
+// to help us remember"). US General + Integon are National General
+// companies, which Allstate owns — they bill on the AS- price list.
+export function insurerPricingBadge(job) {
+  const ins = String(job?.insurer || '').toLowerCase()
+  if (!ins) return null
+  if (/state\s*farm/.test(ins)) return { label: '🏦 STATE FARM · SFP pricing', bg: '#b91c1c' }
+  if (/allstate|u\.?s\.?\s*general|integon|national\s*general/.test(ins)) return { label: '🏦 ALLSTATE · AS pricing', bg: '#1d4ed8' }
+  if (/american\s*family|amfam/.test(ins)) return { label: '🏦 AM FAM · AMFAM pricing', bg: '#0e7490' }
+  return null
+}
+
 // Shop-name normalizer for customer card notes — must mirror
 // normShopName in routes/shops.js so lookups hit.
 export function normShopName(name) {
@@ -223,6 +235,15 @@ export default function MobileJobCard({
 
       <CustomerNoteBox items={noteItems} />
 
+      {insurerPricingBadge(job) && (
+        <p className="mb-1">
+          <span
+            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
+            title="This insurer bills on a special price list — use the matching prefixed items"
+          >{insurerPricingBadge(job).label}</span>
+        </p>
+      )}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
