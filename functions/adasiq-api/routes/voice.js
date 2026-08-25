@@ -241,16 +241,21 @@ function cascadeTargets(req) {
     mark:   normalizePhoneUS(cfg.MARK_PHONE_NUMBER   || process.env.MARK_PHONE_NUMBER   || ''),
     kat:    normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''),
   }
-  const targets = parseCascadeOrder(cfg).map(key => ({
-    key,
-    number: numbers[key],
-    afterUrl: `/webhooks/twilio/voice/after-${key}`,
-  }))
-  // Desk-first softphone (Mark 2026-08-12: "I want it to ring Kat's
-  // computer"): when the browser softphone is on duty, it rings BEFORE
-  // the cell cascade. Off duty (or browser closed → no registered
-  // client, leg fails fast) and the cascade behaves exactly as before.
-  if (String(cfg.DESK_PHONE_ON || '').toLowerCase() === 'true') {
+  const deskOn = String(cfg.DESK_PHONE_ON || '').toLowerCase() === 'true'
+  const order = parseCascadeOrder(cfg)
+  const targets = []
+  for (const key of order) {
+    if (key === 'desk') {
+      // Explicit desk slot (Mark 2026-08-14): rings the browser softphone
+      // at THIS position — but only while On Duty. Off duty = slot skipped.
+      if (deskOn) targets.push({ key: 'desk', client: 'aa-desk', afterUrl: '/webhooks/twilio/voice/after-desk' })
+      continue
+    }
+    targets.push({ key, number: numbers[key], afterUrl: `/webhooks/twilio/voice/after-${key}` })
+  }
+  // Legacy receptionist mode: desk NOT in the configured order but On
+  // Duty → it rings FIRST (the 2026-08-12 behavior, unchanged).
+  if (deskOn && !order.includes('desk')) {
     targets.unshift({ key: 'desk', client: 'aa-desk', afterUrl: '/webhooks/twilio/voice/after-desk' })
   }
   return targets

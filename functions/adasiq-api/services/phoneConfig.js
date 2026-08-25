@@ -38,7 +38,7 @@ export const PHONE_CONFIG_KEYS = [
   { key: 'KAT_PHONE_NUMBER',       label: "Kat's phone",             secret: false, required: false,
     help: 'E.164 — ring cascade (WhatsApp number)' },
   { key: 'CASCADE_ORDER',          label: 'Ring cascade order',      secret: false, required: false,
-    help: 'Comma-separated, first rings first: jayden, mark, kat. Leave a name out to skip them. Default: jayden, mark, kat' },
+    help: 'Comma-separated, first rings first: mark, kat, jayden, desk. "desk" = the browser softphone (only rings while On Duty). Default: jayden, mark, kat' },
   { key: 'VM_GREETING_URL',        label: 'Voicemail greeting audio', secret: false, required: false,
     help: "Public MP3/WAV URL for the voicemail greeting. Blank = Mark's recording (vm-greeting.wav). Type \"robot\" to force the built-in spoken greeting." },
   { key: 'AFTER_HOURS_AUTOREPLY',  label: 'After-hours auto-reply',  secret: false, required: false,
@@ -186,13 +186,17 @@ export function maskSecret(v) {
 // all-invalid input falls back to the default so a typo can never leave
 // the phone system with zero ring targets.
 export const CASCADE_DEFAULT_ORDER = ['jayden', 'mark', 'kat']
+// 'desk' = the browser softphone (Mark 2026-08-14: "register Kat as the
+// desk phone"). Valid in CASCADE_ORDER at any position; the slot only
+// rings while the On Duty toggle (DESK_PHONE_ON) is true.
+const CASCADE_VALID_TOKENS = [...CASCADE_DEFAULT_ORDER, 'desk']
 
 export function parseCascadeOrder(cfg) {
   const raw = String((cfg && cfg.CASCADE_ORDER) || process.env.CASCADE_ORDER || '').toLowerCase()
   const seen = new Set()
   const order = []
   for (const tok of raw.split(/[,\s]+/)) {
-    if (CASCADE_DEFAULT_ORDER.includes(tok) && !seen.has(tok)) {
+    if (CASCADE_VALID_TOKENS.includes(tok) && !seen.has(tok)) {
       seen.add(tok)
       order.push(tok)
     }
