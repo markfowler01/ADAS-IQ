@@ -314,6 +314,16 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
   }
 
+  // Auto-punch piggyback (Mark 2026-08-27) — 6pm PT weekdays: anyone
+  // with zero punches gets the standard 8-12 / 1-5 day, Cliq-flagged.
+  try {
+    const { maybeAutoPunch } = await import('../services/hr.js')
+    const ap = await maybeAutoPunch(req)
+    if (ap.fired && ap.auto_punched?.length) console.log('[postscan] auto-punch:', ap.auto_punched.join(', '))
+  } catch (e) {
+    console.warn('[postscan] auto-punch piggyback failed (non-fatal):', e.message)
+  }
+
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
   // the Books invoice webhook. Every hourly tick, sweep the last two PT
   // days of sent invoices; the per-invoice dedup stamp makes repeated

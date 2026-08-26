@@ -485,5 +485,5 @@ router.get('/pending-approvals', async (req, res) => {
   }
 })
 
-export { readEntries as readEntriesPublic }
+export { readEntries as readEntriesPublic, writeEntries as writeEntriesPublic }
 export default router

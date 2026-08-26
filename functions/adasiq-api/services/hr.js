@@ -181,6 +181,113 @@ export async function buildHoursReport(req, startISO, endISO) {
   return { text: lines.join('\n'), employees: Object.keys(per).length, holidays: holidays.length }
 }
 
+// ── Auto-punch for forgotten days (Mark 2026-08-27) ─────────────────────
+// If an employee has ZERO punches on a weekday, create the standard day:
+// in 8:00, out 12:00 (lunch), in 13:00, out 17:00 PT — 8.0h. Skipped
+// when: weekend, paid holiday, ANY entry exists that day (partial days
+// are theirs to fix), or approved time off covers the day. Every
+// auto-punch is Cliq-flagged to Mark for review. Runs in the 6pm PT
+// hour via the postscan piggyback, once per day.
+const AUTO_PUNCH_ROSTER = [
+  // user_id must match what the timeclock stores (email) so /current and
+  // timesheets line up. Update here when the team changes.
+  { user_id: 'mark@absoluteadas.com',      user_name: 'Mark Fowler' },
+  { user_id: 'jayden@absoluteadas.com',    user_name: 'Jayden Goshorn' },
+  { user_id: 'k.belmonte@absoluteadas.com', user_name: 'Kat Belmonte' },
+]
+
+function ptInstant(dateISO, hour) {
+  for (const off of ['-07:00', '-08:00']) {
+    const d = new Date(`${dateISO}T${String(hour).padStart(2, '0')}:00:00${off}`)
+    const back = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(d))
+    if (back === hour) return d.toISOString()
+  }
+  return new Date(`${dateISO}T${String(hour).padStart(2, '0')}:00:00-07:00`).toISOString()
+}
+
+export async function maybeAutoPunch(req) {
+  const today = todayPT()
+  const dow = new Date(today + 'T12:00:00Z').getUTCDay()
+  if (dow === 0 || dow === 6) return { fired: false, reason: 'weekend' }
+
+  const hourNow = Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
+  }).format(new Date()))
+  if (hourNow !== 18) return { fired: false, reason: `outside 6pm window (hour=${hourNow})` }
+
+  const year = Number(today.slice(0, 4))
+  if (paidHolidaysForYear(year).some(h => h.date === today)) {
+    return { fired: false, reason: 'paid holiday' }
+  }
+
+  const app = catalyst.initialize(req)
+  const stampKey = `auto_punch_done:${today}`
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT config_value FROM AppConfig WHERE config_key = '${stampKey}' LIMIT 1`
+  ).catch(() => [])
+  const r0 = rows?.[0]?.AppConfig || rows?.[0] || null
+  if (r0?.config_value) return { fired: false, reason: 'already ran today' }
+
+  const { readEntriesPublic } = await import('../routes/timeclock.js')
+  const { getRequestsDurable } = await import('../routes/pto.js')
+  const [entries, requests] = await Promise.all([
+    readEntriesPublic(req),
+    getRequestsDurable(req).catch(() => []),
+  ])
+
+  const punchedToday = new Set(
+    entries.filter(e => String(e.clock_in || '').slice(0, 10) === today ||
+      // compare in PT, not UTC — an evening punch crosses the UTC date line
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(new Date(e.clock_in || 0)) === today)
+      .map(e => String(e.user_id).toLowerCase())
+  )
+  const offToday = new Set(
+    requests.filter(r => String(r.status) === 'approved' &&
+      String(r.start_date) <= today && String(r.end_date) >= today)
+      .map(r => String(r.user_id).toLowerCase())
+  )
+
+  const punched = []
+  const newEntries = []
+  const mkId = () => `tc_auto_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  for (const person of AUTO_PUNCH_ROSTER) {
+    const key = person.user_id.toLowerCase()
+    if (punchedToday.has(key) || offToday.has(key)) continue
+    const base = {
+      user_id: person.user_id, user_name: person.user_name,
+      breaks: [], clock_in_location: null, clock_out_location: null,
+      regular_minutes: 240, overtime_minutes: 0,
+      notes: 'Auto-punched — no clock-in recorded this day (standard 8-12, 1-5)',
+      job_ids: [], approved: false, approved_by: '', approved_at: '',
+      created_at: new Date().toISOString(),
+    }
+    newEntries.push(
+      { ...base, id: mkId(), clock_in: ptInstant(today, 8),  clock_out: ptInstant(today, 12), total_minutes: 240 },
+      { ...base, id: mkId(), clock_in: ptInstant(today, 13), clock_out: ptInstant(today, 17), total_minutes: 240 },
+    )
+    punched.push(person.user_name)
+  }
+
+  if (newEntries.length > 0) {
+    const { writeEntriesPublic } = await import('../routes/timeclock.js')
+    await writeEntriesPublic(req, [...entries, ...newEntries])
+    try {
+      const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, [
+        `⏱ *Auto-punched (forgot to clock in)* — ${today}`,
+        ...punched.map(n => `• ${n} — 8:00-12:00 and 1:00-5:00 PT (8.0h)`),
+        '',
+        'If someone actually didn\'t work, fix it on the Time Clock page before payroll.',
+      ].join('\n'))
+    } catch { /* non-fatal */ }
+  }
+
+  await app.datastore().table('AppConfig')
+    .insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
+  return { fired: true, auto_punched: punched }
+}
+
 // Fires on the 14th and the second-to-last day of each month (PT).
 // Dedup stamp per date. Weekends included — payroll doesn't wait.
 export async function maybeFireHoursReport(req) {
