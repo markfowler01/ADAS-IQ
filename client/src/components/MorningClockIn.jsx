@@ -48,9 +48,9 @@ export default function MorningClockIn({ user }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       })
-      if (r.status === 409) { setDone('Already clocked in 👍') }
+      if (r.status === 409) { setDone('Already on the clock — GET SOME!!! 👍') }
       else if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`) }
-      else setDone('Clocked in — have a good one 🔧')
+      else setDone('Clocked in — GET SOME!!! 🔧')
       setTimeout(() => setShow(false), 1600)
     } catch (e) {
       setDone(`Failed: ${e.message} — use the Time Clock page`)
