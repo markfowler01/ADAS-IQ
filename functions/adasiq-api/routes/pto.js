@@ -78,6 +78,7 @@ async function writeDurable(req, key, value) {
 }
 
 export async function getRequestsDurable(req) { return readDurable(req, REQUESTS_KEY, []) }
+export async function getBalancesDurable(req) { return readDurable(req, BALANCES_KEY, {}) }
 async function getRequests(req) { return readDurable(req, REQUESTS_KEY, []) }
 async function saveRequests(req, requests) { return writeDurable(req, REQUESTS_KEY, requests) }
 async function getBalances(req) { return readDurable(req, BALANCES_KEY, {}) }
@@ -472,7 +473,10 @@ router.put('/balances/:user_id', async (req, res) => {
     const cur = ensureUserBalance(balances, uid)
     const patch = req.body || {}
     const allowed = ['accrual_rate', 'balance_vacation', 'balance_sick', 'balance_personal',
-                     'carryover_max', 'year_start_balance', 'taken_ytd', 'last_accrual_date']
+                     'carryover_max', 'year_start_balance', 'taken_ytd', 'last_accrual_date',
+                     // Pre-app history: hours earned before the timeclock existed
+                     // (folded into the live-computed sick balance).
+                     'sick_opening_credit']
     for (const k of allowed) {
       if (k in patch) {
         if (k === 'last_accrual_date') cur[k] = String(patch[k] || '')

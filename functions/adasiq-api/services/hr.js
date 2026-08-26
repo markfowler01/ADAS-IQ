@@ -56,11 +56,23 @@ function firstName(s) {
 // used    = sum of APPROVED sick requests (hours)
 export async function computeSickBalances(req) {
   const { readEntriesPublic } = await import('../routes/timeclock.js')
-  const { getRequestsDurable } = await import('../routes/pto.js')
-  const [entries, requests] = await Promise.all([
+  const { getRequestsDurable, getBalancesDurable } = await import('../routes/pto.js')
+  const [entries, requests, stored] = await Promise.all([
     readEntriesPublic(req),
     getRequestsDurable(req).catch(() => []),
+    getBalancesDurable(req).catch(() => ({})),
   ])
+
+  // Opening credits: sick hours earned BEFORE the timeclock existed
+  // (e.g. Jayden hired 2025-05-11, credited 2026-08-28). Keyed by the
+  // balance row's user_id (email) → first name.
+  const openingCredit = {}
+  for (const [uid, b] of Object.entries(stored || {})) {
+    const credit = Number(b?.sick_opening_credit || 0)
+    if (!credit) continue
+    const key = String(uid).split('@')[0].split('.')[0].toLowerCase()
+    openingCredit[key] = (openingCredit[key] || 0) + credit
+  }
 
   const workedMin = {}   // keyed by lowercase first name
   const nameById = {}
@@ -81,9 +93,10 @@ export async function computeSickBalances(req) {
 
   const out = {}
   const keys = new Set([...Object.keys(workedMin), ...Object.keys(usedHours)])
+  for (const k of Object.keys(openingCredit)) keys.add(k)
   for (const key of keys) {
     const workedHours = (workedMin[key] || 0) / 60
-    const accrued = workedHours / 40
+    const accrued = workedHours / 40 + (openingCredit[key] || 0)
     const used = usedHours[key] || 0
     out[key] = {
       name: nameById[key] || key,
