@@ -83,10 +83,10 @@ function weekdayPT() {
 // null so the caller can skip the send entirely on Sat/Sun.
 function dayOfWeekOpener(weekday) {
   switch (weekday) {
-    case 'Monday':    return '☀️ Happy Monday!'
-    case 'Tuesday':   return '☀️ Happy Tuesday!'
-    case 'Wednesday': return '🐫 Halfway there!'
-    case 'Thursday':  return '👀 Almost Friday!'
+    case 'Monday':    return '☀️ Happy Monday — GET SOME!!!'
+    case 'Tuesday':   return '☀️ Happy Tuesday — GET SOME!!!'
+    case 'Wednesday': return '🐫 Halfway there — GET SOME!!!'
+    case 'Thursday':  return '👀 Almost Friday — GET SOME!!!'
     case 'Friday':    return '🎉 Happy Friday! Here we go — GET SOME!!!'
     default:          return null   // Saturday/Sunday — skip
   }
@@ -131,7 +131,7 @@ function buildGreetingMessage({ name, opener }) {
   return [
     opener,
     ``,
-    `Good morning ${name}. Hope you've got a great one lined up.`,
+    `Good morning ${name}. Let's have a good one — GET SOME!!!`,
   ].join('\n')
 }
 
