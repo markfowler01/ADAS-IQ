@@ -76,7 +76,8 @@ router.get('/token', async (req, res) => {
     const AccessToken = twilio.jwt.AccessToken
     const token = new AccessToken(accountSid, apiKeySid, apiKeySecret, {
       identity: IDENTITY,
-      ttl: 3600,
+      ttl: 86400,  // 24h (Twilio max) — background-tab throttling was
+                   // letting 1h tokens expire (error 20104, 2026-08-29)
     })
     token.addGrant(new AccessToken.VoiceGrant({
       outgoingApplicationSid: twimlAppSid,

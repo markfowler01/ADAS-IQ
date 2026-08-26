@@ -38,6 +38,8 @@ export default function SoftphonePanel({ showControls = true }) {
   const [err, setErr] = useState('')
   const deviceRef = useRef(null)
   const timerRef = useRef(null)
+  const dutyRef = useRef(false)
+  const phaseRef = useRef('off')
   // Audible ring — generated with WebAudio (no asset needed) so a call
   // is HEARD even when the app tab is buried behind other windows.
   const ringRef = useRef(null)
@@ -100,12 +102,39 @@ export default function SoftphonePanel({ showControls = true }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Wake recovery: laptop sleep / long background kills the connection.
+  // On tab focus or network return, if we're supposed to be on duty but
+  // the device is gone or unregistered, restart it with a fresh token.
+  useEffect(() => {
+    const revive = () => {
+      const d = deviceRef.current
+      const dead = !d || d.state === 'destroyed' || d.state === 'unregistered'
+      if (dutyRef.current && dead && phaseRef.current !== 'starting') {
+        try { d?.destroy() } catch {}
+        deviceRef.current = null
+        startDevice()
+      }
+    }
+    const onVis = () => { if (document.visibilityState === 'visible') revive() }
+    document.addEventListener('visibilitychange', onVis)
+    window.addEventListener('online', revive)
+    window.addEventListener('focus', revive)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener('online', revive)
+      window.removeEventListener('focus', revive)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   function startTimer() {
     setElapsed(0)
     clearInterval(timerRef.current)
     timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000)
   }
   function stopTimer() { clearInterval(timerRef.current) }
+  useEffect(() => { dutyRef.current = duty }, [duty])
+  useEffect(() => { phaseRef.current = phase }, [phase])
 
   const wireCall = useCallback((c, direction) => {
     setCall(c)
@@ -143,7 +172,10 @@ export default function SoftphonePanel({ showControls = true }) {
     setErr('')
     try {
       const token = await fetchToken()
-      const device = new Device(token, { logLevel: 'error' })
+      // tokenRefreshMs: fire tokenWillExpire 10 MINUTES early — Chrome
+      // throttles background-tab timers, so the 10s default misses and
+      // the token dies (AccessTokenExpired 20104).
+      const device = new Device(token, { logLevel: 'error', tokenRefreshMs: 600000 })
       deviceRef.current = device
       device.on('registered', () => setPhase('ready'))
       device.on('incoming', c => wireCall(c, 'incoming'))
@@ -152,6 +184,16 @@ export default function SoftphonePanel({ showControls = true }) {
       })
       device.on('error', e => {
         console.warn('[softphone device]', e.message)
+        // Expired token (20104): self-heal with a fresh token instead of
+        // stranding Kat on a dead "reset" state. Full restart (destroy +
+        // register) because an expired device may not accept updateToken.
+        if (e?.code === 20104) {
+          try { deviceRef.current?.destroy() } catch {}
+          deviceRef.current = null
+          setPhase('starting')
+          setTimeout(() => startDevice(), 1500)
+          return
+        }
         setErr(e.message)
         setPhase('error')
       })
