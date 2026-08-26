@@ -137,6 +137,12 @@ function validateRequestBody(body) {
   if (start_date && end_date && end_date < start_date) errors.push('end_date must be on or after start_date')
   const hrs = Number(hours_requested)
   if (!Number.isFinite(hrs) || hrs <= 0) errors.push('hours_requested must be a positive number')
+  // Whole-hour increments, max 8h per day in the range (Mark 2026-08-28)
+  if (Number.isFinite(hrs) && hrs !== Math.round(hrs)) errors.push('hours_requested must be whole hours (1-hour increments)')
+  if (start_date && end_date && /^\d{4}-\d{2}-\d{2}$/.test(start_date) && /^\d{4}-\d{2}-\d{2}$/.test(end_date) && end_date >= start_date) {
+    const days = Math.round((new Date(end_date + 'T12:00Z') - new Date(start_date + 'T12:00Z')) / 86400000) + 1
+    if (Number.isFinite(hrs) && hrs > days * 8) errors.push(`hours_requested cannot exceed ${days * 8}h for a ${days}-day request (8h/day max)`)
+  }
   return errors
 }
 

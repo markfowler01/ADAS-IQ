@@ -57,6 +57,11 @@ export default function PTORequestModal({ onClose, onSaved, existingRequest }) {
     if (endDate < startDate) { setError('End date must be on or after start date.'); return }
     const hours = Number(hoursValue)
     if (!Number.isFinite(hours) || hours <= 0) { setError('Hours must be a positive number.'); return }
+    if (hours !== Math.round(hours)) { setError('Whole hours only — 1-hour increments.'); return }
+    try {
+      const days = halfDay ? 1 : Math.round((new Date(endDate || startDate) - new Date(startDate)) / 86400000) + 1
+      if (hours > Math.max(1, days) * 8) { setError(`Max ${Math.max(1, days) * 8} hours for this date range (8h/day).`); return }
+    } catch { /* dates validated separately */ }
 
     setSaving(true)
     try {
@@ -145,18 +150,35 @@ export default function PTORequestModal({ onClose, onSaved, existingRequest }) {
             Half-day request
           </label>
 
-          {/* Hours */}
+          {/* Hours — 1-hour increments, up to 8 per day (Mark 2026-08-28).
+              Single day: quick 1-8 picker. Multi-day: whole hours, capped. */}
           <div>
             <label className="block text-xs font-semibold mb-1" style={{ color: '#555' }}>
               Hours {hoursOverride === '' && (
                 <span className="font-normal" style={{ color: '#888' }}>— auto-calculated from dates</span>
               )}
             </label>
-            <input type="number" min="0" step="0.5"
-              value={hoursValue}
-              onChange={e => setHoursOverride(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg text-sm"
-              style={{ border: '1px solid #ebebeb' }}/>
+            {(!endDate || endDate === startDate) && !halfDay ? (
+              <div className="flex gap-1.5 flex-wrap">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map(h => (
+                  <button key={h} type="button"
+                    onClick={() => setHoursOverride(String(h))}
+                    className="w-10 h-10 rounded-lg text-sm font-bold"
+                    style={Number(hoursValue) === h
+                      ? { backgroundColor: ORANGE, color: 'white' }
+                      : { backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #ebebeb' }}
+                  >{h}</button>
+                ))}
+                <span className="self-center text-xs ml-1" style={{ color: '#888' }}>hour{Number(hoursValue) === 1 ? '' : 's'}</span>
+              </div>
+            ) : (
+              <input type="number" min="1" step="1"
+                max={(() => { try { const d = Math.round((new Date(endDate) - new Date(startDate)) / 86400000) + 1; return Math.max(1, d) * 8 } catch { return 8 } })()}
+                value={hoursValue}
+                onChange={e => setHoursOverride(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg text-sm"
+                style={{ border: '1px solid #ebebeb' }}/>
+            )}
           </div>
 
           {/* Reason */}
