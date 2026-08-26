@@ -88,7 +88,6 @@ export default function MorningClockIn({ user }) {
             </h2>
             <p className="text-xs mb-5" style={{ color: '#888' }}>
               You're not on the clock yet. Hours drive payroll and sick-leave accrual.
-              {user?.role === 'technician' && <span><br />📍 Your location is recorded with the punch.</span>}
             </p>
             <div className="flex gap-2">
               <button onClick={() => setShow(false)}
