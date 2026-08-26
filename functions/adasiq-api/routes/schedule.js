@@ -80,9 +80,8 @@ async function readKV(req, key) {
 async function readTimeOffMap(req) {
   let requests = []
   try {
-    const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
-    const val = await seg.getValue('pto_requests')
-    requests = val ? JSON.parse(val) : []
+    const { getRequestsDurable } = await import('./pto.js')
+    requests = await getRequestsDurable(req)
   } catch { return {} }
   const today = todayPT()
   const horizon = addDaysISO(today, 120)

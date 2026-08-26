@@ -43,10 +43,45 @@ async function writeCache(req, key, value) {
   }
 }
 
-async function getRequests(req) { return readCache(req, REQUESTS_KEY, []) }
-async function saveRequests(req, requests) { return writeCache(req, REQUESTS_KEY, requests) }
-async function getBalances(req) { return readCache(req, BALANCES_KEY, {}) }
-async function saveBalances(req, balances) { return writeCache(req, BALANCES_KEY, balances) }
+// ── DURABLE storage (Mark 2026-08-15: "this is not built in cache —
+// this needs to stay very accurate"). PTO requests and balances live in
+// AppConfig Datastore rows (permanent), NOT the 48h Catalyst cache.
+// First read self-migrates any legacy cache data into the Datastore.
+async function readDurable(req, key, fallback) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT config_value FROM AppConfig WHERE config_key = 'durable_${key}' LIMIT 1`
+  )
+  const r = rows?.[0]?.AppConfig || rows?.[0] || null
+  if (r?.config_value) {
+    try { return JSON.parse(r.config_value) } catch { return fallback }
+  }
+  // Not in Datastore yet — migrate whatever the legacy cache holds.
+  const legacy = await readCache(req, key, null)
+  if (legacy != null) {
+    try { await writeDurable(req, key, legacy) } catch (e) { console.warn('[pto] migrate failed:', e.message) }
+    return legacy
+  }
+  return fallback
+}
+async function writeDurable(req, key, value) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const cfgKey = `durable_${key}`
+  const json = JSON.stringify(value)
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT ROWID FROM AppConfig WHERE config_key = '${cfgKey}' LIMIT 1`
+  )
+  const existing = rows?.[0]?.AppConfig || rows?.[0] || null
+  const table = app.datastore().table('AppConfig')
+  if (existing?.ROWID) await table.updateRow({ ROWID: String(existing.ROWID), config_key: cfgKey, config_value: json })
+  else await table.insertRow({ config_key: cfgKey, config_value: json })
+}
+
+export async function getRequestsDurable(req) { return readDurable(req, REQUESTS_KEY, []) }
+async function getRequests(req) { return readDurable(req, REQUESTS_KEY, []) }
+async function saveRequests(req, requests) { return writeDurable(req, REQUESTS_KEY, requests) }
+async function getBalances(req) { return readDurable(req, BALANCES_KEY, {}) }
+async function saveBalances(req, balances) { return writeDurable(req, BALANCES_KEY, balances) }
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
 const DEFAULT_BALANCE = {
@@ -225,6 +260,12 @@ router.post('/requests/:id/approve', async (req, res) => {
   try {
     const { user_id: adminId, is_admin } = userFromReq(req)
     if (!is_admin) return res.status(403).json({ error: 'Admin only' })
+    // All time-off approvals route to Mark (Mark 2026-08-15 / HR SOP:
+    // "Approver: Mark, single level"). Kat gets visibility, not the button.
+    const approverEmail = String(req.user?.email || '').toLowerCase()
+    if (approverEmail && !/^mark@/.test(approverEmail)) {
+      return res.status(403).json({ error: 'Time-off approvals go to Mark only' })
+    }
 
     const id = req.params.id
     const requests = await getRequests(req)
@@ -272,6 +313,10 @@ router.post('/requests/:id/deny', async (req, res) => {
   try {
     const { user_id: adminId, is_admin } = userFromReq(req)
     if (!is_admin) return res.status(403).json({ error: 'Admin only' })
+    const approverEmail = String(req.user?.email || '').toLowerCase()
+    if (approverEmail && !/^mark@/.test(approverEmail)) {
+      return res.status(403).json({ error: 'Time-off approvals go to Mark only' })
+    }
 
     const id = req.params.id
     const reason = (req.body && req.body.reason) || ''
