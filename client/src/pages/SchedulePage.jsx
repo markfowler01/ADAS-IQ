@@ -79,6 +79,28 @@ function techShort(t) {
 }
 function normShop(s) { return String(s || '').trim().toLowerCase() }
 
+// The 5 PAID holidays from the handbook (true dates, never shifted)
+function paidHolidayName(dateISO) {
+  const y = Number(dateISO.slice(0, 4))
+  const nth = (month, weekday, n) => {
+    if (n > 0) {
+      const first = new Date(Date.UTC(y, month, 1)).getUTCDay()
+      return 1 + ((weekday - first + 7) % 7) + (n - 1) * 7
+    }
+    const last = new Date(Date.UTC(y, month + 1, 0))
+    return last.getUTCDate() - ((last.getUTCDay() - weekday + 7) % 7)
+  }
+  const pad = n => String(n).padStart(2, '0')
+  const map = {
+    [`${y}-01-01`]: "New Year's",
+    [`${y}-05-${pad(nth(4, 1, -1))}`]: 'Memorial Day',
+    [`${y}-07-04`]: 'July 4th',
+    [`${y}-09-${pad(nth(8, 1, 1))}`]: 'Labor Day',
+    [`${y}-12-25`]: 'Christmas',
+  }
+  return map[dateISO] || ''
+}
+
 export default function SchedulePage({ user, onLogout, currentScreen, onNavigate }) {
   const [board, setBoard] = useState({ jobs: [], meta: {}, shops: {}, time_off: {} })
   const [loading, setLoading] = useState(true)
@@ -324,6 +346,12 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
           <span className="sched-dnum">{Number(date.slice(8))}</span>
           <span className="sched-dow">{isToday ? 'TODAY' : dowShort(date)}</span>
         </div>
+        {paidHolidayName(date) && (
+          <div className="text-[10px] font-bold rounded-md px-1.5 py-0.5"
+            style={{ backgroundColor: '#ede9fe', color: '#6d28d9', border: '1px dashed #c4b5fd' }}>
+            🎉 {paidHolidayName(date)} · paid holiday
+          </div>
+        )}
         {(board.time_off?.[date] || []).map(name => (
           <div key={name} className="text-[10px] font-bold rounded-md px-1.5 py-0.5"
             style={{ backgroundColor: '#ffedd5', color: '#c2410c', border: '1px dashed #fdba74' }}>

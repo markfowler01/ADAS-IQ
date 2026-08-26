@@ -26,6 +26,7 @@ const MORE_GROUPS = [
   { label: 'People & Time', links: [
     { id: 'timeclock', label: 'Time Clock' },
     { id: 'pto',       label: 'Time Off' },
+    { id: 'hr-policy', label: 'HR Policy' },
     { id: 'mileage',   label: 'Mileage' },
     { id: 'payroll',   label: 'Payroll', adminOnly: true },
     { id: 'team',      label: 'Team' },

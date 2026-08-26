@@ -274,11 +274,37 @@ router.post('/requests/:id/approve', async (req, res) => {
     const r = requests[idx]
     if (r.status !== 'pending') return res.status(400).json({ error: `Cannot approve ${r.status} request` })
 
-    // Subtract from balance (when applicable)
+    // WA sick leave (Mark 2026-08-15 HR build): balance is LIVE-computed
+    // from the durable timeclock (1h per 40h worked) minus approved sick.
+    // May go to -40 (advance, repaid by future accrual) — never further.
+    if (r.type === 'sick') {
+      try {
+        const { computeSickBalances, SICK_NEGATIVE_FLOOR } = await import('../services/hr.js')
+        const balances = await computeSickBalances(req)
+        const key = String(r.user_name || r.user_id).trim().split(/\s+/)[0].toLowerCase()
+        const current = balances[key]?.sick_balance_hours ?? 0
+        const after = current - Number(r.hours_requested || 0)
+        if (after < SICK_NEGATIVE_FLOOR) {
+          return res.status(400).json({
+            error: `This would put ${r.user_name} at ${after.toFixed(1)}h sick balance — below the -40h advance limit. Current balance: ${current.toFixed(1)}h.`,
+          })
+        }
+        if (after < 0) {
+          // Flag every negative balance to Mark (SOP: "Flag it to me directly")
+          try {
+            const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+              `⚠️ *Negative sick balance* — ${r.user_name} is at ${after.toFixed(1)}h after this approval (advanced hours, repaid from future accrual).`)
+          } catch { /* non-fatal */ }
+        }
+      } catch (e) { console.warn('[pto] sick balance check failed (approving anyway):', e.message) }
+    }
+
+    // Legacy bucket bookkeeping (vacation/personal still use stored buckets)
     const balances = await getBalances(req)
     const bal = ensureUserBalance(balances, r.user_id)
     const bucket = BUCKET_FOR[r.type]
-    if (bucket) {
+    if (bucket && r.type !== 'sick') {
       bal[bucket] = Math.max(0, Number(bal[bucket] || 0) - Number(r.hours_requested || 0))
     }
     bal.taken_ytd = Number(bal.taken_ytd || 0) + Number(r.hours_requested || 0)
@@ -374,6 +400,34 @@ router.post('/requests/:id/cancel', async (req, res) => {
 })
 
 // ── GET /balance — current user ─────────────────────────────────────────
+// Live WA sick balances for everyone (computed, never stored)
+router.get('/sick-balances', async (req, res) => {
+  try {
+    const { computeSickBalances } = await import('../services/hr.js')
+    res.json({ ok: true, balances: await computeSickBalances(req) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Manual hours-report trigger (backup-2026) — verification + on-demand
+router.post('/hours-report-run', async (req, res) => {
+  const secret = req.headers['x-cron-secret'] || req.query.secret || ''
+  if (secret !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
+  try {
+    const { buildHoursReport } = await import('../services/hr.js')
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const start = `${today.slice(0, 8)}01`
+    const report = await buildHoursReport(req, start, today)
+    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+      `🕒 *Hours report (manual test)* — ${start} to ${today}\n\n` + '```\n' + report.text.slice(0, 3000) + '\n```')
+    res.json({ ok: true, ...report })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 router.get('/balance', async (req, res) => {
   try {
     const { user_id } = userFromReq(req)

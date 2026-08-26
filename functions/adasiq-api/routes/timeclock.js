@@ -33,7 +33,63 @@ async function cacheGet(segment, key, fallback = null) {
 
 // ── Entry storage (chunked) ──────────────────────────────────────────────────
 
+// ── DURABLE entries storage (Mark 2026-08-15: "this needs to be
+// bulletproof"). Payroll-critical hours can NOT live in the 48h cache.
+//
+// Generation-swap writes: each save writes a fresh set of AppConfig
+// rows (tc_g<gen>_chunk_<i>), then flips the meta row last. A crash
+// mid-write leaves the previous generation fully intact — the meta
+// still points at consistent data. After a verified flip the old
+// generation's rows are deleted best-effort.
+async function tcKV(req) {
+  const app = catalyst.initialize(req)
+  return { zcql: app.zcql(), table: app.datastore().table('AppConfig') }
+}
+async function tcRead(req, key) {
+  const { zcql } = await tcKV(req)
+  const rows = await zcql.executeZCQLQuery(
+    `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 1`
+  )
+  const r = rows?.[0]?.AppConfig || rows?.[0] || null
+  return r ? { rowid: String(r.ROWID), value: r.config_value } : null
+}
+async function tcWrite(req, key, value) {
+  const { zcql, table } = await tcKV(req)
+  const rows = await zcql.executeZCQLQuery(
+    `SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`
+  )
+  const existing = rows?.[0]?.AppConfig || rows?.[0] || null
+  if (existing?.ROWID) await table.updateRow({ ROWID: String(existing.ROWID), config_key: key, config_value: value })
+  else await table.insertRow({ config_key: key, config_value: value })
+}
+async function tcDelete(req, key) {
+  try {
+    const { table } = await tcKV(req)
+    const r = await tcRead(req, key)
+    if (r) await table.deleteRow(r.rowid)
+  } catch { /* best-effort cleanup */ }
+}
+
+const TC_META_KEY = 'tc_entries_meta'
+
 async function readEntries(req) {
+  // Durable first
+  try {
+    const metaRow = await tcRead(req, TC_META_KEY)
+    if (metaRow?.value) {
+      const meta = JSON.parse(metaRow.value)
+      if (meta && meta.chunks >= 0 && meta.gen != null) {
+        const parts = []
+        for (let i = 0; i < meta.chunks; i++) {
+          const c = await tcRead(req, `tc_g${meta.gen}_chunk_${i}`)
+          parts.push(c?.value ? JSON.parse(c.value) : [])
+        }
+        return parts.flat()
+      }
+    }
+  } catch (e) { console.warn('[timeclock] durable read failed:', e.message) }
+
+  // One-time migration from the legacy cache chunks
   const segment = getSegment(req)
   try {
     const meta = await cacheGet(segment, 'timeclock_entries_meta', null)
@@ -43,27 +99,57 @@ async function readEntries(req) {
           cacheGet(segment, `timeclock_entries_chunk_${i}`, [])
         )
       )
-      return parts.flat()
+      const entries = parts.flat()
+      try {
+        await writeEntries(req, entries)
+        console.log(`[timeclock] migrated ${entries.length} entries from cache → Datastore`)
+      } catch (e) { console.warn('[timeclock] migration write failed:', e.message) }
+      return entries
     }
   } catch (e) { /* fall through */ }
   return []
 }
 
 async function writeEntries(req, entries) {
-  const segment = getSegment(req)
+  // Next generation number
+  let prevGen = -1
+  let prevChunks = 0
+  try {
+    const metaRow = await tcRead(req, TC_META_KEY)
+    if (metaRow?.value) {
+      const m = JSON.parse(metaRow.value)
+      prevGen = Number(m.gen ?? -1)
+      prevChunks = Number(m.chunks || 0)
+    }
+  } catch { /* first write */ }
+  const gen = prevGen + 1
+
   const chunks = []
   for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
     chunks.push(entries.slice(i, i + CHUNK_SIZE))
   }
   if (chunks.length === 0) chunks.push([])
+
+  // 1. Write the new generation's chunks
   for (let i = 0; i < chunks.length; i++) {
-    await cacheSet(segment, `timeclock_entries_chunk_${i}`, chunks[i])
+    await tcWrite(req, `tc_g${gen}_chunk_${i}`, JSON.stringify(chunks[i]))
   }
-  await cacheSet(segment, 'timeclock_entries_meta', {
-    chunks: chunks.length,
-    total: entries.length,
-    updated: new Date().toISOString(),
-  })
+  // 2. Flip meta LAST — the commit point
+  await tcWrite(req, TC_META_KEY, JSON.stringify({
+    gen, chunks: chunks.length, total: entries.length, updated: new Date().toISOString(),
+  }))
+  // 3. Verify the flip landed
+  const check = await tcRead(req, TC_META_KEY)
+  const checkMeta = check?.value ? JSON.parse(check.value) : null
+  if (!checkMeta || Number(checkMeta.gen) !== gen) {
+    throw new Error('timeclock write verification failed — entry NOT saved, retry')
+  }
+  // 4. Clean up the old generation (best-effort)
+  if (prevGen >= 0) {
+    for (let i = 0; i < Math.max(prevChunks, 1); i++) {
+      await tcDelete(req, `tc_g${prevGen}_chunk_${i}`)
+    }
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -399,4 +485,5 @@ router.get('/pending-approvals', async (req, res) => {
   }
 })
 
+export { readEntries as readEntriesPublic }
 export default router

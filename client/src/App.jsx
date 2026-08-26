@@ -31,6 +31,8 @@ import SmsLog from './pages/SmsLog'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
 import SoftphonePanel from './components/SoftphonePanel'
+import MorningClockIn from './components/MorningClockIn'
+import HRPolicyScreen from './pages/HRPolicyScreen'
 import BooksScreen from './components/BooksScreen'
 import OpsHub from './components/OpsHub'
 import MessageCenter from './components/MessageCenter'
@@ -245,6 +247,8 @@ function MainApp() {
           toggle + dialer) live on the SMS page: all phone + text in one
           place (Mark 2026-08-12). Techs don't get it. */}
       {user?.role !== 'technician' && !isDemo && <SoftphonePanel showControls={screen === 'sms'} />}
+      {/* Morning clock-in prompt — everyone, once per day (not demo) */}
+      {!isDemo && <MorningClockIn user={user} />}
       {/* Session expiry warning banner */}
       {sessionWarning && (
         <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3 text-sm font-medium"
@@ -305,6 +309,9 @@ function MainApp() {
       )}
       {screen === 'item-map' && (
         <ItemMapScreen user={user} onLogout={handleLogout} {...navProps} />
+      )}
+      {screen === 'hr-policy' && (
+        <HRPolicyScreen user={user} onLogout={handleLogout} {...navProps} />
       )}
       {screen === 'dispatch-map' && (
         <DispatchMap user={user} onLogout={handleLogout} {...navProps} />

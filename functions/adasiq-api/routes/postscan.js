@@ -304,6 +304,16 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] schedule-digest piggyback failed (non-fatal):', e.message)
   }
 
+  // Twice-monthly hours report (Mark 2026-08-15 HR build) — fires on the
+  // 14th and the second-to-last day of each month, PT. Own dedup inside.
+  try {
+    const { maybeFireHoursReport } = await import('../services/hr.js')
+    const hr = await maybeFireHoursReport(req)
+    if (hr.fired) console.log('[postscan] hours report:', JSON.stringify({ emailed: hr.emailed, employees: hr.employees }))
+  } catch (e) {
+    console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
+  }
+
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
   // the Books invoice webhook. Every hourly tick, sweep the last two PT
   // days of sent invoices; the per-invoice dedup stamp makes repeated
