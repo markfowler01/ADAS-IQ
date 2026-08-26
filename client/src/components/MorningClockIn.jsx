@@ -37,6 +37,9 @@ export default function MorningClockIn({ user }) {
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState('')
+  // Yesterday's auto-punched hours awaiting the employee's acceptance
+  const [pendingAuto, setPendingAuto] = useState([])
+  const [ackChecked, setAckChecked] = useState(false)
 
   useEffect(() => {
     const day = todayPT()
@@ -44,19 +47,25 @@ export default function MorningClockIn({ user }) {
     try { if (localStorage.getItem(key)) return } catch {}
     const h = hourPT()
     if (h < 4 || h >= 12) return
-    apiFetch(`${API_BASE}/api/timeclock/current`)
-      .then(r => r.json())
-      .then(j => {
-        // /current returns the open entry object, or null when clocked out
-        if (!j || !j.clock_in) setShow(true)
-        try { localStorage.setItem(key, '1') } catch {}
-      })
-      .catch(() => {})
+    Promise.all([
+      apiFetch(`${API_BASE}/api/timeclock/current`).then(r => r.json()).catch(() => null),
+      apiFetch(`${API_BASE}/api/timeclock/pending-autopunch`).then(r => r.json()).catch(() => ({ pending: [] })),
+    ]).then(([cur, auto]) => {
+      const pend = auto?.pending || []
+      setPendingAuto(pend)
+      // /current returns the open entry object, or null when clocked out.
+      // Show the prompt when not clocked in OR there's an auto-punch to accept.
+      if (!cur || !cur.clock_in || pend.length > 0) setShow(true)
+      try { localStorage.setItem(key, '1') } catch {}
+    })
   }, [])
 
   async function clockIn() {
     setBusy(true)
     try {
+      if (pendingAuto.length > 0) {
+        await apiFetch(`${API_BASE}/api/timeclock/acknowledge-autopunch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      }
       const isTech = user?.role === 'technician'
       const location = isTech ? await getLocation() : null
       const r = await apiFetch(`${API_BASE}/api/timeclock/clock-in`, {
@@ -89,13 +98,24 @@ export default function MorningClockIn({ user }) {
             <p className="text-xs mb-5" style={{ color: '#888' }}>
               You're not on the clock yet. Hours drive payroll and sick-leave accrual.
             </p>
+            {pendingAuto.length > 0 && (
+              <label className="flex items-start gap-2 text-left text-xs rounded-xl p-3 mb-4 cursor-pointer"
+                style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#78350f' }}>
+                <input type="checkbox" checked={ackChecked} onChange={e => setAckChecked(e.target.checked)}
+                  className="mt-0.5" />
+                <span>
+                  You forgot to clock in {pendingAuto.length === 1 ? `on ${pendingAuto[0].date}` : `on ${pendingAuto.length} days`} — the system recorded the standard day
+                  ({pendingAuto.map(p => `${p.date}: ${p.hours}h`).join(', ')}). I confirm these hours are correct.
+                </span>
+              </label>
+            )}
             <div className="flex gap-2">
               <button onClick={() => setShow(false)}
                 className="flex-1 text-sm font-semibold rounded-xl px-4 py-2.5"
                 style={{ color: '#666', backgroundColor: '#f5f3f0' }}>Not yet</button>
-              <button onClick={clockIn} disabled={busy}
+              <button onClick={clockIn} disabled={busy || (pendingAuto.length > 0 && !ackChecked)}
                 className="flex-1 text-sm font-bold rounded-xl px-4 py-2.5 text-white"
-                style={{ backgroundColor: busy ? '#e5e7eb' : ORANGE }}>{busy ? '…' : '⏱ Clock in'}</button>
+                style={{ backgroundColor: (busy || (pendingAuto.length > 0 && !ackChecked)) ? '#e5e7eb' : ORANGE }}>{busy ? '…' : '⏱ Clock in'}</button>
             </div>
           </>
         )}

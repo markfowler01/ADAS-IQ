@@ -485,5 +485,51 @@ router.get('/pending-approvals', async (req, res) => {
   }
 })
 
+// ── Auto-punch acknowledgment (Mark 2026-08-27): next morning, the
+// clock-in prompt makes the employee accept yesterday's auto-punched
+// hours before punching in.
+router.get('/pending-autopunch', async (req, res) => {
+  try {
+    const userId = getUserId(req)
+    const entries = await readEntries(req)
+    const pending = entries.filter(e =>
+      e.user_id === userId &&
+      (e.auto_punched || String(e.notes || '').startsWith('Auto-punched')) &&
+      !e.acknowledged
+    )
+    // Group by PT date for a clean prompt line
+    const days = {}
+    for (const e of pending) {
+      const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(e.clock_in))
+      days[d] = (days[d] || 0) + (Number(e.total_minutes) || 0)
+    }
+    res.json({ ok: true, pending: Object.entries(days).map(([date, mins]) => ({ date, hours: Math.round(mins / 6) / 10 })) })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+router.post('/acknowledge-autopunch', async (req, res) => {
+  try {
+    const userId = getUserId(req)
+    const entries = await readEntries(req)
+    let count = 0
+    const now = new Date().toISOString()
+    for (const e of entries) {
+      if (e.user_id === userId &&
+          (e.auto_punched || String(e.notes || '').startsWith('Auto-punched')) &&
+          !e.acknowledged) {
+        e.acknowledged = true
+        e.acknowledged_at = now
+        count++
+      }
+    }
+    if (count > 0) await writeEntries(req, entries)
+    res.json({ ok: true, acknowledged: count })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 export { readEntries as readEntriesPublic, writeEntries as writeEntriesPublic }
 export default router

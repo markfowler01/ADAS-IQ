@@ -1195,12 +1195,15 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     const schedTech = basePayload.technician
     const datesOrTechChanged = schedDate !== String(originalJob.scheduled_date || '').slice(0, 10) ||
       schedTech !== (originalJob.technician || '')
-    if (schedDate && schedTech && datesOrTechChanged) {
+    if (schedDate && datesOrTechChanged) {
       try {
-        const r = await apiFetch(`${API_BASE}/api/schedule/off?date=${schedDate}&technician=${encodeURIComponent(schedTech)}`)
+        const r = await apiFetch(`${API_BASE}/api/schedule/off?date=${schedDate}&technician=${encodeURIComponent(schedTech || '')}`)
         const j = await r.json()
-        if (j.off && !window.confirm(`🏖 ${j.who || schedTech} is OFF on ${schedDate} (approved time off).\n\nBook another day, or press OK to book anyway.`)) {
-          return
+        if (j.off) {
+          const msg = j.holiday
+            ? `🎉 ${schedDate} is ${j.who} — a paid holiday, shop's closed.\n\nBook another day, or press OK to book anyway.`
+            : `🏖 ${j.who || schedTech} is OFF on ${schedDate} (approved time off).\n\nBook another day, or press OK to book anyway.`
+          if (!window.confirm(msg)) return
         }
       } catch { /* best-effort */ }
     }

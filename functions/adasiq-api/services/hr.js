@@ -260,6 +260,7 @@ export async function maybeAutoPunch(req) {
       regular_minutes: 240, overtime_minutes: 0,
       notes: 'Auto-punched — no clock-in recorded this day (standard 8-12, 1-5)',
       job_ids: [], approved: false, approved_by: '', approved_at: '',
+      auto_punched: true, acknowledged: false, acknowledged_at: '',
       created_at: new Date().toISOString(),
     }
     newEntries.push(

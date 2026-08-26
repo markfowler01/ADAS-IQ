@@ -166,6 +166,10 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
     return names.find(n => n.toLowerCase() === t || t.startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(t)) || ''
   }
   function confirmOffOverride(date, technician) {
+    const hol = paidHolidayName(date)
+    if (hol && !window.confirm(`🎉 ${dowShort(date)} ${fmtShort(date)} is ${hol} — a paid holiday, shop's closed.\n\nBook another day, or press OK to book anyway (holiday + worked hours pay).`)) {
+      return false
+    }
     const who = offOn(date, technician)
     if (!who) return true
     return window.confirm(`🏖 ${who} is OFF on ${dowShort(date)} ${fmtShort(date)} (approved time off).\n\nBook another day, or press OK to book anyway.`)
@@ -173,7 +177,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
 
   async function scheduleRequest(id, date) {
     const req = requests.find(r => r.id === id)
-    if (req?.technician && !confirmOffOverride(date, req.technician)) return
+    if (!confirmOffOverride(date, req?.technician || '')) return
     setBoard(prev => ({ ...prev, jobs: prev.jobs.map(j => j.id === id ? { ...j, scheduled_date: date } : j) }))
     try {
       const r = await apiFetch(`${API_BASE}/api/jobs/${id}`, {
@@ -203,8 +207,8 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
   }
 
   async function submitRequest(formData) {
-    if (formData.scheduled_date && formData.technician &&
-        !confirmOffOverride(formData.scheduled_date, formData.technician)) {
+    if (formData.scheduled_date &&
+        !confirmOffOverride(formData.scheduled_date, formData.technician || '')) {
       throw new Error('Pick another day (or resubmit and override)')
     }
     const notes = [formData.ro_number ? `RO# ${formData.ro_number}` : '', formData.notes || ''].filter(Boolean).join('\n')

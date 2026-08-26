@@ -194,7 +194,16 @@ router.get('/off', async (req, res) => {
   try {
     const date = String(req.query.date || '').slice(0, 10)
     const tech = String(req.query.technician || '').trim().split(/\s+/)[0].toLowerCase()
-    if (!date || !tech) return res.json({ ok: true, off: false })
+    if (!date) return res.json({ ok: true, off: false })
+
+    // Paid holidays block for EVERYONE (shop closed; overridable —
+    // policy pays holiday + worked hours when someone does work one).
+    const { paidHolidaysForYear } = await import('../services/hr.js')
+    const y = Number(date.slice(0, 4))
+    const hol = [...paidHolidaysForYear(y), ...paidHolidaysForYear(y + 1)].find(h => h.date === date)
+    if (hol) return res.json({ ok: true, off: true, holiday: true, who: hol.name, date })
+
+    if (!tech) return res.json({ ok: true, off: false })
     const map = await readTimeOffMap(req)
     const names = map[date] || []
     const hit = names.find(n => n.toLowerCase() === tech || tech.startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(tech))
