@@ -19,6 +19,20 @@ function hourPT() {
   }).format(new Date()))
 }
 
+// GPS at punch — TECHNICIANS only (Mark 2026-08-27), same capture the
+// Time Clock page already does. Disclosed in the prompt; a failed or
+// denied location NEVER blocks the punch.
+function getLocation() {
+  return new Promise(resolve => {
+    if (!navigator.geolocation) return resolve(null)
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 60000 }
+    )
+  })
+}
+
 export default function MorningClockIn({ user }) {
   const [show, setShow] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -43,10 +57,12 @@ export default function MorningClockIn({ user }) {
   async function clockIn() {
     setBusy(true)
     try {
+      const isTech = user?.role === 'technician'
+      const location = isTech ? await getLocation() : null
       const r = await apiFetch(`${API_BASE}/api/timeclock/clock-in`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify(location ? { location } : {}),
       })
       if (r.status === 409) { setDone('Already on the clock — GET SOME!!! 👍') }
       else if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`) }
@@ -72,6 +88,7 @@ export default function MorningClockIn({ user }) {
             </h2>
             <p className="text-xs mb-5" style={{ color: '#888' }}>
               You're not on the clock yet. Hours drive payroll and sick-leave accrual.
+              {user?.role === 'technician' && <span><br />📍 Your location is recorded with the punch.</span>}
             </p>
             <div className="flex gap-2">
               <button onClick={() => setShow(false)}
