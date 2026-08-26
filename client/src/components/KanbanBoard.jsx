@@ -1189,6 +1189,21 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // Save (create or update)
   async function handleSave(form, originalJob) {
     const basePayload = formToJobData(form)
+    // PTO soft block (Mark 2026-08-15): warn if this save books a tech
+    // on an approved day off — always overridable.
+    const schedDate = String(basePayload.scheduled_date || '').slice(0, 10)
+    const schedTech = basePayload.technician
+    const datesOrTechChanged = schedDate !== String(originalJob.scheduled_date || '').slice(0, 10) ||
+      schedTech !== (originalJob.technician || '')
+    if (schedDate && schedTech && datesOrTechChanged) {
+      try {
+        const r = await apiFetch(`${API_BASE}/api/schedule/off?date=${schedDate}&technician=${encodeURIComponent(schedTech)}`)
+        const j = await r.json()
+        if (j.off && !window.confirm(`🏖 ${j.who || schedTech} is OFF on ${schedDate} (approved time off).\n\nBook another day, or press OK to book anyway.`)) {
+          return
+        }
+      } catch { /* best-effort */ }
+    }
     // Preserve Zoho/system fields that aren't editable in the form
     const payload = originalJob.id ? {
       ...basePayload,

@@ -73,6 +73,33 @@ async function readKV(req, key) {
   return r?.config_value || null
 }
 
+// Approved PTO → per-day off map (Mark 2026-08-15: "no jobs can be
+// booked those days for the person that's off" — soft block, always
+// overridable in the UI). Reads the same pto_requests store the Time
+// Off page writes. First name only, matching job.technician values.
+async function readTimeOffMap(req) {
+  let requests = []
+  try {
+    const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+    const val = await seg.getValue('pto_requests')
+    requests = val ? JSON.parse(val) : []
+  } catch { return {} }
+  const today = todayPT()
+  const horizon = addDaysISO(today, 120)
+  const out = {}
+  for (const r of requests) {
+    if (String(r.status) !== 'approved') continue
+    if (!r.start_date || !r.end_date || r.end_date < today || r.start_date > horizon) continue
+    const first = String(r.user_name || '').trim().split(/\s+/)[0]
+    if (!first) continue
+    for (let d = r.start_date; d <= r.end_date && d <= horizon; d = addDaysISO(d, 1)) {
+      if (d < today) continue
+      ;(out[d] = out[d] || []).includes(first) || out[d].push(first)
+    }
+  }
+  return out
+}
+
 // One-call payload for the Schedule screen: every job (requests included),
 // confirmed flags, and per-shop city + coords for the cards and the map.
 router.get('/board', async (req, res) => {
@@ -80,10 +107,11 @@ router.get('/board', async (req, res) => {
     const { readGeocache, normalizeKey, geocodeAddress, readGeocacheRaw, writeGeocache } = await import('../services/geocoding.js')
     const app = catalyst.initialize(req, { type: 'advancedio' })
 
-    let [jobs, meta, geocache] = await Promise.all([
+    let [jobs, meta, geocache, timeOff] = await Promise.all([
       readJobsPublic(req),
       scanScheduleMeta(req),
       readGeocache(req).catch(() => ({})),
+      readTimeOffMap(req).catch(() => ({})),
     ])
 
     // Shop → city from CRMShops addresses ("123 Main St, Everett, WA 98201"
@@ -154,10 +182,26 @@ router.get('/board', async (req, res) => {
       })),
       meta,
       shops,
+      time_off: timeOff,
     })
   } catch (err) {
     console.error('[schedule board]', err.message)
     res.status(500).json({ error: err.message })
+  }
+})
+
+// Soft-block check for booking flows: is this tech off that day?
+router.get('/off', async (req, res) => {
+  try {
+    const date = String(req.query.date || '').slice(0, 10)
+    const tech = String(req.query.technician || '').trim().split(/\s+/)[0].toLowerCase()
+    if (!date || !tech) return res.json({ ok: true, off: false })
+    const map = await readTimeOffMap(req)
+    const names = map[date] || []
+    const hit = names.find(n => n.toLowerCase() === tech || tech.startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(tech))
+    res.json({ ok: true, off: !!hit, who: hit || '', date })
+  } catch (err) {
+    res.json({ ok: true, off: false, error: err.message })
   }
 })
 

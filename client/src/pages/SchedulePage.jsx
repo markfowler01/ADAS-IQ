@@ -80,7 +80,7 @@ function techShort(t) {
 function normShop(s) { return String(s || '').trim().toLowerCase() }
 
 export default function SchedulePage({ user, onLogout, currentScreen, onNavigate }) {
-  const [board, setBoard] = useState({ jobs: [], meta: {}, shops: {} })
+  const [board, setBoard] = useState({ jobs: [], meta: {}, shops: {}, time_off: {} })
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [weekOffset, setWeekOffset] = useState(0)
@@ -113,7 +113,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
       const r = await apiFetch(`${API_BASE}/api/schedule/board?_=${Date.now()}`, { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      setBoard({ jobs: j.jobs || [], meta: j.meta || {}, shops: j.shops || {} })
+      setBoard({ jobs: j.jobs || [], meta: j.meta || {}, shops: j.shops || {}, time_off: j.time_off || {} })
       setErr('')
     } catch (e) { setErr(e.message) }
     finally { setLoading(false) }
@@ -135,8 +135,23 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
   const cityOf = useCallback(j => board.shops[normShop(j.shop_name)]?.city || '', [board.shops])
   const confirmedOf = useCallback(j => !!board.meta[j.id]?.confirmed, [board.meta])
 
+  // PTO soft block (Mark 2026-08-15): warn when booking a tech on their
+  // day off — always overridable.
+  function offOn(date, technician) {
+    const names = board.time_off?.[date] || []
+    const t = String(technician || '').trim().split(/\s+/)[0].toLowerCase()
+    if (!t) return ''
+    return names.find(n => n.toLowerCase() === t || t.startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(t)) || ''
+  }
+  function confirmOffOverride(date, technician) {
+    const who = offOn(date, technician)
+    if (!who) return true
+    return window.confirm(`🏖 ${who} is OFF on ${dowShort(date)} ${fmtShort(date)} (approved time off).\n\nBook another day, or press OK to book anyway.`)
+  }
+
   async function scheduleRequest(id, date) {
     const req = requests.find(r => r.id === id)
+    if (req?.technician && !confirmOffOverride(date, req.technician)) return
     setBoard(prev => ({ ...prev, jobs: prev.jobs.map(j => j.id === id ? { ...j, scheduled_date: date } : j) }))
     try {
       const r = await apiFetch(`${API_BASE}/api/jobs/${id}`, {
@@ -166,6 +181,10 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
   }
 
   async function submitRequest(formData) {
+    if (formData.scheduled_date && formData.technician &&
+        !confirmOffOverride(formData.scheduled_date, formData.technician)) {
+      throw new Error('Pick another day (or resubmit and override)')
+    }
     const notes = [formData.ro_number ? `RO# ${formData.ro_number}` : '', formData.notes || ''].filter(Boolean).join('\n')
     const payload = {
       shop_name:    formData.shop_name || '',
@@ -305,6 +324,12 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
           <span className="sched-dnum">{Number(date.slice(8))}</span>
           <span className="sched-dow">{isToday ? 'TODAY' : dowShort(date)}</span>
         </div>
+        {(board.time_off?.[date] || []).map(name => (
+          <div key={name} className="text-[10px] font-bold rounded-md px-1.5 py-0.5"
+            style={{ backgroundColor: '#ffedd5', color: '#c2410c', border: '1px dashed #fdba74' }}>
+            🏖 {name} off
+          </div>
+        ))}
         {dayReqs.map(j => {
           const overdueP = date < today
           const unconf = !confirmedOf(j)
