@@ -85,10 +85,13 @@ async function saveBalances(req, balances) { return writeDurable(req, BALANCES_K
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
 const DEFAULT_BALANCE = {
-  accrual_rate: 3.33,
-  balance_vacation: 80,
-  balance_sick: 40,
-  balance_personal: 16,
+  // Policy (HR SOP 2026-08): NO paid vacation or personal time by
+  // default — sick is live-computed from hours worked, not this bucket.
+  // Mark can still grant vacation/personal per person on the Balances tab.
+  accrual_rate: 0,
+  balance_vacation: 0,
+  balance_sick: 0,
+  balance_personal: 0,
   carryover_max: 80,
   year_start_balance: 80,
   taken_ytd: 0,

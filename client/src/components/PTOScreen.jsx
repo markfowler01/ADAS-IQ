@@ -51,6 +51,7 @@ export default function PTOScreen({ user, onLogout, currentScreen, onNavigate })
   const [editingRequest, setEditingRequest] = useState(null)
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
   const [error, setError] = useState('')
+  const [mySick, setMySick] = useState(null)
   const [denyingId, setDenyingId] = useState(null)
   const [denyReason, setDenyReason] = useState('')
   const [editBalanceUser, setEditBalanceUser] = useState(null)
@@ -63,6 +64,10 @@ export default function PTOScreen({ user, onLogout, currentScreen, onNavigate })
       // Fetch own or all requests (role-filtered on the server)
       const [reqRes, balRes, calRes] = await Promise.all([
         apiFetch(`${API_BASE}/api/pto/requests`),
+        apiFetch(`${API_BASE}/api/pto/sick-balances`).then(r => r.json()).then(j => {
+          const first = String(user?.name || user?.email || '').trim().split(/\s+/)[0].toLowerCase()
+          setMySick(j?.balances?.[first] || null)
+        }).catch(() => {}),
         apiFetch(`${API_BASE}/api/pto/balance`),
         apiFetch(`${API_BASE}/api/pto/calendar`),
       ])
@@ -182,14 +187,20 @@ export default function PTOScreen({ user, onLogout, currentScreen, onNavigate })
         </div>
 
         {/* Balance summary */}
-        {balance && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+        {/* Sick = LIVE-computed (1h per 40h worked, minus used). Vacation/
+            personal only show when Mark has granted hours — policy default
+            is none. */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+          <BalanceCard title="Sick (earned 1h / 40h worked)"
+            value={mySick?.sick_balance_hours ?? 0} max={40} color="#1e40af"/>
+          {Number(balance?.balance_vacation) > 0 && (
             <BalanceCard title="Vacation" value={balance.balance_vacation}
               max={balance.year_start_balance || 80} color={ORANGE}/>
-            <BalanceCard title="Sick" value={balance.balance_sick} max={40} color="#1e40af"/>
+          )}
+          {Number(balance?.balance_personal) > 0 && (
             <BalanceCard title="Personal" value={balance.balance_personal} max={16} color="#15803d"/>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Tabs */}
         <div className="flex items-center gap-1 mb-4"
