@@ -124,7 +124,8 @@ export async function buildHoursReport(req, startISO, endISO) {
 
   const per = {}
   const bucket = key => (per[key] = per[key] || {
-    name: key, worked_min: 0, ot_min: 0, entries: 0, sick_hours: 0, unpaid_days: 0,
+    name: key, worked_min: 0, ot_min: 0, entries: 0,
+    sick_hours: 0, vacation_hours: 0, unpaid_hours: 0,
   })
 
   for (const e of entries) {
@@ -138,32 +139,42 @@ export async function buildHoursReport(req, startISO, endISO) {
     if (String(r.status) !== 'approved') continue
     if (!(String(r.start_date) <= endISO && String(r.end_date) >= startISO)) continue
     const b = bucket(firstName(r.user_name || r.user_id))
-    if (r.type === 'sick') b.sick_hours += Number(r.hours_requested || 0)
-    if (r.type === 'unpaid') b.unpaid_days += 1
+    const hrs = Number(r.hours_requested || 0)
+    if (r.type === 'sick') b.sick_hours += hrs
+    else if (r.type === 'vacation' || r.type === 'personal') b.vacation_hours += hrs
+    else if (r.type === 'unpaid') b.unpaid_hours += hrs
   }
 
   const year = Number(startISO.slice(0, 4))
   const holidays = [...paidHolidaysForYear(year), ...paidHolidaysForYear(year + 1)]
     .filter(h => h.date >= startISO && h.date <= endISO)
 
+  const holidayHours = holidays.length * 8
+
   const lines = []
-  lines.push(`ABSOLUTE ADAS — HOURS REPORT`)
+  lines.push(`ABSOLUTE ADAS — PAYROLL HOURS REPORT`)
   lines.push(`Period: ${startISO} through ${endISO}`)
   lines.push('')
   for (const b of Object.values(per).sort((a, z) => a.name.localeCompare(z.name))) {
     const hrs = Math.round((b.worked_min / 60) * 100) / 100
     const ot = Math.round((b.ot_min / 60) * 100) / 100
     const bal = balances[b.name.toLowerCase()]
+    // PAYABLE = worked + paid sick + paid vacation/personal + holiday pay.
+    // Unpaid leave shown for context, never added. Holiday hours are not
+    // hours worked and never count toward OT (policy).
+    const payable = Math.round((hrs + b.sick_hours + b.vacation_hours + holidayHours) * 100) / 100
     lines.push(`${b.name}`)
-    lines.push(`  Worked: ${hrs}h across ${b.entries} shifts${ot ? ` (${ot}h OT)` : ''}`)
-    if (b.sick_hours) lines.push(`  Sick leave used: ${b.sick_hours}h`)
-    if (b.unpaid_days) lines.push(`  Unpaid leave: ${b.unpaid_days} request(s)`)
-    if (bal) lines.push(`  Sick balance: ${bal.sick_balance_hours}h (accrued ${bal.sick_accrued_hours}h lifetime)`)
+    lines.push(`  Worked:          ${hrs}h across ${b.entries} shifts${ot ? ` (incl. ${ot}h OT)` : ''}`)
+    lines.push(`  Sick paid:       ${b.sick_hours}h`)
+    lines.push(`  Vacation paid:   ${b.vacation_hours}h`)
+    lines.push(`  Holiday pay:     ${holidayHours}h${holidays.length ? ` (${holidays.map(h => h.name).join(', ')})` : ''}`)
+    if (b.unpaid_hours) lines.push(`  Unpaid time off: ${b.unpaid_hours}h — NOT paid`)
+    lines.push(`  >> PAY THIS PERIOD: ${payable}h`)
+    if (bal) lines.push(`  (sick balance after: ${bal.sick_balance_hours}h)`)
     lines.push('')
   }
   if (holidays.length) {
-    lines.push(`PAID HOLIDAYS IN PERIOD (8h each for full-time — for Joyce/Zoho Payroll):`)
-    for (const h of holidays) lines.push(`  ${h.name} — ${h.date}`)
+    lines.push(`Paid holidays in period: ${holidays.map(h => `${h.name} ${h.date}`).join(' · ')}`)
     lines.push('')
   }
   lines.push(`Generated ${new Date().toISOString()} · source: ADAS IQ time clock (durable)`)
