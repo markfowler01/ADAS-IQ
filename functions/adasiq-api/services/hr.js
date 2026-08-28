@@ -51,6 +51,33 @@ function firstName(s) {
   return String(s || '').trim().split(/\s+/)[0]
 }
 
+// ── Canonical identity ──────────────────────────────────────────────────
+// The auth layer hands different sessions different ids: real app logins
+// fall back to display names ('Jayden', 'Kath Belmonte') while HR jobs
+// use emails. Left alone, that split DOUBLE-PAYS (auto-punch can't see a
+// name-keyed real shift) and hides acknowledgments. Everything funnels
+// through here: user_id = email, user_name = the roster spelling.
+const IDENTITY_ALIASES = {
+  'mark@absoluteadas.com':      ['mark@absoluteadas.com', 'Mark Fowler'],
+  'mark fowler':                ['mark@absoluteadas.com', 'Mark Fowler'],
+  'mark':                       ['mark@absoluteadas.com', 'Mark Fowler'],
+  'jayden@absoluteadas.com':    ['jayden@absoluteadas.com', 'Jayden Goshorn'],
+  'jayden goshorn':             ['jayden@absoluteadas.com', 'Jayden Goshorn'],
+  'jayden':                     ['jayden@absoluteadas.com', 'Jayden Goshorn'],
+  'k.belmonte@absoluteadas.com': ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
+  'kath belmonte':              ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
+  'kat belmonte':               ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
+  'kath':                       ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
+  'kat':                        ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
+}
+export function canonicalIdentity(rawId, rawName) {
+  for (const raw of [rawId, rawName]) {
+    const k = String(raw || '').trim().toLowerCase()
+    if (IDENTITY_ALIASES[k]) return IDENTITY_ALIASES[k]
+  }
+  return [rawId || rawName || 'unknown', rawName || rawId || 'Unknown']
+}
+
 // ── WA sick-leave balances, live-computed ───────────────────────────────
 // accrued = total worked hours / 40 (per WA RCW 49.46.210, incl. OT)
 // used    = sum of APPROVED sick requests (hours)
@@ -70,7 +97,8 @@ export async function computeSickBalances(req) {
   for (const [uid, b] of Object.entries(stored || {})) {
     const credit = Number(b?.sick_opening_credit || 0)
     if (!credit) continue
-    const key = String(uid).split('@')[0].split('.')[0].toLowerCase()
+    const [, canonName] = canonicalIdentity(uid, '')
+    const key = firstName(canonName).toLowerCase() || String(uid).split('@')[0].split('.')[0].toLowerCase()
     openingCredit[key] = (openingCredit[key] || 0) + credit
   }
 

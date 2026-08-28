@@ -77,9 +77,22 @@ async function writeDurable(req, key, value) {
   else await table.insertRow({ config_key: cfgKey, config_value: json })
 }
 
-export async function getRequestsDurable(req) { return readDurable(req, REQUESTS_KEY, []) }
+// Requests pass through the same canonical-identity funnel as timeclock
+// entries — real logins store display names ('Jayden'), HR math expects
+// one identity per person.
+async function normalizedRequests(req) {
+  const { canonicalIdentity } = await import('../services/hr.js')
+  const list = await readDurable(req, REQUESTS_KEY, [])
+  for (const r of list || []) {
+    const [id, name] = canonicalIdentity(r.user_id, r.user_name)
+    r.user_id = id
+    r.user_name = name
+  }
+  return list
+}
+export async function getRequestsDurable(req) { return normalizedRequests(req) }
 export async function getBalancesDurable(req) { return readDurable(req, BALANCES_KEY, {}) }
-async function getRequests(req) { return readDurable(req, REQUESTS_KEY, []) }
+async function getRequests(req) { return normalizedRequests(req) }
 async function saveRequests(req, requests) { return writeDurable(req, REQUESTS_KEY, requests) }
 async function getBalances(req) { return readDurable(req, BALANCES_KEY, {}) }
 async function saveBalances(req, balances) { return writeDurable(req, BALANCES_KEY, balances) }

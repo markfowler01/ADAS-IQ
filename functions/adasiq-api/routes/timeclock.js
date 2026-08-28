@@ -1,4 +1,5 @@
 import express from 'express'
+import { canonicalIdentity } from '../services/hr.js'
 import catalyst from 'zcatalyst-sdk-node'
 
 const router = express.Router()
@@ -72,6 +73,15 @@ async function tcDelete(req, key) {
 
 const TC_META_KEY = 'tc_entries_meta'
 
+function normalizeIdentities(entries) {
+  for (const e of entries || []) {
+    const [id, name] = canonicalIdentity(e.user_id, e.user_name)
+    e.user_id = id
+    e.user_name = name
+  }
+  return entries
+}
+
 async function readEntries(req) {
   // Durable first
   try {
@@ -84,7 +94,7 @@ async function readEntries(req) {
           const c = await tcRead(req, `tc_g${meta.gen}_chunk_${i}`)
           parts.push(c?.value ? JSON.parse(c.value) : [])
         }
-        return parts.flat()
+        return normalizeIdentities(parts.flat())
       }
     }
   } catch (e) { console.warn('[timeclock] durable read failed:', e.message) }
@@ -99,7 +109,7 @@ async function readEntries(req) {
           cacheGet(segment, `timeclock_entries_chunk_${i}`, [])
         )
       )
-      const entries = parts.flat()
+      const entries = normalizeIdentities(parts.flat())
       try {
         await writeEntries(req, entries)
         console.log(`[timeclock] migrated ${entries.length} entries from cache → Datastore`)
@@ -155,11 +165,13 @@ async function writeEntries(req, entries) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function getUserId(req) {
-  return req.user?.email || req.user?.id || req.user?.name || 'unknown'
+  const raw = req.user?.email || req.user?.id || req.user?.name || 'unknown'
+  return canonicalIdentity(raw, req.user?.name)[0]
 }
 
 function getUserName(req) {
-  return req.user?.name || req.user?.email || 'Unknown User'
+  const raw = req.user?.name || req.user?.email || 'Unknown User'
+  return canonicalIdentity(req.user?.email || raw, raw)[1]
 }
 
 function isAdmin(req) {
