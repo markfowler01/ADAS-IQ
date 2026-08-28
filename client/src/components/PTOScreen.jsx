@@ -66,7 +66,7 @@ export default function PTOScreen({ user, onLogout, currentScreen, onNavigate })
         apiFetch(`${API_BASE}/api/pto/requests`),
         apiFetch(`${API_BASE}/api/pto/sick-balances`).then(r => r.json()).then(j => {
           const first = String(user?.name || user?.email || '').trim().split(/\s+/)[0].toLowerCase()
-          setMySick(j?.balances?.[first] || null)
+          setMySick(j?.mine || j?.balances?.[first] || null)
         }).catch(() => {}),
         apiFetch(`${API_BASE}/api/pto/balance`),
         apiFetch(`${API_BASE}/api/pto/calendar`),

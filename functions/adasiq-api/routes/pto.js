@@ -426,8 +426,13 @@ router.post('/requests/:id/cancel', async (req, res) => {
 // Live WA sick balances for everyone (computed, never stored)
 router.get('/sick-balances', async (req, res) => {
   try {
-    const { computeSickBalances } = await import('../services/hr.js')
-    res.json({ ok: true, balances: await computeSickBalances(req) })
+    const { computeSickBalances, canonicalIdentity } = await import('../services/hr.js')
+    const balances = await computeSickBalances(req)
+    // 'mine' is resolved server-side through the canonical identity map —
+    // Kat's login says 'Kath Belmonte' but her balance keys as 'kat'.
+    const [, canonName] = canonicalIdentity(req.user?.email, req.user?.name)
+    const mine = balances[String(canonName).trim().split(/\s+/)[0].toLowerCase()] || null
+    res.json({ ok: true, balances, mine })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
