@@ -120,6 +120,72 @@ function todayPT() {
 function daysInMonth(year, month1) {
   return new Date(Date.UTC(year, month1, 0)).getUTCDate()
 }
+function ptDateOf(iso) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(iso))
+}
+function ptHourNow() {
+  return Number(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
+  }).format(new Date()))
+}
+function mondayOf(dateISO) {
+  const d = new Date(dateISO + 'T12:00:00Z')
+  const dow = d.getUTCDay()
+  d.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow))
+  return d.toISOString().slice(0, 10)
+}
+function addDaysISO(dateISO, n) {
+  const d = new Date(dateISO + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+const r2 = n => Math.round(n * 100) / 100
+
+// WA overtime: minutes past 40h in a Mon-Sun workweek are OT, attributed
+// to the DAY they were worked. Weeks straddling a pay-period boundary use
+// the FULL week's minutes, so a Friday that crosses 40h is OT even when
+// the period started Wednesday.
+function weeklyOvertimeByDay(dayMin) {
+  const byWeek = {}
+  for (const d of Object.keys(dayMin)) (byWeek[mondayOf(d)] = byWeek[mondayOf(d)] || []).push(d)
+  const ot = {}
+  for (const days of Object.values(byWeek)) {
+    days.sort()
+    let cum = 0
+    for (const d of days) {
+      const prevOver = Math.max(0, cum - 2400)
+      cum += dayMin[d]
+      ot[d] = Math.max(0, cum - 2400) - prevOver
+    }
+  }
+  return ot
+}
+
+// ── Payroll period marker + lock ────────────────────────────────────────
+// One AppConfig row records the last date a payroll report covered. It
+// does double duty: the next report starts the day after (no hour ever
+// double-paid or lost), and timeclock edits at or before it are frozen
+// unless Mark overrides with an audit note.
+async function getConfigRowByKey(app, key) {
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 1`
+  ).catch(() => [])
+  return rows?.[0]?.AppConfig || rows?.[0] || null
+}
+export async function getPayrollLockDate(req) {
+  const app = catalyst.initialize(req)
+  const r = await getConfigRowByKey(app, 'payroll_reported_through')
+  return r?.config_value || ''
+}
+async function setPayrollLockDate(req, dateISO) {
+  const app = catalyst.initialize(req)
+  const table = app.datastore().table('AppConfig')
+  const r = await getConfigRowByKey(app, 'payroll_reported_through')
+  if (r?.ROWID) await table.updateRow({ ROWID: r.ROWID, config_value: dateISO })
+  else await table.insertRow({ config_key: 'payroll_reported_through', config_value: dateISO })
+}
 
 export async function buildHoursReport(req, startISO, endISO) {
   const { readEntriesPublic } = await import('../routes/timeclock.js')
@@ -130,23 +196,21 @@ export async function buildHoursReport(req, startISO, endISO) {
     computeSickBalances(req),
   ])
 
-  const inWindow = iso => {
-    const d = String(iso || '').slice(0, 10)
-    return d >= startISO && d <= endISO
-  }
-
   const per = {}
   const bucket = key => (per[key] = per[key] || {
-    name: key, worked_min: 0, ot_min: 0, entries: 0,
+    name: key, worked_min: 0, entries: 0, day_min: {},
     sick_hours: 0, vacation_hours: 0, unpaid_hours: 0,
   })
 
+  // day_min spans ALL history so weekly OT is right at period edges;
+  // worked_min/entries count only the reporting window.
   for (const e of entries) {
-    if (!inWindow(e.clock_in)) continue
+    if (!e.clock_in) continue
     const b = bucket(firstName(e.user_name || e.user_id))
-    b.worked_min += entryWorkedMinutes(e)
-    b.ot_min += Number(e.overtime_minutes || 0)
-    b.entries += 1
+    const d = ptDateOf(e.clock_in)
+    const mins = entryWorkedMinutes(e)
+    b.day_min[d] = (b.day_min[d] || 0) + mins
+    if (d >= startISO && d <= endISO) { b.worked_min += mins; b.entries += 1 }
   }
   for (const r of requests) {
     if (String(r.status) !== 'approved') continue
@@ -161,37 +225,52 @@ export async function buildHoursReport(req, startISO, endISO) {
   const year = Number(startISO.slice(0, 4))
   const holidays = [...paidHolidaysForYear(year), ...paidHolidaysForYear(year + 1)]
     .filter(h => h.date >= startISO && h.date <= endISO)
-
   const holidayHours = holidays.length * 8
 
   const lines = []
+  const csvRows = [[
+    'Name', 'Regular Hours', 'Overtime Hours (1.5x)', 'Sick Paid', 'Vacation Paid',
+    'Holiday Pay', 'Unpaid (not paid)', 'Regular-Rate Total', 'Shifts',
+  ]]
   lines.push(`ABSOLUTE ADAS — PAYROLL HOURS REPORT`)
   lines.push(`Period: ${startISO} through ${endISO}`)
   lines.push('')
   for (const b of Object.values(per).sort((a, z) => a.name.localeCompare(z.name))) {
-    const hrs = Math.round((b.worked_min / 60) * 100) / 100
-    const ot = Math.round((b.ot_min / 60) * 100) / 100
+    // Weekly OT computed HERE from the durable clock — not trusted from
+    // whatever clock-out happened to store. WA: 1.5x past 40h/week.
+    const otByDay = weeklyOvertimeByDay(b.day_min)
+    let otMin = 0
+    for (const [d, m] of Object.entries(otByDay)) if (d >= startISO && d <= endISO) otMin += m
+    const worked = r2(b.worked_min / 60)
+    const ot = r2(otMin / 60)
+    const regular = r2(worked - ot)
     const bal = balances[b.name.toLowerCase()]
-    // PAYABLE = worked + paid sick + paid vacation/personal + holiday pay.
-    // Unpaid leave shown for context, never added. Holiday hours are not
-    // hours worked and never count toward OT (policy).
-    const payable = Math.round((hrs + b.sick_hours + b.vacation_hours + holidayHours) * 100) / 100
+    // Regular-rate payable = regular worked + paid sick + paid vacation +
+    // holiday pay. OT listed separately at 1.5x. Unpaid leave shown for
+    // context, never added. Holiday hours never count toward OT (policy).
+    const payable = r2(regular + b.sick_hours + b.vacation_hours + holidayHours)
     lines.push(`${b.name}`)
-    lines.push(`  Worked:          ${hrs}h across ${b.entries} shifts${ot ? ` (incl. ${ot}h OT)` : ''}`)
+    lines.push(`  Regular:         ${regular}h across ${b.entries} shifts`)
+    if (ot) lines.push(`  Overtime:        ${ot}h — pay at 1.5x (past 40h/week)`)
     lines.push(`  Sick paid:       ${b.sick_hours}h`)
     lines.push(`  Vacation paid:   ${b.vacation_hours}h`)
     lines.push(`  Holiday pay:     ${holidayHours}h${holidays.length ? ` (${holidays.map(h => h.name).join(', ')})` : ''}`)
     if (b.unpaid_hours) lines.push(`  Unpaid time off: ${b.unpaid_hours}h — NOT paid`)
-    lines.push(`  >> PAY THIS PERIOD: ${payable}h`)
+    lines.push(`  >> PAY THIS PERIOD: ${payable}h at regular rate${ot ? ` + ${ot}h at 1.5x` : ''}`)
     if (bal) lines.push(`  (sick balance after: ${bal.sick_balance_hours}h)`)
     lines.push('')
+    csvRows.push([
+      b.name, regular, ot, b.sick_hours, b.vacation_hours,
+      holidayHours, b.unpaid_hours, payable, b.entries,
+    ])
   }
   if (holidays.length) {
     lines.push(`Paid holidays in period: ${holidays.map(h => `${h.name} ${h.date}`).join(' · ')}`)
     lines.push('')
   }
   lines.push(`Generated ${new Date().toISOString()} · source: ADAS IQ time clock (durable)`)
-  return { text: lines.join('\n'), employees: Object.keys(per).length, holidays: holidays.length }
+  const csv = csvRows.map(r => r.map(v => /[",]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n')
+  return { text: lines.join('\n'), csv, employees: Object.keys(per).length, holidays: holidays.length, balances }
 }
 
 // ── Auto-punch for forgotten days (Mark 2026-08-27) ─────────────────────
@@ -302,8 +381,12 @@ export async function maybeAutoPunch(req) {
   return { fired: true, auto_punched: punched }
 }
 
-// Fires on the 14th and the second-to-last day of each month (PT).
-// Dedup stamp per date. Weekends included — payroll doesn't wait.
+// Fires on the 14th and the second-to-last day of each month (PT),
+// on the first hourly run at/after 7pm — AFTER the 6pm auto-punch and
+// auto-close sweeps, so the day's hours are complete when counted.
+// Period = everything since the last report's marker (the month-end
+// report used to restart at the 1st and double-count the first half —
+// fixed 2026-08-27). Sending the report LOCKS the period.
 export async function maybeFireHoursReport(req) {
   const today = todayPT()
   const [y, m, d] = today.split('-').map(Number)
@@ -311,16 +394,16 @@ export async function maybeFireHoursReport(req) {
   const isMid = d === 14
   const isEnd = d === secondToLast
   if (!isMid && !isEnd) return { fired: false, reason: `not a report day (14 or ${secondToLast})` }
+  if (ptHourNow() < 19) return { fired: false, reason: 'waiting for the 7pm PT run' }
 
   const app = catalyst.initialize(req)
   const stampKey = `hours_report_sent:${today}`
-  const rows = await app.zcql().executeZCQLQuery(
-    `SELECT config_value FROM AppConfig WHERE config_key = '${stampKey}' LIMIT 1`
-  ).catch(() => [])
-  const r0 = rows?.[0]?.AppConfig || rows?.[0] || null
+  const r0 = await getConfigRowByKey(app, stampKey)
   if (r0?.config_value) return { fired: false, reason: 'already sent today' }
 
-  const start = isMid ? `${today.slice(0, 8)}01` : `${today.slice(0, 8)}01`
+  const lock = await getPayrollLockDate(req).catch(() => '')
+  let start = `${today.slice(0, 8)}01`
+  if (lock && lock < today) start = addDaysISO(lock, 1)
   const end = today
   const report = await buildHoursReport(req, start, end)
 
@@ -333,8 +416,39 @@ export async function maybeFireHoursReport(req) {
         subject: `Hours report — ${start} to ${end} (${isMid ? 'mid-month' : 'month-end'})`,
         text: report.text,
         html: `<pre style="font-family:monospace;font-size:13px">${report.text.replace(/</g, '&lt;')}</pre>`,
+        attachments: [{
+          filename: `hours-${start}-to-${end}.csv`,
+          content: Buffer.from(report.csv, 'utf8').toString('base64'),
+        }],
       })
       emailed = true
+
+      // WA per-pay-period sick-leave notice — one email per employee so
+      // compliance (RCW 49.46: notify each pay period) is automatic and
+      // provable, not dependent on anyone opening the app.
+      for (const p of AUTO_PUNCH_ROSTER) {
+        const key = firstName(p.user_name).toLowerCase()
+        const b = report.balances?.[key]
+        if (!b) continue
+        await sendBroadcast({
+          recipients: [p.user_id],
+          subject: 'Your sick leave balance — Absolute ADAS',
+          text: [
+            `Hi ${firstName(p.user_name)},`,
+            '',
+            'Your paid sick leave (Washington State):',
+            `  Earned so far:  ${b.sick_accrued_hours}h`,
+            `  Used:           ${b.sick_used_hours}h`,
+            `  Balance:        ${b.sick_balance_hours}h`,
+            '',
+            'You earn 1 hour for every 40 hours you work.',
+            'See the Time Off page in ADAS IQ anytime.',
+            '',
+            'GET SOME!!!',
+            '— Absolute ADAS',
+          ].join('\n'),
+        }).catch(e => console.warn('[hours-report] balance notice failed:', p.user_id, e.message))
+      }
     }
   } catch (e) { console.warn('[hours-report] email failed:', e.message) }
 
@@ -342,11 +456,117 @@ export async function maybeFireHoursReport(req) {
   try {
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `🕒 *Hours report (${isMid ? 'mid-month' : 'month-end'})*${emailed ? ' — emailed to mark@' : ' — ⚠️ email failed, full copy here'}\n\n` +
+      `🕒 *Hours report (${isMid ? 'mid-month' : 'month-end'})*${emailed ? ' — emailed to mark@ with CSV for Joyce' : ' — ⚠️ email failed, full copy here'}\n` +
+      `Period ${start} → ${end} is now LOCKED — time clock edits to it need your unlock.\n\n` +
       '```\n' + report.text.slice(0, 3000) + '\n```')
   } catch (e) { console.warn('[hours-report] cliq failed:', e.message) }
 
+  await setPayrollLockDate(req, end).catch(e => console.warn('[hours-report] lock failed:', e.message))
   const table = app.datastore().table('AppConfig')
   await table.insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
-  return { fired: true, emailed, ...report }
+  return { fired: true, emailed, period: { start, end }, employees: report.employees, holidays: report.holidays }
+}
+
+// ── Forgot-to-clock-OUT (Mark 2026-08-27 "get this all fixed") ──────────
+// Mirror of auto-punch. 5pm PT: push nudge to every subscribed device
+// naming whoever's still on the clock. 6pm PT: any shift still open
+// (started before 4pm, or left over from a past day) is closed at 5:00
+// PT of its own day, Cliq-flagged, and acknowledged next morning right
+// alongside auto-punches. An open shift never inflates payroll silently.
+export async function maybeAutoClose(req) {
+  const today = todayPT()
+  const hourNow = ptHourNow()
+  if (hourNow !== 17 && hourNow !== 18) return { fired: false, reason: `outside 5-6pm window (hour=${hourNow})` }
+
+  const app = catalyst.initialize(req)
+  const stampKey = (hourNow === 17 ? 'clockout_nudge:' : 'auto_close_done:') + today
+  const r0 = await getConfigRowByKey(app, stampKey)
+  if (r0?.config_value) return { fired: false, reason: 'already ran today' }
+
+  const { readEntriesPublic, writeEntriesPublic } = await import('../routes/timeclock.js')
+  const entries = await readEntriesPublic(req)
+  const open = entries.filter(e => e.clock_in && !e.clock_out)
+  const stamp = () => app.datastore().table('AppConfig')
+    .insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
+
+  if (hourNow === 17) {
+    if (open.length) {
+      try {
+        const { sendPushToAll } = await import('../routes/push.js')
+        const names = open.map(e => firstName(e.user_name || e.user_id)).join(', ')
+        await sendPushToAll(req, {
+          title: '⏱ Still on the clock?',
+          body: `${names} — done for the day? Clock out now. Open shifts auto-close at 5:00 when 6pm hits.`,
+          url: '/app/index.html',
+          tag: 'clockout-nudge',
+        })
+      } catch (e) { console.warn('[auto-close] nudge push failed:', e.message) }
+    }
+    await stamp()
+    return { fired: true, nudged: open.length }
+  }
+
+  const closed = []
+  for (const e of open) {
+    const inDate = ptDateOf(e.clock_in)
+    const inHour = Number(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
+    }).format(new Date(e.clock_in)))
+    // Evening shifts (started 4pm or later today) are real work — skip.
+    if (inDate === today && inHour >= 16) continue
+    let closeAt = ptInstant(inDate, 17)
+    if (new Date(closeAt) <= new Date(e.clock_in)) {
+      closeAt = new Date(new Date(e.clock_in).getTime() + 4 * 3600e3).toISOString()
+    }
+    for (const b of e.breaks || []) {
+      if (b?.start && !b?.end) b.end = new Date(b.start) < new Date(closeAt) ? closeAt : b.start
+    }
+    e.clock_out = closeAt
+    e.clock_out_location = null
+    let ms = new Date(e.clock_out) - new Date(e.clock_in)
+    for (const b of e.breaks || []) if (b?.start && b?.end) ms -= (new Date(b.end) - new Date(b.start))
+    e.total_minutes = Math.max(0, Math.round(ms / 60000))
+    e.auto_closed = true
+    e.acknowledged = false
+    e.notes = [e.notes, 'Auto-closed — no clock-out recorded (closed at 5:00 PT)'].filter(Boolean).join(' · ')
+    closed.push(`• ${firstName(e.user_name || e.user_id)} — ${inDate}, clocked out at 5:00 PT (${Math.round(e.total_minutes / 6) / 10}h)`)
+  }
+
+  if (closed.length) {
+    await writeEntriesPublic(req, entries)
+    try {
+      const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, [
+        `⏱ *Auto-closed (forgot to clock out)* — ${today}`,
+        ...closed,
+        '',
+        'If a shift really ran later, fix it on the Time Clock page before payroll.',
+      ].join('\n'))
+    } catch { /* non-fatal */ }
+  }
+  await stamp()
+  return { fired: true, auto_closed: closed.length }
+}
+
+// ── GPS sanity flag (quiet honesty-keeper) ──────────────────────────────
+// Needs SHOP_LAT / SHOP_LNG set on the Phone Setup page. If a clock-in
+// with GPS lands farther than SERVICE_RADIUS_MI (default 60) from the
+// shop, Mark gets a quiet Cliq note. Never blocks the punch.
+export async function flagRemoteClockIn(req, entry) {
+  const loc = entry?.clock_in_location
+  if (!loc || !Number(loc.lat) || !Number(loc.lng)) return
+  const { resolvePhoneConfig } = await import('./phoneConfig.js')
+  const cfg = await resolvePhoneConfig(req)
+  const slat = Number(cfg.SHOP_LAT), slng = Number(cfg.SHOP_LNG)
+  if (!slat || !slng) return
+  const radius = Number(cfg.SERVICE_RADIUS_MI) || 60
+  const toRad = x => x * Math.PI / 180
+  const dLat = toRad(Number(loc.lat) - slat), dLng = toRad(Number(loc.lng) - slng)
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(slat)) * Math.cos(toRad(Number(loc.lat))) * Math.sin(dLng / 2) ** 2
+  const miles = 3959 * 2 * Math.asin(Math.sqrt(a))
+  if (miles <= radius) return
+  const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
+  await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+    `📍 *Clock-in location check* — ${entry.user_name || entry.user_id} punched in about ${Math.round(miles)} miles from the shop (flag radius ${radius} mi).`)
 }

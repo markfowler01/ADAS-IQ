@@ -218,6 +218,25 @@ function splitOvertime(entries) {
   return entries
 }
 
+// Payroll period lock (Mark 2026-08-27): once a period's hours report
+// has gone out, its entries are frozen so reported numbers can't drift.
+// Mark alone overrides by sending unlock:true, and the override leaves
+// an audit note on the entry.
+async function payrollLockCheck(req, entry) {
+  const { getPayrollLockDate } = await import('../services/hr.js')
+  const lock = await getPayrollLockDate(req).catch(() => '')
+  if (!lock) return null
+  const d = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(entry.clock_in))
+  if (d > lock) return null
+  const email = String(req.user?.email || '').toLowerCase()
+  if (email.startsWith('mark@') && (req.body?.unlock === true || req.query?.unlock === '1')) {
+    return { audit: `[payroll-locked entry (period through ${lock}) modified by ${email} ${new Date().toISOString()}]` }
+  }
+  return { locked: lock }
+}
+
 // ── Endpoints ────────────────────────────────────────────────────────────────
 
 // Clock in
@@ -250,6 +269,12 @@ router.post('/clock-in', async (req, res) => {
     }
     entries.push(entry)
     await writeEntries(req, entries)
+    // GPS sanity flag must finish BEFORE the response (Catalyst kills
+    // post-response work). Bounded so it never slows the punch.
+    try {
+      const { flagRemoteClockIn } = await import('../services/hr.js')
+      await Promise.race([flagRemoteClockIn(req, entry), new Promise(r => setTimeout(r, 1500))])
+    } catch { /* never blocks a punch */ }
     res.json(entry)
   } catch (e) {
     console.error('[timeclock] clock-in failed:', e)
@@ -421,11 +446,17 @@ router.put('/entries/:id', async (req, res) => {
     const idx = entries.findIndex(e => e.id === req.params.id)
     if (idx < 0) return res.status(404).json({ error: 'Not found' })
 
+    const gate = await payrollLockCheck(req, entries[idx])
+    if (gate?.locked) {
+      return res.status(423).json({ error: `Payroll is locked through ${gate.locked} — this entry was already reported for pay. Mark can resend with unlock to override.` })
+    }
+
     const allowed = ['clock_in', 'clock_out', 'breaks', 'notes', 'job_ids']
     for (const f of allowed) {
       if (req.body[f] !== undefined) entries[idx][f] = req.body[f]
     }
     entries[idx].total_minutes = computeEntryMinutes(entries[idx])
+    if (gate?.audit) entries[idx].notes = [entries[idx].notes, gate.audit].filter(Boolean).join(' · ')
 
     // Recompute OT
     const userEntries = entries.filter(e => e.user_id === entries[idx].user_id)
@@ -445,8 +476,20 @@ router.delete('/entries/:id', async (req, res) => {
     const entries = await readEntries(req)
     const idx = entries.findIndex(e => e.id === req.params.id)
     if (idx < 0) return res.status(404).json({ error: 'Not found' })
+    const gate = await payrollLockCheck(req, entries[idx])
+    if (gate?.locked) {
+      return res.status(423).json({ error: `Payroll is locked through ${gate.locked} — this entry was already reported for pay. Mark can resend with unlock to override.` })
+    }
+    const removed = entries[idx]
     entries.splice(idx, 1)
     await writeEntries(req, entries)
+    if (gate?.audit) {
+      try {
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+          `🗑 *Payroll-locked entry deleted* — ${removed.user_name} ${String(removed.clock_in).slice(0, 10)} (${Math.round((removed.total_minutes || 0) / 6) / 10}h). ${gate.audit}`)
+      } catch { /* audit trail is best-effort */ }
+    }
     res.json({ ok: true })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -494,7 +537,7 @@ router.get('/pending-autopunch', async (req, res) => {
     const entries = await readEntries(req)
     const pending = entries.filter(e =>
       e.user_id === userId &&
-      (e.auto_punched || String(e.notes || '').startsWith('Auto-punched')) &&
+      (e.auto_punched || e.auto_closed || String(e.notes || '').startsWith('Auto-punched')) &&
       !e.acknowledged
     )
     // Group by PT date for a clean prompt line
@@ -517,7 +560,7 @@ router.post('/acknowledge-autopunch', async (req, res) => {
     const now = new Date().toISOString()
     for (const e of entries) {
       if (e.user_id === userId &&
-          (e.auto_punched || String(e.notes || '').startsWith('Auto-punched')) &&
+          (e.auto_punched || e.auto_closed || String(e.notes || '').startsWith('Auto-punched')) &&
           !e.acknowledged) {
         e.acknowledged = true
         e.acknowledged_at = now

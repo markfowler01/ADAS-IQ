@@ -49,6 +49,12 @@ export const PHONE_CONFIG_KEYS = [
     help: '24h number, default 7' },
   // Browser softphone (Kat's desk phone). API key + TwiML app are
   // auto-provisioned by /api/softphone the first time the panel loads.
+  { key: 'SHOP_LAT',               label: 'Shop latitude',           secret: false, required: false,
+    help: 'For the clock-in GPS check, e.g. 47.9790. Blank = check off.' },
+  { key: 'SHOP_LNG',               label: 'Shop longitude',          secret: false, required: false,
+    help: 'e.g. -122.2021. Blank = check off.' },
+  { key: 'SERVICE_RADIUS_MI',      label: 'Clock-in flag radius (mi)', secret: false, required: false,
+    help: 'Clock-ins farther than this from the shop get a quiet Cliq note. Default 60.' },
   { key: 'DESK_PHONE_ON',          label: 'Desk softphone on duty',  secret: false, required: false,
     help: '"true" = browser rings before the cell cascade. Toggled from the phone widget.' },
   { key: 'TWILIO_API_KEY_SID',     label: 'Twilio API key SID',      secret: true,  required: false,

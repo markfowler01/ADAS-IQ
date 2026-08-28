@@ -104,7 +104,7 @@ export default function MorningClockIn({ user }) {
                 <input type="checkbox" checked={ackChecked} onChange={e => setAckChecked(e.target.checked)}
                   className="mt-0.5" />
                 <span>
-                  You forgot to clock in {pendingAuto.length === 1 ? `on ${pendingAuto[0].date}` : `on ${pendingAuto.length} days`} — the system recorded the standard day
+                  You missed a punch {pendingAuto.length === 1 ? `on ${pendingAuto[0].date}` : `on ${pendingAuto.length} days`} — the system filled in your hours
                   ({pendingAuto.map(p => `${p.date}: ${p.hours}h`).join(', ')}). I confirm these hours are correct.
                 </span>
               </label>

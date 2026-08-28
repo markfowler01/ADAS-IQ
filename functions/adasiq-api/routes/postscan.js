@@ -314,6 +314,16 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
   }
 
+  // Auto-close piggyback (Mark 2026-08-27) — 5pm PT push nudge to anyone
+  // still clocked in, 6pm PT sweep closes forgotten shifts at 5:00.
+  try {
+    const { maybeAutoClose } = await import('../services/hr.js')
+    const ac = await maybeAutoClose(req)
+    if (ac.fired) console.log('[postscan] auto-close:', JSON.stringify(ac))
+  } catch (e) {
+    console.warn('[postscan] auto-close piggyback failed (non-fatal):', e.message)
+  }
+
   // Auto-punch piggyback (Mark 2026-08-27) — 6pm PT weekdays: anyone
   // with zero punches gets the standard 8-12 / 1-5 day, Cliq-flagged.
   try {
