@@ -425,13 +425,17 @@ router.post('/hours-report-run', async (req, res) => {
   const secret = req.headers['x-cron-secret'] || req.query.secret || ''
   if (secret !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
   try {
-    const { buildHoursReport } = await import('../services/hr.js')
+    const { buildHoursReport, getPayrollLockDate, addDaysISO } = await import('../services/hr.js')
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-    const start = `${today.slice(0, 8)}01`
-    const report = await buildHoursReport(req, start, today)
+    // Same period math as the real report (lock-aware), overridable for
+    // testing. Read-only: never emails, locks, or flags entries.
+    const lock = await getPayrollLockDate(req).catch(() => '')
+    const start = String(req.query.start || (lock && lock < today ? addDaysISO(lock, 1) : `${today.slice(0, 8)}01`))
+    const end = String(req.query.end || today)
+    const report = await buildHoursReport(req, start, end)
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `🕒 *Hours report (manual test)* — ${start} to ${today}\n\n` + '```\n' + report.text.slice(0, 3000) + '\n```')
+      `🕒 *Hours report (manual test)* — ${start} to ${end}\n\n` + '```\n' + report.text.slice(0, 3000) + '\n```')
     res.json({ ok: true, ...report })
   } catch (err) {
     res.status(500).json({ error: err.message })

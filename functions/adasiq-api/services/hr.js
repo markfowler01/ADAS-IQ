@@ -136,7 +136,7 @@ function mondayOf(dateISO) {
   d.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow))
   return d.toISOString().slice(0, 10)
 }
-function addDaysISO(dateISO, n) {
+export function addDaysISO(dateISO, n) {
   const d = new Date(dateISO + 'T12:00:00Z')
   d.setUTCDate(d.getUTCDate() + n)
   return d.toISOString().slice(0, 10)
@@ -202,15 +202,31 @@ export async function buildHoursReport(req, startISO, endISO) {
     sick_hours: 0, vacation_hours: 0, unpaid_hours: 0,
   })
 
-  // day_min spans ALL history so weekly OT is right at period edges;
-  // worked_min/entries count only the reporting window.
+  // day_min spans ALL history so weekly OT is right at period edges.
+  // An entry is COUNTED (paid this period) when it's finished and either
+  // falls in the window, or predates it but was never reported — a shift
+  // that closed after its period's report went out (late night on report
+  // day, outage) gets swept in as a late adjustment instead of vanishing.
+  // The report marks counted entries reported:true, so nothing is ever
+  // paid twice.
+  const countedIds = []
   for (const e of entries) {
     if (!e.clock_in) continue
     const b = bucket(firstName(e.user_name || e.user_id))
     const d = ptDateOf(e.clock_in)
     const mins = entryWorkedMinutes(e)
     b.day_min[d] = (b.day_min[d] || 0) + mins
-    if (d >= startISO && d <= endISO) { b.worked_min += mins; b.entries += 1 }
+    const finished = !!e.clock_out
+    const inWindow = d >= startISO && d <= endISO
+    const lateAdj = finished && !e.reported && d < startISO
+    if (finished && (inWindow || lateAdj)) {
+      b.worked_min += mins
+      b.entries += 1
+      if (lateAdj) b.late_min = (b.late_min || 0) + mins
+      b.counted_dates = b.counted_dates || new Set()
+      b.counted_dates.add(d)
+      countedIds.push(e.id)
+    }
   }
   for (const r of requests) {
     if (String(r.status) !== 'approved') continue
@@ -240,7 +256,7 @@ export async function buildHoursReport(req, startISO, endISO) {
     // whatever clock-out happened to store. WA: 1.5x past 40h/week.
     const otByDay = weeklyOvertimeByDay(b.day_min)
     let otMin = 0
-    for (const [d, m] of Object.entries(otByDay)) if (d >= startISO && d <= endISO) otMin += m
+    for (const [d, m] of Object.entries(otByDay)) if (b.counted_dates?.has(d)) otMin += m
     const worked = r2(b.worked_min / 60)
     const ot = r2(otMin / 60)
     const regular = r2(worked - ot)
@@ -251,6 +267,7 @@ export async function buildHoursReport(req, startISO, endISO) {
     const payable = r2(regular + b.sick_hours + b.vacation_hours + holidayHours)
     lines.push(`${b.name}`)
     lines.push(`  Regular:         ${regular}h across ${b.entries} shifts`)
+    if (b.late_min) lines.push(`  (includes ${r2(b.late_min / 60)}h finished after the last report — late adjustment)`)
     if (ot) lines.push(`  Overtime:        ${ot}h — pay at 1.5x (past 40h/week)`)
     lines.push(`  Sick paid:       ${b.sick_hours}h`)
     lines.push(`  Vacation paid:   ${b.vacation_hours}h`)
@@ -270,7 +287,7 @@ export async function buildHoursReport(req, startISO, endISO) {
   }
   lines.push(`Generated ${new Date().toISOString()} · source: ADAS IQ time clock (durable)`)
   const csv = csvRows.map(r => r.map(v => /[",]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n')
-  return { text: lines.join('\n'), csv, employees: Object.keys(per).length, holidays: holidays.length, balances }
+  return { text: lines.join('\n'), csv, employees: Object.keys(per).length, holidays: holidays.length, balances, counted_entry_ids: countedIds }
 }
 
 // ── Auto-punch for forgotten days (Mark 2026-08-27) ─────────────────────
@@ -305,7 +322,7 @@ export async function maybeAutoPunch(req) {
   const hourNow = Number(new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false,
   }).format(new Date()))
-  if (hourNow !== 18) return { fired: false, reason: `outside 6pm window (hour=${hourNow})` }
+  if (hourNow < 18 || hourNow > 21) return { fired: false, reason: `outside 6-9pm window (hour=${hourNow})` }
 
   const year = Number(today.slice(0, 4))
   if (paidHolidaysForYear(year).some(h => h.date === today)) {
@@ -391,15 +408,17 @@ export async function maybeFireHoursReport(req) {
   const today = todayPT()
   const [y, m, d] = today.split('-').map(Number)
   const secondToLast = daysInMonth(y, m) - 1
-  const isMid = d === 14
-  const isEnd = d === secondToLast
-  if (!isMid && !isEnd) return { fired: false, reason: `not a report day (14 or ${secondToLast})` }
+  // Due-WINDOW, not due-day: if the report day itself is missed (outage),
+  // the report still goes out the next evening instead of never.
+  const half = d >= secondToLast ? 'end' : d >= 14 ? 'mid' : null
+  if (!half) return { fired: false, reason: `not due (mid from the 14th, end from the ${secondToLast}th)` }
   if (ptHourNow() < 19) return { fired: false, reason: 'waiting for the 7pm PT run' }
+  const isMid = half === 'mid'
 
   const app = catalyst.initialize(req)
-  const stampKey = `hours_report_sent:${today}`
+  const stampKey = `hours_report_sent:${today.slice(0, 7)}:${half}`
   const r0 = await getConfigRowByKey(app, stampKey)
-  if (r0?.config_value) return { fired: false, reason: 'already sent today' }
+  if (r0?.config_value) return { fired: false, reason: `${half} report already sent this month` }
 
   const lock = await getPayrollLockDate(req).catch(() => '')
   let start = `${today.slice(0, 8)}01`
@@ -453,18 +472,40 @@ export async function maybeFireHoursReport(req) {
   } catch (e) { console.warn('[hours-report] email failed:', e.message) }
 
   // Cliq copy either way — belt and suspenders
+  let cliqd = false
   try {
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
       `🕒 *Hours report (${isMid ? 'mid-month' : 'month-end'})*${emailed ? ' — emailed to mark@ with CSV for Joyce' : ' — ⚠️ email failed, full copy here'}\n` +
       `Period ${start} → ${end} is now LOCKED — time clock edits to it need your unlock.\n\n` +
       '```\n' + report.text.slice(0, 3000) + '\n```')
+    cliqd = true
   } catch (e) { console.warn('[hours-report] cliq failed:', e.message) }
+
+  // NO delivery → NO lock, NO stamp, NO reported flags. The whole thing
+  // retries on the next hourly run instead of silently losing a payroll.
+  if (!emailed && !cliqd) {
+    return { fired: false, reason: 'delivery failed (email AND cliq) — will retry next hour' }
+  }
+
+  // Mark every counted entry reported:true (fresh read — entries may have
+  // changed since the report was built; flag by id only).
+  try {
+    if (report.counted_entry_ids?.length) {
+      const { readEntriesPublic, writeEntriesPublic } = await import('../routes/timeclock.js')
+      const all = await readEntriesPublic(req)
+      const ids = new Set(report.counted_entry_ids)
+      const now = new Date().toISOString()
+      let n = 0
+      for (const e of all) if (ids.has(e.id) && !e.reported) { e.reported = true; e.reported_at = now; n++ }
+      if (n) await writeEntriesPublic(req, all)
+    }
+  } catch (e) { console.warn('[hours-report] reported-flag write failed:', e.message) }
 
   await setPayrollLockDate(req, end).catch(e => console.warn('[hours-report] lock failed:', e.message))
   const table = app.datastore().table('AppConfig')
   await table.insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
-  return { fired: true, emailed, period: { start, end }, employees: report.employees, holidays: report.holidays }
+  return { fired: true, emailed, cliqd, period: { start, end }, employees: report.employees, holidays: report.holidays, counted: report.counted_entry_ids?.length || 0 }
 }
 
 // ── Forgot-to-clock-OUT (Mark 2026-08-27 "get this all fixed") ──────────
@@ -476,7 +517,7 @@ export async function maybeFireHoursReport(req) {
 export async function maybeAutoClose(req) {
   const today = todayPT()
   const hourNow = ptHourNow()
-  if (hourNow !== 17 && hourNow !== 18) return { fired: false, reason: `outside 5-6pm window (hour=${hourNow})` }
+  if (hourNow !== 17 && (hourNow < 18 || hourNow > 21)) return { fired: false, reason: `outside 5-9pm window (hour=${hourNow})` }
 
   const app = catalyst.initialize(req)
   const stampKey = (hourNow === 17 ? 'clockout_nudge:' : 'auto_close_done:') + today

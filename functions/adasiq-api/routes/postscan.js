@@ -304,16 +304,6 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] schedule-digest piggyback failed (non-fatal):', e.message)
   }
 
-  // Twice-monthly hours report (Mark 2026-08-15 HR build) — fires on the
-  // 14th and the second-to-last day of each month, PT. Own dedup inside.
-  try {
-    const { maybeFireHoursReport } = await import('../services/hr.js')
-    const hr = await maybeFireHoursReport(req)
-    if (hr.fired) console.log('[postscan] hours report:', JSON.stringify({ emailed: hr.emailed, employees: hr.employees }))
-  } catch (e) {
-    console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
-  }
-
   // Auto-close piggyback (Mark 2026-08-27) — 5pm PT push nudge to anyone
   // still clocked in, 6pm PT sweep closes forgotten shifts at 5:00.
   try {
@@ -332,6 +322,18 @@ router.post('/run', async (req, res) => {
     if (ap.fired && ap.auto_punched?.length) console.log('[postscan] auto-punch:', ap.auto_punched.join(', '))
   } catch (e) {
     console.warn('[postscan] auto-punch piggyback failed (non-fatal):', e.message)
+  }
+
+  // Twice-monthly hours report (Mark 2026-08-15 HR build) — due from the
+  // 14th / second-to-last day, sent on the first run at/after 7pm PT.
+  // Runs AFTER the auto-close and auto-punch sweeps on purpose: payroll
+  // counts a completed day. Own dedup + delivery gate inside.
+  try {
+    const { maybeFireHoursReport } = await import('../services/hr.js')
+    const hr = await maybeFireHoursReport(req)
+    if (hr.fired) console.log('[postscan] hours report:', JSON.stringify({ emailed: hr.emailed, employees: hr.employees, period: hr.period }))
+  } catch (e) {
+    console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
   }
 
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
