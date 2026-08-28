@@ -363,6 +363,14 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] workdrive-health piggyback failed (non-fatal):', e.message)
   }
 
+  // Success heartbeat — the Catalyst cron died silently on 2026-08-27
+  // and nothing noticed for hours. The watchdog now expects this stamp
+  // hourly (see cronMonitor EXPECTATIONS).
+  try {
+    const { stampSuccess } = await import('../services/cronHeartbeat.js')
+    await stampSuccess(req, 'postscan', { processed: processed.length })
+  } catch (e) { console.warn('[postscan] heartbeat stamp failed:', e.message) }
+
   res.json({
     ok: true,
     processed: processed.length,

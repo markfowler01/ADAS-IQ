@@ -32,6 +32,7 @@ const EXPECTATIONS = {
   capture_scheduler:        3 * 60,        // hourly
   capture_nurture:          3 * 60,        // hourly
   mail_agent:               3 * 60,        // hourly (GH-driven since 2026-08-13)
+  postscan:                 3 * 60,        // hourly (GH-driven since 2026-08-27 — Catalyst cron died silently)
   capture_van_safety_net:   6 * 60,        // hourly (newer — lenient)
   capture_engagement:       6 * 60,        // hourly batches
   capture_meta:             26 * 60,       // daily 6am drafter
