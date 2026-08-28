@@ -3,42 +3,34 @@ import { listSalespersons } from '../services/zoho.js'
 
 const router = express.Router()
 
-// Mark 2026-08-27: the picker shows ONLY Mark and Jayden. The Zoho
-// Books /users list this used to mirror includes office staff (Joyce,
-// Kat) and misses Jayden entirely (he has no Books login). Books only
-// receives salesperson_NAME on estimates/invoices, so a Books user
-// account is not required — we keep Mark's real user_id when Books
-// has it and synthesize ids otherwise.
-const SALES_ROSTER = [
-  { email: 'mark@absoluteadas.com',   name: 'Mark Fowler' },
-  { email: 'jayden@absoluteadas.com', name: 'Jayden Goshorn' },
+// Mark 2026-08-27: the picker is Mark and Jayden ONLY. The raw Zoho
+// Books /users list dragged in Joyce and Kat (and missed Jayden, who
+// isn't a Books user). Only salesperson_name goes onto the estimate —
+// Books auto-creates the record on first use — so Jayden needs no
+// Books account; his real user_id is grafted on when one exists.
+const SALES_TEAM = [
+  { match: 'mark',   name: 'Mark Fowler',    email: 'mark@absoluteadas.com' },
+  { match: 'jayden', name: 'Jayden Goshorn', email: 'jayden@absoluteadas.com' },
 ]
 
-const DEMO_SALESPERSONS = [
-  { salesperson_id: 'demo-s1', salesperson_name: 'Mark Fowler' },
-  { salesperson_id: 'demo-s2', salesperson_name: 'Jayden Goshorn' },
-]
+function toTeam(zohoUsers) {
+  return SALES_TEAM.map(t => {
+    const z = (zohoUsers || []).find(u =>
+      String(u.name || '').toLowerCase().includes(t.match) ||
+      String(u.email || '').toLowerCase().startsWith(t.match))
+    return { user_id: z?.user_id || t.match, name: t.name, email: z?.email || t.email }
+  })
+}
 
 router.get('/', async (req, res) => {
-  if (req.user?.demo) return res.json(DEMO_SALESPERSONS)
-  let books = []
+  if (req.user?.demo) return res.json(toTeam([]))
   try {
-    books = await listSalespersons()
+    res.json(toTeam(await listSalespersons()))
   } catch (err) {
-    console.warn('[salespersons] Books users lookup failed (roster still served):', err.message)
+    // Zoho hiccup: serve the static team instead of a broken picker
+    console.warn('[salespersons] zoho fetch failed, static fallback:', err.message)
+    res.json(toTeam([]))
   }
-  const out = SALES_ROSTER.map(r => {
-    const u = books.find(u =>
-      String(u.email || '').toLowerCase() === r.email ||
-      String(u.name || '').trim().toLowerCase() === r.name.toLowerCase()
-    )
-    return {
-      user_id: u?.user_id || `roster-${r.name.split(' ')[0].toLowerCase()}`,
-      name: r.name,
-      email: u?.email || r.email,
-    }
-  })
-  res.json(out)
 })
 
 export default router
