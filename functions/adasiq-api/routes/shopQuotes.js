@@ -255,6 +255,10 @@ router.post('/:id/resend', async (req, res) => {
     const token = await getAccessToken()
     const emails = q.sent_to?.length ? q.sent_to : await shopEmails(token, q.customer_id)
     if (!emails.length) return res.status(400).json({ error: 'No email on file for this shop' })
+    // Re-apply the QUOTE template before re-sending — billing may have
+    // switched the estimate to the insurance template, and the first
+    // real send (2026-08-29) went out on the wrong template entirely.
+    await applyTemplate(token, q.estimate_id, await resolveQuoteTemplateId(req, token))
     await emailEstimate(token, q.estimate_id, emails)
     q.sent_at = new Date().toISOString()
     q.updated_at = q.sent_at
