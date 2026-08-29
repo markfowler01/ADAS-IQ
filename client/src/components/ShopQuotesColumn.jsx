@@ -62,6 +62,11 @@ function QuoteCard({ q, readOnly, onAction, busy }) {
               className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white"
               style={{ backgroundColor: '#16a34a' }}>✅ Approved</button>
           )}
+          {q.status === 'approved' && (
+            <button disabled={busy} onClick={() => onAction(q, 'bill')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white"
+              style={{ backgroundColor: ORANGE }}>🧾 Bill It</button>
+          )}
           <button disabled={busy} onClick={() => onAction(q, 'resend')}
             className="flex-1 text-[11px] font-bold py-1.5 rounded-lg"
             style={{ backgroundColor: '#f5f3f0', color: '#444' }}>📤 Resend</button>
@@ -76,7 +81,19 @@ function QuoteCard({ q, readOnly, onAction, busy }) {
 
 function useQuoteActions(reload) {
   const [busy, setBusy] = useState(false)
+  const [billing, setBilling] = useState(null)  // { q, preview } while modal open
   async function onAction(q, action) {
+    if (action === 'bill') {
+      setBusy(true)
+      try {
+        const r = await apiFetch(`${API_BASE}/api/shop-quotes/${q.estimate_id}/billing-preview`)
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+        setBilling({ q, preview: d })
+      } catch (e) { window.alert(e.message) }
+      finally { setBusy(false) }
+      return
+    }
     if (action === 'dead' && !window.confirm(`Mark the quote for ${q.shop} as dead? It leaves the board.`)) return
     if (action === 'approve' && !window.confirm(`${q.shop} approved this quote?`)) return
     setBusy(true)
@@ -96,13 +113,88 @@ function useQuoteActions(reload) {
     } catch (e) { window.alert(e.message) }
     finally { setBusy(false) }
   }
-  return { busy, onAction }
+  async function confirmBill(pct) {
+    const { q } = billing
+    setBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shop-quotes/${q.estimate_id}/bill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discount_pct: pct }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      window.alert(`Billed ${q.shop} — insurance $${d.insurance_total.toFixed(2)} + cost invoice ${d.cost_invoice_number} $${d.cost_total.toFixed(2)} (${d.discount_pct}% off). Both emailed.`)
+      setBilling(null)
+      reload()
+    } catch (e) { window.alert(e.message) }
+    finally { setBusy(false) }
+  }
+  return { busy, onAction, billing, setBilling, confirmBill }
+}
+
+// Both totals side by side, discount asked once per shop, drift warning
+// when the estimate changed since the quote went out.
+function BillingModal({ billing, onConfirm, onClose, busy }) {
+  const { q, preview } = billing
+  const [pct, setPct] = useState(preview.discount_pct ?? 25)
+  const cost = Math.round(preview.insurance_total * (100 - pct)) / 100
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
+      <div className="rounded-2xl p-5 w-full max-w-sm" style={{ backgroundColor: 'white' }}
+        onClick={e => e.stopPropagation()}>
+        <h3 className="font-bold text-base mb-1" style={{ color: '#1a1a1a' }}>🧾 Bill {q.shop}</h3>
+        <p className="text-xs mb-3" style={{ color: '#888' }}>
+          {q.vehicle}{q.ro_number ? ` · RO ${q.ro_number}` : ''}
+        </p>
+        {preview.drift && (
+          <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
+            style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>
+            ⚠ The estimate changed since the quote went out (quoted ${preview.quoted_total.toFixed(2)}, now ${preview.insurance_total.toFixed(2)}). Make sure the shop knows.
+          </p>
+        )}
+        <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#f8f7f5' }}>
+          <div className="flex justify-between text-sm py-0.5">
+            <span style={{ color: '#666' }}>Insurance invoice (list)</span>
+            <span className="font-bold">${preview.insurance_total.toFixed(2)}</span>
+          </div>
+          <div className="flex justify-between text-sm py-0.5">
+            <span style={{ color: '#666' }}>Cost to shop ({pct}% off)</span>
+            <span className="font-bold" style={{ color: '#16a34a' }}>${cost.toFixed(2)}</span>
+          </div>
+        </div>
+        <p className="text-xs font-semibold mb-1.5" style={{ color: '#666' }}>
+          Partnership discount{preview.discount_pct == null ? ' — first bill for this shop, set it once' : ''}
+        </p>
+        <div className="flex gap-1.5 mb-4">
+          {[15, 20, 25].map(v => (
+            <button key={v} onClick={() => setPct(v)}
+              className="flex-1 py-2 rounded-lg text-sm font-bold"
+              style={pct === v
+                ? { backgroundColor: ORANGE, color: 'white' }
+                : { backgroundColor: '#f5f3f0', color: '#666' }}>{v}%</button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onClose} disabled={busy}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
+          <button onClick={() => onConfirm(pct)} disabled={busy}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
+            style={{ backgroundColor: ORANGE }}>
+            {busy ? 'Sending…' : 'Send both →'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // Desktop: leftmost column, visually distinct from the job columns.
 export function ShopQuotesColumn({ readOnly }) {
   const { quotes, reload } = useShopQuotes()
-  const { busy, onAction } = useQuoteActions(reload)
+  const { busy, onAction, billing, setBilling, confirmBill } = useQuoteActions(reload)
   return (
     <div className="flex flex-col flex-shrink-0" style={{ width: '280px' }}>
       <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between"
@@ -129,7 +221,7 @@ export function ShopQuotesColumn({ readOnly }) {
 // Mobile: collapsible strip above the job list.
 export function MobileQuotesStrip({ readOnly }) {
   const { quotes, reload } = useShopQuotes()
-  const { busy, onAction } = useQuoteActions(reload)
+  const { busy, onAction, billing, setBilling, confirmBill } = useQuoteActions(reload)
   const [open, setOpen] = useState(false)
   if (quotes.length === 0) return null
   return (
@@ -146,6 +238,7 @@ export function MobileQuotesStrip({ readOnly }) {
           ))}
         </div>
       )}
+      {billing && <BillingModal billing={billing} onConfirm={confirmBill} onClose={() => setBilling(null)} busy={busy} />}
     </div>
   )
 }
