@@ -536,11 +536,26 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 }
 
 function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
-  const [phase, setPhase] = useState('idle')  // idle | sending | sent | error
+  const [phase, setPhase] = useState('idle')  // idle | loading | review | sending | sent | error
+  const [preview, setPreview] = useState(null)
   const [msg, setMsg] = useState('')
   if (!result.quoteId) return null
+
+  // Step 1: fetch every line the shop will see (Mark: "i need to know
+  // every line on the estimate before the quote is sent").
+  async function openReview() {
+    setPhase('loading')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shop-quotes/preview?estimate_id=${encodeURIComponent(result.quoteId)}`)
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      setPreview(d)
+      setPhase('review')
+    } catch (e) { setMsg(e.message); setPhase('error') }
+  }
+
+  // Step 2: only after Mark has seen the lines does anything send.
   async function send() {
-    if (!window.confirm(`Email this quote to ${selectedCustomer?.name || job.shop}?`)) return
     setPhase('sending')
     try {
       const r = await apiFetch(`${API_BASE}/api/shop-quotes/send`, {
@@ -562,21 +577,74 @@ function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
       setPhase('sent')
     } catch (e) { setMsg(e.message); setPhase('error') }
   }
+
   if (phase === 'sent') return (
     <div className="text-sm font-semibold rounded-xl px-4 py-2.5 text-center"
       style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1.5px solid #bfdbfe' }}>
       📤 Quote emailed — {msg}. It's on the Jobs board under Quotes Out.
     </div>
   )
+
+  const zeroLines = (preview?.line_items || []).filter(li => !li.rate)
   return (
     <div className="flex flex-col gap-1.5">
-      <button onClick={send} disabled={phase === 'sending'}
+      <button onClick={openReview} disabled={phase === 'loading' || phase === 'sending'}
         className="w-full py-3 rounded-xl font-bold text-white text-sm tracking-wide transition-opacity hover:opacity-90 disabled:opacity-60"
         style={{ backgroundColor: '#1d4ed8' }}>
-        {phase === 'sending' ? 'Sending…' : '📤 Send Quote to Shop'}
+        {phase === 'loading' ? 'Loading lines…' : '📤 Send Quote to Shop'}
       </button>
       {phase === 'error' && (
         <p className="text-xs font-semibold text-center" style={{ color: '#b91c1c' }}>{msg} — tap to retry</p>
+      )}
+      {phase !== 'idle' && phase !== 'error' && preview && (phase === 'review' || phase === 'sending') && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onClick={() => setPhase('idle')}>
+          <div className="rounded-2xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto"
+            style={{ backgroundColor: 'white' }} onClick={e => e.stopPropagation()}>
+            <h3 className="font-bold text-base mb-0.5" style={{ color: '#1a1a1a' }}>
+              Quote {preview.estimate_number} — review before sending
+            </h3>
+            <p className="text-xs mb-3" style={{ color: '#888' }}>
+              To: {preview.sent_to?.length ? preview.sent_to.join(', ') : '⚠ no email on file'}
+            </p>
+            <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #eee' }}>
+              {preview.line_items.map((li, i) => (
+                <div key={i} className="flex items-start justify-between gap-3 px-3 py-2 text-sm"
+                  style={{ borderTop: i ? '1px solid #f0f0f0' : 'none', backgroundColor: li.rate ? 'white' : '#fef2f2' }}>
+                  <div className="min-w-0">
+                    <div className="font-semibold truncate" style={{ color: li.rate ? '#1a1a1a' : '#b91c1c' }}>
+                      {li.rate ? '' : '⚠ '}{li.name}
+                    </div>
+                    {li.quantity > 1 && <div className="text-xs" style={{ color: '#888' }}>× {li.quantity}</div>}
+                  </div>
+                  <div className="font-bold whitespace-nowrap" style={{ color: li.rate ? '#1a1a1a' : '#b91c1c' }}>
+                    ${Number(li.amount).toFixed(2)}
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-between px-3 py-2.5 text-sm font-extrabold"
+                style={{ borderTop: '2px solid #e5e5e5', backgroundColor: '#fafaf9' }}>
+                <span>TOTAL</span><span>${Number(preview.total).toFixed(2)}</span>
+              </div>
+            </div>
+            {zeroLines.length > 0 && (
+              <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
+                style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
+                ⚠ {zeroLines.length} line{zeroLines.length > 1 ? 's have' : ' has'} no price. Fix in Books first, or the shop sees $0.
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button onClick={() => setPhase('idle')} disabled={phase === 'sending'}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+                style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
+              <button onClick={send} disabled={phase === 'sending' || !preview.sent_to?.length}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60"
+                style={{ backgroundColor: '#1d4ed8' }}>
+                {phase === 'sending' ? 'Sending…' : `Send ${preview.line_items.length} lines →`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

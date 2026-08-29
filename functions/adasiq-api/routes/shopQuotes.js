@@ -122,6 +122,24 @@ async function resolveQuoteTemplateId(req, token) {
   return null
 }
 
+// Send path is STRICT (Mark 2026-08-29: "I need the quote template
+// used"): no pinned template, or an apply that doesn't stick, blocks the
+// send entirely — better no email than a quote wearing invoice clothes.
+async function applyQuoteTemplateStrict(req, token, estimateId) {
+  const templateId = await resolveQuoteTemplateId(req, token)
+  if (!templateId) {
+    throw new Error('No Quote template is pinned. Open Books → Settings → Templates → Quotes and make sure a template named "Quote" exists, then retry.')
+  }
+  await axios.put(
+    `${ZOHO_API_BASE}/estimates/${estimateId}/templates/${templateId}`,
+    {}, { headers: zohoHeaders(token), params: orgParam(), timeout: 15000 }
+  )
+  const est = await getEstimate(token, estimateId)
+  if (String(est?.template_id) !== String(templateId)) {
+    throw new Error('The Quote template did not apply — quote NOT sent. Check the template in Books and retry.')
+  }
+}
+
 async function applyTemplate(token, estimateId, templateId) {
   if (!templateId) return
   await axios.put(
@@ -148,6 +166,42 @@ async function emailEstimate(token, estimateId, toEmails) {
 
 // ── Endpoints ───────────────────────────────────────────────────────────
 
+// Every line the shop will see, BEFORE anything sends (Mark 2026-08-29:
+// "i need to know every line on the estimate before the quote is sent").
+router.get('/preview', async (req, res) => {
+  try {
+    const estimateId = String(req.query.estimate_id || '')
+    if (!estimateId) return res.status(400).json({ error: 'estimate_id required' })
+    if (req.user?.demo) {
+      return res.json({ ok: true, estimate_number: 'EST-DEMO-101', total: 1240,
+        sent_to: ['demo@shop.com'], template_ok: true,
+        line_items: [{ name: 'Front Radar Calibration', rate: 450, quantity: 1, amount: 450 }] })
+    }
+    const token = await getAccessToken()
+    const est = await getEstimate(token, estimateId)
+    if (!est) return res.status(404).json({ error: 'Estimate not found in Zoho Books' })
+    const emails = await shopEmails(token, est.customer_id).catch(() => [])
+    const templateId = await resolveQuoteTemplateId(req, token)
+    res.json({
+      ok: true,
+      estimate_number: est.estimate_number || '',
+      shop: est.customer_name || '',
+      total: Number(est.total) || 0,
+      sent_to: emails,
+      template_ok: !!templateId,
+      line_items: (est.line_items || []).map(li => ({
+        name: li.name || '',
+        description: li.description || '',
+        rate: Number(li.rate) || 0,
+        quantity: Number(li.quantity) || 1,
+        amount: Number(li.item_total ?? (li.rate * li.quantity)) || 0,
+      })),
+    })
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data?.message || e.message })
+  }
+})
+
 // One tap: template → email → durable board record.
 router.post('/send', async (req, res) => {
   try {
@@ -166,8 +220,7 @@ router.post('/send', async (req, res) => {
       })
     }
 
-    const templateId = await resolveQuoteTemplateId(req, token)
-    await applyTemplate(token, estimateId, templateId)
+    await applyQuoteTemplateStrict(req, token, estimateId)
     await emailEstimate(token, estimateId, emails)
 
     const meta = req.body?.meta || {}
@@ -258,7 +311,7 @@ router.post('/:id/resend', async (req, res) => {
     // Re-apply the QUOTE template before re-sending — billing may have
     // switched the estimate to the insurance template, and the first
     // real send (2026-08-29) went out on the wrong template entirely.
-    await applyTemplate(token, q.estimate_id, await resolveQuoteTemplateId(req, token))
+    await applyQuoteTemplateStrict(req, token, q.estimate_id)
     await emailEstimate(token, q.estimate_id, emails)
     q.sent_at = new Date().toISOString()
     q.updated_at = q.sent_at
