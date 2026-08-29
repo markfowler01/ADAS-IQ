@@ -206,11 +206,16 @@ async function fetchItemCatalog(token) {
   while (hasMore) {
     const res = await axios.get(`${ZOHO_API_BASE}/items`, {
       headers: zohoHeaders(token),
-      params: { ...orgParam(), per_page: 200, page },
+      // ACTIVE only — Books returns inactive/deleted items too, and one
+      // matched onto an estimate: "Quotes cannot be raised for items
+      // that have been deleted or marked as inactive" (2026-08-29).
+      params: { ...orgParam(), per_page: 200, page, filter_by: 'Status.Active' },
       timeout: 10000,
     })
     const items = res.data?.items || []
-    allItems = allItems.concat(items.map((i) => ({ item_id: i.item_id, name: i.name, rate: i.rate || 0 })))
+    allItems = allItems.concat(items
+      .filter((i) => String(i.status || 'active').toLowerCase() === 'active')
+      .map((i) => ({ item_id: i.item_id, name: i.name, rate: i.rate || 0 })))
     hasMore = res.data?.page_context?.has_more_page === true
     page++
   }
