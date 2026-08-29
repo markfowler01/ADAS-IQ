@@ -94,6 +94,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
   // in Books — same review pattern as sending a quote.
   async function openPriceReview(pool = poolOverride) {
+    if (typeof pool !== 'string') pool = poolOverride  // DOM event guard
     if (selected.length === 0) return
     setPreviewBusy(true)
     setInvoiceError(null)
@@ -553,7 +554,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             <div className="flex flex-col gap-3">
               {/* Primary: existing Zoho flow — unchanged */}
               <button
-                onClick={openPriceReview}
+                onClick={() => openPriceReview()}
                 disabled={selected.length === 0 || submitting || creatingJob || previewBusy}
                 className="w-full py-4 rounded-xl text-base font-bold text-white"
                 style={{
