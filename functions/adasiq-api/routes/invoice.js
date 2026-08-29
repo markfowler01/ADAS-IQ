@@ -93,6 +93,29 @@ async function appendHistory(entry, req) {
   }
 }
 
+// Pricing dry-run for the review-before-create modal. Nothing written.
+router.post('/preview', async (req, res) => {
+  try {
+    if (req.user?.demo) {
+      return res.json({ insurer_pool: 'standard', total: 465, lines: [
+        { name: 'Calibration Identification Report', rate: 15, quantity: 1, amount: 15, needs_price: false, included: false },
+        { name: 'Post-Scan (L-M)', rate: 0, quantity: 1, amount: 0, needs_price: false, included: true },
+        { name: 'Front Radar Calibration', rate: 450, quantity: 1, amount: 450, needs_price: false, included: false },
+      ] })
+    }
+    const { previewInvoiceLines } = await import('../services/zoho.js')
+    const out = await previewInvoiceLines({
+      insurer: req.body?.insurer || '',
+      calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
+      req,
+    })
+    res.json(out)
+  } catch (e) {
+    console.error('[invoice preview]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 router.post('/', async (req, res) => {
   const { customerId, customerName, salespersonId, salespersonName, shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, pdfBase64, pdfFilename, notes, known_folder_id, known_folder_url } = req.body
 
@@ -134,6 +157,7 @@ router.post('/', async (req, res) => {
       notes: notes || null,
       known_folder_id: known_folder_id || null,
       known_folder_url: known_folder_url || null,
+      fixedOverrides: req.body.fixed_overrides || null,
       req,
     })
 

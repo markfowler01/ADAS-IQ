@@ -23,6 +23,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   })
   const [showManualForm, setShowManualForm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [pricePreview, setPricePreview] = useState(null)   // review-before-create modal
+  const [previewBusy, setPreviewBusy] = useState(false)
   const [creatingJob, setCreatingJob] = useState(false)
   const [invoiceResult, setInvoiceResult] = useState(null)
   const [jobResult, setJobResult] = useState(null)
@@ -88,8 +90,32 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     setShowManualForm(false)
   }
 
-  async function handleApprove() {
+  // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
+  // in Books — same review pattern as sending a quote.
+  async function openPriceReview() {
     if (selected.length === 0) return
+    setPreviewBusy(true)
+    setInvoiceError(null)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/create-invoice/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          insurer: jobData.insurer || '',
+          calibrations: selected.map(({ _id, ...rest }) => rest),
+        }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Server error ${r.status}`)
+      setPricePreview(d)
+    } catch (e) {
+      setInvoiceError(e.message)
+    } finally { setPreviewBusy(false) }
+  }
+
+  async function handleApprove(fixedOverrides = null) {
+    if (selected.length === 0) return
+    setPricePreview(null)
     setSubmitting(true)
     setInvoiceError(null)
     try {
@@ -136,6 +162,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         pdfFilename,
         known_folder_id: sharedFolder?.id || null,
         known_folder_url: sharedFolder?.url || null,
+        fixed_overrides: fixedOverrides && Object.keys(fixedOverrides).length ? fixedOverrides : null,
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
@@ -494,7 +521,16 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             </div>
           )}
 
-          {invoiceResult ? (
+          {pricePreview && (
+        <PriceReviewModal
+          preview={pricePreview}
+          insurer={jobData.insurer}
+          onClose={() => setPricePreview(null)}
+          onConfirm={handleApprove}
+          busy={submitting}
+        />
+      )}
+      {invoiceResult ? (
             <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
           ) : jobResult ? (
             <JobSuccessCard result={jobResult} onNavigate={onNavigate} />
@@ -502,16 +538,16 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             <div className="flex flex-col gap-3">
               {/* Primary: existing Zoho flow — unchanged */}
               <button
-                onClick={handleApprove}
-                disabled={selected.length === 0 || submitting || creatingJob}
+                onClick={openPriceReview}
+                disabled={selected.length === 0 || submitting || creatingJob || previewBusy}
                 className="w-full py-4 rounded-xl text-base font-bold text-white"
                 style={{
                   backgroundColor: ORANGE,
-                  opacity: selected.length === 0 || submitting || creatingJob ? 0.5 : 1,
-                  cursor: selected.length === 0 || submitting || creatingJob ? 'not-allowed' : 'pointer',
+                  opacity: selected.length === 0 || submitting || creatingJob || previewBusy ? 0.5 : 1,
+                  cursor: selected.length === 0 || submitting || creatingJob || previewBusy ? 'not-allowed' : 'pointer',
                 }}
               >
-                {submitting ? 'Creating Invoice...' : 'Create Zoho Books Invoice'}
+                {submitting ? 'Creating Invoice...' : previewBusy ? 'Pricing lines…' : 'Create Zoho Books Invoice'}
               </button>
 
               {/* Divider */}
@@ -541,6 +577,88 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
               </p>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Review-before-create (Mark 2026-08-29): every line the invoice will
+// carry, priced by the real matcher, before anything exists in Books.
+function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
+  const flagged = preview.lines.filter(l => l.needs_price)
+  // Included (L-M) services with a paid catalog variant get a toggle —
+  // default stays included/$0 (Mark 2026-08-29).
+  const [paidPicks, setPaidPicks] = useState({})   // requested name → true when paid
+  const effective = preview.lines.map(li =>
+    li.paid_option && paidPicks[li.requested]
+      ? { ...li, name: li.paid_option.name, rate: li.paid_option.rate, amount: li.paid_option.rate * li.quantity, included: false, _paid: true }
+      : li)
+  const total = Math.round(effective.reduce((sum, l) => sum + l.amount, 0) * 100) / 100
+  const overrides = {}
+  for (const li of preview.lines) {
+    if (li.paid_option && paidPicks[li.requested]) overrides[li.requested] = li.paid_option.name
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
+      <div className="rounded-2xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto"
+        style={{ backgroundColor: 'white' }} onClick={e => e.stopPropagation()}>
+        <h3 className="font-bold text-base mb-0.5" style={{ color: '#1a1a1a' }}>
+          Review pricing before creating
+        </h3>
+        <p className="text-xs mb-3" style={{ color: '#888' }}>
+          {insurer ? `${insurer} — ` : ''}priced on the {preview.insurer_pool === 'standard' ? 'standard' : preview.insurer_pool.toUpperCase()} schedule
+        </p>
+        <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #eee' }}>
+          {effective.map((li, i) => (
+            <div key={i} className="px-3 py-2 text-sm"
+              style={{ borderTop: i ? '1px solid #f0f0f0' : 'none', backgroundColor: li.needs_price ? '#fef2f2' : 'white' }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold truncate" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>{li.name}</div>
+                  {li.quantity > 1 && <div className="text-xs" style={{ color: '#888' }}>× {li.quantity}</div>}
+                </div>
+                <div className="font-bold whitespace-nowrap" style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af') }}>
+                  {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
+                </div>
+              </div>
+              {li.paid_option && (
+                <div className="flex gap-1.5 mt-1.5">
+                  <button onClick={() => setPaidPicks(prev => ({ ...prev, [li.requested]: false }))}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg"
+                    style={!li._paid ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
+                    Included $0
+                  </button>
+                  <button onClick={() => setPaidPicks(prev => ({ ...prev, [li.requested]: true }))}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg"
+                    style={li._paid ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
+                    Paid ${Number(li.paid_option.rate).toFixed(0)}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+          <div className="flex justify-between px-3 py-2.5 text-sm font-extrabold"
+            style={{ borderTop: '2px solid #e5e5e5', backgroundColor: '#fafaf9' }}>
+            <span>TOTAL</span><span>${Number(total).toFixed(2)}</span>
+          </div>
+        </div>
+        {flagged.length > 0 && (
+          <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
+            style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
+            ⚠ {flagged.length} unmatched line{flagged.length > 1 ? 's' : ''} — no price found. It will land on the invoice at $0 flagged for pricing.
+          </p>
+        )}
+        <div className="flex gap-2">
+          <button onClick={onClose} disabled={busy}
+            className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
+          <button onClick={() => onConfirm(overrides)} disabled={busy}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
+            style={{ backgroundColor: ORANGE }}>
+            {busy ? 'Creating…' : `Create invoice — $${Number(total).toFixed(2)} →`}
+          </button>
         </div>
       </div>
     </div>

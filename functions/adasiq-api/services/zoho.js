@@ -456,6 +456,7 @@ export async function createDraftQuote({
   known_folder_id,
   known_folder_url,
   notes: userNotes,
+  fixedOverrides,
   req,
 }) {
   const token = await getAccessToken()
@@ -481,12 +482,15 @@ export async function createDraftQuote({
     console.warn('[zoho] Could not load item catalog (non-fatal):', catalogErr.message)
   }
 
-  // Fixed items — always included on every invoice
-  const fixedNames = [
+  // Fixed items — always included on every invoice. The review modal can
+  // swap an included (L-M) $0 service for its PAID catalog item (Mark
+  // 2026-08-29: "i want the option for our paid option").
+  const baseFixedNames = [
     'Calibration Identification Report',
     'Post Collision Safety Inspection 1 (L-M)',
     'Post-Scan (L-M)',
   ]
+  const fixedNames = baseFixedNames.map(n => (fixedOverrides && fixedOverrides[n]) || n)
   console.log(`[zoho] Fixed items: ${fixedNames.join(', ')}`)
 
   const unmatchedItems = []
@@ -928,6 +932,72 @@ export async function listAllEstimates() {
  * Create a draft repair estimate in Zoho Books.
  * Uses raw line items (parts + labor) — no catalog matching needed.
  */
+// Dry-run of the invoice pricing pipeline (Mark 2026-08-29: the quote
+// review modal, "i want to use that for createing invoices also"). Same
+// catalog, Item Map, insurer pool, and fixed items as createDraftQuote —
+// but nothing is written to Books.
+export async function previewInvoiceLines({ insurer, calibrations, req }) {
+  const token = await getAccessToken()
+  let itemMap = null
+  if (req) {
+    try {
+      const { readItemMap } = await import('./itemMap.js')
+      itemMap = await readItemMap(req)
+    } catch { /* legacy matchers still work */ }
+  }
+  let exactMap = new Map(), allItems = []
+  try { ({ exactMap, allItems } = await fetchItemCatalog(token)) } catch { /* empty catalog */ }
+  const insurerPrefix = getInsurerPrefix(insurer)
+  const fixedNames = [
+    'Calibration Identification Report',
+    'Post Collision Safety Inspection 1 (L-M)',
+    'Post-Scan (L-M)',
+  ]
+  // Paid variant of an included (L-M) service — e.g. "Post-Scan (L-M)"
+  // at $0 vs the standalone paid Post-Scan item. Insurer pool preferred.
+  const norm = str => String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  function findPaidAlternative(fixedName) {
+    const base = norm(fixedName.replace(/\(l-m\)/i, '').replace(/\b1\b/, ''))
+    if (!base) return null
+    const candidates = allItems.filter(it =>
+      Number(it.rate) > 0 &&
+      !/l-m/i.test(it.name) &&
+      norm(it.name).replace(/\b1\b/, '').includes(base))
+    if (!candidates.length) return null
+    const pooled = insurerPrefix
+      ? candidates.filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name))
+      : []
+    const standard = candidates.filter(it => !PREFIXED.test(it.name))
+    const pick = pooled[0] || standard[0] || null
+    return pick ? { name: pick.name, rate: Number(pick.rate) || 0 } : null
+  }
+
+  const lines = []
+  const push = (name, quantity, isFixed) => {
+    if (!name) return
+    const m = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
+    if (m) {
+      const rate = Number(m.rate) || 0
+      const included = isFixed && rate === 0
+      lines.push({
+        name: m.matchedName || name, requested: name, rate, quantity,
+        amount: Math.round(rate * quantity * 100) / 100,
+        needs_price: false, included,
+        paid_option: included ? findPaidAlternative(name) : null,
+      })
+    } else {
+      lines.push({ name, requested: name, rate: 0, quantity, amount: 0, needs_price: true, included: false })
+    }
+  }
+  for (const n of fixedNames) push(n, 1, true)
+  for (const c of calibrations || []) push(c.calibration_name || c.name, Number(c.quantity) || 1, false)
+  return {
+    insurer_pool: insurerPrefix || 'standard',
+    lines,
+    total: Math.round(lines.reduce((sum, l) => sum + l.amount, 0) * 100) / 100,
+  }
+}
+
 export async function createRepairDraftQuote({
   customerId, customerName, salespersonId, salespersonName,
   shop, ro_number, vin, vehicle, year, make, model, insurer, claim,
