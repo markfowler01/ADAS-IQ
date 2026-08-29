@@ -195,6 +195,10 @@ router.get('/preview', async (req, res) => {
         rate: Number(li.rate) || 0,
         quantity: Number(li.quantity) || 1,
         amount: Number(li.item_total ?? (li.rate * li.quantity)) || 0,
+        // Red-flag ONLY genuinely unmatched items (the matcher prefixes
+        // them "⚠" / "NEEDS PRICE"). Standard included-free items like
+        // Post-Scan (L-M) are $0 on purpose — show them calm.
+        needs_price: /^\s*⚠/.test(li.name || '') || /NEEDS PRICE/i.test(li.description || ''),
       })),
     })
   } catch (e) {

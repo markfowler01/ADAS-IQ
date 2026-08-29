@@ -585,7 +585,7 @@ function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
     </div>
   )
 
-  const zeroLines = (preview?.line_items || []).filter(li => !li.rate)
+  const zeroLines = (preview?.line_items || []).filter(li => li.needs_price)
   return (
     <div className="flex flex-col gap-1.5">
       <button onClick={openReview} disabled={phase === 'loading' || phase === 'sending'}
@@ -610,15 +610,15 @@ function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
             <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #eee' }}>
               {preview.line_items.map((li, i) => (
                 <div key={i} className="flex items-start justify-between gap-3 px-3 py-2 text-sm"
-                  style={{ borderTop: i ? '1px solid #f0f0f0' : 'none', backgroundColor: li.rate ? 'white' : '#fef2f2' }}>
+                  style={{ borderTop: i ? '1px solid #f0f0f0' : 'none', backgroundColor: li.needs_price ? '#fef2f2' : 'white' }}>
                   <div className="min-w-0">
-                    <div className="font-semibold truncate" style={{ color: li.rate ? '#1a1a1a' : '#b91c1c' }}>
-                      {li.rate ? '' : '⚠ '}{li.name}
+                    <div className="font-semibold truncate" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>
+                      {li.name}
                     </div>
                     {li.quantity > 1 && <div className="text-xs" style={{ color: '#888' }}>× {li.quantity}</div>}
                   </div>
-                  <div className="font-bold whitespace-nowrap" style={{ color: li.rate ? '#1a1a1a' : '#b91c1c' }}>
-                    ${Number(li.amount).toFixed(2)}
+                  <div className="font-bold whitespace-nowrap" style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af') }}>
+                    {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
                   </div>
                 </div>
               ))}
@@ -630,7 +630,7 @@ function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
             {zeroLines.length > 0 && (
               <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
                 style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
-                ⚠ {zeroLines.length} line{zeroLines.length > 1 ? 's have' : ' has'} no price. Fix in Books first, or the shop sees $0.
+                ⚠ {zeroLines.length} unmatched line{zeroLines.length > 1 ? 's' : ''} — no price found in Books. Fix before sending or the shop sees $0.
               </p>
             )}
             <div className="flex gap-2">
