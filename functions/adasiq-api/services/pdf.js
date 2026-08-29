@@ -76,7 +76,9 @@ function chip(doc, x, y, text, bgColor, textColor) {
  */
 export function generateADASIQPdf(jobData) {
   return new Promise((resolve, reject) => {
-    const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links } = jobData
+    const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links,
+      technician, folder_share_url, qr_png } = jobData
+    const performedBy = technician || 'Absolute ADAS'
 
     const required = (calibrations || []).filter(c => c.enabled)
     const notReq   = (calibrations || []).filter(c => !c.enabled)
@@ -106,7 +108,7 @@ export function generateADASIQPdf(jobData) {
         .text(`RO# ${ro_number}`, 0, 46, { width: PAGE_W - MARGIN, align: 'right' })
     }
     doc.font('Helvetica').fontSize(8).fillColor('rgba(255,255,255,0.82)')
-      .text('Performed by: Mark Fowler', 0, ro_number ? 62 : 46, { width: PAGE_W - MARGIN, align: 'right' })
+      .text(`Performed by: ${performedBy}`, 0, ro_number ? 62 : 46, { width: PAGE_W - MARGIN, align: 'right' })
 
     let y = 118
 
@@ -278,6 +280,37 @@ export function generateADASIQPdf(jobData) {
         y += 16
       })
     }
+
+    // ── PROOF & DOCUMENTATION (Mark 2026-08-29: WorkDrive external link
+    // front and center — scan report + proof photos — plus QR + tech) ──
+    if (folder_share_url) {
+      const blockH = 74
+      if (y + blockH + 16 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      y += 6
+      doc.roundedRect(MARGIN, y, CONTENT_W, blockH, 8).fill('#eff6ff')
+      doc.roundedRect(MARGIN, y, CONTENT_W, blockH, 8).stroke('#bfdbfe').lineWidth(0.5)
+      doc.roundedRect(MARGIN, y, 4, blockH, 2).fill('#1d4ed8')
+      const textW = CONTENT_W - (qr_png ? 100 : 30)
+      doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#1e3a8a')
+        .text('PROOF & DOCUMENTATION', MARGIN + 16, y + 12)
+      doc.font('Helvetica').fontSize(8.5).fillColor('#1e40af')
+        .text('Scan report, calibration photos, and all supporting documents for this job:',
+          MARGIN + 16, y + 27, { width: textW - 16 })
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#1d4ed8')
+        .text('Open the job file (WorkDrive) »', MARGIN + 16, y + 42,
+          { link: folder_share_url, underline: true, width: textW - 16, lineBreak: false })
+      doc.font('Helvetica').fontSize(7).fillColor('#60a5fa')
+        .text(qr_png ? 'Or scan the QR code from a printed copy.' : ' ', MARGIN + 16, y + 57, { width: textW - 16, lineBreak: false })
+      if (qr_png) {
+        doc.image(qr_png, MARGIN + CONTENT_W - 78, y + 5, { fit: [64, 64] })
+      }
+      y += blockH + 10
+    }
+
+    // Completion line — who did the work, dated.
+    doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID)
+      .text(`Work completed by ${performedBy} · Absolute ADAS · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+        MARGIN, y + 4, { width: CONTENT_W })
 
     footer(doc)
     doc.end()

@@ -200,6 +200,16 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
       return { ...cal, plain_description: enrichment.plain_description, links: enrichment.links }
     }))
 
+    // QR of the public folder link — a printed report still gets the
+    // adjuster to the scan + photos in one phone scan. Best-effort.
+    let qrPng = null
+    if (folderShareUrl) {
+      try {
+        const QRCode = (await import('qrcode')).default
+        qrPng = await QRCode.toBuffer(folderShareUrl, { width: 256, margin: 1, color: { dark: '#1e3a8a', light: '#eff6ff' } })
+      } catch (e) { console.warn('[report] QR generation failed (non-fatal):', e.message) }
+    }
+
     // 5. Generate the PDF
     const pdfBuffer = await generateADASIQPdf({
       shop:     job.shop_name || '',
@@ -213,6 +223,9 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
       claim:    job.claim_number || '',
       calibrations: [...enrichedCals, ...ruledOutCals],
       document_links: [],
+      technician: job.technician || '',
+      folder_share_url: folderShareUrl || '',
+      qr_png: qrPng,
     })
 
     // 6. Upload to WorkDrive (when a folder resolved)
