@@ -1903,7 +1903,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       </main>
 
       {/* AI-scrub overlay — calibrating animation while a report is read */}
-      {scrubbing && <LoadingSplash overlay label="Scrubbing report" />}
+      {(scrubbing || uploading) && <LoadingSplash overlay label="Scrubbing report" />}
 
       {/* Calibration Review Modal — intercepts "Ready to Invoice" click */}
       {calReviewJob && (
