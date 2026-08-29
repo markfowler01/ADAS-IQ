@@ -108,6 +108,7 @@ router.post('/preview', async (req, res) => {
       insurer: req.body?.insurer || '',
       make: req.body?.make || '',
       calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
+      poolOverride: req.body?.pool_override || null,
       req,
     })
     res.json(out)
@@ -161,6 +162,7 @@ router.post('/', async (req, res) => {
       fixedOverrides: req.body.fixed_overrides || null,
       fixedZero: Array.isArray(req.body.fixed_zero) ? req.body.fixed_zero : null,
       lineOverrides: req.body.line_overrides || null,
+      poolOverride: req.body.pool_override || null,
       req,
     })
 

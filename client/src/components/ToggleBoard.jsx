@@ -25,6 +25,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [submitting, setSubmitting] = useState(false)
   const [pricePreview, setPricePreview] = useState(null)   // review-before-create modal
   const [previewBusy, setPreviewBusy] = useState(false)
+  const [poolOverride, setPoolOverride] = useState(null)    // review-modal schedule pick
   const [creatingJob, setCreatingJob] = useState(false)
   const [invoiceResult, setInvoiceResult] = useState(null)
   const [jobResult, setJobResult] = useState(null)
@@ -92,7 +93,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 
   // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
   // in Books — same review pattern as sending a quote.
-  async function openPriceReview() {
+  async function openPriceReview(pool = poolOverride) {
     if (selected.length === 0) return
     setPreviewBusy(true)
     setInvoiceError(null)
@@ -103,6 +104,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         body: JSON.stringify({
           insurer: jobData.insurer || '',
           make: jobData.make || '',
+          pool_override: pool || null,
           calibrations: selected.map(({ _id, ...rest }) => rest),
         }),
       })
@@ -112,6 +114,11 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     } catch (e) {
       setInvoiceError(e.message)
     } finally { setPreviewBusy(false) }
+  }
+
+  function changePool(pool) {
+    setPoolOverride(pool)
+    openPriceReview(pool)
   }
 
   async function handleApprove(fixedOverrides = null, fixedZero = null, lineOverrides = null) {
@@ -166,6 +173,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         fixed_overrides: fixedOverrides && Object.keys(fixedOverrides).length ? fixedOverrides : null,
         fixed_zero: fixedZero && fixedZero.length ? fixedZero : null,
         line_overrides: lineOverrides && Object.keys(lineOverrides).length ? lineOverrides : null,
+        pool_override: poolOverride || null,
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
@@ -528,9 +536,11 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         <PriceReviewModal
           preview={pricePreview}
           insurer={jobData.insurer}
+          poolOverride={poolOverride}
+          onPool={changePool}
           onClose={() => setPricePreview(null)}
           onConfirm={handleApprove}
-          busy={submitting}
+          busy={submitting || previewBusy}
         />
       )}
       {invoiceResult ? (
@@ -588,7 +598,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 
 // Review-before-create (Mark 2026-08-29): every line the invoice will
 // carry, priced by the real matcher, before anything exists in Books.
-function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
+function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onConfirm, busy }) {
   const flagged = preview.lines.filter(l => l.needs_price)
   // Fixed-service toggles (Mark 2026-08-29): included (L-M) lines can go
   // PAID (swaps to the paid catalog item); paid fixed lines (Cal ID) can
@@ -633,9 +643,30 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
         <h3 className="font-bold text-base mb-0.5" style={{ color: '#1a1a1a' }}>
           Review pricing before creating
         </h3>
-        <p className="text-xs mb-3" style={{ color: '#888' }}>
+        <p className="text-xs mb-2" style={{ color: '#888' }}>
           {insurer ? `${insurer} — ` : ''}priced on the {preview.insurer_pool === 'standard' ? 'standard' : preview.insurer_pool.toUpperCase()} schedule
         </p>
+        {/* Schedule picker (Mark 2026-08-29): the insurer field comes from
+            the shop's estimate and can't be edited — cash jobs get their
+            CP pricing HERE. Tap reprices every line. */}
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {[
+            { id: null,    label: 'Auto' },
+            { id: 'STD',   label: 'Standard' },
+            { id: 'CP',    label: '💵 Cash' },
+            { id: 'SF',    label: 'State Farm' },
+            { id: 'AS',    label: 'Allstate' },
+            { id: 'AMFAM', label: 'AmFam' },
+          ].map(pl => (
+            <button key={pl.label} disabled={busy} onClick={() => onPool(pl.id)}
+              className="text-[10px] font-bold px-2 py-1 rounded-lg"
+              style={poolOverride === pl.id
+                ? { backgroundColor: '#1a1a1a', color: 'white' }
+                : { backgroundColor: '#f5f3f0', color: '#888' }}>
+              {pl.label}
+            </button>
+          ))}
+        </div>
         <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #eee' }}>
           {effective.map((li, i) => (
             <div key={i} className="px-3 py-2 text-sm"

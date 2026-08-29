@@ -257,6 +257,19 @@ function getInsurerPrefix(insurer) {
   return null
 }
 
+// The review modal can force a schedule (Mark 2026-08-29: "we can not
+// change the insurer that comes from the body shops" — cash jobs carry
+// whatever insurer the shop's estimate says, so the pool is picked at
+// review time). 'STD' forces standard pricing.
+export function resolvePricingPool(insurer, poolOverride) {
+  const VALID = ['STD', 'CP', 'SF', 'AS', 'AMFAM']
+  if (poolOverride && VALID.includes(String(poolOverride).toUpperCase())) {
+    const po = String(poolOverride).toUpperCase()
+    return po === 'STD' ? null : po
+  }
+  return getInsurerPrefix(insurer)
+}
+
 /**
  * Filter the item catalog pool based on insurer prefix.
  * - insurerPrefix 'SF' → only items starting with SF / SFP prefix
@@ -461,6 +474,7 @@ export async function createDraftQuote({
   fixedOverrides,
   fixedZero,
   lineOverrides,
+  poolOverride,
   req,
 }) {
   const token = await getAccessToken()
@@ -500,9 +514,9 @@ export async function createDraftQuote({
   const unmatchedItems = []
   const zeroPriceItems = []
 
-  // Determine insurer-based pricing prefix (SF / AS / null)
-  const insurerPrefix = getInsurerPrefix(insurer)
-  console.log(`[zoho] Insurer: "${insurer || 'none'}" → prefix: ${insurerPrefix || 'standard'}`)
+  // Determine pricing pool — review-modal override beats insurer detection
+  const insurerPrefix = resolvePricingPool(insurer, poolOverride)
+  console.log(`[zoho] Insurer: "${insurer || 'none'}"${poolOverride ? ` (override: ${poolOverride})` : ''} → pool: ${insurerPrefix || 'standard'}`)
 
   // Vehicle-aware insurer tiers (Toyota front radar = SF 3a, Audi = 3c):
   // learned from Kat's review-modal picks, checked before the matcher.
@@ -997,7 +1011,7 @@ export async function listAllEstimates() {
 // review modal, "i want to use that for createing invoices also"). Same
 // catalog, Item Map, insurer pool, and fixed items as createDraftQuote —
 // but nothing is written to Books.
-export async function previewInvoiceLines({ insurer, make, calibrations, req }) {
+export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride }) {
   const token = await getAccessToken()
   let itemMap = null
   if (req) {
@@ -1008,7 +1022,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req }) 
   }
   let exactMap = new Map(), allItems = []
   try { ({ exactMap, allItems } = await fetchItemCatalog(token)) } catch { /* empty catalog */ }
-  const insurerPrefix = getInsurerPrefix(insurer)
+  const insurerPrefix = resolvePricingPool(insurer, poolOverride)
   let tierMap = {}
   let tierKeyFn = null
   if (req) {
