@@ -458,6 +458,7 @@ export async function createDraftQuote({
   notes: userNotes,
   fixedOverrides,
   fixedZero,
+  lineOverrides,
   req,
 }) {
   const token = await getAccessToken()
@@ -501,7 +502,43 @@ export async function createDraftQuote({
   const insurerPrefix = getInsurerPrefix(insurer)
   console.log(`[zoho] Insurer: "${insurer || 'none'}" → prefix: ${insurerPrefix || 'standard'}`)
 
+  // Vehicle-aware insurer tiers (Toyota front radar = SF 3a, Audi = 3c):
+  // learned from Kat's review-modal picks, checked before the matcher.
+  let tierMap = {}
+  let tierKeyFn = null
+  if (req && insurerPrefix) {
+    try {
+      const tm = await import('./tierMap.js')
+      tierMap = await tm.readTierMap(req)
+      tierKeyFn = tm.tierKey
+    } catch (e) { console.warn('[zoho] tier map unavailable:', e.message) }
+  }
+  const itemByName = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
+  function resolveOverrideOrTier(calName) {
+    // 1. explicit pick from the review modal this run
+    const manual = lineOverrides && lineOverrides[calName]
+    if (manual) {
+      const it = itemByName.get(String(manual).toLowerCase().trim())
+      if (it) return { it, source: 'manual pick' }
+    }
+    // 2. learned tier for this insurer + make + calibration
+    if (tierKeyFn && make) {
+      const learned = tierMap[tierKeyFn(insurerPrefix, make, calName)]
+      if (learned) {
+        const it = itemByName.get(String(learned).toLowerCase().trim())
+        if (it) return { it, source: 'learned tier' }
+      }
+    }
+    return null
+  }
+
   function buildLineItem(name, description, quantity = 1) {
+    const direct = resolveOverrideOrTier(name)
+    if (direct) {
+      console.log(`[zoho] ✓ "${name}" → "${direct.it.name}" (${direct.source}, rate $${direct.it.rate})`)
+      if (!direct.it.rate) zeroPriceItems.push(direct.it.name)
+      return { item_id: direct.it.item_id, description: description || '', quantity }
+    }
     const match = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
     if (match) {
       console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)}, rate $${match.rate})`)
@@ -547,6 +584,17 @@ export async function createDraftQuote({
 
   if (unmatchedItems.length > 0) {
     console.warn('[zoho] Unmatched items (added to notes):', unmatchedItems)
+  }
+
+  // Learn Kat's picks: insurer + make + calibration → tier item, so the
+  // next scrub of this make prices itself.
+  if (req && insurerPrefix && make && lineOverrides && Object.keys(lineOverrides).length) {
+    try {
+      const { saveTierMappings } = await import('./tierMap.js')
+      await saveTierMappings(req, Object.entries(lineOverrides).map(([calName, itemName]) => ({
+        insurerPrefix, make, calName, itemName,
+      })))
+    } catch (e) { console.warn('[zoho] tier-map save failed (non-fatal):', e.message) }
   }
 
   // If nothing matched at all, warn but still try — Zoho will respond with its own error
@@ -944,7 +992,7 @@ export async function listAllEstimates() {
 // review modal, "i want to use that for createing invoices also"). Same
 // catalog, Item Map, insurer pool, and fixed items as createDraftQuote —
 // but nothing is written to Books.
-export async function previewInvoiceLines({ insurer, calibrations, req }) {
+export async function previewInvoiceLines({ insurer, make, calibrations, req }) {
   const token = await getAccessToken()
   let itemMap = null
   if (req) {
@@ -956,6 +1004,16 @@ export async function previewInvoiceLines({ insurer, calibrations, req }) {
   let exactMap = new Map(), allItems = []
   try { ({ exactMap, allItems } = await fetchItemCatalog(token)) } catch { /* empty catalog */ }
   const insurerPrefix = getInsurerPrefix(insurer)
+  let tierMap = {}
+  let tierKeyFn = null
+  if (req && insurerPrefix) {
+    try {
+      const tm = await import('./tierMap.js')
+      tierMap = await tm.readTierMap(req)
+      tierKeyFn = tm.tierKey
+    } catch { /* matcher only */ }
+  }
+  const itemByNamePrev = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
   const fixedNames = [
     'Calibration Identification Report',
     'Post Collision Safety Inspection 1 (L-M)',
@@ -983,6 +1041,20 @@ export async function previewInvoiceLines({ insurer, calibrations, req }) {
   const lines = []
   const push = (name, quantity, isFixed) => {
     if (!name) return
+    // learned tier beats the matcher (same order as creation)
+    if (!isFixed && tierKeyFn && make) {
+      const learned = tierMap[tierKeyFn(insurerPrefix, make, name)]
+      const it = learned ? itemByNamePrev.get(String(learned).toLowerCase().trim()) : null
+      if (it) {
+        const rate = Number(it.rate) || 0
+        lines.push({
+          name: it.name, requested: name, rate, quantity,
+          amount: Math.round(rate * quantity * 100) / 100,
+          needs_price: false, included: false, learned_tier: true, swappable: true,
+        })
+        return
+      }
+    }
     const m = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
     if (m) {
       const rate = Number(m.rate) || 0
@@ -995,15 +1067,26 @@ export async function previewInvoiceLines({ insurer, calibrations, req }) {
         // Paid fixed line (Cal ID $15) can be comped to $0 (Mark
         // 2026-08-29: "also have the Cal ID included and paid")
         zero_option: isFixed && rate > 0,
+        swappable: !isFixed,
       })
     } else {
-      lines.push({ name, requested: name, rate: 0, quantity, amount: 0, needs_price: true, included: false })
+      lines.push({ name, requested: name, rate: 0, quantity, amount: 0, needs_price: true, included: false, swappable: !isFixed })
     }
   }
   for (const n of fixedNames) push(n, 1, true)
   for (const c of calibrations || []) push(c.calibration_name || c.name, Number(c.quantity) || 1, false)
+  // The insurer's tier catalog (SF - 3a, AS - 3C Complex, ...) for the
+  // review modal's swap picker. Only pool items — a handful, not the
+  // whole catalog.
+  const pool_items = insurerPrefix
+    ? allItems
+        .filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name))
+        .map(it => ({ name: it.name, rate: Number(it.rate) || 0 }))
+        .sort((a, z) => a.name.localeCompare(z.name))
+    : []
   return {
     insurer_pool: insurerPrefix || 'standard',
+    pool_items,
     lines,
     total: Math.round(lines.reduce((sum, l) => sum + l.amount, 0) * 100) / 100,
   }

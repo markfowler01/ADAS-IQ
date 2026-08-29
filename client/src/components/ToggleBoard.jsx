@@ -102,6 +102,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           insurer: jobData.insurer || '',
+          make: jobData.make || '',
           calibrations: selected.map(({ _id, ...rest }) => rest),
         }),
       })
@@ -113,7 +114,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     } finally { setPreviewBusy(false) }
   }
 
-  async function handleApprove(fixedOverrides = null, fixedZero = null) {
+  async function handleApprove(fixedOverrides = null, fixedZero = null, lineOverrides = null) {
     if (selected.length === 0) return
     setPricePreview(null)
     setSubmitting(true)
@@ -164,6 +165,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         known_folder_url: sharedFolder?.url || null,
         fixed_overrides: fixedOverrides && Object.keys(fixedOverrides).length ? fixedOverrides : null,
         fixed_zero: fixedZero && fixedZero.length ? fixedZero : null,
+        line_overrides: lineOverrides && Object.keys(lineOverrides).length ? lineOverrides : null,
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
@@ -592,8 +594,15 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
   // PAID (swaps to the paid catalog item); paid fixed lines (Cal ID) can
   // go INCLUDED (comped to $0). Defaults = today's behavior.
   const [picks, setPicks] = useState({})   // requested name → 'paid' | 'included'
+  const [swaps, setSwaps] = useState({})   // requested name → pool item name (insurer tier pick)
+  const [swapOpen, setSwapOpen] = useState(null)  // requested name with picker open
   const stateOf = li => picks[li.requested] ?? (li.zero_option ? 'paid' : 'included')
+  const poolByName = Object.fromEntries((preview.pool_items || []).map(it => [it.name, it]))
   const effective = preview.lines.map(li => {
+    const swap = swaps[li.requested] && poolByName[swaps[li.requested]]
+    if (swap) {
+      return { ...li, name: swap.name, rate: swap.rate, amount: Math.round(swap.rate * li.quantity * 100) / 100, needs_price: false, included: false, _swapped: true, _toggle: false }
+    }
     if (li.paid_option && stateOf(li) === 'paid') {
       return { ...li, name: li.paid_option.name, rate: li.paid_option.rate, amount: li.paid_option.rate * li.quantity, included: false, _state: 'paid', _toggle: true }
     }
@@ -605,10 +614,16 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
   const total = Math.round(effective.reduce((sum, l) => sum + l.amount, 0) * 100) / 100
   const overrides = {}
   const zeros = []
+  const lineOverrides = {}
   for (const li of preview.lines) {
+    if (swaps[li.requested] && poolByName[swaps[li.requested]]) {
+      lineOverrides[li.requested] = swaps[li.requested]
+      continue
+    }
     if (li.paid_option && stateOf(li) === 'paid') overrides[li.requested] = li.paid_option.name
     if (li.zero_option && stateOf(li) === 'included') zeros.push(li.requested)
   }
+  const canSwap = (preview.pool_items || []).length > 0
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
@@ -633,6 +648,35 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
                   {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
                 </div>
               </div>
+              {li.swappable && canSwap && (
+                <div className="mt-1.5">
+                  <button onClick={() => setSwapOpen(swapOpen === li.requested ? null : li.requested)}
+                    className="text-[10px] font-bold px-2 py-1 rounded-lg"
+                    style={{ backgroundColor: li._swapped ? '#1d4ed8' : '#f5f3f0', color: li._swapped ? 'white' : '#666' }}>
+                    {li._swapped ? '✓ tier set — change' : (li.learned_tier ? '✓ learned tier — change' : 'change tier / item')}
+                  </button>
+                  {swapOpen === li.requested && (
+                    <div className="mt-1.5 rounded-lg overflow-hidden" style={{ border: '1px solid #e5e7eb' }}>
+                      {preview.pool_items.map(it => (
+                        <button key={it.name}
+                          onClick={() => { setSwaps(prev => ({ ...prev, [li.requested]: it.name })); setSwapOpen(null) }}
+                          className="w-full flex justify-between px-2.5 py-1.5 text-xs font-semibold"
+                          style={{ backgroundColor: 'white', color: '#333', borderTop: '1px solid #f3f4f6' }}>
+                          <span className="truncate">{it.name}</span>
+                          <span style={{ color: '#888' }}>${Number(it.rate).toFixed(0)}</span>
+                        </button>
+                      ))}
+                      {swaps[li.requested] && (
+                        <button onClick={() => { setSwaps(prev => { const n = { ...prev }; delete n[li.requested]; return n }); setSwapOpen(null) }}
+                          className="w-full px-2.5 py-1.5 text-xs font-semibold"
+                          style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
+                          Reset to auto-match
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {li._toggle && (
                 <div className="flex gap-1.5 mt-1.5">
                   <button onClick={() => setPicks(prev => ({ ...prev, [li.requested]: 'included' }))}
@@ -664,7 +708,7 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
           <button onClick={onClose} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
             style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
-          <button onClick={() => onConfirm(overrides, zeros)} disabled={busy}
+          <button onClick={() => onConfirm(overrides, zeros, lineOverrides)} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
             style={{ backgroundColor: ORANGE }}>
             {busy ? 'Creating…' : `Create invoice — $${Number(total).toFixed(2)} →`}

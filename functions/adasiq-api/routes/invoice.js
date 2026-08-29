@@ -106,6 +106,7 @@ router.post('/preview', async (req, res) => {
     const { previewInvoiceLines } = await import('../services/zoho.js')
     const out = await previewInvoiceLines({
       insurer: req.body?.insurer || '',
+      make: req.body?.make || '',
       calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
       req,
     })
@@ -159,6 +160,7 @@ router.post('/', async (req, res) => {
       known_folder_url: known_folder_url || null,
       fixedOverrides: req.body.fixed_overrides || null,
       fixedZero: Array.isArray(req.body.fixed_zero) ? req.body.fixed_zero : null,
+      lineOverrides: req.body.line_overrides || null,
       req,
     })
 
