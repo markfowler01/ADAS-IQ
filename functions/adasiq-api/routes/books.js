@@ -115,15 +115,24 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
       'nissan', 'chevrolet', 'gmc', 'mercedes', 'audi', 'volkswagen', 'lexus', 'acura', 'mazda',
       'jeep', 'ram', 'dodge', 'chrysler', 'volvo', 'porsche', 'infiniti', 'cadillac', 'buick',
       'lincoln', 'mitsubishi', 'genesis', 'rivian', 'mini']
-    function sanitizeJustification(text, calName, trigger) {
+    function sanitizeJustification(text, calName, trigger, lineRefs) {
       const t = String(text || '')
       const wrongBrand = CAR_BRANDS.some(b =>
         b !== make && new RegExp(`\\b${b}\\b`, 'i').test(t))
-      if (t && !wrongBrand) return t
+      // A card in the REQUIRED section must never argue against itself.
+      // Happens when Kat/Mark enables a cal Kinetic ruled out — the
+      // stored justification still says "not required" (Rear Blind Spot
+      // Radar, 2026-08-29).
+      const negates = /not\s+required|only\s+required\s+if|no\s+calibration\s+(is\s+)?required|isn'?t\s+required/i.test(t)
+      if (t && !wrongBrand && !negates) return t
       if (t && wrongBrand) console.warn(`[report] dropped cross-brand justification for ${calName} (vehicle: ${make})`)
+      if (t && negates) console.warn(`[report] rewrote self-negating justification for REQUIRED ${calName}`)
       const makeName = job.make || 'OEM'
-      return `${calName} calibration required per ${makeName} OEM position statement and ALLDATA ADAS procedure` +
-        `${trigger ? ` following ${trigger.toLowerCase()}` : ' following collision repair'}. ` +
+      const basis = lineRefs
+        ? `triggered by estimate line${String(lineRefs).includes(',') ? 's' : ''} ${lineRefs}`
+        : trigger ? `following ${trigger.toLowerCase()}` : 'following collision repair'
+      return `${calName} calibration required per ${makeName} OEM position statement and ALLDATA ADAS procedure, ${basis}. ` +
+        `Supported by the OEM documentation and ALLDATA reference linked below. ` +
         `Failure to calibrate presents a safety liability and does not meet ${makeName} OEM repair standards.`
     }
 
@@ -143,7 +152,7 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
         cal_type: cal.cal_type || rule?.cal_type || '',
         trigger,
         line_references: cal.line_references || '',
-        justification: sanitizeJustification(cal.justification || ruleJust, cal.name, trigger),
+        justification: sanitizeJustification(cal.justification || ruleJust, cal.name, trigger, cal.line_references),
       }
     })
 
