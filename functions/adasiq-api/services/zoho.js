@@ -252,6 +252,8 @@ function getInsurerPrefix(insurer) {
   if (ins.includes('integon'))          return 'AS'
   if (ins.includes('national general')) return 'AS'
   if (ins.includes('american family') || ins.includes('amfam')) return 'AMFAM'
+  // Cash / customer-pay jobs bill on the CP pool (Mark 2026-08-29)
+  if (ins.includes('cash') || ins.includes('customer pay') || ins.includes('self pay')) return 'CP'
   return null
 }
 
@@ -506,13 +508,16 @@ export async function createDraftQuote({
   // learned from Kat's review-modal picks, checked before the matcher.
   let tierMap = {}
   let tierKeyFn = null
-  if (req && insurerPrefix) {
+  if (req) {
     try {
       const tm = await import('./tierMap.js')
       tierMap = await tm.readTierMap(req)
       tierKeyFn = tm.tierKey
     } catch (e) { console.warn('[zoho] tier map unavailable:', e.message) }
   }
+  // Standard/cash learning uses the 'STD'/'CP' pool keys — every pool
+  // remembers Kat's picks, not just SF/AS.
+  const poolKey = insurerPrefix || 'STD'
   const itemByName = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
   function resolveOverrideOrTier(calName) {
     // 1. explicit pick from the review modal this run
@@ -523,7 +528,7 @@ export async function createDraftQuote({
     }
     // 2. learned tier for this insurer + make + calibration
     if (tierKeyFn && make) {
-      const learned = tierMap[tierKeyFn(insurerPrefix, make, calName)]
+      const learned = tierMap[tierKeyFn(poolKey, make, calName)]
       if (learned) {
         const it = itemByName.get(String(learned).toLowerCase().trim())
         if (it) return { it, source: 'learned tier' }
@@ -588,11 +593,11 @@ export async function createDraftQuote({
 
   // Learn Kat's picks: insurer + make + calibration → tier item, so the
   // next scrub of this make prices itself.
-  if (req && insurerPrefix && make && lineOverrides && Object.keys(lineOverrides).length) {
+  if (req && make && lineOverrides && Object.keys(lineOverrides).length) {
     try {
       const { saveTierMappings } = await import('./tierMap.js')
       await saveTierMappings(req, Object.entries(lineOverrides).map(([calName, itemName]) => ({
-        insurerPrefix, make, calName, itemName,
+        insurerPrefix: poolKey, make, calName, itemName,
       })))
     } catch (e) { console.warn('[zoho] tier-map save failed (non-fatal):', e.message) }
   }
@@ -1006,13 +1011,14 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req }) 
   const insurerPrefix = getInsurerPrefix(insurer)
   let tierMap = {}
   let tierKeyFn = null
-  if (req && insurerPrefix) {
+  if (req) {
     try {
       const tm = await import('./tierMap.js')
       tierMap = await tm.readTierMap(req)
       tierKeyFn = tm.tierKey
     } catch { /* matcher only */ }
   }
+  const previewPoolKey = insurerPrefix || 'STD'
   const itemByNamePrev = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
   const fixedNames = [
     'Calibration Identification Report',
@@ -1043,7 +1049,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req }) 
     if (!name) return
     // learned tier beats the matcher (same order as creation)
     if (!isFixed && tierKeyFn && make) {
-      const learned = tierMap[tierKeyFn(insurerPrefix, make, name)]
+      const learned = tierMap[tierKeyFn(previewPoolKey, make, name)]
       const it = learned ? itemByNamePrev.get(String(learned).toLowerCase().trim()) : null
       if (it) {
         const rate = Number(it.rate) || 0
@@ -1078,12 +1084,13 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req }) 
   // The insurer's tier catalog (SF - 3a, AS - 3C Complex, ...) for the
   // review modal's swap picker. Only pool items — a handful, not the
   // whole catalog.
-  const pool_items = insurerPrefix
-    ? allItems
-        .filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name))
-        .map(it => ({ name: it.name, rate: Number(it.rate) || 0 }))
-        .sort((a, z) => a.name.localeCompare(z.name))
-    : []
+  // Standard/cash jobs swap within the unprefixed catalog (searchable
+  // client-side — bigger list than an insurer's tier handful).
+  const pool_items = (insurerPrefix
+    ? allItems.filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name))
+    : allItems.filter(it => !PREFIXED.test(it.name)))
+    .map(it => ({ name: it.name, rate: Number(it.rate) || 0 }))
+    .sort((a, z) => a.name.localeCompare(z.name))
   return {
     insurer_pool: insurerPrefix || 'standard',
     pool_items,

@@ -596,6 +596,7 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
   const [picks, setPicks] = useState({})   // requested name → 'paid' | 'included'
   const [swaps, setSwaps] = useState({})   // requested name → pool item name (insurer tier pick)
   const [swapOpen, setSwapOpen] = useState(null)  // requested name with picker open
+  const [swapSearch, setSwapSearch] = useState('')
   const stateOf = li => picks[li.requested] ?? (li.zero_option ? 'paid' : 'included')
   const poolByName = Object.fromEntries((preview.pool_items || []).map(it => [it.name, it]))
   const effective = preview.lines.map(li => {
@@ -657,9 +658,18 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
                   </button>
                   {swapOpen === li.requested && (
                     <div className="mt-1.5 rounded-lg overflow-hidden" style={{ border: '1px solid #e5e7eb' }}>
-                      {preview.pool_items.map(it => (
+                      {preview.pool_items.length > 12 && (
+                        <input autoFocus value={swapSearch} onChange={e => setSwapSearch(e.target.value)}
+                          placeholder="Search items…"
+                          className="w-full px-2.5 py-1.5 text-xs focus:outline-none"
+                          style={{ borderBottom: '1px solid #e5e7eb' }} />
+                      )}
+                      {preview.pool_items
+                        .filter(it => !swapSearch || it.name.toLowerCase().includes(swapSearch.toLowerCase()))
+                        .slice(0, 25)
+                        .map(it => (
                         <button key={it.name}
-                          onClick={() => { setSwaps(prev => ({ ...prev, [li.requested]: it.name })); setSwapOpen(null) }}
+                          onClick={() => { setSwaps(prev => ({ ...prev, [li.requested]: it.name })); setSwapOpen(null); setSwapSearch('') }}
                           className="w-full flex justify-between px-2.5 py-1.5 text-xs font-semibold"
                           style={{ backgroundColor: 'white', color: '#333', borderTop: '1px solid #f3f4f6' }}>
                           <span className="truncate">{it.name}</span>
