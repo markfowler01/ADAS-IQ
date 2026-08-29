@@ -474,6 +474,8 @@ export async function createDraftQuote({
   fixedOverrides,
   fixedZero,
   lineOverrides,
+  lineEdits,
+  addedItems,
   poolOverride,
   req,
 }) {
@@ -586,6 +588,13 @@ export async function createDraftQuote({
     return li
   }).filter(Boolean)
   const calLineItems = calibrations.map((cal) => {
+    // Review-modal line edits (Mark 2026-08-29 "ok yes"): remove, custom
+    // rate, custom quantity — all decided on the review screen.
+    const edit = lineEdits ? lineEdits[cal.calibration_name] : null
+    if (edit?.remove) {
+      console.log(`[zoho] line removed in review: "${cal.calibration_name}"`)
+      return null
+    }
     // If the technician provided a description (e.g. Diagnostic 1 / Mechanical notes), use it directly
     let description = cal.description || ''
     if (!description) {
@@ -593,13 +602,41 @@ export async function createDraftQuote({
       if (cal.trigger)         parts.push(`Trigger: ${cal.trigger}`)
       if (cal.line_references) parts.push(`Line Numbers: ${cal.line_references}`)
       if (cal.cal_type)        parts.push(`Type: ${cal.cal_type}`)
-      if (cal.justification)   parts.push(cal.justification)
+      if (cal.justification) {
+        // A BILLED line never argues against itself — a ruled-out cal
+        // toggled ON would otherwise carry "not required" onto the
+        // estimate (Mark's screen, 2026-08-29).
+        const NEGATED = /not\s+required|only\s+required\s+if|no\s+calibration\s+(is\s+)?required|isn'?t\s+required/i
+        parts.push(NEGATED.test(cal.justification)
+          ? `${cal.calibration_name} calibration required per ${make || 'OEM'} OEM position statement and ALLDATA ADAS procedure${cal.line_references ? ` — triggered by estimate lines ${cal.line_references}` : ' following collision repair'}. Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} OEM repair standards.`
+          : cal.justification)
+      }
       description = parts.join('\n')
     }
-    const quantity = cal.quantity || 1
-    return buildLineItem(cal.calibration_name, description, quantity)
+    const quantity = (edit?.quantity != null ? Number(edit.quantity) : null) || cal.quantity || 1
+    const li = buildLineItem(cal.calibration_name, description, quantity)
+    if (li && edit?.rate != null && Number.isFinite(Number(edit.rate))) {
+      li.rate = Number(edit.rate)   // explicit rate beats the catalog rate
+      console.log(`[zoho] custom rate in review: "${cal.calibration_name}" → $${li.rate}`)
+    }
+    return li
   }).filter(Boolean)
-  const lineItems = [...fixedLineItems, ...calLineItems]
+
+  // Lines ADDED on the review screen — resolved to catalog items when
+  // the name matches, ad-hoc otherwise. Rate passed explicitly = what
+  // the modal displayed.
+  const extraLineItems = (Array.isArray(addedItems) ? addedItems : []).map(a => {
+    const it = itemByName.get(String(a.name || '').toLowerCase().trim())
+    const quantity = Number(a.quantity) || 1
+    if (it) {
+      const li = { item_id: it.item_id, description: '', quantity }
+      if (a.rate != null && Number(a.rate) !== Number(it.rate)) li.rate = Number(a.rate)
+      console.log(`[zoho] + added in review: "${it.name}" ×${quantity}`)
+      return li
+    }
+    return { name: String(a.name || '').slice(0, 90), rate: Number(a.rate) || 0, quantity }
+  })
+  const lineItems = [...fixedLineItems, ...calLineItems, ...extraLineItems]
 
   if (unmatchedItems.length > 0) {
     console.warn('[zoho] Unmatched items (added to notes):', unmatchedItems)

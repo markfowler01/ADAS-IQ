@@ -162,6 +162,8 @@ router.post('/', async (req, res) => {
       fixedOverrides: req.body.fixed_overrides || null,
       fixedZero: Array.isArray(req.body.fixed_zero) ? req.body.fixed_zero : null,
       lineOverrides: req.body.line_overrides || null,
+      lineEdits: req.body.line_edits || null,
+      addedItems: Array.isArray(req.body.added_items) ? req.body.added_items : null,
       poolOverride: req.body.pool_override || null,
       req,
     })

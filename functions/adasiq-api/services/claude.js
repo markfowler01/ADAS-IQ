@@ -32,7 +32,7 @@ For each calibration return:
 - cal_type: "Static", "Dynamic", or null if not listed
 - trigger: trigger description (e.g. "In Collision") or null if not listed
 - line_references: line numbers listed (e.g. "3, 6, 8, 11, 17, 20, 33, 37, 69") or null if not listed
-- justification: one sentence referencing the OEM position statement and ALLDATA ADAS procedure. Format: "[System name] calibration required per [Make] OEM position statement and ALLDATA ADAS procedure following collision repair. [One sentence explaining why.] Failure to calibrate presents a safety liability and does not meet [Make] OEM repair standards."
+- justification: one sentence referencing the OEM position statement and ALLDATA ADAS procedure. For REQUIRED calibrations use: "[System name] calibration required per [Make] OEM position statement and ALLDATA ADAS procedure following collision repair. [One sentence explaining why.] Failure to calibrate presents a safety liability and does not meet [Make] OEM repair standards." For NOT REQUIRED calibrations use: "[System name] calibration not required for this repair — the estimate contains no operations that disturb this sensor per [Make] OEM position statement and ALLDATA ADAS procedure." Never include the safety-liability sentence on a Not Required calibration.
 - enabled: true if Required, false if Not Required
 - links: array of all hyperlinks/URLs found in the PDF that are associated with this calibration (OEM position statements, ALLDATA procedure links, TSB links, etc.). Each entry should be: { "label": "descriptive label", "url": "https://..." }. Extract the actual URLs visible in the document or embedded as hyperlinks. If no links are found for this calibration, return an empty array [].
 

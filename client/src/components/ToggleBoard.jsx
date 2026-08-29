@@ -121,7 +121,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     openPriceReview(pool)
   }
 
-  async function handleApprove(fixedOverrides = null, fixedZero = null, lineOverrides = null) {
+  async function handleApprove(fixedOverrides = null, fixedZero = null, lineOverrides = null, lineEdits = null, addedItems = null) {
     if (selected.length === 0) return
     setPricePreview(null)
     setSubmitting(true)
@@ -173,6 +173,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         fixed_overrides: fixedOverrides && Object.keys(fixedOverrides).length ? fixedOverrides : null,
         fixed_zero: fixedZero && fixedZero.length ? fixedZero : null,
         line_overrides: lineOverrides && Object.keys(lineOverrides).length ? lineOverrides : null,
+        line_edits: lineEdits && Object.keys(lineEdits).length ? lineEdits : null,
+        added_items: addedItems && addedItems.length ? addedItems : null,
         pool_override: poolOverride || null,
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
@@ -597,44 +599,90 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 }
 
 // Review-before-create (Mark 2026-08-29): every line the invoice will
-// carry, priced by the real matcher, before anything exists in Books.
+// carry, priced by the real matcher, fully editable before anything
+// exists in Books — schedule picker, tier swaps, included/paid toggles,
+// inline rate edit, quantity stepper, add + remove lines.
 function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onConfirm, busy }) {
-  const flagged = preview.lines.filter(l => l.needs_price)
-  // Fixed-service toggles (Mark 2026-08-29): included (L-M) lines can go
-  // PAID (swaps to the paid catalog item); paid fixed lines (Cal ID) can
-  // go INCLUDED (comped to $0). Defaults = today's behavior.
-  const [picks, setPicks] = useState({})   // requested name → 'paid' | 'included'
-  const [swaps, setSwaps] = useState({})   // requested name → pool item name (insurer tier pick)
-  const [swapOpen, setSwapOpen] = useState(null)  // requested name with picker open
+  const [picks, setPicks] = useState({})       // fixed toggle: name → 'paid' | 'included'
+  const [swaps, setSwaps] = useState({})       // name → catalog item pick
+  const [swapOpen, setSwapOpen] = useState(null)
   const [swapSearch, setSwapSearch] = useState('')
-  const stateOf = li => picks[li.requested] ?? (li.zero_option ? 'paid' : 'included')
+  const [rateEdits, setRateEdits] = useState({})   // _key → custom rate
+  const [qtyEdits, setQtyEdits] = useState({})     // _key → custom qty
+  const [removed, setRemoved] = useState({})       // _key → true
+  const [added, setAdded] = useState([])           // [{id, name, rate, quantity}]
+  const [addOpen, setAddOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(null)   // _key with the editor row open
+
   const poolByName = Object.fromEntries((preview.pool_items || []).map(it => [it.name, it]))
-  const effective = preview.lines.map(li => {
-    const swap = swaps[li.requested] && poolByName[swaps[li.requested]]
-    if (swap) {
-      return { ...li, name: swap.name, rate: swap.rate, amount: Math.round(swap.rate * li.quantity * 100) / 100, needs_price: false, included: false, _swapped: true, _toggle: false }
-    }
-    if (li.paid_option && stateOf(li) === 'paid') {
-      return { ...li, name: li.paid_option.name, rate: li.paid_option.rate, amount: li.paid_option.rate * li.quantity, included: false, _state: 'paid', _toggle: true }
-    }
-    if (li.zero_option && stateOf(li) === 'included') {
-      return { ...li, rate: 0, amount: 0, included: true, _state: 'included', _toggle: true }
-    }
-    return { ...li, _state: stateOf(li), _toggle: !!(li.paid_option || li.zero_option) }
-  })
-  const total = Math.round(effective.reduce((sum, l) => sum + l.amount, 0) * 100) / 100
-  const overrides = {}
-  const zeros = []
-  const lineOverrides = {}
-  for (const li of preview.lines) {
-    if (swaps[li.requested] && poolByName[swaps[li.requested]]) {
-      lineOverrides[li.requested] = swaps[li.requested]
-      continue
-    }
-    if (li.paid_option && stateOf(li) === 'paid') overrides[li.requested] = li.paid_option.name
-    if (li.zero_option && stateOf(li) === 'included') zeros.push(li.requested)
+  const stateOf = li => picks[li.requested] ?? (li.zero_option ? 'paid' : 'included')
+  const searchFilter = (items, q) => {
+    if (!q) return items.filter(it => it.in_pool !== false)
+    const qq = q.toLowerCase()
+      .replace('state farm', 'sf').replace('allstate', 'as')
+      .replace('american family', 'amfam').replace('cash', 'cp')
+    return items.filter(it => it.name.toLowerCase().includes(qq))
   }
-  const canSwap = (preview.pool_items || []).length > 0
+
+  const baseLines = preview.lines.map(li => {
+    const swap = swaps[li.requested] && poolByName[swaps[li.requested]]
+    let out
+    if (swap) out = { ...li, name: swap.name, rate: swap.rate, needs_price: false, included: false, _swapped: true, _toggle: false }
+    else if (li.paid_option && stateOf(li) === 'paid') out = { ...li, name: li.paid_option.name, rate: li.paid_option.rate, included: false, _state: 'paid', _toggle: true }
+    else if (li.zero_option && stateOf(li) === 'included') out = { ...li, rate: 0, included: true, _state: 'included', _toggle: true }
+    else out = { ...li, _state: stateOf(li), _toggle: !!(li.paid_option || li.zero_option) }
+    return { ...out, _key: li.requested, _added: false, _editable: !!li.swappable }
+  })
+  const addedLines = added.map(a => ({
+    name: a.name, requested: a.name, rate: a.rate, quantity: a.quantity,
+    needs_price: false, included: false, swappable: false,
+    _key: a.id, _added: true, _editable: true, _toggle: false,
+  }))
+  const effective = [...baseLines, ...addedLines]
+    .filter(li => !removed[li._key])
+    .map(li => {
+      const rate = rateEdits[li._key] != null ? rateEdits[li._key] : li.rate
+      const quantity = qtyEdits[li._key] != null ? qtyEdits[li._key] : (li.quantity || 1)
+      return {
+        ...li, rate, quantity,
+        amount: Math.round(rate * quantity * 100) / 100,
+        included: li.included && rateEdits[li._key] == null,
+        _edited: rateEdits[li._key] != null || qtyEdits[li._key] != null,
+      }
+    })
+  const total = Math.round(effective.reduce((sum, l) => sum + l.amount, 0) * 100) / 100
+  const flagged = effective.filter(l => l.needs_price)
+
+  function confirm() {
+    const overrides = {}
+    const zeros = []
+    const lineOverrides = {}
+    const lineEdits = {}
+    for (const li of preview.lines) {
+      const key = li.requested
+      if (li.swappable && removed[key]) { lineEdits[key] = { remove: true }; continue }
+      if (swaps[key] && poolByName[swaps[key]]) lineOverrides[key] = swaps[key]
+      else {
+        if (li.paid_option && stateOf(li) === 'paid') overrides[key] = li.paid_option.name
+        if (li.zero_option && stateOf(li) === 'included') zeros.push(key)
+      }
+      if (li.swappable) {
+        const e = lineEdits[key] || {}
+        if (rateEdits[key] != null) e.rate = rateEdits[key]
+        if (qtyEdits[key] != null) e.quantity = qtyEdits[key]
+        if (Object.keys(e).length) lineEdits[key] = e
+      }
+    }
+    const addedItems = addedLines
+      .filter(li => !removed[li._key])
+      .map(li => ({
+        name: li.name,
+        rate: rateEdits[li._key] != null ? rateEdits[li._key] : li.rate,
+        quantity: qtyEdits[li._key] != null ? qtyEdits[li._key] : li.quantity,
+      }))
+    onConfirm(overrides, zeros, lineOverrides, lineEdits, addedItems)
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
@@ -646,9 +694,6 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
         <p className="text-xs mb-2" style={{ color: '#888' }}>
           {insurer ? `${insurer} — ` : ''}priced on the {preview.insurer_pool === 'standard' ? 'standard' : preview.insurer_pool.toUpperCase()} schedule
         </p>
-        {/* Schedule picker (Mark 2026-08-29): the insurer field comes from
-            the shop's estimate and can't be edited — cash jobs get their
-            CP pricing HERE. Tap reprices every line. */}
         <div className="flex flex-wrap gap-1.5 mb-3">
           {[
             { id: null,    label: 'Auto' },
@@ -667,45 +712,59 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
             </button>
           ))}
         </div>
-        <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #eee' }}>
+        <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #eee' }}>
           {effective.map((li, i) => (
-            <div key={i} className="px-3 py-2 text-sm"
+            <div key={li._key} className="px-3 py-2 text-sm"
               style={{ borderTop: i ? '1px solid #f0f0f0' : 'none', backgroundColor: li.needs_price ? '#fef2f2' : 'white' }}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="font-semibold truncate" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>{li.name}</div>
+                  <div className="font-semibold truncate" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>
+                    {li.name}{li._edited ? ' ✎' : ''}
+                  </div>
                   {li.quantity > 1 && <div className="text-xs" style={{ color: '#888' }}>× {li.quantity}</div>}
                 </div>
-                <div className="font-bold whitespace-nowrap" style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af') }}>
+                <button onClick={() => li._editable && setEditOpen(editOpen === li._key ? null : li._key)}
+                  className="font-bold whitespace-nowrap"
+                  style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af'), textDecoration: li._editable ? 'underline dotted' : 'none' }}>
                   {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
-                </div>
+                </button>
               </div>
-              {li.swappable && canSwap && (
+              {editOpen === li._key && li._editable && (
+                <div className="flex items-center gap-2 mt-1.5 p-2 rounded-lg" style={{ backgroundColor: '#f8f7f5' }}
+                  onClick={e => e.stopPropagation()}>
+                  <span className="text-[10px] font-bold" style={{ color: '#888' }}>$</span>
+                  <input type="number" step="0.01" min="0" defaultValue={li.rate}
+                    onChange={e => { const v = parseFloat(e.target.value); setRateEdits(prev => ({ ...prev, [li._key]: Number.isFinite(v) ? v : 0 })) }}
+                    className="w-20 px-2 py-1 rounded text-xs font-bold focus:outline-none"
+                    style={{ border: '1px solid #ddd' }} />
+                  <div className="flex items-center gap-1 ml-1">
+                    <button onClick={() => setQtyEdits(prev => ({ ...prev, [li._key]: Math.max(1, (prev[li._key] ?? li.quantity) - 1) }))}
+                      className="w-6 h-6 rounded font-bold text-xs" style={{ backgroundColor: '#eee' }}>−</button>
+                    <span className="text-xs font-bold w-5 text-center">{li.quantity}</span>
+                    <button onClick={() => setQtyEdits(prev => ({ ...prev, [li._key]: (prev[li._key] ?? li.quantity) + 1 }))}
+                      className="w-6 h-6 rounded font-bold text-xs" style={{ backgroundColor: '#eee' }}>+</button>
+                  </div>
+                  <button onClick={() => { setRemoved(prev => ({ ...prev, [li._key]: true })); setEditOpen(null) }}
+                    className="ml-auto text-[10px] font-bold px-2 py-1 rounded-lg"
+                    style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>✕ Remove</button>
+                </div>
+              )}
+              {li.swappable && (preview.pool_items || []).length > 0 && (
                 <div className="mt-1.5">
-                  <button onClick={() => setSwapOpen(swapOpen === li.requested ? null : li.requested)}
+                  <button onClick={() => { setSwapOpen(swapOpen === li.requested ? null : li.requested); setSwapSearch('') }}
                     className="text-[10px] font-bold px-2 py-1 rounded-lg"
                     style={{ backgroundColor: li._swapped ? '#1d4ed8' : '#f5f3f0', color: li._swapped ? 'white' : '#666' }}>
-                    {li._swapped ? '✓ tier set — change' : (li.learned_tier ? '✓ learned tier — change' : 'change tier / item')}
+                    {li._swapped ? '✓ item set — change' : (li.learned_tier ? '✓ learned tier — change' : 'change tier / item')}
                   </button>
                   {swapOpen === li.requested && (
                     <div className="mt-1.5 rounded-lg overflow-hidden" style={{ border: '1px solid #e5e7eb' }}>
-                      {preview.pool_items.length > 12 && (
+                      {(preview.pool_items || []).length > 12 && (
                         <input autoFocus value={swapSearch} onChange={e => setSwapSearch(e.target.value)}
                           placeholder="Search items…"
                           className="w-full px-2.5 py-1.5 text-xs focus:outline-none"
                           style={{ borderBottom: '1px solid #e5e7eb' }} />
                       )}
-                      {preview.pool_items
-                        .filter(it => {
-                          if (!swapSearch) return it.in_pool !== false
-                          // "state farm" finds the SF- items, etc.
-                          const q = swapSearch.toLowerCase()
-                            .replace('state farm', 'sf').replace('allstate', 'as')
-                            .replace('american family', 'amfam').replace('cash', 'cp')
-                          return it.name.toLowerCase().includes(q)
-                        })
-                        .slice(0, 30)
-                        .map(it => (
+                      {searchFilter(preview.pool_items || [], swapSearch).slice(0, 30).map(it => (
                         <button key={it.name}
                           onClick={() => { setSwaps(prev => ({ ...prev, [li.requested]: it.name })); setSwapOpen(null); setSwapSearch('') }}
                           className="w-full flex justify-between px-2.5 py-1.5 text-xs font-semibold"
@@ -746,6 +805,33 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
             <span>TOTAL</span><span>${Number(total).toFixed(2)}</span>
           </div>
         </div>
+        <div className="mb-3">
+          <button onClick={() => { setAddOpen(o => !o); setSwapSearch('') }}
+            className="text-xs font-bold px-3 py-1.5 rounded-lg"
+            style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+            + Add item
+          </button>
+          {addOpen && (
+            <div className="mt-1.5 rounded-lg overflow-hidden" style={{ border: '1px solid #e5e7eb' }}>
+              <input autoFocus value={swapSearch} onChange={e => setSwapSearch(e.target.value)}
+                placeholder="Search catalog…"
+                className="w-full px-2.5 py-1.5 text-xs focus:outline-none"
+                style={{ borderBottom: '1px solid #e5e7eb' }} />
+              {searchFilter(preview.pool_items || [], swapSearch).slice(0, 30).map(it => (
+                <button key={it.name}
+                  onClick={() => {
+                    setAdded(prev => [...prev, { id: `add_${prev.length}_${it.name}`, name: it.name, rate: it.rate, quantity: 1 }])
+                    setAddOpen(false); setSwapSearch('')
+                  }}
+                  className="w-full flex justify-between px-2.5 py-1.5 text-xs font-semibold"
+                  style={{ backgroundColor: 'white', color: '#333', borderTop: '1px solid #f3f4f6' }}>
+                  <span className="truncate">{it.name}</span>
+                  <span style={{ color: '#888' }}>${Number(it.rate).toFixed(0)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {flagged.length > 0 && (
           <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
             style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
@@ -756,7 +842,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
           <button onClick={onClose} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
             style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
-          <button onClick={() => onConfirm(overrides, zeros, lineOverrides)} disabled={busy}
+          <button onClick={confirm} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
             style={{ backgroundColor: ORANGE }}>
             {busy ? 'Creating…' : `Create invoice — $${Number(total).toFixed(2)} →`}
