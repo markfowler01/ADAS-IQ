@@ -535,6 +535,53 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   )
 }
 
+function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
+  const [phase, setPhase] = useState('idle')  // idle | sending | sent | error
+  const [msg, setMsg] = useState('')
+  if (!result.quoteId) return null
+  async function send() {
+    if (!window.confirm(`Email this quote to ${selectedCustomer?.name || job.shop}?`)) return
+    setPhase('sending')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shop-quotes/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          estimate_id: result.quoteId,
+          meta: {
+            shop: selectedCustomer?.name || job.shop || '',
+            vehicle: [job.year, job.make, job.model].filter(Boolean).join(' '),
+            vin: job.vin || '', ro_number: job.ro_number || '', claim: job.claim || '',
+            insurer: job.insurer || '', cal_count: lineCount,
+          },
+        }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      setMsg(`Sent to ${(d.sent_to || []).join(', ')}`)
+      setPhase('sent')
+    } catch (e) { setMsg(e.message); setPhase('error') }
+  }
+  if (phase === 'sent') return (
+    <div className="text-sm font-semibold rounded-xl px-4 py-2.5 text-center"
+      style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1.5px solid #bfdbfe' }}>
+      📤 Quote emailed — {msg}. It's on the Jobs board under Quotes Out.
+    </div>
+  )
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button onClick={send} disabled={phase === 'sending'}
+        className="w-full py-3 rounded-xl font-bold text-white text-sm tracking-wide transition-opacity hover:opacity-90 disabled:opacity-60"
+        style={{ backgroundColor: '#1d4ed8' }}>
+        {phase === 'sending' ? 'Sending…' : '📤 Send Quote to Shop'}
+      </button>
+      {phase === 'error' && (
+        <p className="text-xs font-semibold text-center" style={{ color: '#b91c1c' }}>{msg} — tap to retry</p>
+      )}
+    </div>
+  )
+}
+
 function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate }) {
   return (
     <div className="rounded-xl px-5 py-4 flex flex-col gap-3" style={{ backgroundColor: '#f0faf4', border: '1.5px solid #6fcf97' }}>
@@ -549,6 +596,8 @@ function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate }) {
         <SuccessField label="Line Items" value={lineCount} />
         {result.quoteNumber && <SuccessField label="Invoice #" value={result.quoteNumber} />}
       </div>
+
+      <SendQuoteButton result={result} job={job} lineCount={lineCount} selectedCustomer={selectedCustomer} />
 
       {/* Links row */}
       <div className="flex flex-col gap-2 pt-1" style={{ borderTop: '1px solid #b7e4c7' }}>

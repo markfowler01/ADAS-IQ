@@ -67,6 +67,7 @@ import teamRouter from './routes/team.js'
 import portalRouter, { handleStripeWebhook } from './routes/portal.js'
 import zohoImportRouter from './routes/zoho-import.js'
 import quotesRouter from './routes/quotes.js'
+import { shopQuotesRouter } from './routes/shopQuotes.js'
 import declinedRouter from './routes/declined.js'
 import jobEnhancementsRouter from './routes/job-enhancements.js'
 import disputesRouter from './routes/disputes.js'
@@ -254,6 +255,7 @@ app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/push', requireAuth, pushRouter)
 app.use('/api/item-map', requireAuth, itemMapRouter)
+app.use('/api/shop-quotes', requireAuth, shopQuotesRouter)
 app.use('/api/softphone', requireAuth, softphoneRouter)
 // /digest-run inside carries its own cron-secret gate; the rest is auth'd.
 app.use('/api/schedule', (req, res, next) => {

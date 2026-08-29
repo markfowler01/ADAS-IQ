@@ -5,6 +5,7 @@ import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
 import CalibrationReviewModal from './CalibrationReviewModal.jsx'
 import { parseNoteItems, CustomerNoteBox, insurerPricingBadge } from './MobileJobCard.jsx'
+import { ShopQuotesColumn, MobileQuotesStrip } from './ShopQuotesColumn.jsx'
 import LoadingSplash from './LoadingSplash.jsx'
 
 function useIsMobile() {
@@ -1834,6 +1835,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 </button>
               </div>
 
+              <MobileQuotesStrip readOnly={isTechnician} />
+
               <div className="flex flex-col gap-3 pb-6">
                 {visibleJobs.length === 0 ? (
                   <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs found</p>
@@ -1865,6 +1868,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               className="flex gap-4"
               style={{ alignItems: 'flex-start', minHeight: '100%' }}
             >
+              <ShopQuotesColumn readOnly={isTechnician} />
               {COLUMNS.map(col => (
                 <KanbanColumn
                   key={col.id}
