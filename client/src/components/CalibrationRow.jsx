@@ -1,6 +1,6 @@
 const ORANGE = '#CD4419'
 
-export default function CalibrationRow({ cal, onToggle }) {
+export default function CalibrationRow({ cal, onToggle, price }) {
   const { calibration_name, cal_type, trigger, line_references, justification, enabled } = cal
 
   return (
@@ -22,6 +22,14 @@ export default function CalibrationRow({ cal, onToggle }) {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold leading-snug" style={{ color: '#1a1a1a' }}>
             {calibration_name}
+            {price && (
+              <span className="ml-2 text-xs font-bold px-1.5 py-0.5 rounded"
+                style={price.needs_price
+                  ? { backgroundColor: '#fef2f2', color: '#b91c1c' }
+                  : { backgroundColor: enabled ? '#f0faf4' : '#f5f3f0', color: enabled ? '#1a6b3a' : '#999' }}>
+                {price.needs_price ? '$0 — no price' : `$${Number(price.rate).toFixed(0)}`}
+              </span>
+            )}
           </p>
 
           {/* Tags */}

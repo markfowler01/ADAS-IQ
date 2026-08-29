@@ -26,6 +26,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [pricePreview, setPricePreview] = useState(null)   // review-before-create modal
   const [previewBusy, setPreviewBusy] = useState(false)
   const [poolOverride, setPoolOverride] = useState(null)    // review-modal schedule pick
+  const [rowPrices, setRowPrices] = useState(null)          // name(lower) → {rate, needs_price}; _fixed_total
   const [creatingJob, setCreatingJob] = useState(false)
   const [invoiceResult, setInvoiceResult] = useState(null)
   const [jobResult, setJobResult] = useState(null)
@@ -90,6 +91,53 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     setCalibrations((prev) => [...prev, { ...cal, _id: Date.now() }])
     setShowManualForm(false)
   }
+
+  // Inline prices on the FIRST screen (Mark 2026-08-30 "?" on the scrub
+  // screenshot): every extracted calibration is priced once up front —
+  // toggling shows dollars instantly, the footer keeps a live total.
+  useEffect(() => {
+    let dead = false
+    ;(async () => {
+      try {
+        const all = calibrations.map(({ _id, ...rest }) => rest)
+        if (!all.length) return
+        const r = await apiFetch(`${API_BASE}/api/create-invoice/preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            insurer: jobData.insurer || '',
+            make: jobData.make || '',
+            customer_id: selectedCustomer?.id || null,
+            calibrations: all,
+          }),
+        })
+        const d = await r.json()
+        if (!r.ok || dead) return
+        const priceMap = {}
+        let fixedTotal = 0
+        for (const li of d.lines || []) {
+          const key = String(li.requested || li.name).toLowerCase()
+          if (['calibration identification report', 'post collision safety inspection 1 (l-m)', 'post-scan (l-m)'].includes(key)) {
+            fixedTotal += li.amount || 0
+          } else {
+            priceMap[key] = { rate: li.rate, needs_price: !!li.needs_price }
+          }
+        }
+        priceMap._fixed_total = fixedTotal
+        setRowPrices(priceMap)
+        if (d.shop_default_pool) setPoolOverride(prev => prev ?? d.shop_default_pool)
+      } catch { /* prices are a bonus, never a blocker */ }
+    })()
+    return () => { dead = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCustomer?.id])
+
+  const liveTotal = rowPrices
+    ? Math.round((selected.reduce((sum, c) => {
+        const pr = rowPrices[String(c.calibration_name || '').toLowerCase()]
+        return sum + (pr && !pr.needs_price ? pr.rate * (c.quantity || 1) : 0)
+      }, 0) + (rowPrices._fixed_total || 0)) * 100) / 100
+    : null
 
   // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
   // in Books — same review pattern as sending a quote.
@@ -501,7 +549,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
                   </div>
                 )
               }
-              return <CalibrationRow key={cal._id} cal={cal} onToggle={() => toggleCal(cal._id)} />
+              return <CalibrationRow key={cal._id} cal={cal} onToggle={() => toggleCal(cal._id)}
+                price={rowPrices ? rowPrices[String(cal.calibration_name || '').toLowerCase()] : null} />
             })}
 
             {showManualForm ? (
@@ -521,7 +570,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 
         {/* Summary + Approve */}
         <div className="flex flex-col gap-3 pb-8">
-          <SummaryBar selected={selected.length} removed={removed.length} />
+          <SummaryBar selected={selected.length} removed={removed.length} total={liveTotal} />
 
           {invoiceError && (
             <div

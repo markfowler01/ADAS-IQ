@@ -1,12 +1,20 @@
 const ORANGE = '#CD4419'
 
-export default function SummaryBar({ selected, removed }) {
+export default function SummaryBar({ selected, removed, total }) {
   return (
     <div
       className="flex items-center justify-between px-4 py-3 rounded-xl"
       style={{ backgroundColor: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
     >
       <div className="flex items-center gap-4">
+        {total != null && (
+          <>
+            <span className="text-lg font-extrabold" style={{ color: '#1a1a1a' }}>
+              ${Number(total).toFixed(2)}
+            </span>
+            <div className="w-px h-4" style={{ backgroundColor: '#e0dbd6' }} />
+          </>
+        )}
         <div className="flex items-center gap-1.5">
           <span
             className="text-lg font-bold"
