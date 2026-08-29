@@ -65,3 +65,45 @@ export async function saveTierMappings(req, entries) {
   }
   return { saved: changed }
 }
+
+export async function deleteTierMapping(req, key) {
+  const app = catalyst.initialize(req)
+  const table = app.datastore().table('AppConfig')
+  const r = await cfgRow(app, ROW_KEY)
+  let map = {}
+  try { map = JSON.parse(r?.config_value || '{}') || {} } catch { map = {} }
+  if (!(key in map)) return { deleted: false }
+  delete map[key]
+  if (r?.ROWID) await table.updateRow({ ROWID: r.ROWID, config_value: JSON.stringify(map) })
+  console.log('[tier-map] forgot mapping:', key)
+  return { deleted: true }
+}
+
+// ── Per-shop default pricing schedule (Mark 2026-08-29 fix #3) ──────────
+// Some shops are always cash. First explicit schedule pick on a shop's
+// invoice is remembered; the review screen opens on it next time.
+const POOLS_KEY = 'shop_default_pools'
+
+export async function readShopPools(req) {
+  try {
+    const app = catalyst.initialize(req)
+    const r = await cfgRow(app, POOLS_KEY)
+    const parsed = JSON.parse(r?.config_value || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch { return {} }
+}
+
+export async function saveShopPool(req, customerId, pool) {
+  if (!customerId || !pool) return
+  const app = catalyst.initialize(req)
+  const table = app.datastore().table('AppConfig')
+  const r = await cfgRow(app, POOLS_KEY)
+  let map = {}
+  try { map = JSON.parse(r?.config_value || '{}') || {} } catch { map = {} }
+  if (map[customerId] === pool) return
+  map[customerId] = pool
+  const str = JSON.stringify(map)
+  if (r?.ROWID) await table.updateRow({ ROWID: r.ROWID, config_value: str })
+  else await table.insertRow({ config_key: POOLS_KEY, config_value: str })
+  console.log(`[shop-pools] ${customerId} defaults to ${pool}`)
+}

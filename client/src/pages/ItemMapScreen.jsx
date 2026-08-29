@@ -21,6 +21,7 @@ export default function ItemMapScreen({ user, onLogout, currentScreen, onNavigat
   const [seeding, setSeeding] = useState(false)
   const [newName, setNewName] = useState('')
   const [toast, setToast] = useState('')
+  const [tiers, setTiers] = useState([])
 
   function showToast(m) { setToast(m); setTimeout(() => setToast(''), 3500) }
 
@@ -35,6 +36,31 @@ export default function ItemMapScreen({ user, onLogout, currentScreen, onNavigat
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
+
+  const loadTiers = useCallback(async () => {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/item-map/tiers`)
+      const j = await r.json()
+      if (r.ok && Array.isArray(j.entries)) setTiers(j.entries)
+    } catch { /* section hides itself */ }
+  }, [])
+  useEffect(() => { loadTiers() }, [loadTiers])
+
+  async function forgetTier(entry) {
+    if (!window.confirm(`Forget "${entry.make} + ${entry.calibration} → ${entry.item}"? The next ${entry.make} on this schedule goes back to auto-match until a new pick teaches it.`)) return
+    try {
+      const r = await apiFetch(`${API_BASE}/api/item-map/tiers/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: entry.key }),
+      })
+      if (!r.ok) throw new Error((await r.json()).error || `HTTP ${r.status}`)
+      setTiers(prev => prev.filter(t => t.key !== entry.key))
+      showToast('Forgotten — next job re-teaches it')
+    } catch (e) { showToast(e.message) }
+  }
+
+  const POOL_LABELS = { STD: 'Standard', CP: '💵 Cash', SF: 'State Farm', AS: 'Allstate', AMFAM: 'AmFam' }
 
   async function save(kineticName, itemId) {
     const item = data.books_items.find(i => String(i.item_id) === String(itemId))
@@ -177,6 +203,42 @@ export default function ItemMapScreen({ user, onLogout, currentScreen, onNavigat
             </div>
           </div>
         )}
+      </div>
+
+      {/* ── Pricing Brain: learned insurer tiers (Mark 2026-08-29) ──
+          Every pick made on the review screen lands here. Deleting one
+          sends that make/calibration back to auto-match until the next
+          pick re-teaches it. */}
+      <div className="max-w-3xl mx-auto px-4 pb-10">
+        <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'white', border: '1px solid #eee' }}>
+          <div className="px-4 py-3" style={{ borderBottom: '1px solid #f0ece8' }}>
+            <h2 className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🧠 Pricing Brain — learned schedules</h2>
+            <p className="text-xs mt-0.5" style={{ color: '#888' }}>
+              Every tier pick from the invoice review screen is remembered here. Tap ✕ to make it forget a bad pick.
+            </p>
+          </div>
+          {tiers.length === 0 ? (
+            <p className="text-xs text-center py-6" style={{ color: '#aaa' }}>
+              Nothing learned yet — picks made on the "Review pricing" screen will appear here.
+            </p>
+          ) : tiers.map(t => (
+            <div key={t.key} className="flex items-center justify-between gap-3 px-4 py-2.5"
+              style={{ borderTop: '1px solid #f7f4f1' }}>
+              <div className="min-w-0 text-sm">
+                <span className="inline-block text-[10px] font-extrabold px-1.5 py-0.5 rounded mr-2"
+                  style={{ backgroundColor: '#eef2ff', color: '#4338ca' }}>{POOL_LABELS[t.pool] || t.pool}</span>
+                <span className="font-semibold capitalize">{t.make}</span>
+                <span style={{ color: '#888' }}> · {t.calibration} → </span>
+                <span className="font-semibold">{t.item}</span>
+              </div>
+              {user?.role !== 'technician' && (
+                <button onClick={() => forgetTier(t)}
+                  className="text-xs font-bold px-2 py-1 rounded-lg flex-shrink-0"
+                  style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>✕</button>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
 
       {toast && (

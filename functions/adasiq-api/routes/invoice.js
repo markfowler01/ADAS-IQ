@@ -104,14 +104,27 @@ router.post('/preview', async (req, res) => {
       ] })
     }
     const { previewInvoiceLines } = await import('../services/zoho.js')
+    // Shop default schedule (fix #3): no explicit pick → the shop's
+    // remembered pool prices the preview and is reported back so the
+    // modal chip highlights it.
+    let poolOverride = req.body?.pool_override || null
+    let shopDefault = null
+    if (!poolOverride && req.body?.customer_id) {
+      try {
+        const { readShopPools } = await import('../services/tierMap.js')
+        const pools = await readShopPools(req)
+        shopDefault = pools[req.body.customer_id] || null
+        if (shopDefault) poolOverride = shopDefault
+      } catch { /* auto-detect */ }
+    }
     const out = await previewInvoiceLines({
       insurer: req.body?.insurer || '',
       make: req.body?.make || '',
       calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
-      poolOverride: req.body?.pool_override || null,
+      poolOverride,
       req,
     })
-    res.json(out)
+    res.json({ ...out, shop_default_pool: shopDefault })
   } catch (e) {
     console.error('[invoice preview]', e.message)
     res.status(500).json({ error: e.message })
@@ -167,6 +180,14 @@ router.post('/', async (req, res) => {
       poolOverride: req.body.pool_override || null,
       req,
     })
+
+    // Remember this shop's schedule when it was explicitly picked (fix #3)
+    if (req.body.pool_override && customerId) {
+      try {
+        const { saveShopPool } = await import('../services/tierMap.js')
+        await saveShopPool(req, customerId, req.body.pool_override)
+      } catch (e) { console.warn('[invoice] shop-pool save failed (non-fatal):', e.message) }
+    }
 
     // Auto-save enabled calibrations as rules to grow the DB over time (non-blocking)
     if (make && year && cleanedCalibrations?.length) {

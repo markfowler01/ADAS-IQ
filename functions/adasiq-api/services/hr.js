@@ -313,7 +313,7 @@ export async function buildHoursReport(req, startISO, endISO) {
     lines.push(`Paid holidays in period: ${holidays.map(h => `${h.name} ${h.date}`).join(' · ')}`)
     lines.push('')
   }
-  lines.push(`Generated ${new Date().toISOString()} · source: ADAS IQ time clock (durable)`)
+  lines.push(`Generated ${new Date().toISOString()} · source: Absolute ADAS app time clock (durable)`)
   const csv = csvRows.map(r => r.map(v => /[",]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n')
   return { text: lines.join('\n'), csv, employees: Object.keys(per).length, holidays: holidays.length, balances, counted_entry_ids: countedIds }
 }
@@ -489,7 +489,7 @@ export async function maybeFireHoursReport(req) {
             `  Balance:        ${b.sick_balance_hours}h`,
             '',
             'You earn 1 hour for every 40 hours you work.',
-            'See the Time Off page in ADAS IQ anytime.',
+            'See the Time Off page in the Absolute ADAS app anytime.',
             '',
             'GET SOME!!!',
             '— Absolute ADAS',

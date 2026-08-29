@@ -659,11 +659,18 @@ export async function createDraftQuote({
   }
 
   // 3. Notes — user story (manual invoice), then VIN, insurer, claim, plus any unmatched calibrations
+  const auditEdits = lineEdits ? Object.keys(lineEdits).length : 0
+  const auditAdds = Array.isArray(addedItems) ? addedItems.length : 0
   const notesLines = [
     userNotes ? userNotes.trim() : null,
     vin     ? `VIN: ${vin}`         : null,
     insurer ? `Insurer: ${insurer}` : null,
     claim   ? `Claim: ${claim}`     : null,
+    // Audit trail (fix #4): which schedule priced this and whether any
+    // lines were hand-adjusted in the review screen.
+    `Priced in Absolute ADAS app · ${insurerPrefix || 'standard'} schedule` +
+      (auditEdits ? ` · ${auditEdits} line edit${auditEdits > 1 ? 's' : ''}` : '') +
+      (auditAdds ? ` · ${auditAdds} added line${auditAdds > 1 ? 's' : ''}` : ''),
     unmatchedItems.length > 0
       ? `Items needing manual pricing:\n${unmatchedItems.map(n => `  - ${n}`).join('\n')}`
       : null,

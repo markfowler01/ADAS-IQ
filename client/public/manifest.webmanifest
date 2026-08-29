@@ -1,6 +1,6 @@
 {
   "name": "Absolute ADAS",
-  "short_name": "ADAS IQ",
+  "short_name": "Absolute ADAS",
   "description": "Absolute ADAS operations — jobs, texting, calls, invoicing.",
   "start_url": "/app/index.html",
   "scope": "/app/",

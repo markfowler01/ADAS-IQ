@@ -78,6 +78,29 @@ router.post('/delete', async (req, res) => {
 
 // Seed: Claude proposes a Books item for every vocab entry that isn't
 // mapped yet. Existing mappings are never overwritten.
+// ── Pricing Brain (Mark 2026-08-29 fix #1): learned insurer tiers ──────
+router.get('/tiers', async (req, res) => {
+  try {
+    const { readTierMap } = await import('../services/tierMap.js')
+    const map = await readTierMap(req)
+    const entries = Object.entries(map).map(([key, item]) => {
+      const [pool, make, cal] = key.split('|')
+      return { key, pool, make, calibration: cal, item }
+    }).sort((a, z) => (a.pool + a.make + a.calibration).localeCompare(z.pool + z.make + z.calibration))
+    res.json({ ok: true, entries })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+router.post('/tiers/delete', async (req, res) => {
+  try {
+    if (req.user?.role === 'technician') return res.status(403).json({ error: 'Staff only' })
+    const key = String(req.body?.key || '')
+    if (!key) return res.status(400).json({ error: 'key required' })
+    const { deleteTierMapping } = await import('../services/tierMap.js')
+    res.json({ ok: true, ...(await deleteTierMapping(req, key)) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.post('/seed', async (req, res) => {
   try {
     const [map, catalog] = await Promise.all([readItemMap(req), getItemCatalogForAudit()])

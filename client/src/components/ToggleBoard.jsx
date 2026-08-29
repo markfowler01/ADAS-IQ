@@ -65,7 +65,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `ADAS-IQ-${jobData.ro_number || 'report'}.pdf`
+      a.download = `Absolute ADAS_${jobData.ro_number || 'report'}.pdf`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -105,12 +105,15 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         body: JSON.stringify({
           insurer: jobData.insurer || '',
           make: jobData.make || '',
+          customer_id: selectedCustomer?.id || null,
           pool_override: pool || null,
           calibrations: selected.map(({ _id, ...rest }) => rest),
         }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `Server error ${r.status}`)
+      // Shop default schedule applied server-side → highlight its chip
+      if (!pool && d.shop_default_pool) setPoolOverride(d.shop_default_pool)
       setPricePreview(d)
     } catch (e) {
       setInvoiceError(e.message)
@@ -833,6 +836,12 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
             </div>
           )}
         </div>
+        {preview.insurer_pool === 'CP' && total > 700 && (
+          <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
+            style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>
+            💵 CASH · ${Number(total).toFixed(2)} is over the $700 cash cap — trim lines or confirm with Mark before creating.
+          </p>
+        )}
         {flagged.length > 0 && (
           <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
             style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
