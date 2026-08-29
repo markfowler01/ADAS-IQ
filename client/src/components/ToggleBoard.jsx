@@ -1,5 +1,5 @@
 import { API_BASE, apiFetch } from '../utils/api.js'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import JobCard from './JobCard'
 import CalibrationRow from './CalibrationRow'
 import ManualAddForm from './ManualAddForm'
