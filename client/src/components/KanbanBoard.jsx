@@ -1349,7 +1349,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `ADAS-IQ-Report-${job.quote_number || job.ro_number || job.id}.pdf`
+      a.download = `Absolute ADAS_${job.quote_number || job.ro_number || job.id}${job.vin ? `_${job.vin}` : ''}.pdf`
       document.body.appendChild(a)
       a.click()
       a.remove()

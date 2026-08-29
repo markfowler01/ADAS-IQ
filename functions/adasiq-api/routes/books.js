@@ -169,7 +169,11 @@ export async function generateAndUploadReport(req, { job, invoices }) {
     })
 
     // 6. Upload to WorkDrive (when a folder resolved)
-    const filename = `ADAS-IQ-Report-${roNum}.pdf`
+    // Naming per Mark 2026-08-29: "Absolute ADAS_<RO>_<VIN>.pdf" —
+    // matches the Kinetic report sitting in the same folder so both
+    // docs for a car sort together and the VIN is searchable.
+    const vinPart = String(job.vin || '').trim()
+    const filename = `Absolute ADAS_${roNum}${vinPart ? `_${vinPart}` : ''}.pdf`
     if (folderId) {
       await uploadFileToFolder(folderId, filename, pdfBuffer, token)
       console.log(`[report] ADAS IQ PDF uploaded: ${filename}`)
