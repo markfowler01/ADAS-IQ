@@ -1744,6 +1744,32 @@ router.post('/adas-report/:jobId', async (req, res) => {
         console.warn('[books adas-report] Books invoice fetch failed, falling back to card:', e.message)
       }
     }
+    // No invoice yet (quote sent, job running): the ESTIMATE is the
+    // paper of record — pull its CURRENT lines so anything added in
+    // Books before invoicing lands in the report's REQUIRED section
+    // (Mark 2026-08-29: "if we add stuff to the invoice before its
+    // created i need these items added to the required catagory").
+    if (!lineItems.length && job.zoho_estimate_id) {
+      try {
+        const axios = (await import('axios')).default
+        const { getAccessToken } = await import('../services/zoho.js')
+        const zt = await getAccessToken()
+        const er = await axios.get(`https://www.zohoapis.com/books/v3/estimates/${job.zoho_estimate_id}`, {
+          headers: { Authorization: `Zoho-oauthtoken ${zt}` },
+          params: { organization_id: process.env.ZOHO_ORGANIZATION_ID },
+          timeout: 15000,
+        })
+        const els = er.data?.estimate?.line_items || []
+        lineItems = els.map(li => ({
+          description: li.name || li.description || '',
+          qty: Number(li.quantity || 1),
+          rate: Number(li.rate || 0),
+        })).filter(li => li.description)
+        if (lineItems.length) console.log(`[books adas-report] built from live estimate ${job.zoho_estimate_id} (${lineItems.length} lines)`)
+      } catch (e) {
+        console.warn('[books adas-report] estimate fetch failed, falling back to card:', e.message)
+      }
+    }
     if (!lineItems.length) {
       let cals = []
       try {
