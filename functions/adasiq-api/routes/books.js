@@ -76,9 +76,13 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
     const allLineItems = invoices.flatMap(inv => inv.line_items || [])
     const calNames = new Set()
     const finalCals = []
+    // Billing/admin lines are on every invoice but are not calibrations —
+    // as REQUIRED cards they'd dilute the report (and confuse adjusters).
+    const ADMIN_LINES = /calibration identification report|post[- ]scan|post collision safety inspection/i
     for (const li of allLineItems) {
       const name = (li.description || li.name || '').replace(/\s*\(.*?\)\s*$/, '').trim()
       if (!name || calNames.has(name.toLowerCase())) continue
+      if (ADMIN_LINES.test(name)) continue
       calNames.add(name.toLowerCase())
       finalCals.push({
         name, description: li.description || name, qty: li.qty, rate: li.rate,
@@ -128,9 +132,10 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
       if (t && wrongBrand) console.warn(`[report] dropped cross-brand justification for ${calName} (vehicle: ${make})`)
       if (t && negates) console.warn(`[report] rewrote self-negating justification for REQUIRED ${calName}`)
       const makeName = job.make || 'OEM'
+      const realTrigger = trigger && !/ai.?confirmed/i.test(trigger) ? trigger : ''
       const basis = lineRefs
         ? `triggered by estimate line${String(lineRefs).includes(',') ? 's' : ''} ${lineRefs}`
-        : trigger ? `following ${trigger.toLowerCase()}` : 'following collision repair'
+        : realTrigger ? `following ${realTrigger.toLowerCase()}` : 'following collision repair'
       return `${calName} calibration required per ${makeName} OEM position statement and ALLDATA ADAS procedure, ${basis}. ` +
         `Supported by the OEM documentation and ALLDATA reference linked below. ` +
         `Failure to calibrate presents a safety liability and does not meet ${makeName} OEM repair standards.`
@@ -1792,16 +1797,25 @@ router.post('/adas-report/:jobId', async (req, res) => {
         console.warn('[books adas-report] estimate fetch failed, falling back to card:', e.message)
       }
     }
+    // Card calibrations: the enabled flag decides which side of the
+    // report a sensor lands on (2026-08-29: a regenerated report showed
+    // all 7 Kinetic sensors as REQUIRED because the fallback ignored
+    // enabled:false — Kinetic had ruled 6 of them out).
+    let cardCals = []
+    try {
+      const parsed = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : job.calibrations
+      if (Array.isArray(parsed)) cardCals = parsed.filter(c => c && typeof c === 'object' || typeof c === 'string')
+    } catch { cardCals = [] }
+    const calName = c => typeof c === 'string' ? c : (c.name || c.calibration_name || c.type || '')
+
     if (!lineItems.length) {
-      let cals = []
-      try {
-        const parsed = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : job.calibrations
-        if (Array.isArray(parsed)) cals = parsed
-      } catch { cals = [] }
-      lineItems = cals
+      lineItems = cardCals
+        .filter(c => typeof c === 'string' || c.enabled !== false)
         .map(c => ({
-          description: (typeof c === 'string' ? c : (c.name || c.calibration_name || c.type || '')),
+          description: calName(c),
           qty: 1, rate: 0,
+          cal_type: c.cal_type || c.mode || '', trigger: c.trigger || '',
+          line_references: c.line_references || '', justification: c.justification || '',
         }))
         .filter(li => li.description)
     }
@@ -1809,12 +1823,21 @@ router.post('/adas-report/:jobId', async (req, res) => {
       return res.status(400).json({ error: 'This job has no calibrations to report on — add them to the card first.' })
     }
 
+    // Ruled-out matrix for regenerated reports: card cals marked
+    // enabled:false that aren't being billed.
+    const requiredNames = new Set(lineItems.map(li => String(li.description).toLowerCase()))
+    const ruledOut = cardCals
+      .filter(c => typeof c === 'object' && c.enabled === false)
+      .map(c => ({ calibration_name: calName(c), cal_type: c.cal_type || '' }))
+      .filter(c => c.calibration_name && !requiredNames.has(c.calibration_name.toLowerCase()))
+
     const result = await generateAndUploadReport(req, {
       job,
       invoices: [{
         invoice_number: job.invoice_number || job.quote_number || '',
         line_items: lineItems,
       }],
+      ruledOut,
     })
     if (!result?.pdfBuffer) {
       return res.status(500).json({ error: 'Report generation failed — check the function logs.' })

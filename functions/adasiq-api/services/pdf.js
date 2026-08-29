@@ -309,7 +309,7 @@ export function generateADASIQPdf(jobData) {
 
     // Completion line — who did the work, dated.
     doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID)
-      .text(`Work completed by ${performedBy} · Absolute ADAS · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+      .text(`Work completed by ${performedBy}${performedBy === 'Absolute ADAS' ? '' : ' · Absolute ADAS'} · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
         MARGIN, y + 4, { width: CONTENT_W })
 
     footer(doc)
