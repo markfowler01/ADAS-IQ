@@ -113,7 +113,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     } finally { setPreviewBusy(false) }
   }
 
-  async function handleApprove(fixedOverrides = null) {
+  async function handleApprove(fixedOverrides = null, fixedZero = null) {
     if (selected.length === 0) return
     setPricePreview(null)
     setSubmitting(true)
@@ -163,6 +163,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         known_folder_id: sharedFolder?.id || null,
         known_folder_url: sharedFolder?.url || null,
         fixed_overrides: fixedOverrides && Object.keys(fixedOverrides).length ? fixedOverrides : null,
+        fixed_zero: fixedZero && fixedZero.length ? fixedZero : null,
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
@@ -587,17 +588,26 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 // carry, priced by the real matcher, before anything exists in Books.
 function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
   const flagged = preview.lines.filter(l => l.needs_price)
-  // Included (L-M) services with a paid catalog variant get a toggle —
-  // default stays included/$0 (Mark 2026-08-29).
-  const [paidPicks, setPaidPicks] = useState({})   // requested name → true when paid
-  const effective = preview.lines.map(li =>
-    li.paid_option && paidPicks[li.requested]
-      ? { ...li, name: li.paid_option.name, rate: li.paid_option.rate, amount: li.paid_option.rate * li.quantity, included: false, _paid: true }
-      : li)
+  // Fixed-service toggles (Mark 2026-08-29): included (L-M) lines can go
+  // PAID (swaps to the paid catalog item); paid fixed lines (Cal ID) can
+  // go INCLUDED (comped to $0). Defaults = today's behavior.
+  const [picks, setPicks] = useState({})   // requested name → 'paid' | 'included'
+  const stateOf = li => picks[li.requested] ?? (li.zero_option ? 'paid' : 'included')
+  const effective = preview.lines.map(li => {
+    if (li.paid_option && stateOf(li) === 'paid') {
+      return { ...li, name: li.paid_option.name, rate: li.paid_option.rate, amount: li.paid_option.rate * li.quantity, included: false, _state: 'paid', _toggle: true }
+    }
+    if (li.zero_option && stateOf(li) === 'included') {
+      return { ...li, rate: 0, amount: 0, included: true, _state: 'included', _toggle: true }
+    }
+    return { ...li, _state: stateOf(li), _toggle: !!(li.paid_option || li.zero_option) }
+  })
   const total = Math.round(effective.reduce((sum, l) => sum + l.amount, 0) * 100) / 100
   const overrides = {}
+  const zeros = []
   for (const li of preview.lines) {
-    if (li.paid_option && paidPicks[li.requested]) overrides[li.requested] = li.paid_option.name
+    if (li.paid_option && stateOf(li) === 'paid') overrides[li.requested] = li.paid_option.name
+    if (li.zero_option && stateOf(li) === 'included') zeros.push(li.requested)
   }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -623,17 +633,17 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
                   {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
                 </div>
               </div>
-              {li.paid_option && (
+              {li._toggle && (
                 <div className="flex gap-1.5 mt-1.5">
-                  <button onClick={() => setPaidPicks(prev => ({ ...prev, [li.requested]: false }))}
+                  <button onClick={() => setPicks(prev => ({ ...prev, [li.requested]: 'included' }))}
                     className="text-[10px] font-bold px-2 py-1 rounded-lg"
-                    style={!li._paid ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
+                    style={li._state === 'included' ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
                     Included $0
                   </button>
-                  <button onClick={() => setPaidPicks(prev => ({ ...prev, [li.requested]: true }))}
+                  <button onClick={() => setPicks(prev => ({ ...prev, [li.requested]: 'paid' }))}
                     className="text-[10px] font-bold px-2 py-1 rounded-lg"
-                    style={li._paid ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
-                    Paid ${Number(li.paid_option.rate).toFixed(0)}
+                    style={li._state === 'paid' ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
+                    Paid ${Number((li.paid_option ? li.paid_option.rate : li.rate) || 0).toFixed(0)}
                   </button>
                 </div>
               )}
@@ -654,7 +664,7 @@ function PriceReviewModal({ preview, insurer, onClose, onConfirm, busy }) {
           <button onClick={onClose} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
             style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
-          <button onClick={() => onConfirm(overrides)} disabled={busy}
+          <button onClick={() => onConfirm(overrides, zeros)} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
             style={{ backgroundColor: ORANGE }}>
             {busy ? 'Creating…' : `Create invoice — $${Number(total).toFixed(2)} →`}

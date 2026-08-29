@@ -457,6 +457,7 @@ export async function createDraftQuote({
   known_folder_url,
   notes: userNotes,
   fixedOverrides,
+  fixedZero,
   req,
 }) {
   const token = await getAccessToken()
@@ -491,7 +492,7 @@ export async function createDraftQuote({
     'Post-Scan (L-M)',
   ]
   const fixedNames = baseFixedNames.map(n => (fixedOverrides && fixedOverrides[n]) || n)
-  console.log(`[zoho] Fixed items: ${fixedNames.join(', ')}`)
+  console.log(`[zoho] Fixed items: ${fixedNames.join(', ')}${Array.isArray(fixedZero) && fixedZero.length ? ` (comped to $0: ${fixedZero.join(', ')})` : ''}`)
 
   const unmatchedItems = []
   const zeroPriceItems = []
@@ -519,8 +520,15 @@ export async function createDraftQuote({
     }
   }
 
-  // Fixed items first, then calibrations
-  const fixedLineItems = fixedNames.map((name) => buildLineItem(name, '')).filter(Boolean)
+  // Fixed items first, then calibrations. A rate:0 on an item_id line
+  // overrides the catalog rate in Books — that's how a paid fixed item
+  // (Cal ID) gets comped when the review modal picks Included.
+  const fixedLineItems = baseFixedNames.map((baseName) => {
+    const name = (fixedOverrides && fixedOverrides[baseName]) || baseName
+    const li = buildLineItem(name, '')
+    if (li && Array.isArray(fixedZero) && fixedZero.includes(baseName)) li.rate = 0
+    return li
+  }).filter(Boolean)
   const calLineItems = calibrations.map((cal) => {
     // If the technician provided a description (e.g. Diagnostic 1 / Mechanical notes), use it directly
     let description = cal.description || ''
@@ -984,6 +992,9 @@ export async function previewInvoiceLines({ insurer, calibrations, req }) {
         amount: Math.round(rate * quantity * 100) / 100,
         needs_price: false, included,
         paid_option: included ? findPaidAlternative(name) : null,
+        // Paid fixed line (Cal ID $15) can be comped to $0 (Mark
+        // 2026-08-29: "also have the Cal ID included and paid")
+        zero_option: isFixed && rate > 0,
       })
     } else {
       lines.push({ name, requested: name, rate: 0, quantity, amount: 0, needs_price: true, included: false })

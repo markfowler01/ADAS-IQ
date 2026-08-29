@@ -158,6 +158,7 @@ router.post('/', async (req, res) => {
       known_folder_id: known_folder_id || null,
       known_folder_url: known_folder_url || null,
       fixedOverrides: req.body.fixed_overrides || null,
+      fixedZero: Array.isArray(req.body.fixed_zero) ? req.body.fixed_zero : null,
       req,
     })
 
