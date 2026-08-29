@@ -207,10 +207,14 @@ export function generateADASIQPdf(jobData) {
         let lx = MARGIN + 14, ly = cursorY
         calLinks.forEach((link, idx) => {
           const label = link.label || `Reference ${idx + 1}`
-          const lw = doc.widthOfString(label, { fontSize: 7.5 }) + 2
+          // Measure with the same font that renders, and give the text
+          // box slack — an exact-width box wrapped mid-label ("SR5"
+          // dangling on its own line, 2026-08-29 report).
+          doc.font('Helvetica').fontSize(7.5)
+          const lw = doc.widthOfString(label) + 6
           if (lx + lw > MARGIN + CONTENT_W - 20) { lx = MARGIN + 14; ly += 14 }
-          doc.font('Helvetica').fontSize(7.5).fillColor(isRequired ? ORANGE : '#aaa')
-            .text(label, lx, ly, { link: link.url, underline: true, continued: false, width: lw })
+          doc.fillColor(isRequired ? ORANGE : '#aaa')
+            .text(label, lx, ly, { link: link.url, underline: true, continued: false, width: lw, lineBreak: false })
           lx += lw + 14
         })
       }
@@ -231,11 +235,32 @@ export function generateADASIQPdf(jobData) {
       if (y + 40 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
       doc.moveTo(MARGIN, y + 6).lineTo(PAGE_W - MARGIN, y + 6).strokeColor(GRAY_BORDER).lineWidth(0.5).stroke()
       y += 20
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRAY_MID).text('NOT REQUIRED', MARGIN, y)
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(GRAY_MID).text('SENSORS CHECKED — NOT REQUIRED', MARGIN, y)
       doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID)
-        .text(`${notReq.length} calibration${notReq.length !== 1 ? 's' : ''} reviewed — no triggers identified`, MARGIN + 112, y + 0.5)
+        .text(`${notReq.length} sensor${notReq.length !== 1 ? 's' : ''} reviewed, no repair triggers identified`, MARGIN + 190, y + 0.5)
       y += 18
-      notReq.forEach(cal => drawCal(cal, false))
+      // Bare rule-outs (Kinetic-matrix parity) render as a compact
+      // two-column checklist — six tall empty cards wasted a page.
+      const bare = notReq.every(c => !c.plain_description && !c.justification && !(Array.isArray(c.links) && c.links.length))
+      if (bare) {
+        const halfW = (CONTENT_W - 10) / 2
+        notReq.forEach((cal, i) => {
+          const col = i % 2
+          if (col === 0 && y + 32 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+          const bx = MARGIN + col * (halfW + 10)
+          doc.roundedRect(bx, y, halfW, 26, 5).fill(GRAY_LIGHT)
+          doc.roundedRect(bx, y, halfW, 26, 5).stroke(GRAY_BORDER).lineWidth(0.5)
+          doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#7a7a7a')
+            .text(cal.calibration_name || '—', bx + 10, y + 9, { width: halfW - 118, lineBreak: false })
+          doc.font('Helvetica-Bold').fontSize(6).fillColor('#9ca3af')
+            .text('CHECKED — NOT REQUIRED', bx + halfW - 106, y + 10.5, { width: 100, align: 'right', lineBreak: false })
+          if (col === 1) y += 32
+        })
+        if (notReq.length % 2 === 1) y += 32
+        y += 4
+      } else {
+        notReq.forEach(cal => drawCal(cal, false))
+      }
     }
 
     // ── DOCUMENT LINKS ─────────────────────────────────────────────────────

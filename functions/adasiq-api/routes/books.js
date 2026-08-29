@@ -24,7 +24,7 @@ const CHUNK_SIZE = 30
 // Exported 2026-07-15 — the Kinetic-extract and Manual-invoice paths
 // generate the same report (Mark: "should be running for jobs created
 // with kinetic reports or manual jobs").
-export async function generateAndUploadReport(req, { job, invoices }) {
+export async function generateAndUploadReport(req, { job, invoices, ruledOut = [] }) {
   try {
     const token = await getWdToken()
 
@@ -80,7 +80,13 @@ export async function generateAndUploadReport(req, { job, invoices }) {
       const name = (li.description || li.name || '').replace(/\s*\(.*?\)\s*$/, '').trim()
       if (!name || calNames.has(name.toLowerCase())) continue
       calNames.add(name.toLowerCase())
-      finalCals.push({ name, description: li.description || name, qty: li.qty, rate: li.rate })
+      finalCals.push({
+        name, description: li.description || name, qty: li.qty, rate: li.rate,
+        // Scrub facts carried on the line item (triggers + estimate line
+        // numbers are what make the report defensible to an adjuster)
+        cal_type: li.cal_type || '', trigger: li.trigger || '',
+        line_references: li.line_references || '', justification: li.justification || '',
+      })
     }
 
     // 3. Load calibration rules and enrich each line item with justification + cal_type
@@ -90,30 +96,71 @@ export async function generateAndUploadReport(req, { job, invoices }) {
     const make = (job.make || '').toLowerCase()
     const model = (job.model || '').toLowerCase()
 
+    // Prefer a rule learned on THIS make — the rules DB is cross-brand,
+    // and a name-only match once put "Per BMW Body & Paint Training
+    // guidelines" on a Toyota Tacoma report (2026-08-29).
     function findRule(calName) {
       const lc = calName.toLowerCase()
-      return rules.find(r => {
+      const nameMatch = r => {
         const rName = r.calibration_name.toLowerCase()
         return rName === lc || rName.includes(lc) || lc.includes(rName)
-      })
+      }
+      return rules.find(r => nameMatch(r) && String(r.make || '').toLowerCase() === make)
+        || rules.find(nameMatch)
+    }
+
+    // Last line of defense: a justification citing a DIFFERENT car brand
+    // than the vehicle's make never reaches the PDF.
+    const CAR_BRANDS = ['bmw', 'toyota', 'honda', 'ford', 'subaru', 'tesla', 'hyundai', 'kia',
+      'nissan', 'chevrolet', 'gmc', 'mercedes', 'audi', 'volkswagen', 'lexus', 'acura', 'mazda',
+      'jeep', 'ram', 'dodge', 'chrysler', 'volvo', 'porsche', 'infiniti', 'cadillac', 'buick',
+      'lincoln', 'mitsubishi', 'genesis', 'rivian', 'mini']
+    function sanitizeJustification(text, calName, trigger) {
+      const t = String(text || '')
+      const wrongBrand = CAR_BRANDS.some(b =>
+        b !== make && new RegExp(`\\b${b}\\b`, 'i').test(t))
+      if (t && !wrongBrand) return t
+      if (t && wrongBrand) console.warn(`[report] dropped cross-brand justification for ${calName} (vehicle: ${make})`)
+      const makeName = job.make || 'OEM'
+      return `${calName} calibration required per ${makeName} OEM position statement and ALLDATA ADAS procedure` +
+        `${trigger ? ` following ${trigger.toLowerCase()}` : ' following collision repair'}. ` +
+        `Failure to calibrate presents a safety liability and does not meet ${makeName} OEM repair standards.`
     }
 
     // First pass — build the base calibration objects from invoice line
     // items + rule metadata (OEM justification template).
     const baseCals = finalCals.map(cal => {
       const rule = findRule(cal.name)
-      const justification = rule?.justification_template
+      const ruleJust = rule?.justification_template
         ? rule.justification_template.replace(/\{make\}/gi, job.make || 'OEM').replace(/\{model\}/gi, job.model || 'vehicle')
         : ''
+      // Scrub facts beat rule guesses — the Kinetic PDF is the source of
+      // truth for how THIS estimate triggered the calibration.
+      const trigger = cal.trigger || rule?.trigger_category?.replace(/_/g, ' ') || ''
       return {
         calibration_name: cal.description || cal.name,
         enabled: true,           // everything on the invoice is REQUIRED
-        cal_type: rule?.cal_type || '',
-        trigger: rule?.trigger_category?.replace(/_/g, ' ') || '',
-        line_references: '',
-        justification,
+        cal_type: cal.cal_type || rule?.cal_type || '',
+        trigger,
+        line_references: cal.line_references || '',
+        justification: sanitizeJustification(cal.justification || ruleJust, cal.name, trigger),
       }
     })
+
+    // Rule-out matrix (Kinetic parity, Mark 2026-08-29 "better all
+    // around"): sensors the scrub checked and cleared appear as grey
+    // NOT REQUIRED cards — proof of a complete inspection, not just
+    // what was billed.
+    const ruledOutCals = (Array.isArray(ruledOut) ? ruledOut : [])
+      .filter(c => c && (c.calibration_name || c.name))
+      .map(c => ({
+        calibration_name: c.calibration_name || c.name,
+        enabled: false,
+        cal_type: c.cal_type || '',
+        trigger: c.trigger || '',
+        line_references: c.line_references || '',
+        justification: '',
+      }))
 
     // Build invoice number string for the report filename (hoisted up
     // so the share-link label below can use it).
@@ -164,7 +211,7 @@ export async function generateAndUploadReport(req, { job, invoices }) {
       make:     job.make || '',
       model:    job.model || '',
       claim:    job.claim_number || '',
-      calibrations: enrichedCals,
+      calibrations: [...enrichedCals, ...ruledOutCals],
       document_links: [],
     })
 

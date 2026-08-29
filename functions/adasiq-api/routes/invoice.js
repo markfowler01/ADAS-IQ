@@ -179,8 +179,15 @@ router.post('/', async (req, res) => {
               description: c.calibration_name || c.name || '',
               qty: c.quantity || 1,
               rate: c.rate || 0,
+              // Scrub facts the report needs (were dropped before
+              // 2026-08-29: reports showed no triggers/line numbers)
+              cal_type: c.cal_type || '',
+              trigger: c.trigger || '',
+              line_references: c.line_references || '',
+              justification: c.justification || '',
             })),
           }],
+          ruledOut: Array.isArray(req.body.ruled_out) ? req.body.ruled_out : [],
         })
       }
     } catch (e) {

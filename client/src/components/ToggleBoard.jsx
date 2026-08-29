@@ -126,6 +126,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         model: jobData.model,
         claim: jobData.claim,
         calibrations: selected.map(({ _id, ...rest }) => rest),
+        // Sensors Kinetic checked and ruled OUT — the report's rule-out
+        // matrix is proof of a full inspection (Diagnostic/Mechanical are
+        // UI add-on rows, not real sensors).
+        ruled_out: calibrations
+          .filter(c => !c.enabled && !['Diagnostic 1', 'Mechanical'].includes(c.calibration_name))
+          .map(({ _id, ...rest }) => rest),
         pdfBase64,
         pdfFilename,
         known_folder_id: sharedFolder?.id || null,
@@ -252,6 +258,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         make: jobData.make,
         model: jobData.model,
         calibrations: selected.map(({ _id, ...rest }) => rest),
+        // Sensors Kinetic checked and ruled OUT — the report's rule-out
+        // matrix is proof of a full inspection (Diagnostic/Mechanical are
+        // UI add-on rows, not real sensors).
+        ruled_out: calibrations
+          .filter(c => !c.enabled && !['Diagnostic 1', 'Mechanical'].includes(c.calibration_name))
+          .map(({ _id, ...rest }) => rest),
         pdfBase64,
         pdfFilename,
         folder_id: sharedFolder?.id || null,
