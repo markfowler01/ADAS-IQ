@@ -256,6 +256,57 @@ app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/push', requireAuth, pushRouter)
 app.use('/api/item-map', requireAuth, itemMapRouter)
 app.use('/api/shop-quotes', requireAuth, shopQuotesRouter)
+
+// Debug (secret-gated): see Books estimate templates + pin the quote /
+// insurance template ids when the name-guess picks wrong (2026-08-29:
+// Mark's first real send went out on the insurance template).
+app.get('/debug/quote-templates', async (req, res) => {
+  if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('./services/zoho.js')
+    const token = await getAccessToken()
+    const r = await axios.get('https://www.zohoapis.com/books/v3/estimates/templates', {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+      params: { organization_id: process.env.ZOHO_ORGANIZATION_ID },
+      timeout: 15000,
+    })
+    const catalyst = (await import('zcatalyst-sdk-node')).default
+    const app2 = catalyst.initialize(req)
+    const rows = {}
+    for (const key of ['QUOTE_TEMPLATE_ID', 'quote_template_id_cache', 'INSURANCE_TEMPLATE_ID', 'insurance_template_id_cache']) {
+      const q = await app2.zcql().executeZCQLQuery(
+        `SELECT config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 1`).catch(() => [])
+      rows[key] = q?.[0]?.AppConfig?.config_value || q?.[0]?.config_value || null
+    }
+    res.json({ templates: (r.data?.templates || []).map(t => ({ id: t.template_id, name: t.template_name })), pinned: rows })
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data?.message || e.message })
+  }
+})
+
+app.post('/debug/quote-templates/pin', async (req, res) => {
+  if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
+  try {
+    const kind = String(req.query.kind || '')
+    const id = String(req.query.id || '')
+    if (!['quote', 'insurance'].includes(kind) || !id) return res.status(400).json({ error: 'kind=quote|insurance and id required' })
+    const catalyst = (await import('zcatalyst-sdk-node')).default
+    const app2 = catalyst.initialize(req)
+    const table = app2.datastore().table('AppConfig')
+    const keys = kind === 'quote'
+      ? ['QUOTE_TEMPLATE_ID', 'quote_template_id_cache']
+      : ['INSURANCE_TEMPLATE_ID', 'insurance_template_id_cache']
+    for (const key of keys) {
+      const q = await app2.zcql().executeZCQLQuery(
+        `SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`).catch(() => [])
+      const rowid = q?.[0]?.AppConfig?.ROWID || q?.[0]?.ROWID
+      if (rowid) await table.updateRow({ ROWID: rowid, config_value: id })
+      else await table.insertRow({ config_key: key, config_value: id })
+    }
+    res.json({ ok: true, kind, id })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 app.use('/api/softphone', requireAuth, softphoneRouter)
 // /digest-run inside carries its own cron-secret gate; the rest is auth'd.
 app.use('/api/schedule', (req, res, next) => {
