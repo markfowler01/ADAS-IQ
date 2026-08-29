@@ -696,8 +696,15 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
                           style={{ borderBottom: '1px solid #e5e7eb' }} />
                       )}
                       {preview.pool_items
-                        .filter(it => !swapSearch || it.name.toLowerCase().includes(swapSearch.toLowerCase()))
-                        .slice(0, 25)
+                        .filter(it => {
+                          if (!swapSearch) return it.in_pool !== false
+                          // "state farm" finds the SF- items, etc.
+                          const q = swapSearch.toLowerCase()
+                            .replace('state farm', 'sf').replace('allstate', 'as')
+                            .replace('american family', 'amfam').replace('cash', 'cp')
+                          return it.name.toLowerCase().includes(q)
+                        })
+                        .slice(0, 30)
                         .map(it => (
                         <button key={it.name}
                           onClick={() => { setSwaps(prev => ({ ...prev, [li.requested]: it.name })); setSwapOpen(null); setSwapSearch('') }}

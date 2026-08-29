@@ -1098,13 +1098,20 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
   // The insurer's tier catalog (SF - 3a, AS - 3C Complex, ...) for the
   // review modal's swap picker. Only pool items — a handful, not the
   // whole catalog.
-  // Standard/cash jobs swap within the unprefixed catalog (searchable
-  // client-side — bigger list than an insurer's tier handful).
-  const pool_items = (insurerPrefix
-    ? allItems.filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name))
-    : allItems.filter(it => !PREFIXED.test(it.name)))
-    .map(it => ({ name: it.name, rate: Number(it.rate) || 0 }))
+  // Swap list (Mark 2026-08-29): CALIBRATIONS ONLY — no keys, fobs,
+  // programming, scans, inspections, or fee lines — and the WHOLE
+  // catalog is searchable (any pool), with the job's own pool listed
+  // first so cross-schedule picks like "SF pricing on this one line"
+  // are two taps.
+  const SWAP_JUNK = /key|fob|remote|programm|diagnos|post[- ]?scan|pre[- ]?scan|inspection|identification|report|fee|charge|shipping|supplies|mileage|deposit/i
+  const inPool = it => insurerPrefix
+    ? new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name)
+    : !PREFIXED.test(it.name)
+  const swapEligible = allItems
+    .filter(it => Number(it.rate) > 0 && !SWAP_JUNK.test(it.name))
+    .map(it => ({ name: it.name, rate: Number(it.rate) || 0, in_pool: inPool(it) }))
     .sort((a, z) => a.name.localeCompare(z.name))
+  const pool_items = [...swapEligible.filter(it => it.in_pool), ...swapEligible.filter(it => !it.in_pool)]
   return {
     insurer_pool: insurerPrefix || 'standard',
     pool_items,
