@@ -181,6 +181,16 @@ export default function MobileJobCard({
 
   async function handleOpenWorkDrive(e) {
     e.stopPropagation()
+    // Team members get the INTERNAL folder link — it deep-links into the
+    // WorkDrive app where techs can upload/browse. The external share
+    // link is view-only (Mark 2026-08-30 "we can not upload pics").
+    try {
+      const r = await apiFetch(`${API_BASE}/api/jobs/${job.ROWID || job.id}/wd-folder`)
+      if (r.ok) {
+        const d = await r.json()
+        if (d.url) { window.location.href = d.url; return }
+      }
+    } catch { /* fall through to legacy links */ }
     if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       window.open(job.folder_url, '_blank', 'noopener,noreferrer')
       return

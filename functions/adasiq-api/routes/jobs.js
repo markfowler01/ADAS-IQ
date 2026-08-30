@@ -5,7 +5,7 @@ import catalyst from 'zcatalyst-sdk-node'
 import { listAllEstimates, getEstimateLineItems, getAccessToken, updateEstimateShareLink, updateEstimateSalesperson } from '../services/zoho.js'
 import { createNotification } from './notifications.js'
 import { postToCliqChannel, AA_JOBS_CHANNEL, DISPATCH_CHANNEL } from '../services/cliq.js'
-import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from '../services/workdrive.js'
+import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder } from '../services/workdrive.js'
 import { appendHistory } from '../services/history.js'
 
 const router = express.Router()
@@ -1239,57 +1239,75 @@ router.post('/:id/photos', upload.array('photos', 20), async (req, res) => {
   }
 })
 
+// Resolve (or CREATE) the job's WorkDrive folder id. Tries every RO
+// form, then shop+vehicle, then makes the folder — an upload from the
+// field must never dead-end on "folder not found" (Mark 2026-08-30).
+async function resolveJobFolder(req, job, wdToken) {
+  if (job.folder_url) {
+    const m = job.folder_url.match(/workdrive\.zoho\.com\/(?:folder|home[^ ]*?\/folders)\/([a-z0-9]+)/i)
+    if (m) return m[1]
+  }
+  const candidates = [job.invoice_number, job.quote_number, job.ro_number]
+    .filter(Boolean)
+    .flatMap(r => {
+      const full = String(r).trim()
+      const digits = full.match(/\d{4,}/)?.[0]
+      return digits && digits !== full ? [full, digits] : [full]
+    })
+  for (const ro of candidates) {
+    const found = await findFolderByRO(ro, wdToken).catch(() => null)
+    if (found?.folderId) return found.folderId
+  }
+  const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+  const byShop = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken).catch(() => null)
+  if (byShop?.folderId) return byShop.folderId
+  // Last resort: create it, same naming as the report pipeline
+  const fullRO = candidates[0] || 'Job'
+  const folderName = `${fullRO} — ${job.shop_name || ''} — ${vehicle}`.slice(0, 80)
+  const created = await createJobFolder(folderName, wdToken).catch(() => null)
+  if (created?.folderId) {
+    console.log(`[wd-folder] created folder for job ${job.id}: ${folderName}`)
+    return created.folderId
+  }
+  return null
+}
+
+// Internal WorkDrive link for the team — opens the WorkDrive APP on
+// phones (every tech has it). The external zohoexternal link is
+// view-only and stays reserved for shops/reports.
+router.get('/:id/wd-folder', async (req, res) => {
+  try {
+    const table = getTable(req)
+    const row = await table.getRow(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Job not found' })
+    const job = rowToJob(row)
+    const wdToken = await getAccessToken()
+    const folderId = await resolveJobFolder(req, job, wdToken)
+    if (!folderId) return res.status(404).json({ error: 'No WorkDrive folder for this job yet.' })
+    res.json({ ok: true, url: `https://workdrive.zoho.com/folder/${folderId}` })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // POST /api/jobs/:id/upload-photo
-// Uploads a single file to the job's WorkDrive folder (found by RO number or shop/vehicle)
+// Uploads a single file to the job's WorkDrive folder — resolves by any
+// RO form, shop+vehicle, or creates the folder. Never a dead end.
 const uploadSingle = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } }).single('file')
 router.post('/:id/upload-photo', (req, res) => {
   uploadSingle(req, res, async (err) => {
     if (err) return res.status(400).json({ error: err.message })
     if (!req.file) return res.status(400).json({ error: 'No file provided' })
-
     try {
-      const jobId = req.params.id
       const table = getTable(req)
-      const row = await table.getRow(jobId)
+      const row = await table.getRow(req.params.id)
       if (!row) return res.status(404).json({ error: 'Job not found' })
       const job = rowToJob(row)
-
-      // ── Resolve folder ─────────────────────────────────────────────────────
-      let folderId = null
-
-      if (job.folder_url) {
-        const m = job.folder_url.match(/\/folders?\/([a-z0-9]+)/i)
-        if (m) folderId = m[1]
-      }
-
-      if (!folderId) {
-        const wdToken = await getAccessToken()
-        const roNumber = job.invoice_number || job.quote_number
-        let found = null
-
-        if (roNumber) {
-          found = await findFolderByRO(roNumber, wdToken)
-        }
-        if (!found) {
-          const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
-          found = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken)
-        }
-
-        if (!found) {
-          return res.status(404).json({ error: 'Could not find WorkDrive folder for this job. Make sure the RO number matches the folder name.' })
-        }
-
-        folderId = found.folderId
-        const folderUrl = `https://workdrive.zoho.com/folder/${folderId}`
-        updateJob(req, job.id, { ...job, folder_url: folderUrl }).catch(e =>
-          console.warn('[upload-photo] could not persist folder_url:', e.message)
-        )
-      }
-
       const wdToken = await getAccessToken()
-      const filename = req.file.originalname || `upload-${Date.now()}`
+      const folderId = await resolveJobFolder(req, job, wdToken)
+      if (!folderId) return res.status(500).json({ error: 'Could not find or create a WorkDrive folder — check the WorkDrive connection.' })
+      const filename = req.file.originalname || `photo-${Date.now()}.jpg`
       await uploadFileToFolder(folderId, filename, req.file.buffer, wdToken, req.file.mimetype)
-
       res.json({ ok: true, filename })
     } catch (e) {
       console.error('[upload-photo]', e.message)

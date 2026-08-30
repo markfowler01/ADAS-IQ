@@ -1629,7 +1629,15 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   }
 
   async function handleOpenWorkDrive(job) {
-    // Public link — open immediately, no API call needed
+    // Team gets the INTERNAL folder (uploadable in WorkDrive web/app);
+    // the external share link is view-only and stays for shops.
+    try {
+      const r = await apiFetch(`${API_BASE}/api/jobs/${job.ROWID || job.id}/wd-folder`)
+      if (r.ok) {
+        const d = await r.json()
+        if (d.url) { window.open(d.url, '_blank', 'noopener,noreferrer'); return }
+      }
+    } catch { /* fall through */ }
     if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       window.open(job.folder_url, '_blank', 'noopener,noreferrer')
       return
