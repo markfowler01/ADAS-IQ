@@ -550,7 +550,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
                 )
               }
               return <CalibrationRow key={cal._id} cal={cal} onToggle={() => toggleCal(cal._id)}
-                price={rowPrices ? rowPrices[String(cal.calibration_name || '').toLowerCase()] : null} />
+                price={rowPrices ? rowPrices[String(cal.calibration_name || '').toLowerCase()] : null}
+                onField={(f, v) => updateCalField(cal._id, f, v)}
+                vehicle={{ year: jobData.year, make: jobData.make, model: jobData.model }} />
             })}
 
             {showManualForm ? (

@@ -1,7 +1,33 @@
+import { useState } from 'react'
+import { API_BASE, apiFetch } from '../utils/api.js'
+
 const ORANGE = '#CD4419'
 
-export default function CalibrationRow({ cal, onToggle, price }) {
+export default function CalibrationRow({ cal, onToggle, price, onField, vehicle }) {
   const { calibration_name, cal_type, trigger, line_references, justification, enabled } = cal
+  const [editOpen, setEditOpen] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
+
+  async function aiRewrite(e) {
+    e.stopPropagation()
+    setAiBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/extract/rewrite-justification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          calibration_name,
+          year: vehicle?.year, make: vehicle?.make, model: vehicle?.model,
+          trigger: cal.trigger || '',
+          line_references: cal.line_references || '',
+        }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      onField && onField('justification', d.justification)
+    } catch (err) { alert(err.message) }
+    finally { setAiBusy(false) }
+  }
 
   return (
     <div
@@ -55,6 +81,48 @@ export default function CalibrationRow({ cal, onToggle, price }) {
             >
               {justification}
             </p>
+          )}
+
+          {/* Fix-up panel (Mark 2026-08-30): Kinetic missed this one —
+              set the estimate lines it ties to, then let AI write the
+              justification before it hits the report + invoice. */}
+          {enabled && onField && (
+            <div className="mt-2" onClick={e => e.stopPropagation()}>
+              {!editOpen ? (
+                <button onClick={e => { e.stopPropagation(); setEditOpen(true) }}
+                  className="text-[10px] font-bold px-2 py-1 rounded-lg"
+                  style={{ backgroundColor: '#f5f3f0', color: '#666' }}>
+                  ✎ lines / justification
+                </button>
+              ) : (
+                <div className="rounded-xl p-2.5" style={{ backgroundColor: '#faf8f6', border: '1px solid #eee' }}>
+                  <div className="flex gap-2 mb-2">
+                    <div className="flex-1">
+                      <label className="block text-[9px] font-bold mb-0.5" style={{ color: '#999' }}>ESTIMATE LINES</label>
+                      <input value={cal.line_references || ''} onChange={e => onField('line_references', e.target.value)}
+                        placeholder="e.g. 2, 8"
+                        className="w-full text-xs px-2 py-1.5 rounded-lg" style={{ border: '1px solid #ddd' }} />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-[9px] font-bold mb-0.5" style={{ color: '#999' }}>TRIGGER / OPERATION</label>
+                      <input value={cal.trigger || ''} onChange={e => onField('trigger', e.target.value)}
+                        placeholder="e.g. Bumper Removal -- Front"
+                        className="w-full text-xs px-2 py-1.5 rounded-lg" style={{ border: '1px solid #ddd' }} />
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button onClick={aiRewrite} disabled={aiBusy}
+                      className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white"
+                      style={{ backgroundColor: '#7c3aed', opacity: aiBusy ? 0.6 : 1 }}>
+                      {aiBusy ? '🪄 Writing…' : '🪄 AI rewrite justification'}
+                    </button>
+                    <button onClick={e => { e.stopPropagation(); setEditOpen(false) }}
+                      className="text-[11px] font-semibold px-3 py-1.5 rounded-lg"
+                      style={{ backgroundColor: '#eee', color: '#666' }}>Done</button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
 

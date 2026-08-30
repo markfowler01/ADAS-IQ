@@ -108,6 +108,40 @@ const DEMO_PAYLOAD = {
   ],
 }
 
+// AI justification rewrite (Mark 2026-08-30): when Kinetic missed a
+// calibration and Kat toggles/adds it with the estimate line numbers,
+// one tap writes a clean house-format justification for the report +
+// invoice description.
+router.post('/rewrite-justification', async (req, res) => {
+  try {
+    const { calibration_name, year, make, model, trigger, line_references } = req.body || {}
+    if (!calibration_name) return res.status(400).json({ error: 'calibration_name required' })
+    const Anthropic = (await import('@anthropic-ai/sdk')).default
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 20000, maxRetries: 1 })
+    const vehicle = [year, make, model].filter(Boolean).join(' ') || 'this vehicle'
+    const basis = line_references
+      ? `triggered by estimate line${String(line_references).includes(',') ? 's' : ''} ${line_references}${trigger ? ` (${trigger})` : ''}`
+      : trigger ? `following ${trigger}` : 'following collision repair'
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 300,
+      messages: [{ role: 'user', content:
+        `Write EXACTLY one justification paragraph (2-3 sentences) for an insurance-facing ADAS report. ` +
+        `Calibration: ${calibration_name}. Vehicle: ${vehicle}. Basis: ${basis}.\n` +
+        `Required format: "${calibration_name} calibration required per ${make || 'OEM'} OEM position statement and ALLDATA ADAS procedure, ${basis}. ` +
+        `[One sentence: which repair operations disturb this sensor and why recalibration is needed.] ` +
+        `Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} OEM repair standards."\n` +
+        `Never say "not required". No preamble — return only the paragraph.` }],
+    })
+    const text = (msg.content || []).map(b => b.text || '').join('').trim()
+    if (!text) throw new Error('empty response')
+    res.json({ ok: true, justification: text })
+  } catch (e) {
+    console.error('[rewrite-justification]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 router.post('/', (req, res, next) => {
   upload.single('pdf')(req, res, (err) => {
     if (err) {
