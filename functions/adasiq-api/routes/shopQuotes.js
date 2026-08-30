@@ -290,6 +290,33 @@ router.get('/', async (req, res) => {
   }
 })
 
+// Estimate totals for the kanban cards (Mark 2026-08-30: "add that to
+// all the kanban cards") — one Books sweep, cached 1h so the board
+// doesn't hammer the API.
+router.get('/estimate-totals', async (req, res) => {
+  try {
+    if (req.user?.demo) return res.json({})
+    const app = catalyst.initialize(req)
+    const segment = app.cache().segment()
+    try {
+      const cached = await segment.getValue('estimate_totals_v1')
+      if (cached) return res.json(JSON.parse(cached))
+    } catch { /* miss */ }
+    const { listAllEstimates } = await import('../services/zoho.js')
+    const estimates = await listAllEstimates()
+    const out = {}
+    for (const e of estimates) {
+      if (e.estimate_id && e.total > 0) out[e.estimate_id] = e.total
+    }
+    try {
+      const str = JSON.stringify(out)
+      try { await segment.update('estimate_totals_v1', str) }
+      catch { await segment.put('estimate_totals_v1', str, 1) }
+    } catch { /* cache is a bonus */ }
+    res.json(out)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // Adopt an existing job card into Quotes Out (Mark 2026-08-30: "we have
 // some other quotes in the job board"): builds the quote record from the
 // job's Books estimate and flips the card to 'quoted'.

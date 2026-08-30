@@ -3,8 +3,28 @@
 // 2026-07-08). Handlers are all optional — pages pass only what they
 // support.
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+
+// Estimate totals for card price tags (Mark 2026-08-30: totals on all
+// kanban + live view cards). Module-cached: one fetch per session no
+// matter how many cards render.
+let _totalsCache = null
+let _totalsPromise = null
+export function useEstimateTotals() {
+  const [totals, setTotals] = useState(_totalsCache || {})
+  useEffect(() => {
+    if (_totalsCache) return
+    if (!_totalsPromise) {
+      _totalsPromise = apiFetch(`${API_BASE}/api/shop-quotes/estimate-totals`)
+        .then(r => r.json())
+        .then(d => { if (d && typeof d === 'object' && !d.error) _totalsCache = d; return _totalsCache || {} })
+        .catch(() => ({}))
+    }
+    _totalsPromise.then(d => setTotals(d || {}))
+  }, [])
+  return totals
+}
 
 const ORANGE = '#CD4419'
 
@@ -152,8 +172,11 @@ export default function MobileJobCard({
   customerNotes,
   billableQuote,
   onBillFromQuote,
+  estimateTotal,
 }) {
   const [finding, setFinding] = useState(false)
+  const totalsMap = useEstimateTotals()
+  const cardTotal = estimateTotal ?? (job.zoho_estimate_id ? totalsMap[job.zoho_estimate_id] : null)
   const noteItems = parseNoteItems(customerNotes?.[normShopName(job.shop_name)])
 
   async function handleOpenWorkDrive(e) {
@@ -232,6 +255,12 @@ export default function MobileJobCard({
         <p className="text-xs font-medium mb-1" style={{ color: '#6b7280' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
           {job.invoice_number || job.quote_number}
+        </p>
+      )}
+
+      {cardTotal > 0 && (
+        <p className="text-sm font-extrabold mb-1" style={{ color: '#1a1a1a' }}>
+          ${Number(cardTotal).toFixed(2)}
         </p>
       )}
 

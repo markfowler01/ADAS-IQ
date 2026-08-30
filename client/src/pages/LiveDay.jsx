@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
-import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox } from '../components/MobileJobCard.jsx'
+import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstimateTotals } from '../components/MobileJobCard.jsx'
 import JobRequestModal from '../components/JobRequestModal.jsx'
 import QuoteRequestModal from '../components/QuoteRequestModal.jsx'
 
@@ -341,8 +341,11 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
             style={{ color, fontFamily: 'IBM Plex Mono, monospace' }}>
             Current
           </div>
-          <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>
-            {current.shop_name || 'Unknown'}
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>
+              {current.shop_name || 'Unknown'}
+            </div>
+            <CurrentTotal job={current} />
           </div>
           <div className="text-xs mt-0.5 mb-2" style={{ color: '#555' }}>
             {current.vehicle || ''}
@@ -543,6 +546,13 @@ function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
       </div>
     </div>
   )
+}
+
+function CurrentTotal({ job }) {
+  const totals = useEstimateTotals()
+  const t = job?.zoho_estimate_id ? totals[job.zoho_estimate_id] : null
+  if (!(t > 0)) return null
+  return <span className="text-sm font-extrabold flex-shrink-0" style={{ color: '#1a1a1a' }}>${Number(t).toFixed(2)}</span>
 }
 
 export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {

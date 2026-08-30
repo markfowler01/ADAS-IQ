@@ -598,7 +598,7 @@ function QuoteJacket({ q, job, readOnly, busy, onAction, children }) {
   )
 }
 
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote, estimateTotal }) {
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
@@ -838,6 +838,11 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             {job.invoiced ? '✓ Invoiced' : 'Invoice'}
           </button>
           <UploadButton job={job} />
+          {estimateTotal > 0 && (
+            <span className="text-sm font-extrabold ml-auto" style={{ color: '#1a1a1a' }}>
+              ${Number(estimateTotal).toFixed(2)}
+            </span>
+          )}
         </div>
       </div>
 
@@ -960,7 +965,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote, estimateTotals }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -1019,6 +1024,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             job={job}
             billableQuote={billableQuotes ? billableQuotes[job.zoho_estimate_id] : null}
             onBillFromQuote={onBillFromQuote}
+            estimateTotal={estimateTotals ? estimateTotals[job.zoho_estimate_id] : null}
             onEdit={onEdit}
             onDragStart={onDragStart}
             onComplete={onComplete}
@@ -1065,9 +1071,13 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [quoteBilling, setQuoteBilling] = useState(null)     // {q, preview} modal
   const [quoteBillBusy, setQuoteBillBusy] = useState(false)
 
+  const [estimateTotals, setEstimateTotals] = useState({})
   useEffect(() => {
     apiFetch(`${API_BASE}/api/shop-quotes/billable`).then(r => r.json())
       .then(d => { if (d && typeof d === 'object' && !d.error) setBillableQuotes(d) })
+      .catch(() => {})
+    apiFetch(`${API_BASE}/api/shop-quotes/estimate-totals`).then(r => r.json())
+      .then(d => { if (d && typeof d === 'object' && !d.error) setEstimateTotals(d) })
       .catch(() => {})
   }, [])
 
@@ -2015,6 +2025,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                       job={job}
                       billableQuote={billableQuotes[job.zoho_estimate_id]}
                       onBillFromQuote={handleBillFromQuote}
+                      estimateTotal={estimateTotals[job.zoho_estimate_id]}
                       onEdit={openEdit}
                       onMoveToReadyInvoice={handleMoveToReadyInvoice}
                       onMoveToPendingParts={handleMoveToPendingParts}
@@ -2076,6 +2087,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   column={col}
                   billableQuotes={billableQuotes}
                   onBillFromQuote={handleBillFromQuote}
+                  estimateTotals={estimateTotals}
                   jobs={jobsByStatus[col.id] || []}
                   onEdit={openEdit}
                   onNewJob={openNewJob}
