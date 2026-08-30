@@ -290,6 +290,59 @@ router.get('/', async (req, res) => {
   }
 })
 
+// Adopt an existing job card into Quotes Out (Mark 2026-08-30: "we have
+// some other quotes in the job board"): builds the quote record from the
+// job's Books estimate and flips the card to 'quoted'.
+router.post('/adopt', async (req, res) => {
+  try {
+    const jobId = String(req.body?.job_id || '')
+    if (!jobId) return res.status(400).json({ error: 'job_id required' })
+    const { readJobsPublic, updateJobPublic } = await import('./jobs.js')
+    const jobs = await readJobsPublic(req)
+    const job = (jobs || []).find(j => String(j.id) === jobId)
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+    if (!job.zoho_estimate_id) {
+      return res.status(400).json({ error: 'This card has no Books estimate linked — create the estimate first, then move it to Quotes Out.' })
+    }
+    const records = await readQuoteRecords(req)
+    let q = records.find(r => String(r.estimate_id) === String(job.zoho_estimate_id))
+    const now = new Date().toISOString()
+    if (q) {
+      q.status = 'quoted'
+      q.updated_at = now
+      if (!q.sent_at) q.sent_at = now
+    } else {
+      const token = await getAccessToken()
+      const est = await getEstimate(token, job.zoho_estimate_id)
+      if (!est) return res.status(404).json({ error: 'Linked estimate no longer exists in Books' })
+      q = {
+        estimate_id: String(job.zoho_estimate_id),
+        estimate_number: est.estimate_number || '',
+        customer_id: est.customer_id || '',
+        shop: est.customer_name || job.shop_name || '',
+        vehicle: job.vehicle || '',
+        vin: job.vin || '',
+        ro_number: job.quote_number || job.ro_number || '',
+        claim: job.claim_number || '',
+        insurer: job.insurer || '',
+        cal_count: est.line_items?.length ?? 0,
+        total: Number(est.total) || 0,
+        salesperson: est.salesperson_name || job.technician || '',
+        status: 'quoted',
+        sent_to: [], sent_at: now, approved_at: '', dead_at: '',
+        sent_by: req.user?.email || req.user?.name || '',
+        created_at: now, updated_at: now,
+      }
+    }
+    await writeQuoteRecord(req, q)
+    await updateJobPublic(req, job.id, { ...job, status: 'quoted' })
+    res.json({ ok: true, quote: q })
+  } catch (e) {
+    console.error('[shop-quotes adopt]', e.response?.data?.message || e.message)
+    res.status(500).json({ error: e.response?.data?.message || e.message })
+  }
+})
+
 // Approved-but-unbilled quotes, keyed by estimate — the job card's
 // "Bill from Quote" button shows for these.
 router.get('/billable', async (req, res) => {

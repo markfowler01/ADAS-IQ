@@ -447,6 +447,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
               {COLUMNS.map(col => (
                 <option key={col.id} value={col.id}>{col.label}</option>
               ))}
+              <option value="quoted">📤 Quotes Out (waiting on shop)</option>
             </select>
           </div>
 
@@ -1314,6 +1315,21 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // Save (create or update)
   async function handleSave(form, originalJob) {
     const basePayload = formToJobData(form)
+    // Moving an existing card into Quotes Out: adopt builds the quote
+    // record from its Books estimate, then flips the card.
+    if (basePayload.status === 'quoted' && originalJob?.id && originalJob.status !== 'quoted') {
+      const r = await apiFetch(`${API_BASE}/api/shop-quotes/adopt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: originalJob.id }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      showToast('📤 Moved to Quotes Out')
+      reloadQuotes()
+      fetchJobs()
+      return
+    }
     // PTO soft block (Mark 2026-08-15): warn if this save books a tech
     // on an approved day off — always overridable.
     const schedDate = String(basePayload.scheduled_date || '').slice(0, 10)
