@@ -1346,6 +1346,36 @@ router.post('/:id/refresh-share-link', async (req, res) => {
 })
 
 // ─── Exports for webhook.js ───────────────────────────────────────────────────
+// Route info for Head-to-the-Job: the REAL street address. The Books
+// contacts LIST omits addresses entirely (documented in zoho.js) — the
+// first version searched Maps by shop name and navigated a tech toward
+// Montana (Mark, 2026-08-30). Full-contact fetch or bust.
+router.get('/:id/route-info', async (req, res) => {
+  try {
+    const jobs = await getAllJobs(req)
+    const job = jobs.find(j => String(j.id) === String(req.params.id))
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+    let address = '', matched = '', phoneOnFile = false
+    try {
+      const { listCustomers, getCustomerFull } = await import('../services/zoho.js')
+      const customers = await listCustomers()
+      const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const target = norm(job.shop_name)
+      const hit = customers.find(c => norm(c.contact_name) === target || norm(c.company_name) === target)
+        || customers.find(c => target && (norm(c.contact_name).includes(target) || target.includes(norm(c.contact_name))))
+      if (hit) {
+        matched = hit.contact_name
+        phoneOnFile = !!(hit.phone || hit.mobile)
+        const full = await getCustomerFull(hit.contact_id)
+        const a = full?.billing_address || full?.shipping_address || {}
+        address = [a.address, a.street2, a.city, a.state, a.zip].filter(Boolean).join(', ')
+        if (!phoneOnFile) phoneOnFile = !!(full?.phone || full?.mobile)
+      }
+    } catch (e) { console.warn('[route-info] lookup failed:', e.message) }
+    res.json({ ok: true, shop_matched: matched, address, phone_on_file: phoneOnFile })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // ── Head to the Job (Mark 2026-08-30) ──────────────────────────────────
 // One tap on the tech's Live view: looks up the shop's Books contact
 // for address + phone, texts the shop that the tech is rolling, pings
@@ -1360,10 +1390,14 @@ router.post('/:id/enroute', async (req, res) => {
     const tech = req.body?.technician || job.technician || 'Your technician'
     const ro = job.quote_number || job.ro_number || ''
 
-    // Shop lookup in Books (addresses + phones live there)
+    const etaMin = Number(req.body?.eta_minutes) > 0 && Number(req.body?.eta_minutes) < 600
+      ? Math.round(Number(req.body.eta_minutes)) : null
+
+    // Shop lookup in Books — full contact (the list omits phone-less rows
+    // and ALL addresses).
     let address = '', phone = '', matched = ''
     try {
-      const { listCustomers } = await import('../services/zoho.js')
+      const { listCustomers, getCustomerFull } = await import('../services/zoho.js')
       const customers = await listCustomers()
       const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '')
       const target = norm(job.shop_name)
@@ -1371,9 +1405,13 @@ router.post('/:id/enroute', async (req, res) => {
         || customers.find(c => target && (norm(c.contact_name).includes(target) || target.includes(norm(c.contact_name))))
       if (hit) {
         matched = hit.contact_name
-        const a = hit.billing_address || {}
-        address = [a.address, a.street2, a.city, a.state, a.zip].filter(Boolean).join(', ')
         phone = hit.phone || hit.mobile || ''
+        const full = await getCustomerFull(hit.contact_id).catch(() => null)
+        if (full) {
+          const a = full.billing_address || full.shipping_address || {}
+          address = [a.address, a.street2, a.city, a.state, a.zip].filter(Boolean).join(', ')
+          if (!phone) phone = full.phone || full.mobile || ''
+        }
       }
     } catch (e) { console.warn('[enroute] customer lookup failed:', e.message) }
 
@@ -1388,7 +1426,7 @@ router.post('/:id/enroute', async (req, res) => {
         if (to) {
           await sendTwilioSMS({
             to,
-            body: `Absolute ADAS: ${tech} is on the way for the ${vehicle || 'vehicle'} calibration${ro ? ` (RO ${ro})` : ''}.`,
+            body: `Absolute ADAS: ${tech} is on the way for the ${vehicle || 'vehicle'} calibration${ro ? ` (RO ${ro})` : ''}.${etaMin ? ` About ${etaMin} minutes out.` : ''}`,
             from: 'tollfree',
             cfg,
           })
@@ -1401,7 +1439,7 @@ router.post('/:id/enroute', async (req, res) => {
     try {
       const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
       await postToCliqChannel(DISPATCH_CHANNEL,
-        `🚗 *${tech} en route* · ${job.shop_name || 'Shop'} · ${vehicle}${ro ? ` · RO ${ro}` : ''}${texted ? ' · shop texted' : ' · ⚠ no shop phone on file'}`)
+        `🚗 *${tech} en route* · ${job.shop_name || 'Shop'} · ${vehicle}${ro ? ` · RO ${ro}` : ''}${etaMin ? ` · ~${etaMin} min out` : ''}${texted ? ' · shop texted' : ' · ⚠ no shop phone on file'}`)
     } catch { /* non-fatal */ }
 
     res.json({

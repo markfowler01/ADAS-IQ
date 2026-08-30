@@ -624,24 +624,70 @@ function HeadToJobButton({ job, techName }) {
     go(pref)
   }
 
+  function myLocation() {
+    return new Promise(resolve => {
+      if (!navigator.geolocation) return resolve(null)
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 6000 }
+      )
+    })
+  }
+
   async function go(pref = mapsPref) {
     // First tap on this device: ask which maps app (remembered after).
     if (!pref) { setChoosing(true); return }
     setBusy(true)
     try {
+      // 1. Real street address from Books (full contact — the list API
+      //    has no addresses; a bare name search once navigated toward
+      //    Montana).
+      const infoR = await apiFetch(`${API_BASE}/api/jobs/${job.id}/route-info`)
+      const info = await infoR.json()
+      if (!infoR.ok) throw new Error(info.error || `Error ${infoR.status}`)
+
+      // 2. Geocode to exact coordinates + drive-time ETA via Mapbox,
+      //    biased to the tech's own position.
+      const mbToken = import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN
+      const loc = await myLocation()
+      const rawQuery = info.address || `${job.shop_name || ''} auto body, WA`
+      let dest = null
+      let eta = null
+      if (mbToken) {
+        try {
+          const prox = loc ? `&proximity=${loc.lng},${loc.lat}` : ''
+          const g = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(rawQuery)}.json?access_token=${mbToken}&limit=1&country=US${prox}`).then(x => x.json())
+          const f = g?.features?.[0]
+          if (f?.center) dest = { lng: f.center[0], lat: f.center[1], label: f.place_name || rawQuery }
+          if (dest && loc) {
+            const dr = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${loc.lng},${loc.lat};${dest.lng},${dest.lat}?access_token=${mbToken}&overview=false`).then(x => x.json())
+            const sec = dr?.routes?.[0]?.duration
+            if (sec > 0) eta = Math.max(1, Math.round(sec / 60))
+          }
+        } catch { /* maps still opens without ETA */ }
+      }
+
+      // 3. Text the shop (with ETA when we have one) + Cliq ping.
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/enroute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ technician: techName || job.technician || '' }),
+        body: JSON.stringify({ technician: techName || job.technician || '', eta_minutes: eta }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
-      const q = encodeURIComponent(d.maps_query || job.shop_name || '')
+
+      // 4. Navigate — exact coordinates when geocoded, biased search
+      //    otherwise.
+      const q = dest ? `${dest.lat},${dest.lng}` : encodeURIComponent(rawQuery)
       const url = pref === 'apple'
         ? `https://maps.apple.com/?daddr=${q}&dirflg=d`
         : `https://www.google.com/maps/dir/?api=1&destination=${q}`
       window.open(url, '_blank', 'noopener,noreferrer')
-      setDone(d.texted ? '✓ Shop texted — drive safe' : '✓ Navigation opened (no shop phone on file — give them a call)')
+      const bits = []
+      bits.push(d.texted ? `✓ Shop texted${eta ? ` — about ${eta} min out` : ''}` : '✓ Navigation opened (no shop phone on file — give them a call)')
+      if (!info.address) bits.push('⚠ no street address in Books — verify the destination')
+      setDone(bits.join(' · '))
     } catch (e) { setDone(e.message) }
     finally { setBusy(false) }
   }
