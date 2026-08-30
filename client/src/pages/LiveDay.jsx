@@ -354,6 +354,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
               : current.time_window_start ? ` · ETA ${current.time_window_start}` : ''}
           </div>
           <CustomerNoteBox items={parseNoteItems(customerNotes?.[normShopName(current.shop_name)])} />
+          <HeadToJobButton job={current} techName={tech.name} />
           {/* Ready to Invoice — flips job status, which moves it to the
               Ready to Invoice column on the Kanban and posts to #aajobs +
               #Dispatch (Cliq fan-out lives in routes/jobs.js). */}
@@ -544,6 +545,44 @@ function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
           </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+// Head to the Job (Mark 2026-08-30): opens turn-by-turn to the shop and
+// texts them the tech is rolling. Apple Maps on iPhone, Google elsewhere.
+function HeadToJobButton({ job, techName }) {
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState('')
+  if (!job?.id) return null
+  async function go() {
+    setBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/enroute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ technician: techName || job.technician || '' }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      const q = encodeURIComponent(d.maps_query || job.shop_name || '')
+      const isApple = /iPhone|iPad|Macintosh/.test(navigator.userAgent)
+      const url = isApple
+        ? `https://maps.apple.com/?daddr=${q}&dirflg=d`
+        : `https://www.google.com/maps/dir/?api=1&destination=${q}`
+      window.open(url, '_blank', 'noopener,noreferrer')
+      setDone(d.texted ? '✓ Shop texted — drive safe' : '✓ Navigation opened (no shop phone on file — give them a call)')
+    } catch (e) { setDone(e.message) }
+    finally { setBusy(false) }
+  }
+  return (
+    <div className="mb-2">
+      <button onClick={go} disabled={busy}
+        className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 font-bold text-sm text-white"
+        style={{ backgroundColor: '#1a1a1a', opacity: busy ? 0.6 : 1 }}>
+        🧭 {busy ? 'Getting directions…' : 'Head to the Job'}
+      </button>
+      {done && <p className="text-[11px] font-semibold text-center mt-1" style={{ color: '#555' }}>{done}</p>}
     </div>
   )
 }

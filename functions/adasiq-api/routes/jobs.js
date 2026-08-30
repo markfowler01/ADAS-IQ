@@ -1346,5 +1346,76 @@ router.post('/:id/refresh-share-link', async (req, res) => {
 })
 
 // ─── Exports for webhook.js ───────────────────────────────────────────────────
+// ── Head to the Job (Mark 2026-08-30) ──────────────────────────────────
+// One tap on the tech's Live view: looks up the shop's Books contact
+// for address + phone, texts the shop that the tech is rolling, pings
+// #dispatch, and hands the client a maps destination.
+router.post('/:id/enroute', async (req, res) => {
+  try {
+    const jobs = await getAllJobs(req)
+    const job = jobs.find(j => String(j.id) === String(req.params.id))
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+
+    const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+    const tech = req.body?.technician || job.technician || 'Your technician'
+    const ro = job.quote_number || job.ro_number || ''
+
+    // Shop lookup in Books (addresses + phones live there)
+    let address = '', phone = '', matched = ''
+    try {
+      const { listCustomers } = await import('../services/zoho.js')
+      const customers = await listCustomers()
+      const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const target = norm(job.shop_name)
+      const hit = customers.find(c => norm(c.contact_name) === target || norm(c.company_name) === target)
+        || customers.find(c => target && (norm(c.contact_name).includes(target) || target.includes(norm(c.contact_name))))
+      if (hit) {
+        matched = hit.contact_name
+        const a = hit.billing_address || {}
+        address = [a.address, a.street2, a.city, a.state, a.zip].filter(Boolean).join(', ')
+        phone = hit.phone || hit.mobile || ''
+      }
+    } catch (e) { console.warn('[enroute] customer lookup failed:', e.message) }
+
+    // Text the shop — customer-facing: plain, no exclamation points.
+    let texted = false
+    if (phone) {
+      try {
+        const { sendTwilioSMS, normalizePhoneUS } = await import('../services/twilio.js')
+        const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+        const cfg = await resolvePhoneConfig(req)
+        const to = normalizePhoneUS(phone)
+        if (to) {
+          await sendTwilioSMS({
+            to,
+            body: `Absolute ADAS: ${tech} is on the way for the ${vehicle || 'vehicle'} calibration${ro ? ` (RO ${ro})` : ''}.`,
+            from: 'tollfree',
+            cfg,
+          })
+          texted = true
+        }
+      } catch (e) { console.warn('[enroute] SMS failed (non-fatal):', e.message) }
+    }
+
+    // Dispatch visibility
+    try {
+      const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+      await postToCliqChannel(DISPATCH_CHANNEL,
+        `🚗 *${tech} en route* · ${job.shop_name || 'Shop'} · ${vehicle}${ro ? ` · RO ${ro}` : ''}${texted ? ' · shop texted' : ' · ⚠ no shop phone on file'}`)
+    } catch { /* non-fatal */ }
+
+    res.json({
+      ok: true,
+      texted,
+      shop_matched: matched,
+      address,
+      maps_query: address || job.shop_name || '',
+    })
+  } catch (e) {
+    console.error('[enroute]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 export { getAllJobs as readJobsPublic, updateJob as updateJobPublic, deleteJob as deleteJobPublic, insertJob as insertJobPublic }
 export default router
