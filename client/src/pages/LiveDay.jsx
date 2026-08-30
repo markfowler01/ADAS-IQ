@@ -611,8 +611,22 @@ function TimeClockChip({ user }) {
 function HeadToJobButton({ job, techName }) {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState('')
+  const [choosing, setChoosing] = useState(false)
+  const [mapsPref, setMapsPref] = useState(() => {
+    try { return localStorage.getItem('aa_maps_pref') || '' } catch { return '' }
+  })
   if (!job?.id) return null
-  async function go() {
+
+  function savePref(pref) {
+    try { localStorage.setItem('aa_maps_pref', pref) } catch { /* session-only */ }
+    setMapsPref(pref)
+    setChoosing(false)
+    go(pref)
+  }
+
+  async function go(pref = mapsPref) {
+    // First tap on this device: ask which maps app (remembered after).
+    if (!pref) { setChoosing(true); return }
     setBusy(true)
     try {
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/enroute`, {
@@ -623,8 +637,7 @@ function HeadToJobButton({ job, techName }) {
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
       const q = encodeURIComponent(d.maps_query || job.shop_name || '')
-      const isApple = /iPhone|iPad|Macintosh/.test(navigator.userAgent)
-      const url = isApple
+      const url = pref === 'apple'
         ? `https://maps.apple.com/?daddr=${q}&dirflg=d`
         : `https://www.google.com/maps/dir/?api=1&destination=${q}`
       window.open(url, '_blank', 'noopener,noreferrer')
@@ -632,14 +645,33 @@ function HeadToJobButton({ job, techName }) {
     } catch (e) { setDone(e.message) }
     finally { setBusy(false) }
   }
+
   return (
     <div className="mb-2">
-      <button onClick={go} disabled={busy}
-        className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 font-bold text-sm text-white"
-        style={{ backgroundColor: '#1a1a1a', opacity: busy ? 0.6 : 1 }}>
-        🧭 {busy ? 'Getting directions…' : 'Head to the Job'}
-      </button>
+      {choosing ? (
+        <div className="rounded-xl p-2.5" style={{ backgroundColor: '#1a1a1a' }}>
+          <p className="text-[11px] font-bold text-center mb-1.5" style={{ color: 'white' }}>Which maps app? (remembered on this phone)</p>
+          <div className="flex gap-1.5">
+            <button onClick={() => savePref('apple')}
+              className="flex-1 py-2 rounded-lg text-sm font-bold" style={{ backgroundColor: 'white', color: '#1a1a1a' }}> Apple Maps</button>
+            <button onClick={() => savePref('google')}
+              className="flex-1 py-2 rounded-lg text-sm font-bold" style={{ backgroundColor: '#4285F4', color: 'white' }}>G Google Maps</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => go()} disabled={busy}
+          className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 font-bold text-sm text-white"
+          style={{ backgroundColor: '#1a1a1a', opacity: busy ? 0.6 : 1 }}>
+          🧭 {busy ? 'Getting directions…' : 'Head to the Job'}
+        </button>
+      )}
       {done && <p className="text-[11px] font-semibold text-center mt-1" style={{ color: '#555' }}>{done}</p>}
+      {!choosing && mapsPref && (
+        <p className="text-[10px] text-center mt-0.5" style={{ color: '#aaa' }}>
+          {mapsPref === 'apple' ? ' Apple Maps' : 'G Google Maps'} ·{' '}
+          <button className="underline" onClick={() => { setChoosing(true) }}>switch</button>
+        </p>
+      )}
     </div>
   )
 }
