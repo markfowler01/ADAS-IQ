@@ -674,3 +674,54 @@ export async function flagRemoteClockIn(req, entry) {
   await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
     `📍 *Clock-in location check* — ${entry.user_name || entry.user_id} punched in about ${Math.round(miles)} miles from the shop (flag radius ${radius} mi).`)
 }
+
+// ── Nightly time clock backup (Mark 2026-08-30: "I want the time clock
+// backed up this is very important") ────────────────────────────────────
+// Every evening the full punch history goes to Mark's email as JSON +
+// CSV attachments — an off-site copy that survives anything happening
+// to Catalyst. Rides the postscan hourly, 8-10pm PT window, once a day.
+export async function maybeBackupTimeclock(req) {
+  const hourNow = ptHourNow()
+  if (hourNow < 20 || hourNow > 22) return { fired: false, reason: `outside 8-10pm window (hour=${hourNow})` }
+  const today = todayPT()
+  const app = catalyst.initialize(req)
+  const stampKey = `tc_backup:${today}`
+  const r0 = await getConfigRowByKey(app, stampKey)
+  if (r0?.config_value) return { fired: false, reason: 'already backed up today' }
+
+  const { readEntriesPublic } = await import('../routes/timeclock.js')
+  const entries = await readEntriesPublic(req)
+
+  const csvRows = [['user', 'email', 'clock_in', 'clock_out', 'total_minutes', 'auto_punched', 'auto_closed', 'acknowledged', 'reported', 'notes']]
+  for (const e of entries) {
+    csvRows.push([
+      e.user_name || '', e.user_id || '', e.clock_in || '', e.clock_out || '',
+      e.total_minutes ?? '', e.auto_punched ? 'yes' : '', e.auto_closed ? 'yes' : '',
+      e.acknowledged ? 'yes' : '', e.reported ? 'yes' : '',
+      String(e.notes || '').replace(/\r?\n/g, ' '),
+    ])
+  }
+  const csv = csvRows.map(r => r.map(v => /[",]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n')
+
+  let emailed = false
+  try {
+    const { sendBroadcast, resendConfigured } = await import('./brewResend.js')
+    if (resendConfigured()) {
+      await sendBroadcast({
+        recipients: ['mark@absoluteadas.com'],
+        subject: `Time clock backup — ${today} (${entries.length} entries)`,
+        text: `Nightly off-site backup of the Absolute ADAS time clock.\n${entries.length} entries attached as JSON (restore format) and CSV (readable).\nKeep a few of these — any one email restores the whole clock.`,
+        attachments: [
+          { filename: `timeclock-${today}.json`, content: Buffer.from(JSON.stringify(entries, null, 1), 'utf8').toString('base64') },
+          { filename: `timeclock-${today}.csv`, content: Buffer.from(csv, 'utf8').toString('base64') },
+        ],
+      })
+      emailed = true
+    }
+  } catch (e) { console.warn('[tc-backup] email failed:', e.message) }
+
+  if (!emailed) return { fired: false, reason: 'email failed — will retry next hour' }
+  await app.datastore().table('AppConfig')
+    .insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
+  return { fired: true, entries: entries.length }
+}

@@ -336,6 +336,16 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
   }
 
+  // Nightly time clock backup (Mark 2026-08-30) — 8-10pm PT, email
+  // JSON+CSV to mark@. Own stamp + retry inside.
+  try {
+    const { maybeBackupTimeclock } = await import('../services/hr.js')
+    const tb = await maybeBackupTimeclock(req)
+    if (tb.fired) console.log('[postscan] tc backup:', JSON.stringify(tb))
+  } catch (e) {
+    console.warn('[postscan] tc-backup piggyback failed (non-fatal):', e.message)
+  }
+
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
   // the Books invoice webhook. Every hourly tick, sweep the last two PT
   // days of sent invoices; the per-invoice dedup stamp makes repeated

@@ -82,7 +82,9 @@ function normalizeIdentities(entries) {
   return entries
 }
 
-async function readEntries(req) {
+// ═══ LEGACY store (single global blob, generation-swap) — kept intact
+// as the migration source AND as a frozen backup. Never deleted.
+async function readLegacyEntries(req) {
   // Durable first
   try {
     const metaRow = await tcRead(req, TC_META_KEY)
@@ -110,17 +112,14 @@ async function readEntries(req) {
         )
       )
       const entries = normalizeIdentities(parts.flat())
-      try {
-        await writeEntries(req, entries)
-        console.log(`[timeclock] migrated ${entries.length} entries from cache → Datastore`)
-      } catch (e) { console.warn('[timeclock] migration write failed:', e.message) }
+      console.log(`[timeclock] legacy cache still holds ${entries.length} entries`)
       return entries
     }
   } catch (e) { /* fall through */ }
   return []
 }
 
-async function writeEntries(req, entries) {
+async function writeLegacyEntries(req, entries) { // retained for emergencies
   // Next generation number
   let prevGen = -1
   let prevChunks = 0
@@ -163,6 +162,116 @@ async function writeEntries(req, entries) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// ═══ PER-PERSON-MONTH store (Mark 2026-08-30: "I want the time clock
+// backed up this is very important"). One AppConfig row per person per
+// month — a punch touches ONLY that person's row, so simultaneous
+// 8 AM clock-ins can never race each other. The legacy blob is left in
+// place untouched as a frozen backup, and a nightly email backup rides
+// the postscan (see hr.js maybeBackupTimeclock).
+const TC2_INDEX = 'tc2:index'
+const emailKey = uid => String(uid || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '_')
+function monthOf(entry) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit',
+  }).format(new Date(entry.clock_in || Date.now())).slice(0, 7)
+}
+const rowKeyFor = (uid, month) => `tc2:${emailKey(uid)}:${month}`
+
+async function tc2Index(req) {
+  const r = await tcRead(req, TC2_INDEX)
+  try { return r?.value ? JSON.parse(r.value) : null } catch { return null }
+}
+async function tc2SetIndex(req, keys) {
+  await tcWrite(req, TC2_INDEX, JSON.stringify([...new Set(keys)].sort()))
+}
+function bucketize(entries) {
+  const buckets = {}
+  for (const e of entries) {
+    const k = rowKeyFor(e.user_id, monthOf(e))
+    ;(buckets[k] = buckets[k] || []).push(e)
+  }
+  return buckets
+}
+
+// One-time migration: legacy blob → per-person-month rows. Old rows stay.
+async function ensureTc2(req) {
+  const idx = await tc2Index(req)
+  if (idx !== null) return idx
+  const legacy = await readLegacyEntries(req)
+  const buckets = bucketize(legacy)
+  const keys = Object.keys(buckets)
+  for (const k of keys) await tcWrite(req, k, JSON.stringify(buckets[k]))
+  await tc2SetIndex(req, keys)
+  // verify: counts must match before we trust it
+  let total = 0
+  for (const k of keys) {
+    const r = await tcRead(req, k)
+    total += r?.value ? JSON.parse(r.value).length : 0
+  }
+  if (total !== legacy.length) {
+    await tcDelete(req, TC2_INDEX)
+    throw new Error(`timeclock migration verify failed (${total} vs ${legacy.length}) — staying on legacy store`)
+  }
+  console.log(`[timeclock] migrated ${legacy.length} entries → ${keys.length} person-month rows (legacy blob preserved)`)
+  return keys
+}
+
+async function readEntries(req) {
+  const keys = await ensureTc2(req)
+  const parts = await Promise.all(keys.map(async k => {
+    const r = await tcRead(req, k)
+    try { return r?.value ? JSON.parse(r.value) : [] } catch { return [] }
+  }))
+  return normalizeIdentities(parts.flat()).sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)))
+}
+
+// Full write (sweeps + multi-person admin ops — evening, low contention).
+async function writeEntries(req, entries) {
+  const keys = await ensureTc2(req)
+  const buckets = bucketize(normalizeIdentities(entries))
+  for (const [k, list] of Object.entries(buckets)) {
+    await tcWrite(req, k, JSON.stringify(list))
+  }
+  // A person-month that lost its last entry must be emptied, or deleted
+  // entries resurrect on the next read.
+  for (const k of keys) {
+    if (!buckets[k]) await tcWrite(req, k, '[]')
+  }
+  await tc2SetIndex(req, [...keys, ...Object.keys(buckets)])
+  const check = await tcRead(req, TC2_INDEX)
+  if (!check?.value) throw new Error('timeclock write verification failed — retry')
+}
+
+// HOT PATH: one person's entries only. Punches race no one.
+async function readPerson(req, userId) {
+  const keys = await ensureTc2(req)
+  const mine = keys.filter(k => k.startsWith(`tc2:${emailKey(userId)}:`))
+  const parts = await Promise.all(mine.map(async k => {
+    const r = await tcRead(req, k)
+    try { return r?.value ? JSON.parse(r.value) : [] } catch { return [] }
+  }))
+  return normalizeIdentities(parts.flat()).sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)))
+}
+async function writePerson(req, userId, personEntries) {
+  const keys = await ensureTc2(req)
+  const ek = emailKey(userId)
+  const buckets = bucketize(personEntries)
+  for (const [k, list] of Object.entries(buckets)) {
+    if (!k.startsWith(`tc2:${ek}:`)) throw new Error('writePerson: foreign entry in person write')
+    await tcWrite(req, k, JSON.stringify(list))
+  }
+  for (const k of keys) {
+    if (k.startsWith(`tc2:${ek}:`) && !buckets[k]) await tcWrite(req, k, '[]')
+  }
+  await tc2SetIndex(req, [...keys, ...Object.keys(buckets)])
+  // read-back verify the newest bucket
+  const first = Object.keys(buckets)[0]
+  if (first) {
+    const check = await tcRead(req, first)
+    if (!check?.value) throw new Error('timeclock person-write verification failed — punch NOT saved, retry')
+  }
+}
 
 function getUserId(req) {
   const raw = req.user?.email || req.user?.id || req.user?.name || 'unknown'
@@ -255,7 +364,7 @@ async function payrollLockCheck(req, entry) {
 router.post('/clock-in', async (req, res) => {
   try {
     const userId = getUserId(req)
-    const entries = await readEntries(req)
+    const entries = await readPerson(req, userId)
     const open = entries.find(e => e.user_id === userId && !e.clock_out)
     if (open) return res.status(409).json({ error: 'Already clocked in', entry: open })
 
@@ -280,7 +389,7 @@ router.post('/clock-in', async (req, res) => {
       created_at: now,
     }
     entries.push(entry)
-    await writeEntries(req, entries)
+    await writePerson(req, userId, entries)
     // GPS sanity flag must finish BEFORE the response (Catalyst kills
     // post-response work). Bounded so it never slows the punch.
     try {
@@ -298,7 +407,7 @@ router.post('/clock-in', async (req, res) => {
 router.post('/clock-out', async (req, res) => {
   try {
     const userId = getUserId(req)
-    const entries = await readEntries(req)
+    const entries = await readPerson(req, userId)
     const entry = entries.find(e => e.user_id === userId && !e.clock_out)
     if (!entry) return res.status(404).json({ error: 'Not clocked in' })
 
@@ -313,10 +422,9 @@ router.post('/clock-out', async (req, res) => {
     entry.total_minutes = computeEntryMinutes(entry)
 
     // Recompute OT for this user's current week
-    const userEntries = entries.filter(e => e.user_id === userId)
-    splitOvertime(userEntries)
+    splitOvertime(entries)
 
-    await writeEntries(req, entries)
+    await writePerson(req, userId, entries)
     res.json(entry)
   } catch (e) {
     console.error('[timeclock] clock-out failed:', e)
@@ -328,7 +436,7 @@ router.post('/clock-out', async (req, res) => {
 router.post('/break/start', async (req, res) => {
   try {
     const userId = getUserId(req)
-    const entries = await readEntries(req)
+    const entries = await readPerson(req, userId)
     const entry = entries.find(e => e.user_id === userId && !e.clock_out)
     if (!entry) return res.status(404).json({ error: 'Not clocked in' })
     const openBreak = (entry.breaks || []).find(b => !b.end)
@@ -340,7 +448,7 @@ router.post('/break/start', async (req, res) => {
       end: null,
       type: req.body?.type || 'short',
     })
-    await writeEntries(req, entries)
+    await writePerson(req, userId, entries)
     res.json(entry)
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -351,14 +459,14 @@ router.post('/break/start', async (req, res) => {
 router.post('/break/end', async (req, res) => {
   try {
     const userId = getUserId(req)
-    const entries = await readEntries(req)
+    const entries = await readPerson(req, userId)
     const entry = entries.find(e => e.user_id === userId && !e.clock_out)
     if (!entry) return res.status(404).json({ error: 'Not clocked in' })
     const openBreak = (entry.breaks || []).find(b => !b.end)
     if (!openBreak) return res.status(404).json({ error: 'No active break' })
 
     openBreak.end = new Date().toISOString()
-    await writeEntries(req, entries)
+    await writePerson(req, userId, entries)
     res.json(entry)
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -369,7 +477,7 @@ router.post('/break/end', async (req, res) => {
 router.get('/current', async (req, res) => {
   try {
     const userId = getUserId(req)
-    const entries = await readEntries(req)
+    const entries = await readPerson(req, userId)
     const entry = entries.find(e => e.user_id === userId && !e.clock_out)
     res.json(entry || null)
   } catch (e) {
@@ -644,7 +752,7 @@ router.post('/entries/:id/edit-decision', async (req, res) => {
 router.get('/pending-autopunch', async (req, res) => {
   try {
     const userId = getUserId(req)
-    const entries = await readEntries(req)
+    const entries = await readPerson(req, userId)
     const pending = entries.filter(e =>
       e.user_id === userId &&
       (e.auto_punched || e.auto_closed || String(e.notes || '').startsWith('Auto-punched')) &&
@@ -665,7 +773,7 @@ router.get('/pending-autopunch', async (req, res) => {
 router.post('/acknowledge-autopunch', async (req, res) => {
   try {
     const userId = getUserId(req)
-    const entries = await readEntries(req)
+    const entries = await readPerson(req, userId)
     let count = 0
     const now = new Date().toISOString()
     for (const e of entries) {
@@ -677,7 +785,7 @@ router.post('/acknowledge-autopunch', async (req, res) => {
         count++
       }
     }
-    if (count > 0) await writeEntries(req, entries)
+    if (count > 0) await writePerson(req, userId, entries)
     res.json({ ok: true, acknowledged: count })
   } catch (e) {
     res.status(500).json({ error: e.message })
