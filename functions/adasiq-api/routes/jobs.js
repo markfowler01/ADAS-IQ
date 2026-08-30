@@ -1395,7 +1395,7 @@ router.post('/:id/enroute', async (req, res) => {
 
     // Shop lookup in Books — full contact (the list omits phone-less rows
     // and ALL addresses).
-    let address = '', phone = '', matched = ''
+    let address = '', phone = '', matched = '', contactFirst = ''
     try {
       const { listCustomers, getCustomerFull } = await import('../services/zoho.js')
       const customers = await listCustomers()
@@ -1411,6 +1411,9 @@ router.post('/:id/enroute', async (req, res) => {
           const a = full.billing_address || full.shipping_address || {}
           address = [a.address, a.street2, a.city, a.state, a.zip].filter(Boolean).join(', ')
           if (!phone) phone = full.phone || full.mobile || ''
+          const persons = full.contact_persons || []
+          const primary = persons.find(pp => pp.is_primary_contact) || persons[0]
+          contactFirst = (primary?.first_name || full.first_name || '').trim()
         }
       }
     } catch (e) { console.warn('[enroute] customer lookup failed:', e.message) }
@@ -1424,9 +1427,17 @@ router.post('/:id/enroute', async (req, res) => {
         const cfg = await resolvePhoneConfig(req)
         const to = normalizePhoneUS(phone)
         if (to) {
+          // Mark's template (2026-08-30): "{vehicle}, RO {ro}. Hey
+          // {contact_first}, it's {tech_first} with Absolute ADAS, about
+          // {eta} minutes out. Reply here if anything's changed. See you
+          // soon." Replies land in the 844 SMS inbox.
+          const techFirst = String(tech).trim().split(/\s+/)[0]
           await sendTwilioSMS({
             to,
-            body: `Absolute ADAS: ${tech} is on the way for the ${vehicle || 'vehicle'} calibration${ro ? ` (RO ${ro})` : ''}.${etaMin ? ` About ${etaMin} minutes out.` : ''}`,
+            body: `${vehicle || 'Your vehicle'}${ro ? `, RO ${ro}` : ''}. ` +
+              `Hey ${contactFirst || 'there'}, it's ${techFirst} with Absolute ADAS, ` +
+              `${etaMin ? `about ${etaMin} minutes out` : 'on my way now'}. ` +
+              `Reply here if anything's changed. See you soon.`,
             from: 'tollfree',
             cfg,
           })
