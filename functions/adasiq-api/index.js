@@ -285,6 +285,32 @@ app.get('/debug/quote-templates', async (req, res) => {
   }
 })
 
+// One-shot cleanup (secret-gated): mark test quotes dead so the board
+// starts clean. Matches shop name only — real shops untouched.
+app.post('/debug/shop-quotes-sweep', async (req, res) => {
+  if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
+  try {
+    const shop = String(req.query.shop || 'Test')
+    const { readQuoteRecords } = await import('./routes/shopQuotes.js')
+    const catalyst = (await import('zcatalyst-sdk-node')).default
+    const app2 = catalyst.initialize(req)
+    const table = app2.datastore().table('AppConfig')
+    const records = await readQuoteRecords(req)
+    let swept = 0
+    for (const q of records) {
+      if (q.status === 'dead') continue
+      if (String(q.shop).toLowerCase() !== shop.toLowerCase()) continue
+      q.status = 'dead'
+      q.dead_at = q.updated_at = new Date().toISOString()
+      const rows = await app2.zcql().executeZCQLQuery(
+        `SELECT ROWID FROM AppConfig WHERE config_key = 'shopquote:${q.estimate_id}' LIMIT 1`).catch(() => [])
+      const rowid = rows?.[0]?.AppConfig?.ROWID || rows?.[0]?.ROWID
+      if (rowid) { await table.updateRow({ ROWID: rowid, config_value: JSON.stringify(q) }); swept++ }
+    }
+    res.json({ ok: true, swept, shop })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 app.post('/debug/quote-templates/pin', async (req, res) => {
   if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
   try {
