@@ -662,6 +662,11 @@ function HeadToJobButton({ job, techName }) {
   async function openDirections(pref = mapsPref) {
     if (!pref) { setChoosing(true); return }
     setBusy('nav')
+    // Claim the window SYNCHRONOUSLY at tap time — Safari blocks any
+    // window.open that follows an await/permission prompt, which made
+    // the button look dead (Mark 2026-08-30 "it does not load anything").
+    let win = null
+    try { win = window.open('', '_blank') } catch { win = null }
     try {
       const loc = await myLocation()
       const d = await resolveDest(loc)
@@ -669,9 +674,13 @@ function HeadToJobButton({ job, techName }) {
       const url = pref === 'apple'
         ? `https://maps.apple.com/?daddr=${q}&dirflg=d`
         : `https://www.google.com/maps/dir/?api=1&destination=${q}`
-      window.open(url, '_blank', 'noopener,noreferrer')
-      setDone(d.hasAddress ? '' : '⚠ No street address in Books — verify the destination before driving.')
-    } catch (e) { setDone(e.message) }
+      if (win && !win.closed) win.location.href = url
+      else window.location.href = url
+      setDone(`✓ Directions opened${d.hasAddress ? '' : ' — ⚠ no street address in Books, verify the destination'}`)
+    } catch (e) {
+      if (win && !win.closed) win.close()
+      setDone(e.message)
+    }
     finally { setBusy('') }
   }
 
