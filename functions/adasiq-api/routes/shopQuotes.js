@@ -416,7 +416,10 @@ router.post('/:id/status', async (req, res) => {
           } else {
             patch.status = 'need_dispatch'
           }
-          if (dispatch !== 'need_dispatch' && !patch.scheduled_date) {
+          if (dispatch !== 'need_dispatch') {
+            // "Send to Mark" means GO NOW (Mark 2026-08-30 "yup") — the
+            // job lands in today's Live view regardless of the card's
+            // old date.
             patch.scheduled_date = new Intl.DateTimeFormat('en-CA', {
               timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
             }).format(new Date())

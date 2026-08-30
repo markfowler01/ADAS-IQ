@@ -411,7 +411,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
               onMoveToReadyInvoice={onReadyToInvoice}
               onMoveToPendingParts={onPendingParts}
               customerNotes={customerNotes} />
-            {i === 0 && <div className="mt-1.5"><HeadToJobButton job={j} techName={tech.name} /></div>}
+            <div className="mt-1.5"><HeadToJobButton job={j} techName={tech.name} /></div>
             {onReassign && otherTechs.map(n => (
               <button
                 key={n}
