@@ -396,6 +396,38 @@ router.post('/clock-in', async (req, res) => {
       const { flagRemoteClockIn } = await import('../services/hr.js')
       await Promise.race([flagRemoteClockIn(req, entry), new Promise(r => setTimeout(r, 1500))])
     } catch { /* never blocks a punch */ }
+    // Text Mark when a TECHNICIAN punches in, with a map pin of where
+    // (Mark 2026-08-30). Bounded — the punch never waits on Twilio.
+    try {
+      if (req.user?.role === 'technician') {
+        const alert = (async () => {
+          const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+          const { sendTwilioSMS } = await import('../services/twilio.js')
+          const cfg = await resolvePhoneConfig(req)
+          if (!cfg.MARK_PHONE_NUMBER) return
+          const loc = entry.clock_in_location
+          let where = 'no location shared'
+          if (loc?.lat && loc?.lng) {
+            where = `https://maps.google.com/?q=${loc.lat},${loc.lng}`
+            const slat = Number(cfg.SHOP_LAT), slng = Number(cfg.SHOP_LNG)
+            if (slat && slng) {
+              const toRad = x => x * Math.PI / 180
+              const dLat = toRad(loc.lat - slat), dLng = toRad(loc.lng - slng)
+              const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(slat)) * Math.cos(toRad(loc.lat)) * Math.sin(dLng / 2) ** 2
+              const mi = Math.round(3959 * 2 * Math.asin(Math.sqrt(a)))
+              where += ` (~${mi} mi from shop)`
+            }
+          }
+          const t = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date())
+          await sendTwilioSMS({
+            to: cfg.MARK_PHONE_NUMBER,
+            body: `⏱ ${getUserName(req)} clocked in at ${t} — ${where}`,
+            from: 'local', cfg,
+          })
+        })()
+        await Promise.race([alert, new Promise(r => setTimeout(r, 2500))])
+      }
+    } catch { /* never blocks a punch */ }
     res.json(entry)
   } catch (e) {
     console.error('[timeclock] clock-in failed:', e)
