@@ -123,6 +123,7 @@ export async function computeSickBalances(req) {
   const keys = new Set([...Object.keys(workedMin), ...Object.keys(usedHours)])
   for (const k of Object.keys(openingCredit)) keys.add(k)
   for (const key of keys) {
+    if (isContractor(key)) continue  // WA sick leave is employees-only
     const workedHours = (workedMin[key] || 0) / 60
     const accrued = workedHours / 40 + (openingCredit[key] || 0)
     const used = usedHours[key] || 0
@@ -138,6 +139,16 @@ export async function computeSickBalances(req) {
 }
 
 export const SICK_NEGATIVE_FLOOR = -40
+
+// ── Team classification (Mark 2026-08-30: "joyce and kat are contract
+// workers from the phillipens") ─────────────────────────────────────────
+// Employees (W-2, Washington): sick accrual, weekly OT at 1.5x, paid
+// holidays, per-period balance notices. Contractors (Philippines):
+// hours tracked for contract pay — none of the WA machinery applies.
+const CONTRACTOR_KEYS = new Set(['kat', 'kath', 'joyce', 'k'])
+export function isContractor(firstNameKey) {
+  return CONTRACTOR_KEYS.has(String(firstNameKey || '').toLowerCase().trim())
+}
 
 // ── Twice-monthly hours report ──────────────────────────────────────────
 function todayPT() {
@@ -273,13 +284,19 @@ export async function buildHoursReport(req, startISO, endISO) {
 
   const lines = []
   const csvRows = [[
-    'Name', 'Regular Hours', 'Overtime Hours (1.5x)', 'Sick Paid', 'Vacation Paid',
+    'Name', 'Type', 'Regular Hours', 'Overtime Hours (1.5x)', 'Sick Paid', 'Vacation Paid',
     'Holiday Pay', 'Unpaid (not paid)', 'Regular-Rate Total', 'Shifts',
   ]]
   lines.push(`ABSOLUTE ADAS — PAYROLL HOURS REPORT`)
   lines.push(`Period: ${startISO} through ${endISO}`)
   lines.push('')
-  for (const b of Object.values(per).sort((a, z) => a.name.localeCompare(z.name))) {
+  const people = Object.values(per).sort((a, z) => a.name.localeCompare(z.name))
+  const employees = people.filter(b => !isContractor(b.name.toLowerCase()))
+  const contractors = people.filter(b => isContractor(b.name.toLowerCase()))
+
+  lines.push('══ EMPLOYEES (W-2 · Washington rules) ══')
+  lines.push('')
+  for (const b of employees) {
     // Weekly OT computed HERE from the durable clock — not trusted from
     // whatever clock-out happened to store. WA: 1.5x past 40h/week.
     const otByDay = weeklyOvertimeByDay(b.day_min)
@@ -305,9 +322,26 @@ export async function buildHoursReport(req, startISO, endISO) {
     if (bal) lines.push(`  (sick balance after: ${bal.sick_balance_hours}h)`)
     lines.push('')
     csvRows.push([
-      b.name, regular, ot, b.sick_hours, b.vacation_hours,
+      b.name, 'Employee', regular, ot, b.sick_hours, b.vacation_hours,
       holidayHours, b.unpaid_hours, payable, b.entries,
     ])
+  }
+
+  // Contractors: worked hours at contract rate — no OT premium, no WA
+  // sick, no holiday pay. Their number is what goes on the contract
+  // payment, nothing added or implied.
+  if (contractors.length) {
+    lines.push('══ CONTRACTORS (Philippines · hours for contract pay) ══')
+    lines.push('')
+    for (const b of contractors) {
+      const worked = r2(b.worked_min / 60)
+      lines.push(`${b.name}`)
+      lines.push(`  Worked:          ${worked}h across ${b.entries} shifts`)
+      if (b.unpaid_hours) lines.push(`  Time off logged: ${b.unpaid_hours}h — informational`)
+      lines.push(`  >> PAY THIS PERIOD: ${worked}h at contract rate`)
+      lines.push('')
+      csvRows.push([b.name, 'Contractor', worked, 0, 0, 0, 0, b.unpaid_hours || 0, worked, b.entries])
+    }
   }
   if (holidays.length) {
     lines.push(`Paid holidays in period: ${holidays.map(h => `${h.name} ${h.date}`).join(' · ')}`)
@@ -475,6 +509,7 @@ export async function maybeFireHoursReport(req) {
       // provable, not dependent on anyone opening the app.
       for (const p of AUTO_PUNCH_ROSTER) {
         const key = firstName(p.user_name).toLowerCase()
+        if (isContractor(key)) continue  // WA notices are employees-only
         const b = report.balances?.[key]
         if (!b) continue
         await sendBroadcast({
