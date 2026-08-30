@@ -674,7 +674,20 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
     const qq = q.toLowerCase()
       .replace('state farm', 'sf').replace('allstate', 'as')
       .replace('american family', 'amfam').replace('cash', 'cp')
-    return items.filter(it => it.name.toLowerCase().includes(qq))
+    // Rank: name STARTS with the query first (searching "as" puts the
+    // AS- pool on top, not names merely containing "as"), then word-
+    // boundary hits, then anywhere-substring.
+    const safe = qq.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const boundary = new RegExp(`\\b${safe}`)
+    return items
+      .map(it => {
+        const n = it.name.toLowerCase()
+        const score = n.startsWith(qq) ? 0 : boundary.test(n) ? 1 : n.includes(qq) ? 2 : -1
+        return { it, score }
+      })
+      .filter(x => x.score >= 0)
+      .sort((a, b) => a.score - b.score)
+      .map(x => x.it)
   }
 
   const baseLines = preview.lines.map(li => {
