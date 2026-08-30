@@ -841,6 +841,10 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </div>
       </div>
 
+      {/* Request cards keep just the Create Job button (Mark 2026-08-30:
+          "these job requests only need the create job button") — the
+          full toolset appears once it's a real job. */}
+      {job.status !== 'job_requested' && (<>
       {/* WorkDrive button — full-width iOS-style */}
       <button
         onClick={e => { e.stopPropagation(); handleOpenWorkDrive(e) }}
@@ -942,6 +946,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           <span className="text-sm font-semibold" style={{ color: '#c2410c' }}>Waiting on Parts</span>
         </button>
       )}
+      </>)}
 
       {/* Upload Report → Invoice — tech-requested jobs skip the whole
           dispatch dance when the work's already done: upload the report,

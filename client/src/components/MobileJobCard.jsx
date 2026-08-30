@@ -332,6 +332,7 @@ export default function MobileJobCard({
         </div>
       </div>
 
+      {job.status !== 'job_requested' && (<>
       <button
         onClick={handleOpenWorkDrive}
         disabled={finding}
@@ -387,6 +388,8 @@ export default function MobileJobCard({
           </button>
         ) : null
       )}
+
+      </>)}
 
       {/* Bill from Quote (one-card flow): this job came from an approved
           quote — one tap sends the insurance invoice + discounted cost
