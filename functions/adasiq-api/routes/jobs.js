@@ -1436,7 +1436,7 @@ router.post('/:id/enroute', async (req, res) => {
             to,
             body: `${vehicle || 'Your vehicle'}${ro ? `, RO ${ro}` : ''}. ` +
               `Hey ${contactFirst || 'there'}, it's ${techFirst} with Absolute ADAS, ` +
-              `${etaMin ? `about ${etaMin} minutes out` : 'on my way now'}. ` +
+              `${etaMin ? `about ${etaMin} minutes out` : 'we will be there soon'}. ` +
               `Reply here if anything's changed. See you soon.`,
             from: 'tollfree',
             cfg,
