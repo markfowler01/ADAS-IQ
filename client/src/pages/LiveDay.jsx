@@ -609,20 +609,14 @@ function TimeClockChip({ user }) {
 }
 
 function HeadToJobButton({ job, techName }) {
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState('')       // 'nav' | 'text' | ''
   const [done, setDone] = useState('')
   const [choosing, setChoosing] = useState(false)
+  const [dest, setDest] = useState(null)     // resolved destination (cached per card)
   const [mapsPref, setMapsPref] = useState(() => {
     try { return localStorage.getItem('aa_maps_pref') || '' } catch { return '' }
   })
   if (!job?.id) return null
-
-  function savePref(pref) {
-    try { localStorage.setItem('aa_maps_pref', pref) } catch { /* session-only */ }
-    setMapsPref(pref)
-    setChoosing(false)
-    go(pref)
-  }
 
   function myLocation() {
     return new Promise(resolve => {
@@ -635,61 +629,78 @@ function HeadToJobButton({ job, techName }) {
     })
   }
 
-  async function go(pref = mapsPref) {
-    // First tap on this device: ask which maps app (remembered after).
+  // Street address from Books (full contact) + Mapbox geocode to exact
+  // coordinates. A bare name search sent a tech toward "Test Creek",
+  // Montana (2026-08-30) — never again.
+  async function resolveDest(loc) {
+    if (dest) return dest
+    const infoR = await apiFetch(`${API_BASE}/api/jobs/${job.id}/route-info`)
+    const info = await infoR.json()
+    if (!infoR.ok) throw new Error(info.error || `Error ${infoR.status}`)
+    const rawQuery = info.address || `${job.shop_name || ''} auto body, WA`
+    let out = { rawQuery, hasAddress: !!info.address, lat: null, lng: null }
+    const mbToken = import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN
+    if (mbToken) {
+      try {
+        const prox = loc ? `&proximity=${loc.lng},${loc.lat}` : ''
+        const g = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(rawQuery)}.json?access_token=${mbToken}&limit=1&country=US${prox}`).then(x => x.json())
+        const f = g?.features?.[0]
+        if (f?.center) { out.lng = f.center[0]; out.lat = f.center[1] }
+      } catch { /* fall back to text query */ }
+    }
+    setDest(out)
+    return out
+  }
+
+  function savePref(pref) {
+    try { localStorage.setItem('aa_maps_pref', pref) } catch { /* session-only */ }
+    setMapsPref(pref)
+    setChoosing(false)
+    openDirections(pref)
+  }
+
+  async function openDirections(pref = mapsPref) {
     if (!pref) { setChoosing(true); return }
-    setBusy(true)
+    setBusy('nav')
     try {
-      // 1. Real street address from Books (full contact — the list API
-      //    has no addresses; a bare name search once navigated toward
-      //    Montana).
-      const infoR = await apiFetch(`${API_BASE}/api/jobs/${job.id}/route-info`)
-      const info = await infoR.json()
-      if (!infoR.ok) throw new Error(info.error || `Error ${infoR.status}`)
-
-      // 2. Geocode to exact coordinates + drive-time ETA via Mapbox,
-      //    biased to the tech's own position.
-      const mbToken = import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN
       const loc = await myLocation()
-      const rawQuery = info.address || `${job.shop_name || ''} auto body, WA`
-      let dest = null
-      let eta = null
-      if (mbToken) {
-        try {
-          const prox = loc ? `&proximity=${loc.lng},${loc.lat}` : ''
-          const g = await fetch(`https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(rawQuery)}.json?access_token=${mbToken}&limit=1&country=US${prox}`).then(x => x.json())
-          const f = g?.features?.[0]
-          if (f?.center) dest = { lng: f.center[0], lat: f.center[1], label: f.place_name || rawQuery }
-          if (dest && loc) {
-            const dr = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${loc.lng},${loc.lat};${dest.lng},${dest.lat}?access_token=${mbToken}&overview=false`).then(x => x.json())
-            const sec = dr?.routes?.[0]?.duration
-            if (sec > 0) eta = Math.max(1, Math.round(sec / 60))
-          }
-        } catch { /* maps still opens without ETA */ }
-      }
+      const d = await resolveDest(loc)
+      const q = d.lat != null ? `${d.lat},${d.lng}` : encodeURIComponent(d.rawQuery)
+      const url = pref === 'apple'
+        ? `https://maps.apple.com/?daddr=${q}&dirflg=d`
+        : `https://www.google.com/maps/dir/?api=1&destination=${q}`
+      window.open(url, '_blank', 'noopener,noreferrer')
+      setDone(d.hasAddress ? '' : '⚠ No street address in Books — verify the destination before driving.')
+    } catch (e) { setDone(e.message) }
+    finally { setBusy('') }
+  }
 
-      // 3. Text the shop (with ETA when we have one) + Cliq ping.
+  async function textShop() {
+    setBusy('text')
+    try {
+      const loc = await myLocation()
+      const d = await resolveDest(loc)
+      let eta = null
+      const mbToken = import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN
+      if (mbToken && loc && d.lat != null) {
+        try {
+          const dr = await fetch(`https://api.mapbox.com/directions/v5/mapbox/driving-traffic/${loc.lng},${loc.lat};${d.lng},${d.lat}?access_token=${mbToken}&overview=false`).then(x => x.json())
+          const sec = dr?.routes?.[0]?.duration
+          if (sec > 0) eta = Math.max(1, Math.round(sec / 60))
+        } catch { /* text still goes without ETA */ }
+      }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/enroute`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ technician: techName || job.technician || '', eta_minutes: eta }),
       })
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
-
-      // 4. Navigate — exact coordinates when geocoded, biased search
-      //    otherwise.
-      const q = dest ? `${dest.lat},${dest.lng}` : encodeURIComponent(rawQuery)
-      const url = pref === 'apple'
-        ? `https://maps.apple.com/?daddr=${q}&dirflg=d`
-        : `https://www.google.com/maps/dir/?api=1&destination=${q}`
-      window.open(url, '_blank', 'noopener,noreferrer')
-      const bits = []
-      bits.push(d.texted ? `✓ Shop texted${eta ? ` — about ${eta} min out` : ''}` : '✓ Navigation opened (no shop phone on file — give them a call)')
-      if (!info.address) bits.push('⚠ no street address in Books — verify the destination')
-      setDone(bits.join(' · '))
+      const resp = await r.json()
+      if (!r.ok) throw new Error(resp.error || `Error ${r.status}`)
+      setDone(resp.texted
+        ? `✓ Shop texted${eta ? ` — about ${eta} min out` : ''}`
+        : '⚠ No shop phone in Books — give them a call.')
     } catch (e) { setDone(e.message) }
-    finally { setBusy(false) }
+    finally { setBusy('') }
   }
 
   return (
@@ -705,11 +716,18 @@ function HeadToJobButton({ job, techName }) {
           </div>
         </div>
       ) : (
-        <button onClick={() => go()} disabled={busy}
-          className="w-full flex items-center justify-center gap-2 rounded-xl py-2.5 font-bold text-sm text-white"
-          style={{ backgroundColor: '#1a1a1a', opacity: busy ? 0.6 : 1 }}>
-          🧭 {busy ? 'Getting directions…' : 'Head to the Job'}
-        </button>
+        <div className="flex gap-1.5">
+          <button onClick={() => openDirections()} disabled={!!busy}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5 font-bold text-sm text-white"
+            style={{ backgroundColor: '#1a1a1a', opacity: busy ? 0.6 : 1 }}>
+            🧭 {busy === 'nav' ? 'Routing…' : 'Directions'}
+          </button>
+          <button onClick={textShop} disabled={!!busy}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5 font-bold text-sm"
+            style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1.5px solid #bfdbfe', opacity: busy ? 0.6 : 1 }}>
+            💬 {busy === 'text' ? 'Texting…' : "Text: on my way"}
+          </button>
+        </div>
       )}
       {done && <p className="text-[11px] font-semibold text-center mt-1" style={{ color: '#555' }}>{done}</p>}
       {!choosing && mapsPref && (
