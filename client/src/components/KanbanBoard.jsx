@@ -5,7 +5,7 @@ import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
 import CalibrationReviewModal from './CalibrationReviewModal.jsx'
 import { parseNoteItems, CustomerNoteBox, insurerPricingBadge } from './MobileJobCard.jsx'
-import { ShopQuotesColumn, MobileQuotesStrip, BillingModal } from './ShopQuotesColumn.jsx'
+import { useShopQuotes, BillingModal } from './ShopQuotesColumn.jsx'
 import LoadingSplash from './LoadingSplash.jsx'
 
 function useIsMobile() {
@@ -560,6 +560,43 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
+function QuoteJacket({ q, job, readOnly, busy, onAction, children }) {
+  const days = q?.days_waiting || 0
+  return (
+    <div className="mb-3 rounded-2xl overflow-hidden" style={{ border: '2px solid #1d4ed8', backgroundColor: '#eff6ff' }}>
+      <div className="flex items-center justify-between px-3 py-2">
+        <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full text-white"
+          style={{ backgroundColor: days >= 3 ? '#b45309' : '#1d4ed8', letterSpacing: '0.05em' }}>
+          📤 QUOTED{days > 0 ? ` · ${days}d waiting` : ''}
+        </span>
+        <span className="text-sm font-extrabold" style={{ color: '#1e3a8a' }}>
+          {q ? `$${Number(q.total).toFixed(2)}` : ''}
+        </span>
+      </div>
+      {children}
+      {!readOnly && q && (
+        <div className="px-3 pb-3 pt-1">
+          <p className="text-[10px] font-bold mb-1" style={{ color: '#166534' }}>✅ SHOP APPROVED — SEND TO:</p>
+          <div className="flex gap-1.5 mb-1.5">
+            <button disabled={busy} onClick={() => onAction(q, 'approve', 'jayden')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white" style={{ backgroundColor: '#16a34a' }}>Jayden</button>
+            <button disabled={busy} onClick={() => onAction(q, 'approve', 'mark')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white" style={{ backgroundColor: '#16a34a' }}>Mark</button>
+            <button disabled={busy} onClick={() => onAction(q, 'approve', 'need_dispatch')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>Dispatch later</button>
+          </div>
+          <div className="flex gap-1.5">
+            <button disabled={busy} onClick={() => onAction(q, 'resend')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg" style={{ backgroundColor: 'white', color: '#444' }}>📤 Resend</button>
+            <button disabled={busy} onClick={() => onAction(q, 'dead')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg" style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>✖ Dead</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote }) {
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
@@ -1016,6 +1053,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [toast, setToast] = useState(null)
   const [invoicingJob, setInvoicingJob] = useState(null)
   const [billableQuotes, setBillableQuotes] = useState({})   // estimate_id → {shop,total}
+  const { quotes: quoteRecords, reload: reloadQuotes } = useShopQuotes()
+  const [mobileQuotesOpen, setMobileQuotesOpen] = useState(false)
+  const [quoteBusy, setQuoteBusy] = useState(false)
   const [quoteBilling, setQuoteBilling] = useState(null)     // {q, preview} modal
   const [quoteBillBusy, setQuoteBillBusy] = useState(false)
 
@@ -1024,6 +1064,38 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       .then(d => { if (d && typeof d === 'object' && !d.error) setBillableQuotes(d) })
       .catch(() => {})
   }, [])
+
+  // Quote actions on the full job card (Mark 2026-08-30: "this is what
+  // i want it to look like") — approve routes the job, dead removes it.
+  async function quoteAction(q, action, dispatch) {
+    if (action === 'dead' && !window.confirm(`Quote for ${q.shop} is dead? The job card disappears too (record kept).`)) return
+    if (action === 'approve') {
+      const where = dispatch === 'jayden' ? 'Jayden' : dispatch === 'mark' ? 'Mark' : 'Needs Dispatch'
+      if (!window.confirm(`${q.shop} approved — send the job to ${where}?`)) return
+    }
+    setQuoteBusy(true)
+    try {
+      const url = action === 'resend'
+        ? `${API_BASE}/api/shop-quotes/${q.estimate_id}/resend`
+        : `${API_BASE}/api/shop-quotes/${q.estimate_id}/status`
+      const r = await apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(action === 'resend' ? {} : { status: action === 'approve' ? 'approved' : 'dead', dispatch: dispatch || undefined }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      if (action === 'resend') showToast(`📤 Re-sent to ${(d.sent_to || []).join(', ')}`)
+      reloadQuotes()
+      fetchJobs()
+      apiFetch(`${API_BASE}/api/shop-quotes/billable`).then(r2 => r2.json())
+        .then(x => { if (x && !x.error) setBillableQuotes(x) }).catch(() => {})
+    } catch (e) { showToast(e.message) }
+    finally { setQuoteBusy(false) }
+  }
+
+  const quoteByEstimate = Object.fromEntries((quoteRecords || []).map(q => [String(q.estimate_id), q]))
+  const quotedJobs = jobs.filter(j => j.status === 'quoted')
 
   async function handleBillFromQuote(job) {
     const entry = billableQuotes[job.zoho_estimate_id]
@@ -1887,7 +1959,30 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 </button>
               </div>
 
-              <MobileQuotesStrip readOnly={isTechnician} />
+              {quotedJobs.length > 0 && (
+                <div className="mb-3">
+                  <button onClick={() => setMobileQuotesOpen(o => !o)}
+                    className="w-full py-3 rounded-2xl font-extrabold text-white text-sm tracking-wide flex items-center justify-center gap-2"
+                    style={{ backgroundColor: '#1d4ed8' }}>
+                    📤 Quotes Out ({quotedJobs.length}) {mobileQuotesOpen ? '▲' : '▼'}
+                  </button>
+                  {mobileQuotesOpen && (
+                    <div className="mt-2">
+                      {quotedJobs.map(job => (
+                        <QuoteJacket key={job.id} q={quoteByEstimate[String(job.zoho_estimate_id)]} job={job}
+                          readOnly={isTechnician} busy={quoteBusy} onAction={quoteAction}>
+                          <MobileJobCard
+                            job={job}
+                            onEdit={openEdit}
+                            onOpenWorkDrive={handleOpenWorkDrive}
+                            customerNotes={customerNotes}
+                          />
+                        </QuoteJacket>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="flex flex-col gap-3 pb-6">
                 {visibleJobs.length === 0 ? (
@@ -1922,7 +2017,38 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               className="flex gap-4"
               style={{ alignItems: 'flex-start', minHeight: '100%' }}
             >
-              <ShopQuotesColumn readOnly={isTechnician} />
+              <div className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
+                <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={{ backgroundColor: '#1d4ed8' }}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white text-sm font-bold">📤 Quotes Out</span>
+                    <span className="text-xs font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>{quotedJobs.length}</span>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto pr-1">
+                  {quotedJobs.length === 0 ? (
+                    <p className="text-xs text-center py-8" style={{ color: '#aaa' }}>No quotes waiting.<br />Send one from a Kinetic scrub.</p>
+                  ) : quotedJobs.map(job => (
+                    <QuoteJacket key={job.id} q={quoteByEstimate[String(job.zoho_estimate_id)]} job={job}
+                      readOnly={isTechnician} busy={quoteBusy} onAction={quoteAction}>
+                      <KanbanCard
+                        job={job}
+                        onEdit={openEdit}
+                        onDragStart={() => {}}
+                        onComplete={handleComplete}
+                        onToggleInvoiced={handleToggleInvoiced}
+                        onDelete={handleDelete}
+                        onOpenWorkDrive={handleOpenWorkDrive}
+                        onRefreshShareLink={handleRefreshShareLink}
+                        onCreateInvoices={setInvoicingJob}
+                        onUploadReport={handleCardReportUpload}
+                        onDownloadReport={handleDownloadAdasReport}
+                        reportBusyId={reportBusyId}
+                        customerNotes={customerNotes}
+                      />
+                    </QuoteJacket>
+                  ))}
+                </div>
+              </div>
               {COLUMNS.map(col => (
                 <KanbanColumn
                   key={col.id}
