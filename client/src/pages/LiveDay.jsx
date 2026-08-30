@@ -551,6 +551,62 @@ function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
 
 // Head to the Job (Mark 2026-08-30): opens turn-by-turn to the shop and
 // texts them the tech is rolling. Apple Maps on iPhone, Google elsewhere.
+// Time clock on the Live view (Mark 2026-08-30): the tech's whole day
+// lives here, so punching in and out should too. GPS captured for
+// technicians, same as the morning prompt.
+function TimeClockChip({ user }) {
+  const [entry, setEntry] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const isTech = user?.role === 'technician'
+
+  const refresh = () => apiFetch(`${API_BASE}/api/timeclock/current`)
+    .then(r => r.json()).then(d => { setEntry(d && d.id ? d : null); setLoaded(true) })
+    .catch(() => setLoaded(true))
+  useEffect(() => { refresh() }, [])
+
+  function getLocation() {
+    return new Promise(resolve => {
+      if (!navigator.geolocation) return resolve(null)
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 6000 }
+      )
+    })
+  }
+
+  async function punch() {
+    setBusy(true)
+    try {
+      const location = isTech ? await getLocation() : null
+      const path = entry ? 'clock-out' : 'clock-in'
+      const r = await apiFetch(`${API_BASE}/api/timeclock/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ location }),
+      })
+      if (!r.ok) throw new Error((await r.json()).error || `Error ${r.status}`)
+      await refresh()
+    } catch (e) { window.alert(e.message) }
+    finally { setBusy(false) }
+  }
+
+  if (!loaded) return null
+  const since = entry?.clock_in
+    ? new Date(entry.clock_in).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    : ''
+  return (
+    <button onClick={punch} disabled={busy}
+      className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold flex-shrink-0"
+      style={entry
+        ? { backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #86efac' }
+        : { backgroundColor: '#1a1a1a', color: 'white' }}>
+      {busy ? '⏱ …' : entry ? `⏱ On the clock since ${since} — out?` : '⏱ Clock In'}
+    </button>
+  )
+}
+
 function HeadToJobButton({ job, techName }) {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState('')
@@ -894,6 +950,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             </div>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+            <TimeClockChip user={user} />
             {/* Reference-tool shortcuts — one tap from the tech's Live Day
                 straight into AllData / Kinetic in a new tab. Kept compact
                 as pill buttons so they don't eat header real estate. */}
