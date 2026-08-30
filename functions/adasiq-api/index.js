@@ -287,6 +287,27 @@ app.get('/debug/quote-templates', async (req, res) => {
 
 // One-shot cleanup (secret-gated): mark test quotes dead so the board
 // starts clean. Matches shop name only — real shops untouched.
+// Sweep junk calibration rules (digit-makes etc.) learned from bad parses.
+app.post('/debug/rules-junk-sweep', async (req, res) => {
+  if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
+  try {
+    const { getAllRules, looksLikeRealVehicle } = await import('./services/calibrationRulesService.js')
+    const catalyst = (await import('zcatalyst-sdk-node')).default
+    const sdk = catalyst.initialize(req, { type: 'advancedio' })
+    const rules = await getAllRules(req)
+    const junk = rules.filter(r => !looksLikeRealVehicle(r.make, r.model))
+    const dry = req.query.dry === '1'
+    if (!dry) {
+      const table = sdk.datastore().table('AdasCalibrationRules')
+      for (const r of junk) {
+        if (r.ROWID) await table.deleteRow(r.ROWID).catch(e => console.warn('[rules-sweep]', r.ROWID, e.message))
+      }
+    }
+    res.json({ ok: true, dry, total: rules.length, junk: junk.length,
+      samples: junk.slice(0, 10).map(r => `${r.calibration_name} · make="${r.make}" model="${r.model}"`) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 app.post('/debug/shop-quotes-sweep', async (req, res) => {
   if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
   try {

@@ -183,8 +183,25 @@ export async function crossReferenceRules(req, extracted, repairText, vehicleEqu
  * @param {object} req - Express request
  * @param {object} job - Job data (make, model, year, calibrations)
  */
+// A real make is letters (Mercedes-Benz, Land Rover) — a make with
+// digits means the parser grabbed noise ("34 3434", Mark's screenshot
+// 2026-08-30), and a junk rule pollutes the cross-reference forever.
+export function looksLikeRealVehicle(make, model) {
+  const m = String(make || '').trim()
+  if (m.length < 2 || m.length > 40) return false
+  if (/\d/.test(m)) return false
+  if (!/^[a-z][a-z\s.&'-]*$/i.test(m)) return false
+  const mo = String(model || '').trim()
+  if (mo && mo.length > 60) return false
+  return true
+}
+
 export async function saveCalibrationAsRule(req, { make, model, year, calibration }) {
   try {
+    if (!looksLikeRealVehicle(make, model)) {
+      console.warn(`[rulesService] skipped junk-vehicle rule: make="${make}" model="${model}"`)
+      return
+    }
     const sdk = catalyst.initialize(req, { type: 'advancedio' })
     const table = sdk.datastore().table(TABLE)
 
