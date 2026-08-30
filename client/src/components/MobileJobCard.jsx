@@ -230,6 +230,11 @@ export default function MobileJobCard({
       className={`bg-white rounded-xl shadow-sm p-3 select-none transition-shadow ${handleEdit ? 'cursor-pointer hover:shadow-md active:opacity-75' : ''}`}
       style={{ border: `1px solid ${isComplete ? '#d4edda' : '#ebebeb'}`, backgroundColor: isComplete ? '#f8fff9' : 'white' }}
     >
+      {cardTotal > 0 && (
+        <div className="flex justify-end -mt-1 mb-1">
+          <span className="text-sm font-extrabold" style={{ color: '#1a1a1a' }}>${Number(cardTotal).toFixed(2)}</span>
+        </div>
+      )}
       {/* Shop name in bold uppercase orange */}
       {job.shop_name && (
         <p className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: ORANGE }}>
@@ -255,12 +260,6 @@ export default function MobileJobCard({
         <p className="text-xs font-medium mb-1" style={{ color: '#6b7280' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
           {job.invoice_number || job.quote_number}
-        </p>
-      )}
-
-      {cardTotal > 0 && (
-        <p className="text-sm font-extrabold mb-1" style={{ color: '#1a1a1a' }}>
-          ${Number(cardTotal).toFixed(2)}
         </p>
       )}
 

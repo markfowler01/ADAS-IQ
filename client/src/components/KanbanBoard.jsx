@@ -656,6 +656,15 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       className="bg-white rounded-xl shadow-sm p-3 cursor-pointer select-none transition-shadow hover:shadow-md active:opacity-75"
       style={{ border: `1px solid ${isComplete ? '#d4edda' : '#ebebeb'}`, backgroundColor: isComplete ? '#f8fff9' : 'white' }}
     >
+      {/* Price bar — top of the card, like the quoted jacket (Mark
+          2026-08-30: "I want the price on the top bar like the quoted") */}
+      {estimateTotal > 0 && (
+        <div className="flex justify-end -mt-1 mb-1">
+          <span className="text-sm font-extrabold" style={{ color: '#1a1a1a' }}>
+            ${Number(estimateTotal).toFixed(2)}
+          </span>
+        </div>
+      )}
       {/* Top row: shop name + complete toggle */}
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="min-w-0 flex-1">
@@ -838,11 +847,6 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             {job.invoiced ? '✓ Invoiced' : 'Invoice'}
           </button>
           <UploadButton job={job} />
-          {estimateTotal > 0 && (
-            <span className="text-sm font-extrabold ml-auto" style={{ color: '#1a1a1a' }}>
-              ${Number(estimateTotal).toFixed(2)}
-            </span>
-          )}
         </div>
       </div>
 
