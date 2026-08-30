@@ -654,7 +654,13 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       onDragStart={(e) => onDragStart(e, job)}
       onClick={() => onEdit(job)}
       className="bg-white rounded-xl shadow-sm p-3 cursor-pointer select-none transition-shadow hover:shadow-md active:opacity-75"
-      style={{ border: `1px solid ${isComplete ? '#d4edda' : '#ebebeb'}`, backgroundColor: isComplete ? '#f8fff9' : 'white' }}
+      style={{
+        // Active jobs wear the brand orange like quoted cards wear blue
+        // (Mark 2026-08-30). Complete stays green-tinted; cards inside
+        // the blue quote jacket keep a quiet border.
+        border: isComplete ? '2px solid #a8d5b5' : job.status === 'quoted' ? '1px solid #ebebeb' : `2px solid ${ORANGE}`,
+        backgroundColor: isComplete ? '#f8fff9' : 'white',
+      }}
     >
       {/* Price bar — top of the card, like the quoted jacket (Mark
           2026-08-30: "I want the price on the top bar like the quoted") */}

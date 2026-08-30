@@ -228,7 +228,10 @@ export default function MobileJobCard({
     <div
       onClick={handleEdit}
       className={`bg-white rounded-xl shadow-sm p-3 select-none transition-shadow ${handleEdit ? 'cursor-pointer hover:shadow-md active:opacity-75' : ''}`}
-      style={{ border: `1px solid ${isComplete ? '#d4edda' : '#ebebeb'}`, backgroundColor: isComplete ? '#f8fff9' : 'white' }}
+      style={{
+        border: isComplete ? '2px solid #a8d5b5' : job.status === 'quoted' ? '1px solid #ebebeb' : `2px solid ${ORANGE}`,
+        backgroundColor: isComplete ? '#f8fff9' : 'white',
+      }}
     >
       {cardTotal > 0 && (
         <div className="flex justify-end -mt-1 mb-1">
