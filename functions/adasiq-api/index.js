@@ -295,12 +295,16 @@ app.post('/debug/rules-junk-sweep', async (req, res) => {
     const catalyst = (await import('zcatalyst-sdk-node')).default
     const sdk = catalyst.initialize(req, { type: 'advancedio' })
     const rules = await getAllRules(req)
-    const junk = rules.filter(r => !looksLikeRealVehicle(r.make, r.model))
+    // Only auto-learned junk — imported/manual rules may be make-agnostic
+    // on purpose.
+    const junk = rules.filter(r =>
+      String(r.source || '').toUpperCase() === 'AI_CONFIRMED' && !looksLikeRealVehicle(r.make, r.model))
     const dry = req.query.dry === '1'
     if (!dry) {
       const table = sdk.datastore().table('AdasCalibrationRules')
       for (const r of junk) {
-        if (r.ROWID) await table.deleteRow(r.ROWID).catch(e => console.warn('[rules-sweep]', r.ROWID, e.message))
+        const rowid = r.id || r.ROWID
+        if (rowid) await table.deleteRow(rowid).catch(e => console.warn('[rules-sweep]', rowid, e.message))
       }
     }
     res.json({ ok: true, dry, total: rules.length, junk: junk.length,
