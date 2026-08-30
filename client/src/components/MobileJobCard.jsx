@@ -175,22 +175,27 @@ export default function MobileJobCard({
   estimateTotal,
 }) {
   const [finding, setFinding] = useState(false)
+  const [wdUrl, setWdUrl] = useState('')
   const totalsMap = useEstimateTotals()
   const cardTotal = estimateTotal ?? (job.zoho_estimate_id ? totalsMap[job.zoho_estimate_id] : null)
   const noteItems = parseNoteItems(customerNotes?.[normShopName(job.shop_name)])
 
   async function handleOpenWorkDrive(e) {
     e.stopPropagation()
-    // Team members get the INTERNAL folder link — it deep-links into the
-    // WorkDrive app where techs can upload/browse. The external share
-    // link is view-only (Mark 2026-08-30 "we can not upload pics").
+    // Two-tap open (iOS PWA): navigating the webview after an await
+    // strands the app on WorkDrive's login page (Mark 2026-08-30 "loads
+    // a blank page"). Tap 1 resolves the internal folder and the button
+    // becomes a REAL link; tap 2 is a direct user-gesture navigation
+    // that opens the WorkDrive app/Safari cleanly.
     try {
+      setFinding(true)
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.ROWID || job.id}/wd-folder`)
       if (r.ok) {
         const d = await r.json()
-        if (d.url) { window.location.href = d.url; return }
+        if (d.url) { setWdUrl(d.url); setFinding(false); return }
       }
     } catch { /* fall through to legacy links */ }
+    setFinding(false)
     if (job.folder_url && job.folder_url.includes('zohoexternal.com')) {
       window.open(job.folder_url, '_blank', 'noopener,noreferrer')
       return
@@ -374,6 +379,14 @@ export default function MobileJobCard({
       </div>
 
       {job.status !== 'job_requested' && (<>
+      {wdUrl ? (
+        <a href={wdUrl} target="_blank" rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          className="w-full flex items-center justify-center gap-2 rounded-xl transition-all"
+          style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', padding: '10px 0', minHeight: '44px' }}>
+          <span className="text-sm font-bold" style={{ color: '#166534' }}>📂 Folder ready — tap to open</span>
+        </a>
+      ) : (
       <button
         onClick={handleOpenWorkDrive}
         disabled={finding}
@@ -393,6 +406,7 @@ export default function MobileJobCard({
           {finding ? 'Finding folder…' : 'Open in WorkDrive'}
         </span>
       </button>
+      )}
 
       {/* Waiting-on-Parts (Mark 2026-07-13): techs park a job on the
           Pending/Waiting-on-Parts column straight from the card. Only
