@@ -144,6 +144,21 @@ app.use('/auth', authRouter)
 app.use('/auth/demo', demoRouter)
 
 // Auth middleware — X-Auth-Token header (primary) or session cookie (fallback)
+// Role gates (Mark 2026-08-30). 'admin' tokens from before the role
+// split behave as dispatcher; owner is mark@ or explicit role.
+function userIsOwner(u) {
+  return String(u?.email || '').toLowerCase().startsWith('mark@') || u?.role === 'owner'
+}
+function userIsTech(u) { return u?.role === 'technician' }
+function requireStaff(req, res, next) {
+  if (!userIsTech(req.user)) return next()
+  res.status(403).json({ error: 'Not available on technician accounts — ask Kat or Mark.' })
+}
+function requireOwner(req, res, next) {
+  if (userIsOwner(req.user)) return next()
+  res.status(403).json({ error: 'Owner only.' })
+}
+
 function requireAuth(req, res, next) {
   if (process.env.SKIP_AUTH === 'true') return next()
   // Primary: HMAC-signed token via X-Auth-Token header
@@ -191,7 +206,7 @@ app.use('/api/extract', requireAuth, extractLimiter, extractRouter)
 app.use('/api/clean-descriptions', requireAuth, extractLimiter, cleanDescriptionsRouter)
 app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
-app.use('/api/create-invoice', requireAuth, invoiceRouter)
+app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
 app.use('/api/salespersons', requireAuth, salespersonsRouter)
 app.use('/api/tech-stats', requireAuth, techStatsRouter)
@@ -219,7 +234,7 @@ app.use('/webhooks/twilio/voice',
 )
 app.use('/api/voicemails', requireAuth, voicemailsAuthRouter)
 app.use('/api/calls', requireAuth, callsAuthRouter)
-app.use('/api/phone-config', requireAuth, phoneConfigRouter)
+app.use('/api/phone-config', requireAuth, requireStaff, phoneConfigRouter)
 
 // Simple health check — quick way to confirm each Twilio + Cliq env is set.
 app.get('/api/health/phone', requireAuth, (req, res) => {
@@ -254,7 +269,7 @@ app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/push', requireAuth, pushRouter)
-app.use('/api/item-map', requireAuth, itemMapRouter)
+app.use('/api/item-map', requireAuth, requireStaff, itemMapRouter)
 app.use('/api/shop-quotes', requireAuth, shopQuotesRouter)
 
 // Debug (secret-gated): see Books estimate templates + pin the quote /
@@ -358,7 +373,7 @@ app.post('/debug/quote-templates/pin', async (req, res) => {
     res.json({ ok: true, kind, id })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
-app.use('/api/softphone', requireAuth, softphoneRouter)
+app.use('/api/softphone', requireAuth, requireStaff, softphoneRouter)
 // /digest-run inside carries its own cron-secret gate; the rest is auth'd.
 app.use('/api/schedule', (req, res, next) => {
   if (req.path === '/digest-run') return next()

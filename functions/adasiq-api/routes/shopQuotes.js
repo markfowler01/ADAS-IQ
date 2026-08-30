@@ -164,6 +164,14 @@ async function emailEstimate(token, estimateId, toEmails) {
     { headers: zohoHeaders(token), params: orgParam(), timeout: 20000 })
 }
 
+// Technicians see the board read-only; every mutation is staff-only
+// (Mark 2026-08-30: Kat does all the invoicing).
+function staffOnly(req, res) {
+  if (req.user?.role !== 'technician') return true
+  res.status(403).json({ error: 'Not available on technician accounts — ask Kat or Mark.' })
+  return false
+}
+
 // ── Endpoints ───────────────────────────────────────────────────────────
 
 // Every line the shop will see, BEFORE anything sends (Mark 2026-08-29:
@@ -208,6 +216,7 @@ router.get('/preview', async (req, res) => {
 
 // One tap: template → email → durable board record.
 router.post('/send', async (req, res) => {
+  if (!staffOnly(req, res)) return
   try {
     const estimateId = String(req.body?.estimate_id || '')
     if (!estimateId) return res.status(400).json({ error: 'estimate_id required' })
@@ -321,6 +330,7 @@ router.get('/estimate-totals', async (req, res) => {
 // some other quotes in the job board"): builds the quote record from the
 // job's Books estimate and flips the card to 'quoted'.
 router.post('/adopt', async (req, res) => {
+  if (!staffOnly(req, res)) return
   try {
     const jobId = String(req.body?.job_id || '')
     if (!jobId) return res.status(400).json({ error: 'job_id required' })
@@ -386,6 +396,7 @@ router.get('/billable', async (req, res) => {
 
 // We flip status by hand (Mark: "we will be doing the approval").
 router.post('/:id/status', async (req, res) => {
+  if (!staffOnly(req, res)) return
   try {
     const status = String(req.body?.status || '')
     if (!['approved', 'dead', 'quoted'].includes(status)) {
@@ -446,6 +457,7 @@ router.post('/:id/status', async (req, res) => {
 })
 
 router.post('/:id/resend', async (req, res) => {
+  if (!staffOnly(req, res)) return
   try {
     const records = await readQuoteRecords(req)
     const q = records.find(r => r.estimate_id === req.params.id)

@@ -17,12 +17,18 @@ if (!LOGIN_CLIENT_ID || !LOGIN_CLIENT_SECRET) {
   console.error('❌ ZOHO_LOGIN_CLIENT_ID and ZOHO_LOGIN_CLIENT_SECRET must be set as environment variables.')
 }
 
-// Role map — keyed by lowercase email. Unrecognised users get admin by default.
+// Role map — keyed by lowercase email (Mark 2026-08-30 permissions):
+//   owner       — Mark: everything incl. payroll, approvals, settings
+//   dispatcher  — Kat: full operations incl. all invoicing/quoting
+//   technician  — field view: jobs, time clock, photos, navigation
+// Unrecognised logins get dispatcher (staff) — owners are explicit.
 const USER_ROLES = {
-  'jayden@absoluteadas.com': { role: 'technician', techName: 'Jaden' },
+  'mark@absoluteadas.com':      { role: 'owner' },
+  'k.belmonte@absoluteadas.com': { role: 'dispatcher' },
+  'jayden@absoluteadas.com':    { role: 'technician', techName: 'Jaden' },
 }
 function applyRole(email) {
-  return USER_ROLES[(email || '').toLowerCase()] || { role: 'admin' }
+  return USER_ROLES[(email || '').toLowerCase()] || { role: 'dispatcher' }
 }
 
 // ── Token helpers (stateless JWT-like, no library needed) ─────────────────────

@@ -10,31 +10,31 @@ const PRIMARY_LINKS = [
   { id: 'today',   label: 'Today' },
   { id: 'kanban',  label: 'Jobs' },
   { id: 'dispatch-map', label: 'Map', adminOnly: true },
-  { id: 'crm',     label: 'CRM' },
-  { id: 'sms',     label: 'Phone' },
-  { id: 'books',   label: 'Books' },
+  { id: 'crm',     label: 'CRM', adminOnly: true },
+  { id: 'sms',     label: 'Phone', adminOnly: true },
+  { id: 'books',   label: 'Books', adminOnly: true },
 ]
 
 // Secondary nav — grouped by category in a spacious dropdown
 const MORE_GROUPS = [
   { label: 'Finance', links: [
-    { id: 'quotes',    label: 'Quotes' },
+    { id: 'quotes',    label: 'Quotes', adminOnly: true },
     { id: 'disputes',  label: 'Disputes', adminOnly: true },
-    { id: 'manual',    label: 'Manual Invoice' },
-    { id: 'estimates', label: 'Repair Estimates' },
+    { id: 'manual',    label: 'Manual Invoice', adminOnly: true },
+    { id: 'estimates', label: 'Repair Estimates', adminOnly: true },
   ]},
   { label: 'People & Time', links: [
     { id: 'timeclock', label: 'Time Clock' },
     { id: 'pto',       label: 'Time Off' },
     { id: 'hr-policy', label: 'HR Policy' },
     { id: 'mileage',   label: 'Mileage' },
-    { id: 'payroll',   label: 'Payroll', adminOnly: true },
+    { id: 'payroll',   label: 'Payroll', ownerOnly: true },
     { id: 'team',      label: 'Team' },
   ]},
   { label: 'Intelligence', links: [
-    { id: 'daily-review', label: 'Daily Review', adminOnly: true },
-    { id: 'intel',        label: 'Business Intelligence', adminOnly: true },
-    { id: 'cx',           label: 'Customer Experience', adminOnly: true },
+    { id: 'daily-review', label: 'Daily Review', ownerOnly: true },
+    { id: 'intel',        label: 'Business Intelligence', ownerOnly: true },
+    { id: 'cx',           label: 'Customer Experience', ownerOnly: true },
     { id: 'history',      label: 'History' },
   ]},
   { label: 'Tools', links: [
@@ -46,10 +46,10 @@ const MORE_GROUPS = [
     { id: 'messages',  label: 'Messages' },
   ]},
   { label: 'Admin', links: [
-    { id: 'ops',         label: 'Ops', adminOnly: true },
-    { id: 'scaling',     label: 'Scaling', adminOnly: true },
-    { id: 'branding',    label: 'Branding', adminOnly: true },
-    { id: 'zoho-import', label: 'Import from Zoho', adminOnly: true },
+    { id: 'ops',         label: 'Ops', ownerOnly: true },
+    { id: 'scaling',     label: 'Scaling', ownerOnly: true },
+    { id: 'branding',    label: 'Branding', ownerOnly: true },
+    { id: 'zoho-import', label: 'Import from Zoho', ownerOnly: true },
   ]},
 ]
 
@@ -66,7 +66,12 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
   const moreRef = useRef(null)
   const notifRef = useRef(null)
   const isAdmin = user?.role !== 'technician'
-  const visiblePrimary = PRIMARY_LINKS.filter(l => !l.adminOnly || isAdmin)
+  // Roles (Mark 2026-08-30): owner = Mark (everything), dispatcher = Kat
+  // (all operations incl. invoicing), technician = field essentials.
+  // Legacy 'admin' tokens behave as dispatcher until next login.
+  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const canSee = l => (l.ownerOnly ? isOwner : l.adminOnly ? isAdmin : true)
+  const visiblePrimary = PRIMARY_LINKS.filter(canSee)
   const visibleAll = [...visiblePrimary, ...MORE_LINKS]
 
   // Fetch notifications on mount + every 30s
@@ -181,7 +186,7 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
               <div className="absolute top-full left-0 mt-2 py-2 rounded-xl shadow-xl z-50 grid grid-cols-2 gap-1"
                 style={{ backgroundColor: 'white', border: '1px solid #ebebeb', minWidth: 420, maxWidth: 560 }}>
                 {MORE_GROUPS.map(group => {
-                  const visibleLinks = group.links.filter(l => !l.adminOnly || isAdmin)
+                  const visibleLinks = group.links.filter(canSee)
                   if (visibleLinks.length === 0) return null
                   return (
                     <div key={group.label} className="py-1 px-2">
@@ -364,7 +369,7 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
               )
             })}
             {MORE_GROUPS.map(group => {
-              const visibleLinks = group.links.filter(l => !l.adminOnly || isAdmin)
+              const visibleLinks = group.links.filter(canSee)
               if (visibleLinks.length === 0) return null
               return (
                 <div key={group.label}>

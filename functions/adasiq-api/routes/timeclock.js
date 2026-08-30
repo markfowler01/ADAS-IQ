@@ -286,6 +286,11 @@ function getUserName(req) {
 function isAdmin(req) {
   return req.user?.role !== 'technician'
 }
+// Payroll-grade mutations are OWNER only (Mark 2026-08-30: "if they
+// need to edit the time card i will need to approve it").
+function isOwner(req) {
+  return String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+}
 
 function newId(prefix = 'te') {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -590,10 +595,10 @@ router.get('/timesheet', async (req, res) => {
   }
 })
 
-// Edit entry (admin only)
+// Edit entry (OWNER only — everyone else goes through edit-request)
 router.put('/entries/:id', async (req, res) => {
   try {
-    if (!isAdmin(req)) return res.status(403).json({ error: 'Admin only' })
+    if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark edits time cards directly — use Request Fix.' })
     const entries = await readEntries(req)
     const idx = entries.findIndex(e => e.id === req.params.id)
     if (idx < 0) return res.status(404).json({ error: 'Not found' })
@@ -621,10 +626,10 @@ router.put('/entries/:id', async (req, res) => {
   }
 })
 
-// Delete entry (admin)
+// Delete entry (OWNER only)
 router.delete('/entries/:id', async (req, res) => {
   try {
-    if (!isAdmin(req)) return res.status(403).json({ error: 'Admin only' })
+    if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark can delete time card entries.' })
     const entries = await readEntries(req)
     const idx = entries.findIndex(e => e.id === req.params.id)
     if (idx < 0) return res.status(404).json({ error: 'Not found' })
@@ -648,10 +653,10 @@ router.delete('/entries/:id', async (req, res) => {
   }
 })
 
-// Approve entry (admin)
+// Approve entry (OWNER only)
 router.post('/entries/:id/approve', async (req, res) => {
   try {
-    if (!isAdmin(req)) return res.status(403).json({ error: 'Admin only' })
+    if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark approves time card entries.' })
     const entries = await readEntries(req)
     const entry = entries.find(e => e.id === req.params.id)
     if (!entry) return res.status(404).json({ error: 'Not found' })
