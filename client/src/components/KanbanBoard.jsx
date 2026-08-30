@@ -5,7 +5,7 @@ import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
 import CalibrationReviewModal from './CalibrationReviewModal.jsx'
 import { parseNoteItems, CustomerNoteBox, insurerPricingBadge } from './MobileJobCard.jsx'
-import { ShopQuotesColumn, MobileQuotesStrip } from './ShopQuotesColumn.jsx'
+import { ShopQuotesColumn, MobileQuotesStrip, BillingModal } from './ShopQuotesColumn.jsx'
 import LoadingSplash from './LoadingSplash.jsx'
 
 function useIsMobile() {
@@ -560,7 +560,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 }
 
 // ─── Kanban Card ──────────────────────────────────────────────────────────────
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote }) {
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
@@ -880,6 +880,16 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </button>
       )}
 
+      {billableQuote && onBillFromQuote && (
+        <button
+          onClick={e => { e.stopPropagation(); onBillFromQuote(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
+          style={{ backgroundColor: '#eff6ff', border: '1.5px solid #bfdbfe', padding: '10px 0', minHeight: '44px' }}
+        >
+          <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>🧾 Bill from Quote (${Number(billableQuote.total).toFixed(0)})</span>
+        </button>
+      )}
+
       {/* Waiting on Parts (Mark 2026-07-13) — one tap moves the job to
           the Pending/Waiting-on-Parts column. Hidden once it's already
           there or past the tech's hands. */}
@@ -907,7 +917,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote }) {
   const isOver = dragOverCol === column.id
 
   return (
@@ -964,6 +974,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
           <KanbanCard
             key={job.id}
             job={job}
+            billableQuote={billableQuotes ? billableQuotes[job.zoho_estimate_id] : null}
+            onBillFromQuote={onBillFromQuote}
             onEdit={onEdit}
             onDragStart={onDragStart}
             onComplete={onComplete}
@@ -1003,6 +1015,46 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [dragOverCol, setDragOverCol] = useState(null)
   const [toast, setToast] = useState(null)
   const [invoicingJob, setInvoicingJob] = useState(null)
+  const [billableQuotes, setBillableQuotes] = useState({})   // estimate_id → {shop,total}
+  const [quoteBilling, setQuoteBilling] = useState(null)     // {q, preview} modal
+  const [quoteBillBusy, setQuoteBillBusy] = useState(false)
+
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/shop-quotes/billable`).then(r => r.json())
+      .then(d => { if (d && typeof d === 'object' && !d.error) setBillableQuotes(d) })
+      .catch(() => {})
+  }, [])
+
+  async function handleBillFromQuote(job) {
+    const entry = billableQuotes[job.zoho_estimate_id]
+    if (!entry) return
+    setQuoteBillBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shop-quotes/${job.zoho_estimate_id}/billing-preview`)
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      setQuoteBilling({ q: { estimate_id: job.zoho_estimate_id, shop: entry.shop || job.shop_name, vehicle: job.vehicle, ro_number: job.quote_number || job.ro_number }, preview: d })
+    } catch (e) { showToast(e.message) }
+    finally { setQuoteBillBusy(false) }
+  }
+
+  async function confirmQuoteBill(pct) {
+    const { q } = quoteBilling
+    setQuoteBillBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shop-quotes/${q.estimate_id}/bill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ discount_pct: pct }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      showToast(`🧾 Billed ${q.shop} — insurance $${d.insurance_total.toFixed(2)} + cost ${d.cost_invoice_number} $${d.cost_total.toFixed(2)} (${d.discount_pct}% off)`)
+      setQuoteBilling(null)
+      setBillableQuotes(prev => { const n = { ...prev }; delete n[q.estimate_id]; return n })
+    } catch (e) { showToast(e.message) }
+    finally { setQuoteBillBusy(false) }
+  }
 
   // Customer card notes — one sticky note per shop, shows on every card
   // for that shop (Mark 2026-07-10). Stored on the CRM shop row in
@@ -1845,6 +1897,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                     <MobileJobCard
                       key={job.ROWID || job.id}
                       job={job}
+                      billableQuote={billableQuotes[job.zoho_estimate_id]}
+                      onBillFromQuote={handleBillFromQuote}
                       onEdit={openEdit}
                       onMoveToReadyInvoice={handleMoveToReadyInvoice}
                       onMoveToPendingParts={handleMoveToPendingParts}
@@ -1873,6 +1927,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 <KanbanColumn
                   key={col.id}
                   column={col}
+                  billableQuotes={billableQuotes}
+                  onBillFromQuote={handleBillFromQuote}
                   jobs={jobsByStatus[col.id] || []}
                   onEdit={openEdit}
                   onNewJob={openNewJob}
@@ -1941,6 +1997,11 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           onDelete={handleDelete}
           allJobs={jobs}
         />
+      )}
+
+      {quoteBilling && (
+        <BillingModal billing={quoteBilling} onConfirm={confirmQuoteBill}
+          onClose={() => setQuoteBilling(null)} busy={quoteBillBusy} />
       )}
 
       {/* Create Invoices Modal */}

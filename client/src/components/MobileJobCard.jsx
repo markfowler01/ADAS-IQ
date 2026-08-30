@@ -150,6 +150,8 @@ export default function MobileJobCard({
   onToggleInvoiced,
   onOpenWorkDrive,
   customerNotes,
+  billableQuote,
+  onBillFromQuote,
 }) {
   const [finding, setFinding] = useState(false)
   const noteItems = parseNoteItems(customerNotes?.[normShopName(job.shop_name)])
@@ -384,6 +386,19 @@ export default function MobileJobCard({
             <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
           </button>
         ) : null
+      )}
+
+      {/* Bill from Quote (one-card flow): this job came from an approved
+          quote — one tap sends the insurance invoice + discounted cost
+          invoice built from it. */}
+      {billableQuote && onBillFromQuote && (
+        <button
+          onClick={e => { e.stopPropagation(); onBillFromQuote(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
+          style={{ backgroundColor: '#eff6ff', border: '1.5px solid #bfdbfe', padding: '10px 0', minHeight: '44px' }}
+        >
+          <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>🧾 Bill from Quote (${Number(billableQuote.total).toFixed(0)})</span>
+        </button>
       )}
     </div>
   )

@@ -56,23 +56,28 @@ function QuoteCard({ q, readOnly, onAction, busy }) {
           style={{ background: insurer.bg, letterSpacing: '0.06em' }}>{insurer.label}</span>
       )}
       {open && !readOnly && (
-        <div className="flex gap-1.5 mt-2 pt-2" style={{ borderTop: '1px solid #eee' }} onClick={e => e.stopPropagation()}>
-          {q.status !== 'approved' && (
-            <button disabled={busy} onClick={() => onAction(q, 'approve')}
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid #eee' }} onClick={e => e.stopPropagation()}>
+          {/* Approval = routing (one-card flow): pick where the job goes */}
+          <p className="text-[10px] font-bold mb-1" style={{ color: '#16a34a' }}>✅ SHOP APPROVED — SEND TO:</p>
+          <div className="flex gap-1.5 mb-1.5">
+            <button disabled={busy} onClick={() => onAction(q, 'approve', 'jayden')}
               className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white"
-              style={{ backgroundColor: '#16a34a' }}>✅ Approved</button>
-          )}
-          {q.status === 'approved' && (
-            <button disabled={busy} onClick={() => onAction(q, 'bill')}
+              style={{ backgroundColor: '#16a34a' }}>Jayden</button>
+            <button disabled={busy} onClick={() => onAction(q, 'approve', 'mark')}
               className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white"
-              style={{ backgroundColor: ORANGE }}>🧾 Bill It</button>
-          )}
-          <button disabled={busy} onClick={() => onAction(q, 'resend')}
-            className="flex-1 text-[11px] font-bold py-1.5 rounded-lg"
-            style={{ backgroundColor: '#f5f3f0', color: '#444' }}>📤 Resend</button>
-          <button disabled={busy} onClick={() => onAction(q, 'dead')}
-            className="flex-1 text-[11px] font-bold py-1.5 rounded-lg"
-            style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>✖ Dead</button>
+              style={{ backgroundColor: '#16a34a' }}>Mark</button>
+            <button disabled={busy} onClick={() => onAction(q, 'approve', 'need_dispatch')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg"
+              style={{ backgroundColor: '#dcfce7', color: '#166534' }}>Dispatch later</button>
+          </div>
+          <div className="flex gap-1.5">
+            <button disabled={busy} onClick={() => onAction(q, 'resend')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg"
+              style={{ backgroundColor: '#f5f3f0', color: '#444' }}>📤 Resend</button>
+            <button disabled={busy} onClick={() => onAction(q, 'dead')}
+              className="flex-1 text-[11px] font-bold py-1.5 rounded-lg"
+              style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>✖ Dead — remove job</button>
+          </div>
         </div>
       )}
     </div>
@@ -82,7 +87,7 @@ function QuoteCard({ q, readOnly, onAction, busy }) {
 function useQuoteActions(reload) {
   const [busy, setBusy] = useState(false)
   const [billing, setBilling] = useState(null)  // { q, preview } while modal open
-  async function onAction(q, action) {
+  async function onAction(q, action, dispatch) {
     if (action === 'bill') {
       setBusy(true)
       try {
@@ -94,8 +99,11 @@ function useQuoteActions(reload) {
       finally { setBusy(false) }
       return
     }
-    if (action === 'dead' && !window.confirm(`Mark the quote for ${q.shop} as dead? It leaves the board.`)) return
-    if (action === 'approve' && !window.confirm(`${q.shop} approved this quote?`)) return
+    if (action === 'dead' && !window.confirm(`Quote for ${q.shop} is dead? The job card disappears too (record kept).`)) return
+    if (action === 'approve') {
+      const where = dispatch === 'jayden' ? 'Jayden' : dispatch === 'mark' ? 'Mark' : 'Needs Dispatch'
+      if (!window.confirm(`${q.shop} approved — send the job to ${where}?`)) return
+    }
     setBusy(true)
     try {
       const url = action === 'resend'
@@ -104,7 +112,7 @@ function useQuoteActions(reload) {
       const r = await apiFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(action === 'resend' ? {} : { status: action === 'approve' ? 'approved' : 'dead' }),
+        body: JSON.stringify(action === 'resend' ? {} : { status: action === 'approve' ? 'approved' : 'dead', dispatch: dispatch || undefined }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
@@ -135,7 +143,7 @@ function useQuoteActions(reload) {
 
 // Both totals side by side, discount asked once per shop, drift warning
 // when the estimate changed since the quote went out.
-function BillingModal({ billing, onConfirm, onClose, busy }) {
+export function BillingModal({ billing, onConfirm, onClose, busy }) {
   const { q, preview } = billing
   const [pct, setPct] = useState(preview.discount_pct ?? 25)
   const cost = Math.round(preview.insurance_total * (100 - pct)) / 100

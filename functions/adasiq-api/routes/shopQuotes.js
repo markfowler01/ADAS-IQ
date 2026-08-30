@@ -248,6 +248,16 @@ router.post('/send', async (req, res) => {
       sent_by: req.user?.email || req.user?.name || '',
       created_at: now, updated_at: now,
     })
+    // One-card lifecycle (Mark 2026-08-30): the scrub's job card slides
+    // into Quotes Out instead of a second card appearing — status
+    // 'quoted' pulls it out of the working columns.
+    try {
+      const { readJobsPublic, updateJobPublic } = await import('./jobs.js')
+      const jobs = await readJobsPublic(req)
+      const job = (jobs || []).find(j => String(j.zoho_estimate_id) === String(estimateId))
+      if (job && job.status !== 'quoted') await updateJobPublic(req, job.id, { ...job, status: 'quoted' })
+    } catch (e) { console.warn('[shop-quotes] job→quoted failed (non-fatal):', e.message) }
+
     res.json({ ok: true, sent_to: emails, estimate_number: est.estimate_number, total: est.total })
   } catch (e) {
     console.error('[shop-quotes send]', e.response?.data?.message || e.message)
@@ -266,7 +276,7 @@ router.get('/', async (req, res) => {
       }])
     }
     const records = (await readQuoteRecords(req))
-      .filter(q => q.status !== 'dead' && q.status !== 'billed')
+      .filter(q => q.status === 'quoted')
       .map(q => ({
         ...q,
         days_waiting: q.status === 'quoted'
@@ -278,6 +288,20 @@ router.get('/', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
+})
+
+// Approved-but-unbilled quotes, keyed by estimate — the job card's
+// "Bill from Quote" button shows for these.
+router.get('/billable', async (req, res) => {
+  try {
+    if (req.user?.demo) return res.json({})
+    const records = await readQuoteRecords(req)
+    const out = {}
+    for (const q of records) {
+      if (q.status === 'approved') out[q.estimate_id] = { shop: q.shop, total: q.total, estimate_id: q.estimate_id }
+    }
+    res.json(out)
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 // We flip status by hand (Mark: "we will be doing the approval").
@@ -296,7 +320,41 @@ router.post('/:id/status', async (req, res) => {
     if (status === 'dead') q.dead_at = q.updated_at
     await writeQuoteRecord(req, q)
     if (status === 'approved') {
+      // Approval carries the routing decision (one-card flow): the job
+      // card re-enters the working columns dispatched or queued.
+      const dispatch = String(req.body?.dispatch || 'need_dispatch')
+      try {
+        const { readJobsPublic, updateJobPublic } = await import('./jobs.js')
+        const jobs = await readJobsPublic(req)
+        const job = (jobs || []).find(j => String(j.zoho_estimate_id) === String(q.estimate_id))
+        if (job) {
+          const patch = { ...job }
+          if (dispatch === 'jayden') {
+            patch.status = 'dispatched_jaden'; patch.technician = job.technician || 'Jaden'
+          } else if (dispatch === 'mark') {
+            patch.status = 'dispatched_mark'; patch.technician = job.technician || 'Mark'
+          } else {
+            patch.status = 'need_dispatch'
+          }
+          if (dispatch !== 'need_dispatch' && !patch.scheduled_date) {
+            patch.scheduled_date = new Intl.DateTimeFormat('en-CA', {
+              timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+            }).format(new Date())
+          }
+          await updateJobPublic(req, job.id, patch)
+        }
+      } catch (e) { console.warn('[shop-quotes] approve routing failed:', e.message) }
       await onQuoteApproved(req, q).catch(e => console.warn('[shop-quotes approve hook]', e.message))
+    }
+    if (status === 'dead') {
+      // Dead quote = dead job (Mark: "yes to both") — the record keeps
+      // the history, the card disappears.
+      try {
+        const { readJobsPublic, deleteJobPublic } = await import('./jobs.js')
+        const jobs = await readJobsPublic(req)
+        const job = (jobs || []).find(j => String(j.zoho_estimate_id) === String(q.estimate_id))
+        if (job) await deleteJobPublic(req, job.id)
+      } catch (e) { console.warn('[shop-quotes] dead-job delete failed:', e.message) }
     }
     res.json({ ok: true, quote: q })
   } catch (e) {
@@ -359,7 +417,7 @@ async function onQuoteApproved(req, q) {
   const msg = [
     `✅ *Quote APPROVED* · ${q.shop}`,
     `${q.vehicle || 'Vehicle TBD'}${q.ro_number ? ` · RO# ${q.ro_number}` : ''} · $${Number(q.total).toFixed(2)}${q.insurer ? ` · 🏦 ${q.insurer}` : ''}`,
-    createdJob ? 'New job card created — needs scheduling.' : 'Job card is on the board — schedule it.',
+    createdJob ? 'New job card created — needs scheduling.' : 'Card is back on the board, routed.',
   ].join('\n')
   await postToCliqChannel(AA_JOBS_CHANNEL, msg).catch(e => console.warn('[shop-quotes cliq]', e.message))
   await postToCliqChannel(DISPATCH_CHANNEL, msg).catch(e => console.warn('[shop-quotes cliq]', e.message))
