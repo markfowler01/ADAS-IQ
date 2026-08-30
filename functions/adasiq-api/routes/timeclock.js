@@ -540,6 +540,104 @@ router.get('/pending-approvals', async (req, res) => {
   }
 })
 
+// ── Time card edit requests (Mark 2026-08-30: "if they need to edit
+// the time card i will need to approve it"). A tech proposes new times;
+// NOTHING changes until Mark approves. Pending edits ride on the entry.
+router.post('/entries/:id/edit-request', async (req, res) => {
+  try {
+    const userId = getUserId(req)
+    const entries = await readEntries(req)
+    const entry = entries.find(e => e.id === req.params.id)
+    if (!entry) return res.status(404).json({ error: 'Not found' })
+    if (entry.user_id !== userId && !isAdmin(req)) {
+      return res.status(403).json({ error: 'You can only request fixes to your own time card' })
+    }
+    const newIn = new Date(req.body?.clock_in || '')
+    const newOut = new Date(req.body?.clock_out || '')
+    if (isNaN(newIn) || isNaN(newOut) || newOut <= newIn) {
+      return res.status(400).json({ error: 'Enter a valid in and out time (out must be after in)' })
+    }
+    if ((newOut - newIn) / 3600000 > 16) {
+      return res.status(400).json({ error: 'That shift is over 16 hours — check the times' })
+    }
+    const gate = await payrollLockCheck(req, entry)
+    if (gate?.locked) {
+      return res.status(423).json({ error: `Payroll is locked through ${gate.locked} — this entry was already reported for pay. Talk to Mark.` })
+    }
+    entry.pending_edit = {
+      clock_in: newIn.toISOString(),
+      clock_out: newOut.toISOString(),
+      note: String(req.body?.note || '').slice(0, 300),
+      requested_by: getUserName(req),
+      requested_at: new Date().toISOString(),
+    }
+    await writeEntries(req, entries)
+    try {
+      const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+      const day = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }).format(new Date(entry.clock_in))
+      const t = iso => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date(iso))
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+        `✏️ *Time card fix requested* — ${entry.user_name}, ${day}\n` +
+        `Current: ${t(entry.clock_in)} → ${entry.clock_out ? t(entry.clock_out) : 'open'}\n` +
+        `Requested: ${t(entry.pending_edit.clock_in)} → ${t(entry.pending_edit.clock_out)}\n` +
+        `${entry.pending_edit.note ? `Reason: ${entry.pending_edit.note}\n` : ''}` +
+        `Approve on the Time Clock page.`)
+    } catch { /* non-fatal */ }
+    res.json({ ok: true, entry })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Mark-only queue + decision (same email gate as PTO approvals)
+router.get('/pending-edits', async (req, res) => {
+  try {
+    const entries = await readEntries(req)
+    const pending = entries.filter(e => e.pending_edit)
+      .sort((a, b) => String(b.pending_edit.requested_at).localeCompare(String(a.pending_edit.requested_at)))
+    res.json(pending)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+router.post('/entries/:id/edit-decision', async (req, res) => {
+  try {
+    const email = String(req.user?.email || '').toLowerCase()
+    if (!email.startsWith('mark@')) return res.status(403).json({ error: 'Only Mark approves time card edits' })
+    const approve = !!req.body?.approve
+    const entries = await readEntries(req)
+    const entry = entries.find(e => e.id === req.params.id)
+    if (!entry) return res.status(404).json({ error: 'Not found' })
+    if (!entry.pending_edit) return res.status(404).json({ error: 'No pending edit on this entry' })
+
+    const pe = entry.pending_edit
+    if (approve) {
+      const gate = await payrollLockCheck(req, entry)
+      if (gate?.locked && !(req.body?.unlock === true)) {
+        return res.status(423).json({ error: `Payroll is locked through ${gate.locked} — resend with unlock:true to override.` })
+      }
+      entry.clock_in = pe.clock_in
+      entry.clock_out = pe.clock_out
+      entry.total_minutes = computeEntryMinutes(entry)
+      entry.notes = [entry.notes, `[time fixed per ${pe.requested_by}'s request, approved by ${email} ${new Date().toISOString()}${pe.note ? ` — "${pe.note}"` : ''}]`]
+        .filter(Boolean).join(' · ')
+      const userEntries = entries.filter(e => e.user_id === entry.user_id)
+      splitOvertime(userEntries)
+    }
+    delete entry.pending_edit
+    await writeEntries(req, entries)
+    try {
+      const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+        `${approve ? '✅ Time card fix APPROVED' : '❌ Time card fix denied'} — ${entry.user_name} (${String(entry.clock_in).slice(0, 10)})`)
+    } catch { /* non-fatal */ }
+    res.json({ ok: true, approved: approve, entry })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ── Auto-punch acknowledgment (Mark 2026-08-27): next morning, the
 // clock-in prompt makes the employee accept yesterday's auto-punched
 // hours before punching in.

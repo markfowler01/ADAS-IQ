@@ -28,6 +28,11 @@ function getLocation() {
 export default function TimeClockScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [current, setCurrent] = useState(null)
   const [timesheet, setTimesheet] = useState(null)
+  const [myEntries, setMyEntries] = useState([])
+  const [pendingEdits, setPendingEdits] = useState([])
+  const [fixing, setFixing] = useState(null)      // entry being edited
+  const [fixBusy, setFixBusy] = useState(false)
+  const isMark = String(user?.email || '').toLowerCase().startsWith('mark@')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [notes, setNotes] = useState('')
@@ -39,6 +44,12 @@ export default function TimeClockScreen({ user, onLogout, currentScreen, onNavig
       const [currRes, tsRes] = await Promise.all([
         apiFetch(`${API_BASE}/api/timeclock/current`).then(r => r.json()),
         apiFetch(`${API_BASE}/api/timeclock/timesheet`).then(r => r.json()),
+        apiFetch(`${API_BASE}/api/timeclock/entries`).then(r => r.json()).then(es => {
+          if (Array.isArray(es)) setMyEntries(es.filter(e => e.clock_out).slice(0, 10))
+        }).catch(() => {}),
+        apiFetch(`${API_BASE}/api/timeclock/pending-edits`).then(r => r.json()).then(pe => {
+          if (Array.isArray(pe)) setPendingEdits(pe)
+        }).catch(() => {}),
       ])
       setCurrent(currRes)
       setTimesheet(tsRes)
@@ -116,6 +127,52 @@ export default function TimeClockScreen({ user, onLogout, currentScreen, onNavig
   }
 
   const totals = timesheet?.totals || { regular: 0, overtime: 0, total: 0 }
+
+  const toLocalInput = iso => {
+    const d = new Date(iso)
+    const pad = n => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+  const fmtT = iso => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const fmtD = iso => new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
+
+  async function submitFix(e) {
+    e.preventDefault()
+    const form = new FormData(e.target)
+    setFixBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/timeclock/entries/${fixing.id}/edit-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clock_in: new Date(form.get('in')).toISOString(),
+          clock_out: new Date(form.get('out')).toISOString(),
+          note: form.get('note') || '',
+        }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      window.alert('Fix requested — Mark will review it. Your card stays as-is until he approves.')
+      setFixing(null)
+      load()
+    } catch (err) { window.alert(err.message) }
+    finally { setFixBusy(false) }
+  }
+
+  async function decideEdit(entry, approve) {
+    setFixBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/timeclock/entries/${entry.id}/edit-decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approve }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      load()
+    } catch (err) { window.alert(err.message) }
+    finally { setFixBusy(false) }
+  }
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
@@ -224,6 +281,78 @@ export default function TimeClockScreen({ user, onLogout, currentScreen, onNavig
                 </div>
               </div>
             </div>
+
+            {/* Mark's approval queue (Mark 2026-08-30: edits need his OK) */}
+            {isMark && pendingEdits.length > 0 && (
+              <div className="mt-4 rounded-xl border shadow-sm" style={{ borderColor: '#fde68a', backgroundColor: '#fffbeb' }}>
+                <div className="px-5 py-3 border-b" style={{ borderColor: '#fde68a' }}>
+                  <h3 className="text-sm font-bold" style={{ color: '#92400e' }}>✏️ Time card fixes waiting on you ({pendingEdits.length})</h3>
+                </div>
+                {pendingEdits.map(pe => (
+                  <div key={pe.id} className="px-5 py-3 border-b" style={{ borderColor: '#fef3c7' }}>
+                    <p className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{pe.user_name} · {fmtD(pe.clock_in)}</p>
+                    <p className="text-xs mt-0.5" style={{ color: '#666' }}>
+                      Current: {fmtT(pe.clock_in)} → {pe.clock_out ? fmtT(pe.clock_out) : 'open'}
+                    </p>
+                    <p className="text-xs font-semibold" style={{ color: '#92400e' }}>
+                      Requested: {fmtT(pe.pending_edit.clock_in)} → {fmtT(pe.pending_edit.clock_out)}
+                    </p>
+                    {pe.pending_edit.note && <p className="text-xs italic mt-0.5" style={{ color: '#888' }}>"{pe.pending_edit.note}"</p>}
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={() => decideEdit(pe, true)} disabled={fixBusy}
+                        className="flex-1 text-xs font-bold py-2 rounded-lg text-white" style={{ backgroundColor: '#16a34a' }}>✅ Approve</button>
+                      <button onClick={() => decideEdit(pe, false)} disabled={fixBusy}
+                        className="flex-1 text-xs font-bold py-2 rounded-lg" style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>Deny</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Recent shifts — request a fix (nothing changes until Mark approves) */}
+            {myEntries.length > 0 && (
+              <div className="mt-4 rounded-xl border shadow-sm" style={{ borderColor: '#f0ece8' }}>
+                <div className="px-5 py-3 border-b" style={{ borderColor: '#f0ece8' }}>
+                  <h3 className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>Recent Shifts</h3>
+                  <p className="text-[11px] mt-0.5" style={{ color: '#999' }}>Wrong times? Request a fix — Mark approves before anything changes.</p>
+                </div>
+                {myEntries.map(en => (
+                  <div key={en.id} className="px-5 py-2.5 border-b" style={{ borderColor: '#f7f4f1' }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm" style={{ color: '#444' }}>
+                        {fmtD(en.clock_in)} · {fmtT(en.clock_in)} → {fmtT(en.clock_out)}
+                        {en.pending_edit && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>FIX PENDING</span>}
+                      </span>
+                      {!en.pending_edit && (
+                        <button onClick={() => setFixing(en)}
+                          className="text-xs font-bold px-2.5 py-1 rounded-lg flex-shrink-0"
+                          style={{ backgroundColor: '#f5f3f0', color: '#666' }}>✎ Request fix</button>
+                      )}
+                    </div>
+                    {fixing?.id === en.id && (
+                      <form onSubmit={submitFix} className="mt-2 p-3 rounded-xl" style={{ backgroundColor: '#f8f7f5' }}>
+                        <label className="block text-[10px] font-bold mb-1" style={{ color: '#888' }}>CLOCK IN</label>
+                        <input name="in" type="datetime-local" defaultValue={toLocalInput(en.clock_in)} required
+                          className="w-full text-sm px-2 py-1.5 rounded-lg mb-2" style={{ border: '1px solid #ddd' }} />
+                        <label className="block text-[10px] font-bold mb-1" style={{ color: '#888' }}>CLOCK OUT</label>
+                        <input name="out" type="datetime-local" defaultValue={toLocalInput(en.clock_out)} required
+                          className="w-full text-sm px-2 py-1.5 rounded-lg mb-2" style={{ border: '1px solid #ddd' }} />
+                        <input name="note" placeholder="Why? (e.g. forgot to clock out at lunch)"
+                          className="w-full text-sm px-2 py-1.5 rounded-lg mb-2" style={{ border: '1px solid #ddd' }} />
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => setFixing(null)}
+                            className="flex-1 text-xs font-semibold py-2 rounded-lg" style={{ backgroundColor: '#eee', color: '#666' }}>Cancel</button>
+                          <button type="submit" disabled={fixBusy}
+                            className="flex-1 text-xs font-bold py-2 rounded-lg text-white" style={{ backgroundColor: ORANGE }}>
+                            {fixBusy ? 'Sending…' : 'Send to Mark'}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Daily breakdown */}
             {timesheet?.days && (
