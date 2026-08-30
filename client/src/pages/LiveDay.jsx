@@ -613,6 +613,7 @@ function HeadToJobButton({ job, techName }) {
   const [done, setDone] = useState('')
   const [choosing, setChoosing] = useState(false)
   const [dest, setDest] = useState(null)     // resolved destination (cached per card)
+  const [nudge, setNudge] = useState(false)  // after directions: offer the text
   const [mapsPref, setMapsPref] = useState(() => {
     try { return localStorage.getItem('aa_maps_pref') || '' } catch { return '' }
   })
@@ -677,6 +678,7 @@ function HeadToJobButton({ job, techName }) {
       if (win && !win.closed) win.location.href = url
       else window.location.href = url
       setDone(`✓ Directions opened${d.hasAddress ? '' : ' — ⚠ no street address in Books, verify the destination'}`)
+      setNudge(true)
     } catch (e) {
       if (win && !win.closed) win.close()
       setDone(e.message)
@@ -685,6 +687,7 @@ function HeadToJobButton({ job, techName }) {
   }
 
   async function textShop() {
+    setNudge(false)
     setBusy('text')
     try {
       const loc = await myLocation()
@@ -739,6 +742,13 @@ function HeadToJobButton({ job, techName }) {
         </div>
       )}
       {done && <p className="text-[11px] font-semibold text-center mt-1" style={{ color: '#555' }}>{done}</p>}
+      {nudge && !busy && (
+        <button onClick={textShop}
+          className="w-full mt-1.5 py-2 rounded-xl text-sm font-bold"
+          style={{ backgroundColor: '#1d4ed8', color: 'white' }}>
+          💬 Now text the shop? →
+        </button>
+      )}
       {!choosing && mapsPref && (
         <p className="text-[10px] text-center mt-0.5" style={{ color: '#aaa' }}>
           {mapsPref === 'apple' ? ' Apple Maps' : 'G Google Maps'} ·{' '}
