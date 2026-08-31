@@ -62,7 +62,10 @@ export default function PTOScreen({ user, onLogout, currentScreen, onNavigate })
     setError('')
     try {
       // Fetch own or all requests (role-filtered on the server)
-      const [reqRes, balRes, calRes] = await Promise.all([
+      // 4 promises, 4 slots — the sick-balances chain resolves undefined
+      // (side-effect only) and was silently eating the /balance slot,
+      // crashing balRes.json() ("undefined is not an object").
+      const [reqRes, _sickDone, balRes, calRes] = await Promise.all([
         apiFetch(`${API_BASE}/api/pto/requests`),
         apiFetch(`${API_BASE}/api/pto/sick-balances`).then(r => r.json()).then(j => {
           const first = String(user?.name || user?.email || '').trim().split(/\s+/)[0].toLowerCase()
