@@ -583,6 +583,32 @@ export async function createDraftQuote({
     }
   }
 
+  // Third-grade plain-English story per calibration (Mark 2026-08-30:
+  // "AI rewrite the story in third grade reading level" on the invoice,
+  // not just the report). Same generator + 90-day cache as the report,
+  // so repeat vehicles cost nothing. Best-effort — a missing story
+  // never blocks the invoice.
+  let plainByName = {}
+  if (req) {
+    try {
+      const { enrichCalibration } = await import('./reportEnrichment.js')
+      const wanting = calibrations.filter(c => !(c.description || '').trim() && (c.calibration_name || c.name))
+      const uniq = [...new Map(wanting.map(c => [c.calibration_name || c.name, c])).values()]
+      const results = await Promise.all(uniq.map(async c => {
+        try {
+          const e = await enrichCalibration(req, {
+            calibrationName: c.calibration_name || c.name,
+            year, make, model,
+            trigger: c.trigger || '',
+            folderShareUrl: '',
+          })
+          return [c.calibration_name || c.name, e?.plain_description || '']
+        } catch { return [c.calibration_name || c.name, ''] }
+      }))
+      plainByName = Object.fromEntries(results.filter(([, v]) => v))
+    } catch (e) { console.warn('[zoho] plain-story enrichment unavailable:', e.message) }
+  }
+
   // Fixed items first, then calibrations. A rate:0 on an item_id line
   // overrides the catalog rate in Books — that's how a paid fixed item
   // (Cal ID) gets comped when the review modal picks Included.
@@ -607,6 +633,8 @@ export async function createDraftQuote({
       if (cal.trigger)         parts.push(`Trigger: ${cal.trigger}`)
       if (cal.line_references) parts.push(`Line Numbers: ${cal.line_references}`)
       if (cal.cal_type)        parts.push(`Type: ${cal.cal_type}`)
+      const plainStory = plainByName[cal.calibration_name]
+      if (plainStory) parts.push(plainStory)
       if (cal.justification) {
         // A BILLED line never argues against itself — a ruled-out cal
         // toggled ON would otherwise carry "not required" onto the

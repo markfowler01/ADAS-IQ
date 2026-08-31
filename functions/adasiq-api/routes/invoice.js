@@ -16,7 +16,7 @@ async function cleanDescriptions(calibrations) {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const prompt = `You are editing line item descriptions for a professional automotive ADAS calibration insurance invoice.
 
-Clean up each technician note below into a clear, professional 1-3 sentence description suitable for an insurance invoice. Fix grammar, spelling, and clarity. Keep all technical details. Do not invent information not present. Return ONLY a JSON array of strings in the same order as the input — no other text.
+Rewrite each technician note below into 1-3 sentences at a THIRD-GRADE reading level for an insurance invoice: short sentences (5-12 words), plain everyday words, active voice. Keep every technical detail and part name exactly. Fix grammar and spelling. Do not invent information not present. Return ONLY a JSON array of strings in the same order as the input — no other text.
 
 Items:
 ${JSON.stringify(toClean.map(x => ({ item: x.name, note: x.text })), null, 2)}`
