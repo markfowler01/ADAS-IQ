@@ -102,7 +102,7 @@ function paidHolidayName(dateISO) {
 }
 
 export default function SchedulePage({ user, onLogout, currentScreen, onNavigate }) {
-  const [board, setBoard] = useState({ jobs: [], meta: {}, shops: {}, time_off: {} })
+  const [board, setBoard] = useState({ jobs: [], meta: {}, shops: {}, time_off: {}, time_off_pending: {} })
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [weekOffset, setWeekOffset] = useState(0)
@@ -135,7 +135,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
       const r = await apiFetch(`${API_BASE}/api/schedule/board?_=${Date.now()}`, { cache: 'no-store' })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      setBoard({ jobs: j.jobs || [], meta: j.meta || {}, shops: j.shops || {}, time_off: j.time_off || {} })
+      setBoard({ jobs: j.jobs || [], meta: j.meta || {}, shops: j.shops || {}, time_off: j.time_off || {}, time_off_pending: j.time_off_pending || {} })
       setErr('')
     } catch (e) { setErr(e.message) }
     finally { setLoading(false) }
@@ -356,6 +356,12 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
             🎉 {paidHolidayName(date)} · paid holiday
           </div>
         )}
+        {(board.time_off_pending?.[date] || []).map(name => (
+          <span key={`p-${name}`} className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
+            style={{ backgroundColor: '#fef9c3', color: '#a16207', border: '1px dashed #eab308' }}>
+            🏖? {name} pending
+          </span>
+        ))}
         {(board.time_off?.[date] || []).map(name => (
           <div key={name} className="text-[10px] font-bold rounded-md px-1.5 py-0.5"
             style={{ backgroundColor: '#ffedd5', color: '#c2410c', border: '1px dashed #fdba74' }}>

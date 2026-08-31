@@ -85,17 +85,24 @@ async function readTimeOffMap(req) {
   } catch { return {} }
   const today = todayPT()
   const horizon = addDaysISO(today, 120)
+  // Approved AND pending both surface (Mark 2026-08-30: "if someone puts
+  // in a time off request i want this to pop in the scheduler") — Kat
+  // sees pending requests before Mark has ruled, styled differently.
   const out = {}
+  const pending = {}
   for (const r of requests) {
-    if (String(r.status) !== 'approved') continue
+    const status = String(r.status)
+    if (status !== 'approved' && status !== 'pending') continue
     if (!r.start_date || !r.end_date || r.end_date < today || r.start_date > horizon) continue
     const first = String(r.user_name || '').trim().split(/\s+/)[0]
     if (!first) continue
+    const target = status === 'approved' ? out : pending
     for (let d = r.start_date; d <= r.end_date && d <= horizon; d = addDaysISO(d, 1)) {
       if (d < today) continue
-      ;(out[d] = out[d] || []).includes(first) || out[d].push(first)
+      ;(target[d] = target[d] || []).includes(first) || target[d].push(first)
     }
   }
+  out._pending = pending
   return out
 }
 
@@ -182,6 +189,7 @@ router.get('/board', async (req, res) => {
       meta,
       shops,
       time_off: timeOff,
+      time_off_pending: timeOff._pending || {},
     })
   } catch (err) {
     console.error('[schedule board]', err.message)
@@ -205,9 +213,11 @@ router.get('/off', async (req, res) => {
 
     if (!tech) return res.json({ ok: true, off: false })
     const map = await readTimeOffMap(req)
-    const names = map[date] || []
-    const hit = names.find(n => n.toLowerCase() === tech || tech.startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(tech))
-    res.json({ ok: true, off: !!hit, who: hit || '', date })
+    const match = list => (list || []).find(n => n.toLowerCase() === tech || tech.startsWith(n.toLowerCase()) || n.toLowerCase().startsWith(tech))
+    const hit = match(map[date])
+    if (hit) return res.json({ ok: true, off: true, who: hit, date })
+    const pendingHit = match(map._pending?.[date])
+    res.json({ ok: true, off: false, pending: !!pendingHit, who: pendingHit || '', date })
   } catch (err) {
     res.json({ ok: true, off: false, error: err.message })
   }

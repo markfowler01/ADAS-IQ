@@ -401,9 +401,23 @@ router.post('/clock-in', async (req, res) => {
       const { flagRemoteClockIn } = await import('../services/hr.js')
       await Promise.race([flagRemoteClockIn(req, entry), new Promise(r => setTimeout(r, 1500))])
     } catch { /* never blocks a punch */ }
-    // Text Mark when a TECHNICIAN punches in, with a map pin of where
-    // (Mark 2026-08-30). Bounded — the punch never waits on Twilio.
+    // Clock-in alerts to Mark (2026-08-30): Cliq alert w/ map link for
+    // EVERYONE (except Mark himself), SMS for technicians. Bounded —
+    // the punch never waits on notifications.
     try {
+      if (!String(req.user?.email || '').toLowerCase().startsWith('mark@')) {
+        const cliqWork = (async () => {
+          const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+          const loc = entry.clock_in_location
+          const t = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date())
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+            `⏱ *${getUserName(req)} clocked in* at ${t}` +
+            (loc?.lat && loc?.lng
+              ? `\n📍 https://maps.google.com/?q=${loc.lat},${loc.lng}`
+              : '\n📍 no location shared'))
+        })()
+        await Promise.race([cliqWork, new Promise(r => setTimeout(r, 2000))]).catch(() => {})
+      }
       if (req.user?.role === 'technician') {
         const alert = (async () => {
           const { resolvePhoneConfig } = await import('../services/phoneConfig.js')

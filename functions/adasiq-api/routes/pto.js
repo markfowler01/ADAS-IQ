@@ -193,6 +193,17 @@ router.post('/requests', async (req, res) => {
     requests.unshift(newReq)
     await saveRequests(req, requests)
 
+    // Cliq ping to Mark's alerts (2026-08-30: "I need to approve it") —
+    // the request also pops on the Schedule as a pending pill.
+    try {
+      const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+        `🏖 *Time off request* — ${user_name}\n` +
+        `${type} · ${start_date}${end_date !== start_date ? ` → ${end_date}` : ''} · ${hours_requested}h\n` +
+        `${reason ? `Reason: ${reason}\n` : ''}` +
+        `Approve or deny on the Time Off page (Approvals tab).`)
+    } catch (e) { console.warn('[pto] cliq notify failed:', e.message) }
+
     // Notify admin
     try {
       await createNotification(req, {
