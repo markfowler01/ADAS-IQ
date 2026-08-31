@@ -308,6 +308,22 @@ export async function buildScheduleDigest(req) {
   }
   if (unscheduled.length) lines.push(`📥 Unscheduled: ${unscheduled.length}`)
 
+  // Kat's morning cue (Mark 2026-08-30: "queue Kat to create a job for
+  // that car"): every request whose day has arrived, spelled out.
+  const dueRequests = requests.filter(j => {
+    const d = dateOnly(j.scheduled_date)
+    return d && d <= today
+  })
+  if (dueRequests.length) {
+    lines.push('')
+    lines.push(`📋 *Kat — create these jobs today (${dueRequests.length}):*`)
+    for (const j of dueRequests.slice(0, 10)) {
+      const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
+      const ro = j.invoice_number || j.quote_number
+      lines.push(`• ${j.shop_name || 'Unknown shop'} — ${vehicle || 'Vehicle TBD'}${ro ? ` (RO# ${ro})` : ''}${j.technician ? ` · ${j.technician}` : ''} → tap *Create Job* on the card`)
+    }
+  }
+
   const nothingToSay = !unconfirmed.length && !overdue.length && !unscheduled.length &&
     horizonRequests.length === 0 && count(requests, today) === 0
 
@@ -335,7 +351,7 @@ export async function buildScheduleDigest(req) {
     techText = techLines.join('\n')
   }
 
-  return { text: lines.join('\n'), techText, counts: {
+  return { text: lines.join('\n'), techText, dueRequests, counts: {
     today_jobs: count(active, today), overdue: overdue.length,
     unconfirmed: unconfirmed.length, unscheduled: unscheduled.length,
     today_total: todayItems.length,
@@ -365,6 +381,21 @@ export async function maybeFireScheduleDigest(req) {
     if (digest.techText) {
       await postToCliqChannel(TECHNICIANS_CHANNEL, digest.techText)
         .catch(e => console.warn('[sched-digest] tech post failed:', e.message))
+    }
+    // Bell for Kat: today's scheduled requests need jobs created (Mark
+    // 2026-08-30) — the cards are already waiting in her lane.
+    if (digest.dueRequests?.length) {
+      try {
+        const { createNotification } = await import('./notifications.js')
+        await createNotification(req, {
+          to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
+          type: 'job_requested',
+          title: `${digest.dueRequests.length} scheduled request${digest.dueRequests.length > 1 ? 's' : ''} due today — create the jobs`,
+          body: digest.dueRequests.slice(0, 5).map(j =>
+            `${j.shop_name || 'Shop'} · ${j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'}`).join(' | '),
+          skipCliq: true, skipTechChannel: true,
+        })
+      } catch (e) { console.warn('[sched-digest] kat bell failed:', e.message) }
     }
     await upsertKV(req, stampKey, new Date().toISOString())
     return { fired: !digest.quiet || !!digest.techText, ...digest.counts }
