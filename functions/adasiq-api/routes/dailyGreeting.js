@@ -83,11 +83,11 @@ function weekdayPT() {
 // null so the caller can skip the send entirely on Sat/Sun.
 function dayOfWeekOpener(weekday) {
   switch (weekday) {
-    case 'Monday':    return '☀️ Happy Monday — GET SOME!!!'
-    case 'Tuesday':   return '☀️ Happy Tuesday — GET SOME!!!'
-    case 'Wednesday': return '🐫 Halfway there — GET SOME!!!'
-    case 'Thursday':  return '👀 Almost Friday — GET SOME!!!'
-    case 'Friday':    return '🎉 Happy Friday! Here we go — GET SOME!!!'
+    case 'Monday':    return '☀️ Happy Monday!'
+    case 'Tuesday':   return '☀️ Happy Tuesday!'
+    case 'Wednesday': return '🐫 Happy Wednesday — halfway there!'
+    case 'Thursday':  return '👀 Almost Friday!'
+    case 'Friday':    return '🎉 Happy Friday! Big finish.'
     default:          return null   // Saturday/Sunday — skip
   }
 }
@@ -131,7 +131,7 @@ function buildGreetingMessage({ name, opener }) {
   return [
     opener,
     ``,
-    `Good morning ${name}. Let's have a good one — GET SOME!!!`,
+    `Good morning ${name} — let's have a good one. GET SOME!!!`,
   ].join('\n')
 }
 
@@ -361,10 +361,20 @@ export async function maybeFireMorningKickoff(req) {
   }
 }
 
-// Cron-fired endpoint.
+// Cron-fired endpoint — same once-per-day dedup as the piggyback (the
+// unguarded direct call double-greeted Kat on 2026-09-01: Catalyst cron
+// at 7:49 after the piggyback's 7:04 send). ?force=1 for manual tests.
 router.post('/', requireCronSecret, async (req, res) => {
   try {
+    if (req.query.force !== '1') {
+      const dateStr = todayPT()
+      try {
+        const already = await readKickoffFiredKey(req, dateStr)
+        if (already) return res.json({ ok: true, fired: false, reason: 'already sent today', at: already })
+      } catch { /* cache miss — proceed */ }
+    }
     const summary = await sendMorningKickoff(req)
+    try { await stampKickoffFired(req, todayPT()) } catch { /* sent OK */ }
     res.json({ ok: true, ...summary })
   } catch (e) {
     console.error('[daily-greeting]', e.message, e.stack)
