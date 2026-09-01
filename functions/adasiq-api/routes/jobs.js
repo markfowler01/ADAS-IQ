@@ -1364,6 +1364,39 @@ router.post('/:id/refresh-share-link', async (req, res) => {
 })
 
 // ─── Exports for webhook.js ───────────────────────────────────────────────────
+// A tech is ACTING on a scheduled request whose job isn't created yet →
+// Kat gets an urgent Cliq + bell, once per job per day (Mark 2026-08-31:
+// "tell kat they are working on the job and need the job created").
+async function nudgeKatJobNeeded(req, job, action) {
+  if ((job.status || '') !== 'job_requested') return
+  try {
+    const catalystMod = (await import('zcatalyst-sdk-node')).default
+    const app = catalystMod.initialize(req)
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const stampKey = `kat_nudge:${job.id}:${today}`.slice(0, 64)
+    const rows = await app.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM AppConfig WHERE config_key = '${stampKey}' LIMIT 1`).catch(() => [])
+    if (rows?.length) return
+    await app.datastore().table('AppConfig')
+      .insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
+    const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+    const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+    await postToCliqChannel(DISPATCH_CHANNEL,
+      `🚨 *${job.technician || 'Tech'} is ${action} — JOB NOT CREATED YET*\n` +
+      `${job.shop_name || 'Shop'} · ${vehicle || 'Vehicle TBD'}${job.quote_number ? ` · RO ${job.quote_number}` : ''}\n` +
+      `Kat — create the job from the card in Waiting-on-Kat now.`).catch(() => {})
+    const { createNotification } = await import('./notifications.js')
+    await createNotification(req, {
+      to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
+      type: 'job_requested',
+      title: `🚨 ${job.technician || 'Tech'} working ${job.shop_name || 'a job'} — create the job`,
+      body: `${vehicle || ''} — tech is ${action}, paperwork needed now`,
+      jobId: job.id, job,
+      skipCliq: true, skipTechChannel: true,
+    }).catch(() => {})
+  } catch (e) { console.warn('[kat-nudge]', e.message) }
+}
+
 // Route info for Head-to-the-Job: the REAL street address. The Books
 // contacts LIST omits addresses entirely (documented in zoho.js) — the
 // first version searched Maps by shop name and navigated a tech toward
@@ -1373,6 +1406,7 @@ router.get('/:id/route-info', async (req, res) => {
     const jobs = await getAllJobs(req)
     const job = jobs.find(j => String(j.id) === String(req.params.id))
     if (!job) return res.status(404).json({ error: 'Job not found' })
+    nudgeKatJobNeeded(req, job, 'getting directions').catch(() => {})
     let address = '', matched = '', phoneOnFile = false
     try {
       const { listCustomers, getCustomerFull } = await import('../services/zoho.js')
@@ -1404,6 +1438,7 @@ router.post('/:id/enroute', async (req, res) => {
     const job = jobs.find(j => String(j.id) === String(req.params.id))
     if (!job) return res.status(404).json({ error: 'Job not found' })
 
+    await nudgeKatJobNeeded(req, job, 'on the way').catch(() => {})
     const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
     const tech = req.body?.technician || job.technician || 'Your technician'
     const ro = job.quote_number || job.ro_number || ''

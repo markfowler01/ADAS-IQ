@@ -404,7 +404,9 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
           <div key={j.id || i} className={i > 0 ? 'mt-2' : ''}>
             <div className="text-[10px] uppercase tracking-wider font-semibold mb-1"
               style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-              {i === 0 ? `Next${j.time_window_start ? ` · ETA ${j.time_window_start}` : ''}`
+              {j.status === 'job_requested'
+                ? '🟠 Scheduled — paperwork coming from Kat'
+                : i === 0 ? `Next${j.time_window_start ? ` · ETA ${j.time_window_start}` : ''}`
                 : j.status === 'pending_parts' ? '⏳ Waiting on Parts' : 'On the board'}
             </div>
             <MobileJobCard job={j}

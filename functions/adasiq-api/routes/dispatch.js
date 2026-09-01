@@ -68,10 +68,20 @@ router.get('/live', async (req, res) => {
       // Schedule calendar (2026-08-10): FUTURE-dated jobs are parked on
       // the calendar — they join the live view the morning their date
       // arrives. No-date and past-date jobs still show (carryover work).
+      // Scheduled REQUESTS whose day arrived ride in the tech's lane too
+      // (Mark 2026-08-31): the tech can navigate + text before Kat has
+      // created the paperwork. Undated requests stay in Kat's queue.
       const techJobs = allJobs
         .filter(j => isAssignedTo(j, techName))
-        .filter(j => /^dispatched_/.test(j.status || ''))
-        .filter(j => !j.scheduled_date || String(j.scheduled_date).slice(0, 10) <= dateISO)
+        .filter(j => {
+          const st = j.status || ''
+          if (/^dispatched_/.test(st)) return !j.scheduled_date || String(j.scheduled_date).slice(0, 10) <= dateISO
+          if (st === 'job_requested') {
+            const d = String(j.scheduled_date || '').slice(0, 10)
+            return d && d <= dateISO
+          }
+          return false
+        })
         .map(decorate)
         .sort((a, b) => (a.drive_order ?? 999) - (b.drive_order ?? 999))
 
