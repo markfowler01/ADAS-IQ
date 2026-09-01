@@ -2228,6 +2228,9 @@ captureCalcRouter.all('/report/weekly', heartbeatAttempt('capture_weekly'), requ
       // Day-of-week gate: only run on Fridays (Pacific time).
       const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
       if (dayPT !== 'Fri') {
+        // Stamp the gate-skip as a success — the cron IS alive and on
+        // schedule; without this the watchdog reads 'no success' all week.
+        await stampSuccess(req, 'capture_weekly', { skipped: `cron gate, ${dayPT}` })
         return res.json({ ok: true, skipped: true, reason: `today is ${dayPT} PT, weekly report only fires on Fri` })
       }
     }
@@ -2634,6 +2637,8 @@ const DEBUG_FORWARD_WHITELIST = {
   'weekly-run':          '/api/capture-calc/report/weekly?force=1',
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
   'li-outreach-run':     '/api/capture-calc/li-outreach/run',
+  'weekly-run-cron':     '/api/capture-calc/report/weekly',
+  'van-draft-weekly-cron': '/api/capture-calc/from-the-van/draft-weekly?cron=1',
   'mailagent-run':       '/api/mail-agent/run',
 }
 async function debugForward(req, res, target) {
@@ -2700,6 +2705,8 @@ captureCalcRouter.all('/debug/van-draft-day',       (req, res) => debugForward(r
 captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
 captureCalcRouter.all('/debug/li-outreach-run',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-outreach-run']))
+captureCalcRouter.all('/debug/weekly-run-cron',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run-cron']))
+captureCalcRouter.all('/debug/van-draft-weekly-cron', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['van-draft-weekly-cron']))
 captureCalcRouter.all('/debug/mailagent-run',       (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['mailagent-run']))
 
 // TEMP DEBUG — generate one meta-drafter slot and return text + image_prompt.
@@ -2986,7 +2993,11 @@ captureCalcRouter.get('/debug/setup-crons', async (req, res) => {
         { cron_name: 'aa_daily_tasks',      path: 'engagement-run',  type: 'daily', hour: 6, minute: 23 },
         { cron_name: 'aa_li_outreach',      path: 'li-outreach-run', type: 'daily', hour: 7, minute: 45 },
         { cron_name: 'aa_li_comments',      path: 'li-comments-check', type: 'daily', hour: 8, minute: 15 },
-        { cron_name: 'aa_weekly_report',    path: 'weekly-run',      type: 'weekly', hour: 7, minute: 17, weekDay: 6 }, // Catalyst week_day: 1=Sun … 6=Fri
+        // Catalyst's Weekly cron payload 500s no matter the shape — model
+        // weeklies as Daily crons hitting routes with their own PT day gates
+        // (same proven pattern as aa_li_outreach's weekend skip).
+        { cron_name: 'aa_weekly_report',    path: 'weekly-run-cron', type: 'daily', hour: 7, minute: 17 }, // route runs Fri only
+        { cron_name: 'aa_van_weekly_draft', path: 'van-draft-weekly-cron', type: 'daily', hour: 8, minute: 7 }, // route runs Sun only (?cron=1)
       ]
       const existing = await cronApi.getAllCron().catch(() => [])
       const existingNames = new Set((existing || []).map(c => c.cron_name))
@@ -4295,6 +4306,16 @@ captureCalcRouter.post('/from-the-van/reset-issue-state', requireCronSecretFlex,
 captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_van_weekly_draft'), requireCronSecretFlex, async (req, res) => {
   const dry = req.query.dry === '1' || req.query.dry === 'true'
   try {
+    // Cron calls (?cron=1, from the daily aa_van_weekly_draft cron) only run
+    // on Sundays PT — the draft lands before Mark's Sunday review, matching
+    // the safety net's Sun/Mon window. Manual/debug fires are ungated.
+    if (req.query.cron === '1') {
+      const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
+      if (dayPT !== 'Sun') {
+        await stampSuccess(req, 'capture_van_weekly_draft', { skipped: `cron gate, ${dayPT}` })
+        return res.json({ ok: true, skipped: true, reason: `cron only drafts on Sun PT (today ${dayPT})` })
+      }
+    }
     const seg = getSegment(req)
     // Bail if a previous draft is still pending — don't clobber unread work.
     const existing = await readPendingDraft(req)

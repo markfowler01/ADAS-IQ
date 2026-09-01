@@ -75,10 +75,20 @@ export function heartbeatAttempt(name) {
  * extra fields go into the cache payload (e.g. processed count).
  */
 export async function stampSuccess(req, name, extra = {}) {
+  const payload = { at: new Date().toISOString(), ...extra }
   try {
     const seg = getSegment(req)
-    await cacheSet(seg, HB_SUCCESS_KEY(name), { at: new Date().toISOString(), ...extra })
+    await cacheSet(seg, HB_SUCCESS_KEY(name), payload)
   } catch (e) { /* swallow */ }
+  // WRITE-THROUGH to Datastore (2026-09-01): Catalyst Cache expires values
+  // after 48h, so a WEEKLY cron's success stamp always evaporated before its
+  // next fire — the watchdog cried "no success ever recorded" for
+  // capture_weekly / capture_van_weekly_draft every week even when they ran
+  // fine. VanKV is durable; readAllHeartbeats falls back to it.
+  try {
+    const { setVal } = await import('./vanDatastore.js')
+    await setVal(req, HB_SUCCESS_KEY(name), payload)
+  } catch (e) { /* swallow — cache stamp above still covers the common case */ }
 }
 
 /**
@@ -128,10 +138,16 @@ export async function readAllHeartbeats(req) {
   }
   const now = Date.now()
   const ageMin = iso => iso ? Math.round((now - new Date(iso).getTime()) / 60000) : null
+  // Durable fallback for stamps the 48h cache TTL has evicted (weekly crons).
+  let getDurable = async () => null
+  try {
+    const { getVal } = await import('./vanDatastore.js')
+    getDurable = key => getVal(req, key).catch(() => null)
+  } catch { /* datastore unavailable — cache-only view */ }
   const out = {}
   for (const name of CRON_NAMES) {
     const a = await get(HB_ATTEMPT_KEY(name))
-    const s = await get(HB_SUCCESS_KEY(name))
+    const s = (await get(HB_SUCCESS_KEY(name))) || (await getDurable(HB_SUCCESS_KEY(name)))
     out[name] = {
       last_attempt: a?.at || null,
       last_attempt_age_min: ageMin(a?.at),
