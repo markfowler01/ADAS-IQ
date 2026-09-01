@@ -127,12 +127,9 @@ function fmtUSD(n) {
 
 // Warm short greeting for Kat + Joyce — no sales numbers, just the DOW
 // opener and a friendly tail.
-function buildGreetingMessage({ name, opener }) {
-  return [
-    opener,
-    ``,
-    `Good morning ${name} — let's have a good one. GET SOME!!!`,
-  ].join('\n')
+// Exact format per Mark 2026-09-01: "Happy Tuesday Kat - Lets get some!!!"
+function buildGreetingMessage({ name, weekday }) {
+  return `Happy ${weekday} ${name} — Let's get some!!!`
 }
 
 // Sales digest for a technician. Adds the reference day's sales + MTD $
@@ -236,7 +233,7 @@ export async function sendMorningKickoff(req) {
         mtd, goal: DEFAULT_MONTHLY_GOAL, jobsToday,
       })
     } else {
-      msg = buildGreetingMessage({ name: r.name, opener })
+      msg = buildGreetingMessage({ name: r.name, weekday })
     }
 
     const outcome = await deliver(r, msg)
