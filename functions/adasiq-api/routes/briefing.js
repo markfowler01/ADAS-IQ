@@ -819,10 +819,11 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // Two passes on purpose: the page is built from the brief HTML, and the
   // email needs the page's URL to link to it. Render once for the page, then
   // render again with the URL in hand for the email.
-  const pageBody = formatBriefHtml(b, big3, tr, null, null)
-  const page = await withTimeout('brief-page',
-    safe('brief-page', () => publishBriefPage(pageBody, audio?.url || null, ptDate())), 20000)
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page?.url || null)
+  // Link the live Catalyst page rather than a published file — instant, always
+  // current, and it cannot 404 because the email beat a static site build.
+  const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+  const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -961,6 +962,52 @@ router.get('/sms-debug', async (req, res) => {
 })
 
 // Render the email as HTML so it can be eyeballed instead of guessed at.
+// Serve the brief page LIVE from Catalyst instead of GitHub Pages.
+//
+// Pages takes 2-4 minutes to build after a commit, so at 4:40 the email lands
+// before the page exists and the link 404s — which is exactly what happened.
+// Rendering here is instant and always current.
+//
+// The audio is proxied from raw.githubusercontent, which serves the moment the
+// commit lands rather than after a site build. Same file, no wait.
+router.get('/page', async (req, res) => {
+  try {
+    const date = String(req.query.date || ptDate())
+    const b = await buildBriefing(req)
+    const day = await safe('plan', () => getDay(req, date))
+    const big3 = day?.big3?.length
+      ? { big3: day.big3, hardThing: day.hard_thing?.text || '', note: day.plan_note || '', affirmation: day.affirmation || '' }
+      : null
+    const tr = techRevenue(b.jobs, b.revenue)
+    const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+    const audioSrc = `${SELF_BASE}/api/briefing/audio?date=${encodeURIComponent(date)}&k=${encodeURIComponent(secret)}`
+    res.type('html').send(`<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light"><title>Ada — ${date}</title>
+<style>body{margin:0;background:#f6f3ed}
+.bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
+.bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
+<div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
+${formatBriefHtml(b, big3, tr, null, null)}
+</body></html>`)
+  } catch (e) { res.status(500).send(String(e.message)) }
+})
+
+// Audio proxy — streams the mp3 straight from raw.githubusercontent so it is
+// playable the instant it is committed, with no Pages build in the way.
+router.get('/audio', async (req, res) => {
+  try {
+    const date = String(req.query.date || ptDate())
+    const voice = process.env.ADA_TTS_VOICE || 'sage'
+    const raw = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/audio/ada-morning-${date}-${voice}.mp3`
+    const r = await axios.get(raw, { responseType: 'arraybuffer', timeout: 20000, validateStatus: s => s < 500 })
+    if (r.status >= 300) return res.status(404).send('not ready')
+    res.set('Content-Type', 'audio/mpeg')
+    res.set('Cache-Control', 'public, max-age=3600')
+    res.send(Buffer.from(r.data))
+  } catch (e) { res.status(500).send(String(e.message)) }
+})
+
 router.get('/email-preview', async (req, res) => {
   try {
     const b = await buildBriefing(req)
