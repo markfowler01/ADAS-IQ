@@ -158,7 +158,19 @@ async function getEmailBlocks() {
     const token = await getMailAccessToken()
     const accountId = await getMailAccountIdFor(token, process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com')
     const unread = (await getUnreadInboxMessages(token, accountId)) || []
-    const usable = unread.filter(m => String(m.folderId) !== SCAN_REPORTS_FOLDER_ID).slice(0, 5)
+    // Ada must not read her own mail. The brief is emailed to Mark, so without
+    // this the extractor sees the Big 3 she just wrote, files them as promises
+    // HE made, and does it again tomorrow — four near-identical "Call the 20
+    // open-job shops" entries showed up on day one. Self-authored mail is
+    // excluded by subject and sender, along with the scan-reports folder and
+    // the automated reports that are never commitments.
+    const SELF_SUBJECT = /^(Ada\b|☀️?\s*Pipeline looks good|Absolute ADAS Morning Brief)/i
+    const NOISE_FROM = /(dmarc|mimecastreport|no-reply@zohobooks|notification@zohostore|auto-confirm@amazon)/i
+    const usable = unread
+      .filter(m => String(m.folderId) !== SCAN_REPORTS_FOLDER_ID)
+      .filter(m => !SELF_SUBJECT.test(String(m.subject || '')))
+      .filter(m => !NOISE_FROM.test(String(m.fromAddress || m.sender || '')))
+      .slice(0, 5)
     const blocks = await Promise.all(usable.map(m =>
       safe('email:msg', () => getMessageContent(token, accountId, m.folderId, m.messageId))
         .then(c => {

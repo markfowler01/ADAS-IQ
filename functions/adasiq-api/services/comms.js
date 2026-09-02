@@ -80,6 +80,24 @@ export async function sendSMS(req, { to, body, category = 'general', related_id 
   if (!to) throw new Error('to required')
   if (!body) throw new Error('body required')
 
+  // The phone stack was rebuilt to read credentials from the phone_config
+  // Datastore row, not env vars — so this module's env-only check reported
+  // "not configured" and every SMS from here silently no-op'd. That included
+  // the evening check-in, which is the entire data-collection path.
+  // Prefer the same helper the working SMS webhook uses; fall back to env.
+  try {
+    const { resolvePhoneConfig } = await import('./phoneConfig.js')
+    const { sendTwilioSMS, twilioConfigured: cfgConfigured } = await import('./twilio.js')
+    const cfg = await resolvePhoneConfig(req)
+    if (cfgConfigured(cfg)) {
+      const r = await sendTwilioSMS({ to, body, from: 'local', cfg })
+      await logMessage(req, { channel: 'sms', status: 'sent', to, body, category, related_id })
+      return { sent: true, channel: 'sms', sid: r?.sid || null, via: 'phone_config' }
+    }
+  } catch (e) {
+    console.warn('[comms] phone_config SMS path failed, trying env:', e.message)
+  }
+
   if (!twilioConfigured()) {
     console.warn(`[comms] SMS skipped (Twilio not configured) — would have sent: ${to}: ${body.slice(0, 60)}…`)
     await logMessage(req, {
