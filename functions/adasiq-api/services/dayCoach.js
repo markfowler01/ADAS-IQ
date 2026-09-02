@@ -17,6 +17,11 @@ import Anthropic from '@anthropic-ai/sdk'
 
 const COACH_MODEL = 'claude-opus-5'      // judgment: proposals, pattern-finding
 const PARSE_MODEL = 'claude-haiku-4-5'   // extraction: SMS -> JSON, on a clock
+// The nightly review also runs on Haiku, and for the same reason: the evening
+// endpoint answers a gateway request capped at 30s. This call summarizes facts
+// it is handed and asks a question — it is not the pattern-finding step. That
+// job is weeklyReview(), which runs on Opus where the judgment compounds.
+const REVIEW_MODEL = 'claude-haiku-4-5'
 
 function client() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -116,6 +121,49 @@ export async function proposeBig3(req, { goals, recentDays, coachingNotes, today
     hardThing: parsed.hard_thing || '',
     note: parsed.note || '',
   }
+}
+
+// ── evening: review the day, then ask ───────────────────────────────────────
+
+const NIGHTLY_SYSTEM = `You write Mark's end-of-day text. He owns Absolute ADAS, a mobile ADAS calibration shop.
+
+You are given what the day actually looked like — jobs closed, commitments due and overdue, promises he made, unread mail, tomorrow's load — and the Big 3 he committed to this morning.
+
+Write a short SMS with three parts, in this order:
+1. What the day looked like from the outside. Two or three facts that actually matter, from the data you were given. Not a list dump — the things a chief of staff would mention. If something is overdue or slipping, lead with it.
+2. His Big 3, numbered, so he can answer by number.
+3. The ask: which ones landed, rate the day 1-10, and what made it that.
+
+Rules:
+- This is a text message. Keep the whole thing under 700 characters.
+- Never invent a fact. Only use what you were given. If a source is empty, say nothing about it rather than saying "no emails".
+- Plain sentences. No headers, no markdown, no emoji, no bullet characters.
+- Do not congratulate him and do not pep-talk. State it and ask.
+- If he closed nothing and had nothing due, say the day looks quiet from here and ask anyway.
+
+Return raw JSON only.
+{"text": "the full SMS"}`
+
+export async function reviewDay(req, { context, big3, hardThing, date }) {
+  const list = (big3 || []).map((b, i) => `${i + 1}. ${b.text}`).join('\n') || '(none were set today)'
+  const res = await client().messages.create({
+    model: REVIEW_MODEL,
+    max_tokens: 1200,
+    system: NIGHTLY_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: [
+        `Date: ${date}`, '',
+        '## What the day looked like',
+        JSON.stringify(context || {}, null, 1), '',
+        '## His Big 3 from this morning',
+        list,
+        hardThing ? `\nThe hard thing: ${hardThing}` : '',
+      ].join('\n'),
+    }],
+  })
+  const parsed = extractJson(firstText(res))
+  return parsed?.text ? String(parsed.text).slice(0, 900) : null
 }
 
 // ── evening: parse the reply ─────────────────────────────────────────────────

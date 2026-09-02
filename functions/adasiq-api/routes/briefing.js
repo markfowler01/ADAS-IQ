@@ -24,7 +24,7 @@ import { extractCommitments } from '../services/commitmentExtractor.js'
 import { proposeBig3 } from '../services/dayCoach.js'
 import { recordPlan, listDays, getDay, upsertDay } from '../services/dayLedger.js'
 import { readContext } from './coach.js'
-import { ptDate } from './eveningCheckin.js'
+import { ptDate } from '../services/ptDate.js'
 import { sendPushToAll } from './push.js'
 
 const router = express.Router()
@@ -360,6 +360,30 @@ function formatVoiceEvening(b) {
 // commitment extraction the planner doesn't need.
 export async function buildBriefingForPlan(req) {
   return buildBriefing(req)
+}
+
+// What the evening review reads before it asks how the day went. Same
+// sources as the morning brief; the evening cares about what CLOSED, not
+// what's scheduled.
+export async function gatherDayReview(req) {
+  const b = await buildBriefing(req, { mode: 'evening' })
+  return {
+    completed_today: b.completedToday.map(j => `${j.year || ''} ${j.make || ''} ${j.model || ''}`.trim() || 'job').slice(0, 12),
+    jobs_scheduled_today: b.todaysJobs.length,
+    open_jobs: b.openJobs.length,
+    commitments_due_today: b.dueToday.map(c => `${c.person}: ${c.text}`).slice(0, 10),
+    commitments_overdue: b.overdue.map(c => `${c.person}: ${c.text}`).slice(0, 10),
+    my_promises: b.outbound.map(c => c.text).slice(0, 8),
+    followups_due: b.followups.length,
+    unread_inbox: b.sources.emailBlocks,
+    tomorrow_jobs: b.tomorrowsJobs.length,
+    tomorrow_calendar: eventTitles(b.tomorrowEvents, 5),
+    revenue_today: b.revenue?.todayTotal ?? null,
+    revenue_mtd: b.revenue?.monthlyTotal ?? null,
+    revenue_projected: b.revenue?.projected ?? null,
+    revenue_target: TARGET,
+    cliq_available: b.sources.cliqProbe !== 'disabled (missing Messages.READ scope)',
+  }
 }
 
 export async function planDay(req, b) {

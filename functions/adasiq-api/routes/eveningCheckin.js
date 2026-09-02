@@ -20,7 +20,9 @@ import catalyst from 'zcatalyst-sdk-node'
 import { sendSMS } from '../services/comms.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import { getDay, upsertDay, recordCheckin } from '../services/dayLedger.js'
-import { parseCheckin } from '../services/dayCoach.js'
+import { parseCheckin, reviewDay } from '../services/dayCoach.js'
+import { ptDate } from '../services/ptDate.js'
+import { gatherDayReview } from './briefing.js'
 
 const router = express.Router()
 
@@ -38,13 +40,7 @@ router.use((req, res, next) => {
   return res.status(401).json({ error: 'Unauthorized' })
 })
 
-// PT-local date. The check-in fires at 8:30 PM PT, which is already "tomorrow"
-// in UTC — using the UTC date here would file every answer against the wrong day.
-export function ptDate(d = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(d)
-}
+export { ptDate } from '../services/ptDate.js'
 
 function segment(req) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
@@ -98,8 +94,27 @@ export function formatCheckin(day) {
 export async function sendEveningCheckin(req, { dry = false } = {}) {
   const date = ptDate()
   const day = await getDay(req, date)
-  const body = formatCheckin(day)
-  if (dry) return { ok: true, dry: true, date, body, big3: day?.big3 || [] }
+
+  // Review the day before asking about it. Gather what actually happened —
+  // jobs closed, commitments due and overdue, promises outstanding, unread
+  // mail, tomorrow's load — and let the coach lead with the part that matters.
+  // Falls back to the plain question if either step fails; a missed review
+  // must never cost him the check-in, because the check-in is the data.
+  let body = null
+  let reviewed = false
+  try {
+    const context = await gatherDayReview(req)
+    body = await reviewDay(req, {
+      context, date,
+      big3: day?.big3 || [],
+      hardThing: day?.hard_thing?.text || '',
+    })
+    reviewed = !!body
+  } catch (e) {
+    console.warn('[evening review]', e.message)
+  }
+  if (!body) body = formatCheckin(day)
+  if (dry) return { ok: true, dry: true, date, body, reviewed, big3: day?.big3 || [] }
 
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
   if (!to) return { ok: false, error: 'MARK_PHONE_NUMBER not set' }
@@ -120,7 +135,7 @@ export async function sendEveningCheckin(req, { dry = false } = {}) {
       sent_at: new Date().toISOString(),
     })
   }
-  return { ok: sent, date, body, sent }
+  return { ok: sent, date, body, reviewed, sent }
 }
 
 // ── handling the reply ───────────────────────────────────────────────────────

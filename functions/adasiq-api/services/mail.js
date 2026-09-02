@@ -135,12 +135,31 @@ export async function getAllMailAccounts(token) {
 /**
  * Get unread inbox messages for an account (used by mail-agent.js).
  */
+// Zoho Mail folder ids are long numerics (the scan-reports folder above is
+// 147686000000057026). The old code passed folderId '0' on the assumption that
+// 0 meant Inbox — it doesn't, so this silently returned nothing and the
+// briefing reported 0 unread every single day. Resolve the real id by name.
+let _inboxFolderId = null
+export async function getInboxFolderId(token, accountId) {
+  if (_inboxFolderId) return _inboxFolderId
+  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/folders`, {
+    headers: mailHeaders(token), timeout: 15000,
+    transformResponse: [safeParseMailResponse],
+  })
+  const folders = res.data?.data || []
+  const inbox = folders.find(f => String(f.folderName || '').toLowerCase() === 'inbox')
+    || folders.find(f => String(f.folderType || '').toLowerCase() === 'inbox')
+  _inboxFolderId = inbox?.folderId ? String(inbox.folderId) : null
+  if (!_inboxFolderId) console.warn('[mail] could not resolve Inbox folder id from', folders.length, 'folders')
+  return _inboxFolderId
+}
+
 export async function getUnreadInboxMessages(token, accountId) {
-  // folderId 0 = Inbox in Zoho Mail API
+  const folderId = await getInboxFolderId(token, accountId)
+  const params = { status: 'unread', limit: 50 }
+  if (folderId) params.folderId = folderId
   const res = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/view`, {
-    headers: mailHeaders(token),
-    params: { folderId: '0', status: 'unread', limit: 50 },
-    timeout: 15000,
+    headers: mailHeaders(token), params, timeout: 15000,
     transformResponse: [safeParseMailResponse],
   })
   return res.data?.data || []

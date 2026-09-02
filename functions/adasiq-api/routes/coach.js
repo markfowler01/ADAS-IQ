@@ -19,7 +19,7 @@ import { listDays, summarize } from '../services/dayLedger.js'
 import { weeklyReview } from '../services/dayCoach.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
-import { ptDate } from './eveningCheckin.js'
+import { ptDate } from '../services/ptDate.js'
 
 const router = express.Router()
 
