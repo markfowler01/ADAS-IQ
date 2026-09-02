@@ -127,9 +127,17 @@ function fmtUSD(n) {
 
 // Warm short greeting for Kat + Joyce — no sales numbers, just the DOW
 // opener and a friendly tail.
-// Exact format per Mark 2026-09-01: "Happy Tuesday Kat - Lets get some!!!"
+// One line, day personality intact, GET SOME once (Mark 2026-09-02:
+// "i still want the different versions for each day").
 function buildGreetingMessage({ name, weekday }) {
-  return `Happy ${weekday} ${name} — Let's get some!!!`
+  switch (weekday) {
+    case 'Monday':    return `☀️ Happy Monday ${name} — fresh week. Let's get some!!!`
+    case 'Tuesday':   return `💪 Happy Tuesday ${name} — Let's get some!!!`
+    case 'Wednesday': return `🐫 Happy Wednesday ${name} — halfway there. Let's get some!!!`
+    case 'Thursday':  return `👀 Almost Friday ${name} — Let's get some!!!`
+    case 'Friday':    return `🎉 Happy Friday ${name} — big finish. Let's get some!!!`
+    default:          return `Happy ${weekday} ${name} — Let's get some!!!`
+  }
 }
 
 // Sales digest for a technician. Adds the reference day's sales + MTD $
