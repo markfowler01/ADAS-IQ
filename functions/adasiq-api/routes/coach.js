@@ -15,7 +15,7 @@
 
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
-import { listDays, summarize } from '../services/dayLedger.js'
+import { listDays, summarize, deleteDay } from '../services/dayLedger.js'
 import { weeklyReview } from '../services/dayCoach.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
@@ -142,6 +142,11 @@ router.get('/ledger', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit || '90', 10) || 90, 200)
   const days = await listDays(req, { limit })
   res.json({ ok: true, count: days.length, stats: summarize(days), days })
+})
+
+router.delete('/ledger/:date', async (req, res) => {
+  try { res.json({ ok: true, ...(await deleteDay(req, req.params.date)) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
 router.get('/weekly/debug', async (req, res) => {

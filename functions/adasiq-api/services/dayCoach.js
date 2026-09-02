@@ -66,6 +66,7 @@ You also propose "the hard thing" — the one task he doesn't want to do. It goe
 How to choose:
 - Anchor on the goals you're given. A day that hits three tasks unrelated to his goals is a busy day, not a good day.
 - Look at what he missed yesterday and the day before. A Big 3 item he's ducked twice is usually the hard thing.
+- CRITICAL: a day with "reported": false means he was never asked and never answered. You know NOTHING about what he did that day. Never say or imply he skipped, pushed, avoided, or failed anything on an unreported day, and never count it toward a streak. Only days with "reported": true are evidence about his behavior. If you have no reported days at all, say nothing about his habits — talk about today only.
 - Watch the F3 balance (Faith, Family, Fitness, Finances). If an area has gone untouched for several days, one of the three should serve it. He built this system to run his life, not just his business.
 - Be specific enough to be checkable tonight. "Follow up with shops" is not a task. "Call the three shops with quotes out past 7 days" is.
 - Keep each one under about 90 characters. It has to read on a phone lock screen. Put the number in the task, not a paragraph of reasoning — the reasoning goes in "note".
@@ -82,12 +83,22 @@ Return raw JSON only. No preamble, no markdown fence.
 }`
 
 export async function proposeBig3(req, { goals, recentDays, coachingNotes, todayContext }) {
+  // `reported` is load-bearing. Without it the model reads an unchecked box on
+  // a day Mark was never asked about as evidence he ducked the task — which it
+  // did on day one, telling him he'd "pushed the calls two days running" when
+  // one of those days was a test row he never saw.
   const recent = (recentDays || []).slice(-5).map(d => ({
     date: d.date,
+    reported: !!d.checkin_at,
     rating: d.rating,
-    big3: (d.big3 || []).map(b => ({ text: b.text, done: !!b.done })),
-    hard_thing: d.hard_thing || null,
-    f3: d.f3 || {},
+    big3: (d.big3 || []).map(b => ({
+      text: b.text,
+      status: d.checkin_at ? (b.done ? 'done' : 'not done') : 'unknown — never reported',
+    })),
+    hard_thing: d.hard_thing
+      ? { text: d.hard_thing.text, status: d.checkin_at ? (d.hard_thing.done ? 'done' : 'not done') : 'unknown — never reported' }
+      : null,
+    f3: d.checkin_at ? (d.f3 || {}) : 'unknown — never reported',
     win: d.win || '',
     drag: d.drag || '',
   }))

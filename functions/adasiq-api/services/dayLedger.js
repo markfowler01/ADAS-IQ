@@ -252,6 +252,26 @@ export async function recordCheckin(req, date, parsed) {
   })
 }
 
+// Remove a day entirely. Needed for test rows and misparsed check-ins — a
+// wrong day is worse than a missing one, because the coach reasons from it.
+export async function deleteDay(req, date) {
+  let ds = false
+  if (dsAvailable !== false) {
+    try {
+      const app = catalyst.initialize(req, { type: 'advancedio' })
+      const safe = String(date).replace(/'/g, "''")
+      const rows = await app.zcql().executeZCQLQuery(
+        `SELECT ROWID FROM ${TABLE} WHERE day_date = '${safe}' LIMIT 1`)
+      const existing = rows?.[0]?.[TABLE] || rows?.[0] || null
+      if (existing?.ROWID) { await app.datastore().table(TABLE).deleteRow(existing.ROWID); ds = true }
+    } catch (e) { console.warn('[ledger ds delete]', e.message) }
+  }
+  const cache = await readCache(req)
+  const kept = cache.filter(d => d.date !== date)
+  await writeCache(req, kept)
+  return { deleted: date, datastore: ds, remaining: kept.length }
+}
+
 // Rollups the coach uses — kept here so the brief, the review, and any
 // future dashboard all compute "a good day" the same way.
 export function summarize(days) {
