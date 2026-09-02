@@ -277,6 +277,23 @@ app.use('/api/shop-quotes', requireAuth, shopQuotesRouter)
 // Debug (secret-gated): see Books estimate templates + pin the quote /
 // insurance template ids when the name-guess picks wrong (2026-08-29:
 // Mark's first real send went out on the insurance template).
+// Verify/provision the Twilio Voice Intelligence service used for call
+// transcripts (call-transcription pipeline, 2026-09-02).
+app.get('/debug/transcript-setup', async (req, res) => {
+  if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
+  try {
+    const { resolvePhoneConfig } = await import('./services/phoneConfig.js')
+    const { ensureIntelligenceService } = await import('./services/callTranscripts.js')
+    const cfg = await resolvePhoneConfig(req)
+    const base = (process.env.TWILIO_WEBHOOK_BASE_URL || '').replace(/\/$/, '')
+      || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+    const sid = await ensureIntelligenceService(req, cfg, base)
+    res.json({ ok: !!sid, service_sid: sid || null, webhook: `${base}/webhooks/twilio/voice/transcript-ready` })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, detail: e.response?.data || null })
+  }
+})
+
 app.get('/debug/quote-templates', async (req, res) => {
   if ((req.query.secret || '') !== 'backup-2026') return res.status(401).json({ error: 'unauthorized' })
   try {

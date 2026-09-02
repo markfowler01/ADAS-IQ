@@ -665,7 +665,9 @@ router.post('/recording-done', requireTwilioSignature, async (req, res) => {
 // Twilio signature here — we authenticate by fetching the transcript
 // from Twilio ourselves; a forged sid just 404s.
 router.post('/transcript-ready', async (req, res) => {
-  res.status(200).send('OK')  // ack fast; work continues below within this handler
+  // Catalyst kills the function once the response is sent, so the whole
+  // pipeline runs BEFORE the ack, bounded under the 30s gateway cap.
+  const work = (async () => {
   try {
     const tSid = String(req.body?.transcript_sid || req.body?.TranscriptSid || '')
     const status = String(req.body?.status || req.body?.Status || '').toLowerCase()
@@ -723,6 +725,9 @@ router.post('/transcript-ready', async (req, res) => {
   } catch (e) {
     console.error('[transcript-ready]', e.message)
   }
+  })()
+  await Promise.race([work, new Promise(r => setTimeout(r, 26000))])
+  res.status(200).send('OK')
 })
 
 // ── POST /webhooks/twilio/voice/status ──────────────────────────────────────
