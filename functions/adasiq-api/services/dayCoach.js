@@ -299,7 +299,7 @@ Return raw JSON only.
 export async function planWeek(req, { goals, weekAhead, lastWeek, review, coachingNotes, today }) {
   const res = await client().messages.create({
     model: COACH_MODEL,
-    max_tokens: 8000,
+    max_tokens: 3000,
     system: WEEKPLAN_SYSTEM,
     messages: [{
       role: 'user',

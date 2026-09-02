@@ -144,7 +144,10 @@ export function formatWeekPlan(p) {
 // Sunday 3 PM. Reviews the week that just ended, then plans the next one —
 // in that order, because the review is an input to the plan.
 export async function runWeeklyPlanner(req, { dry = false } = {}) {
-  const review = await runWeeklyReview(req, { dry: true })   // read-only pass
+  // Deliberately does NOT re-run the review. sunday.sh runs the real review
+  // first, which stores its conclusions into coaching_notes — this reads those.
+  // Running it inline meant two Opus calls in one request and a hard 408 at
+  // the 30s gateway cap.
   const [weekAhead, ctx, all] = await Promise.all([
     gatherWeekAhead(req), readContext(req), listDays(req, { limit: 30 }),
   ])
@@ -153,11 +156,11 @@ export async function runWeeklyPlanner(req, { dry = false } = {}) {
     coachingNotes: ctx.coaching_notes,
     weekAhead,
     lastWeek: last7(all),
-    review: review?.review || null,
+    review: ctx.coaching_notes || null,
     today: ptDate(),
   })
   const text = formatWeekPlan(plan)
-  if (dry) return { ok: !!plan, dry: true, plan, text, reviewIncluded: !!review?.review }
+  if (dry) return { ok: !!plan, dry: true, plan, text, notesUsed: !!ctx.coaching_notes }
 
   const sent = { cliq: false, sms: false }
   try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
