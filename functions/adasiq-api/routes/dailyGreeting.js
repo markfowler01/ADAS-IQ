@@ -305,31 +305,26 @@ function isInKickoffWindow(h, m) {
 }
 
 async function readKickoffFiredKey(req, dateStr) {
+  // AppConfig datastore, NOT the raw Cache REST API — cache calls fail
+  // silently on cron-context runs and Kat got greeted 4x (2026-09-02).
   const key = `morning_kickoff_${dateStr}`
-  const url = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache/${key}`
-  try {
-    const r = await axios.get(url, { headers: catalystHeaders(req) })
-    return r.data?.data?.cache_value || null
-  } catch (e) {
-    if (e.response?.status === 404) return null
-    throw e
-  }
+  const app = catalyst.initialize(req)
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 1`
+  ).catch(() => [])
+  const r0 = rows?.[0]?.AppConfig || rows?.[0] || null
+  return r0?.config_value || null
 }
 
 async function stampKickoffFired(req, dateStr) {
   const key = `morning_kickoff_${dateStr}`
-  const baseUrl = `${CATALYST_API}/baas/v1/project/${catalystProjectId(req)}/cache`
-  const headers = catalystHeaders(req)
-  const value = new Date().toISOString()
-  try {
-    await axios.put(`${baseUrl}/${key}`, { cache_value: value, expiry_in_hours: 25 }, { headers })
-  } catch (e) {
-    if (e.response?.status === 404) {
-      await axios.post(baseUrl, { cache_name: key, cache_value: value, expiry_in_hours: 25 }, { headers })
-    } else {
-      throw e
-    }
-  }
+  const app = catalyst.initialize(req)
+  await app.datastore().table('AppConfig')
+    .insertRow({ config_key: key, config_value: new Date().toISOString() })
+  // Read-back verify — a stamp that didn't land means tomorrow's dedup
+  // is broken, and we want the log to scream today.
+  const check = await readKickoffFiredKey(req, dateStr)
+  if (!check) throw new Error('kickoff stamp verify failed')
 }
 
 // Piggyback entry point — called from postscan.js /run (and any other
@@ -348,12 +343,19 @@ export async function maybeFireMorningKickoff(req) {
     console.warn('[kickoff-dedup] cache read failed, will send anyway:', e.message)
   }
   try {
+    // CLAIM the day BEFORE sending — a raced second trigger sees the
+    // stamp and stands down. If the claim itself fails we do NOT send
+    // (better a missed greeting than four of them).
+    await stampKickoffFired(req, dateStr)
+  } catch (e) {
+    console.error('[kickoff-dedup] could not claim stamp — NOT sending:', e.message)
+    return { fired: false, error: `stamp claim failed: ${e.message}` }
+  }
+  try {
     const summary = await sendMorningKickoff(req)
-    try { await stampKickoffFired(req, dateStr) }
-    catch (e) { console.warn('[kickoff-dedup] cache stamp failed (kickoff sent OK):', e.message) }
     return { fired: true, ...summary }
   } catch (e) {
-    console.error('[kickoff] send failed:', e.message)
+    console.error('[kickoff] send failed after claim:', e.message)
     return { fired: false, error: e.message }
   }
 }
@@ -363,15 +365,16 @@ export async function maybeFireMorningKickoff(req) {
 // at 7:49 after the piggyback's 7:04 send). ?force=1 for manual tests.
 router.post('/', requireCronSecret, async (req, res) => {
   try {
+    if (req.query.stamp_only === '1') {
+      await stampKickoffFired(req, todayPT()).catch(() => {})
+      return res.json({ ok: true, stamped: todayPT() })
+    }
     if (req.query.force !== '1') {
-      const dateStr = todayPT()
-      try {
-        const already = await readKickoffFiredKey(req, dateStr)
-        if (already) return res.json({ ok: true, fired: false, reason: 'already sent today', at: already })
-      } catch { /* cache miss — proceed */ }
+      const already = await readKickoffFiredKey(req, todayPT()).catch(() => null)
+      if (already) return res.json({ ok: true, fired: false, reason: 'already sent today', at: already })
+      await stampKickoffFired(req, todayPT())
     }
     const summary = await sendMorningKickoff(req)
-    try { await stampKickoffFired(req, todayPT()) } catch { /* sent OK */ }
     res.json({ ok: true, ...summary })
   } catch (e) {
     console.error('[daily-greeting]', e.message, e.stack)

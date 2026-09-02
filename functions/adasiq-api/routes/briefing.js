@@ -19,6 +19,7 @@ import { sendSMS, sendEmail } from '../services/comms.js'
 import { getAccessToken } from '../services/zoho.js'
 import {
   getMailAccessToken, getMailAccountIdFor, getUnreadInboxMessages, getMessageContent,
+  getAllMailAccounts, getInboxFolderId,
 } from '../services/mail.js'
 import { extractCommitments } from '../services/commitmentExtractor.js'
 import { proposeBig3 } from '../services/dayCoach.js'
@@ -666,6 +667,41 @@ router.post('/plan', async (req, res) => {
   } catch (e) {
     console.error('[briefing/plan]', e)
     res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Mail diagnostic — the briefing reported 0 unread while Mark's inbox visibly
+// had six. This shows every step of the resolution so the failing one is
+// obvious instead of inferred: which mailboxes exist, which matched, which
+// folder id came back, and what the raw query returned.
+router.get('/mail-debug', async (req, res) => {
+  const out = { steps: {} }
+  try {
+    const token = await getMailAccessToken()
+    out.steps.token = !!token
+    const accounts = await getAllMailAccounts(token)
+    out.steps.accounts = accounts.map(a => ({
+      accountId: a.accountId,
+      accountName: a.accountName,
+      primary: a.primaryEmailAddress,
+      mailbox: a.mailboxAddress,
+      addresses: (a.emailAddress || []).map(e => e?.mailId).filter(Boolean),
+    }))
+    const want = process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com'
+    out.steps.wanted = want
+    const accountId = await getMailAccountIdFor(token, want)
+    out.steps.matchedAccountId = accountId
+    out.steps.matchedIsFirst = accountId === accounts[0]?.accountId
+
+    const folderId = await getInboxFolderId(token, accountId)
+    out.steps.resolvedInboxFolderId = folderId
+
+    const msgs = await getUnreadInboxMessages(token, accountId)
+    out.steps.unreadCount = msgs.length
+    out.steps.subjects = msgs.slice(0, 8).map(m => m.subject || '(no subject)')
+    res.json({ ok: true, ...out })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message, ...out })
   }
 })
 

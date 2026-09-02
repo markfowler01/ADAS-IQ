@@ -172,11 +172,22 @@ export async function getAllMailAccounts(token) {
 const _inboxFolderIds = new Map()
 export async function getInboxFolderId(token, accountId) {
   if (_inboxFolderIds.has(accountId)) return _inboxFolderIds.get(accountId)
-  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/folders`, {
-    headers: mailHeaders(token), timeout: 15000,
-    transformResponse: [safeParseMailResponse],
-  })
-  const folders = res.data?.data || []
+  // The /folders endpoint 401s — the Mail OAuth grant doesn't include folder
+  // listing. Fail soft: a null id makes the caller query without a folder
+  // filter, which returns unread across the mailbox. Throwing here took the
+  // whole email source down.
+  let folders = []
+  try {
+    const res = await axios.get(`${MAIL_API}/accounts/${accountId}/folders`, {
+      headers: mailHeaders(token), timeout: 15000,
+      transformResponse: [safeParseMailResponse],
+    })
+    folders = res.data?.data || []
+  } catch (e) {
+    console.warn('[mail] folder list unavailable (' + (e.response?.status || e.message) + ') — querying without a folder filter')
+    _inboxFolderIds.set(accountId, null)
+    return null
+  }
   const inbox = folders.find(f => String(f.folderName || '').toLowerCase() === 'inbox')
     || folders.find(f => String(f.folderType || '').toLowerCase() === 'inbox')
   const id = inbox?.folderId ? String(inbox.folderId) : null
