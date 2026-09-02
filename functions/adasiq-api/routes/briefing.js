@@ -464,6 +464,125 @@ function formatVoiceEvening(b) {
   return cleanSpeech(L.join(' '))
 }
 
+// The brief as real HTML. sendMail posts with mailFormat:'html', so the plain
+// text version arrived as one collapsed paragraph — every newline eaten.
+//
+// Email clients are stuck in 2003: inline styles only, tables for layout, no
+// external CSS, no flexbox worth trusting. Built accordingly, and mobile-first
+// because he reads it on a phone.
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+const INK = '#1a1a1a', MUTED = '#6b6b6b', RULE = '#e3e0da'
+const PAPER = '#faf8f4', ACCENT = '#8a3324'
+
+function htmlSection(title, inner) {
+  if (!inner) return ''
+  return `<tr><td style="padding:22px 28px 0 28px;">
+    <div style="font:600 11px/1 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+      letter-spacing:.11em;text-transform:uppercase;color:${MUTED};padding-bottom:9px;">${esc(title)}</div>
+    ${inner}</td></tr>`
+}
+
+export function formatBriefHtml(b, big3, tr, audioUrl) {
+  const money0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
+  const face = '-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
+
+  // Big 3 — the reason the email exists, so it leads.
+  const hard = big3?.hardThing || ''
+  const big3Html = (big3?.big3 || []).map((x, i) => {
+    const isHard = hard && x.text === hard
+    return `<tr><td style="padding:0 0 11px 0;vertical-align:top;width:26px;">
+        <div style="font:700 15px/22px ${face};color:${isHard ? ACCENT : MUTED};">${i + 1}</div></td>
+      <td style="padding:0 0 11px 0;font:${isHard ? '600' : '400'} 16px/22px ${face};color:${INK};">
+        ${esc(x.text)}${isHard ? `<div style="font:600 11px/1 ${face};letter-spacing:.08em;
+          text-transform:uppercase;color:${ACCENT};padding-top:5px;">Do this one first</div>` : ''}</td></tr>`
+  }).join('')
+
+  // Revenue: pace against the $50K target is the number that matters.
+  const rev = b.revenue || {}
+  const diff = (rev.projected || 0) - 50000
+  const ahead = diff >= 0
+  const stat = (label, val, note) => `<td style="padding:0 16px 0 0;vertical-align:top;">
+      <div style="font:600 10px/1 ${face};letter-spacing:.1em;text-transform:uppercase;color:${MUTED};">${esc(label)}</div>
+      <div style="font:600 21px/28px ${face};color:${INK};padding-top:3px;">${esc(val)}</div>
+      ${note ? `<div style="font:400 12px/16px ${face};color:${MUTED};">${esc(note)}</div>` : ''}</td>`
+
+  const techRows = (tr?.rows || []).map(([name, amt]) =>
+    `<tr><td style="font:400 14px/22px ${face};color:${INK};">${esc(name)}</td>
+      <td align="right" style="font:600 14px/22px ${face};color:${INK};">${money0(amt)}</td></tr>`).join('')
+
+  const events = (b.events || []).slice(0, 6).map(e =>
+    `<tr><td style="font:400 14px/21px ${face};color:${INK};padding:0 0 4px 0;">
+      <span style="color:${MUTED};">${esc(e.start || '')}</span> ${esc(e.title || '')}</td></tr>`).join('')
+
+  const dueList = (b.dueToday || []).concat(b.overdue || []).slice(0, 6).map(c =>
+    `<tr><td style="font:400 14px/21px ${face};color:${INK};padding:0 0 4px 0;">
+      <strong>${esc(c.person)}</strong> — ${esc(c.text)}</td></tr>`).join('')
+
+  return `<div style="margin:0;padding:0;background:${PAPER};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER};padding:20px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+  style="max-width:560px;background:#ffffff;border:1px solid ${RULE};border-radius:12px;overflow:hidden;">
+
+  <tr><td style="padding:26px 28px 0 28px;">
+    <div style="font:600 11px/1 ${face};letter-spacing:.16em;text-transform:uppercase;color:${ACCENT};">Ada</div>
+    <div style="font:400 13px/1 ${face};color:${MUTED};padding-top:7px;">${esc(b.today)}</div>
+  </td></tr>
+
+  ${big3?.affirmation ? `<tr><td style="padding:20px 28px 0 28px;">
+    <div style="border-left:3px solid ${ACCENT};padding:2px 0 2px 15px;
+      font:400 17px/26px Georgia,'Times New Roman',serif;color:${INK};">${esc(big3.affirmation)}</div>
+  </td></tr>` : ''}
+
+  ${big3Html ? htmlSection('Big 3 today',
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${big3Html}</table>`) : ''}
+
+  ${audioUrl ? `<tr><td style="padding:18px 28px 0 28px;">
+    <a href="${esc(audioUrl)}" style="display:inline-block;background:${INK};color:#ffffff;
+      text-decoration:none;font:600 14px/1 ${face};padding:12px 20px;border-radius:7px;">
+      Listen &nbsp;&rarr;</a>
+    <div style="font:400 12px/16px ${face};color:${MUTED};padding-top:8px;">Ada reads it to you, about a minute.</div>
+  </td></tr>` : ''}
+
+  <tr><td style="padding:22px 28px 0 28px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
+
+  ${htmlSection('Revenue', `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
+      ${stat('Month to date', money0(rev.monthlyTotal))}
+      ${stat('Projected', money0(rev.projected), (ahead ? 'ahead by ' : 'behind by ') + money0(Math.abs(diff)))}
+    </tr></table>`)}
+
+  ${techRows ? htmlSection('Sales by tech',
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${techRows}</table>` +
+    (tr.merged?.length ? `<div style="font:400 12px/17px ${face};color:${MUTED};padding-top:7px;">
+      Merged in Books: ${esc(tr.merged.join(', '))} — worth fixing at the source.</div>` : '')) : ''}
+
+  ${htmlSection('Today', `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+      <tr><td style="font:400 14px/21px ${face};color:${INK};padding:0 0 4px 0;">
+        ${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} scheduled
+        &middot; Jaden ${b.jadenToday.length} &middot; ${b.openJobs.length} open</td></tr>
+      ${events}</table>`)}
+
+  ${dueList ? htmlSection('Needs you',
+    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${dueList}</table>`) : ''}
+
+  ${big3?.note ? `<tr><td style="padding:24px 28px 0 28px;">
+    <div style="background:${PAPER};border-radius:9px;padding:15px 17px;
+      font:400 14px/22px ${face};color:${INK};">${esc(big3.note)}</div></td></tr>` : ''}
+
+  <tr><td style="padding:26px 28px 28px 28px;">
+    <div style="border-top:1px solid ${RULE};padding-top:13px;
+      font:400 12px/17px ${face};color:${MUTED};">Ada checks in at 7.</div>
+  </td></tr>
+
+</table>
+</td></tr></table></div>`
+}
+
 // ---------- send + routes ----------
 
 // Ask the coach for today's Big 3 and write them into the day ledger.
@@ -691,7 +810,7 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
     const e = await safe('email', () => sendEmail(req, {
       to: emailTo,
       subject: `Ada — ${ptDate()}${big3?.big3?.length ? `: ${big3.big3[0].text}` : ''}`.slice(0, 160),
-      body: full,
+      body: formatBriefHtml(b, big3, tr, audio?.url || null),
       category: 'briefing',
     }))
     sent.email = !!e
