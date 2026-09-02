@@ -136,6 +136,64 @@ router.post('/sync', async (req, res) => {
 })
 
 // GET /api/garmin/today — planner reads this; returns latest cached data + suggestion
+// Recent activities — the training history the day coach needs.
+//
+// The daily sync only stores sleep/steps/HR for a single day, which is enough
+// for an energy read but says nothing about whether Mark is actually trained
+// for a race. This pulls real activities (distance, duration, pace) so a
+// taper plan can be built on what he has done rather than what he remembers.
+router.get('/activities', async (req, res) => {
+  const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+  if ((req.headers['x-cron-secret'] || req.query.k || '').trim() !== secret) {
+    return res.status(401).json({ error: 'Unauthorized' })
+  }
+  const limit = Math.min(parseInt(req.query.limit || '40', 10) || 40, 100)
+  try {
+    const email = process.env.GARMIN_EMAIL
+    const password = process.env.GARMIN_PASSWORD
+    if (!email || !password) return res.status(500).json({ ok: false, error: 'GARMIN creds missing' })
+
+    const client = new GarminConnect({ username: email, password })
+    await client.login()
+    const raw = await client.getActivities(0, limit)
+
+    const acts = (raw || []).map(a => ({
+      date: (a.startTimeLocal || '').slice(0, 10),
+      type: a.activityType?.typeKey || 'unknown',
+      name: a.activityName || '',
+      miles: a.distance ? +(a.distance / 1609.34).toFixed(2) : 0,
+      minutes: a.duration ? +(a.duration / 60).toFixed(1) : 0,
+      avg_pace_min_per_mi: (a.distance && a.duration)
+        ? +((a.duration / 60) / (a.distance / 1609.34)).toFixed(2) : null,
+      avg_hr: a.averageHR ?? null,
+      elev_gain_ft: a.elevationGain ? Math.round(a.elevationGain * 3.28084) : null,
+    }))
+
+    // Weekly running mileage — the number that actually answers "is he trained".
+    const runs = acts.filter(a => /run|trail|trac/i.test(a.type))
+    const byWeek = {}
+    for (const r of runs) {
+      if (!r.date) continue
+      const d = new Date(r.date + 'T12:00:00Z')
+      d.setUTCDate(d.getUTCDate() - d.getUTCDay())
+      const wk = d.toISOString().slice(0, 10)
+      byWeek[wk] = +((byWeek[wk] || 0) + r.miles).toFixed(1)
+    }
+
+    res.json({
+      ok: true,
+      counts: { total: acts.length, runs: runs.length },
+      longest_run_mi: runs.length ? Math.max(...runs.map(r => r.miles)) : 0,
+      weekly_run_miles: byWeek,
+      runs: runs.slice(0, 30),
+      all_types: [...new Set(acts.map(a => a.type))],
+    })
+  } catch (e) {
+    console.error('[garmin/activities]', e.message)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 router.get('/today', async (req, res) => {
   try {
     const segment = catalyst.initialize(req).cache().segment()

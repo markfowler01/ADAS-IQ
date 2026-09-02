@@ -367,8 +367,13 @@ Return raw JSON only.
 export async function planFridayQ(req, { recentQs, raceNote, date }) {
   const recent = (recentQs || []).map(q => '- ' + q).join('\n') || '(none on file)'
   const res = await client().messages.create({
-    model: COACH_MODEL,
-    max_tokens: 4000,
+    model: WEEKPLAN_MODEL,
+    max_tokens: 3000,
+    // Same gateway ceiling as the week plan — Opus with thinking on took this
+    // past 38s and 408'd, losing the work. Sonnet with thinking off lands
+    // around 25s. The Q is well-scoped creative work against a detailed brief,
+    // which is where this holds up fine.
+    thinking: { type: 'disabled' },
     system: FRIDAY_Q_SYSTEM,
     messages: [{
       role: 'user',
