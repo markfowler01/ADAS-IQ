@@ -21,6 +21,11 @@ import {
   getMailAccessToken, getMailAccountId, getUnreadInboxMessages, getMessageContent,
 } from '../services/mail.js'
 import { extractCommitments } from '../services/commitmentExtractor.js'
+import { proposeBig3 } from '../services/dayCoach.js'
+import { recordPlan, listDays, getDay, upsertDay } from '../services/dayLedger.js'
+import { readContext } from './coach.js'
+import { ptDate } from './eveningCheckin.js'
+import { sendPushToAll } from './push.js'
 
 const router = express.Router()
 const TARGET = 50000
@@ -345,12 +350,84 @@ function formatVoiceEvening(b) {
 
 // ---------- send + routes ----------
 
+// Ask the coach for today's Big 3 and write them into the day ledger.
+//
+// Best-effort by design: a failed or slow proposal must never cost Mark his
+// briefing, so every path returns null rather than throwing. When this returns
+// null the brief still sends, just without a proposed Big 3 — and the evening
+// check-in still fires and still asks how the day went.
+// Context builder for the planner cron — same sources as the brief, minus the
+// commitment extraction the planner doesn't need.
+export async function buildBriefingForPlan(req) {
+  return buildBriefing(req)
+}
+
+export async function planDay(req, b) {
+  try {
+    const today = ptDate()
+    const [ctx, recentDays] = await Promise.all([
+      safe('coach-context', () => readContext(req)).then(c => c || { goals: '', coaching_notes: '' }),
+      safe('coach-ledger', () => listDays(req, { limit: 10 })).then(d => d || []),
+    ])
+
+    const proposal = await withTimeout('big3', proposeBig3(req, {
+      goals: ctx.goals,
+      coachingNotes: ctx.coaching_notes,
+      recentDays,
+      todayContext: {
+        today,
+        weekday: weekday(today),
+        load: {
+          jobs_today: b.todaysJobs.length,
+          jaden_jobs_today: b.jadenToday.length,
+          open_jobs: b.openJobs.length,
+          calendar: eventTitles(b.events, 6),
+          commitments_due_today: b.dueToday.map(c => `${c.person}: ${c.text}`).slice(0, 8),
+          commitments_overdue: b.overdue.map(c => `${c.person}: ${c.text}`).slice(0, 8),
+          followups_due: b.followups.length,
+          revenue_mtd: b.revenue?.monthlyTotal || null,
+          revenue_projected: b.revenue?.projected || null,
+          revenue_target: TARGET,
+        },
+      },
+    }), 180000)
+
+    if (!proposal?.big3?.length) return null
+    await safe('record-plan', () => recordPlan(req, today, {
+      big3: proposal.big3, hardThing: proposal.hardThing,
+    }))
+    if (proposal.note) await safe('record-note', () => upsertDay(req, today, { plan_note: proposal.note }))
+    return proposal
+  } catch (e) {
+    console.error('[briefing] big3 failed:', e.message)
+    return null
+  }
+}
+
+function formatBig3(p) {
+  if (!p) return ''
+  const L = ['', 'Big 3 today:']
+  p.big3.forEach((b, i) => L.push(`${i + 1}. ${b.text}`))
+  if (p.hardThing) L.push(`Hard thing (do it first): ${p.hardThing}`)
+  if (p.note) { L.push(''); L.push(p.note) }
+  return L.join('\n')
+}
+
 export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   const b = await buildBriefing(req, { only })
-  const full = formatFull(b)
-  const digest = formatDigest(b)
+  // Read the plan the 7:20 planner cron already stored. Generating it here
+  // would put a 20-40s Opus call inside a request the gateway kills at 30s.
+  const big3 = await safe('read-plan', async () => {
+    const day = await getDay(req, ptDate())
+    if (!day?.big3?.length) return null
+    return { big3: day.big3, hardThing: day.hard_thing?.text || '', note: day.plan_note || '' }
+  })
+  const full = formatFull(b) + formatBig3(big3)
+  const digest = (big3?.big3?.length
+    ? `Big 3: ${big3.big3.map((x, i) => `${i + 1}) ${x.text}`).join(' ')}\n`
+    : '') + formatDigest(b)
   if (dry) {
-    return { ok: true, dry: true, digest, full, commitments: b.commitments, timings: b.timings, sources: b.sources,
+    return { ok: true, dry: true, digest, full, big3, commitments: b.commitments, timings: b.timings, sources: b.sources,
       counts: { jobsToday: b.todaysJobs.length, events: b.events.length, dueToday: b.dueToday.length, overdue: b.overdue.length, followups: b.followups.length, shops: b.shops.length } }
   }
   const sent = { cliq: false, sms: false }
@@ -360,6 +437,16 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   // Mark's number lives in the MARK_PHONE_NUMBER env var
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
   if (to) { const s = await safe('sms', () => sendSMS(req, { to, body: digest, category: 'briefing' })); sent.sms = !!s }
+  // Web Push to the home-screen PWA — the part that actually surfaces on his
+  // phone. Cliq and SMS both land silently behind other traffic.
+  const pushBody = big3?.big3?.length
+    ? big3.big3.map((x, i) => `${i + 1}. ${x.text}`).join('\n')
+    : `${b.todaysJobs.length} jobs today, ${b.dueToday.length} commitments due.`
+  const p = await safe('push', () => sendPushToAll(req, {
+    title: big3?.big3?.length ? 'Your Big 3 today' : 'Morning briefing',
+    body: pushBody, url: '/today', tag: 'morning-briefing',
+  }))
+  sent.push = !!p
   // Team good-morning fan-out (Kat / Joyce greetings + Jayden sales digest).
   // Piggybacks on this cron so we don't need a second console entry. Failures
   // are swallowed by safe() so a broken Cliq DM never derails Mark's briefing.
@@ -367,7 +454,7 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
     const { sendMorningKickoff } = await import('./dailyGreeting.js')
     return sendMorningKickoff(req)
   })
-  return { ok: true, sent, digest, kickoff: kickoff || { ok: false } }
+  return { ok: true, sent, digest, big3, kickoff: kickoff || { ok: false } }
 }
 
 router.get('/debug', async (req, res) => {
@@ -378,6 +465,20 @@ router.get('/debug', async (req, res) => {
     counts: { jobsToday: b.todaysJobs.length, jadenToday: b.jadenToday.length, openJobs: b.openJobs.length, events: b.events.length, followups: b.followups.length, dueToday: b.dueToday.length, overdue: b.overdue.length, shops: b.shops.length },
   })
 })
+// Planner — runs on its own cron at 7:20 AM PT, ten minutes ahead of the
+// briefing. Split out because the Opus call routinely outlives the 30s
+// gateway cap that the 7:30 briefing request has to answer inside.
+router.post('/plan', async (req, res) => {
+  try {
+    const b = await buildBriefing(req)
+    const proposal = await planDay(req, b)
+    res.json({ ok: !!proposal, date: ptDate(), proposal })
+  } catch (e) {
+    console.error('[briefing/plan]', e)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })
 router.post('/send', async (req, res) => { res.json(await sendDailyBriefing(req)) })
 

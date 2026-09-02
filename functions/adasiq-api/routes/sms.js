@@ -29,6 +29,7 @@ import {
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
 import { postToCliqChannel, SMS_TOLLFREE_CHANNEL, SMS_LOCAL_CHANNEL } from '../services/cliq.js'
 import { loadPhoneIndex, normPhone, contactLabel, findContactByPhone } from '../services/crmContacts.js'
+import { tryHandleCheckinReply } from './eveningCheckin.js'
 
 const router = express.Router()
 
@@ -316,6 +317,20 @@ router.post('/', async (req, res) => {
 
     // 1) Persist to cache log
     await appendMessage(req, record)
+
+    // 1b) Evening check-in interception. If this is Mark answering tonight's
+    //     end-of-day text, parse it into the day ledger and stop here — his
+    //     answer is personal and must not fan out to #aajobs. Any other text
+    //     from him (or anyone else) falls through to normal handling. The
+    //     parse runs inline on Haiku because Catalyst can't fire-and-forget
+    //     after responding and Twilio gives up around 15s.
+    try {
+      const checkin = await tryHandleCheckinReply(req, { from, body })
+      if (checkin?.handled) {
+        console.log('[sms inbound] evening check-in recorded', checkin.date, checkin.rating)
+        return res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+      }
+    } catch (e) { console.warn('[evening checkin hook]', e.message) }
 
     // CRM contact lookup — best-effort. If the sender's phone matches a
     // shop or person on file, we surface the name/shop in both the Cliq

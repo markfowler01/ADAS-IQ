@@ -77,7 +77,9 @@ import operationsRouter from './routes/operations.js'
 import booksFromExtractRouter from './routes/books-from-extract.js'
 import payrollRouter from './routes/payroll.js'
 import scalingRouter from './routes/scaling.js'
-import briefingRouter, { sendDailyBriefing } from './routes/briefing.js'
+import briefingRouter, { sendDailyBriefing, planDay, buildBriefingForPlan } from './routes/briefing.js'
+import eveningRouter, { sendEveningCheckin } from './routes/eveningCheckin.js'
+import coachRouter, { runWeeklyReview } from './routes/coach.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -1007,6 +1009,51 @@ app.post('/api/cron/daily-briefing', async (req, res) => {
     res.json(out)
   } catch (e) {
     console.error('[cron/daily-briefing]', e)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Day coach — evening check-in + weekly review. Both self-gate on
+// x-cron-secret like the briefing above (no requireAuth), so the Catalyst
+// cron runner can invoke them directly.
+app.use('/api/evening', eveningRouter)
+app.use('/api/coach', coachRouter)
+
+const coachSecretOk = req => {
+  const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+  return (req.headers['x-cron-secret'] || req.query.k || '').trim() === secret
+}
+
+// Day planner — fires 7:20 AM PT, ten minutes ahead of the briefing. Split
+// out from the brief because the Opus proposal routinely runs longer than the
+// 30s the gateway gives the 7:30 briefing request.
+app.post('/api/cron/plan-day', async (req, res) => {
+  if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const proposal = await planDay(req, await buildBriefingForPlan(req))
+    res.json({ ok: !!proposal, proposal })
+  } catch (e) {
+    console.error('[cron/plan-day]', e)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+app.post('/api/cron/evening-checkin', async (req, res) => {
+  if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    res.json(await sendEveningCheckin(req, { dry: req.query.dry === '1' }))
+  } catch (e) {
+    console.error('[cron/evening-checkin]', e)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+app.post('/api/cron/weekly-review', async (req, res) => {
+  if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    res.json(await runWeeklyReview(req, { dry: req.query.dry === '1' }))
+  } catch (e) {
+    console.error('[cron/weekly-review]', e)
     res.status(500).json({ ok: false, error: e.message })
   }
 })
