@@ -307,6 +307,11 @@ export async function planWeek(req, { goals, weekAhead, lastWeek, review, coachi
   const res = await client().messages.create({
     model: WEEKPLAN_MODEL,
     max_tokens: 3000,
+    // Thinking is ON by default on Sonnet 5, and it is what pushed this call
+    // past the gateway's ~38s ceiling — not the model tier. This is structured
+    // synthesis over data already assembled for it, so the reasoning budget
+    // buys little here and costs the whole request.
+    thinking: { type: 'disabled' },
     system: WEEKPLAN_SYSTEM,
     messages: [{
       role: 'user',
