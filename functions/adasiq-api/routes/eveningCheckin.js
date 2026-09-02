@@ -18,7 +18,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { sendSMS } from '../services/comms.js'
-import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
+import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { getDay, upsertDay, recordCheckin } from '../services/dayLedger.js'
 import { parseCheckin, reviewDay } from '../services/dayCoach.js'
 import { ptDate } from '../services/ptDate.js'
@@ -183,7 +183,7 @@ export async function tryHandleCheckinReply(req, { from, body }) {
   catch (e) { console.warn('[evening ack]', e.message) }
 
   try {
-    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+    await postToCliqChannelById(ADA_CHANNEL_ID,
       `Day logged ${day.date}: ${day.rating ?? '—'}/10, Big 3 ${hit}/${total}` +
       `${day.win ? `\nWorked: ${day.win}` : ''}${day.drag ? `\nGot in the way: ${day.drag}` : ''}`)
   } catch (e) { console.warn('[evening cliq]', e.message) }

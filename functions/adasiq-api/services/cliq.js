@@ -22,6 +22,11 @@ export const TECHNICIANS_CHANNEL = 'technicians'
 // Channel ID P6015142000000718001
 export const MARK_ALERT_CHANNEL_ID = 'P6015142000000718001'
 
+// #Ada — everything the day coach says lives here, so the coaching stream
+// stays out of the general alert channel. Created 2026-09-02.
+//   unique name: ada · chat id: CT_1424876166686316389_883116359
+export const ADA_CHANNEL_ID = 'P6015142000001219001'
+
 // AA Jobs — shared job-flow channel. All job lifecycle events (requested,
 // needs-dispatch, dispatched, ready-invoice, invoice sent) fan into this
 // one channel instead of DMing Mark / Kat / Jayden individually. Match by

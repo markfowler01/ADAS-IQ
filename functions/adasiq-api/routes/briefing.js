@@ -14,7 +14,7 @@ import express from 'express'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { readJobsPublic } from './jobs.js'
-import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
+import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
 import { getAccessToken } from '../services/zoho.js'
 import {
@@ -524,7 +524,7 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   }
   const sent = { cliq: false, sms: false }
   // postToCliqChannelById returns undefined on success — map to true explicitly
-  const r = await safe('cliq-send', () => postToCliqChannelById(MARK_ALERT_CHANNEL_ID, full).then(() => true))
+  const r = await safe('cliq-send', () => postToCliqChannelById(ADA_CHANNEL_ID, full).then(() => true))
   sent.cliq = !!r
   // Mark's number lives in the MARK_PHONE_NUMBER env var
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()

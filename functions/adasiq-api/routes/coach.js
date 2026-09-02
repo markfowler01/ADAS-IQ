@@ -17,7 +17,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { listDays, summarize, deleteDay } from '../services/dayLedger.js'
 import { weeklyReview, planWeek, planFridayQ, formatFridayQ } from '../services/dayCoach.js'
-import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
+import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
 import { ptDate } from '../services/ptDate.js'
 import { gatherWeekAhead } from './briefing.js'
@@ -101,7 +101,7 @@ export async function runWeeklyReview(req, { dry = false } = {}) {
     const msg = `Weekly review skipped — only ${stats.rated} rated ${stats.rated === 1 ? 'day' : 'days'} this week. ` +
                 `Answer the evening text and this gets useful fast.`
     if (!dry) {
-      try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg) } catch (e) { console.warn('[weekly cliq]', e.message) }
+      try { await postToCliqChannelById(ADA_CHANNEL_ID, msg) } catch (e) { console.warn('[weekly cliq]', e.message) }
     }
     return { ok: true, skipped: true, reason: 'insufficient_data', stats, message: msg }
   }
@@ -115,7 +115,7 @@ export async function runWeeklyReview(req, { dry = false } = {}) {
   }
 
   const sent = { cliq: false, sms: false }
-  try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
+  try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[weekly cliq]', e.message) }
 
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
@@ -191,7 +191,7 @@ export async function deliverWeekPlan(req, { dry = false } = {}) {
   if (dry) return { ok: true, dry: true, plan, text, computed_at: stored.computed_at }
 
   const sent = { cliq: false, sms: false }
-  try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
+  try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[weekplan cliq]', e.message) }
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
   if (to && plan?.theme) {
@@ -222,7 +222,7 @@ export async function runWeeklyPlanner(req, { dry = false } = {}) {
   if (dry) return { ok: !!plan, dry: true, plan, text, notesUsed: !!ctx.coaching_notes }
 
   const sent = { cliq: false, sms: false }
-  try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
+  try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[weekplan cliq]', e.message) }
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
   if (to && plan?.theme) {
@@ -256,7 +256,7 @@ export async function runFridayQ(req, { dry = false } = {}) {
   if (!q) return { ok: false, error: 'no Q generated' }
 
   const sent = { cliq: false, sms: false }
-  try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
+  try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[fridayq cliq]', e.message) }
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
   if (to) {
