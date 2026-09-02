@@ -464,119 +464,119 @@ function formatVoiceEvening(b) {
   return cleanSpeech(L.join(' '))
 }
 
-// The brief as real HTML. sendMail posts with mailFormat:'html', so the plain
-// text version arrived as one collapsed paragraph — every newline eaten.
+// The brief as HTML.
 //
-// Email clients are stuck in 2003: inline styles only, tables for layout, no
-// external CSS, no flexbox worth trusting. Built accordingly, and mobile-first
-// because he reads it on a phone.
+// First pass read like a dashboard — all-caps tracked labels, tight stacking,
+// metrics-panel feel. Wrong register for something read at 4:40 in the dark
+// before anyone has spoken to you. This is set like a short letter instead:
+// serif for the things meant to land, generous leading, quiet labels, one
+// accent colour, and a lot of air.
+//
+// Email clients are stuck in 2003 — inline styles only, tables for layout,
+// no external CSS. Mobile-first, because that's where he reads it.
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
 
-const INK = '#1a1a1a', MUTED = '#6b6b6b', RULE = '#e3e0da'
-const PAPER = '#faf8f4', ACCENT = '#8a3324'
+const INK = '#26221e'        // warm near-black, easier at 4:40 than pure black
+const SOFT = '#7d766c'
+const RULE = '#e8e3da'
+const PAPER = '#f6f3ed'
+const ACCENT = '#9c4221'
+const SERIF = "Georgia,'Iowan Old Style','Times New Roman',serif"
+const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
-function htmlSection(title, inner) {
-  if (!inner) return ''
-  return `<tr><td style="padding:22px 28px 0 28px;">
-    <div style="font:600 11px/1 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-      letter-spacing:.11em;text-transform:uppercase;color:${MUTED};padding-bottom:9px;">${esc(title)}</div>
-    ${inner}</td></tr>`
+function label(t) {
+  return `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
 }
 
 export function formatBriefHtml(b, big3, tr, audioUrl) {
   const money0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
-  const face = '-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif'
-
-  // Big 3 — the reason the email exists, so it leads.
-  const hard = big3?.hardThing || ''
-  const big3Html = (big3?.big3 || []).map((x, i) => {
-    const isHard = hard && x.text === hard
-    return `<tr><td style="padding:0 0 11px 0;vertical-align:top;width:26px;">
-        <div style="font:700 15px/22px ${face};color:${isHard ? ACCENT : MUTED};">${i + 1}</div></td>
-      <td style="padding:0 0 11px 0;font:${isHard ? '600' : '400'} 16px/22px ${face};color:${INK};">
-        ${esc(x.text)}${isHard ? `<div style="font:600 11px/1 ${face};letter-spacing:.08em;
-          text-transform:uppercase;color:${ACCENT};padding-top:5px;">Do this one first</div>` : ''}</td></tr>`
-  }).join('')
-
-  // Revenue: pace against the $50K target is the number that matters.
   const rev = b.revenue || {}
   const diff = (rev.projected || 0) - 50000
   const ahead = diff >= 0
-  const stat = (label, val, note) => `<td style="padding:0 16px 0 0;vertical-align:top;">
-      <div style="font:600 10px/1 ${face};letter-spacing:.1em;text-transform:uppercase;color:${MUTED};">${esc(label)}</div>
-      <div style="font:600 21px/28px ${face};color:${INK};padding-top:3px;">${esc(val)}</div>
-      ${note ? `<div style="font:400 12px/16px ${face};color:${MUTED};">${esc(note)}</div>` : ''}</td>`
+  const hard = big3?.hardThing || ''
+
+  const big3Html = (big3?.big3 || []).map((x, i) => {
+    const isHard = hard && x.text === hard
+    return `<tr>
+      <td width="30" style="vertical-align:top;padding:0 0 18px 0;">
+        <div style="font:400 17px/27px ${SERIF};color:${isHard ? ACCENT : '#bdb5a8'};">${i + 1}</div>
+      </td>
+      <td style="padding:0 0 18px 0;">
+        <div style="font:400 17px/27px ${SERIF};color:${INK};">${esc(x.text)}</div>
+        ${isHard ? `<div style="font:400 13px/19px ${SANS};color:${ACCENT};padding-top:5px;">
+          Start here. It's the one you'll want to put off.</div>` : ''}
+      </td></tr>`
+  }).join('')
 
   const techRows = (tr?.rows || []).map(([name, amt]) =>
-    `<tr><td style="font:400 14px/22px ${face};color:${INK};">${esc(name)}</td>
-      <td align="right" style="font:600 14px/22px ${face};color:${INK};">${money0(amt)}</td></tr>`).join('')
+    `<tr><td style="font:400 15px/26px ${SANS};color:${INK};">${esc(name)}</td>
+      <td align="right" style="font:400 15px/26px ${SANS};color:${INK};">${money0(amt)}</td></tr>`).join('')
 
   const events = (b.events || []).slice(0, 6).map(e =>
-    `<tr><td style="font:400 14px/21px ${face};color:${INK};padding:0 0 4px 0;">
-      <span style="color:${MUTED};">${esc(e.start || '')}</span> ${esc(e.title || '')}</td></tr>`).join('')
+    `<div style="font:400 15px/24px ${SANS};color:${INK};">
+      <span style="color:${SOFT};">${esc(e.start || '')}</span>&nbsp;&nbsp;${esc(e.title || '')}</div>`).join('')
 
-  const dueList = (b.dueToday || []).concat(b.overdue || []).slice(0, 6).map(c =>
-    `<tr><td style="font:400 14px/21px ${face};color:${INK};padding:0 0 4px 0;">
-      <strong>${esc(c.person)}</strong> — ${esc(c.text)}</td></tr>`).join('')
+  const needs = (b.dueToday || []).concat(b.overdue || []).slice(0, 6).map(c =>
+    `<div style="font:400 15px/24px ${SANS};color:${INK};padding-bottom:3px;">
+      ${esc(c.person)} — ${esc(c.text)}</div>`).join('')
+
+  const block = (title, inner) => inner
+    ? `<tr><td style="padding:34px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
 
   return `<div style="margin:0;padding:0;background:${PAPER};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER};padding:20px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER};padding:28px 14px 40px 14px;">
 <tr><td align="center">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-  style="max-width:560px;background:#ffffff;border:1px solid ${RULE};border-radius:12px;overflow:hidden;">
+  style="max-width:552px;background:#fffdfa;border:1px solid ${RULE};border-radius:14px;">
 
-  <tr><td style="padding:26px 28px 0 28px;">
-    <div style="font:600 11px/1 ${face};letter-spacing:.16em;text-transform:uppercase;color:${ACCENT};">Ada</div>
-    <div style="font:400 13px/1 ${face};color:${MUTED};padding-top:7px;">${esc(b.today)}</div>
+  <tr><td style="padding:34px 34px 0 34px;">
+    <span style="font:400 19px/1 ${SERIF};color:${ACCENT};letter-spacing:.02em;">Ada</span>
+    <span style="font:400 14px/1 ${SANS};color:${SOFT};padding-left:10px;">${esc(b.today)}</span>
   </td></tr>
 
-  ${big3?.affirmation ? `<tr><td style="padding:20px 28px 0 28px;">
-    <div style="border-left:3px solid ${ACCENT};padding:2px 0 2px 15px;
-      font:400 17px/26px Georgia,'Times New Roman',serif;color:${INK};">${esc(big3.affirmation)}</div>
+  ${big3?.affirmation ? `<tr><td style="padding:30px 34px 0 34px;">
+    <div style="font:400 20px/32px ${SERIF};color:${INK};">${esc(big3.affirmation)}</div>
   </td></tr>` : ''}
 
-  ${big3Html ? htmlSection('Big 3 today',
+  ${audioUrl ? `<tr><td style="padding:26px 34px 0 34px;">
+    <a href="${esc(audioUrl)}" style="font:400 15px/1 ${SANS};color:${ACCENT};text-decoration:none;
+      border-bottom:1px solid ${ACCENT};padding-bottom:2px;">Listen instead &rarr;</a>
+  </td></tr>` : ''}
+
+  <tr><td style="padding:32px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
+
+  ${big3Html ? block('If you only do three things',
     `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${big3Html}</table>`) : ''}
 
-  ${audioUrl ? `<tr><td style="padding:18px 28px 0 28px;">
-    <a href="${esc(audioUrl)}" style="display:inline-block;background:${INK};color:#ffffff;
-      text-decoration:none;font:600 14px/1 ${face};padding:12px 20px;border-radius:7px;">
-      Listen &nbsp;&rarr;</a>
-    <div style="font:400 12px/16px ${face};color:${MUTED};padding-top:8px;">Ada reads it to you, about a minute.</div>
-  </td></tr>` : ''}
+  ${block('Where the month stands',
+    `<div style="font:400 15px/26px ${SANS};color:${INK};">
+       ${money0(rev.monthlyTotal)} so far, on pace for <strong style="font-weight:600;">${money0(rev.projected)}</strong>.
+       <span style="color:${ahead ? '#3f6b47' : ACCENT};">
+         ${ahead ? 'Ahead of' : 'Behind'} the ${money0(50000)} mark by ${money0(Math.abs(diff))}.</span>
+     </div>`)}
 
-  <tr><td style="padding:22px 28px 0 28px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
-
-  ${htmlSection('Revenue', `<table role="presentation" cellpadding="0" cellspacing="0" width="100%"><tr>
-      ${stat('Month to date', money0(rev.monthlyTotal))}
-      ${stat('Projected', money0(rev.projected), (ahead ? 'ahead by ' : 'behind by ') + money0(Math.abs(diff)))}
-    </tr></table>`)}
-
-  ${techRows ? htmlSection('Sales by tech',
+  ${techRows ? block('Sales by tech',
     `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${techRows}</table>` +
-    (tr.merged?.length ? `<div style="font:400 12px/17px ${face};color:${MUTED};padding-top:7px;">
-      Merged in Books: ${esc(tr.merged.join(', '))} — worth fixing at the source.</div>` : '')) : ''}
+    (tr.merged?.length ? `<div style="font:400 13px/20px ${SANS};color:${SOFT};padding-top:10px;">
+      Books has ${esc(tr.merged.join(', '))} — worth fixing at the source.</div>` : '')) : ''}
 
-  ${htmlSection('Today', `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-      <tr><td style="font:400 14px/21px ${face};color:${INK};padding:0 0 4px 0;">
-        ${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} scheduled
-        &middot; Jaden ${b.jadenToday.length} &middot; ${b.openJobs.length} open</td></tr>
-      ${events}</table>`)}
+  ${block('Today',
+    `<div style="font:400 15px/24px ${SANS};color:${INK};padding-bottom:${events ? '8px' : '0'};">
+       ${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} on the board,
+       ${b.jadenToday.length} for Jaden, ${b.openJobs.length} still open.</div>${events}`)}
 
-  ${dueList ? htmlSection('Needs you',
-    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${dueList}</table>`) : ''}
+  ${needs ? block('Waiting on you', needs) : ''}
 
-  ${big3?.note ? `<tr><td style="padding:24px 28px 0 28px;">
-    <div style="background:${PAPER};border-radius:9px;padding:15px 17px;
-      font:400 14px/22px ${face};color:${INK};">${esc(big3.note)}</div></td></tr>` : ''}
+  ${big3?.note ? `<tr><td style="padding:34px 34px 0 34px;">
+    <div style="border-top:1px solid ${RULE};padding-top:24px;
+      font:400 16px/27px ${SERIF};color:${INK};">${esc(big3.note)}</div></td></tr>` : ''}
 
-  <tr><td style="padding:26px 28px 28px 28px;">
-    <div style="border-top:1px solid ${RULE};padding-top:13px;
-      font:400 12px/17px ${face};color:${MUTED};">Ada checks in at 7.</div>
+  <tr><td style="padding:30px 34px 34px 34px;">
+    <div style="font:400 14px/20px ${SANS};color:${SOFT};">I'll check in at seven. — Ada</div>
   </td></tr>
 
 </table>
