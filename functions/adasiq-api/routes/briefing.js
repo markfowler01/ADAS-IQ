@@ -101,7 +101,16 @@ async function getRevenue() {
     const todayTotal = invs.filter(i => i.date === today).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
     const yr = Number(y), mi = Number(ym.slice(5, 7)) - 1, dayNum = Number(today.slice(8, 10))
     const elapsed = Math.max(1, workingDays(yr, mi, dayNum))
-    const projected = Math.round((monthlyTotal / elapsed) * workingDays(yr, mi))
+    // Extrapolating a month from a couple of days is noise dressed as insight:
+    // on 2 elapsed working days a single $1,000 invoice moves the projection by
+    // $11,000, and it read "$60,469, ahead by $10,469" on September 2nd. That
+    // is the exact number Mark's $40K-two-months-running hiring gate keys off,
+    // so it gets suppressed until there is enough month to extrapolate from.
+    const MIN_DAYS_TO_PROJECT = 5
+    const totalWorkingDays = workingDays(yr, mi)
+    const projectable = elapsed >= MIN_DAYS_TO_PROJECT
+    const projected = projectable ? Math.round((monthlyTotal / elapsed) * totalWorkingDays) : null
+    const dailyPace = Math.round(monthlyTotal / elapsed)
     // Keep the raw records — per-tech revenue is a join of Books invoices to
     // the jobs table on invoice_number, since jobs carry no dollar amount.
     const records = invs
@@ -118,7 +127,8 @@ async function getRevenue() {
         status: String(i.status || ''),
         customer: String(i.customer_name || ''),
       }))
-    return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, invoiceCount: invs.length, records }
+    return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, dailyPace,
+      elapsedWorkingDays: elapsed, totalWorkingDays, projectable, invoiceCount: invs.length, records }
   })
 }
 
@@ -382,7 +392,11 @@ function formatFull(b) {
     const proj = b.revenue.projected || 0
     const diff = proj - TARGET
     L.push(`Revenue: ${money(b.revenue.yesterdayTotal || 0)} yesterday. ${money(mtd)} month to date.`)
-    L.push(`Projected month end: ${money(proj)} vs ${money(TARGET)} target. ${diff >= 0 ? 'Ahead by' : 'Behind by'} ${money(Math.abs(diff))} at current pace.`)
+    if (b.revenue.projectable) {
+      L.push(`Projected month end: ${money(proj)} vs ${money(TARGET)} target. ${diff >= 0 ? 'Ahead by' : 'Behind by'} ${money(Math.abs(diff))} at current pace.`)
+    } else {
+      L.push(`${b.revenue.elapsedWorkingDays} working day${b.revenue.elapsedWorkingDays === 1 ? '' : 's'} in — about ${money(b.revenue.dailyPace)} a day. Too early to project; ${money(TARGET)} needs about ${money(Math.round(TARGET / b.revenue.totalWorkingDays))} a day.`)
+    }
   } else L.push('Revenue: not available this run.')
   L.push(`Field ops: ${b.todaysJobs.length} jobs scheduled today. Jaden has ${b.jadenToday.length} today (${b.jaden.length} on the board). ${b.openJobs.length} open jobs total.`)
   L.push(`Pipeline: ${b.shops.length} shops, ${b.followups.length} follow-ups due.`)
@@ -405,7 +419,7 @@ function formatDigestTech(tr) {
 }
 
 function formatDigest(b) {
-  const proj = b.revenue ? money(b.revenue.projected || 0) : 'n/a'
+  const proj = b.revenue?.projectable ? money(b.revenue.projected || 0) : 'too early to project'
   const mtd = b.revenue ? money(b.revenue.monthlyTotal || 0) : 'n/a'
   return `Briefing ${b.today}. Rev ${mtd} MTD, projecting ${proj} of ${money(TARGET)}. Jobs today ${b.todaysJobs.length} (Jaden ${b.jadenToday.length}). Events ${b.events.length}. Follow-ups ${b.followups.length}. Commitments due ${b.dueToday.length}, overdue ${b.overdue.length}. Full brief in Cliq.`
 }
@@ -434,7 +448,11 @@ function formatVoiceMorning(b) {
   if (b.revenue) {
     const proj = b.revenue.projected || 0
     const diff = proj - TARGET
-    L.push(`Yesterday you booked ${spoken(b.revenue.yesterdayTotal || 0)}. You're at ${spoken(b.revenue.monthlyTotal || 0)} for the month, on pace for ${spoken(proj)} against your fifty thousand target, ${diff >= 0 ? 'ahead' : 'behind'} by ${spoken(Math.abs(diff))}.`)
+    if (b.revenue.projectable) {
+      L.push(`Yesterday you booked ${spoken(b.revenue.yesterdayTotal || 0)}. You're at ${spoken(b.revenue.monthlyTotal || 0)} for the month, on pace for ${spoken(proj)} against your fifty thousand target, ${diff >= 0 ? 'ahead' : 'behind'} by ${spoken(Math.abs(diff))}.`)
+    } else {
+      L.push(`Yesterday you booked ${spoken(b.revenue.yesterdayTotal || 0)}. You're at ${spoken(b.revenue.monthlyTotal || 0)} for the month, about ${spoken(b.revenue.dailyPace)} a day. It's too early to call the month.`)
+    }
   }
   L.push(`On the board today, ${plural(b.todaysJobs.length, 'job')} scheduled. Jaden has ${b.jadenToday.length}. ${plural(b.openJobs.length, 'job')} open in total.`)
   const ev = eventTitles(b.events, 5)
@@ -563,12 +581,18 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl) {
   ${big3Html ? block('If you only do three things',
     `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${big3Html}</table>`) : ''}
 
-  ${block('Where the month stands',
-    `<div style="font:400 15px/26px ${SANS};color:${INK};">
-       ${money0(rev.monthlyTotal)} so far, on pace for <strong style="font-weight:600;">${money0(rev.projected)}</strong>.
-       <span style="color:${ahead ? '#3f6b47' : ACCENT};">
-         ${ahead ? 'Ahead of' : 'Behind'} the ${money0(50000)} mark by ${money0(Math.abs(diff))}.</span>
-     </div>`)}
+  ${block('Where the month stands', rev.projectable
+    ? `<div style="font:400 15px/26px ${SANS};color:${INK};">
+         ${money0(rev.monthlyTotal)} so far, on pace for <strong style="font-weight:600;">${money0(rev.projected)}</strong>.
+         <span style="color:${ahead ? '#3f6b47' : ACCENT};">
+           ${ahead ? 'Ahead of' : 'Behind'} the ${money0(50000)} mark by ${money0(Math.abs(diff))}.</span>
+       </div>`
+    : `<div style="font:400 15px/26px ${SANS};color:${INK};">
+         ${money0(rev.monthlyTotal)} so far, over ${rev.elapsedWorkingDays} working day${rev.elapsedWorkingDays === 1 ? '' : 's'}
+         &mdash; about ${money0(rev.dailyPace)} a day.
+         <span style="color:${SOFT};">Too early to project the month; ${money0(50000) } needs
+         about ${money0(Math.round(50000 / rev.totalWorkingDays))} a day.</span>
+       </div>`)}
 
   ${techRows ? block('Sales by tech',
     `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${techRows}</table>` +
