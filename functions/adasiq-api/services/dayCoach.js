@@ -63,6 +63,7 @@ How to choose:
 - Look at what he missed yesterday and the day before. A Big 3 item he's ducked twice is usually the hard thing.
 - Watch the F3 balance (Faith, Family, Fitness, Finances). If an area has gone untouched for several days, one of the three should serve it. He built this system to run his life, not just his business.
 - Be specific enough to be checkable tonight. "Follow up with shops" is not a task. "Call the three shops with quotes out past 7 days" is.
+- Keep each one under about 90 characters. It has to read on a phone lock screen. Put the number in the task, not a paragraph of reasoning — the reasoning goes in "note".
 - If the coaching notes tell you something about how his good days are built, use it.
 
 Return raw JSON only. No preamble, no markdown fence.

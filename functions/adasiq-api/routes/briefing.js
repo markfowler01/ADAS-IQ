@@ -423,9 +423,12 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
     return { big3: day.big3, hardThing: day.hard_thing?.text || '', note: day.plan_note || '' }
   })
   const full = formatFull(b) + formatBig3(big3)
-  const digest = (big3?.big3?.length
-    ? `Big 3: ${big3.big3.map((x, i) => `${i + 1}) ${x.text}`).join(' ')}\n`
-    : '') + formatDigest(b)
+  // SMS is billed and read by the segment — keep the digest to one or two.
+  // The full wording lives in Cliq and the push notification.
+  const shortBig3 = (big3?.big3 || [])
+    .map((x, i) => `${i + 1}) ${x.text.length > 64 ? x.text.slice(0, 61).trimEnd() + '...' : x.text}`)
+    .join(' ')
+  const digest = (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b)
   if (dry) {
     return { ok: true, dry: true, digest, full, big3, commitments: b.commitments, timings: b.timings, sources: b.sources,
       counts: { jobsToday: b.todaysJobs.length, events: b.events.length, dueToday: b.dueToday.length, overdue: b.overdue.length, followups: b.followups.length, shops: b.shops.length } }
