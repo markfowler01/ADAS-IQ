@@ -25,6 +25,7 @@ import { gatherWeekAhead } from './briefing.js'
 const router = express.Router()
 
 const CONTEXT_KEY = 'coach_context'
+const WEEKPLAN_KEY = 'week_plan'
 const CONTEXT_TTL_HOURS = 48   // refreshed by the bridge daily; vault is the source
 
 router.use((req, res, next) => {
@@ -143,6 +144,63 @@ export function formatWeekPlan(p) {
 
 // Sunday 3 PM. Reviews the week that just ended, then plans the next one —
 // in that order, because the review is an input to the plan.
+async function readWeekPlan(req) {
+  try {
+    const v = await segment(req).getValue(WEEKPLAN_KEY)
+    if (!v) return null
+    return typeof v === 'string' ? JSON.parse(v) : v
+  } catch { return null }
+}
+
+async function writeWeekPlan(req, obj) {
+  const val = JSON.stringify(obj)
+  const seg = segment(req)
+  try { await seg.update(WEEKPLAN_KEY, val) } catch { await seg.put(WEEKPLAN_KEY, val, 48) }
+}
+
+// COMPUTE and DELIVER are separate calls on purpose.
+//
+// planWeek is an Opus call over a full week of context and takes ~40s. The
+// Catalyst gateway kills the HTTP request at 30s, so a single compute+send
+// endpoint 408s before it ever reaches the send — which is exactly what it did
+// on the first live run. The inner handler keeps executing server-side after
+// the gateway gives up, so compute stores its result and a second, fast call
+// delivers it. Same split absoluteadas-cron-runner uses for the long drafters.
+export async function computeWeekPlan(req) {
+  const [weekAhead, ctx, all] = await Promise.all([
+    gatherWeekAhead(req), readContext(req), listDays(req, { limit: 30 }),
+  ])
+  const plan = await planWeek(req, {
+    goals: ctx.goals,
+    coachingNotes: ctx.coaching_notes,
+    weekAhead,
+    lastWeek: last7(all),
+    review: ctx.coaching_notes || null,
+    today: ptDate(),
+  })
+  if (plan) await writeWeekPlan(req, { date: ptDate(), plan, computed_at: new Date().toISOString() })
+  return plan
+}
+
+export async function deliverWeekPlan(req, { dry = false } = {}) {
+  const stored = await readWeekPlan(req)
+  if (!stored?.plan) return { ok: false, error: 'no plan computed yet — run compute first' }
+  const plan = stored.plan
+  const text = formatWeekPlan(plan)
+  if (dry) return { ok: true, dry: true, plan, text, computed_at: stored.computed_at }
+
+  const sent = { cliq: false, sms: false }
+  try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
+  catch (e) { console.warn('[weekplan cliq]', e.message) }
+  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  if (to && plan?.theme) {
+    const sms = `Week ahead: ${plan.theme}\n` + (plan.outcomes || []).map((x, i) => `${i + 1}. ${x}`).join('\n')
+    try { await sendSMS(req, { to, body: sms.slice(0, 700), category: 'week_plan' }); sent.sms = true }
+    catch (e) { console.warn('[weekplan sms]', e.message) }
+  }
+  return { ok: true, date: stored.date, plan, text, sent }
+}
+
 export async function runWeeklyPlanner(req, { dry = false } = {}) {
   // Deliberately does NOT re-run the review. sunday.sh runs the real review
   // first, which stores its conclusions into coaching_notes — this reads those.
@@ -200,6 +258,16 @@ router.delete('/ledger/:date', async (req, res) => {
 
 router.get('/weekly/debug', async (req, res) => {
   try { res.json(await runWeeklyReview(req, { dry: true })) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/weekly/plan/compute', async (req, res) => {
+  try { const p = await computeWeekPlan(req); res.json({ ok: !!p, plan: p }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/weekly/plan/deliver', async (req, res) => {
+  try { res.json(await deliverWeekPlan(req, { dry: req.query.dry === '1' })) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 

@@ -79,7 +79,7 @@ import payrollRouter from './routes/payroll.js'
 import scalingRouter from './routes/scaling.js'
 import briefingRouter, { sendDailyBriefing, planDay, buildBriefingForPlan } from './routes/briefing.js'
 import eveningRouter, { sendEveningCheckin } from './routes/eveningCheckin.js'
-import coachRouter, { runWeeklyReview, runWeeklyPlanner } from './routes/coach.js'
+import coachRouter, { runWeeklyReview, computeWeekPlan, deliverWeekPlan } from './routes/coach.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -1062,7 +1062,10 @@ app.post('/api/cron/weekly-review', async (req, res) => {
 app.post('/api/cron/weekly-plan', async (req, res) => {
   if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {
-    res.json(await runWeeklyPlanner(req, { dry: req.query.dry === '1' }))
+    // step=compute (slow, may 408 — keeps running) then step=deliver (fast)
+    if (req.query.step === 'deliver') return res.json(await deliverWeekPlan(req, { dry: req.query.dry === '1' }))
+    const plan = await computeWeekPlan(req)
+    res.json({ ok: !!plan, computed: !!plan })
   } catch (e) {
     console.error('[cron/weekly-plan]', e)
     res.status(500).json({ ok: false, error: e.message })
