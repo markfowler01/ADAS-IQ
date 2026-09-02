@@ -22,6 +22,13 @@ const PARSE_MODEL = 'claude-haiku-4-5'   // extraction: SMS -> JSON, on a clock
 // it is handed and asks a question — it is not the pattern-finding step. That
 // job is weeklyReview(), which runs on Opus where the judgment compounds.
 const REVIEW_MODEL = 'claude-haiku-4-5'
+// The Sunday week plan runs on Sonnet, not Opus, for a hard platform reason:
+// it answers a gateway request and the gateway kills the connection around
+// 30-38s. Opus took ~40s and 408'd, and — verified, not assumed — the handler
+// does NOT keep running after the gateway gives up, so the work was simply
+// lost. Sonnet finishes this synthesis inside the window. The Opus judgment
+// call stays on weeklyReview, which is what actually finds the patterns.
+const WEEKPLAN_MODEL = 'claude-sonnet-5'
 
 function client() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -298,7 +305,7 @@ Return raw JSON only.
 
 export async function planWeek(req, { goals, weekAhead, lastWeek, review, coachingNotes, today }) {
   const res = await client().messages.create({
-    model: COACH_MODEL,
+    model: WEEKPLAN_MODEL,
     max_tokens: 3000,
     system: WEEKPLAN_SYSTEM,
     messages: [{

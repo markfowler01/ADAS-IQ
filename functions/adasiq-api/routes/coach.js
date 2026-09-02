@@ -168,7 +168,7 @@ async function writeWeekPlan(req, obj) {
 // delivers it. Same split absoluteadas-cron-runner uses for the long drafters.
 export async function computeWeekPlan(req) {
   const [weekAhead, ctx, all] = await Promise.all([
-    gatherWeekAhead(req), readContext(req), listDays(req, { limit: 30 }),
+    gatherWeekAhead(req), readContext(req), listDays(req, { limit: 14 }),
   ])
   const plan = await planWeek(req, {
     goals: ctx.goals,
@@ -207,7 +207,7 @@ export async function runWeeklyPlanner(req, { dry = false } = {}) {
   // Running it inline meant two Opus calls in one request and a hard 408 at
   // the 30s gateway cap.
   const [weekAhead, ctx, all] = await Promise.all([
-    gatherWeekAhead(req), readContext(req), listDays(req, { limit: 30 }),
+    gatherWeekAhead(req), readContext(req), listDays(req, { limit: 14 }),
   ])
   const plan = await planWeek(req, {
     goals: ctx.goals,
