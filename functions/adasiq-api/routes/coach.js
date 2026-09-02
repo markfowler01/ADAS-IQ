@@ -16,6 +16,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { listDays, summarize, deleteDay } from '../services/dayLedger.js'
+import { say } from '../services/confidence.js'
 import { weeklyReview, planWeek, planFridayQ, formatFridayQ, planFamilyDevotional, formatDevotional } from '../services/dayCoach.js'
 import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
@@ -78,9 +79,10 @@ function last7(days) {
 export function formatReview(review, stats) {
   if (!review) return 'Weekly review: not enough recorded days to say anything useful yet.'
   const L = [`Weekly review — ${review.headline}`, '']
-  const avg = stats.avgRating === null ? '—' : stats.avgRating.toFixed(1)
-  const b3 = stats.avgBig3HitRate === null ? '—' : `${Math.round(stats.avgBig3HitRate * 100)}%`
-  L.push(`${stats.rated} of ${stats.days} days rated, averaging ${avg}. Big 3 hit rate ${b3}.`)
+  // say() refuses to print a number it can't stand behind, and states the
+  // sample instead. Better a visible gap than a confident average of two days.
+  L.push(`${stats.rated} of ${stats.days} days rated, averaging ${say(stats.avgRating, v => v.toFixed(1))}.`)
+  L.push(`Big 3 hit rate ${say(stats.avgBig3HitRate, v => Math.round(v * 100) + '%')}.`)
   if (stats.missedCheckins.length) L.push(`No check-in on: ${stats.missedCheckins.join(', ')}.`)
   L.push('')
   if (review.what_worked?.length) { L.push('Worked:'); review.what_worked.forEach(x => L.push(`- ${x}`)); L.push('') }

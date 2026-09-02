@@ -20,6 +20,7 @@
 // late-arriving morning run can't blank an evening answer.
 
 import catalyst from 'zcatalyst-sdk-node'
+import { mean, rate } from './confidence.js'
 
 const TABLE = 'day_ledger'
 const CACHE_KEY = 'day_ledger'
@@ -277,25 +278,31 @@ export async function deleteDay(req, date) {
 
 // Rollups the coach uses — kept here so the brief, the review, and any
 // future dashboard all compute "a good day" the same way.
+// Rollups the coach uses. Every derived figure comes back guarded — see
+// services/confidence.js. A mean of two days is not a mean, and returning one
+// as a bare number is how the brief ended up telling Mark he was $10K ahead of
+// a target on the second of the month.
 export function summarize(days) {
   const rated = days.filter(d => typeof d.rating === 'number')
+  const reported = days.filter(d => d.checkin_at)   // only reported days say anything
   const hitRate = d => {
     const b = d.big3 || []
     return b.length ? b.filter(x => x.done).length / b.length : null
   }
-  const avg = xs => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
+  const hardDays = reported.filter(d => d.hard_thing)
+
   return {
     days: days.length,
     rated: rated.length,
-    avgRating: avg(rated.map(d => d.rating)),
+    reported: reported.length,
+    avgRating: mean(rated.map(d => d.rating)),
+    avgBig3HitRate: mean(reported.map(hitRate).filter(x => x !== null)),
+    hardThingHitRate: rate(hardDays.filter(d => d.hard_thing.done).length, hardDays.length),
+    // Counts are facts, not estimates — no guard needed.
     goodDays: rated.filter(d => d.rating >= 8).map(d => d.date),
     roughDays: rated.filter(d => d.rating <= 5).map(d => d.date),
-    avgBig3HitRate: avg(days.map(hitRate).filter(x => x !== null)),
-    hardThingHitRate: avg(
-      days.filter(d => d.hard_thing).map(d => (d.hard_thing.done ? 1 : 0))
-    ),
     f3Counts: ['faith', 'family', 'fitness', 'finances'].reduce((acc, k) => {
-      acc[k] = days.filter(d => d.f3?.[k]).length
+      acc[k] = reported.filter(d => d.f3?.[k]).length
       return acc
     }, {}),
     missedCheckins: days.filter(d => !d.checkin_at).map(d => d.date),

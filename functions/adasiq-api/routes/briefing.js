@@ -29,6 +29,7 @@ import { ptDate } from '../services/ptDate.js'
 import { sendPushToAll } from './push.js'
 import { publishAdaVoice } from '../services/adaVoice.js'
 import { publishBriefPage } from '../services/briefPage.js'
+import { project } from '../services/confidence.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
@@ -106,11 +107,11 @@ async function getRevenue() {
     // $11,000, and it read "$60,469, ahead by $10,469" on September 2nd. That
     // is the exact number Mark's $40K-two-months-running hiring gate keys off,
     // so it gets suppressed until there is enough month to extrapolate from.
-    const MIN_DAYS_TO_PROJECT = 5
     const totalWorkingDays = workingDays(yr, mi)
-    const projectable = elapsed >= MIN_DAYS_TO_PROJECT
-    const projected = projectable ? Math.round((monthlyTotal / elapsed) * totalWorkingDays) : null
-    const dailyPace = Math.round(monthlyTotal / elapsed)
+    const g = project(monthlyTotal, elapsed, totalWorkingDays)
+    const projectable = g.enough
+    const projected = g.value
+    const dailyPace = g.perUnit
     // Keep the raw records — per-tech revenue is a join of Books invoices to
     // the jobs table on invoice_number, since jobs carry no dollar amount.
     const records = invs
