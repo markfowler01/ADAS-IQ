@@ -769,6 +769,50 @@ router.get('/mail-debug', async (req, res) => {
   }
 })
 
+// Purge the stored commitments. The extractor filed Ada's own brief as Mark's
+// promises before the self-mail filter landed; the filter stops new ones but
+// the cache still holds the old ones.
+router.post('/commitments/purge', async (req, res) => {
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const seg = app.cache().segment()
+    const payload = JSON.stringify([])
+    try { await seg.update(COMMIT_CACHE_KEY, payload) } catch { await seg.put(COMMIT_CACHE_KEY, payload, 48) }
+    res.json({ ok: true, purged: true })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+// Why is SMS not sending? Reports each step instead of swallowing it.
+router.get('/sms-debug', async (req, res) => {
+  const out = { env: {}, cfg: {}, attempt: null }
+  try {
+    out.env = {
+      MARK_PHONE_NUMBER: !!process.env.MARK_PHONE_NUMBER,
+      TWILIO_ACCOUNT_SID: !!process.env.TWILIO_ACCOUNT_SID,
+      TWILIO_AUTH_TOKEN: !!process.env.TWILIO_AUTH_TOKEN,
+      TWILIO_FROM_NUMBER: !!process.env.TWILIO_FROM_NUMBER,
+    }
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const { twilioConfigured: cfgConfigured, pickFromNumber } = await import('../services/twilio.js')
+    const cfg = await resolvePhoneConfig(req)
+    out.cfg = {
+      resolved: !!cfg,
+      keys: cfg ? Object.keys(cfg).filter(k => !/token|secret|auth/i.test(k)).slice(0, 20) : [],
+      configured: cfg ? cfgConfigured(cfg) : false,
+      fromLocal: cfg ? (pickFromNumber('local', cfg) || null) : null,
+    }
+    if (req.query.send === '1') {
+      const { sendSMS } = await import('../services/comms.js')
+      try {
+        out.attempt = await sendSMS(req, {
+          to: process.env.MARK_PHONE_NUMBER, body: 'Ada test.', category: 'test',
+        })
+      } catch (e) { out.attempt = { threw: e.message } }
+    }
+    res.json({ ok: true, ...out })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message, ...out }) }
+})
+
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })
 router.post('/send', async (req, res) => { res.json(await sendDailyBriefing(req)) })
 
