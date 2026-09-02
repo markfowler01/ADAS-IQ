@@ -16,7 +16,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { listDays, summarize, deleteDay } from '../services/dayLedger.js'
-import { weeklyReview, planWeek } from '../services/dayCoach.js'
+import { weeklyReview, planWeek, planFridayQ, formatFridayQ } from '../services/dayCoach.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
 import { ptDate } from '../services/ptDate.js'
@@ -137,6 +137,7 @@ export function formatWeekPlan(p) {
     p.days.forEach(d => L.push(`- ${d.day}: ${d.focus}${d.note ? ` (${d.note})` : ''}`))
     L.push('')
   }
+  if (p.for_carrie?.what) { L.push(`For Carrie — ${p.for_carrie.day}: ${p.for_carrie.what}`); L.push('') }
   if (p.prep?.length) { L.push('Prep ahead:'); p.prep.forEach(x => L.push(`- ${x}`)); L.push('') }
   if (p.say_no_to?.length) { L.push('Say no to:'); p.say_no_to.forEach(x => L.push(`- ${x}`)) }
   return L.join('\n')
@@ -233,6 +234,51 @@ export async function runWeeklyPlanner(req, { dry = false } = {}) {
   return { ok: !!plan, plan, text, sent }
 }
 
+// Thursday night — tomorrow's F3 Q, so he can get it in his head before bed.
+export async function runFridayQ(req, { dry = false } = {}) {
+  const ctx = await readContext(req)
+  const friday = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+
+  // Race weeks change the Q. Pull the date out of his goals rather than
+  // hardcoding it, so moving the race in the vault moves it here.
+  let raceNote = ''
+  const m = (ctx.goals || '').match(/50\s*miler[^\n]*?(\d{4}-\d{2}-\d{2}|September\s+\d{1,2})/i)
+  if (m) {
+    const daysOut = Math.round((new Date(m[1].match(/^\d{4}/) ? m[1] : `${m[1]}, 2026`) - new Date(friday)) / 86400000)
+    if (daysOut >= 0 && daysOut <= 14) {
+      raceNote = `His 50 mile race is ${daysOut} day(s) after this Friday. He is in taper. Keep the legs light — upper body, core and coupons over sprints and hill repeats.`
+    }
+  }
+
+  const q = await planFridayQ(req, { recentQs: RECENT_QS, raceNote, date: friday })
+  const text = formatFridayQ(q, friday)
+  if (dry) return { ok: !!q, dry: true, friday, raceNote, q, text }
+  if (!q) return { ok: false, error: 'no Q generated' }
+
+  const sent = { cliq: false, sms: false }
+  try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
+  catch (e) { console.warn('[fridayq cliq]', e.message) }
+  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  if (to) {
+    try { await sendSMS(req, { to, body: text.slice(0, 900), category: 'friday_q' }); sent.sms = true }
+    catch (e) { console.warn('[fridayq sms]', e.message) }
+  }
+  return { ok: true, friday, q, text, sent }
+}
+
+// Recent Qs so it does not rebuild one he just led. The vault bridge refreshes
+// this list; this is the seed from his backblast log.
+const RECENT_QS = [
+  'Ladder & Sprints (Forest Park) — 11-count warmup, Jacobs Ladder, hill sprints',
+  'CLAW.D Protocol — 4-station scavenger, 44-rep override mission',
+  'Tundra TUFF — dice-roll coupons + Ultimate Frisbee',
+  'Emotional Support Coupon — carry-your-coupon hill AMRAP',
+  'Coupon Cooper — Coupon Cooper ladder',
+  'Farmers Strong Hands — bear-crawl alley, 10-20-30, farmer carries',
+  'Billy Madison — 12-grade circuit',
+  'Race to the Believer — hill + traverse + Dora',
+]
+
 // ── routes ───────────────────────────────────────────────────────────────────
 
 router.get('/context', async (req, res) => res.json({ ok: true, ...(await readContext(req)) }))
@@ -268,6 +314,16 @@ router.post('/weekly/plan/compute', async (req, res) => {
 
 router.post('/weekly/plan/deliver', async (req, res) => {
   try { res.json(await deliverWeekPlan(req, { dry: req.query.dry === '1' })) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.get('/friday-q/debug', async (req, res) => {
+  try { res.json(await runFridayQ(req, { dry: true })) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/friday-q', async (req, res) => {
+  try { res.json(await runFridayQ(req, { dry: req.query.dry === '1' })) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 

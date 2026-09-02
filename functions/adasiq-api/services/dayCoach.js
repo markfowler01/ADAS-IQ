@@ -79,8 +79,17 @@ How to choose:
 - Keep each one under about 90 characters. It has to read on a phone lock screen. Put the number in the task, not a paragraph of reasoning — the reasoning goes in "note".
 - If the coaching notes tell you something about how his good days are built, use it.
 
+The affirmation comes first, because he reads it before anything else.
+It is one or two sentences, first person, that he says to himself. Ground it in
+who he actually is and what he is actually carrying this week — his faith, his
+family, the rung of the ladder he is on, the race he is training for. Not a
+poster slogan and not hype. The test: would a guy in a blue shirt with grease on
+his hands say this out loud without wincing. Steady and true beats loud. Do not
+reuse yesterday's wording.
+
 Return raw JSON only. No preamble, no markdown fence.
 {
+  "affirmation": "...",
   "big3": [
     {"text": "...", "source": "revenue" | "unblocks_team" | "only_you" },
     ...exactly 3
@@ -135,6 +144,7 @@ export async function proposeBig3(req, { goals, recentDays, coachingNotes, today
   const parsed = extractJson(firstText(res))
   if (!parsed?.big3?.length) return null
   return {
+    affirmation: parsed.affirmation || '',
     big3: parsed.big3.slice(0, 3),
     hardThing: parsed.hard_thing || '',
     note: parsed.note || '',
@@ -287,6 +297,7 @@ Produce a plan for the week, not a summary of it. What that means:
 - Day-by-day: what each day is for. Some days are already spoken for by jobs or events — say so and work around them. Do not invent appointments.
 - What to say no to. He overcommits. Name the things that will show up this week that he should decline or defer.
 - Anything on the calendar that needs preparing for BEFORE it arrives, and which day to prepare on.
+- ONE thing for his wife Carrie, every week, without exception. A date night, taking dinner service off her, a morning where she sleeps in — something that costs him time and attention, not money. Name the day it happens and put it on that day too. This is not optional and it is not a filler item; if the week is slammed, it gets smaller, not skipped.
 
 Rules:
 - Ground everything in the data you were given. Never invent a job, a meeting, or a number.
@@ -299,6 +310,7 @@ Return raw JSON only.
   "theme": "one sentence",
   "outcomes": ["...", "...", "..."],
   "days": [{"day": "Monday", "focus": "...", "note": "optional constraint or prep"}],
+  "for_carrie": {"what": "...", "day": "..."},
   "say_no_to": ["..."],
   "prep": ["..."]
 }`
@@ -326,6 +338,60 @@ export async function planWeek(req, { goals, weekAhead, lastWeek, review, coachi
     }],
   })
   return extractJson(firstText(res))
+}
+
+// ── thursday night: tomorrow's F3 Q ─────────────────────────────────────────
+
+const FRIDAY_Q_SYSTEM = `You build Mark's F3 Friday bootcamp Q. He is Bugle — Site Q at Tundra Woodinville, Nantan at F3 Everett. He leads it Friday morning in the gloom and reads your draft Thursday night to get it in his head, so write it to be MEMORIZED, not referenced.
+
+Home AO is The Bunker (Woodinville HS). Coupons available. A ~2.9 mile loop is in play. Satellites he has used: Bloomberg Hill, Rotary Community Park, Woodin Elementary, Stonehill Meadows.
+
+Hard-won lessons from his own AARs. Follow them:
+- Keep it to about THREE blocks. More stations drags it out.
+- The format that works: two satellite workouts, then everyone converges at The Bunker to finish together.
+- Two stops plus home, and a big readable map. PAX could not read his station codes in the dark.
+- High-concept mission themes land. Mumblechatter goes quiet when the work is real.
+- Grass over pavement for anything involving partner carries.
+
+Write it in his Q Draft style: a named mission theme, WARMUP, THE THANG in blocks, MARY, and a COT prompt. The COT prompt is a real question about character or faith, not a slogan — he closes the circle with it.
+
+Rules:
+- Bodyweight and coupons only. Nothing he does not have.
+- Real rep counts. "Some merkins" is not a plan.
+- Vary from what he has run recently. You are given his recent Qs; do not rebuild one he just led.
+- If he is inside a race taper, say so in the Q note and keep the legs light. The Q still runs, it just does not wreck him.
+
+Return raw JSON only.
+{"title": "NAME // SUBTITLE", "theme": "one or two sentences", "warmup": "...", "thang": [{"block": "name", "detail": "..."}], "mary": "...", "cot_prompt": "...", "q_note": "logistics, taper or weather note, or empty string"}`
+
+export async function planFridayQ(req, { recentQs, raceNote, date }) {
+  const recent = (recentQs || []).map(q => '- ' + q).join('\n') || '(none on file)'
+  const res = await client().messages.create({
+    model: COACH_MODEL,
+    max_tokens: 4000,
+    system: FRIDAY_Q_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: [
+        'Friday date: ' + date,
+        raceNote ? '\nIMPORTANT: ' + raceNote : '',
+        '',
+        '## Qs he has led recently — do not repeat these',
+        recent,
+      ].join('\n'),
+    }],
+  })
+  return extractJson(firstText(res))
+}
+
+export function formatFridayQ(q, date) {
+  if (!q) return null
+  const L = ['Q DRAFT — "' + q.title + '"', 'Friday ' + date + ' · The Bunker', '', q.theme, '',
+             'WARMUP: ' + q.warmup, '', 'THE THANG:']
+  for (const b of (q.thang || [])) L.push('- ' + b.block + ': ' + b.detail)
+  L.push('', 'MARY: ' + q.mary, '', 'COT: ' + q.cot_prompt)
+  if (q.q_note) L.push('', 'Q note: ' + q.q_note)
+  return L.join('\n')
 }
 
 export const COACH_MODELS = { coach: COACH_MODEL, parse: PARSE_MODEL }

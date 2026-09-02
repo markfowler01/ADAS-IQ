@@ -47,6 +47,7 @@ export function emptyDay(date) {
     drag: '',            // what got in the way
     f3: {},              // { faith, family, fitness, finances } booleans
     plan_note: '',       // the coach's one-line 'why these three'
+    affirmation: '',     // what he reads to himself first thing
     raw_reply: '',       // the unparsed SMS, kept so parsing can improve later
     planned_at: '',
     checkin_at: '',
@@ -119,6 +120,7 @@ function toRow(d) {
     drag:       String(d.drag || ''),
     f3:         JSON.stringify(d.f3 || {}),
     plan_note:  String(d.plan_note || ''),
+    affirmation: String(d.affirmation || ''),
     raw_reply:  String(d.raw_reply || '').slice(0, 2000),
     planned_at: String(d.planned_at || ''),
     checkin_at: String(d.checkin_at || ''),
@@ -138,6 +140,7 @@ function fromRow(row) {
     drag:       r.drag || '',
     f3:         j(r.f3, {}),
     plan_note:  r.plan_note || '',
+    affirmation: r.affirmation || '',
     raw_reply:  r.raw_reply || '',
     planned_at: r.planned_at || '',
     checkin_at: r.checkin_at || '',

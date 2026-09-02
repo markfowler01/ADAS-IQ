@@ -79,7 +79,7 @@ import payrollRouter from './routes/payroll.js'
 import scalingRouter from './routes/scaling.js'
 import briefingRouter, { sendDailyBriefing, planDay, buildBriefingForPlan } from './routes/briefing.js'
 import eveningRouter, { sendEveningCheckin } from './routes/eveningCheckin.js'
-import coachRouter, { runWeeklyReview, computeWeekPlan, deliverWeekPlan } from './routes/coach.js'
+import coachRouter, { runWeeklyReview, computeWeekPlan, deliverWeekPlan, runFridayQ } from './routes/coach.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -1070,6 +1070,13 @@ app.post('/api/cron/weekly-plan', async (req, res) => {
     console.error('[cron/weekly-plan]', e)
     res.status(500).json({ ok: false, error: e.message })
   }
+})
+
+// Thursday 8 PM PT — tomorrow's F3 Q.
+app.post('/api/cron/friday-q', async (req, res) => {
+  if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { res.json(await runFridayQ(req, { dry: req.query.dry === '1' })) }
+  catch (e) { console.error('[cron/friday-q]', e); res.status(500).json({ ok: false, error: e.message }) }
 })
 
 // Deployment version probe

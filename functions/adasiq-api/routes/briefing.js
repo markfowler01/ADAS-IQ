@@ -449,12 +449,19 @@ export async function planDay(req, b) {
     await safe('record-plan', () => recordPlan(req, today, {
       big3: proposal.big3, hardThing: proposal.hardThing,
     }))
-    if (proposal.note) await safe('record-note', () => upsertDay(req, today, { plan_note: proposal.note }))
+    await safe('record-note', () => upsertDay(req, today, {
+      plan_note: proposal.note || '', affirmation: proposal.affirmation || '',
+    }))
     return proposal
   } catch (e) {
     console.error('[briefing] big3 failed:', e.message)
     return null
   }
+}
+
+// The affirmation opens the brief — it is the first thing he reads each day.
+function formatAffirmation(p) {
+  return p?.affirmation ? `${p.affirmation}\n\n` : ''
 }
 
 function formatBig3(p) {
@@ -499,15 +506,18 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   const big3 = await safe('read-plan', async () => {
     const day = await getDay(req, ptDate())
     if (!day?.big3?.length) return null
-    return { big3: day.big3, hardThing: day.hard_thing?.text || '', note: day.plan_note || '' }
+    return {
+      big3: day.big3, hardThing: day.hard_thing?.text || '',
+      note: day.plan_note || '', affirmation: day.affirmation || '',
+    }
   })
-  const full = formatFull(b) + formatBig3(big3)
+  const full = formatAffirmation(big3) + formatFull(b) + formatBig3(big3)
   // SMS is billed and read by the segment — keep the digest to one or two.
   // The full wording lives in Cliq and the push notification.
   const shortBig3 = (big3?.big3 || [])
     .map((x, i) => `${i + 1}) ${x.text.length > 64 ? x.text.slice(0, 61).trimEnd() + '...' : x.text}`)
     .join(' ')
-  const digest = (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b)
+  const digest = formatAffirmation(big3) + (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b)
   if (dry) {
     return { ok: true, dry: true, digest, full, big3, commitments: b.commitments, timings: b.timings, sources: b.sources,
       counts: { jobsToday: b.todaysJobs.length, events: b.events.length, dueToday: b.dueToday.length, overdue: b.overdue.length, followups: b.followups.length, shops: b.shops.length } }
