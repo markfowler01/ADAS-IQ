@@ -309,9 +309,18 @@ function techRevenue(jobs, revenue) {
   const records = (revenue?.records || []).filter(r => r.salesperson)
   if (!records.length) return null
 
+  // Known-correct spellings win over frequency. Books currently has "Mark
+  // Folwer" and "Mark Fowler" at two invoices each — a tie, so frequency alone
+  // picked the typo as the label. Alphabetical is the tiebreak of last resort
+  // so the output is at least deterministic.
+  const KNOWN = (process.env.SALESPEOPLE || 'Mark Fowler,Jayden Goshorn')
+    .split(',').map(x => x.trim()).filter(Boolean)
+  const isKnown = n => KNOWN.some(k => k.toLowerCase() === n.toLowerCase())
+
   const counts = {}
   for (const r of records) counts[r.salesperson] = (counts[r.salesperson] || 0) + 1
-  const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a])
+  const names = Object.keys(counts).sort((a, b) =>
+    (isKnown(b) - isKnown(a)) || (counts[b] - counts[a]) || a.localeCompare(b))
 
   const canonical = {}
   const merged = []
