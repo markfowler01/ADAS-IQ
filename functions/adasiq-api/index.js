@@ -1005,7 +1005,14 @@ app.post('/api/cron/daily-briefing', async (req, res) => {
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   if ((req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
   try {
-    const out = await sendDailyBriefing(req, { dry: req.query.dry === '1' || req.query.dry === 'true', only: req.query.only })
+    // A forced or dry run is a test. Tests must not DM the team — that has to
+    // be asked for explicitly with ?kickoff=1, never inherited.
+    const isTest = req.query.force === '1' || req.query.dry === '1' || req.query.dry === 'true'
+    const out = await sendDailyBriefing(req, {
+      dry: req.query.dry === '1' || req.query.dry === 'true',
+      only: req.query.only,
+      kickoff: req.query.kickoff === '1' ? true : !isTest,
+    })
     res.json(out)
   } catch (e) {
     console.error('[cron/daily-briefing]', e)

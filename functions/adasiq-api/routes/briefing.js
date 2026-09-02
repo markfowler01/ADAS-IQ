@@ -542,9 +542,17 @@ export function formatBriefHtml(b, big3, tr, audioUrl) {
     <div style="font:400 20px/32px ${SERIF};color:${INK};">${esc(big3.affirmation)}</div>
   </td></tr>` : ''}
 
-  ${audioUrl ? `<tr><td style="padding:26px 34px 0 34px;">
-    <a href="${esc(audioUrl)}" style="font:400 15px/1 ${SANS};color:${ACCENT};text-decoration:none;
-      border-bottom:1px solid ${ACCENT};padding-bottom:2px;">Listen instead &rarr;</a>
+  ${audioUrl ? `<tr><td style="padding:24px 34px 0 34px;">
+    <!-- Inline player so he can read along while Ada reads it. Apple Mail and
+         Zoho render this; Gmail and Outlook strip <audio>, so the link below
+         is the fallback rather than a decoration. -->
+    <audio controls preload="none" src="${esc(audioUrl)}" style="width:100%;max-width:484px;height:38px;">
+    </audio>
+    <div style="padding-top:8px;">
+      <a href="${esc(audioUrl)}" style="font:400 14px/1 ${SANS};color:${ACCENT};text-decoration:none;
+        border-bottom:1px solid ${ACCENT};padding-bottom:2px;">Open the audio &rarr;</a>
+      <span style="font:400 13px/1 ${SANS};color:${SOFT};padding-left:8px;">about a minute</span>
+    </div>
   </td></tr>` : ''}
 
   <tr><td style="padding:32px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
@@ -750,7 +758,7 @@ function buildSpokenScript(b, big3, tr) {
   return cleanSpeech(parts.join(' '))
 }
 
-export async function sendDailyBriefing(req, { dry = false, only } = {}) {
+export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKickoff = true } = {}) {
   if (!dry && req.query?.force !== '1' && await alreadySentToday(req)) {
     console.log('[briefing] already sent today — skipping duplicate')
     return { ok: true, skipped: 'already_sent_today', date: ptDate() }
@@ -824,7 +832,14 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   // Team good-morning fan-out (Kat / Joyce greetings + Jayden sales digest).
   // Piggybacks on this cron so we don't need a second console entry. Failures
   // are swallowed by safe() so a broken Cliq DM never derails Mark's briefing.
-  const kickoff = await safe('morning-kickoff', async () => {
+  // The team good-morning fan-out DMs Kat, Joyce and Jayden. It rides on this
+  // function, which means every manual or forced run of the brief messaged all
+  // three — five times over during one afternoon of testing. Real people get
+  // pinged by a developer pressing a button; that is never acceptable.
+  // Testing is now opt-out by default and only the scheduled path fans out.
+  const kickoff = !doKickoff
+    ? { fired: false, reason: 'skipped — not the scheduled run' }
+    : await safe('morning-kickoff', async () => {
     const { sendMorningKickoff } = await import('./dailyGreeting.js')
     return sendMorningKickoff(req)
   })

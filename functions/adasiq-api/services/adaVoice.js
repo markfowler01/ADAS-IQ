@@ -10,9 +10,15 @@
 import axios from 'axios'
 import { commitBinaryFile } from './brewArchive.js'
 
-// OpenAI female voices: nova (warm, clear), shimmer (brighter), coral, sage.
-// Mark asked for a woman's voice; nova is the steadiest for spoken briefings.
-const ADA_TTS_VOICE = process.env.ADA_TTS_VOICE || 'nova'
+// Voice options, warmest to brightest: sage, coral, nova, shimmer.
+// Mark asked for something warmer than the default, so this sits on sage —
+// breathier and more conversational than nova, which reads a little clipped.
+// Swap with ADA_TTS_VOICE without a deploy.
+const ADA_TTS_VOICE = process.env.ADA_TTS_VOICE || 'sage'
+
+// tts-1-hd over tts-1: about twice the cost of essentially nothing (~$0.006 a
+// memo) and a clear step up in warmth on a voice he hears every morning.
+const ADA_TTS_MODEL = process.env.ADA_TTS_MODEL || 'tts-1-hd'
 
 async function toMp3(script) {
   const apiKey = process.env.OPENAI_API_KEY
@@ -21,7 +27,7 @@ async function toMp3(script) {
     const res = await axios.post(
       'https://api.openai.com/v1/audio/speech',
       {
-        model: 'tts-1',
+        model: ADA_TTS_MODEL,
         voice: ADA_TTS_VOICE,
         input: script.slice(0, 4000),   // OpenAI caps at 4096 chars
         response_format: 'mp3',
@@ -54,7 +60,7 @@ export async function publishAdaVoice(script, dateISO, { slot = 'morning', force
     console.log('[adaVoice] no OPENAI_API_KEY, skipping audio')
     return null
   }
-  const name = 'ada-' + slot + '-' + dateISO + '.mp3'
+  const name = 'ada-' + slot + '-' + dateISO + '-' + ADA_TTS_VOICE + '.mp3'
   const publicUrl = 'https://absoluteadas.com/audio/' + name
 
   // Already rendered today? Return it rather than paying for TTS twice — the
