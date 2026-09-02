@@ -150,7 +150,7 @@ router.post('/transfer', async (req, res) => {
     const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
     const callerId = child.to && child.to.startsWith('client:') ? undefined : child.to
     await client.calls(parentSid).update({
-      twiml: `<Response><Say voice="Polly.Matthew">Transferring you now.</Say><Dial callerId="${esc(cfg.TWILIO_TOLLFREE_NUMBER || '')}" record="record-from-answer"><Number>${esc(target)}</Number></Dial></Response>`,
+      twiml: `<Response><Say voice="Polly.Matthew">Transferring you now.</Say><Dial callerId="${esc(cfg.TWILIO_TOLLFREE_NUMBER || '')}" record="record-from-answer" recordingStatusCallback="${esc(webhookBase())}/webhooks/twilio/voice/recording-done" recordingStatusCallbackEvent="completed"><Number>${esc(target)}</Number></Dial></Response>`,
     })
     console.log(`[softphone] transferred parent ${parentSid} → ${who}`)
     res.json({ ok: true, transferred_to: who })

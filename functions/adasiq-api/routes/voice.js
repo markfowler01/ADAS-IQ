@@ -630,10 +630,98 @@ router.post('/recording-done', requireTwilioSignature, async (req, res) => {
       recording_duration_sec: durSec,
       timestamp: new Date().toISOString(),
     })
+    // AI transcript pipeline (Mark 2026-09-02): kick Twilio Voice
+    // Intelligence on real conversations (skip sub-8s pocket answers).
+    // The transcript-ready webhook below does the Cliq posting.
+    if (recSid && durSec >= 8) {
+      try {
+        const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+        const { ensureIntelligenceService, startTranscript } = await import('../services/callTranscripts.js')
+        const cfg = await resolvePhoneConfig(req)
+        const serviceSid = await ensureIntelligenceService(req, cfg, baseUrl(req))
+        if (serviceSid) {
+          const tSid = await startTranscript(cfg, serviceSid, recSid)
+          if (tSid) {
+            const catalystMod = (await import('zcatalyst-sdk-node')).default
+            const app = catalystMod.initialize(req)
+            await app.datastore().table('AppConfig').insertRow({
+              config_key: `call_transcript:${tSid}`.slice(0, 64),
+              config_value: JSON.stringify({ call_sid: callSid, recording_sid: recSid, duration_sec: durSec }),
+            }).catch(() => {})
+            console.log('[transcripts] started', tSid, 'for call', callSid)
+          }
+        }
+      } catch (e) { console.warn('[transcripts] kick failed (non-fatal):', e.message) }
+    }
     res.status(200).send('OK')
   } catch (err) {
     console.error('[voice recording-done]', err.message)
     res.status(500).send('err')
+  }
+})
+
+// ── POST /webhooks/twilio/voice/transcript-ready ────────────────────────────
+// Twilio Voice Intelligence calls this when a transcript finishes. No
+// Twilio signature here — we authenticate by fetching the transcript
+// from Twilio ourselves; a forged sid just 404s.
+router.post('/transcript-ready', async (req, res) => {
+  res.status(200).send('OK')  // ack fast; work continues below within this handler
+  try {
+    const tSid = String(req.body?.transcript_sid || req.body?.TranscriptSid || '')
+    const status = String(req.body?.status || req.body?.Status || '').toLowerCase()
+    if (!tSid || (status && status !== 'completed')) return
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const { fetchTranscript, fetchSentences, formatConversation, summarizeCall } = await import('../services/callTranscripts.js')
+    const cfg = await resolvePhoneConfig(req)
+    const transcript = await fetchTranscript(cfg, tSid)   // auth check — forged sids die here
+    if (!transcript || String(transcript.status).toLowerCase() !== 'completed') return
+
+    // Once-only guard + call linkage
+    const catalystMod = (await import('zcatalyst-sdk-node')).default
+    const app = catalystMod.initialize(req)
+    const mapKey = `call_transcript:${tSid}`.slice(0, 64)
+    const rows = await app.zcql().executeZCQLQuery(
+      `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${mapKey}' LIMIT 1`).catch(() => [])
+    const r0 = rows?.[0]?.AppConfig || rows?.[0] || null
+    if (!r0) return  // unknown or already-posted transcript
+    let meta = {}
+    try { meta = JSON.parse(r0.config_value || '{}') } catch { meta = {} }
+    await app.datastore().table('AppConfig').deleteRow(String(r0.ROWID)).catch(() => {})
+
+    const sentences = await fetchSentences(cfg, tSid)
+    const conversation = formatConversation(sentences)
+    if (!conversation) return
+
+    // Caller identity
+    let from = '', who = ''
+    try {
+      const twilioMod = (await import('twilio')).default
+      const client = twilioMod(cfg.TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID,
+        cfg.TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN)
+      const call = await client.calls(meta.call_sid).fetch()
+      from = call.from || ''
+      const { findContactByPhone } = await import('../services/crmContacts.js')
+      const c = await findContactByPhone(req, from).catch(() => null)
+      who = [c?.contact_name, c?.shop_name].filter(Boolean).join(' · ')
+    } catch { /* number-only is fine */ }
+
+    const summary = await summarizeCall(conversation)
+    const pretty = String(from).replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3')
+    const mins = Math.round((meta.duration_sec || 0) / 6) / 10
+    const MAX = 3200
+    const convoOut = conversation.length > MAX
+      ? conversation.slice(0, MAX) + '\n… (long call — full recording on the Phone page)'
+      : conversation
+    const { postToCliqChannel, SMS_TOLLFREE_CHANNEL } = await import('../services/cliq.js')
+    await postToCliqChannel(SMS_TOLLFREE_CHANNEL, [
+      `📞 *Call transcript* — ${pretty || from || 'Unknown'}${who ? ` · ${who}` : ''} · ${mins} min`,
+      summary || '',
+      '———',
+      convoOut,
+    ].filter(Boolean).join('\n'))
+    console.log('[transcripts] posted', tSid, 'call', meta.call_sid)
+  } catch (e) {
+    console.error('[transcript-ready]', e.message)
   }
 })
 

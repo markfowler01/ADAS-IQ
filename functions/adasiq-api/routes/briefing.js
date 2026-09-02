@@ -115,6 +115,8 @@ async function getRevenue() {
         // authoritative; joining on invoice_number was not, because the
         // numbers are free text ("IAR 2017 Mercedes GLS") and never matched.
         salesperson: String(i.salesperson_name || '').trim(),
+        status: String(i.status || ''),
+        customer: String(i.customer_name || ''),
       }))
     return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, invoiceCount: invs.length, records }
   })
