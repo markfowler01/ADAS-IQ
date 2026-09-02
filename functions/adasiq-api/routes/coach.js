@@ -16,7 +16,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { listDays, summarize, deleteDay } from '../services/dayLedger.js'
-import { weeklyReview, planWeek, planFridayQ, formatFridayQ } from '../services/dayCoach.js'
+import { weeklyReview, planWeek, planFridayQ, formatFridayQ, planFamilyDevotional, formatDevotional } from '../services/dayCoach.js'
 import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
 import { ptDate } from '../services/ptDate.js'
@@ -279,6 +279,36 @@ const RECENT_QS = [
   'Race to the Believer — hill + traverse + Dora',
 ]
 
+// Weekly family devotional — Sunday, for Kyleighanne (14) and Wyatt (12).
+// Passages used are kept in cache so it does not circle the same three verses.
+const DEVO_KEY = 'family_devo_passages'
+
+export async function runFamilyDevotional(req, { dry = false } = {}) {
+  const weekOf = ptDate()
+  let recent = []
+  try {
+    const v = await segment(req).getValue(DEVO_KEY)
+    if (v) recent = (typeof v === 'string' ? JSON.parse(v) : v) || []
+  } catch { recent = [] }
+
+  const d = await planFamilyDevotional(req, { recentPassages: recent, weekOf })
+  const text = formatDevotional(d, weekOf)
+  if (dry) return { ok: !!d, dry: true, weekOf, devotional: d, text, recent }
+  if (!d) return { ok: false, error: 'no devotional generated' }
+
+  const next = [...recent, d.passage_ref].filter(Boolean).slice(-12)
+  try {
+    const seg = segment(req)
+    const val = JSON.stringify(next)
+    try { await seg.update(DEVO_KEY, val) } catch { await seg.put(DEVO_KEY, val, 48) }
+  } catch (e) { console.warn('[devo history]', e.message) }
+
+  const sent = { cliq: false }
+  try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
+  catch (e) { console.warn('[devo cliq]', e.message) }
+  return { ok: true, weekOf, devotional: d, text, sent }
+}
+
 // ── routes ───────────────────────────────────────────────────────────────────
 
 router.get('/context', async (req, res) => res.json({ ok: true, ...(await readContext(req)) }))
@@ -314,6 +344,16 @@ router.post('/weekly/plan/compute', async (req, res) => {
 
 router.post('/weekly/plan/deliver', async (req, res) => {
   try { res.json(await deliverWeekPlan(req, { dry: req.query.dry === '1' })) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.get('/devotional/debug', async (req, res) => {
+  try { res.json(await runFamilyDevotional(req, { dry: true })) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/devotional', async (req, res) => {
+  try { res.json(await runFamilyDevotional(req, { dry: req.query.dry === '1' })) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 

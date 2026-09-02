@@ -79,7 +79,7 @@ import payrollRouter from './routes/payroll.js'
 import scalingRouter from './routes/scaling.js'
 import briefingRouter, { sendDailyBriefing, planDay, buildBriefingForPlan } from './routes/briefing.js'
 import eveningRouter, { sendEveningCheckin } from './routes/eveningCheckin.js'
-import coachRouter, { runWeeklyReview, computeWeekPlan, deliverWeekPlan, runFridayQ } from './routes/coach.js'
+import coachRouter, { runWeeklyReview, computeWeekPlan, deliverWeekPlan, runFridayQ, runFamilyDevotional } from './routes/coach.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -1077,6 +1077,13 @@ app.post('/api/cron/friday-q', async (req, res) => {
   if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
   try { res.json(await runFridayQ(req, { dry: req.query.dry === '1' })) }
   catch (e) { console.error('[cron/friday-q]', e); res.status(500).json({ ok: false, error: e.message }) }
+})
+
+// Sunday — the family devotional for the week.
+app.post('/api/cron/family-devotional', async (req, res) => {
+  if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { res.json(await runFamilyDevotional(req, { dry: req.query.dry === '1' })) }
+  catch (e) { console.error('[cron/family-devotional]', e); res.status(500).json({ ok: false, error: e.message }) }
 })
 
 // Deployment version probe

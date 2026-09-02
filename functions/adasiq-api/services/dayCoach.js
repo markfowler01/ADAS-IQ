@@ -399,4 +399,69 @@ export function formatFridayQ(q, date) {
   return L.join('\n')
 }
 
+// ── weekly family devotional ────────────────────────────────────────────────
+
+const DEVO_SYSTEM = `You write the Fowler family's weekly devotional. Mark leads it. It is for the two kids still at home:
+
+- Kyleighanne, 14 — early high school. Identity, friendships, comparison, wanting independence and still wanting to be known.
+- Wyatt, 12 — middle school. Fairness, courage, belonging, big feelings he does not always have words for.
+
+The four older kids are grown or out. Do not write for them.
+
+Produce ONE devotional for the week that the family reads together, then give Mark ways to keep it alive during the week.
+
+What it needs:
+- A short passage. Give the reference and quote it plainly. Pick something concrete — a story, a moment, a real instruction — over an abstract verse. Nothing longer than a few verses.
+- The main read: five or six sentences Mark can read out loud at the table. Written for a twelve year old to follow and a fourteen year old not to roll her eyes at. No churchy filler, no "as we journey together."
+- One angle for Kyleighanne and one for Wyatt. Same passage, different door in. Hers should respect that she is nearly grown and thinking hard about who she is. His should be concrete and often physical — what would you DO.
+- Three conversation prompts for the week: one for the morning (short, before school, thirty seconds), one for midday or the drive (a real question, not a quiz), one for bedtime (quieter, more honest, the kind of question that gets a real answer in the dark).
+- One thing the family can DO together this week that makes the passage real. Small. Achievable on a weeknight by a family with a shop to run.
+
+Rules:
+- Plain language. Mark's test is whether a guy in a blue shirt with grease on his hands would say it out loud.
+- Never talk down to them. Twelve and fourteen can handle a real idea.
+- No guilt as a motivator. No "you should feel."
+- Do not repeat a passage from the recent list you are given.
+
+Return raw JSON only.
+{"theme": "...", "passage_ref": "...", "passage_text": "...", "main_read": "...", "for_kyleighanne": "...", "for_wyatt": "...", "prompts": {"morning": "...", "midday": "...", "bedtime": "..."}, "do_together": "..."}`
+
+export async function planFamilyDevotional(req, { recentPassages, weekOf }) {
+  const recent = (recentPassages || []).join(', ') || '(none yet)'
+  const res = await client().messages.create({
+    model: WEEKPLAN_MODEL,
+    max_tokens: 3000,
+    thinking: { type: 'disabled' },   // same gateway ceiling as the week plan
+    system: DEVO_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: 'Week of ' + weekOf + '.\n\nPassages already used recently, do not reuse: ' + recent,
+    }],
+  })
+  return extractJson(firstText(res))
+}
+
+export function formatDevotional(d, weekOf) {
+  if (!d) return null
+  return [
+    'Family devotional — week of ' + weekOf,
+    d.theme,
+    '',
+    d.passage_ref,
+    '"' + d.passage_text + '"',
+    '',
+    d.main_read,
+    '',
+    'For Kyleighanne (14): ' + d.for_kyleighanne,
+    'For Wyatt (12): ' + d.for_wyatt,
+    '',
+    'Talk about it —',
+    '  Morning: ' + d.prompts.morning,
+    '  Midday/drive: ' + d.prompts.midday,
+    '  Bedtime: ' + d.prompts.bedtime,
+    '',
+    'Do together this week: ' + d.do_together,
+  ].join('\n')
+}
+
 export const COACH_MODELS = { coach: COACH_MODEL, parse: PARSE_MODEL }
