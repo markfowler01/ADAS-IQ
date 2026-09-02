@@ -28,6 +28,7 @@ import { readContext } from './coach.js'
 import { ptDate } from '../services/ptDate.js'
 import { sendPushToAll } from './push.js'
 import { publishAdaVoice } from '../services/adaVoice.js'
+import { publishBriefPage } from '../services/briefPage.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
@@ -492,7 +493,7 @@ function label(t) {
   return `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
 }
 
-export function formatBriefHtml(b, big3, tr, audioUrl) {
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl) {
   const money0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
   const rev = b.revenue || {}
   const diff = (rev.projected || 0) - 50000
@@ -549,8 +550,8 @@ export function formatBriefHtml(b, big3, tr, audioUrl) {
     <audio controls preload="none" src="${esc(audioUrl)}" style="width:100%;max-width:484px;height:38px;">
     </audio>
     <div style="padding-top:8px;">
-      <a href="${esc(audioUrl)}" style="font:400 14px/1 ${SANS};color:${ACCENT};text-decoration:none;
-        border-bottom:1px solid ${ACCENT};padding-bottom:2px;">Open the audio &rarr;</a>
+      <a href="${esc(pageUrl || audioUrl)}" style="font:400 14px/1 ${SANS};color:${ACCENT};text-decoration:none;
+        border-bottom:1px solid ${ACCENT};padding-bottom:2px;">${pageUrl ? 'Play it and read along &rarr;' : 'Open the audio &rarr;'}</a>
       <span style="font:400 13px/1 ${SANS};color:${SOFT};padding-left:8px;">about a minute</span>
     </div>
   </td></tr>` : ''}
@@ -813,12 +814,22 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // Email — for the mornings he's at the computer instead of in the van.
   // Plain text of the same brief plus the audio link, so nothing is only
   // available in one place.
+  // Publish the page first so the email can link to it. Email clients strip
+  // <audio>, so this is the only place "play it and read along" actually works.
+  // Two passes on purpose: the page is built from the brief HTML, and the
+  // email needs the page's URL to link to it. Render once for the page, then
+  // render again with the URL in hand for the email.
+  const pageBody = formatBriefHtml(b, big3, tr, null, null)
+  const page = await withTimeout('brief-page',
+    safe('brief-page', () => publishBriefPage(pageBody, audio?.url || null, ptDate())), 20000)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page?.url || null)
+
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
     const e = await safe('email', () => sendEmail(req, {
       to: emailTo,
       subject: `Ada — ${ptDate()}${big3?.big3?.length ? `: ${big3.big3[0].text}` : ''}`.slice(0, 160),
-      body: formatBriefHtml(b, big3, tr, audio?.url || null),
+      body: briefHtml,
       category: 'briefing',
     }))
     sent.email = !!e
@@ -844,7 +855,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     return sendMorningKickoff(req)
   })
   if (sent.cliq || sent.sms || sent.push) await stampSent(req)
-  return { ok: true, sent, digest, big3, audio: audio?.url || null, kickoff: kickoff || { ok: false } }
+  return { ok: true, sent, digest, big3, audio: audio?.url || null, page: page?.url || null, kickoff: kickoff || { ok: false } }
 }
 
 router.get('/debug', async (req, res) => {
