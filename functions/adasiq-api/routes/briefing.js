@@ -26,6 +26,7 @@ import { recordPlan, listDays, getDay, upsertDay } from '../services/dayLedger.j
 import { readContext } from './coach.js'
 import { ptDate } from '../services/ptDate.js'
 import { sendPushToAll } from './push.js'
+import { publishAdaVoice } from '../services/adaVoice.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
 
@@ -497,6 +498,22 @@ async function stampSent(req) {
   } catch (e) { console.warn('[briefing stamp]', e.message) }
 }
 
+// The script Ada reads. Same order as the written brief: affirmation, the
+// brief itself, then the Big 3 — so hearing it and reading it feel like one
+// thing rather than two.
+function buildSpokenScript(b, big3) {
+  const parts = []
+  if (big3?.affirmation) parts.push(big3.affirmation)
+  parts.push(formatVoiceMorning(b))
+  if (big3?.big3?.length) {
+    parts.push('Your big three today.')
+    big3.big3.forEach((x, i) => parts.push(`Number ${i + 1}. ${x.text}.`))
+    if (big3.hardThing) parts.push(`The hard thing, and do it first. ${big3.hardThing}.`)
+  }
+  parts.push('Go get it.')
+  return cleanSpeech(parts.join(' '))
+}
+
 export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   if (!dry && req.query?.force !== '1' && await alreadySentToday(req)) {
     console.log('[briefing] already sent today — skipping duplicate')
@@ -513,13 +530,13 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
       note: day.plan_note || '', affirmation: day.affirmation || '',
     }
   })
-  const full = formatAffirmation(big3) + formatFull(b) + formatBig3(big3)
+  let full = formatAffirmation(big3) + formatFull(b) + formatBig3(big3)
   // SMS is billed and read by the segment — keep the digest to one or two.
   // The full wording lives in Cliq and the push notification.
   const shortBig3 = (big3?.big3 || [])
     .map((x, i) => `${i + 1}) ${x.text.length > 64 ? x.text.slice(0, 61).trimEnd() + '...' : x.text}`)
     .join(' ')
-  const digest = formatAffirmation(big3) + (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b)
+  let digest = formatAffirmation(big3) + (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b)
   if (dry) {
     return { ok: true, dry: true, digest, full, big3, commitments: b.commitments, timings: b.timings, sources: b.sources,
       counts: { jobsToday: b.todaysJobs.length, events: b.events.length, dueToday: b.dueToday.length, overdue: b.overdue.length, followups: b.followups.length, shops: b.shops.length } }
@@ -531,6 +548,18 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   // Mark's number lives in the MARK_PHONE_NUMBER env var
   const to = (process.env.MARK_PHONE_NUMBER || '').trim()
   if (to) { const s = await safe('sms', () => sendSMS(req, { to, body: digest, category: 'briefing' })); sent.sms = !!s }
+  // Ada's voice memo — a file he can tap and play on the way to F3. Hard
+  // timeout and fail-soft: TTS plus a git commit is ~12s, and if it runs long
+  // the written brief still goes out on time without it.
+  const audio = await withTimeout('ada-voice',
+    safe('ada-voice', () => publishAdaVoice(buildSpokenScript(b, big3), ptDate(), { slot: 'morning' })),
+    22000)
+  if (audio?.url) {
+    const line = `\n\nListen: ${audio.url}`
+    full += line
+    digest += line
+  }
+
   // Web Push to the home-screen PWA — the part that actually surfaces on his
   // phone. Cliq and SMS both land silently behind other traffic.
   const pushBody = big3?.big3?.length
@@ -549,7 +578,7 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
     return sendMorningKickoff(req)
   })
   if (sent.cliq || sent.sms || sent.push) await stampSent(req)
-  return { ok: true, sent, digest, big3, kickoff: kickoff || { ok: false } }
+  return { ok: true, sent, digest, big3, audio: audio?.url || null, kickoff: kickoff || { ok: false } }
 }
 
 router.get('/debug', async (req, res) => {
