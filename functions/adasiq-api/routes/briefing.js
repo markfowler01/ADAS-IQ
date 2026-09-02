@@ -413,7 +413,33 @@ function formatBig3(p) {
   return L.join('\n')
 }
 
+// One briefing per PT day, whoever asks. The 6 AM LaunchAgent and any
+// still-enabled Catalyst cron both call this; without a stamp Mark gets the
+// same brief twice. Same idempotence rule the marketing crons run on.
+const SENT_KEY = 'briefing_sent_stamp'
+
+async function alreadySentToday(req) {
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const v = await app.cache().segment().getValue(SENT_KEY)
+    return v ? String(typeof v === 'string' ? JSON.parse(v).date : v.date) === ptDate() : false
+  } catch { return false }
+}
+
+async function stampSent(req) {
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const seg = app.cache().segment()
+    const val = JSON.stringify({ date: ptDate(), at: new Date().toISOString() })
+    try { await seg.update(SENT_KEY, val) } catch { await seg.put(SENT_KEY, val, 48) }
+  } catch (e) { console.warn('[briefing stamp]', e.message) }
+}
+
 export async function sendDailyBriefing(req, { dry = false, only } = {}) {
+  if (!dry && req.query?.force !== '1' && await alreadySentToday(req)) {
+    console.log('[briefing] already sent today — skipping duplicate')
+    return { ok: true, skipped: 'already_sent_today', date: ptDate() }
+  }
   const b = await buildBriefing(req, { only })
   // Read the plan the 7:20 planner cron already stored. Generating it here
   // would put a 20-40s Opus call inside a request the gateway kills at 30s.
@@ -457,6 +483,7 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
     const { sendMorningKickoff } = await import('./dailyGreeting.js')
     return sendMorningKickoff(req)
   })
+  if (sent.cliq || sent.sms || sent.push) await stampSent(req)
   return { ok: true, sent, digest, big3, kickoff: kickoff || { ok: false } }
 }
 
