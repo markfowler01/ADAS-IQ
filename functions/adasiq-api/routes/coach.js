@@ -16,10 +16,11 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { listDays, summarize, deleteDay } from '../services/dayLedger.js'
-import { weeklyReview } from '../services/dayCoach.js'
+import { weeklyReview, planWeek } from '../services/dayCoach.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
 import { ptDate } from '../services/ptDate.js'
+import { gatherWeekAhead } from './briefing.js'
 
 const router = express.Router()
 
@@ -126,6 +127,51 @@ export async function runWeeklyReview(req, { dry = false } = {}) {
   return { ok: true, date: ptDate(), stats, review, text, sent }
 }
 
+export function formatWeekPlan(p) {
+  if (!p) return 'Week plan unavailable.'
+  const L = [`Week ahead — ${p.theme}`, '']
+  if (p.outcomes?.length) { L.push('Outcomes:'); p.outcomes.forEach((o, i) => L.push(`${i + 1}. ${o}`)); L.push('') }
+  if (p.days?.length) {
+    L.push('The week:')
+    p.days.forEach(d => L.push(`- ${d.day}: ${d.focus}${d.note ? ` (${d.note})` : ''}`))
+    L.push('')
+  }
+  if (p.prep?.length) { L.push('Prep ahead:'); p.prep.forEach(x => L.push(`- ${x}`)); L.push('') }
+  if (p.say_no_to?.length) { L.push('Say no to:'); p.say_no_to.forEach(x => L.push(`- ${x}`)) }
+  return L.join('\n')
+}
+
+// Sunday 3 PM. Reviews the week that just ended, then plans the next one —
+// in that order, because the review is an input to the plan.
+export async function runWeeklyPlanner(req, { dry = false } = {}) {
+  const review = await runWeeklyReview(req, { dry: true })   // read-only pass
+  const [weekAhead, ctx, all] = await Promise.all([
+    gatherWeekAhead(req), readContext(req), listDays(req, { limit: 30 }),
+  ])
+  const plan = await planWeek(req, {
+    goals: ctx.goals,
+    coachingNotes: ctx.coaching_notes,
+    weekAhead,
+    lastWeek: last7(all),
+    review: review?.review || null,
+    today: ptDate(),
+  })
+  const text = formatWeekPlan(plan)
+  if (dry) return { ok: !!plan, dry: true, plan, text, reviewIncluded: !!review?.review }
+
+  const sent = { cliq: false, sms: false }
+  try { await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text); sent.cliq = true }
+  catch (e) { console.warn('[weekplan cliq]', e.message) }
+  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  if (to && plan?.theme) {
+    const sms = `Week ahead: ${plan.theme}\n` +
+      (plan.outcomes || []).map((o, i) => `${i + 1}. ${o}`).join('\n')
+    try { await sendSMS(req, { to, body: sms.slice(0, 700), category: 'week_plan' }); sent.sms = true }
+    catch (e) { console.warn('[weekplan sms]', e.message) }
+  }
+  return { ok: !!plan, plan, text, sent }
+}
+
 // ── routes ───────────────────────────────────────────────────────────────────
 
 router.get('/context', async (req, res) => res.json({ ok: true, ...(await readContext(req)) }))
@@ -151,6 +197,16 @@ router.delete('/ledger/:date', async (req, res) => {
 
 router.get('/weekly/debug', async (req, res) => {
   try { res.json(await runWeeklyReview(req, { dry: true })) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.get('/weekly/plan/debug', async (req, res) => {
+  try { res.json(await runWeeklyPlanner(req, { dry: true })) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/weekly/plan', async (req, res) => {
+  try { res.json(await runWeeklyPlanner(req)) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 

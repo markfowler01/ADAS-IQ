@@ -386,6 +386,35 @@ export async function gatherDayReview(req) {
   }
 }
 
+// What the Sunday planner reads. Looks forward across the next 7 days rather
+// than at today, so jobs are bucketed by scheduled_date.
+export async function gatherWeekAhead(req) {
+  const b = await buildBriefing(req)
+  const days = []
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(Date.now() + i * 86400000).toISOString().slice(0, 10)
+    const onDay = b.jobs.filter(j => j.scheduled_date === d)
+    days.push({
+      date: d,
+      weekday: weekday(d),
+      jobs: onDay.length,
+      jaden_jobs: onDay.filter(j => String(j.technician || '').toLowerCase().startsWith('jay')).length,
+    })
+  }
+  return {
+    week: days,
+    open_jobs: b.openJobs.length,
+    shops: b.shops.length,
+    followups_due: b.followups.length,
+    commitments_open: b.commitments.length,
+    commitments_overdue: b.overdue.map(c => `${c.person}: ${c.text}`).slice(0, 10),
+    my_promises: b.outbound.map(c => c.text).slice(0, 10),
+    revenue_mtd: b.revenue?.monthlyTotal ?? null,
+    revenue_projected: b.revenue?.projected ?? null,
+    revenue_target: TARGET,
+  }
+}
+
 export async function planDay(req, b) {
   try {
     const today = ptDate()

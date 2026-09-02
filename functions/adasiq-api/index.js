@@ -79,7 +79,7 @@ import payrollRouter from './routes/payroll.js'
 import scalingRouter from './routes/scaling.js'
 import briefingRouter, { sendDailyBriefing, planDay, buildBriefingForPlan } from './routes/briefing.js'
 import eveningRouter, { sendEveningCheckin } from './routes/eveningCheckin.js'
-import coachRouter, { runWeeklyReview } from './routes/coach.js'
+import coachRouter, { runWeeklyReview, runWeeklyPlanner } from './routes/coach.js'
 
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
@@ -1054,6 +1054,17 @@ app.post('/api/cron/weekly-review', async (req, res) => {
     res.json(await runWeeklyReview(req, { dry: req.query.dry === '1' }))
   } catch (e) {
     console.error('[cron/weekly-review]', e)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Sunday 3 PM PT — review the week that ended, then plan the one ahead.
+app.post('/api/cron/weekly-plan', async (req, res) => {
+  if (!coachSecretOk(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    res.json(await runWeeklyPlanner(req, { dry: req.query.dry === '1' }))
+  } catch (e) {
+    console.error('[cron/weekly-plan]', e)
     res.status(500).json({ ok: false, error: e.message })
   }
 })
