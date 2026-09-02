@@ -26,6 +26,8 @@ import { recordPlan, listDays, getDay, upsertDay } from '../services/dayLedger.j
 import { readContext } from './coach.js'
 import { ptDate } from '../services/ptDate.js'
 import { sendPushToAll } from './push.js'
+import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
+import { resolvePhoneConfig } from '../services/phoneConfig.js'
 
 const router = express.Router()
 const TARGET = 50000
@@ -574,6 +576,86 @@ router.post('/plan', async (req, res) => {
 
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })
 router.post('/send', async (req, res) => { res.json(await sendDailyBriefing(req)) })
+
+// ── Ada's voice ─────────────────────────────────────────────────────────────
+//
+// Mark drives to F3 at 4:40 and wanted the brief read to him rather than
+// tapping through a phone in the dark. Twilio calls him, Polly reads it.
+//
+//   GET  /api/briefing/twiml   — the TwiML Twilio fetches (?k= secret, since
+//                                Twilio can't send our auth header)
+//   POST /api/briefing/call    — place the call
+//
+// ADA_VOICE overrides the voice; Polly neural US-English female voices that
+// work here: Joanna, Danielle, Ruth, Kendra.
+const ADA_VOICE = process.env.ADA_VOICE || 'Polly.Joanna-Neural'
+
+// Twilio's <Say> chokes on raw &, <, > — and reads them aloud badly if they
+// slip through. Escape before embedding.
+function escapeXml(s) {
+  return String(s || '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+}
+
+// Break the brief into sentences so we can put a beat between them. One giant
+// <Say> runs together and is hard to follow at 4:40 in the morning.
+function speakBlocks(text) {
+  return String(text || '')
+    .split(/(?<=[.!?])\s+/)
+    .map(s => s.trim())
+    .filter(Boolean)
+}
+
+router.get('/twiml', async (req, res) => {
+  const mode = req.query.mode === 'evening' ? 'evening' : 'morning'
+  let spoken
+  try {
+    const b = await buildBriefing(req, { mode })
+    spoken = mode === 'evening' ? formatVoiceEvening(b) : formatVoiceMorning(b)
+    if (mode === 'morning') {
+      // Lead with the affirmation, then the brief, then the Big 3 — same
+      // order as the written version, because that's the order he's used to.
+      const day = await safe('voice-plan', () => getDay(req, ptDate()))
+      const aff = day?.affirmation ? day.affirmation + ' ' : ''
+      const big3 = (day?.big3 || []).map((x, i) => `Number ${i + 1}. ${x.text}.`).join(' ')
+      const hard = day?.hard_thing?.text ? ` The hard thing, do it first. ${day.hard_thing.text}.` : ''
+      spoken = `${aff}${spoken}${big3 ? ` Your big three today. ${big3}${hard}` : ''}`
+    }
+  } catch (e) {
+    console.error('[briefing/twiml]', e.message)
+    spoken = "Good morning Mark. I couldn't reach your data this morning. Check the app when you get a minute."
+  }
+
+  const says = speakBlocks(spoken)
+    .map(s => `<Say voice="${ADA_VOICE}">${escapeXml(s)}</Say><Pause length="1"/>`)
+    .join('')
+  res.type('text/xml').send(
+    `<?xml version="1.0" encoding="UTF-8"?><Response>${says}<Say voice="${ADA_VOICE}">Go get it.</Say></Response>`
+  )
+})
+
+router.post('/call', async (req, res) => {
+  try {
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg)) return res.status(500).json({ ok: false, error: 'twilio not configured' })
+    const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+    if (!to) return res.status(500).json({ ok: false, error: 'MARK_PHONE_NUMBER not set' })
+
+    const mode = req.query.mode === 'evening' ? 'evening' : 'morning'
+    const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+    const base = (process.env.SELF_BASE_URL || SELF_BASE).replace(/\/$/, '')
+    const url = `${base}/api/briefing/twiml?mode=${mode}&k=${encodeURIComponent(secret)}`
+
+    const client = await getTwilioClient(cfg)
+    const from = pickFromNumber('local', cfg)
+    const call = await client.calls.create({ to, from, url, timeout: 25 })
+    res.json({ ok: true, sid: call.sid, to, from, mode, voice: ADA_VOICE })
+  } catch (e) {
+    console.error('[briefing/call]', e.message)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
 
 // Voice endpoint — plain spoken text for the Siri "Speak Text" shortcut.
 //   /api/briefing/voice            -> morning briefing
