@@ -934,6 +934,19 @@ router.get('/sms-debug', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message, ...out }) }
 })
 
+// Render the email as HTML so it can be eyeballed instead of guessed at.
+router.get('/email-preview', async (req, res) => {
+  try {
+    const b = await buildBriefing(req)
+    const day = await safe('plan', () => getDay(req, ptDate()))
+    const big3 = day?.big3?.length
+      ? { big3: day.big3, hardThing: day.hard_thing?.text || '', note: day.plan_note || '', affirmation: day.affirmation || '' }
+      : null
+    const tr = techRevenue(b.jobs, b.revenue)
+    res.type('html').send(formatBriefHtml(b, big3, tr, `https://absoluteadas.com/audio/ada-morning-${ptDate()}.mp3`))
+  } catch (e) { res.status(500).send(String(e.message)) }
+})
+
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })
 router.post('/send', async (req, res) => { res.json(await sendDailyBriefing(req)) })
 
