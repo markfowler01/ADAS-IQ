@@ -18,7 +18,7 @@ import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
 import { getAccessToken } from '../services/zoho.js'
 import {
-  getMailAccessToken, getMailAccountId, getUnreadInboxMessages, getMessageContent,
+  getMailAccessToken, getMailAccountIdFor, getUnreadInboxMessages, getMessageContent,
 } from '../services/mail.js'
 import { extractCommitments } from '../services/commitmentExtractor.js'
 import { proposeBig3 } from '../services/dayCoach.js'
@@ -141,7 +141,7 @@ const stripHtml = s => String(s || '')
 async function getEmailBlocks() {
   return (await safe('email', async () => {
     const token = await getMailAccessToken()
-    const accountId = await getMailAccountId(token)
+    const accountId = await getMailAccountIdFor(token, process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com')
     const unread = (await getUnreadInboxMessages(token, accountId)) || []
     const usable = unread.filter(m => String(m.folderId) !== SCAN_REPORTS_FOLDER_ID).slice(0, 5)
     const blocks = await Promise.all(usable.map(m =>

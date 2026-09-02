@@ -122,6 +122,34 @@ export async function markAccountMessageRead(token, accountId, folderId, message
 }
 
 /**
+ * Resolve the account id for a SPECIFIC address.
+ *
+ * getMailAccountId() returns accounts[0] — whichever mailbox Zoho lists first,
+ * which is the postscan service box, not Mark's. That is why the briefing
+ * reported "0 unread" every day: it was reading the wrong inbox entirely.
+ *
+ * This is deliberately a separate function rather than a fix to the shared one.
+ * postscan, comms, notifications, shops and crmReminder all call
+ * getMailAccountId and depend on its current behaviour — changing the default
+ * would reroute live business email to a different mailbox.
+ */
+export async function getMailAccountIdFor(token, preferredEmail) {
+  const accounts = await getAllMailAccounts(token)
+  if (!accounts.length) throw new Error('No Zoho Mail accounts found')
+  const want = String(preferredEmail || '').trim().toLowerCase()
+  if (want) {
+    const hit = accounts.find(acc => {
+      const fields = [acc.primaryEmailAddress, acc.mailboxAddress, acc.accountName,
+        ...(acc.emailAddress || []).map(e => e?.mailId)]
+      return fields.filter(Boolean).some(f => String(f).toLowerCase() === want)
+    })
+    if (hit) return hit.accountId
+    console.warn('[mail] no account matched', want, '— falling back to first of', accounts.length)
+  }
+  return accounts[0].accountId
+}
+
+/**
  * Return all Zoho Mail accounts (primary + group inboxes like info@, postscan@, etc.)
  */
 export async function getAllMailAccounts(token) {
@@ -139,9 +167,11 @@ export async function getAllMailAccounts(token) {
 // 147686000000057026). The old code passed folderId '0' on the assumption that
 // 0 meant Inbox — it doesn't, so this silently returned nothing and the
 // briefing reported 0 unread every single day. Resolve the real id by name.
-let _inboxFolderId = null
+// Keyed by account — two mailboxes have different Inbox folder ids, and a
+// single shared cache would hand one account the other's folder.
+const _inboxFolderIds = new Map()
 export async function getInboxFolderId(token, accountId) {
-  if (_inboxFolderId) return _inboxFolderId
+  if (_inboxFolderIds.has(accountId)) return _inboxFolderIds.get(accountId)
   const res = await axios.get(`${MAIL_API}/accounts/${accountId}/folders`, {
     headers: mailHeaders(token), timeout: 15000,
     transformResponse: [safeParseMailResponse],
@@ -149,9 +179,10 @@ export async function getInboxFolderId(token, accountId) {
   const folders = res.data?.data || []
   const inbox = folders.find(f => String(f.folderName || '').toLowerCase() === 'inbox')
     || folders.find(f => String(f.folderType || '').toLowerCase() === 'inbox')
-  _inboxFolderId = inbox?.folderId ? String(inbox.folderId) : null
-  if (!_inboxFolderId) console.warn('[mail] could not resolve Inbox folder id from', folders.length, 'folders')
-  return _inboxFolderId
+  const id = inbox?.folderId ? String(inbox.folderId) : null
+  if (!id) console.warn('[mail] could not resolve Inbox folder id from', folders.length, 'folders')
+  _inboxFolderIds.set(accountId, id)
+  return id
 }
 
 export async function getUnreadInboxMessages(token, accountId) {
