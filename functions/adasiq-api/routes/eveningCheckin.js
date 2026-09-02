@@ -206,6 +206,15 @@ export async function tryHandleCheckinReply(req, { from, body }) {
 
 router.get('/debug', async (req, res) => res.json(await sendEveningCheckin(req, { dry: true })))
 router.post('/send', async (req, res) => res.json(await sendEveningCheckin(req)))
+// Preview the closing line against a hypothetical day, without sending.
+router.post('/close/debug', async (req, res) => {
+  try {
+    const day = req.body?.day || (await getDay(req, req.query.date || ptDate()))
+    if (!day) return res.status(400).json({ ok: false, error: 'no day' })
+    res.json({ ok: true, close: await closeDay(req, { day }) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 router.get('/pending', async (req, res) => res.json({ ok: true, pending: await readPending(req) }))
 
 // Manual re-file, for when a reply is missed or misparsed.
