@@ -104,7 +104,16 @@ async function getRevenue() {
     // the jobs table on invoice_number, since jobs carry no dollar amount.
     const records = invs
       .filter(i => (i.date || '').startsWith(ym))
-      .map(i => ({ number: String(i.invoice_number || ''), total: parseFloat(i.total) || 0, date: i.date || '' }))
+      .map(i => ({
+        number: String(i.invoice_number || ''),
+        total: parseFloat(i.total) || 0,
+        date: i.date || '',
+        // Books tracks the salesperson on the invoice — the same field behind
+        // the "Sales by Salesperson" report Mark already gets daily. That is
+        // authoritative; joining on invoice_number was not, because the
+        // numbers are free text ("IAR 2017 Mercedes GLS") and never matched.
+        salesperson: String(i.salesperson_name || '').trim(),
+      }))
     return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, invoiceCount: invs.length, records }
   })
 }
@@ -273,24 +282,57 @@ async function buildBriefing(req, { only, mode = 'morning' } = {}) {
 // job. Invoices with no matching job are reported as unattributed rather than
 // silently dropped or spread around — a number Mark can't trace is worse than
 // no number.
+function levenshtein(a, b) {
+  const m = a.length, n = b.length
+  let prev = Array.from({ length: n + 1 }, (_, j) => j)
+  for (let i = 1; i <= m; i++) {
+    const cur = [i]
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    }
+    prev = cur
+  }
+  return prev[n]
+}
+
+// Month-to-date revenue per person, straight off the Books invoice
+// salesperson field — the same field behind the "Sales by Salesperson" report
+// Mark already gets daily. An earlier attempt joined invoices to jobs on
+// invoice_number; that never matched, because Books numbers are free text
+// ("IAR 2017 Mercedes GLS").
+//
+// Names get typo'd at entry — "Mark Folwer" and "Mark Fowler" are both live in
+// Books right now and would otherwise split his total. Near-identical spellings
+// are merged onto the most-used one, and the merge is REPORTED rather than
+// hidden, because the real fix is in Books, not here.
 function techRevenue(jobs, revenue) {
-  const records = revenue?.records || []
+  const records = (revenue?.records || []).filter(r => r.salesperson)
   if (!records.length) return null
-  const byNumber = new Map()
-  for (const j of jobs) {
-    const n = String(j.invoice_number || '').trim()
-    if (n) byNumber.set(n, j.technician || 'Unassigned')
+
+  const counts = {}
+  for (const r of records) counts[r.salesperson] = (counts[r.salesperson] || 0) + 1
+  const names = Object.keys(counts).sort((a, b) => counts[b] - counts[a])
+
+  const canonical = {}
+  const merged = []
+  for (const name of names) {
+    const hit = names.find(c => canonical[c] === c && c !== name &&
+      levenshtein(c.toLowerCase(), name.toLowerCase()) <= 2)
+    if (hit) { canonical[name] = hit; merged.push(`${name} -> ${hit}`) }
+    else canonical[name] = name
   }
+
   const byTech = {}
-  let unattributed = 0
-  let unattributedCount = 0
-  for (const r of records) {
-    const tech = byNumber.get(r.number)
-    if (!tech) { unattributed += r.total; unattributedCount++; continue }
-    byTech[tech] = (byTech[tech] || 0) + r.total
+  let unattributed = 0, unattributedCount = 0
+  for (const r of (revenue?.records || [])) {
+    if (!r.salesperson) { unattributed += r.total; unattributedCount++; continue }
+    const key = canonical[r.salesperson] || r.salesperson
+    byTech[key] = (byTech[key] || 0) + r.total
   }
-  const rows = Object.entries(byTech).sort((a, b) => b[1] - a[1])
-  return { rows, unattributed, unattributedCount, matched: records.length - unattributedCount, total: records.length }
+  return {
+    rows: Object.entries(byTech).sort((a, b) => b[1] - a[1]),
+    unattributed, unattributedCount, merged,
+  }
 }
 
 function formatTechRevenue(tr) {
@@ -298,8 +340,9 @@ function formatTechRevenue(tr) {
   const L = ['', 'Sales this month by tech:']
   tr.rows.forEach(([tech, amt]) => L.push(`- ${tech}: ${money(amt)}`))
   if (tr.unattributed > 0) {
-    L.push(`- Unattributed: ${money(tr.unattributed)} (${tr.unattributedCount} invoice${tr.unattributedCount === 1 ? '' : 's'} with no matching job)`)
+    L.push(`- Unassigned: ${money(tr.unattributed)} (${tr.unattributedCount} invoice${tr.unattributedCount === 1 ? '' : 's'} with no salesperson set in Books)`)
   }
+  if (tr.merged?.length) L.push(`  (merged misspellings in Books: ${tr.merged.join(', ')} — worth fixing at the source)`)
   return L.join('\n')
 }
 
