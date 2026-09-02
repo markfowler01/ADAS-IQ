@@ -22,6 +22,7 @@ import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { getDay, upsertDay, recordCheckin } from '../services/dayLedger.js'
 import { parseCheckin, reviewDay, closeDay } from '../services/dayCoach.js'
 import { ptDate } from '../services/ptDate.js'
+import { getMarkPhone } from '../services/markPhone.js'
 import { gatherDayReview } from './briefing.js'
 
 const router = express.Router()
@@ -116,7 +117,7 @@ export async function sendEveningCheckin(req, { dry = false } = {}) {
   if (!body) body = formatCheckin(day)
   if (dry) return { ok: true, dry: true, date, body, reviewed, big3: day?.big3 || [] }
 
-  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  const to = await getMarkPhone(req)
   if (!to) return { ok: false, error: 'MARK_PHONE_NUMBER not set' }
 
   let sent = false
@@ -149,7 +150,7 @@ async function safeClose(req, day) {
 // { handled: false } when this text isn't a check-in answer, so the caller
 // falls through to normal SMS handling.
 export async function tryHandleCheckinReply(req, { from, body }) {
-  const markPhone = (process.env.MARK_PHONE_NUMBER || '').trim()
+  const markPhone = await getMarkPhone(req)
   if (!markPhone || !from || from !== markPhone) return { handled: false, reason: 'not_mark' }
 
   const pending = await readPending(req)

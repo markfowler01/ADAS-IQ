@@ -20,6 +20,7 @@ import { weeklyReview, planWeek, planFridayQ, formatFridayQ, planFamilyDevotiona
 import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { sendSMS } from '../services/comms.js'
 import { ptDate } from '../services/ptDate.js'
+import { getMarkPhone } from '../services/markPhone.js'
 import { gatherWeekAhead } from './briefing.js'
 
 const router = express.Router()
@@ -118,7 +119,7 @@ export async function runWeeklyReview(req, { dry = false } = {}) {
   try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[weekly cliq]', e.message) }
 
-  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  const to = await getMarkPhone(req)
   if (to && review?.headline) {
     const sms = `Weekly review: ${review.headline}${review.next_week ? ` Next week: ${review.next_week}` : ''}`.slice(0, 600)
     try { await sendSMS(req, { to, body: sms, category: 'weekly_review' }); sent.sms = true }
@@ -193,7 +194,7 @@ export async function deliverWeekPlan(req, { dry = false } = {}) {
   const sent = { cliq: false, sms: false }
   try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[weekplan cliq]', e.message) }
-  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  const to = await getMarkPhone(req)
   if (to && plan?.theme) {
     const sms = `Week ahead: ${plan.theme}\n` + (plan.outcomes || []).map((x, i) => `${i + 1}. ${x}`).join('\n')
     try { await sendSMS(req, { to, body: sms.slice(0, 700), category: 'week_plan' }); sent.sms = true }
@@ -224,7 +225,7 @@ export async function runWeeklyPlanner(req, { dry = false } = {}) {
   const sent = { cliq: false, sms: false }
   try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[weekplan cliq]', e.message) }
-  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  const to = await getMarkPhone(req)
   if (to && plan?.theme) {
     const sms = `Week ahead: ${plan.theme}\n` +
       (plan.outcomes || []).map((o, i) => `${i + 1}. ${o}`).join('\n')
@@ -258,7 +259,7 @@ export async function runFridayQ(req, { dry = false } = {}) {
   const sent = { cliq: false, sms: false }
   try { await postToCliqChannelById(ADA_CHANNEL_ID, text); sent.cliq = true }
   catch (e) { console.warn('[fridayq cliq]', e.message) }
-  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  const to = await getMarkPhone(req)
   if (to) {
     try { await sendSMS(req, { to, body: text.slice(0, 900), category: 'friday_q' }); sent.sms = true }
     catch (e) { console.warn('[fridayq sms]', e.message) }

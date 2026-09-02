@@ -28,6 +28,7 @@ import { readContext } from './coach.js'
 import { ptDate } from '../services/ptDate.js'
 import { sendPushToAll } from './push.js'
 import { publishAdaVoice } from '../services/adaVoice.js'
+import { getMarkPhone } from '../services/markPhone.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
 
@@ -663,7 +664,7 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   const r = await safe('cliq-send', () => postToCliqChannelById(ADA_CHANNEL_ID, full).then(() => true))
   sent.cliq = !!r
   // Mark's number lives in the MARK_PHONE_NUMBER env var
-  const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+  const to = await getMarkPhone(req)
   if (to) { const s = await safe('sms', () => sendSMS(req, { to, body: digest, category: 'briefing' })); sent.sms = !!s }
   // Ada's voice memo — a file he can tap and play on the way to F3. Hard
   // timeout and fail-soft: TTS plus a git commit is ~12s, and if it runs long
@@ -787,7 +788,8 @@ router.get('/sms-debug', async (req, res) => {
   const out = { env: {}, cfg: {}, attempt: null }
   try {
     out.env = {
-      MARK_PHONE_NUMBER: !!process.env.MARK_PHONE_NUMBER,
+      MARK_PHONE_NUMBER_env: !!process.env.MARK_PHONE_NUMBER,
+      MARK_PHONE_NUMBER_resolved: !!(await getMarkPhone(req)),
       TWILIO_ACCOUNT_SID: !!process.env.TWILIO_ACCOUNT_SID,
       TWILIO_AUTH_TOKEN: !!process.env.TWILIO_AUTH_TOKEN,
       TWILIO_FROM_NUMBER: !!process.env.TWILIO_FROM_NUMBER,
@@ -805,7 +807,7 @@ router.get('/sms-debug', async (req, res) => {
       const { sendSMS } = await import('../services/comms.js')
       try {
         out.attempt = await sendSMS(req, {
-          to: process.env.MARK_PHONE_NUMBER, body: 'Ada test.', category: 'test',
+          to: await getMarkPhone(req), body: 'Ada test.', category: 'test',
         })
       } catch (e) { out.attempt = { threw: e.message } }
     }
@@ -878,7 +880,7 @@ router.post('/call', async (req, res) => {
   try {
     const cfg = await resolvePhoneConfig(req)
     if (!twilioConfigured(cfg)) return res.status(500).json({ ok: false, error: 'twilio not configured' })
-    const to = (process.env.MARK_PHONE_NUMBER || '').trim()
+    const to = await getMarkPhone(req)
     if (!to) return res.status(500).json({ ok: false, error: 'MARK_PHONE_NUMBER not set' })
 
     const mode = req.query.mode === 'evening' ? 'evening' : 'morning'
