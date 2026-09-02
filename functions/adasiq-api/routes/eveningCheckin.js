@@ -20,7 +20,7 @@ import catalyst from 'zcatalyst-sdk-node'
 import { sendSMS } from '../services/comms.js'
 import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { getDay, upsertDay, recordCheckin } from '../services/dayLedger.js'
-import { parseCheckin, reviewDay } from '../services/dayCoach.js'
+import { parseCheckin, reviewDay, closeDay } from '../services/dayCoach.js'
 import { ptDate } from '../services/ptDate.js'
 import { gatherDayReview } from './briefing.js'
 
@@ -138,6 +138,11 @@ export async function sendEveningCheckin(req, { dry = false } = {}) {
   return { ok: sent, date, body, reviewed, sent }
 }
 
+async function safeClose(req, day) {
+  try { return await closeDay(req, { day }) }
+  catch (e) { console.warn('[evening close]', e.message); return null }
+}
+
 // ── handling the reply ───────────────────────────────────────────────────────
 
 // Called from the Twilio inbound webhook when the sender is Mark. Returns
@@ -178,7 +183,13 @@ export async function tryHandleCheckinReply(req, { from, body }) {
 
   const hit = (day.big3 || []).filter(b => b.done).length
   const total = (day.big3 || []).length
-  const ack = `Logged${day.rating ? ` — ${day.rating}/10` : ''}${total ? `, ${hit}/${total} on the Big 3` : ''}. Rest up.`
+
+  // The day closes on an affirmation, the way the morning opens on one — but
+  // written against the day he just described, not a stock line. Best-effort:
+  // if it fails he still gets the receipt, because the logging is the point.
+  const close = await safeClose(req, day)
+  const ack = `Logged${day.rating ? ` — ${day.rating}/10` : ''}${total ? `, ${hit}/${total} on the Big 3` : ''}.` +
+    (close ? `\n\n${close}` : ' Rest up.')
   try { await sendSMS(req, { to: markPhone, body: ack, category: 'evening_checkin' }) }
   catch (e) { console.warn('[evening ack]', e.message) }
 

@@ -464,4 +464,49 @@ export function formatDevotional(d, weekOf) {
   ].join('\n')
 }
 
+// ── evening: close the day ──────────────────────────────────────────────────
+
+const CLOSE_SYSTEM = `Mark has just told you how his day went. You write the last thing he reads before bed.
+
+One or two sentences. It closes the day and it is honest about the day he actually had — you are given his rating, what landed, what didn't, and his own words.
+
+How to pitch it:
+- A good day: name the specific thing he did, then let him put it down. Do not inflate it.
+- A rough day: do not spin it and do not coach him. Tomorrow is a separate day and he knows what went wrong; say something true that lets him stop carrying it tonight.
+- A middling day: those are most days, and most days counting is the point.
+
+Hard rules:
+- Never start with "Remember" or "Don't forget".
+- No exclamation marks. No emoji. No hype.
+- Do not restate his numbers back at him — he just gave them to you.
+- Do not assign him anything or ask a question. The day is over.
+- Speak to him directly, as someone who watched the day.
+- Steady and true beats loud. The test: would a guy in a blue shirt with grease on his hands read this and feel like a person said it.
+
+Return raw JSON only.
+{"close": "..."}`
+
+export async function closeDay(req, { day }) {
+  const b3 = (day.big3 || []).map(x => (x.done ? '[done] ' : '[not done] ') + x.text).join('; ')
+  const res = await client().messages.create({
+    model: PARSE_MODEL,   // inline in the Twilio webhook — has to be fast
+    max_tokens: 400,
+    system: CLOSE_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: [
+        'Rating: ' + (day.rating ?? 'not given') + ' out of 10',
+        'Big 3: ' + (b3 || 'none were set'),
+        day.hard_thing ? 'Hard thing: ' + (day.hard_thing.done ? 'done' : 'not done') + ' — ' + day.hard_thing.text : '',
+        day.win ? 'What worked: ' + day.win : '',
+        day.drag ? 'What got in the way: ' + day.drag : '',
+        '',
+        'His own words: "' + (day.raw_reply || '') + '"',
+      ].filter(Boolean).join('\n'),
+    }],
+  })
+  const parsed = extractJson(firstText(res))
+  return parsed?.close ? String(parsed.close).slice(0, 400) : null
+}
+
 export const COACH_MODELS = { coach: COACH_MODEL, parse: PARSE_MODEL }
