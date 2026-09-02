@@ -15,7 +15,7 @@ import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { readJobsPublic } from './jobs.js'
 import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
-import { sendSMS } from '../services/comms.js'
+import { sendSMS, sendEmail } from '../services/comms.js'
 import { getAccessToken } from '../services/zoho.js'
 import {
   getMailAccessToken, getMailAccountIdFor, getUnreadInboxMessages, getMessageContent,
@@ -99,7 +99,12 @@ async function getRevenue() {
     const yr = Number(y), mi = Number(ym.slice(5, 7)) - 1, dayNum = Number(today.slice(8, 10))
     const elapsed = Math.max(1, workingDays(yr, mi, dayNum))
     const projected = Math.round((monthlyTotal / elapsed) * workingDays(yr, mi))
-    return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, invoiceCount: invs.length }
+    // Keep the raw records — per-tech revenue is a join of Books invoices to
+    // the jobs table on invoice_number, since jobs carry no dollar amount.
+    const records = invs
+      .filter(i => (i.date || '').startsWith(ym))
+      .map(i => ({ number: String(i.invoice_number || ''), total: parseFloat(i.total) || 0, date: i.date || '' }))
+    return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, invoiceCount: invs.length, records }
   })
 }
 
@@ -260,6 +265,43 @@ async function buildBriefing(req, { only, mode = 'morning' } = {}) {
   }
 }
 
+// Month-to-date revenue per technician.
+//
+// Jobs have no price on them, so the only honest way to attribute dollars is
+// to join Books invoices to jobs on invoice_number and read the tech off the
+// job. Invoices with no matching job are reported as unattributed rather than
+// silently dropped or spread around — a number Mark can't trace is worse than
+// no number.
+function techRevenue(jobs, revenue) {
+  const records = revenue?.records || []
+  if (!records.length) return null
+  const byNumber = new Map()
+  for (const j of jobs) {
+    const n = String(j.invoice_number || '').trim()
+    if (n) byNumber.set(n, j.technician || 'Unassigned')
+  }
+  const byTech = {}
+  let unattributed = 0
+  let unattributedCount = 0
+  for (const r of records) {
+    const tech = byNumber.get(r.number)
+    if (!tech) { unattributed += r.total; unattributedCount++; continue }
+    byTech[tech] = (byTech[tech] || 0) + r.total
+  }
+  const rows = Object.entries(byTech).sort((a, b) => b[1] - a[1])
+  return { rows, unattributed, unattributedCount, matched: records.length - unattributedCount, total: records.length }
+}
+
+function formatTechRevenue(tr) {
+  if (!tr || (!tr.rows.length && !tr.unattributed)) return ''
+  const L = ['', 'Sales this month by tech:']
+  tr.rows.forEach(([tech, amt]) => L.push(`- ${tech}: ${money(amt)}`))
+  if (tr.unattributed > 0) {
+    L.push(`- Unattributed: ${money(tr.unattributed)} (${tr.unattributedCount} invoice${tr.unattributedCount === 1 ? '' : 's'} with no matching job)`)
+  }
+  return L.join('\n')
+}
+
 // ---------- formatting ----------
 
 const money = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
@@ -286,6 +328,11 @@ function formatFull(b) {
   if (b.overdue.length) { L.push(''); L.push('Overdue:'); b.overdue.slice(0, 10).forEach(c => L.push(`- ${c.person}: ${c.text} (was ${c.due})`)) }
   if (b.outbound.length) { L.push(''); L.push('Your promises:'); b.outbound.slice(0, 8).forEach(c => L.push(`- ${c.text}${c.due ? ` (by ${c.due})` : ''}`)) }
   return L.join('\n')
+}
+
+function formatDigestTech(tr) {
+  if (!tr?.rows?.length) return ''
+  return ' ' + tr.rows.map(([t, a]) => `${t} ${money(a)}`).join(', ') + '.'
 }
 
 function formatDigest(b) {
@@ -501,10 +548,14 @@ async function stampSent(req) {
 // The script Ada reads. Same order as the written brief: affirmation, the
 // brief itself, then the Big 3 — so hearing it and reading it feel like one
 // thing rather than two.
-function buildSpokenScript(b, big3) {
+function buildSpokenScript(b, big3, tr) {
   const parts = []
   if (big3?.affirmation) parts.push(big3.affirmation)
   parts.push(formatVoiceMorning(b))
+  if (tr?.rows?.length) {
+    parts.push('Sales this month by tech.')
+    tr.rows.forEach(([t, amt]) => parts.push(`${t}, ${spoken(amt)}.`))
+  }
   if (big3?.big3?.length) {
     parts.push('Your big three today.')
     big3.big3.forEach((x, i) => parts.push(`Number ${i + 1}. ${x.text}.`))
@@ -530,13 +581,14 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
       note: day.plan_note || '', affirmation: day.affirmation || '',
     }
   })
-  let full = formatAffirmation(big3) + formatFull(b) + formatBig3(big3)
+  const tr = techRevenue(b.jobs, b.revenue)
+  let full = formatAffirmation(big3) + formatFull(b) + formatTechRevenue(tr) + formatBig3(big3)
   // SMS is billed and read by the segment — keep the digest to one or two.
   // The full wording lives in Cliq and the push notification.
   const shortBig3 = (big3?.big3 || [])
     .map((x, i) => `${i + 1}) ${x.text.length > 64 ? x.text.slice(0, 61).trimEnd() + '...' : x.text}`)
     .join(' ')
-  let digest = formatAffirmation(big3) + (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b)
+  let digest = formatAffirmation(big3) + (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b) + formatDigestTech(tr)
   if (dry) {
     return { ok: true, dry: true, digest, full, big3, commitments: b.commitments, timings: b.timings, sources: b.sources,
       counts: { jobsToday: b.todaysJobs.length, events: b.events.length, dueToday: b.dueToday.length, overdue: b.overdue.length, followups: b.followups.length, shops: b.shops.length } }
@@ -552,7 +604,7 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   // timeout and fail-soft: TTS plus a git commit is ~12s, and if it runs long
   // the written brief still goes out on time without it.
   const audio = await withTimeout('ada-voice',
-    safe('ada-voice', () => publishAdaVoice(buildSpokenScript(b, big3), ptDate(), { slot: 'morning' })),
+    safe('ada-voice', () => publishAdaVoice(buildSpokenScript(b, big3, tr), ptDate(), { slot: 'morning' })),
     22000)
   if (audio?.url) {
     const line = `\n\nListen: ${audio.url}`
@@ -565,6 +617,20 @@ export async function sendDailyBriefing(req, { dry = false, only } = {}) {
   const pushBody = big3?.big3?.length
     ? big3.big3.map((x, i) => `${i + 1}. ${x.text}`).join('\n')
     : `${b.todaysJobs.length} jobs today, ${b.dueToday.length} commitments due.`
+  // Email — for the mornings he's at the computer instead of in the van.
+  // Plain text of the same brief plus the audio link, so nothing is only
+  // available in one place.
+  const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
+  if (emailTo) {
+    const e = await safe('email', () => sendEmail(req, {
+      to: emailTo,
+      subject: `Ada — ${ptDate()}${big3?.big3?.length ? `: ${big3.big3[0].text}` : ''}`.slice(0, 160),
+      body: full,
+      category: 'briefing',
+    }))
+    sent.email = !!e
+  }
+
   const p = await safe('push', () => sendPushToAll(req, {
     title: big3?.big3?.length ? 'Your Big 3 today' : 'Morning briefing',
     body: pushBody, url: '/today', tag: 'morning-briefing',
