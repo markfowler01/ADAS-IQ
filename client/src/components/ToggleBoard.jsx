@@ -36,6 +36,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // Job date (Mark 2026-09-03): the auto-created card was hardcoded to
   // TODAY, so jobs booked for a future day vanished off the scheduler.
   const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [createAs, setCreateAs] = useState('request')
   const [kanbanWarning, setKanbanWarning] = useState(null)
   // One WorkDrive folder per job (Mark 2026-07-29): whichever button
   // runs first records the folder here; the other button reuses it.
@@ -292,7 +293,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             quote_number: data.quoteNumber || '',
             quote_url: data.quoteUrl || '',
             folder_url: data.shareLink || data.folderUrl || '',
-            status: 'need_dispatch',
+            status: createAs === 'request' ? 'job_requested' : 'need_dispatch',
+            via_request: createAs === 'request' ? true : undefined,
+            request_type: createAs === 'request' ? 'job' : undefined,
           }),
         })
         // apiFetch resolves even on 4xx/5xx — must check res.ok explicitly
@@ -400,7 +403,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             // folder and outside users can open it.
             folder_url: data.folder_url || sharedFolder?.url || '',
             quote_number: jobData.ro_number || '',
-            status: 'need_dispatch',
+            status: createAs === 'request' ? 'job_requested' : 'need_dispatch',
+            via_request: createAs === 'request' ? true : undefined,
+            request_type: createAs === 'request' ? 'job' : undefined,
           }),
         })
         if (!jobRes.ok) {
@@ -473,7 +478,22 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
               books for {new Date(jobDate + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })}
             </span>
           )}
+          <div className="flex gap-1.5 ml-auto">
+            {[['request', '📥 Request'], ['dispatch', '🚀 Dispatch']].map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setCreateAs(v)}
+                className="text-xs font-bold rounded-full px-3 py-1.5"
+                style={createAs === v
+                  ? { backgroundColor: '#e8710a', color: 'white' }
+                  : { backgroundColor: 'white', color: '#888', border: '1px solid #ddd' }}
+              >{label}</button>
+            ))}
+          </div>
         </div>
+        {createAs === 'request' && (
+          <p className="text-xs -mt-2" style={{ color: '#999' }}>
+            Card lands as a request on the scheduler — becomes a job when it's confirmed.
+          </p>
+        )}
 
         {/* Calibration banner */}
         <div
