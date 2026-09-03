@@ -30,6 +30,7 @@ import { sendPushToAll } from './push.js'
 import { publishAdaVoice } from '../services/adaVoice.js'
 import { publishBriefPage } from '../services/briefPage.js'
 import { project } from '../services/confidence.js'
+import { toSpoken } from '../services/toSpoken.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
@@ -819,8 +820,12 @@ async function stampSent(req) {
 // brief itself, then the Big 3 — so hearing it and reading it feel like one
 // thing rather than two.
 function buildSpokenScript(b, big3, tr) {
+  // Everything that is written for a screen goes through toSpoken() first.
+  // formatVoiceMorning() is already spoken-formatted; the affirmation and the
+  // Big 3 are not, and were being read out with their punctuation and
+  // shorthand intact.
   const parts = []
-  if (big3?.affirmation) parts.push(big3.affirmation)
+  if (big3?.affirmation) parts.push(toSpoken(big3.affirmation))
   parts.push(formatVoiceMorning(b))
   if (tr?.rows?.length) {
     parts.push('Sales this month by tech.')
@@ -828,8 +833,8 @@ function buildSpokenScript(b, big3, tr) {
   }
   if (big3?.big3?.length) {
     parts.push('Your big three today.')
-    big3.big3.forEach((x, i) => parts.push(`Number ${i + 1}. ${x.text}.`))
-    if (big3.hardThing) parts.push(`The hard thing, and do it first. ${big3.hardThing}.`)
+    big3.big3.forEach((x, i) => parts.push(`Number ${i + 1}. ${toSpoken(x.text)}.`))
+    if (big3.hardThing) parts.push(`The hard thing, and do it first. ${toSpoken(big3.hardThing)}.`)
   }
   parts.push('Go get it.')
   return cleanSpeech(parts.join(' '))

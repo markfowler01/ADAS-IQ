@@ -16,32 +16,48 @@ import { commitBinaryFile } from './brewArchive.js'
 // Swap with ADA_TTS_VOICE without a deploy.
 const ADA_TTS_VOICE = process.env.ADA_TTS_VOICE || 'sage'
 
-// tts-1-hd over tts-1: about twice the cost of essentially nothing (~$0.006 a
-// memo) and a clear step up in warmth on a voice he hears every morning.
-const ADA_TTS_MODEL = process.env.ADA_TTS_MODEL || 'tts-1-hd'
+// gpt-4o-mini-tts accepts an `instructions` prompt, which steers delivery far
+// more than picking from a fixed voice list ever could — pace, warmth, how
+// close she sits to the mic. Falls back to tts-1-hd if that model is
+// unavailable, because a missing memo must never cost him the brief.
+const ADA_TTS_MODEL = process.env.ADA_TTS_MODEL || 'gpt-4o-mini-tts'
+const ADA_TTS_FALLBACK = 'tts-1-hd'
+
+// Mark asked for warmer. This is the lever that actually moves it.
+const ADA_TTS_STYLE = process.env.ADA_TTS_STYLE ||
+  'Warm, low and unhurried, close to the mic. Speak like you know him well and ' +
+  'you are the first voice he hears today, before anyone else is up. Relaxed and ' +
+  'confident, never bright or perky, never newsreader. Let the sentences breathe ' +
+  'and land. Slightly slower than conversational.'
 
 async function toMp3(script) {
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey || !script) return null
   try {
-    const res = await axios.post(
-      'https://api.openai.com/v1/audio/speech',
-      {
-        model: ADA_TTS_MODEL,
-        voice: ADA_TTS_VOICE,
-        input: script.slice(0, 4000),   // OpenAI caps at 4096 chars
-        response_format: 'mp3',
-      },
-      {
-        headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-        responseType: 'arraybuffer',
-        timeout: 45000,
-        validateStatus: s => s < 500,
-      }
-    )
+    const opts = {
+      headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+      responseType: 'arraybuffer',
+      timeout: 45000,
+      validateStatus: st => st < 500,
+    }
+    const body = {
+      model: ADA_TTS_MODEL,
+      voice: ADA_TTS_VOICE,
+      input: script.slice(0, 4000),   // OpenAI caps at 4096 chars
+      response_format: 'mp3',
+    }
+    // `instructions` is only honoured by the gpt-4o-*-tts models — sending it
+    // to tts-1 is a 400, so it is gated on the model family.
+    if (/^gpt-/.test(ADA_TTS_MODEL)) body.instructions = ADA_TTS_STYLE
+
+    let res = await axios.post('https://api.openai.com/v1/audio/speech', body, opts)
     if (res.status >= 300) {
-      console.warn('[adaVoice tts] OpenAI ' + res.status)
-      return null
+      console.warn('[adaVoice tts] ' + ADA_TTS_MODEL + ' -> ' + res.status + ', falling back to ' + ADA_TTS_FALLBACK)
+      res = await axios.post('https://api.openai.com/v1/audio/speech', {
+        model: ADA_TTS_FALLBACK, voice: ADA_TTS_VOICE,
+        input: script.slice(0, 4000), response_format: 'mp3',
+      }, opts)
+      if (res.status >= 300) { console.warn('[adaVoice tts] fallback also ' + res.status); return null }
     }
     return Buffer.from(res.data)
   } catch (e) {
