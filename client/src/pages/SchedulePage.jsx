@@ -389,7 +389,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
         })}
         {dayJobs.map(j => (
           <div key={j.id} className="sched-chip booked">
-            {j.shop_name || 'Unknown shop'} ✓
+            {j.shop_name || 'Unknown shop'}
             <span className="veh">{vehicleOf(j) || 'Vehicle TBD'}{calsOf(j).length ? ` · ${calsOf(j).slice(0, 2).join(', ')}` : ''}</span>
             <span className="loc">
               {cityOf(j) ? `📍 ${cityOf(j)}` : ''}
@@ -437,7 +437,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
         .sched-chip { font-size:12px; font-weight:600; border-radius:8px; padding:4px 7px; line-height:1.3; cursor:grab; background:${ORANGE}; color:white; }
         .sched-chip.unconf { background:#fff5f0; color:${ORANGE}; border:1.5px dashed ${ORANGE}; }
         .sched-chip.overdue { background:#dc2626; }
-        .sched-chip.booked { background:#f0fdf4; color:#15803d; border:1.5px solid #86efac; cursor:default; }
+        .sched-chip.booked { background:#fff; color:#1a1a1a; border:2px solid ${ORANGE}; cursor:default; }
         .sched-chip .veh { display:block; font-weight:400; font-size:11px; opacity:.9; }
         .sched-chip .loc { display:block; font-weight:700; font-size:11px; }
         .sched-jobsline { margin-top:auto; font-size:10.5px; color:#9c9c9c; display:flex; align-items:center; gap:5px; padding-top:4px; border-top:1px solid #f4f1ee; }
