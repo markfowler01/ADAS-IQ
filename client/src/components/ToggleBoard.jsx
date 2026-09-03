@@ -33,6 +33,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [invoiceError, setInvoiceError] = useState(null)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
+  // Job date (Mark 2026-09-03): the auto-created card was hardcoded to
+  // TODAY, so jobs booked for a future day vanished off the scheduler.
+  const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0])
   const [kanbanWarning, setKanbanWarning] = useState(null)
   // One WorkDrive folder per job (Mark 2026-07-29): whichever button
   // runs first records the folder here; the other button reuses it.
@@ -282,7 +285,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             vin: jobData.vin || '',
             insurer: jobData.insurer || '',
             technician: selectedSalesperson?.name || '',
-            scheduled_date: new Date().toISOString().split('T')[0],
+            scheduled_date: jobDate || '',
             calibrations: JSON.stringify(calList),
             notes: `RO#: ${jobData.ro_number || ''} | Quote: ${data.quoteNumber || ''}`,
             report_url: data.quoteUrl || data.folderUrl || '',
@@ -388,7 +391,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             year: jobData.year || '', make: jobData.make || '', model: jobData.model || '',
             vin: jobData.vin || '', insurer: jobData.insurer || '',
             technician: selectedSalesperson?.name || '',
-            scheduled_date: new Date().toISOString().split('T')[0],
+            scheduled_date: jobDate || '',
             calibrations: JSON.stringify(calList),
             notes: `RO#: ${jobData.ro_number || ''} | Absolute ADAS Invoice: ${data.invoice?.invoice_number || ''}`,
             // Reuse the EXACT folder the reports just landed in (Mark
@@ -452,6 +455,25 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         <SalespersonPicker
           onSelect={setSelectedSalesperson}
         />
+
+        {/* Job date — which day the card lands on (board + scheduler) */}
+        <div className="flex items-center gap-3">
+          <label className="text-xs font-semibold uppercase tracking-widest" style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#999' }}>
+            Job date
+          </label>
+          <input
+            type="date"
+            value={jobDate}
+            onChange={e => setJobDate(e.target.value)}
+            className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+            style={{ borderColor: jobDate === new Date().toISOString().split('T')[0] ? '#ddd' : '#e8710a' }}
+          />
+          {jobDate !== new Date().toISOString().split('T')[0] && (
+            <span className="text-xs font-semibold" style={{ color: '#e8710a' }}>
+              books for {new Date(jobDate + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })}
+            </span>
+          )}
+        </div>
 
         {/* Calibration banner */}
         <div
