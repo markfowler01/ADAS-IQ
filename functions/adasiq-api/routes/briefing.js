@@ -156,8 +156,57 @@ const msgText = m =>
 // ZOHO_CLIQ_REFRESH_TOKEN (not yet granted). Until Mark regenerates that token,
 // commitments come from email only. Re-enable by restoring fetchMessagesProbing.
 let lastCliqProbe = 'disabled (missing Messages.READ scope)'
+// Read recent Cliq conversation for commitment extraction.
+//
+// Stubbed to return [] since 2026-07-03, when the OAuth grant turned out to
+// lack ZohoCliq.Messages.READ — and, it later emerged, ZohoCliq.Chats.READ too.
+// Both are in the grant now, so this is live again.
+//
+// Deliberately narrow: the people Mark actually makes commitments with. Reading
+// every chat would bury real promises in bot noise, and the extractor is a
+// Claude call on a time budget.
+const CLIQ_PEOPLE = (process.env.CLIQ_COMMITMENT_CHATS ||
+  'Kath Belmonte,Joyce Cruz,Jayden Goshorn').split(',').map(x => x.trim().toLowerCase())
+
 async function getCliqBlocks() {
-  return []
+  return (await safe('cliq', async () => {
+    const { getCliqAccessToken } = await import('../services/cliq.js')
+    const token = await getCliqAccessToken()
+    const ORG = process.env.ZOHO_ORGANIZATION_ID || '883116359'
+    const base = `https://cliq.zoho.com/company/${ORG}/api/v2`
+    const H = { Authorization: `Zoho-oauthtoken ${token}` }
+
+    const chats = await axios.get(`${base}/chats`, {
+      headers: H, params: { limit: 25 }, timeout: 6000, validateStatus: s => s < 500,
+    })
+    if (chats.status >= 300) {
+      lastCliqProbe = `chats ${chats.status}: ${JSON.stringify(chats.data).slice(0, 120)}`
+      return []
+    }
+    const list = (chats.data?.chats || chats.data?.data || [])
+      .filter(c => CLIQ_PEOPLE.some(p => String(c.title || c.name || '').toLowerCase().includes(p)))
+
+    lastCliqProbe = `reading ${list.length} chat(s)`
+    const blocks = []
+    // Sequential and capped — this runs inside the briefing's 6s slice, and a
+    // fan-out across every chat would blow it.
+    for (const c of list.slice(0, 4)) {
+      const id = c.chat_id || c.id
+      if (!id) continue
+      const r = await axios.get(`${base}/chats/${id}/messages`, {
+        headers: H, params: { limit: 25 }, timeout: 5000, validateStatus: s => s < 500,
+      }).catch(() => null)
+      if (!r || r.status >= 300) continue
+      const msgs = r.data?.messages || r.data?.data || []
+      const text = msgs.map(m => {
+        const who = m.sender?.name || m.sender?.id || 'unknown'
+        const body = String(m.content?.text || m.message || m.text || '').trim()
+        return body ? `${who}: ${body}` : ''
+      }).filter(Boolean).slice(-25).join('\n')
+      if (text) blocks.push({ source: 'cliq', label: c.title || c.name || 'chat', text: text.slice(0, 2500) })
+    }
+    return blocks
+  })) || []
 }
 
 const stripHtml = s => String(s || '')
@@ -912,6 +961,74 @@ router.post('/plan', async (req, res) => {
 // had six. This shows every step of the resolution so the failing one is
 // obvious instead of inferred: which mailboxes exist, which matched, which
 // folder id came back, and what the raw query returned.
+// Probe what the new Cliq token can actually reach. Built as a diagnostic
+// first because the previous grant could post but not read, and the failure
+// was silent — getCliqBlocks() just returned [] for two months.
+router.get('/cliq-debug', async (req, res) => {
+  const out = { steps: {} }
+  try {
+    // Ask Zoho what the LIVE refresh token in Catalyst env actually grants.
+    // This is the only way to tell "env var never updated" apart from "wrong
+    // scope requested" — both surface as oauthtoken_scope_invalid downstream.
+    const rt = process.env.ZOHO_CLIQ_REFRESH_TOKEN || ''
+    out.steps.refreshTokenTail = rt ? rt.slice(-6) : '(none set)'
+    try {
+      const p = new URLSearchParams({
+        grant_type: 'refresh_token', client_id: process.env.ZOHO_CLIENT_ID,
+        client_secret: process.env.ZOHO_CLIENT_SECRET, refresh_token: rt,
+      })
+      const t = await axios.post('https://accounts.zoho.com/oauth/v2/token', p.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 12000,
+        validateStatus: s => s < 500,
+      })
+      out.steps.grantedScopes = t.data?.scope || t.data?.error || '(none reported)'
+    } catch (e) { out.steps.grantedScopes = 'probe failed: ' + e.message }
+
+    const { getCliqAccessToken } = await import('../services/cliq.js')
+    const token = await getCliqAccessToken()
+    out.steps.token = !!token
+    const ORG = process.env.ZOHO_ORGANIZATION_ID || '883116359'
+    const base = `https://cliq.zoho.com/company/${ORG}/api/v2`
+    const H = { Authorization: `Zoho-oauthtoken ${token}` }
+
+    const chats = await axios.get(`${base}/chats`, { headers: H, params: { limit: 20 }, timeout: 12000, validateStatus: s => s < 500 })
+    out.steps.chatsStatus = chats.status
+    const list = chats.data?.chats || chats.data?.data || []
+    out.steps.chatCount = list.length
+    out.steps.chats = list.slice(0, 12).map(c => ({
+      id: c.chat_id || c.id, title: c.title || c.name || '', type: c.type || '',
+    }))
+    if (chats.status >= 300) out.steps.chatsError = JSON.stringify(chats.data).slice(0, 300)
+
+    // Distinguish "env var never updated" from "wrong scope requested": read
+    // a channel we know the ID of. Channels.READ is in the new grant and was
+    // not in the old one, so success here proves the new token is live.
+    try {
+      const ch = await axios.get(`${base}/channels/P6015142000001219001/messages`, {
+        headers: H, params: { limit: 3 }, timeout: 12000, validateStatus: s => s < 500,
+      })
+      out.steps.channelReadStatus = ch.status
+      out.steps.channelReadError = ch.status >= 300 ? JSON.stringify(ch.data).slice(0, 200) : null
+      out.steps.channelMsgCount = (ch.data?.messages || ch.data?.data || []).length
+    } catch (e) { out.steps.channelReadStatus = 'threw: ' + e.message }
+
+    const first = list[0]?.chat_id || list[0]?.id
+    if (first) {
+      const msgs = await axios.get(`${base}/chats/${first}/messages`, {
+        headers: H, params: { limit: 5 }, timeout: 12000, validateStatus: s => s < 500,
+      })
+      out.steps.messagesStatus = msgs.status
+      const m = msgs.data?.messages || msgs.data?.data || []
+      out.steps.sampleCount = m.length
+      out.steps.sample = m.slice(0, 3).map(x => ({
+        sender: x.sender?.name || x.sender?.id || '', text: String(x.content?.text || x.message || '').slice(0, 90),
+      }))
+      if (msgs.status >= 300) out.steps.messagesError = JSON.stringify(msgs.data).slice(0, 300)
+    }
+    res.json({ ok: true, ...out })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message, ...out }) }
+})
+
 router.get('/mail-debug', async (req, res) => {
   const out = { steps: {} }
   try {

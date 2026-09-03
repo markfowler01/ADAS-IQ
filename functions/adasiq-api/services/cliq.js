@@ -65,6 +65,10 @@ export function cliqUrlButton(label, url /* , style */) {
 let cachedAccessToken = null
 let accessExpiresAt = 0
 
+export async function getCliqAccessToken() {
+  return getAccessToken()
+}
+
 async function getAccessToken() {
   const now = Date.now()
   if (cachedAccessToken && now < accessExpiresAt - 60000) return cachedAccessToken
