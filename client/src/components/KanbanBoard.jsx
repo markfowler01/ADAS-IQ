@@ -423,16 +423,39 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
             />
           </div>
 
-          {/* Scheduled date */}
+          {/* Scheduled date. Date + separate optional time — a single
+              datetime-local input stays EMPTY until both halves are
+              filled, which silently dropped date-only picks (Kirkland
+              job vanished off next Tuesday, 2026-09-03). */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Scheduled Date & Time</label>
-            <input
-              type="datetime-local"
-              className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
-              style={{ borderColor: '#ddd' }}
-              value={form.scheduled_date}
-              onChange={e => setField('scheduled_date', e.target.value)}
-            />
+            <div className="flex gap-2">
+              <input
+                type="date"
+                className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                style={{ borderColor: '#ddd' }}
+                value={String(form.scheduled_date || '').slice(0, 10)}
+                onChange={e => {
+                  const d = e.target.value
+                  const t = String(form.scheduled_date || '').includes('T') ? form.scheduled_date.split('T')[1] : ''
+                  setField('scheduled_date', d ? (t ? `${d}T${t}` : d) : '')
+                }}
+              />
+              <input
+                type="time"
+                className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
+                style={{ borderColor: '#ddd' }}
+                value={String(form.scheduled_date || '').includes('T') ? form.scheduled_date.split('T')[1] : ''}
+                onChange={e => {
+                  const d = String(form.scheduled_date || '').slice(0, 10)
+                  if (!d) return
+                  setField('scheduled_date', e.target.value ? `${d}T${e.target.value}` : d)
+                }}
+              />
+            </div>
+            {!String(form.scheduled_date || '').slice(0, 10) && form.technician && (
+              <div className="text-xs mt-1" style={{ color: '#b45309' }}>No date — will be booked for today</div>
+            )}
           </div>
 
           {/* Status */}
