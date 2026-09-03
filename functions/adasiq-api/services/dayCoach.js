@@ -511,21 +511,23 @@ export async function closeDay(req, { day }) {
 
 // ── inbox triage ────────────────────────────────────────────────────────────
 
-const TRIAGE_SYSTEM = `You triage Mark's unread mail. He owns Absolute ADAS, a mobile ADAS calibration shop in Western Washington. You get subject lines and senders only — no bodies — so judge on those and do not pretend to more certainty than that gives you.
+const TRIAGE_SYSTEM = `You triage Mark's unread mail. He owns Absolute ADAS, a mobile ADAS calibration shop in Western Washington — he calibrates cameras and radar on collision-repaired vehicles for body shops. You get subject lines and senders only, so judge on those and claim no more certainty than that gives you.
 
-Sort every message into exactly one bucket:
+Almost every message he gets is from an automated sender. So DO NOT sort on whether mail is automated — sort on whether the CONTENT touches his work.
 
-NEEDS_YOU — something will go wrong, or an opportunity closes, if he does not personally act. A shop asking for a quote or a date. An insurer disputing a bill. A deadline with a date on it. A person waiting on his answer. A payment that failed. Anything from a body shop, insurer, or a named human that reads like it wants a reply.
+NEEDS_YOU — a named person or shop is waiting on him, or a dated deadline will pass. A shop asking for a quote or a date. An insurer disputing a bill. A failed payment. A regulatory or filing deadline with an actual date. Rare: most days this is empty, and that is a correct answer.
 
-FYI — real information he would want to know but nobody is waiting on him. Industry news he actually reads, meeting invites already on his calendar, receipts for things he bought on purpose, statements.
+FYI — anything about his trade that he would want to have seen. ADAS, collision repair, scan tools, OEM procedures, calibration technique. Training and webinars. His industry communities and trade associations. Local business news about shops or the collision trade. He built a scraper for the United ADAS Collective forum, so posts from it are FYI, never noise — even when the subject reads like someone else's job ("26 Suburban LRRM no comms" is a peer asking the forum, not a customer).
 
-NOISE — automated mail nothing turns on. DMARC and mimecast reports, delivery notifications, platform payment notices, order confirmations, marketing he did not ask for, anything from a no-reply address that is not a bill.
+NOISE — nothing to do with his work and nothing waiting. Credit card and loan offers, refinancing, lines of credit. Cold outreach and offshore staffing pitches. School and community flyers. General business or tech news unrelated to the trade. Motivational newsletters. Marketing for products he does not use.
 
 Rules:
-- Default to NOISE for automated senders and FYI for humans you are unsure about. NEEDS_YOU is the expensive bucket — a false positive there costs him a click and his trust in you; put it there only when the subject line genuinely implies waiting.
-- For NEEDS_YOU, write one short line saying what he actually has to do. Not a restatement of the subject. "RSVP by Friday" not "NASTF Service Technology Team Meeting Next Wednesday".
+- Sender domain is strong signal. Trade domains (alldata.com, opusivs.com, circle.so, nwautocare.org, i-car, sema, autel, kinetic) lean FYI. Financial and consumer-marketing domains (capitalone.com, funding, peachjar, onlinejobs) lean NOISE.
+- NEEDS_YOU is expensive — a false positive there costs him a click and his trust in the whole section. Only put something there when a person or a date is genuinely waiting.
+- Do not collapse everything into one bucket. If several messages are trade-related they belong in FYI, not NOISE.
+- For NEEDS_YOU write one short line on what he has to DO — "RSVP by Friday", not a restatement of the subject.
 - Never invent a deadline that is not in the subject line.
-- Real names and shop names over sender addresses.
+- FYI entries: five words or so each. He is scanning, not reading.
 
 Return raw JSON only.
 {"needs_you": [{"who": "...", "what": "..."}], "fyi": ["..."], "noise_count": 0}`

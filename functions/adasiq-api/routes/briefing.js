@@ -1019,6 +1019,38 @@ router.post('/plan', async (req, res) => {
 // What does the MAIL token actually grant? Separate refresh token from Cliq,
 // and its scopes were never captured — which is why /folders 401s and nobody
 // knew whether that was fixable or fundamental.
+// Where does triage spend its time? It hit the 12s cap on first run and the
+// pieces needed timing individually rather than guessing.
+router.get('/triage-debug', async (req, res) => {
+  const t = {}
+  const mark = (k, t0) => { t[k] = Date.now() - t0 }
+  try {
+    let t0 = Date.now()
+    const token = await getMailAccessToken(); mark('mailToken', t0)
+    t0 = Date.now()
+    const accountId = await getMailAccountIdFor(token, process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com')
+    mark('resolveAccount', t0)
+    t0 = Date.now()
+    const unread = (await getUnreadInboxMessages(token, accountId)) || []
+    mark('fetchUnread', t0)
+    const msgs = unread
+      .filter(m => String(m.folderId) !== SCAN_REPORTS_FOLDER_ID)
+      .filter(m => !/^(Ada\b|☀️?\s*Pipeline looks good)/i.test(String(m.subject || '')))
+      .slice(0, 40)
+      .map(m => ({ subject: m.subject || '', from: m.fromAddress || m.sender || '' }))
+    t0 = Date.now()
+    const result = await triageInbox(req, { messages: msgs })
+    mark('claudeTriage', t0)
+    res.json({ ok: true, timingsMs: t, unreadRaw: unread.length, triaged: msgs.length,
+      // Is sender data even arriving? Empty `from` would leave the classifier
+      // judging on subject alone, which would explain everything collapsing
+      // into one bucket.
+      sentToModel: msgs.slice(0, 14),
+      rawFields: unread[0] ? Object.keys(unread[0]) : [],
+      result })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message, timingsMs: t }) }
+})
+
 router.get('/mail-scope', async (req, res) => {
   const out = {}
   try {
