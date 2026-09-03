@@ -121,7 +121,6 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate }) {
   // ── Submit ──────────────────────────────────────────────────────────────────
   async function handleSubmit() {
     if (!selected)                         { setError('Please select a customer.'); return }
-    if (!year && !make && !model)          { setError('Enter at least Year, Make, or Model.'); return }
     setSaving(true)
     setError(null)
     try {
