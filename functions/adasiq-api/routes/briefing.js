@@ -1147,8 +1147,17 @@ ${formatBriefHtml(b, big3, tr, null, null)}
 router.get('/audio', async (req, res) => {
   try {
     const date = String(req.query.date || ptDate())
-    const voice = process.env.ADA_TTS_VOICE || 'sage'
-    const raw = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/audio/ada-morning-${date}-${voice}.mp3`
+    // The filename carries a content fingerprint, so it can't be reconstructed
+    // from the date — ask GitHub which file exists for this day and take the
+    // newest.
+    const idx = await axios.get(
+      'https://api.github.com/repos/markfowler01/markfowler01.github.io/contents/audio',
+      { timeout: 15000, validateStatus: s => s < 500 })
+    const match = (idx.data || [])
+      .filter(f => typeof f.name === 'string' && f.name.startsWith(`ada-morning-${date}-`))
+      .sort((a, b) => b.name.localeCompare(a.name))[0]
+    if (!match) return res.status(404).send('no memo for ' + date)
+    const raw = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/audio/${match.name}`
     const r = await axios.get(raw, { responseType: 'arraybuffer', timeout: 20000, validateStatus: s => s < 500 })
     if (r.status >= 300) return res.status(404).send('not ready')
     res.set('Content-Type', 'audio/mpeg')

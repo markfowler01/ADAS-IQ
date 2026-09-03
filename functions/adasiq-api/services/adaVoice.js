@@ -8,6 +8,7 @@
 // Nothing new to provision.
 
 import axios from 'axios'
+import crypto from 'node:crypto'
 import { commitBinaryFile } from './brewArchive.js'
 
 // Voice options, warmest to brightest: sage, coral, nova, shimmer.
@@ -76,7 +77,14 @@ export async function publishAdaVoice(script, dateISO, { slot = 'morning', force
     console.log('[adaVoice] no OPENAI_API_KEY, skipping audio')
     return null
   }
-  const name = 'ada-' + slot + '-' + dateISO + '-' + ADA_TTS_VOICE + '.mp3'
+  // Cache key covers everything that changes the audio: the script, the voice,
+  // the model and the delivery instructions. Keying on date+voice alone meant
+  // retuning the style produced no audible change — it just served yesterday's
+  // render back.
+  const fingerprint = crypto.createHash('sha1')
+    .update(script + '|' + ADA_TTS_VOICE + '|' + ADA_TTS_MODEL + '|' + ADA_TTS_STYLE)
+    .digest('hex').slice(0, 8)
+  const name = 'ada-' + slot + '-' + dateISO + '-' + fingerprint + '.mp3'
   const publicUrl = 'https://absoluteadas.com/audio/' + name
 
   // Already rendered today? Return it rather than paying for TTS twice — the
@@ -87,7 +95,7 @@ export async function publishAdaVoice(script, dateISO, { slot = 'morning', force
         'https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/audio/' + name,
         { timeout: 5000, validateStatus: s => s < 500 }
       )
-      if (head.status === 200) return { url: publicUrl, cached: true }
+      if (head.status === 200) return { url: publicUrl, cached: true, name }
     } catch { /* fall through and render */ }
   }
 
@@ -100,7 +108,7 @@ export async function publishAdaVoice(script, dateISO, { slot = 'morning', force
       message: 'Ada ' + slot + ' brief ' + dateISO,
     })
     if (!r?.ok) return null
-    return { url: publicUrl, bytes: mp3.length, voice: ADA_TTS_VOICE }
+    return { url: publicUrl, bytes: mp3.length, voice: ADA_TTS_VOICE, name }
   } catch (e) {
     console.warn('[adaVoice commit]', e.message)
     return null
