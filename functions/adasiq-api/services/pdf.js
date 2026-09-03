@@ -232,6 +232,24 @@ export function generateADASIQPdf(jobData) {
       required.forEach(cal => drawCal(cal, true))
     }
 
+    // ── SEATBELTS & POST-COLLISION SAFETY INSPECTION (Mark 2026-09-03:
+    // on EVERY report — OEM service info requires it on any vehicle
+    // involved in a collision, so it applies to every car we see) ──────────
+    {
+      const pcsiH = 58
+      if (y + pcsiH + 16 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      y += 4
+      doc.roundedRect(MARGIN, y, CONTENT_W, pcsiH, 6).fill('#fff7ed')
+      doc.roundedRect(MARGIN, y, CONTENT_W, pcsiH, 6).strokeColor(ORANGE).lineWidth(1).stroke()
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#1a1a1a')
+        .text('Seatbelts & Post-Collision Safety Inspection (SRS, Steering Columns)', MARGIN + 12, y + 9, { width: CONTENT_W - 160, lineBreak: false })
+      doc.font('Helvetica-Bold').fontSize(6.5).fillColor(ORANGE)
+        .text('REQUIRED — EVERY VEHICLE', MARGIN + CONTENT_W - 130, y + 10.5, { width: 120, align: 'right', lineBreak: false })
+      doc.font('Helvetica').fontSize(8).fillColor('#4b5563')
+        .text('OEM service information requires assessment of seat belt tensioner units, SRS components, and steering columns on any vehicle involved in a collision. This post-collision safety inspection is a required operation for this repair and is performed and documented with this calibration visit.', MARGIN + 12, y + 24, { width: CONTENT_W - 24 })
+      y += pcsiH + 10
+    }
+
     // ── NOT REQUIRED SECTION ───────────────────────────────────────────────
     if (notReq.length > 0) {
       if (y + 40 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
