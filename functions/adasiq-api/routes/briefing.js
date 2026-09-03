@@ -31,6 +31,7 @@ import { publishAdaVoice } from '../services/adaVoice.js'
 import { publishBriefPage } from '../services/briefPage.js'
 import { project } from '../services/confidence.js'
 import { toSpoken } from '../services/toSpoken.js'
+import { triageInbox, formatTriage } from '../services/dayCoach.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
@@ -217,6 +218,24 @@ const stripHtml = s => String(s || '')
   .replace(/&nbsp;|&amp;|&lt;|&gt;|&#\d+;/g, ' ')
   .replace(/\s+/g, ' ')
   .trim()
+
+// Subjects and senders only. The commitment path fetches bodies for 5
+// messages; triage just needs headers for all of them, which is one call.
+async function getUnreadSummaries() {
+  return (await safe('unread-list', async () => {
+    const token = await getMailAccessToken()
+    const accountId = await getMailAccountIdFor(token, process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com')
+    const unread = (await getUnreadInboxMessages(token, accountId)) || []
+    return unread
+      .filter(m => String(m.folderId) !== SCAN_REPORTS_FOLDER_ID)
+      // Mark's Zoho filter now moves Ada's mail out and marks it read, but keep
+      // the subject guard — a filter can be edited or disabled, and Ada
+      // triaging her own brief would be a loop with a straight face.
+      .filter(m => !/^(Ada\b|☀️?\s*Pipeline looks good)/i.test(String(m.subject || '')))
+      .slice(0, 40)
+      .map(m => ({ subject: m.subject || '', from: m.fromAddress || m.sender || '' }))
+  })) || []
+}
 
 async function getEmailBlocks() {
   return (await safe('email', async () => {
@@ -564,7 +583,7 @@ function label(t) {
   return `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
 }
 
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl) {
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage) {
   const money0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
   const rev = b.revenue || {}
   const diff = (rev.projected || 0) - 50000
@@ -656,6 +675,16 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl) {
        ${b.jadenToday.length} for Jaden, ${b.openJobs.length} still open.</div>${events}`)}
 
   ${needs ? block('Waiting on you', needs) : ''}
+
+  ${triage ? block('Your inbox', (triage.needsYou.length
+    ? `<div style="font:400 15px/24px ${SANS};color:${SOFT};padding-bottom:8px;">
+         ${triage.total} unread &middot; ${triage.needsYou.length} need${triage.needsYou.length === 1 ? 's' : ''} you</div>` +
+      triage.needsYou.map(x => `<div style="font:400 15px/24px ${SANS};color:${INK};padding-bottom:4px;">
+         <strong style="font-weight:600;">${esc(x.who)}</strong> &mdash; ${esc(x.what)}</div>`).join('')
+    : `<div style="font:400 15px/24px ${SANS};color:${INK};">
+         ${triage.total} unread, nothing that needs you.</div>`) +
+    (triage.noiseCount ? `<div style="font:400 13px/20px ${SANS};color:${SOFT};padding-top:8px;">
+       ${triage.noiseCount} automated &mdash; ignore.</div>` : '')) : ''}
 
   ${big3?.note ? `<tr><td style="padding:34px 34px 0 34px;">
     <div style="border-top:1px solid ${RULE};padding-top:24px;
@@ -819,7 +848,7 @@ async function stampSent(req) {
 // The script Ada reads. Same order as the written brief: affirmation, the
 // brief itself, then the Big 3 — so hearing it and reading it feel like one
 // thing rather than two.
-function buildSpokenScript(b, big3, tr) {
+function buildSpokenScript(b, big3, tr, triage) {
   // Everything that is written for a screen goes through toSpoken() first.
   // formatVoiceMorning() is already spoken-formatted; the affirmation and the
   // Big 3 are not, and were being read out with their punctuation and
@@ -830,6 +859,12 @@ function buildSpokenScript(b, big3, tr) {
   if (tr?.rows?.length) {
     parts.push('Sales this month by tech.')
     tr.rows.forEach(([t, amt]) => parts.push(`${t}, ${spoken(amt)}.`))
+  }
+  if (triage?.needsYou?.length) {
+    parts.push(`In your inbox, ${triage.total} unread, and ${triage.needsYou.length} need you.`)
+    triage.needsYou.forEach(x => parts.push(`${toSpoken(x.who)}. ${toSpoken(x.what)}.`))
+  } else if (triage) {
+    parts.push(`${triage.total} unread in your inbox, nothing that needs you.`)
   }
   if (big3?.big3?.length) {
     parts.push('Your big three today.')
@@ -857,7 +892,11 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     }
   })
   const tr = techRevenue(b.jobs, b.revenue)
-  let full = formatAffirmation(big3) + formatFull(b) + formatTechRevenue(tr) + formatBig3(big3)
+  // Triage is best-effort and capped: it rides inside the brief's gateway
+  // request, and an unread inbox must never be why the brief is late.
+  const triage = await withTimeout('triage',
+    safe('triage', async () => triageInbox(req, { messages: await getUnreadSummaries() })), 12000)
+  let full = formatAffirmation(big3) + formatFull(b) + formatTechRevenue(tr) + formatTriage(triage) + formatBig3(big3)
   // SMS is billed and read by the segment — keep the digest to one or two.
   // The full wording lives in Cliq and the push notification.
   const shortBig3 = (big3?.big3 || [])
@@ -879,7 +918,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // timeout and fail-soft: TTS plus a git commit is ~12s, and if it runs long
   // the written brief still goes out on time without it.
   const audio = await withTimeout('ada-voice',
-    safe('ada-voice', () => publishAdaVoice(buildSpokenScript(b, big3, tr), ptDate(), { slot: 'morning' })),
+    safe('ada-voice', () => publishAdaVoice(buildSpokenScript(b, big3, tr, triage), ptDate(), { slot: 'morning' })),
     22000)
   if (audio?.name) {
     try {
@@ -912,7 +951,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // current, and it cannot 404 because the email beat a static site build.
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -945,7 +984,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     return sendMorningKickoff(req)
   })
   if (sent.cliq || sent.sms || sent.push) await stampSent(req)
-  return { ok: true, sent, digest, big3, audio: audio?.url || null, page: page?.url || null, kickoff: kickoff || { ok: false } }
+  return { ok: true, sent, digest, big3, triage, audio: audio?.url || null, page: page?.url || null, kickoff: kickoff || { ok: false } }
 }
 
 router.get('/debug', async (req, res) => {
@@ -977,6 +1016,48 @@ router.post('/plan', async (req, res) => {
 // Probe what the new Cliq token can actually reach. Built as a diagnostic
 // first because the previous grant could post but not read, and the failure
 // was silent — getCliqBlocks() just returned [] for two months.
+// What does the MAIL token actually grant? Separate refresh token from Cliq,
+// and its scopes were never captured — which is why /folders 401s and nobody
+// knew whether that was fixable or fundamental.
+router.get('/mail-scope', async (req, res) => {
+  const out = {}
+  try {
+    const rt = process.env.ZOHO_MAIL_REFRESH_TOKEN || ''
+    out.tokenTail = rt ? rt.slice(-6) : '(none)'
+    const p = new URLSearchParams({
+      grant_type: 'refresh_token', client_id: process.env.ZOHO_CLIENT_ID,
+      client_secret: process.env.ZOHO_CLIENT_SECRET, refresh_token: rt,
+    })
+    const t = await axios.post('https://accounts.zoho.com/oauth/v2/token', p.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 12000,
+      validateStatus: s => s < 500,
+    })
+    out.grantedScopes = t.data?.scope || t.data?.error || '(none reported)'
+    const access = t.data?.access_token
+
+    if (access) {
+      const H = { Authorization: `Zoho-oauthtoken ${access}` }
+      const acctId = '147686000000008002'
+      // Can we list folders?
+      const list = await axios.get(`https://mail.zoho.com/api/accounts/${acctId}/folders`,
+        { headers: H, timeout: 12000, validateStatus: s => s < 500 })
+      out.listFoldersStatus = list.status
+      out.listFoldersError = list.status >= 300 ? JSON.stringify(list.data).slice(0, 160) : null
+      out.folderCount = Array.isArray(list.data?.data) ? list.data.data.length : null
+
+      // Can we CREATE one? Dry probe with an obviously-temporary name.
+      if (req.query.probeCreate === '1') {
+        const mk = await axios.post(`https://mail.zoho.com/api/accounts/${acctId}/folders`,
+          { folderName: 'zz-ada-probe' },
+          { headers: { ...H, 'Content-Type': 'application/json' }, timeout: 12000, validateStatus: s => s < 500 })
+        out.createStatus = mk.status
+        out.createBody = JSON.stringify(mk.data).slice(0, 200)
+      }
+    }
+    res.json({ ok: true, ...out })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message, ...out }) }
+})
+
 router.get('/cliq-debug', async (req, res) => {
   const out = { steps: {} }
   try {

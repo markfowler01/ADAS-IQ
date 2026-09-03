@@ -509,4 +509,59 @@ export async function closeDay(req, { day }) {
   return parsed?.close ? String(parsed.close).slice(0, 400) : null
 }
 
+// ── inbox triage ────────────────────────────────────────────────────────────
+
+const TRIAGE_SYSTEM = `You triage Mark's unread mail. He owns Absolute ADAS, a mobile ADAS calibration shop in Western Washington. You get subject lines and senders only — no bodies — so judge on those and do not pretend to more certainty than that gives you.
+
+Sort every message into exactly one bucket:
+
+NEEDS_YOU — something will go wrong, or an opportunity closes, if he does not personally act. A shop asking for a quote or a date. An insurer disputing a bill. A deadline with a date on it. A person waiting on his answer. A payment that failed. Anything from a body shop, insurer, or a named human that reads like it wants a reply.
+
+FYI — real information he would want to know but nobody is waiting on him. Industry news he actually reads, meeting invites already on his calendar, receipts for things he bought on purpose, statements.
+
+NOISE — automated mail nothing turns on. DMARC and mimecast reports, delivery notifications, platform payment notices, order confirmations, marketing he did not ask for, anything from a no-reply address that is not a bill.
+
+Rules:
+- Default to NOISE for automated senders and FYI for humans you are unsure about. NEEDS_YOU is the expensive bucket — a false positive there costs him a click and his trust in you; put it there only when the subject line genuinely implies waiting.
+- For NEEDS_YOU, write one short line saying what he actually has to do. Not a restatement of the subject. "RSVP by Friday" not "NASTF Service Technology Team Meeting Next Wednesday".
+- Never invent a deadline that is not in the subject line.
+- Real names and shop names over sender addresses.
+
+Return raw JSON only.
+{"needs_you": [{"who": "...", "what": "..."}], "fyi": ["..."], "noise_count": 0}`
+
+export async function triageInbox(req, { messages }) {
+  if (!messages?.length) return null
+  const lines = messages.map((m, i) =>
+    `${i + 1}. from: ${m.from || 'unknown'} | subject: ${m.subject || '(no subject)'}`).join('\n')
+  const res = await client().messages.create({
+    model: PARSE_MODEL,   // classification on a clock — this sits in the brief's request
+    max_tokens: 1500,
+    system: TRIAGE_SYSTEM,
+    messages: [{ role: 'user', content: `${messages.length} unread:\n\n${lines}` }],
+  })
+  const parsed = extractJson(firstText(res))
+  if (!parsed) return null
+  return {
+    needsYou: (parsed.needs_you || []).slice(0, 6),
+    fyi: (parsed.fyi || []).slice(0, 5),
+    noiseCount: Number(parsed.noise_count) || 0,
+    total: messages.length,
+  }
+}
+
+export function formatTriage(t) {
+  if (!t) return ''
+  const L = ['', `Inbox: ${t.total} unread.`]
+  if (t.needsYou.length) {
+    L.push(`${t.needsYou.length} need${t.needsYou.length === 1 ? 's' : ''} you:`)
+    t.needsYou.forEach(x => L.push(`- ${x.who}: ${x.what}`))
+  } else {
+    L.push('Nothing in there needs you.')
+  }
+  if (t.fyi.length) L.push(`Worth knowing: ${t.fyi.join('; ')}.`)
+  if (t.noiseCount) L.push(`${t.noiseCount} automated, ignore.`)
+  return L.join('\n')
+}
+
 export const COACH_MODELS = { coach: COACH_MODEL, parse: PARSE_MODEL }
