@@ -881,6 +881,14 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const audio = await withTimeout('ada-voice',
     safe('ada-voice', () => publishAdaVoice(buildSpokenScript(b, big3, tr), ptDate(), { slot: 'morning' })),
     22000)
+  if (audio?.name) {
+    try {
+      const app = catalyst.initialize(req, { type: 'advancedio' })
+      const seg = app.cache().segment()
+      try { await seg.update('ada_audio_' + ptDate(), audio.name) }
+      catch { await seg.put('ada_audio_' + ptDate(), audio.name, 48) }
+    } catch (e) { console.warn('[ada audio stamp]', e.message) }
+  }
   if (audio?.url) {
     const line = `\n\nListen: ${audio.url}`
     full += line
@@ -1150,14 +1158,19 @@ router.get('/audio', async (req, res) => {
     // The filename carries a content fingerprint, so it can't be reconstructed
     // from the date — ask GitHub which file exists for this day and take the
     // newest.
-    const idx = await axios.get(
-      'https://api.github.com/repos/markfowler01/markfowler01.github.io/contents/audio',
-      { timeout: 15000, validateStatus: s => s < 500 })
-    const match = (idx.data || [])
-      .filter(f => typeof f.name === 'string' && f.name.startsWith(`ada-morning-${date}-`))
-      .sort((a, b) => b.name.localeCompare(a.name))[0]
-    if (!match) return res.status(404).send('no memo for ' + date)
-    const raw = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/audio/${match.name}`
+    // The filename carries a content fingerprint, so it can't be derived from
+    // the date. Sorting the directory listing doesn't work either — an older
+    // 'ada-morning-<date>-sage.mp3' sorts above a newer hashed name and gets
+    // served instead. The publisher records the exact filename; read that.
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const seg = app.cache().segment()
+    let name = null
+    try {
+      const v = await seg.getValue('ada_audio_' + date)
+      name = v ? (typeof v === 'string' ? v : String(v)) : null
+    } catch { name = null }
+    if (!name) return res.status(404).send('no memo recorded for ' + date)
+    const raw = `https://raw.githubusercontent.com/markfowler01/markfowler01.github.io/main/audio/${name}`
     const r = await axios.get(raw, { responseType: 'arraybuffer', timeout: 20000, validateStatus: s => s < 500 })
     if (r.status >= 300) return res.status(404).send('not ready')
     res.set('Content-Type', 'audio/mpeg')
