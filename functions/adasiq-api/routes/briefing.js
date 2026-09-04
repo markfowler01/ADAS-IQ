@@ -31,7 +31,11 @@ import { publishAdaVoice } from '../services/adaVoice.js'
 import { publishBriefPage } from '../services/briefPage.js'
 import { project } from '../services/confidence.js'
 import { toSpoken } from '../services/toSpoken.js'
-import { triageInbox, formatTriage } from '../services/dayCoach.js'
+import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
+import { evaluate as evaluatePace } from '../services/paceModel.js'
+import { formatPace, speakPace } from '../services/paceFormat.js'
+import { getMonthlyGoal, getRatio } from '../services/paceConfig.js'
+import { MORNING_POOL, pickUnused, nextCategory } from '../services/closing.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
@@ -455,8 +459,9 @@ function formatTechRevenue(tr) {
 
 const money = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
-function formatFull(b) {
+function formatFull(b, pace) {
   const L = [`Daily Briefing — ${b.today}`, '']
+  if (pace) { L.push(pace); L.push('') }
   if (b.revenue) {
     const mtd = b.revenue.monthlyTotal || 0
     const proj = b.revenue.projected || 0
@@ -698,6 +703,37 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage) {
 </td></tr></table></div>`
 }
 
+// Closing: one evidence line from today's data, then an affirmation about
+// character. Both rotate with memory — the affirmation on a 30-day window, the
+// evidence category never twice running.
+const CLOSING_KEY = 'closing_history'
+
+async function buildClosing(req, { data, pool }) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const seg = app.cache().segment()
+  let hist = { affirmations: [], categories: [] }
+  try {
+    const v = await seg.getValue(CLOSING_KEY)
+    if (v) hist = typeof v === 'string' ? JSON.parse(v) : v
+  } catch { /* first run */ }
+
+  const category = nextCategory(hist.categories?.[0]?.category)
+  const affirmation = pickUnused(pool, hist.affirmations, 30)
+  const evidence = await safe('evidence', () => evidenceLine(req, { category, data }))
+
+  const now = new Date().toISOString()
+  const next = {
+    affirmations: [{ text: affirmation, at: now }, ...(hist.affirmations || [])].slice(0, 60),
+    categories: [{ category, at: now }, ...(hist.categories || [])].slice(0, 14),
+  }
+  try {
+    const payload = JSON.stringify(next)
+    try { await seg.update(CLOSING_KEY, payload) } catch { await seg.put(CLOSING_KEY, payload, 48) }
+  } catch (e) { console.warn('[closing history]', e.message) }
+
+  return { evidence, affirmation, category }
+}
+
 // ---------- send + routes ----------
 
 // Ask the coach for today's Big 3 and write them into the day ledger.
@@ -892,11 +928,41 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     }
   })
   const tr = techRevenue(b.jobs, b.revenue)
+
+  // Pace: two independent verdicts against separate bucket targets. The goal
+  // is Mark's to set each month; the ratio is derived from his own history.
+  const [goalRec, ratioRec] = await Promise.all([
+    safe('goal', () => getMonthlyGoal(req)).then(g => g || { goal: 40000, source: 'default' }),
+    safe('ratio', () => getRatio(req)).then(r => r || { ratio: 1.51, source: 'default' }),
+  ])
+  const pace = b.revenue?.records
+    ? evaluatePace({ invoices: b.revenue.records, today: ptDate(), monthlyGoal: goalRec.goal, ratio: ratioRec.ratio })
+    : null
+  const paceText = pace ? formatPace(pace) : ''
+
   // Triage is best-effort and capped: it rides inside the brief's gateway
   // request, and an unread inbox must never be why the brief is late.
   const triage = await withTimeout('triage',
     safe('triage', async () => triageInbox(req, { messages: await getUnreadSummaries() })), 12000)
-  let full = formatAffirmation(big3) + formatFull(b) + formatTechRevenue(tr) + formatTriage(triage) + formatBig3(big3)
+  const closing = await withTimeout('closing',
+    safe('closing', () => buildClosing(req, {
+      pool: MORNING_POOL,
+      data: {
+        bucket_today: pace?.bucketToday,
+        steady: pace?.steady, push: pace?.push,
+        jobs_today: b.todaysJobs.length, jaden_today: b.jadenToday.length,
+        open_jobs: b.openJobs.length, completed_today: b.completedToday.length,
+        commitments_due: b.dueToday.length, overdue: b.overdue.length,
+        sales_by_tech: tr?.rows || [], shops: b.shops.length,
+      },
+    })), 15000)
+
+  const closingText = closing
+    ? `\n\n${closing.evidence || ''}\n${closing.affirmation}`.replace(/\n{3,}/g, '\n\n')
+    : ''
+
+  let full = formatAffirmation(big3) + formatFull(b, paceText) + formatTechRevenue(tr) +
+             formatTriage(triage) + formatBig3(big3) + closingText
   // SMS is billed and read by the segment — keep the digest to one or two.
   // The full wording lives in Cliq and the push notification.
   const shortBig3 = (big3?.big3 || [])
@@ -984,7 +1050,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     return sendMorningKickoff(req)
   })
   if (sent.cliq || sent.sms || sent.push) await stampSent(req)
-  return { ok: true, sent, digest, big3, triage, audio: audio?.url || null, page: page?.url || null, kickoff: kickoff || { ok: false } }
+  return { ok: true, sent, digest, big3, triage, pace, closing, audio: audio?.url || null, page: page?.url || null, kickoff: kickoff || { ok: false } }
 }
 
 router.get('/debug', async (req, res) => {

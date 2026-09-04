@@ -532,6 +532,14 @@ Rules:
 Return raw JSON only.
 {"needs_you": [{"who": "...", "what": "..."}], "fyi": ["..."], "noise_count": 0}`
 
+// Names only, never counts. "14 unread, nothing needs you" is noise — the
+// count is not information, the names are. If nothing needs a reply the whole
+// section is omitted rather than reporting an empty state.
+export function formatTriage(t) {
+  if (!t?.needsYou?.length) return ''
+  return ['', 'Inbox:', ...t.needsYou.map(x => `- ${x.who}: ${x.what}`)].join('\n')
+}
+
 export async function triageInbox(req, { messages }) {
   if (!messages?.length) return null
   const lines = messages.map((m, i) =>
@@ -552,18 +560,45 @@ export async function triageInbox(req, { messages }) {
   }
 }
 
-export function formatTriage(t) {
-  if (!t) return ''
-  const L = ['', `Inbox: ${t.total} unread.`]
-  if (t.needsYou.length) {
-    L.push(`${t.needsYou.length} need${t.needsYou.length === 1 ? 's' : ''} you:`)
-    t.needsYou.forEach(x => L.push(`- ${x.who}: ${x.what}`))
-  } else {
-    L.push('Nothing in there needs you.')
-  }
-  if (t.fyi.length) L.push(`Worth knowing: ${t.fyi.join('; ')}.`)
-  if (t.noiseCount) L.push(`${t.noiseCount} automated, ignore.`)
-  return L.join('\n')
+
+// ── closing evidence line ───────────────────────────────────────────────────
+
+const EVIDENCE_SYSTEM = `You write one line for the bottom of Mark's brief: a single true thing pulled from today's data.
+
+You are given a CATEGORY and the day's numbers. Find something in the data that fits the category and state it.
+
+Rules:
+- One sentence. No adjectives about the thing — state it, do not rate it.
+- No praise, no encouragement, no "great job", no exclamation.
+- Never invent a fact. Only what is in the data you were given.
+- Numbers where numbers exist.
+- Never editorialize a shortfall. If the category has nothing good in it today, reach smaller rather than reaching for a verdict: "Board was thin and you still made 6 reactivation calls" is right; "tough day out there" is not.
+- On a genuinely empty day the smallest true thing is still the answer: "Nothing closed today. You showed up anyway."
+
+Category meanings:
+  quality       — work done right, no comebacks, clean reports
+  reliability   — showed up, hit times, did what was said
+  collections   — money in, invoices cleared, AR moved
+  relationships — shops, people, conversations, follow-through with a name attached
+  effort        — calls made, miles driven, jobs attempted
+  progress      — a number moving the right way over time
+  delegation    — work carried by Jayden or Kat rather than Mark
+
+Return raw JSON only.
+{"line": "..."}`
+
+export async function evidenceLine(req, { category, data }) {
+  const res = await client().messages.create({
+    model: PARSE_MODEL,
+    max_tokens: 300,
+    system: EVIDENCE_SYSTEM,
+    messages: [{
+      role: 'user',
+      content: `Category: ${category}\n\nToday's data:\n${JSON.stringify(data, null, 1)}`,
+    }],
+  })
+  const p = extractJson(firstText(res))
+  return p?.line ? String(p.line).slice(0, 220) : null
 }
 
 export const COACH_MODELS = { coach: COACH_MODEL, parse: PARSE_MODEL }
