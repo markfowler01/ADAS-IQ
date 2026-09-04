@@ -460,19 +460,15 @@ function formatTechRevenue(tr) {
 const money = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
 function formatFull(b, pace) {
-  const L = [`Daily Briefing — ${b.today}`, '']
+  // Dated in PT. This read 2026-09-04 on the evening of the 3rd because it used
+  // the UTC date — the brief was stamped tomorrow.
+  const L = [`Daily Briefing — ${ptDate()}`, '']
   if (pace) { L.push(pace); L.push('') }
-  if (b.revenue) {
-    const mtd = b.revenue.monthlyTotal || 0
-    const proj = b.revenue.projected || 0
-    const diff = proj - TARGET
-    L.push(`Revenue: ${money(b.revenue.yesterdayTotal || 0)} yesterday. ${money(mtd)} month to date.`)
-    if (b.revenue.projectable) {
-      L.push(`Projected month end: ${money(proj)} vs ${money(TARGET)} target. ${diff >= 0 ? 'Ahead by' : 'Behind by'} ${money(Math.abs(diff))} at current pace.`)
-    } else {
-      L.push(`${b.revenue.elapsedWorkingDays} working day${b.revenue.elapsedWorkingDays === 1 ? '' : 's'} in — about ${money(b.revenue.dailyPace)} a day. Too early to project; ${money(TARGET)} needs about ${money(Math.round(TARGET / b.revenue.totalWorkingDays))} a day.`)
-    }
-  } else L.push('Revenue: not available this run.')
+
+  // No revenue paragraph here. Pace above IS the revenue reporting, against
+  // two bucket targets. The old block reported a third, blended figure against
+  // a $50,000 goal the pace section no longer uses — two different answers to
+  // the same question, in the same brief.
   L.push(`Field ops: ${b.todaysJobs.length} jobs scheduled today. Jaden has ${b.jadenToday.length} today (${b.jaden.length} on the board). ${b.openJobs.length} open jobs total.`)
   L.push(`Pipeline: ${b.shops.length} shops, ${b.followups.length} follow-ups due.`)
   if (b.events.length) {
@@ -560,68 +556,105 @@ function formatVoiceEvening(b) {
   return cleanSpeech(L.join(' '))
 }
 
-// The brief as HTML.
+// The brief as HTML, in the spec's section order.
 //
-// First pass read like a dashboard — all-caps tracked labels, tight stacking,
-// metrics-panel feel. Wrong register for something read at 4:40 in the dark
-// before anyone has spoken to you. This is set like a short letter instead:
-// serif for the things meant to land, generous leading, quiet labels, one
-// accent colour, and a lot of air.
+// This template had drifted out of sync with the plain-text renderer — it was
+// still printing a blended projection against a $50,000 goal after pace moved
+// to two bucket verdicts against $40,000, and dating itself off UTC so it read
+// tomorrow. Two renderers, one dataset; they now read the same numbers.
 //
-// Email clients are stuck in 2003 — inline styles only, tables for layout,
-// no external CSS. Mobile-first, because that's where he reads it.
+// Order: Cash, Pace, Board, Open work, AR, The one thing, Inbox, Closing.
+// Skipped by Mark: room-for-a-new-shop, quality, summers.
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
 
-const INK = '#26221e'        // warm near-black, easier at 4:40 than pure black
-const SOFT = '#7d766c'
-const RULE = '#e8e3da'
-const PAPER = '#f6f3ed'
-const ACCENT = '#9c4221'
+const INK = '#26221e', SOFT = '#7d766c', RULE = '#e8e3da'
+const PAPER = '#f6f3ed', ACCENT = '#9c4221', GOOD = '#3f6b47'
 const SERIF = "Georgia,'Iowan Old Style','Times New Roman',serif"
 const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+const m0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
-function label(t) {
-  return `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
-}
-
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage) {
-  const money0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
-  const rev = b.revenue || {}
-  const diff = (rev.projected || 0) - 50000
-  const ahead = diff >= 0
-  const hard = big3?.hardThing || ''
-
-  const big3Html = (big3?.big3 || []).map((x, i) => {
-    const isHard = hard && x.text === hard
-    return `<tr>
-      <td width="30" style="vertical-align:top;padding:0 0 18px 0;">
-        <div style="font:400 17px/27px ${SERIF};color:${isHard ? ACCENT : '#bdb5a8'};">${i + 1}</div>
-      </td>
-      <td style="padding:0 0 18px 0;">
-        <div style="font:400 17px/27px ${SERIF};color:${INK};">${esc(x.text)}</div>
-        ${isHard ? `<div style="font:400 13px/19px ${SANS};color:${ACCENT};padding-top:5px;">
-          Start here. It's the one you'll want to put off.</div>` : ''}
-      </td></tr>`
-  }).join('')
-
-  const techRows = (tr?.rows || []).map(([name, amt]) =>
-    `<tr><td style="font:400 15px/26px ${SANS};color:${INK};">${esc(name)}</td>
-      <td align="right" style="font:400 15px/26px ${SANS};color:${INK};">${money0(amt)}</td></tr>`).join('')
-
-  const events = (b.events || []).slice(0, 6).map(e =>
-    `<div style="font:400 15px/24px ${SANS};color:${INK};">
-      <span style="color:${SOFT};">${esc(e.start || '')}</span>&nbsp;&nbsp;${esc(e.title || '')}</div>`).join('')
-
-  const needs = (b.dueToday || []).concat(b.overdue || []).slice(0, 6).map(c =>
-    `<div style="font:400 15px/24px ${SANS};color:${INK};padding-bottom:3px;">
-      ${esc(c.person)} — ${esc(c.text)}</div>`).join('')
-
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar) {
+  const label = t => `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
   const block = (title, inner) => inner
-    ? `<tr><td style="padding:34px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
+    ? `<tr><td style="padding:32px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
+  const line = (txt, color) =>
+    `<div style="font:400 15px/25px ${SANS};color:${color || INK};">${txt}</div>`
+
+  // Pace — two verdicts, never blended, each with its own target.
+  const verdict = (name, v, nextStart) => {
+    if (!v) return ''
+    if (!v.started) {
+      const when = nextStart ? `starts the ${ord(Number(nextStart.slice(-2)))}` : 'has not started'
+      return line(`${name} week ${when}. Target <strong style="font-weight:600;">${m0(v.target)}</strong>/day.`, SOFT)
+    }
+    const col = v.onPlan ? GOOD : ACCENT
+    const tail = v.onPlan ? '' : ` Gap ${m0(Math.abs(v.gap))}.`
+    return line(`${name} days ${v.onPlan ? 'on plan at' : 'at'} <strong style="font-weight:600;">${m0(v.avg)}</strong> against ${m0(v.target)}. ${v.days} so far.<span style="color:${col};">${tail}</span>`)
+  }
+  const paceHtml = pace ? [
+    pace.bucketToday
+      ? line(`Today is a <strong style="font-weight:600;">${pace.bucketToday}</strong> day. Target ${m0(pace.bucketToday === 'push' ? pace.push.target : pace.steady.target)}.`)
+      : '',
+    verdict('Steady', pace.steady, null),
+    verdict('Push', pace.push, pace.nextPushStart),
+    line(`${pace.remaining.push + pace.remaining.steady} working days left.`, SOFT),
+  ].join('') : ''
+
+  const cashHtml = b.revenue ? [
+    line(`<strong style="font-weight:600;">${m0(b.revenue.monthlyTotal)}</strong> month to date.`),
+    line(`${m0(b.revenue.todayTotal)} today &middot; ${m0(b.revenue.yesterdayTotal)} yesterday.`, SOFT),
+  ].join('') : ''
+
+  const boardHtml = [
+    line(`${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} today, ${b.jadenToday.length} for Jaden.`),
+    ...(b.events || []).slice(0, 6).map(e =>
+      `<div style="font:400 15px/24px ${SANS};color:${INK};">
+        <span style="color:${SOFT};">${esc(e.start || '')}</span>&nbsp;&nbsp;${esc(e.title || '')}</div>`),
+  ].join('')
+
+  const openHtml = line(`${b.openJobs.length} open work orders &middot; ${b.shops.length} shops &middot; ${b.followups.length} follow-ups due.`)
+
+  const arHtml = ar ? [
+    line(`<strong style="font-weight:600;">${m0(ar.total)}</strong> outstanding${ar.overdue ? `, ${m0(ar.overdue)} past terms` : ''}.`),
+    ...ar.rows.slice(0, 5).map(r =>
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td style="font:400 15px/24px ${SANS};color:${INK};">${esc(r.name)}</td>
+        <td align="right" style="font:400 15px/24px ${SANS};color:${r.overdue ? ACCENT : INK};">${m0(r.total)}</td>
+      </tr></table>`),
+  ].join('') : ''
+
+  const hard = big3?.hardThing || ''
+  const oneThing = big3?.big3?.length
+    ? (big3.big3 || []).map((x, i) => {
+        const isHard = hard && x.text === hard
+        return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td width="30" style="vertical-align:top;padding:0 0 16px 0;">
+            <div style="font:400 17px/27px ${SERIF};color:${isHard ? ACCENT : '#bdb5a8'};">${i + 1}</div></td>
+          <td style="padding:0 0 16px 0;">
+            <div style="font:400 17px/27px ${SERIF};color:${INK};">${esc(x.text)}</div>
+            ${isHard ? `<div style="font:400 13px/19px ${SANS};color:${ACCENT};padding-top:4px;">Start here.</div>` : ''}
+          </td></tr></table>`
+      }).join('')
+    : ''
+
+  // Inbox: names needing a reply. Never a count.
+  const inboxHtml = triage?.needsYou?.length
+    ? triage.needsYou.map(x =>
+        `<div style="font:400 15px/24px ${SANS};color:${INK};padding-bottom:4px;">
+          <strong style="font-weight:600;">${esc(x.who)}</strong> &mdash; ${esc(x.what)}</div>`).join('')
+    : ''
+
+  const techHtml = tr?.rows?.length
+    ? tr.rows.map(([n, amt]) =>
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+          <td style="font:400 15px/26px ${SANS};color:${INK};">${esc(n)}</td>
+          <td align="right" style="font:400 15px/26px ${SANS};color:${INK};">${m0(amt)}</td>
+        </tr></table>`).join('')
+    : ''
 
   return `<div style="margin:0;padding:0;background:${PAPER};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${PAPER};padding:28px 14px 40px 14px;">
@@ -630,108 +663,69 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage) {
   style="max-width:552px;background:#fffdfa;border:1px solid ${RULE};border-radius:14px;">
 
   <tr><td style="padding:34px 34px 0 34px;">
-    <span style="font:400 19px/1 ${SERIF};color:${ACCENT};letter-spacing:.02em;">Ada</span>
-    <span style="font:400 14px/1 ${SANS};color:${SOFT};padding-left:10px;">${esc(b.today)}</span>
+    <span style="font:400 19px/1 ${SERIF};color:${ACCENT};">Ada</span>
+    <span style="font:400 14px/1 ${SANS};color:${SOFT};padding-left:10px;">${esc(ptDate())}</span>
   </td></tr>
 
-  ${big3?.affirmation ? `<tr><td style="padding:30px 34px 0 34px;">
-    <div style="font:400 20px/32px ${SERIF};color:${INK};">${esc(big3.affirmation)}</div>
-  </td></tr>` : ''}
+  ${big3?.affirmation ? `<tr><td style="padding:28px 34px 0 34px;">
+    <div style="font:400 20px/32px ${SERIF};color:${INK};">${esc(big3.affirmation)}</div></td></tr>` : ''}
 
   ${audioUrl ? `<tr><td style="padding:24px 34px 0 34px;">
-    <!-- Inline player so he can read along while Ada reads it. Apple Mail and
-         Zoho render this; Gmail and Outlook strip <audio>, so the link below
-         is the fallback rather than a decoration. -->
-    <audio controls preload="none" src="${esc(audioUrl)}" style="width:100%;max-width:484px;height:38px;">
-    </audio>
-    <div style="padding-top:8px;">
-      <a href="${esc(pageUrl || audioUrl)}" style="font:400 14px/1 ${SANS};color:${ACCENT};text-decoration:none;
-        border-bottom:1px solid ${ACCENT};padding-bottom:2px;">${pageUrl ? 'Play it and read along &rarr;' : 'Open the audio &rarr;'}</a>
-      <span style="font:400 13px/1 ${SANS};color:${SOFT};padding-left:8px;">about a minute</span>
-    </div>
-  </td></tr>` : ''}
+    <a href="${esc(pageUrl || audioUrl)}" style="font:400 15px/1 ${SANS};color:${ACCENT};text-decoration:none;
+      border-bottom:1px solid ${ACCENT};padding-bottom:2px;">Play it and read along &rarr;</a></td></tr>` : ''}
 
-  <tr><td style="padding:32px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
+  <tr><td style="padding:30px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
 
-  ${big3Html ? block('If you only do three things',
-    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${big3Html}</table>`) : ''}
+  ${block('Cash', cashHtml)}
+  ${block('Pace', paceHtml)}
+  ${block('Sales by tech', techHtml)}
+  ${block('Board', boardHtml)}
+  ${block('Open work', openHtml)}
+  ${block('AR', arHtml)}
+  ${oneThing ? block('If you only do three things', oneThing) : ''}
+  ${inboxHtml ? block('Inbox', inboxHtml) : ''}
 
-  ${block('Where the month stands', rev.projectable
-    ? `<div style="font:400 15px/26px ${SANS};color:${INK};">
-         ${money0(rev.monthlyTotal)} so far, on pace for <strong style="font-weight:600;">${money0(rev.projected)}</strong>.
-         <span style="color:${ahead ? '#3f6b47' : ACCENT};">
-           ${ahead ? 'Ahead of' : 'Behind'} the ${money0(50000)} mark by ${money0(Math.abs(diff))}.</span>
-       </div>`
-    : `<div style="font:400 15px/26px ${SANS};color:${INK};">
-         ${money0(rev.monthlyTotal)} so far, over ${rev.elapsedWorkingDays} working day${rev.elapsedWorkingDays === 1 ? '' : 's'}
-         &mdash; about ${money0(rev.dailyPace)} a day.
-         <span style="color:${SOFT};">Too early to project the month; ${money0(50000) } needs
-         about ${money0(Math.round(50000 / rev.totalWorkingDays))} a day.</span>
-       </div>`)}
+  ${closing ? `<tr><td style="padding:34px 34px 0 34px;">
+    <div style="border-top:1px solid ${RULE};padding-top:24px;">
+      ${closing.evidence ? `<div style="font:400 15px/25px ${SANS};color:${INK};padding-bottom:14px;">${esc(closing.evidence)}</div>` : ''}
+      <div style="font:400 18px/29px ${SERIF};color:${INK};">${esc(closing.affirmation)}</div>
+    </div></td></tr>` : ''}
 
-  ${techRows ? block('Sales by tech',
-    `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${techRows}</table>` +
-    (tr.merged?.length ? `<div style="font:400 13px/20px ${SANS};color:${SOFT};padding-top:10px;">
-      Books has ${esc(tr.merged.join(', '))} — worth fixing at the source.</div>` : '')) : ''}
-
-  ${block('Today',
-    `<div style="font:400 15px/24px ${SANS};color:${INK};padding-bottom:${events ? '8px' : '0'};">
-       ${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} on the board,
-       ${b.jadenToday.length} for Jaden, ${b.openJobs.length} still open.</div>${events}`)}
-
-  ${needs ? block('Waiting on you', needs) : ''}
-
-  ${triage ? block('Your inbox', (triage.needsYou.length
-    ? `<div style="font:400 15px/24px ${SANS};color:${SOFT};padding-bottom:8px;">
-         ${triage.total} unread &middot; ${triage.needsYou.length} need${triage.needsYou.length === 1 ? 's' : ''} you</div>` +
-      triage.needsYou.map(x => `<div style="font:400 15px/24px ${SANS};color:${INK};padding-bottom:4px;">
-         <strong style="font-weight:600;">${esc(x.who)}</strong> &mdash; ${esc(x.what)}</div>`).join('')
-    : `<div style="font:400 15px/24px ${SANS};color:${INK};">
-         ${triage.total} unread, nothing that needs you.</div>`) +
-    (triage.noiseCount ? `<div style="font:400 13px/20px ${SANS};color:${SOFT};padding-top:8px;">
-       ${triage.noiseCount} automated &mdash; ignore.</div>` : '')) : ''}
-
-  ${big3?.note ? `<tr><td style="padding:34px 34px 0 34px;">
-    <div style="border-top:1px solid ${RULE};padding-top:24px;
-      font:400 16px/27px ${SERIF};color:${INK};">${esc(big3.note)}</div></td></tr>` : ''}
-
-  <tr><td style="padding:30px 34px 34px 34px;">
-    <div style="font:400 14px/20px ${SANS};color:${SOFT};">I'll check in at seven. — Ada</div>
+  <tr><td style="padding:28px 34px 34px 34px;">
+    <div style="font:400 14px/20px ${SANS};color:${SOFT};">I'll check in at seven. &mdash; Ada</div>
   </td></tr>
 
 </table>
 </td></tr></table></div>`
 }
 
-// Closing: one evidence line from today's data, then an affirmation about
-// character. Both rotate with memory — the affirmation on a 30-day window, the
-// evidence category never twice running.
-const CLOSING_KEY = 'closing_history'
+function ord(n) {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100
+  return n + (s[(v - 20) % 10] || s[v] || s[0])
+}
 
-async function buildClosing(req, { data, pool }) {
-  const app = catalyst.initialize(req, { type: 'advancedio' })
-  const seg = app.cache().segment()
-  let hist = { affirmations: [], categories: [] }
-  try {
-    const v = await seg.getValue(CLOSING_KEY)
-    if (v) hist = typeof v === 'string' ? JSON.parse(v) : v
-  } catch { /* first run */ }
-
-  const category = nextCategory(hist.categories?.[0]?.category)
-  const affirmation = pickUnused(pool, hist.affirmations, 30)
-  const evidence = await safe('evidence', () => evidenceLine(req, { category, data }))
-
-  const now = new Date().toISOString()
-  const next = {
-    affirmations: [{ text: affirmation, at: now }, ...(hist.affirmations || [])].slice(0, 60),
-    categories: [{ category, at: now }, ...(hist.categories || [])].slice(0, 14),
+// AR — what is owed, aged, by customer. Books carries status on every invoice:
+// "sent" is outstanding, "overdue" is past terms, "paid" is closed.
+export function buildAR(revenue) {
+  const recs = (revenue?.records || []).filter(r => r.status && r.status !== 'paid')
+  if (!recs.length) return null
+  const byCustomer = {}
+  for (const r of recs) {
+    const k = r.customer || 'Unknown'
+    if (!byCustomer[k]) byCustomer[k] = { total: 0, overdue: 0, count: 0, oldest: r.date }
+    byCustomer[k].total += r.total
+    byCustomer[k].count += 1
+    if (r.status === 'overdue') byCustomer[k].overdue += r.total
+    if (r.date < byCustomer[k].oldest) byCustomer[k].oldest = r.date
   }
-  try {
-    const payload = JSON.stringify(next)
-    try { await seg.update(CLOSING_KEY, payload) } catch { await seg.put(CLOSING_KEY, payload, 48) }
-  } catch (e) { console.warn('[closing history]', e.message) }
-
-  return { evidence, affirmation, category }
+  const rows = Object.entries(byCustomer)
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.total - a.total)
+  return {
+    rows,
+    total: rows.reduce((s2, r) => s2 + r.total, 0),
+    overdue: rows.reduce((s2, r) => s2 + r.overdue, 0),
+  }
 }
 
 // ---------- send + routes ----------
@@ -1017,7 +1011,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // current, and it cannot 404 because the email beat a static site build.
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -1324,7 +1318,7 @@ router.get('/page', async (req, res) => {
 .bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
 .bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
 <div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
-${formatBriefHtml(b, big3, tr, null, null)}
+${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue))}
 </body></html>`)
   } catch (e) { res.status(500).send(String(e.message)) }
 })

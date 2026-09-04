@@ -574,6 +574,8 @@ Rules:
 - Numbers where numbers exist.
 - Never editorialize a shortfall. If the category has nothing good in it today, reach smaller rather than reaching for a verdict: "Board was thin and you still made 6 reactivation calls" is right; "tough day out there" is not.
 - On a genuinely empty day the smallest true thing is still the answer: "Nothing closed today. You showed up anyway."
+- NEVER compare a number to a target, and never restate the pace section. Pace is reported elsewhere in the brief; repeating it here wastes the line. "Collections reached $6,230 across 3 days, $1,538 above the daily target" is the pace section wearing a hat. "Three invoices cleared, Avon and Autoglass Guys both paid" is an evidence line.
+- Prefer a fact with a NAME in it over a fact with only a number.
 
 Category meanings:
   quality       — work done right, no comebacks, clean reports
