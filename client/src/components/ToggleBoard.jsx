@@ -9,6 +9,12 @@ import SalespersonPicker from './SalespersonPicker'
 import Navbar from './Navbar'
 import LoadingSplash from './LoadingSplash.jsx'
 
+function todayPT() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+
 const ORANGE = '#CD4419'
 
 export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout, currentScreen, onNavigate }) {
@@ -35,7 +41,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
   // Job date (Mark 2026-09-03): the auto-created card was hardcoded to
   // TODAY, so jobs booked for a future day vanished off the scheduler.
-  const [jobDate, setJobDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [jobDate, setJobDate] = useState(() => todayPT())
   const [createAs, setCreateAs] = useState('request')
   const [kanbanWarning, setKanbanWarning] = useState(null)
   // One WorkDrive folder per job (Mark 2026-07-29): whichever button
@@ -471,9 +477,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             value={jobDate}
             onChange={e => setJobDate(e.target.value)}
             className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
-            style={{ borderColor: jobDate === new Date().toISOString().split('T')[0] ? '#ddd' : '#e8710a' }}
+            style={{ borderColor: jobDate === todayPT() ? '#ddd' : '#e8710a' }}
           />
-          {jobDate !== new Date().toISOString().split('T')[0] && (
+          {jobDate !== todayPT() && (
             <span className="text-xs font-semibold" style={{ color: '#e8710a' }}>
               books for {new Date(jobDate + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })}
             </span>
