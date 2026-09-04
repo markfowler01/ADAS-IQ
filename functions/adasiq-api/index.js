@@ -14,6 +14,7 @@ import { softphoneRouter } from './routes/softphone.js'
 import { holidayPosterRouter } from './routes/holidayPoster.js'
 import { cronMonitorRouter } from './routes/cronMonitor.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
+import extractVinImageRouter from './routes/extract-vin-image.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
@@ -207,6 +208,7 @@ app.get('/debug/cache', requireAuth, async (req, res) => {
 app.use('/api/extract', requireAuth, extractLimiter, extractRouter)
 app.use('/api/clean-descriptions', requireAuth, extractLimiter, cleanDescriptionsRouter)
 app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)
+app.use('/api/extract-vin-image', requireAuth, extractLimiter, extractVinImageRouter)
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)

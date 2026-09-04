@@ -402,7 +402,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
                   try {
                     const fd = new FormData()
                     fd.append('image', file)
-                    const r = await apiFetch(`${API_BASE}/api/extract-ro-image`, { method: 'POST', body: fd })
+                    const r = await apiFetch(`${API_BASE}/api/extract-vin-image`, { method: 'POST', body: fd })
                     const d = await r.json()
                     if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
                     const vin = String(d.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
