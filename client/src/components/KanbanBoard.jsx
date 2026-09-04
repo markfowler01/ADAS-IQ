@@ -236,6 +236,8 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
   })
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [vinScanning, setVinScanning] = useState(false)
+  const vinCamRef = useRef(null)
   const [error, setError] = useState(null)
 
   function setField(key, val) {
@@ -375,16 +377,53 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
             </div>
           </div>
 
-          {/* VIN */}
+          {/* VIN — camera scan (Mark 2026-09-03): snap the door-jamb
+              sticker, /api/extract-ro-image reads the VIN out of it. */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">VIN <span className="text-gray-300 font-normal">(optional)</span></label>
-            <input
-              className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
-              style={{ borderColor: '#ddd' }}
-              value={form.vin}
-              onChange={e => setField('vin', e.target.value)}
-              placeholder="17-character VIN"
-            />
+            <div className="flex gap-2">
+              <input
+                className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                style={{ borderColor: '#ddd' }}
+                value={form.vin}
+                onChange={e => setField('vin', e.target.value)}
+                placeholder="17-character VIN"
+              />
+              <input
+                ref={vinCamRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={async e => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  setVinScanning(true)
+                  try {
+                    const fd = new FormData()
+                    fd.append('image', file)
+                    const r = await apiFetch(`${API_BASE}/api/extract-ro-image`, { method: 'POST', body: fd })
+                    const d = await r.json()
+                    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+                    const vin = String(d.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+                    if (vin) setField('vin', vin)
+                    else setError('No VIN found in that photo — try a closer shot of the sticker.')
+                  } catch (err) {
+                    setError(`VIN scan failed: ${err.message}`)
+                  } finally {
+                    setVinScanning(false)
+                    if (vinCamRef.current) vinCamRef.current.value = ''
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => vinCamRef.current?.click()}
+                disabled={vinScanning}
+                className="rounded-lg px-3 py-2 text-sm font-semibold"
+                style={{ border: '1px solid #ddd', backgroundColor: vinScanning ? '#f5f3f0' : 'white', color: '#555', whiteSpace: 'nowrap' }}
+              >{vinScanning ? '🔍 Reading…' : '📷 Scan'}</button>
+            </div>
           </div>
 
           {/* Insurer */}
