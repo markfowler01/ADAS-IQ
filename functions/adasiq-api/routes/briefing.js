@@ -935,7 +935,7 @@ function buildSpokenScript(b, big3, tr, triage) {
     big3.big3.forEach((x, i) => parts.push(`Number ${i + 1}. ${toSpoken(x.text)}.`))
     if (big3.hardThing) parts.push(`The hard thing, and do it first. ${toSpoken(big3.hardThing)}.`)
   }
-  parts.push('Go get it.')
+  parts.push('Get some.')
   return cleanSpeech(parts.join(' '))
 }
 
@@ -1456,7 +1456,7 @@ router.get('/twiml', async (req, res) => {
     .map(s => `<Say voice="${ADA_VOICE}">${escapeXml(s)}</Say><Pause length="1"/>`)
     .join('')
   res.type('text/xml').send(
-    `<?xml version="1.0" encoding="UTF-8"?><Response>${says}<Say voice="${ADA_VOICE}">Go get it.</Say></Response>`
+    `<?xml version="1.0" encoding="UTF-8"?><Response>${says}<Say voice="${ADA_VOICE}">Get some.</Say></Response>`
   )
 })
 
