@@ -174,6 +174,28 @@ export default function MobileJobCard({
   onBillFromQuote,
   estimateTotal,
 }) {
+  // Tap-to-copy VIN (Mark 2026-09-03: "we use this alot") — clipboard
+  // API first, execCommand fallback for older webviews.
+  const [vinCopied, setVinCopied] = useState(false)
+  function copyVin(vin) {
+    const done = () => { setVinCopied(true); setTimeout(() => setVinCopied(false), 1600) }
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(vin).then(done).catch(() => fallbackCopy(vin, done))
+    } else fallbackCopy(vin, done)
+  }
+  function fallbackCopy(text, done) {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'; ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      done()
+    } catch { /* nothing to do */ }
+  }
+
   const [finding, setFinding] = useState(false)
   const [wdUrl, setWdUrl] = useState('')
   const totalsMap = useEstimateTotals()
@@ -265,7 +287,14 @@ export default function MobileJobCard({
       )}
 
       {job.vin && (
-        <p className="text-xs mb-1 font-mono" style={{ color: '#888' }}>VIN: {job.vin}</p>
+        <p
+          className="text-xs mb-1 font-mono"
+          style={{ color: vinCopied ? '#15803d' : '#888', cursor: 'pointer' }}
+          onClick={e => {
+            e.stopPropagation()
+            copyVin(job.vin)
+          }}
+        >VIN: {job.vin} {vinCopied ? '✓ copied' : '⧉'}</p>
       )}
 
       {job.ro_number && (
