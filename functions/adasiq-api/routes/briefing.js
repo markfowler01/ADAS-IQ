@@ -704,6 +704,40 @@ function ord(n) {
   return n + (s[(v - 20) % 10] || s[v] || s[0])
 }
 
+// Closing: one evidence line from today's data, then an affirmation about
+// character. Both rotate with memory — the affirmation on a 30-day window, the
+// evidence category never twice running.
+//
+// Lost once already: this sat next to the old email template and went out with
+// it when that was replaced, while the call site stayed. safe() swallowed the
+// ReferenceError and the closing silently vanished from the brief.
+const CLOSING_KEY = 'closing_history'
+
+async function buildClosing(req, { data, pool }) {
+  const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+  let hist = { affirmations: [], categories: [] }
+  try {
+    const v = await seg.getValue(CLOSING_KEY)
+    if (v) hist = typeof v === 'string' ? JSON.parse(v) : v
+  } catch { /* first run */ }
+
+  const category = nextCategory(hist.categories?.[0]?.category)
+  const affirmation = pickUnused(pool, hist.affirmations, 30)
+  const evidence = await safe('evidence', () => evidenceLine(req, { category, data }))
+
+  const now = new Date().toISOString()
+  const next = {
+    affirmations: [{ text: affirmation, at: now }, ...(hist.affirmations || [])].slice(0, 60),
+    categories: [{ category, at: now }, ...(hist.categories || [])].slice(0, 14),
+  }
+  try {
+    const payload = JSON.stringify(next)
+    try { await seg.update(CLOSING_KEY, payload) } catch { await seg.put(CLOSING_KEY, payload, 48) }
+  } catch (e) { console.warn('[closing history]', e.message) }
+
+  return { evidence, affirmation, category }
+}
+
 // AR — what is owed, aged, by customer. Books carries status on every invoice:
 // "sent" is outstanding, "overdue" is past terms, "paid" is closed.
 export function buildAR(revenue) {
@@ -1011,6 +1045,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // current, and it cannot 404 because the email beat a static site build.
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
+  const ar = buildAR(b.revenue)
   const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
