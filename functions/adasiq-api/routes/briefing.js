@@ -31,6 +31,7 @@ import { publishAdaVoice } from '../services/adaVoice.js'
 import { publishBriefPage } from '../services/briefPage.js'
 import { project } from '../services/confidence.js'
 import { toSpoken } from '../services/toSpoken.js'
+import { dayShape } from '../services/dayShape.js'
 import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
 import { evaluate as evaluatePace } from '../services/paceModel.js'
 import { formatPace, speakPace } from '../services/paceFormat.js'
@@ -795,7 +796,7 @@ export async function gatherDayReview(req) {
     revenue_today: b.revenue?.todayTotal ?? null,
     revenue_mtd: b.revenue?.monthlyTotal ?? null,
     revenue_projected: b.revenue?.projected ?? null,
-    revenue_target: TARGET,
+    revenue_target: null,  // set by the caller from the stored monthly goal
     cliq_available: b.sources.cliqProbe !== 'disabled (missing Messages.READ scope)',
   }
 }
@@ -844,6 +845,7 @@ export async function planDay(req, b) {
       todayContext: {
         today,
         weekday: weekday(today),
+        day_shape: dayShape(today),
         load: {
           jobs_today: b.todaysJobs.length,
           jaden_jobs_today: b.jadenToday.length,
@@ -1011,9 +1013,16 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // Ada's voice memo — a file he can tap and play on the way to F3. Hard
   // timeout and fail-soft: TTS plus a git commit is ~12s, and if it runs long
   // the written brief still goes out on time without it.
-  const audio = await withTimeout('ada-voice',
-    safe('ada-voice', () => publishAdaVoice(buildSpokenScript(b, big3, tr, triage), ptDate(), { slot: 'morning' })),
-    22000)
+  // Audio is rendered by its own cron step BEFORE the brief, not here. TTS plus
+  // a git commit runs ~12s, and with pace, closing, triage and the page render
+  // added the brief crossed the 30s gateway cap and 408'd — sending nothing.
+  // The brief now just reads whatever the render step recorded.
+  const audio = await safe('audio-lookup', async () => {
+    const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+    const name = await seg.getValue('ada_audio_' + ptDate())
+    if (!name) return null
+    return { name: String(name), url: `https://absoluteadas.com/audio/${String(name)}` }
+  })
   if (audio?.name) {
     try {
       const app = catalyst.initialize(req, { type: 'advancedio' })
@@ -1116,6 +1125,27 @@ router.post('/plan', async (req, res) => {
 // knew whether that was fixable or fundamental.
 // Where does triage spend its time? It hit the 12s cap on first run and the
 // pieces needed timing individually rather than guessing.
+// Render the morning memo. Runs as its own cron step so the brief's request
+// stays inside the gateway cap.
+router.post('/render-audio', async (req, res) => {
+  try {
+    const b = await buildBriefing(req)
+    const day = await safe('plan', () => getDay(req, ptDate()))
+    const big3 = day?.big3?.length
+      ? { big3: day.big3, hardThing: day.hard_thing?.text || '', note: day.plan_note || '', affirmation: day.affirmation || '' }
+      : null
+    const tr = techRevenue(b.jobs, b.revenue)
+    const triage = await safe('triage', async () => triageInbox(req, { messages: await getUnreadSummaries() }))
+    const out = await publishAdaVoice(buildSpokenScript(b, big3, tr, triage), ptDate(), { slot: 'morning' })
+    if (out?.name) {
+      const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+      try { await seg.update('ada_audio_' + ptDate(), out.name) }
+      catch { await seg.put('ada_audio_' + ptDate(), out.name, 48) }
+    }
+    res.json({ ok: !!out, ...out })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 router.get('/triage-debug', async (req, res) => {
   const t = {}
   const mark = (k, t0) => { t[k] = Date.now() - t0 }

@@ -22,6 +22,8 @@ import { postToCliqChannelById, ADA_CHANNEL_ID } from '../services/cliq.js'
 import { getDay, upsertDay, recordCheckin } from '../services/dayLedger.js'
 import { parseCheckin, reviewDay, closeDay } from '../services/dayCoach.js'
 import { ptDate } from '../services/ptDate.js'
+import { getMonthlyGoal } from '../services/paceConfig.js'
+import { dayShape } from '../services/dayShape.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { gatherDayReview } from './briefing.js'
 
@@ -105,6 +107,11 @@ export async function sendEveningCheckin(req, { dry = false } = {}) {
   let reviewed = false
   try {
     const context = await gatherDayReview(req)
+    // The morning runs on the stored monthly goal; the evening was quoting a
+    // hardcoded $50,000. Two different targets in the same day's briefs.
+    const goal = await getMonthlyGoal(req).catch(() => ({ goal: 40000 }))
+    context.revenue_target = goal.goal
+    context.day_shape = dayShape(date)
     body = await reviewDay(req, {
       context, date,
       big3: day?.big3 || [],
