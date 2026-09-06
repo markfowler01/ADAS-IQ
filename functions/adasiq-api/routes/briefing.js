@@ -33,7 +33,7 @@ import { project } from '../services/confidence.js'
 import { toSpoken } from '../services/toSpoken.js'
 import { dayShape } from '../services/dayShape.js'
 import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
-import { evaluate as evaluatePace } from '../services/paceModel.js'
+import { evaluate as evaluatePace, projectMonth } from '../services/paceModel.js'
 import { formatPace, speakPace } from '../services/paceFormat.js'
 import { getMonthlyGoal, getRatio } from '../services/paceConfig.js'
 import { MORNING_POOL, pickUnused, nextCategory } from '../services/closing.js'
@@ -42,7 +42,12 @@ import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/t
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
 
 const router = express.Router()
-const TARGET = 50000
+// Fallback only. The authoritative goal is the stored monthly goal
+// (services/paceConfig.js), which Mark sets and the pace section reads. This
+// constant survives in the SMS digest and the voice script, so it is aligned
+// to the same default — having it at 50000 meant the digest quoted one target
+// while pace quoted another, in the same brief.
+const TARGET = Number(process.env.MONTHLY_TARGET_FALLBACK || 40000)
 const SCAN_REPORTS_FOLDER_ID = '147686000000057026' // postscan folder — not commitments
 const SELF_BASE = (process.env.SELF_BASE_URL ||
   'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api').replace(/\/$/, '')
@@ -739,6 +744,60 @@ async function buildClosing(req, { data, pool }) {
   return { evidence, affirmation, category }
 }
 
+// The four standing numbers Mark asked for every day: workdays left, projected
+// month, average invoice, and invoices per tech per day.
+export function buildNumbers(revenue, ev, ratio, projection) {
+  const recs = revenue?.records || []
+  if (!recs.length || !ev) return null
+
+  const avgInvoice = recs.reduce((s2, r) => s2 + r.total, 0) / recs.length
+
+  // Invoices per tech per day is counted over the days that tech actually
+  // invoiced, not over every working day in the month — dividing by days he
+  // was not on the board understates the rate.
+  const byTech = {}
+  for (const r of recs) {
+    const t = (r.salesperson || 'Unassigned').trim()
+    if (!byTech[t]) byTech[t] = { count: 0, days: new Set(), total: 0 }
+    byTech[t].count += 1
+    byTech[t].total += r.total
+    if (r.date) byTech[t].days.add(r.date)
+  }
+  const perTech = Object.entries(byTech)
+    .map(([name, v]) => ({
+      name,
+      invoices: v.count,
+      daysWorked: v.days.size,
+      perDay: v.days.size ? +(v.count / v.days.size).toFixed(1) : 0,
+      avgInvoice: Math.round(v.total / v.count),
+    }))
+    .sort((a, b) => b.invoices - a.invoices)
+
+  return {
+    workdaysLeft: projection.remainingWorkingDays,
+    workdaysElapsed: projection.elapsedWorkingDays,
+    projected: projection.projected,
+    projectionReliable: projection.reliable,
+    avgInvoice: Math.round(avgInvoice),
+    invoiceCount: recs.length,
+    perTech,
+  }
+}
+
+export function formatNumbers(n, goal) {
+  if (!n) return ''
+  const m = v => '$' + Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
+  const L = ['', 'Numbers:']
+  L.push(`- ${n.workdaysLeft} workdays left this month.`)
+  L.push(n.projectionReliable
+    ? `- Projected ${m(n.projected)} against ${m(goal)}.`
+    : `- Projection holds until day 5. ${n.workdaysElapsed} elapsed.`)
+  L.push(`- Average invoice ${m(n.avgInvoice)} across ${n.invoiceCount}.`)
+  n.perTech.forEach(t =>
+    L.push(`- ${t.name}: ${t.perDay} invoices/day over ${t.daysWorked} days, ${m(t.avgInvoice)} average.`))
+  return L.join('\n')
+}
+
 // AR — what is owed, aged, by customer. Books carries status on every invoice:
 // "sent" is outstanding, "overdue" is past terms, "paid" is closed.
 export function buildAR(revenue) {
@@ -856,7 +915,7 @@ export async function planDay(req, b) {
           followups_due: b.followups.length,
           revenue_mtd: b.revenue?.monthlyTotal || null,
           revenue_projected: b.revenue?.projected || null,
-          revenue_target: TARGET,
+          revenue_target: (await safe('goal', () => getMonthlyGoal(req)))?.goal ?? 40000,
         },
       },
     }), 180000)
@@ -968,7 +1027,9 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const pace = b.revenue?.records
     ? evaluatePace({ invoices: b.revenue.records, today: ptDate(), monthlyGoal: goalRec.goal, ratio: ratioRec.ratio })
     : null
-  const paceText = pace ? formatPace(pace) : ''
+  const projection = pace ? projectMonth(pace, ratioRec.ratio) : null
+  const numbers = pace ? buildNumbers(b.revenue, pace, ratioRec.ratio, projection) : null
+  const paceText = (pace ? formatPace(pace) : '') + (numbers ? formatNumbers(numbers, goalRec.goal) : '')
 
   // Triage is best-effort and capped: it rides inside the brief's gateway
   // request, and an unread inbox must never be why the brief is late.
@@ -1088,7 +1149,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     return sendMorningKickoff(req)
   })
   if (sent.cliq || sent.sms || sent.push) await stampSent(req)
-  return { ok: true, sent, digest, big3, triage, pace, closing, audio: audio?.url || null, page: page?.url || null, kickoff: kickoff || { ok: false } }
+  return { ok: true, sent, digest, big3, triage, pace, numbers, projection, closing, audio: audio?.url || null, page: page?.url || null, kickoff: kickoff || { ok: false } }
 }
 
 router.get('/debug', async (req, res) => {

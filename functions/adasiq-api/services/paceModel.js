@@ -151,3 +151,36 @@ export function evaluate({ invoices, today, monthlyGoal, ratio }) {
     targets: t,
   }
 }
+
+/**
+ * Month projection, bucket-aware.
+ *
+ * The old projection multiplied a flat daily average across the month, which
+ * ignores that Mark's last 7 working days run ~1.5x his steady days — it
+ * under-projects all month and then over-corrects at the end. This carries
+ * what he has actually booked and adds each remaining bucket at that bucket's
+ * own observed rate.
+ *
+ * Push rate falls back to steady x ratio until push days have started, since
+ * there is nothing observed to use yet.
+ */
+export function projectMonth(ev, ratio) {
+  const steadyRate = ev.steady.started ? ev.steady.avg : ev.steady.target
+  const pushRate = ev.push.started ? ev.push.avg : Math.round(steadyRate * ratio)
+  const booked = (ev.steady.actual || 0) + (ev.push.actual || 0)
+  const projected = Math.round(
+    booked + ev.remaining.steady * steadyRate + ev.remaining.push * pushRate
+  )
+  const elapsed = ev.steady.days + ev.push.days
+  return {
+    booked,
+    projected,
+    steadyRate,
+    pushRate,
+    elapsedWorkingDays: elapsed,
+    remainingWorkingDays: ev.remaining.steady + ev.remaining.push,
+    // Same floor the rest of the coach uses: below 5 elapsed working days a
+    // projection is noise dressed as a forecast.
+    reliable: elapsed >= 5,
+  }
+}
