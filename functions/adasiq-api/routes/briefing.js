@@ -746,6 +746,25 @@ async function buildClosing(req, { data, pool }) {
 
 // The four standing numbers Mark asked for every day: workdays left, projected
 // month, average invoice, and invoices per tech per day.
+// Canonical salesperson names. techRevenue already merges near-identical
+// spellings; without the same treatment here "Mark Folwer" and "Mark Fowler"
+// were counted as two different techs in the per-day rates.
+function canonicalNames(recs) {
+  const counts = {}
+  for (const r of recs) {
+    const n = (r.salesperson || '').trim()
+    if (n) counts[n] = (counts[n] || 0) + 1
+  }
+  const names = Object.keys(counts).sort((x, y) => counts[y] - counts[x])
+  const map = {}
+  for (const n of names) {
+    const hit = names.find(c => map[c] === c && c !== n &&
+      levenshtein(c.toLowerCase(), n.toLowerCase()) <= 2)
+    map[n] = hit || n
+  }
+  return map
+}
+
 export function buildNumbers(revenue, ev, ratio, projection) {
   const recs = revenue?.records || []
   if (!recs.length || !ev) return null
@@ -755,9 +774,11 @@ export function buildNumbers(revenue, ev, ratio, projection) {
   // Invoices per tech per day is counted over the days that tech actually
   // invoiced, not over every working day in the month — dividing by days he
   // was not on the board understates the rate.
+  const canon = canonicalNames(recs)
   const byTech = {}
   for (const r of recs) {
-    const t = (r.salesperson || 'Unassigned').trim()
+    const raw = (r.salesperson || 'Unassigned').trim()
+    const t = canon[raw] || raw
     if (!byTech[t]) byTech[t] = { count: 0, days: new Set(), total: 0 }
     byTech[t].count += 1
     byTech[t].total += r.total
@@ -788,7 +809,6 @@ export function formatNumbers(n, goal) {
   if (!n) return ''
   const m = v => '$' + Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
   const L = ['', 'Numbers:']
-  L.push(`- ${n.workdaysLeft} workdays left this month.`)
   L.push(n.projectionReliable
     ? `- Projected ${m(n.projected)} against ${m(goal)}.`
     : `- Projection holds until day 5. ${n.workdaysElapsed} elapsed.`)
