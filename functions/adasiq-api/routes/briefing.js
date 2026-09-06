@@ -48,6 +48,11 @@ const router = express.Router()
 // to the same default — having it at 50000 meant the digest quoted one target
 // while pace quoted another, in the same brief.
 const TARGET = Number(process.env.MONTHLY_TARGET_FALLBACK || 40000)
+
+// Mark's Zoho Analytics workspace. Env-overridable so the view can be
+// re-pointed without a deploy.
+const ANALYTICS_URL = process.env.ZOHO_ANALYTICS_URL ||
+  'https://analytics.zoho.com/workspace/3060705000000071002/view/3060705000000245309'
 const SCAN_REPORTS_FOLDER_ID = '147686000000057026' // postscan folder — not commitments
 const SELF_BASE = (process.env.SELF_BASE_URL ||
   'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api').replace(/\/$/, '')
@@ -583,7 +588,7 @@ const SERIF = "Georgia,'Iowan Old Style','Times New Roman',serif"
 const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 const m0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar) {
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl) {
   const label = t => `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
   const block = (title, inner) => inner
     ? `<tr><td style="padding:32px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
@@ -685,6 +690,17 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   ${block('Cash', cashHtml)}
   ${block('Pace', paceHtml)}
   ${block('Sales by tech', techHtml)}
+  ${numbers ? block('Numbers', [
+    numbers.projectionReliable
+      ? line(`Projected <strong style="font-weight:600;">${m0(numbers.projected)}</strong> against ${m0(goal)}.`)
+      : line(`Projection holds until day 5. ${numbers.workdaysElapsed} elapsed.`, SOFT),
+    line(`Average invoice ${m0(numbers.avgInvoice)} across ${numbers.invoiceCount}.`),
+    ...numbers.perTech.map(t => line(
+      `${esc(t.name)} &middot; ${t.perDay} invoices/day over ${t.daysWorked} days &middot; ${m0(t.avgInvoice)} avg`)),
+    `<div style="padding-top:10px;"><a href="${esc(analyticsUrl || '')}"
+       style="font:400 14px/1 ${SANS};color:${ACCENT};text-decoration:none;
+       border-bottom:1px solid ${ACCENT};padding-bottom:2px;">Click here for the full numbers &rarr;</a></div>`,
+  ].join('')) : ''}
   ${block('Board', boardHtml)}
   ${block('Open work', openHtml)}
   ${block('AR', arHtml)}
@@ -815,6 +831,7 @@ export function formatNumbers(n, goal) {
   L.push(`- Average invoice ${m(n.avgInvoice)} across ${n.invoiceCount}.`)
   n.perTech.forEach(t =>
     L.push(`- ${t.name}: ${t.perDay} invoices/day over ${t.daysWorked} days, ${m(t.avgInvoice)} average.`))
+  L.push(`Full numbers: ${ANALYTICS_URL}`)
   return L.join('\n')
 }
 
@@ -1136,7 +1153,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
   const ar = buildAR(b.revenue)
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -1464,7 +1481,7 @@ router.get('/page', async (req, res) => {
 .bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
 .bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
 <div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
-${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue))}
+${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL)}
 </body></html>`)
   } catch (e) { res.status(500).send(String(e.message)) }
 })
