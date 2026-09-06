@@ -32,6 +32,7 @@ import { publishBriefPage } from '../services/briefPage.js'
 import { project } from '../services/confidence.js'
 import { toSpoken } from '../services/toSpoken.js'
 import { dayShape } from '../services/dayShape.js'
+import { buildProgress, formatProgress, clockStanding } from '../services/progressStrip.js'
 import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
 import { evaluate as evaluatePace, projectMonth } from '../services/paceModel.js'
 import { formatPace, speakPace } from '../services/paceFormat.js'
@@ -588,7 +589,38 @@ const SERIF = "Georgia,'Iowan Old Style','Times New Roman',serif"
 const SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 const m0 = n => '$' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })
 
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl) {
+// Progress bars, drawn as nested tables. No flexbox, no divs with widths —
+// Outlook renders neither reliably. Two bars per row: the clock, and the goal.
+function bar(pctVal, color, w = 300) {
+  const fill = Math.max(2, Math.round(pctVal * w))
+  return `<table role="presentation" cellpadding="0" cellspacing="0" width="${w}" style="border-collapse:collapse;">
+    <tr>
+      <td width="${fill}" height="6" style="background:${color};border-radius:3px;font-size:0;line-height:0;">&nbsp;</td>
+      <td width="${w - fill}" height="6" style="background:#e8e3da;border-radius:3px;font-size:0;line-height:0;">&nbsp;</td>
+    </tr></table>`
+}
+
+function progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD) {
+  if (!prog) return ''
+  const r = x => Math.round(x * 100)
+  const st = clockStanding(prog.month)
+  const col = st.even ? SOFT : (st.delta > 0 ? GOOD : ACCENT)
+  const row = (label, value, pctVal, color) => `
+    <tr>
+      <td style="font:400 11px/1 ${SANS};color:${SOFT};padding:0 10px 7px 0;white-space:nowrap;">${label}</td>
+      <td style="padding:0 10px 7px 0;width:100%;">${bar(pctVal, color)}</td>
+      <td style="font:400 12px/1 ${SANS};color:${INK};padding:0 0 7px 0;white-space:nowrap;">${value}</td>
+    </tr>`
+  return `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+    ${row('MONTH', `${r(prog.month.timePct)}% elapsed`, prog.month.timePct, SOFT)}
+    ${row('BOOKED', `${r(prog.month.goalPct)}% of goal`, prog.month.goalPct, col)}
+    ${row(prog.quarter.label.toUpperCase(), `${prog.quarter.left}d left`, prog.quarter.timePct, SOFT)}
+    ${row('YEAR', `${prog.year.left}d left`, prog.year.timePct, SOFT)}
+  </table>
+  <div style="font:400 13px/20px ${SANS};color:${col};padding-top:6px;">${st.even ? 'Even with' : (st.delta > 0 ? 'Ahead of' : 'Behind')} the clock.</div>`
+}
+
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog) {
   const label = t => `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
   const block = (title, inner) => inner
     ? `<tr><td style="padding:32px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
@@ -687,6 +719,7 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
 
   <tr><td style="padding:30px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
 
+  ${prog ? block('Where the month is', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
   ${block('Cash', cashHtml)}
   ${block('Pace', paceHtml)}
   ${block('Sales by tech', techHtml)}
@@ -1066,7 +1099,12 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     : null
   const projection = pace ? projectMonth(pace, ratioRec.ratio) : null
   const numbers = pace ? buildNumbers(b.revenue, pace, ratioRec.ratio, projection) : null
-  const paceText = (pace ? formatPace(pace) : '') + (numbers ? formatNumbers(numbers, goalRec.goal) : '')
+  const prog = b.revenue ? buildProgress({
+    today: ptDate(), booked: b.revenue.monthlyTotal || 0, goal: goalRec.goal,
+  }) : null
+  const paceText = (pace ? formatPace(pace) : '') +
+    (prog ? formatProgress(prog) : '') +
+    (numbers ? formatNumbers(numbers, goalRec.goal) : '')
 
   // Triage is best-effort and capped: it rides inside the brief's gateway
   // request, and an unread inbox must never be why the brief is late.
@@ -1153,7 +1191,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
   const ar = buildAR(b.revenue)
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -1481,7 +1519,7 @@ router.get('/page', async (req, res) => {
 .bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
 .bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
 <div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
-${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL)}
+${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null)}
 </body></html>`)
   } catch (e) { res.status(500).send(String(e.message)) }
 })
