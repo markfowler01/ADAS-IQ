@@ -1202,7 +1202,15 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [mobileQuotesOpen, setMobileQuotesOpen] = useState(false)
   // Mobile column picker (Mark 2026-09-03: "on mobile it's very hard to
   // see what is what... I can not change the column")
-  const [mobileCol, setMobileCol] = useState('all')
+  // Remembered per device (Mark 2026-09-03) — Jayden's phone reopens on
+  // whatever chip he last picked.
+  const [mobileCol, setMobileCol] = useState(() => {
+    try { return localStorage.getItem('aa_jobs_mobile_col') || 'all' } catch { return 'all' }
+  })
+  const pickMobileCol = (id) => {
+    setMobileCol(id)
+    try { localStorage.setItem('aa_jobs_mobile_col', id) } catch { /* private mode */ }
+  }
   const [quoteBusy, setQuoteBusy] = useState(false)
   const [quoteBilling, setQuoteBilling] = useState(null)     // {q, preview} modal
   const [quoteBillBusy, setQuoteBillBusy] = useState(false)
@@ -2144,7 +2152,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   { id: 'quotes', label: '📤 Quotes', n: quotedJobs.length }]
                   .map(t => (
                   <button key={t.id}
-                    onClick={() => setMobileCol(t.id)}
+                    onClick={() => pickMobileCol(t.id)}
                     className="text-xs font-bold rounded-full px-3 py-2 flex-shrink-0"
                     style={mobileCol === t.id
                       ? { backgroundColor: t.id === 'quotes' ? '#1d4ed8' : ORANGE, color: 'white' }
