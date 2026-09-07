@@ -28,6 +28,7 @@ import RepairEstimateScreen from './components/RepairEstimateScreen'
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
+import TipsScreen from './pages/TipsScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
 import SoftphonePanel from './components/SoftphonePanel'
@@ -330,6 +331,9 @@ function MainApp() {
       )}
       {screen === 'sms' && (
         <SmsLog {...navProps} />
+      )}
+      {screen === 'tips' && (
+        <TipsScreen {...navProps} />
       )}
       {screen === 'books' && (
         <BooksScreen onBack={() => setScreen('upload')} {...navProps} />

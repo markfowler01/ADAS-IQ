@@ -41,6 +41,7 @@ const MORE_GROUPS = [
     { id: 'upload',    label: 'Upload PDF' },
     { id: 'planner',   label: 'My Day Planner' },
     { id: 'projects',  label: 'Projects' },
+    { id: 'tips',      label: 'TSB Tips' },
     { id: 'rules',     label: 'Calibration Rules' },
     { id: 'item-map',  label: 'Item Mapping', adminOnly: true },
     { id: 'messages',  label: 'Messages' },
