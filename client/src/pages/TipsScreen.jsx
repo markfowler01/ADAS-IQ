@@ -29,6 +29,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
   const [editTsb, setEditTsb] = useState(null)
   const [openId, setOpenId] = useState(null)
   const [toast, setToast] = useState(null)
+  const [view, setView] = useState('tips')  // tips | cloning
 
   const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
   const showToast = m => { setToast(m); setTimeout(() => setToast(null), 2600) }
@@ -80,6 +81,19 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
             style={{ backgroundColor: ORANGE }}>+ New TSB</button>
         </div>
 
+        <div className="flex gap-1.5 mb-3">
+          {[['tips', '📖 Tips'], ['cloning', '🧬 Hex Prog Coverage']].map(([v, label]) => (
+            <button key={v} onClick={() => setView(v)}
+              className="text-sm font-bold rounded-xl px-4 py-2.5"
+              style={view === v
+                ? { backgroundColor: '#1a1a1a', color: 'white' }
+                : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>{label}</button>
+          ))}
+        </div>
+
+        {view === 'cloning' && <CloningCoverage />}
+
+        {view === 'tips' && (<>
         <input
           type="search"
           value={q}
@@ -173,6 +187,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
             )
           })}
         </div>
+        </>)}
       </div>
 
       {(showNew || editTsb) && (
@@ -282,6 +297,106 @@ function TsbModal({ tsb, onClose, onSaved }) {
           {saving ? (cleanup && !isEdit ? '✨ Cleaning up & saving…' : 'Saving…') : (isEdit ? 'Save Changes' : 'Save TSB')}
         </button>
       </div>
+    </div>
+  )
+}
+
+
+// Hex Prog II coverage search — server-side substring search over the
+// parsed Microtronik dataset (~read-only reference).
+function CloningCoverage() {
+  const [q, setQ] = useState('')
+  const [type, setType] = useState('vehicles')
+  const [stats, setStats] = useState(null)
+  const [res, setRes] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/cloning/stats`).then(r => r.json()).then(setStats).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const needle = q.trim()
+    if (!needle) { setRes(null); return }
+    const t = setTimeout(async () => {
+      setBusy(true)
+      try {
+        const r = await apiFetch(`${API_BASE}/api/cloning/search?q=${encodeURIComponent(needle)}&type=${type}`)
+        setRes(await r.json())
+      } catch { setRes(null) }
+      finally { setBusy(false) }
+    }, 250)
+    return () => clearTimeout(t)
+  }, [q, type])
+
+  return (
+    <div>
+      <div className="flex gap-1.5 mb-2">
+        {[['vehicles', '🚗 Vehicles'], ['ecus', '🖥 ECU Modules']].map(([v, label]) => (
+          <button key={v} onClick={() => setType(v)}
+            className="text-xs font-bold rounded-full px-3 py-1.5"
+            style={type === v
+              ? { backgroundColor: '#7e22ce', color: 'white' }
+              : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>{label}</button>
+        ))}
+        {stats && (
+          <span className="text-[11px] self-center ml-auto" style={{ color: '#aaa' }}>
+            {Number(stats.vehicles).toLocaleString()} vehicles · {Number(stats.ecus).toLocaleString()} modules
+          </span>
+        )}
+      </div>
+      <input
+        type="search"
+        value={q}
+        onChange={e => setQ(e.target.value)}
+        placeholder={type === 'vehicles' ? 'Search — 2018 F-150, BMW 5-Series, EDC17…' : 'Search — module, MCU, make…'}
+        className="w-full rounded-xl px-4 py-3 text-sm mb-3"
+        style={{ border: '1px solid #e0dbd6', backgroundColor: 'white' }}
+      />
+      {!q.trim() && (
+        <p className="text-sm text-center py-10" style={{ color: '#aaa' }}>
+          Type a vehicle or module — answers come from the Hex Prog II coverage list.
+        </p>
+      )}
+      {busy && <p className="text-xs text-center py-2" style={{ color: '#aaa' }}>Searching…</p>}
+      {res && q.trim() && (
+        <>
+          <p className="text-[11px] mb-2" style={{ color: '#888' }}>
+            {res.total === 0 ? 'No coverage found — Hex Prog may not support this one.'
+              : `${res.total}${res.capped ? '+' : ''} match${res.total === 1 ? '' : 'es'}${res.total > 100 ? ' (showing 100 — narrow the search)' : ''}`}
+          </p>
+          <div className="flex flex-col gap-1.5">
+            {(res.results || []).map((r, i) => (
+              <div key={i} className="bg-white rounded-xl px-3.5 py-2.5" style={{ border: '1px solid #ebebeb' }}>
+                {res.type === 'vehicles' ? (
+                  <>
+                    <p className="text-sm font-bold" style={{ color: '#1a1a1a' }}>
+                      {[r.year, r.make, r.model].filter(Boolean).join(' ')}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: '#666' }}>
+                      {r.engine && <span>{r.engine} · </span>}
+                      {r.ecu && <span className="font-bold" style={{ color: '#7e22ce' }}>ECU {r.ecu}</span>}
+                      {r.micro && <span> · {r.micro}</span>}
+                      {r.methods && <span> · {r.methods}</span>}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-bold" style={{ color: '#1a1a1a' }}>
+                      {r.make}{r.maker ? ` · ${r.maker}` : ''} — {r.module}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: '#666' }}>
+                      {r.mcu && <span>MCU {r.mcu}</span>}
+                      {r.type && <span> · {r.type}</span>}
+                      {r.options && <span> · {r.options}</span>}
+                    </p>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

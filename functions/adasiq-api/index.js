@@ -16,6 +16,7 @@ import { cronMonitorRouter } from './routes/cronMonitor.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
 import extractVinImageRouter from './routes/extract-vin-image.js'
 import tsbRouter from './routes/tsb.js'
+import cloningRouter from './routes/cloning.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
@@ -211,6 +212,7 @@ app.use('/api/clean-descriptions', requireAuth, extractLimiter, cleanDescription
 app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)
 app.use('/api/extract-vin-image', requireAuth, extractLimiter, extractVinImageRouter)
 app.use('/api/tsb', requireAuth, tsbRouter)
+app.use('/api/cloning', requireAuth, cloningRouter)
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
