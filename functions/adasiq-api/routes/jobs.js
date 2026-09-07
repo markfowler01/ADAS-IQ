@@ -979,11 +979,11 @@ export async function performSyncQuotes(req) {
     // Fetch line items from the full estimate detail
     const lineItems = await getEstimateLineItems(est.estimate_id)
 
-    // Auto-dispatch (Mark 2026-07-24): a quote whose salesperson is a
-    // technician lands directly in that tech's column for the day.
-    // Only quotes with no recognizable tech hit Needs Dispatch.
-    const syncAutoStatus = dispatchedStatusFor(est.salesperson_name)
-
+    // Request-first (Mark 2026-09-05, replacing the 7/24 auto-dispatch):
+    // imported estimates land as REQUESTS — no auto-dispatch, no fake
+    // today-date. Salesperson rides along as the suggested tech; the
+    // card becomes a job when Kat creates it (or someone moves it).
+    // A request scheduled for today still reaches the tech's Live lane.
     const vehicle = [est.cf_year, est.cf_make, est.cf_model].filter(Boolean).join(' ')
     const newJob = await insertJob(req, {
       zoho_estimate_id: est.estimate_id,
@@ -995,23 +995,23 @@ export async function performSyncQuotes(req) {
       vin:          est.cf_vin         || '',
       insurer:      est.cf_insurer     || '',
       technician:   est.salesperson_name || '',
-      scheduled_date: new Date().toISOString().split('T')[0],
+      scheduled_date: '',
       calibrations: JSON.stringify(lineItems),
       notes:        `Quote: ${est.estimate_number}`,
       report_url:   est.quote_url      || '',
-      status:       syncAutoStatus || 'need_dispatch',
+      status:       'job_requested',
+      via_request:  true,
+      request_type: 'job',
       quote_number: est.estimate_number || '',
       quote_url:    est.quote_url       || '',
       folder_url:   est.cf_scan_report_and_documentation || '',
     })
     created++
 
-    // Assigned quote → DM the tech + #technicians. Unassigned → the
-    // Needs Dispatch alert to Mark + Kat.
+    // New quote imported → Needs-attention alert to Mark + Kat (techs
+    // aren't pinged for unconfirmed quote work).
     try {
-      if (syncAutoStatus) {
-        await notifyJobDispatched(req, { ...newJob, vehicle })
-      } else {
+      {
         await notifyNeedsDispatch(req, { ...newJob, vehicle })
       }
     } catch (notifErr) {
@@ -1027,10 +1027,12 @@ export async function performSyncQuotes(req) {
     // A job whose estimate vanished, left the active statuses, or aged
     // past the cutoff comes off the board (need_dispatch only).
     if (!est || !IMPORT_STATUSES.has(est.status) || estimateTooOld(est)) {
-      // Only auto-remove if the job is still sitting in Need to Dispatch
-      // (hasn't been dispatched or worked on). Progressed jobs stay even if
-      // the estimate was voided/declined in Zoho.
-      if (job.status === 'need_dispatch') {
+      // Only auto-remove untouched cards: Need to Dispatch, or a sync-
+      // created request that nobody edited (notes still the bare
+      // 'Quote:' signature). Progressed jobs stay even if the estimate
+      // was voided/declined in Zoho.
+      if (job.status === 'need_dispatch' ||
+          (job.status === 'job_requested' && /^Quote: /.test(job.notes || ''))) {
         try {
           await deleteJob(req, job.id)
           removed++
