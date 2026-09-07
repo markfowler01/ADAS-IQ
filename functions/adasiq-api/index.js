@@ -272,6 +272,26 @@ app.use('/api/dispatch', requireAuth, dispatchRouter)
 app.use('/api/brew', requireAuth, brewRouter)
 
 app.use('/api/feedback', requireAuth, feedbackRouter)
+
+// Client crash reports from the ErrorBoundary (scan report F-01) →
+// Mark's alerts channel. Bounded + non-fatal; the client never waits.
+app.post('/api/client-error', requireAuth, async (req, res) => {
+  // Work BEFORE the response — Catalyst ends the function once res goes out.
+  try {
+    const b = req.body || {}
+    const who = req.user?.techName || req.user?.email || 'someone'
+    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./services/cliq.js')
+    await Promise.race([
+      postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+        `💥 *App crashed for ${who}* on screen *${b.screen || '?'}*\n` +
+        `\`${String(b.message || '').slice(0, 300)}\`\n` +
+        `${String(b.component || '').split('\n').filter(Boolean).slice(0, 3).join(' › ').slice(0, 300)}\n` +
+        `_${String(b.ua || '').slice(0, 80)}_`),
+      new Promise(r => setTimeout(r, 6000)),
+    ])
+  } catch (e) { console.warn('[client-error]', e.message) }
+  res.json({ ok: true })
+})
 app.use('/api/estimates', requireAuth, estimatesRouter)
 app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)

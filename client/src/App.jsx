@@ -24,6 +24,7 @@ import AuditScreen from './components/AuditScreen'
 import ManualQuoteScreen from './components/ManualQuoteScreen'
 import HistoryScreen from './components/HistoryScreen'
 import KanbanBoard from './components/KanbanBoard'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
 import RepairEstimateScreen from './components/RepairEstimateScreen'
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
@@ -263,6 +264,10 @@ function MainApp() {
           </button>
         </div>
       )}
+      {/* Error boundary (scan report F-01): a throw on any screen shows a
+          recovery card instead of a white page. key={screen} remounts it
+          on navigation so the error clears itself. */}
+      <ErrorBoundary key={screen} screen={screen} onReset={() => setScreen('live')}>
       {screen === 'upload' && (
         <UploadScreen
           user={user}
@@ -392,6 +397,7 @@ function MainApp() {
       {screen === 'scaling' && (
         <ScalingScreen {...navProps} />
       )}
+      </ErrorBoundary>
     </div>
   )
 }
