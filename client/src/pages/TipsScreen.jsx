@@ -1,7 +1,7 @@
 // Absolute ADAS TSB library (Mark 2026-09-05) — team tips & tricks:
 // calibration, keys, cloning. Quick to add (voice-typed, AI cleanup),
 // instantly searchable. Phase 2 adds the ask-Claude box up top.
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 
@@ -310,6 +310,9 @@ function CloningCoverage() {
   const [stats, setStats] = useState(null)
   const [res, setRes] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanDetail, setScanDetail] = useState('')
+  const camRef = useRef(null)
 
   useEffect(() => {
     apiFetch(`${API_BASE}/api/cloning/stats`).then(r => r.json()).then(setStats).catch(() => {})
@@ -331,28 +334,62 @@ function CloningCoverage() {
 
   return (
     <div>
-      <div className="flex gap-1.5 mb-2">
-        {[['vehicles', '🚗 Vehicles'], ['ecus', '🖥 ECU Modules']].map(([v, label]) => (
+      <div className="flex gap-1.5 mb-2 flex-wrap">
+        {[['vehicles', '🚗 Hex Prog · Vehicles'], ['ecus', '🖥 Hex Prog · ECUs'], ['dc706', '🔑 OBDSTAR DC706']].map(([v, label]) => (
           <button key={v} onClick={() => setType(v)}
             className="text-xs font-bold rounded-full px-3 py-1.5"
             style={type === v
               ? { backgroundColor: '#7e22ce', color: 'white' }
               : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>{label}</button>
         ))}
-        {stats && (
+        {stats?.tools && (
           <span className="text-[11px] self-center ml-auto" style={{ color: '#aaa' }}>
-            {Number(stats.vehicles).toLocaleString()} vehicles · {Number(stats.ecus).toLocaleString()} modules
+            {stats.tools.map(t => `${t.label}: ${Number(t.vehicles || t.modules || 0).toLocaleString()}`).join(' · ')}
           </span>
         )}
       </div>
-      <input
-        type="search"
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        placeholder={type === 'vehicles' ? 'Search — 2018 F-150, BMW 5-Series, EDC17…' : 'Search — module, MCU, make…'}
-        className="w-full rounded-xl px-4 py-3 text-sm mb-3"
-        style={{ border: '1px solid #e0dbd6', backgroundColor: 'white' }}
-      />
+      <div className="flex gap-2 mb-1">
+        <input
+          type="search"
+          value={q}
+          onChange={e => { setQ(e.target.value); setScanDetail('') }}
+          placeholder={type === 'vehicles' ? 'Search — 2018 F-150, BMW 5-Series, EDC17…'
+            : type === 'dc706' ? 'Search — make, module, BCM, TCM, MCU…' : 'Search — module, MCU, make…'}
+          className="flex-1 rounded-xl px-4 py-3 text-sm"
+          style={{ border: '1px solid #e0dbd6', backgroundColor: 'white' }}
+        />
+        <input
+          ref={camRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={async e => {
+            const file = e.target.files?.[0]
+            if (!file) return
+            setScanning(true); setScanDetail('')
+            try {
+              const fd = new FormData()
+              fd.append('image', file)
+              const r = await apiFetch(`${API_BASE}/api/cloning/extract-label`, { method: 'POST', body: fd })
+              const d = await r.json()
+              if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+              if (d.terms) { setQ(d.terms); setScanDetail(d.detail || '') }
+              else setScanDetail(d.detail || 'Could not read the label — try a closer, straight-on shot.')
+            } catch (err) { setScanDetail(`Scan failed: ${err.message}`) }
+            finally { setScanning(false); if (camRef.current) camRef.current.value = '' }
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => camRef.current?.click()}
+          disabled={scanning}
+          className="rounded-xl px-4 text-sm font-bold flex-shrink-0"
+          style={{ border: '1px solid #e0dbd6', backgroundColor: scanning ? '#f5f3f0' : 'white', color: '#555' }}
+        >{scanning ? '🔍…' : '📷 Scan ECU'}</button>
+      </div>
+      {scanDetail && <p className="text-[11px] mb-2" style={{ color: '#7e22ce' }}>🤖 {scanDetail}</p>}
+      <div className="mb-2" />
       {!q.trim() && (
         <p className="text-sm text-center py-10" style={{ color: '#aaa' }}>
           Type a vehicle or module — answers come from the Hex Prog II coverage list.
@@ -368,7 +405,22 @@ function CloningCoverage() {
           <div className="flex flex-col gap-1.5">
             {(res.results || []).map((r, i) => (
               <div key={i} className="bg-white rounded-xl px-3.5 py-2.5" style={{ border: '1px solid #ebebeb' }}>
-                {res.type === 'vehicles' ? (
+                {res.type === 'dc706' ? (
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-bold" style={{ color: '#1a1a1a' }}>
+                        {r.make}{r.module ? ` · ${r.module}` : ''} — {r.maker} {r.type || r.mcu}
+                      </p>
+                      {r.method && <MethodBadge method={r.method} />}
+                    </div>
+                    <p className="text-xs mt-0.5" style={{ color: '#666' }}>
+                      <span style={{ color: '#7e22ce', fontWeight: 700 }}>{r.system}</span>
+                      {r.mcu && <span> · {r.mcu}</span>}
+                      {r.caps && <span> · {r.caps}</span>}
+                      {r.other && <span> · {r.other}</span>}
+                    </p>
+                  </>
+                ) : res.type === 'vehicles' ? (
                   <>
                     <p className="text-sm font-bold" style={{ color: '#1a1a1a' }}>
                       {[r.year, r.make, r.model].filter(Boolean).join(' ')}
@@ -398,5 +450,27 @@ function CloningCoverage() {
         </>
       )}
     </div>
+  )
+}
+
+
+// Clone-method badge (Mark 2026-09-07: "what kinda clone is it — OBD
+// port, bench, boot"). Green = plug in and go; amber = bench wiring;
+// red = boot mode (case open); +P003 = needs the adapter.
+function MethodBadge({ method }) {
+  const m = String(method).toUpperCase()
+  const style = m.includes('OBD') && !m.includes('BENCH') && !m.includes('BOOT')
+    ? { bg: '#f0fdf4', color: '#15803d' }
+    : m.includes('BOOT')
+      ? { bg: '#fef2f2', color: '#dc2626' }
+      : m.includes('OBD')
+        ? { bg: '#eff6ff', color: '#1d4ed8' }
+        : { bg: '#fff7ed', color: '#c2410c' }
+  const icon = m.includes('BOOT') ? '🧪' : m.includes('OBD') && !m.includes('BENCH') ? '🔌' : '🔧'
+  return (
+    <span className="text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 whitespace-nowrap"
+      style={{ backgroundColor: style.bg, color: style.color }}>
+      {icon} {m}
+    </span>
   )
 }
