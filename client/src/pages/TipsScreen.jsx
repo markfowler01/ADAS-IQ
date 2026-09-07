@@ -94,6 +94,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
         {view === 'cloning' && <CloningCoverage />}
 
         {view === 'tips' && (<>
+        <AskBox />
         <input
           type="search"
           value={q}
@@ -542,6 +543,70 @@ function TsbPhotoEditor({ tsb }) {
         style={{ backgroundColor: '#fdf3ef', color: '#CD4419', border: '1px solid #f5cfc3' }}>
         {busy ? '⏳ Uploading…' : '📷 Add photo'}
       </button>
+    </div>
+  )
+}
+
+
+// Ask-the-brain box (Phase 2, Mark 2026-09-07): natural-language Q over
+// the TSB library — Claude answers and cites the tips it used.
+function AskBox() {
+  const [q, setQ] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [ans, setAns] = useState(null)
+  const catOf2 = id => (({ calibration: '#CD4419', keys: '#a16207', cloning: '#7e22ce', general: '#1d4ed8' })[id] || '#1d4ed8')
+
+  async function ask() {
+    const question = q.trim()
+    if (!question || busy) return
+    setBusy(true); setAns(null)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/tsb/ask`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setAns(d)
+    } catch (e) { setAns({ answer: `Couldn't answer: ${e.message}`, cited: [] }) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="rounded-2xl p-3 mb-3" style={{ background: 'linear-gradient(135deg,#fdf3ef,#fff)', border: '1.5px solid #f5cfc3' }}>
+      <div className="flex gap-2">
+        <input
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') ask() }}
+          placeholder="Ask the shop brain — e.g. 2019 Honda camera won't calibrate after windshield"
+          className="flex-1 rounded-xl px-3 py-2.5 text-sm"
+          style={{ border: '1px solid #e0dbd6', backgroundColor: 'white' }}
+        />
+        <button onClick={ask} disabled={busy || !q.trim()}
+          className="rounded-xl px-4 text-sm font-bold text-white flex-shrink-0"
+          style={{ backgroundColor: busy || !q.trim() ? '#e5a58e' : '#CD4419' }}>
+          {busy ? '…' : '🤖 Ask'}
+        </button>
+      </div>
+      {ans && (
+        <div className="mt-3">
+          <p className="text-sm whitespace-pre-wrap" style={{ color: '#1a1a1a' }}>{ans.answer}</p>
+          {ans.cited?.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              {ans.cited.map(t => (
+                <div key={t.id} className="rounded-lg px-3 py-2" style={{ backgroundColor: 'white', border: '1px solid #ebebeb' }}>
+                  <p className="text-xs font-bold" style={{ color: catOf2(t.category) }}>
+                    {t.number ? `${t.number} · ` : ''}{t.title}
+                  </p>
+                  <p className="text-[11px]" style={{ color: '#888' }}>{[t.year_from && t.year_to ? `${t.year_from}–${t.year_to}` : (t.year_from || t.year_to || ''), t.make, t.model].filter(Boolean).join(' ') || 'All vehicles'}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -269,6 +269,59 @@ router.post('/:id/pdf', async (req, res) => {
 })
 
 
+// ── Ask the TSB brain (Mark 2026-09-07, Phase 2) ────────────────────────
+// Pre-filter TSBs by the question's words (keeps the prompt small), let
+// Claude answer in plain language, and cite the TSBs it leaned on so the
+// client can render those cards under the answer.
+router.post('/ask', async (req, res) => {
+  try {
+    const question = String(req.body?.question || '').trim()
+    if (!question) return res.status(400).json({ error: 'Ask a question.' })
+    const all = await readAllTsbs(req)
+    if (!all.length) return res.json({ answer: 'No TSBs in the library yet — write the first one.', cited: [] })
+
+    // Rank by how many question words hit each TSB; always keep a floor
+    // so a loosely-worded question still gets the newest tips as context.
+    const words = question.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+    const scored = all.map(t => {
+      const hay = [t.title, t.body, t.make, t.model, t.year_from, t.year_to, t.tools, t.category].join(' ').toLowerCase()
+      return { t, score: words.reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0) }
+    }).sort((a, b) => b.score - a.score || String(b.t.created_at || '').localeCompare(String(a.t.created_at || '')))
+    const shortlist = (scored.some(x => x.score > 0) ? scored.filter(x => x.score > 0) : scored).slice(0, 12).map(x => x.t)
+
+    const context = shortlist.map((t, i) =>
+      `[${i + 1}] ${t.number || `TSB-${t.id}`} — ${t.title}\n` +
+      `    Category: ${t.category} · Vehicles: ${[t.year_from && t.year_to ? `${t.year_from}-${t.year_to}` : (t.year_from || t.year_to || ''), t.make, t.model].filter(Boolean).join(' ') || 'all'}` +
+      `${t.tools ? ` · Tools: ${t.tools}` : ''}\n    ${String(t.body).replace(/\s+/g, ' ').slice(0, 500)}`
+    ).join('\n\n')
+
+    const Anthropic = (await import('@anthropic-ai/sdk')).default
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 1 })
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 500,
+      messages: [{ role: 'user', content:
+        `You are the Absolute ADAS shop knowledge assistant. Answer the technician's question using ONLY the TSBs below. ` +
+        `Be direct and practical, like a senior tech giving a quick answer at the bay. If a TSB applies, name it by its number. ` +
+        `If none of the TSBs actually answer the question, say so plainly and suggest they write one.\n\n` +
+        `After your answer, add a line exactly like: CITED: [1, 3] listing the bracket numbers you used (or CITED: [] if none).\n\n` +
+        `QUESTION: ${question}\n\nTSBs:\n${context}` }],
+    })
+    let answer = (msg.content || []).map(b => b.text || '').join('').trim()
+    let cited = []
+    const m = answer.match(/CITED:\s*\[([^\]]*)\]/i)
+    if (m) {
+      cited = m[1].split(',').map(x => parseInt(x.trim(), 10)).filter(n => n >= 1 && n <= shortlist.length)
+      answer = answer.replace(/CITED:\s*\[[^\]]*\]/i, '').trim()
+    }
+    const citedTsbs = [...new Set(cited)].map(n => shortlist[n - 1]).filter(Boolean)
+    res.json({ answer, cited: citedTsbs })
+  } catch (e) {
+    console.error('[tsb ask]', e.message)
+    res.status(500).json({ error: e.message || 'Ask failed.' })
+  }
+})
+
 // ── Photos (Mark 2026-09-07: "pics in the list and on the PDF") ─────────
 // Stored in a dedicated WorkDrive folder; bytes are streamed back
 // through /api/tsb/photo/:fileId so <img> tags and the PDF generator
