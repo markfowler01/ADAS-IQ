@@ -2172,11 +2172,12 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               )}
 
               <div className="flex flex-col gap-3 pb-6">
-                {mobileCol !== 'quotes' && (mobileCol === 'all' ? visibleJobs : visibleJobs.filter(j => j.status === mobileCol)).length === 0 ? (
+                {mobileCol !== 'quotes' && (mobileCol === 'all' ? visibleJobs.filter(j => j.status !== 'quoted') : visibleJobs.filter(j => j.status === mobileCol)).length === 0 ? (
                   <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs here</p>
                 ) : mobileCol === 'quotes' ? null : (
                   (mobileCol === 'all'
-                    ? [...visibleJobs].sort((a, b) => COLUMNS.findIndex(c => c.id === a.status) - COLUMNS.findIndex(c => c.id === b.status))
+                    ? visibleJobs.filter(j => j.status !== 'quoted')
+                        .sort((a, b) => COLUMNS.findIndex(c => c.id === a.status) - COLUMNS.findIndex(c => c.id === b.status))
                     : visibleJobs.filter(j => j.status === mobileCol)
                   ).map((job, idx, arr) => (
                     <div key={job.ROWID || job.id}>
