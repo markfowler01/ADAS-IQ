@@ -1200,6 +1200,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const [billableQuotes, setBillableQuotes] = useState({})   // estimate_id → {shop,total}
   const { quotes: quoteRecords, reload: reloadQuotes } = useShopQuotes()
   const [mobileQuotesOpen, setMobileQuotesOpen] = useState(false)
+  // Mobile column picker (Mark 2026-09-03: "on mobile it's very hard to
+  // see what is what... I can not change the column")
+  const [mobileCol, setMobileCol] = useState('all')
   const [quoteBusy, setQuoteBusy] = useState(false)
   const [quoteBilling, setQuoteBilling] = useState(null)     // {q, preview} modal
   const [quoteBillBusy, setQuoteBillBusy] = useState(false)
@@ -2134,52 +2137,71 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 </button>
               </div>
 
-              {quotedJobs.length > 0 && (
+              {/* Column chips — swipe sideways, tap to filter the list */}
+              <div className="flex gap-1.5 overflow-x-auto pb-2 -mx-1 px-1" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
+                {[{ id: 'all', label: 'All', n: visibleJobs.length },
+                  ...COLUMNS.map(c => ({ id: c.id, label: c.label.replace('Dispatched to ', '').replace('Pending / Waiting on ', '').replace(' to Dispatch', ' Dispatch'), n: visibleJobs.filter(j => j.status === c.id).length })),
+                  { id: 'quotes', label: '📤 Quotes', n: quotedJobs.length }]
+                  .map(t => (
+                  <button key={t.id}
+                    onClick={() => setMobileCol(t.id)}
+                    className="text-xs font-bold rounded-full px-3 py-2 flex-shrink-0"
+                    style={mobileCol === t.id
+                      ? { backgroundColor: t.id === 'quotes' ? '#1d4ed8' : ORANGE, color: 'white' }
+                      : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: t.n > 0 ? '#1a1a1a' : '#bbb' }}
+                  >{t.label} {t.n > 0 ? t.n : ''}</button>
+                ))}
+              </div>
+
+              {/* Quotes — shown when the Quotes chip is picked */}
+              {mobileCol === 'quotes' && (
                 <div className="mb-3">
-                  <button onClick={() => setMobileQuotesOpen(o => !o)}
-                    className="w-full py-3 rounded-2xl font-extrabold text-white text-sm tracking-wide flex items-center justify-center gap-2"
-                    style={{ backgroundColor: '#1d4ed8' }}>
-                    📤 Quotes Out ({quotedJobs.length}) {mobileQuotesOpen ? '▲' : '▼'}
-                  </button>
-                  {mobileQuotesOpen && (
-                    <div className="mt-2">
-                      {quotedJobs.map(job => (
-                        <QuoteJacket key={job.id} q={quoteByEstimate[String(job.zoho_estimate_id)]} job={job}
-                          readOnly={isTechnician} busy={quoteBusy} onAction={quoteAction}>
-                          <MobileJobCard
-                            job={job}
-                            onEdit={openEdit}
-                            onOpenWorkDrive={handleOpenWorkDrive}
-                            customerNotes={customerNotes}
-                          />
-                        </QuoteJacket>
-                      ))}
-                    </div>
-                  )}
+                  {quotedJobs.length === 0 && <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No quotes waiting.</p>}
+                  {quotedJobs.map(job => (
+                    <QuoteJacket key={job.id} q={quoteByEstimate[String(job.zoho_estimate_id)]} job={job}
+                      readOnly={isTechnician} busy={quoteBusy} onAction={quoteAction}>
+                      <MobileJobCard
+                        job={job}
+                        onEdit={openEdit}
+                        onOpenWorkDrive={handleOpenWorkDrive}
+                        customerNotes={customerNotes}
+                      />
+                    </QuoteJacket>
+                  ))}
                 </div>
               )}
 
               <div className="flex flex-col gap-3 pb-6">
-                {visibleJobs.length === 0 ? (
-                  <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs found</p>
-                ) : (
-                  visibleJobs.map(job => (
-                    <MobileJobCard
-                      key={job.ROWID || job.id}
-                      job={job}
-                      billableQuote={billableQuotes[job.zoho_estimate_id]}
-                      onBillFromQuote={handleBillFromQuote}
-                      estimateTotal={estimateTotals[job.zoho_estimate_id]}
-                      onEdit={openEdit}
-                      onMoveToReadyInvoice={handleMoveToReadyInvoice}
-                      onMoveToPendingParts={handleMoveToPendingParts}
-                      onCreateInvoices={setInvoicingJob}
-                      onUploadReport={handleCardReportUpload}
-                      onInvoiceFromJob={handleInvoiceFromJob}
-                      onDownloadReport={handleDownloadAdasReport}
-                      reportBusyId={reportBusyId}
-                      customerNotes={customerNotes}
-                    />
+                {mobileCol !== 'quotes' && (mobileCol === 'all' ? visibleJobs : visibleJobs.filter(j => j.status === mobileCol)).length === 0 ? (
+                  <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs here</p>
+                ) : mobileCol === 'quotes' ? null : (
+                  (mobileCol === 'all'
+                    ? [...visibleJobs].sort((a, b) => COLUMNS.findIndex(c => c.id === a.status) - COLUMNS.findIndex(c => c.id === b.status))
+                    : visibleJobs.filter(j => j.status === mobileCol)
+                  ).map((job, idx, arr) => (
+                    <div key={job.ROWID || job.id}>
+                      {/* Status header when the column changes (All view) */}
+                      {mobileCol === 'all' && (idx === 0 || arr[idx - 1].status !== job.status) && (
+                        <p className="text-[11px] font-extrabold uppercase tracking-widest mb-1.5 mt-1" style={{ color: ORANGE }}>
+                          {COLUMNS.find(c => c.id === job.status)?.label || job.status} · {arr.filter(x => x.status === job.status).length}
+                        </p>
+                      )}
+                      <MobileJobCard
+                        job={job}
+                        billableQuote={billableQuotes[job.zoho_estimate_id]}
+                        onBillFromQuote={handleBillFromQuote}
+                        estimateTotal={estimateTotals[job.zoho_estimate_id]}
+                        onEdit={openEdit}
+                        onMoveToReadyInvoice={handleMoveToReadyInvoice}
+                        onMoveToPendingParts={handleMoveToPendingParts}
+                        onCreateInvoices={setInvoicingJob}
+                        onUploadReport={handleCardReportUpload}
+                        onInvoiceFromJob={handleInvoiceFromJob}
+                        onDownloadReport={handleDownloadAdasReport}
+                        reportBusyId={reportBusyId}
+                        customerNotes={customerNotes}
+                      />
+                    </div>
                   ))
                 )}
               </div>
