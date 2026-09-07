@@ -32,7 +32,9 @@ import { publishBriefPage } from '../services/briefPage.js'
 import { project } from '../services/confidence.js'
 import { toSpoken } from '../services/toSpoken.js'
 import { dayShape } from '../services/dayShape.js'
-import { buildProgress, formatProgress, clockStanding } from '../services/progressStrip.js'
+import { buildProgress, formatProgress, standing, moneyShort } from '../services/progressStrip.js'
+import { fetchYtdByDay } from '../services/salesRollup.js'
+import { subtraction, formatSubtraction } from '../services/subtraction.js'
 import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
 import { evaluate as evaluatePace, projectMonth } from '../services/paceModel.js'
 import { formatPace, speakPace } from '../services/paceFormat.js'
@@ -603,24 +605,55 @@ function bar(pctVal, color, w = 300) {
 function progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD) {
   if (!prog) return ''
   const r = x => Math.round(x * 100)
-  const st = clockStanding(prog.month)
-  const col = st.even ? SOFT : (st.delta > 0 ? GOOD : ACCENT)
-  const row = (label, value, pctVal, color) => `
+
+  // The bar is dollars. The clock is a 2px tick sitting on the same bar, so
+  // one row says both how much is booked and whether that is ahead of the
+  // calendar. Built from table cells because Outlook renders no positioning.
+  const W = 220
+  const barWithTick = (goalPct, timePct, color) => {
+    const fill = Math.round(Math.max(0, Math.min(1, goalPct)) * W)
+    const cells = []
+    const px = (w, bg) => w > 0 ? `<td width="${w}" height="8" style="background:${bg};font-size:0;line-height:0;">&nbsp;</td>` : ''
+    if (timePct == null) {
+      cells.push(px(fill, color), px(W - fill, '#e8e3da'))
+    } else {
+      const tick = Math.max(0, Math.min(W - 2, Math.round(timePct * W)))
+      if (fill <= tick) {
+        cells.push(px(fill, color), px(tick - fill, '#e8e3da'), px(2, '#8a8378'), px(W - tick - 2, '#e8e3da'))
+      } else {
+        cells.push(px(tick, color), px(2, '#8a8378'), px(fill - tick - 2, color), px(W - fill, '#e8e3da'))
+      }
+    }
+    return `<table role="presentation" cellpadding="0" cellspacing="0" width="${W}" style="border-radius:4px;overflow:hidden;"><tr>${cells.join('')}</tr></table>`
+  }
+
+  const row = (b) => {
+    if (!b || !b.goal) return ''
+    const st = standing(b)
+    const color = !st ? ACCENT : st.even ? ACCENT : (st.delta > 0 ? GOOD : ACCENT)
+    return `
     <tr>
-      <td style="font:400 11px/1 ${SANS};color:${SOFT};padding:0 10px 7px 0;white-space:nowrap;">${label}</td>
-      <td style="padding:0 10px 7px 0;width:100%;">${bar(pctVal, color)}</td>
-      <td style="font:400 12px/1 ${SANS};color:${INK};padding:0 0 7px 0;white-space:nowrap;">${value}</td>
+      <td style="font:400 11px/1 ${SANS};color:${SOFT};padding:0 12px 9px 0;white-space:nowrap;">${b.label.toUpperCase()}</td>
+      <td style="padding:0 12px 9px 0;">${barWithTick(b.goalPct, b.timePct, color)}</td>
+      <td style="font:400 12px/1 ${SANS};color:${INK};padding:0 0 9px 0;white-space:nowrap;">${moneyShort(b.booked)} <span style="color:${SOFT};">of ${moneyShort(b.goal)}</span> &nbsp;${r(b.goalPct)}%</td>
     </tr>`
-  return `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    ${row('MONTH', `${r(prog.month.timePct)}% elapsed`, prog.month.timePct, SOFT)}
-    ${row('BOOKED', `${r(prog.month.goalPct)}% of goal`, prog.month.goalPct, col)}
-    ${row(prog.quarter.label.toUpperCase(), `${prog.quarter.left}d left`, prog.quarter.timePct, SOFT)}
-    ${row('YEAR', `${prog.year.left}d left`, prog.year.timePct, SOFT)}
+  }
+
+  const st = standing(prog.month)
+  const verdict = st
+    ? `${st.even ? 'Even with' : (st.delta > 0 ? 'Ahead of' : 'Behind')} the clock. ${moneyShort(prog.month.left)} left over ${prog.month.daysLeft} working days.`
+    : ''
+  const col = !st ? SOFT : st.even ? SOFT : (st.delta > 0 ? GOOD : ACCENT)
+
+  return `<table role="presentation" cellpadding="0" cellspacing="0">
+    ${prog.day.isWorkDay ? row(prog.day) : ''}
+    ${row(prog.week)}${row(prog.month)}${row(prog.quarter)}${row(prog.year)}
   </table>
-  <div style="font:400 13px/20px ${SANS};color:${col};padding-top:6px;">${st.even ? 'Even with' : (st.delta > 0 ? 'Ahead of' : 'Behind')} the clock.</div>`
+  ${verdict ? `<div style="font:400 13px/20px ${SANS};color:${col};padding-top:8px;">${verdict}</div>` : ''}
+  <div style="font:400 11px/16px ${SANS};color:${SOFT};padding-top:4px;">Bar is dollars booked. The mark is where the calendar is.</div>`
 }
 
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog) {
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog, d2) {
   const label = t => `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
   const block = (title, inner) => inner
     ? `<tr><td style="padding:32px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
@@ -719,7 +752,7 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
 
   <tr><td style="padding:30px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
 
-  ${prog ? block('Where the month is', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
+  ${prog ? block('Sales against goal', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
   ${block('Cash', cashHtml)}
   ${block('Pace', paceHtml)}
   ${block('Sales by tech', techHtml)}
@@ -739,6 +772,12 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   ${block('AR', arHtml)}
   ${oneThing ? block('If you only do three things', oneThing) : ''}
   ${inboxHtml ? block('Inbox', inboxHtml) : ''}
+
+  ${d2 ? `<tr><td style="padding:32px 34px 0 34px;">
+    <div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">Day ${d2.day} of ${d2.of}</div>
+    <div style="font:400 15px/25px ${SANS};color:${INK};">${esc(d2.thing)}</div>
+    ${d2.finalPrompt ? `<div style="font:400 15px/25px ${SANS};color:${ACCENT};padding-top:8px;">${esc(d2.finalPrompt)}</div>` : ''}
+  </td></tr>` : ''}
 
   ${closing ? `<tr><td style="padding:34px 34px 0 34px;">
     <div style="border-top:1px solid ${RULE};padding-top:24px;">
@@ -1066,6 +1105,8 @@ function buildSpokenScript(b, big3, tr, triage) {
     big3.big3.forEach((x, i) => parts.push(`Number ${i + 1}. ${toSpoken(x.text)}.`))
     if (big3.hardThing) parts.push(`The hard thing, and do it first. ${toSpoken(big3.hardThing)}.`)
   }
+  // The Subtraction is deliberately absent from the spoken script. He plays this
+  // in the van, sometimes with a passenger.
   parts.push('Get some.')
   return cleanSpeech(parts.join(' '))
 }
@@ -1099,8 +1140,12 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     : null
   const projection = pace ? projectMonth(pace, ratioRec.ratio) : null
   const numbers = pace ? buildNumbers(b.revenue, pace, ratioRec.ratio, projection) : null
-  const prog = b.revenue ? buildProgress({
-    today: ptDate(), booked: b.revenue.monthlyTotal || 0, goal: goalRec.goal,
+  // The strip runs on booked dollars per day for the whole year, not on the
+  // month total the rest of the brief uses. Best-effort: if Books is slow or
+  // down the brief still ships, just without the strip.
+  const roll = await safe('sales-rollup', () => fetchYtdByDay(req, { year: Number(ptDate().slice(0, 4)) }))
+  const prog = roll?.byDay ? buildProgress({
+    today: ptDate(), byDay: roll.byDay, monthlyGoal: goalRec.goal, ratio: ratioRec.ratio,
   }) : null
   const paceText = (pace ? formatPace(pace) : '') +
     (prog ? formatProgress(prog) : '') +
@@ -1123,12 +1168,22 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
       },
     })), 15000)
 
+  // Private — email, SMS and the page, never Cliq. Built as a separate string
+  // so the Cliq post can be assembled without it rather than relying on
+  // remembering to strip it later.
+  const d2 = subtraction(ptDate())
+  const d2Text = formatSubtraction(d2)
+
   const closingText = closing
     ? `\n\n${closing.evidence || ''}\n${closing.affirmation}`.replace(/\n{3,}/g, '\n\n')
     : ''
 
-  let full = formatAffirmation(big3) + formatFull(b, paceText) + formatTechRevenue(tr) +
-             formatTriage(triage) + formatBig3(big3) + closingText
+  // `full` goes to email and the page. `cliqBody` is the same brief minus the
+  // private block.
+  const body = formatAffirmation(big3) + formatFull(b, paceText) + formatTechRevenue(tr) +
+               formatTriage(triage) + formatBig3(big3)
+  let full = body + d2Text + closingText
+  const cliqBody = body + closingText
   // SMS is billed and read by the segment — keep the digest to one or two.
   // The full wording lives in Cliq and the push notification.
   const shortBig3 = (big3?.big3 || [])
@@ -1141,7 +1196,8 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   }
   const sent = { cliq: false, sms: false }
   // postToCliqChannelById returns undefined on success — map to true explicitly
-  const r = await safe('cliq-send', () => postToCliqChannelById(ADA_CHANNEL_ID, full).then(() => true))
+  // cliqBody, not full — the Daily Two never reaches a channel.
+  const r = await safe('cliq-send', () => postToCliqChannelById(ADA_CHANNEL_ID, cliqBody).then(() => true))
   sent.cliq = !!r
   // Mark's number lives in the MARK_PHONE_NUMBER env var
   const to = await getMarkPhone(req)
@@ -1191,7 +1247,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
   const ar = buildAR(b.revenue)
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog, d2)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -1519,7 +1575,7 @@ router.get('/page', async (req, res) => {
 .bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
 .bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
 <div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
-${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null)}
+${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null, null)}
 </body></html>`)
   } catch (e) { res.status(500).send(String(e.message)) }
 })
@@ -1561,8 +1617,30 @@ router.get('/email-preview', async (req, res) => {
       ? { big3: day.big3, hardThing: day.hard_thing?.text || '', note: day.plan_note || '', affirmation: day.affirmation || '' }
       : null
     const tr = techRevenue(b.jobs, b.revenue)
-    res.type('html').send(formatBriefHtml(b, big3, tr, `https://absoluteadas.com/audio/ada-morning-${ptDate()}.mp3`))
-  } catch (e) { res.status(500).send(String(e.message)) }
+
+    // The preview used to pass four arguments and silently render a brief that
+    // was missing half of what actually gets sent. If it does not match the
+    // real email it is worse than nothing, so it builds the same inputs.
+    const [goalRec, ratioRec] = await Promise.all([
+      safe('goal', () => getMonthlyGoal(req)).then(r => r || { goal: TARGET }),
+      safe('ratio', () => getRatio(req)).then(r => r || { ratio: 1.51 }),
+    ])
+    const pace = b.revenue?.records
+      ? evaluatePace({ invoices: b.revenue.records, today: ptDate(), monthlyGoal: goalRec.goal, ratio: ratioRec.ratio })
+      : null
+    const projection = pace ? projectMonth(pace, ratioRec.ratio) : null
+    const numbers = pace ? buildNumbers(b.revenue, pace, ratioRec.ratio, projection) : null
+    const roll = await safe('sales-rollup', () => fetchYtdByDay(req, { year: Number(ptDate().slice(0, 4)) }))
+    const prog = roll?.byDay ? buildProgress({
+      today: ptDate(), byDay: roll.byDay, monthlyGoal: goalRec.goal, ratio: ratioRec.ratio,
+    }) : null
+    const d2 = subtraction(ptDate())
+
+    res.type('html').send(formatBriefHtml(
+      b, big3, tr, `https://absoluteadas.com/audio/ada-morning-${ptDate()}.mp3`,
+      null, null, pace, null, buildAR(b.revenue), numbers,
+      goalRec.goal, ANALYTICS_URL, prog, d2))
+  } catch (e) { res.status(500).type('text/plain').send(String(e.stack || e.message)) }
 })
 
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })

@@ -216,8 +216,10 @@ Mapping notes:
 - hard_thing_done: did he do the hard thing.
 - Anything he didn't address is false/null, never a guess.
 
+"s" is a private daily practice — one behaviour he is removing. True if he indicates he held it, false if he says he slipped. He answers tersely: "s yes", "clean", "s no", "slipped once". Null when he says nothing about it. Never infer it from the rest of the message.
+
 Return raw JSON only.
-{"big3_done": [bool, bool, bool], "hard_thing_done": bool, "rating": int|null, "energy": {"morning": int|null, "midday": int|null, "evening": int|null}, "win": "", "drag": "", "f3": {"faith": bool, "family": bool, "fitness": bool, "finances": bool}}`
+{"big3_done": [bool, bool, bool], "hard_thing_done": bool, "rating": int|null, "energy": {"morning": int|null, "midday": int|null, "evening": int|null}, "win": "", "drag": "", "f3": {"faith": bool, "family": bool, "fitness": bool, "finances": bool}, "s": bool|null}`
 
 export async function parseCheckin(req, { reply, big3, hardThing }) {
   const list = (big3 || []).map((b, i) => `${i + 1}. ${b.text}`).join('\n') || '(none were set)'
@@ -235,6 +237,7 @@ export async function parseCheckin(req, { reply, big3, hardThing }) {
   return {
     big3_done: Array.from({ length: n }, (_, i) => !!parsed.big3_done?.[i]),
     hard_thing_done: !!parsed.hard_thing_done,
+    s: typeof parsed.s === 'boolean' ? parsed.s : null,
     rating: Number.isFinite(parsed.rating) ? Math.max(1, Math.min(10, parsed.rating)) : null,
     energy: parsed.energy || {},
     win: String(parsed.win || '').slice(0, 300),

@@ -24,6 +24,7 @@ import { parseCheckin, reviewDay, closeDay } from '../services/dayCoach.js'
 import { ptDate } from '../services/ptDate.js'
 import { getMonthlyGoal } from '../services/paceConfig.js'
 import { dayShape } from '../services/dayShape.js'
+import { subtraction } from '../services/subtraction.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { gatherDayReview } from './briefing.js'
 
@@ -122,6 +123,11 @@ export async function sendEveningCheckin(req, { dry = false } = {}) {
     console.warn('[evening review]', e.message)
   }
   if (!body) body = formatCheckin(day)
+
+  // The Subtraction, asked as one letter. He knows what it is; nothing in
+  // the message names it, and it never appears in the Cliq mirror below.
+  const d2 = subtraction(date)
+  if (d2) body += `\n\nS?`
   if (dry) return { ok: true, dry: true, date, body, reviewed, big3: day?.big3 || [] }
 
   const to = await getMarkPhone(req)
@@ -203,7 +209,7 @@ export async function tryHandleCheckinReply(req, { from, body }) {
 
   try {
     await postToCliqChannelById(ADA_CHANNEL_ID,
-      `Day logged ${day.date}: ${day.rating ?? '—'}/10, Big 3 ${hit}/${total}` +
+      `Day logged ${day.date}: ${day.rating ?? '—'}/10, Big 3 ${hit}/${total}`  // s deliberately absent +
       `${day.win ? `\nWorked: ${day.win}` : ''}${day.drag ? `\nGot in the way: ${day.drag}` : ''}`)
   } catch (e) { console.warn('[evening cliq]', e.message) }
 

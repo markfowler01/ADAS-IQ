@@ -660,7 +660,7 @@ function QuoteJacket({ q, job, readOnly, busy, onAction, children }) {
   )
 }
 
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote, estimateTotal }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote, estimateTotal, expanded = true, onToggleExpand = null }) {
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
@@ -860,9 +860,10 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </div>
       )}
 
-      {/* Calibrations chips + fixed PCSI & POST */}
+      {/* Calibrations chips + fixed PCSI & POST — collapsed cards cap
+          at 3 chips (compact board, Mark 2026-09-03) */}
       <div className="flex flex-wrap gap-1 mb-2">
-        {calArr.map((c, i) => {
+        {(onToggleExpand && !expanded ? calArr.slice(0, 3) : calArr).map((c, i) => {
           const label = c.name || c.type || ''
           const modeLabel = c.mode && c.mode.toLowerCase() !== 'static' ? ` (${c.mode})` : ''
           if (!label) return null
@@ -876,6 +877,9 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             </span>
           )
         })}
+        {onToggleExpand && !expanded && calArr.length > 3 && (
+          <span className="text-xs px-1.5 py-0.5 rounded-md font-bold" style={{ backgroundColor: '#f0ece8', color: '#888' }}>+{calArr.length - 3} more</span>
+        )}
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
@@ -921,7 +925,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       {/* Request cards keep just the Create Job button (Mark 2026-08-30:
           "these job requests only need the create job button") — the
           full toolset appears once it's a real job. */}
-      {job.status !== 'job_requested' && (<>
+      {job.status !== 'job_requested' && (!onToggleExpand || expanded) && (<>
       {/* WorkDrive button — full-width iOS-style */}
       <button
         onClick={e => { e.stopPropagation(); handleOpenWorkDrive(e) }}
@@ -1032,16 +1036,57 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
         <UploadReportButton job={job} onUploadReport={onUploadReport} onInvoiceFromJob={onInvoiceFromJob} />
       )}
+
+      {/* Compact board (Mark 2026-09-03): buttons live behind this
+          toggle so collapsed cards stay short. Card click still edits. */}
+      {onToggleExpand && job.status !== 'job_requested' && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleExpand(job) }}
+          className="w-full mt-1 py-1.5 rounded-lg text-xs font-bold transition-colors hover:bg-gray-100"
+          style={{ color: '#999', backgroundColor: '#f7f6f5' }}
+        >{expanded ? '⌃ Hide actions' : '⌄ Actions'}</button>
+      )}
     </div>
   )
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote, estimateTotals }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote, estimateTotals, expandedId, onToggleExpand, slim, onUnslim, onSlim, slimTotal }) {
   const isOver = dragOverCol === column.id
+
+  // Slim column (compact board, Mark 2026-09-03): empty columns and the
+  // collapsed Completed column shrink to a labeled bar. Still a full
+  // drop target — dragging over it lights it up like a normal column.
+  if (slim && !isOver) {
+    return (
+      <div
+        id={`col-${column.id}`}
+        className="flex flex-col flex-shrink-0"
+        style={{ width: '150px' }}
+        onDragOver={(e) => onDragOver(e, column.id)}
+        onDrop={(e) => onDrop(e, column.id)}
+      >
+        <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={{ backgroundColor: ORANGE, opacity: 0.75 }}>
+          <span className="text-white text-xs font-bold truncate">{column.label}</span>
+          <span className="text-xs font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>{jobs.length}</span>
+        </div>
+        <div className="flex-1 rounded-xl p-2 min-h-32 flex flex-col items-center justify-start gap-2 pt-4" style={{ backgroundColor: '#f9f8f7', border: '2px dashed transparent' }}>
+          {slimTotal > 0 && (
+            <span className="text-sm font-extrabold" style={{ color: '#15803d' }}>${Math.round(slimTotal).toLocaleString('en-US')}</span>
+          )}
+          {jobs.length > 0 ? (
+            <button onClick={onUnslim} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ color: '#666', backgroundColor: 'white', border: '1px solid #ddd' }}>Show {jobs.length}</button>
+          ) : (
+            <span className="text-[10px]" style={{ color: '#c8c4c0' }}>drop here</span>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
+      id={`col-${column.id}`}
       className="flex flex-col flex-shrink-0"
       style={{ width: '280px' }}
       onDragOver={(e) => onDragOver(e, column.id)}
@@ -1061,14 +1106,24 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             {jobs.length}
           </span>
         </div>
-        <button
-          onClick={() => onNewJob(column.id)}
-          className="w-6 h-6 rounded-full flex items-center justify-center text-white font-bold text-lg leading-none transition-opacity hover:opacity-80"
-          style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}
-          title="New Job"
-        >
-          +
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onSlim && (
+            <button
+              onClick={onSlim}
+              className="w-6 h-6 rounded-full flex items-center justify-center text-white font-bold leading-none transition-opacity hover:opacity-80"
+              style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}
+              title="Collapse column"
+            >–</button>
+          )}
+          <button
+            onClick={() => onNewJob(column.id)}
+            className="w-6 h-6 rounded-full flex items-center justify-center text-white font-bold text-lg leading-none transition-opacity hover:opacity-80"
+            style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}
+            title="New Job"
+          >
+            +
+          </button>
+        </div>
       </div>
 
       {/* "Request Job" button pinned at top of the Job Requested column */}
@@ -1094,6 +1149,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
           <KanbanCard
             key={job.id}
             job={job}
+            expanded={String(expandedId) === String(job.id)}
+            onToggleExpand={onToggleExpand}
             billableQuote={billableQuotes ? billableQuotes[job.zoho_estimate_id] : null}
             onBillFromQuote={onBillFromQuote}
             estimateTotal={estimateTotals ? estimateTotals[job.zoho_estimate_id] : null}
@@ -1127,6 +1184,10 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
 
 // ─── Main Kanban Board ─────────────────────────────────────────────────────────
 export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onNavigate, onExtracted, onManualInvoice }) {
+  // Compact board (Mark 2026-09-03: "the jobs screen is the hardest to
+  // navigate"): one card's actions open at a time; Completed starts slim.
+  const [expandedCardId, setExpandedCardId] = useState(null)
+  const [showCompleted, setShowCompleted] = useState(false)
   const isMobile = useIsMobile()
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1837,6 +1898,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     return true
   })
 
+  const toggleCardExpand = (job) =>
+    setExpandedCardId(prev => String(prev) === String(job.id) ? null : job.id)
+
   const jobsByStatus = COLUMNS.reduce((acc, col) => {
     acc[col.id] = visibleJobs.filter(j => j.status === col.id)
     return acc
@@ -2121,6 +2185,19 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               </div>
             </div>
 
+            {/* ── Desktop: column jump bar (Mark 2026-09-03) ── */}
+            <div className="hidden md:flex flex-wrap gap-1.5 mb-3">
+              {[{ id: 'quotes', label: '📤 Quotes', n: quotedJobs.length },
+                ...COLUMNS.map(c => ({ id: c.id, label: c.label.replace('Dispatched to ', '').replace('Pending / Waiting on ', '').replace(' to Dispatch', ' Dispatch'), n: (jobsByStatus[c.id] || []).length }))]
+                .map(t => (
+                <button key={t.id}
+                  onClick={() => document.getElementById(`col-${t.id}`)?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' })}
+                  className="text-xs font-semibold rounded-full px-3 py-1.5 transition-colors hover:bg-orange-50"
+                  style={{ backgroundColor: 'white', border: '1px solid #e0dbd6', color: t.n > 0 ? '#1a1a1a' : '#aaa' }}
+                >{t.label} <span style={{ color: t.n > 0 ? ORANGE : '#ccc', fontWeight: 800 }}>{t.n}</span></button>
+              ))}
+            </div>
+
             {/* ── Desktop: horizontal Kanban columns ── */}
             <div className="hidden md:flex flex-1 overflow-x-auto pb-4" onDragLeave={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCol(null)
@@ -2129,7 +2206,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               className="flex gap-4"
               style={{ alignItems: 'flex-start', minHeight: '100%' }}
             >
-              <div className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
+              <div id="col-quotes" className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
                 <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={{ backgroundColor: '#1d4ed8' }}>
                   <div className="flex items-center gap-2">
                     <span className="text-white text-sm font-bold">📤 Quotes Out</span>
@@ -2165,6 +2242,14 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                 <KanbanColumn
                   key={col.id}
                   column={col}
+                  expandedId={expandedCardId}
+                  onToggleExpand={toggleCardExpand}
+                  slim={(col.id === 'complete' && !showCompleted) || ((jobsByStatus[col.id] || []).length === 0 && col.id !== 'job_requested')}
+                  onUnslim={() => setShowCompleted(true)}
+                  onSlim={col.id === 'complete' && showCompleted ? () => setShowCompleted(false) : null}
+                  slimTotal={col.id === 'complete'
+                    ? (jobsByStatus.complete || []).reduce((sum, j) => sum + (Number(estimateTotals[j.zoho_estimate_id]) || 0), 0)
+                    : 0}
                   billableQuotes={billableQuotes}
                   onBillFromQuote={handleBillFromQuote}
                   estimateTotals={estimateTotals}
@@ -2601,6 +2686,9 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             +{cals.length - 4} more
           </span>
         )}
+        {onToggleExpand && !expanded && calArr.length > 3 && (
+          <span className="text-xs px-1.5 py-0.5 rounded-md font-bold" style={{ backgroundColor: '#f0ece8', color: '#888' }}>+{calArr.length - 3} more</span>
+        )}
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
@@ -2659,6 +2747,16 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
           desktop card. */}
       {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
         <UploadReportButton job={job} onUploadReport={onUploadReport} onInvoiceFromJob={onInvoiceFromJob} />
+      )}
+
+      {/* Compact board (Mark 2026-09-03): buttons live behind this
+          toggle so collapsed cards stay short. Card click still edits. */}
+      {onToggleExpand && job.status !== 'job_requested' && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleExpand(job) }}
+          className="w-full mt-1 py-1.5 rounded-lg text-xs font-bold transition-colors hover:bg-gray-100"
+          style={{ color: '#999', backgroundColor: '#f7f6f5' }}
+        >{expanded ? '⌃ Hide actions' : '⌄ Actions'}</button>
       )}
     </div>
   )

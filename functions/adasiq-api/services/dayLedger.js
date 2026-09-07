@@ -47,6 +47,7 @@ export function emptyDay(date) {
     win: '',             // what made it good
     drag: '',            // what got in the way
     f3: {},              // { faith, family, fitness, finances } booleans
+    s: null,             // The Subtraction — held it? null means he didn't say.
     plan_note: '',       // the coach's one-line 'why these three'
     affirmation: '',     // what he reads to himself first thing
     raw_reply: '',       // the unparsed SMS, kept so parsing can improve later
@@ -120,6 +121,7 @@ function toRow(d) {
     win:        String(d.win || ''),
     drag:       String(d.drag || ''),
     f3:         JSON.stringify(d.f3 || {}),
+    s:          d.s === null || d.s === undefined ? '' : String(!!d.s),
     plan_note:  String(d.plan_note || ''),
     affirmation: String(d.affirmation || ''),
     raw_reply:  String(d.raw_reply || '').slice(0, 2000),
@@ -140,6 +142,7 @@ function fromRow(row) {
     win:        r.win || '',
     drag:       r.drag || '',
     f3:         j(r.f3, {}),
+    s:          r.s === '' || r.s == null ? null : r.s === 'true' || r.s === true,
     plan_note:  r.plan_note || '',
     affirmation: r.affirmation || '',
     raw_reply:  r.raw_reply || '',
