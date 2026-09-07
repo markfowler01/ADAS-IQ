@@ -1136,6 +1136,13 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           >
             📝 Request a Quote
           </button>
+          <button
+            onClick={() => onNavigate && onNavigate('tips')}
+            className="text-sm font-bold rounded-2xl px-4 py-3"
+            style={{ backgroundColor: 'white', color: '#1a1a1a', border: '1.5px solid #e0dbd6' }}
+          >
+            📖 TSB Tips
+          </button>
         </div>
 
         {/* Needs-Dispatch alert — moved to TOP + red styled 2026-07-09

@@ -123,7 +123,9 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
                 style={{ border: '1px solid #ebebeb' }}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-bold leading-snug" style={{ color: '#1a1a1a' }}>{t.title}</p>
+                    <p className="text-sm font-bold leading-snug" style={{ color: '#1a1a1a' }}>
+                      {t.number ? <span style={{ color: '#aaa', fontWeight: 600 }}>{t.number} · </span> : null}{t.title}
+                    </p>
                     <p className="text-xs mt-0.5" style={{ color: '#888' }}>{vehicleLabel(t)}{t.tools ? ` · 🧰 ${t.tools}` : ''}</p>
                   </div>
                   <span className="text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0"
@@ -138,6 +140,24 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
                       {t.author}{t.created_at ? ` · ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}
                     </span>
                     <div className="flex gap-2">
+                      <button onClick={async e => {
+                        e.stopPropagation()
+                        showToast('📄 Building bulletin…')
+                        try {
+                          const r = await apiFetch(`${API_BASE}/api/tsb/${t.id}/pdf`, { method: 'POST' })
+                          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)
+                          const blob = await r.blob()
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `${(r.headers.get('Content-Disposition') || '').match(/filename="(.+?)"/)?.[1] || 'Absolute-ADAS-TSB.pdf'}`
+                          document.body.appendChild(a); a.click(); a.remove()
+                          URL.revokeObjectURL(url)
+                          load()
+                        } catch (err) { showToast(`PDF failed: ${err.message}`) }
+                      }}
+                        className="text-xs font-bold rounded-lg px-3 py-1.5"
+                        style={{ backgroundColor: '#fdf3ef', color: ORANGE }}>📄 Official PDF</button>
                       <button onClick={e => { e.stopPropagation(); setEditTsb(t) }}
                         className="text-xs font-bold rounded-lg px-3 py-1.5"
                         style={{ backgroundColor: '#f5f3f0', color: '#555' }}>✎ Edit</button>

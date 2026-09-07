@@ -155,4 +155,94 @@ router.delete('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+
+// ── Official bulletin PDF (Mark 2026-09-05: "look very official") ───────
+// Numbered AA-TSB-<year>-<seq>; the number is assigned on first export
+// and stored on the TSB so it never changes.
+router.post('/:id/pdf', async (req, res) => {
+  try {
+    const tsbs = await readAllTsbs(req)
+    const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
+    if (!tsb) return res.status(404).json({ error: 'TSB not found' })
+
+    if (!tsb.number) {
+      const year = new Date(tsb.created_at || Date.now()).getFullYear()
+      const seqs = tsbs.map(t => {
+        const m = /AA-TSB-\d{4}-(\d+)/.exec(t.number || '')
+        return m ? parseInt(m[1], 10) : 0
+      })
+      tsb.number = `AA-TSB-${year}-${String(Math.max(0, ...seqs) + 1).padStart(3, '0')}`
+      await writeTsb(req, tsb)
+    }
+
+    const PDFDocument = (await import('pdfkit')).default
+    const ORANGE = '#CD4419'
+    const DARK = '#1a1a1a'
+    const GRAY = '#6b7280'
+    const M = 54
+    const doc = new PDFDocument({ margin: 0, size: 'LETTER' })
+    const chunks = []
+    doc.on('data', c => chunks.push(c))
+    const donePdf = new Promise(r => doc.on('end', () => r(Buffer.concat(chunks))))
+    const W = doc.page.width
+
+    // Letterhead band
+    doc.rect(0, 0, W, 86).fill(DARK)
+    doc.rect(0, 86, W, 4).fill(ORANGE)
+    doc.font('Helvetica-Bold').fontSize(19).fillColor('white').text('ABSOLUTE ADAS', M, 24)
+    doc.font('Helvetica').fontSize(8.5).fillColor('#d1d5db')
+      .text('Advanced Driver Assistance Systems · Calibration · Diagnostics', M, 48)
+    doc.font('Helvetica-Bold').fontSize(10).fillColor(ORANGE)
+      .text('TECHNICAL SERVICE BULLETIN', M, 62, { characterSpacing: 1.5 })
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('white')
+      .text(tsb.number, W - M - 180, 30, { width: 180, align: 'right' })
+    doc.font('Helvetica').fontSize(8.5).fillColor('#d1d5db')
+      .text(new Date(tsb.created_at || Date.now()).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
+        W - M - 180, 48, { width: 180, align: 'right' })
+
+    // Reference block
+    let y = 112
+    const yrs = tsb.year_from && tsb.year_to ? `${tsb.year_from}–${tsb.year_to}` : (tsb.year_from || tsb.year_to || '')
+    const rows = [
+      ['SUBJECT', tsb.title || ''],
+      ['CATEGORY', String(tsb.category || 'general').toUpperCase()],
+      ['APPLICABLE VEHICLES', [yrs, tsb.make, tsb.model].filter(Boolean).join(' ') || 'All makes and models'],
+      tsb.tools ? ['EQUIPMENT', tsb.tools] : null,
+      ['ISSUED BY', `Absolute ADAS Technical Team${tsb.author ? ` · ${tsb.author}` : ''}`],
+    ].filter(Boolean)
+    for (const [label, value] of rows) {
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor(GRAY).text(label, M, y + 2, { width: 130, characterSpacing: 0.5 })
+      doc.font('Helvetica-Bold').fontSize(9.5).fillColor(DARK).text(value, M + 140, y, { width: W - M * 2 - 140 })
+      y = Math.max(y + 16, doc.y + 6)
+    }
+    doc.moveTo(M, y + 4).lineTo(W - M, y + 4).lineWidth(1).strokeColor('#e5e7eb').stroke()
+    y += 18
+
+    // Body
+    doc.font('Helvetica-Bold').fontSize(8).fillColor(ORANGE).text('SERVICE INFORMATION', M, y, { characterSpacing: 1 })
+    y += 16
+    doc.font('Helvetica').fontSize(10.5).fillColor('#111827')
+      .text(String(tsb.body || ''), M, y, { width: W - M * 2, lineGap: 3.5 })
+
+    // Footer
+    const fy = doc.page.height - 64
+    doc.moveTo(M, fy).lineTo(W - M, fy).lineWidth(0.5).strokeColor('#e5e7eb').stroke()
+    doc.font('Helvetica-Bold').fontSize(7.5).fillColor(DARK).text('ABSOLUTE ADAS', M, fy + 10)
+    doc.font('Helvetica').fontSize(7.5).fillColor(GRAY)
+      .text('Lake Stevens, WA · absoluteadas.com', M, fy + 21)
+    doc.font('Helvetica').fontSize(7).fillColor('#9ca3af')
+      .text(`${tsb.number} · Internal technical bulletin. Procedures reflect Absolute ADAS field experience; always verify against current OEM service information.`,
+        M, fy + 34, { width: W - M * 2 })
+    doc.end()
+
+    const buf = await donePdf
+    res.type('application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${tsb.number}.pdf"`)
+    res.send(buf)
+  } catch (e) {
+    console.error('[tsb pdf]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 export default router
