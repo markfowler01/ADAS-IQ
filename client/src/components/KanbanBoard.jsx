@@ -2686,9 +2686,6 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             +{cals.length - 4} more
           </span>
         )}
-        {onToggleExpand && !expanded && calArr.length > 3 && (
-          <span className="text-xs px-1.5 py-0.5 rounded-md font-bold" style={{ backgroundColor: '#f0ece8', color: '#888' }}>+{calArr.length - 3} more</span>
-        )}
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
@@ -2747,16 +2744,6 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
           desktop card. */}
       {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
         <UploadReportButton job={job} onUploadReport={onUploadReport} onInvoiceFromJob={onInvoiceFromJob} />
-      )}
-
-      {/* Compact board (Mark 2026-09-03): buttons live behind this
-          toggle so collapsed cards stay short. Card click still edits. */}
-      {onToggleExpand && job.status !== 'job_requested' && (
-        <button
-          onClick={e => { e.stopPropagation(); onToggleExpand(job) }}
-          className="w-full mt-1 py-1.5 rounded-lg text-xs font-bold transition-colors hover:bg-gray-100"
-          style={{ color: '#999', backgroundColor: '#f7f6f5' }}
-        >{expanded ? '⌃ Hide actions' : '⌄ Actions'}</button>
       )}
     </div>
   )
