@@ -6,6 +6,8 @@
 // write-verified, no console table setup needed.
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import multer from 'multer'
+import axios from 'axios'
 
 const router = express.Router()
 
@@ -224,6 +226,27 @@ router.post('/:id/pdf', async (req, res) => {
     doc.font('Helvetica').fontSize(10.5).fillColor('#111827')
       .text(String(tsb.body || ''), M, y, { width: W - M * 2, lineGap: 3.5 })
 
+    // Photos (fetched from WorkDrive, embedded as real images)
+    if (Array.isArray(tsb.photos) && tsb.photos.length) {
+      let py = doc.y + 18
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(ORANGE).text('PHOTOS', M, py, { characterSpacing: 1 })
+      py += 14
+      const imgW = (W - M * 2 - 12) / 2
+      let col = 0
+      for (const ph of tsb.photos.slice(0, 6)) {
+        try {
+          const { buf } = await fetchWdFile(ph.file_id)
+          if (py + 180 > doc.page.height - 80) { doc.addPage(); py = 54; col = 0 }
+          const x = M + col * (imgW + 12)
+          doc.image(buf, x, py, { fit: [imgW, 170] })
+          if (col === 1) py += 182
+          col = col === 0 ? 1 : 0
+        } catch (e) { console.warn('[tsb pdf] photo skip:', e.message) }
+      }
+      if (col === 1) py += 182
+      doc.y = py
+    }
+
     // Footer
     const fy = doc.page.height - 64
     doc.moveTo(M, fy).lineTo(W - M, fy).lineWidth(0.5).strokeColor('#e5e7eb').stroke()
@@ -242,6 +265,98 @@ router.post('/:id/pdf', async (req, res) => {
   } catch (e) {
     console.error('[tsb pdf]', e.message)
     res.status(500).json({ error: e.message })
+  }
+})
+
+
+// ── Photos (Mark 2026-09-07: "pics in the list and on the PDF") ─────────
+// Stored in a dedicated WorkDrive folder; bytes are streamed back
+// through /api/tsb/photo/:fileId so <img> tags and the PDF generator
+// can both render them (WorkDrive share links don't hotlink).
+const photoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    if (!file.mimetype.startsWith('image/')) cb(new Error('Only image files are accepted'))
+    else cb(null, true)
+  },
+})
+
+async function ensureTsbFolder(req, wdToken) {
+  const app = catalyst.initialize(req)
+  const r = await cfgRow(app, 'tsb_photos_folder_id')
+  const saved = r?.config_value ? String(r.config_value).replace(/"/g, '') : ''
+  if (saved) return saved
+  const { createJobFolder } = await import('../services/workdrive.js')
+  const f = await createJobFolder('Absolute ADAS TSB Photos', wdToken)
+  const id = f?.folderId
+  if (id) await cfgSet(app, 'tsb_photos_folder_id', id)
+  return id
+}
+
+router.post('/:id/photo', (req, res) => {
+  photoUpload.single('image')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message })
+    if (!req.file) return res.status(400).json({ error: 'No image provided' })
+    try {
+      const tsbs = await readAllTsbs(req)
+      const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
+      if (!tsb) return res.status(404).json({ error: 'TSB not found' })
+      const { getAccessToken } = await import('../services/workdrive.js')
+      const wdToken = await getAccessToken()
+      const folderId = await ensureTsbFolder(req, wdToken)
+      if (!folderId) return res.status(500).json({ error: 'Could not create the TSB photos folder in WorkDrive.' })
+      const ext = (req.file.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
+      const filename = `TSB-${tsb.number || tsb.id}-${Date.now()}.${ext}`
+      const { uploadFileToFolder } = await import('../services/workdrive.js')
+      const fileId = await uploadFileToFolder(folderId, filename, req.file.buffer, wdToken, req.file.mimetype)
+      tsb.photos = Array.isArray(tsb.photos) ? tsb.photos : []
+      tsb.photos.push({ file_id: fileId, name: filename, mime: req.file.mimetype })
+      await writeTsb(req, tsb)
+      res.json({ ok: true, photo: { file_id: fileId, name: filename } })
+    } catch (e) {
+      console.error('[tsb photo]', e.message)
+      res.status(500).json({ error: e.message })
+    }
+  })
+})
+
+router.delete('/:id/photo/:fileId', async (req, res) => {
+  try {
+    const tsbs = await readAllTsbs(req)
+    const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
+    if (!tsb) return res.status(404).json({ error: 'TSB not found' })
+    tsb.photos = (tsb.photos || []).filter(p => String(p.file_id) !== String(req.params.fileId))
+    await writeTsb(req, tsb)
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+async function fetchWdFile(fileId) {
+  const { getAccessToken } = await import('../services/workdrive.js')
+  const wdToken = await getAccessToken()
+  const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, {
+    headers: { Authorization: `Zoho-oauthtoken ${wdToken}` },
+    responseType: 'arraybuffer', timeout: 25000, maxContentLength: 30 * 1024 * 1024,
+  })
+  return { buf: Buffer.from(r.data), mime: r.headers['content-type'] || 'image/jpeg' }
+}
+
+// GET /photo/:fileId?t=<auth token> — <img> tags can't send headers, so
+// the token rides the query string; verified the same way as the header.
+router.get('/photo/:fileId', async (req, res) => {
+  try {
+    if (req.query.t) {
+      const { verifyToken } = await import('./auth.js')
+      const u = verifyToken(String(req.query.t))
+      if (!u) return res.status(401).json({ error: 'unauthorized' })
+    }
+    // (no t param: requireAuth on the mount already validated the header)
+    const { buf, mime } = await fetchWdFile(String(req.params.fileId))
+    res.setHeader('Cache-Control', 'private, max-age=86400')
+    res.type(mime).send(buf)
+  } catch (e) {
+    res.status(404).json({ error: 'Photo not found' })
   }
 })
 

@@ -2,7 +2,7 @@
 // calibration, keys, cloning. Quick to add (voice-typed, AI cleanup),
 // instantly searchable. Phase 2 adds the ask-Claude box up top.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { API_BASE, apiFetch } from '../utils/api.js'
+import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 
 const ORANGE = '#CD4419'
@@ -148,6 +148,19 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
                 <p className="text-sm mt-2 whitespace-pre-wrap" style={{ color: '#374151' }}>
                   {open ? t.body : (t.body.length > 140 ? t.body.slice(0, 140) + '…' : t.body)}
                 </p>
+                {Array.isArray(t.photos) && t.photos.length > 0 && (
+                  <div className="flex gap-1.5 mt-2 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+                    {t.photos.map(ph => (
+                      <img key={ph.file_id}
+                        src={`${API_BASE}/api/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`}
+                        alt="" loading="lazy"
+                        onClick={e => { e.stopPropagation(); window.open(`${API_BASE}/api/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`, '_blank') }}
+                        className="rounded-lg flex-shrink-0"
+                        style={{ height: open ? 120 : 60, width: 'auto', objectFit: 'cover', border: '1px solid #ebebeb' }}
+                      />
+                    ))}
+                  </div>
+                )}
                 {open && (
                   <div className="flex items-center justify-between mt-3 pt-2" style={{ borderTop: '1px solid #f4f1ee' }}>
                     <span className="text-[11px]" style={{ color: '#aaa' }}>
@@ -194,7 +207,13 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
         <TsbModal
           tsb={editTsb}
           onClose={() => { setShowNew(false); setEditTsb(null) }}
-          onSaved={msg => { setShowNew(false); setEditTsb(null); showToast(msg); load() }}
+          onSaved={(msg, saved) => {
+            showToast(msg)
+            load()
+            // New TSB → reopen in edit mode so photos can be attached.
+            if (showNew && saved) { setShowNew(false); setEditTsb(saved) }
+            else { setShowNew(false); setEditTsb(null) }
+          }}
         />
       )}
 
@@ -232,7 +251,7 @@ function TsbModal({ tsb, onClose, onSaved }) {
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      onSaved(isEdit ? '✅ TSB updated' : '✅ TSB saved')
+      onSaved(isEdit ? '✅ TSB updated' : '✅ TSB saved — add photos below', j.tsb)
     } catch (e) { setError(e.message) }
     finally { setSaving(false) }
   }
@@ -289,6 +308,9 @@ function TsbModal({ tsb, onClose, onSaved }) {
         </div>
         <input value={tools} onChange={e => setTools(e.target.value)} placeholder="Tools used (Autel IM608, key programmer…)"
           className="w-full rounded-xl px-3 py-2.5 text-sm mb-3" style={input} />
+
+        {/* Photos — only after the TSB exists (needs an id to attach to) */}
+        {isEdit && <TsbPhotoEditor tsb={tsb} />}
 
         {error && <p className="text-xs mb-2" style={{ color: '#dc2626' }}>{error}</p>}
         <button onClick={save} disabled={saving}
@@ -472,5 +494,54 @@ function MethodBadge({ method }) {
       style={{ backgroundColor: style.bg, color: style.color }}>
       {icon} {m}
     </span>
+  )
+}
+
+
+// Photo add/remove inside the TSB editor (edit mode — a saved TSB has an
+// id to attach files to). New TSBs get photos by saving, then reopening.
+function TsbPhotoEditor({ tsb }) {
+  const [photos, setPhotos] = useState(tsb.photos || [])
+  const [busy, setBusy] = useState(false)
+  const ref = useRef(null)
+  async function upload(file) {
+    if (!file) return
+    setBusy(true)
+    try {
+      const fd = new FormData()
+      fd.append('image', file)
+      const r = await apiFetch(`${API_BASE}/api/tsb/${tsb.id}/photo`, { method: 'POST', body: fd })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setPhotos(p => [...p, d.photo])
+    } catch (e) { alert(`Upload failed: ${e.message}`) }
+    finally { setBusy(false); if (ref.current) ref.current.value = '' }
+  }
+  async function remove(fileId) {
+    setPhotos(p => p.filter(x => x.file_id !== fileId))
+    apiFetch(`${API_BASE}/api/tsb/${tsb.id}/photo/${fileId}`, { method: 'DELETE' }).catch(() => {})
+  }
+  return (
+    <div className="mb-3">
+      <p className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: '#888' }}>Photos</p>
+      <div className="flex gap-1.5 flex-wrap mb-2">
+        {photos.map(ph => (
+          <div key={ph.file_id} className="relative">
+            <img src={`${API_BASE}/api/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`} alt=""
+              className="rounded-lg" style={{ height: 64, width: 64, objectFit: 'cover', border: '1px solid #ebebeb' }} />
+            <button onClick={() => remove(ph.file_id)}
+              className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-white text-xs font-bold flex items-center justify-center"
+              style={{ backgroundColor: '#dc2626' }}>×</button>
+          </div>
+        ))}
+      </div>
+      <input ref={ref} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={e => upload(e.target.files?.[0])} />
+      <button type="button" onClick={() => ref.current?.click()} disabled={busy}
+        className="text-xs font-bold rounded-lg px-3 py-2"
+        style={{ backgroundColor: '#fdf3ef', color: '#CD4419', border: '1px solid #f5cfc3' }}>
+        {busy ? '⏳ Uploading…' : '📷 Add photo'}
+      </button>
+    </div>
   )
 }
