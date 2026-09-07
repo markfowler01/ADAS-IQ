@@ -1399,6 +1399,51 @@ async function nudgeKatJobNeeded(req, job, action) {
   } catch (e) { console.warn('[kat-nudge]', e.message) }
 }
 
+// Tech's "I'm here" button (Mark 2026-09-05): posts the urgent create-
+// this-job-ASAP ping to the dispatch channel + Kat's bell. Explicit
+// button press, so it bypasses the once-a-day directions nudge — but a
+// 10-minute stamp stops accidental double-taps from spamming Kat.
+router.post('/:id/need-job-now', async (req, res) => {
+  try {
+    const jobs = await getAllJobs(req)
+    const job = jobs.find(j => String(j.id) === String(req.params.id))
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+    if ((job.status || '') !== 'job_requested') {
+      return res.status(400).json({ error: 'This card is already a job.' })
+    }
+    const catalystMod = (await import('zcatalyst-sdk-node')).default
+    const app = catalystMod.initialize(req)
+    const bucket = Math.floor(Date.now() / 600000)  // 10-min window
+    const stampKey = `need_job_now:${job.id}:${bucket}`.slice(0, 64)
+    const rows = await app.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM AppConfig WHERE config_key = '${stampKey}' LIMIT 1`).catch(() => [])
+    if (rows?.length) return res.json({ ok: true, deduped: true })
+    await app.datastore().table('AppConfig')
+      .insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
+
+    const who = req.user?.techName || job.technician || 'Tech'
+    const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+    const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+    await postToCliqChannel(DISPATCH_CHANNEL,
+      `🚨 *${who} is AT THE CAR — needs this job created ASAP*\n` +
+      `${job.shop_name || 'Shop'} · ${vehicle || 'Vehicle TBD'}${job.vin ? ` · VIN ${job.vin}` : ''}${job.quote_number ? ` · RO ${job.quote_number}` : ''}\n` +
+      `Kat — create the job from the Job Requested card now.`).catch(() => {})
+    const { createNotification } = await import('./notifications.js')
+    await createNotification(req, {
+      to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
+      type: 'job_requested',
+      title: `🚨 ${who} at ${job.shop_name || 'the shop'} — create the job ASAP`,
+      body: `${vehicle || ''} — tech is at the car waiting on paperwork`,
+      jobId: job.id, job,
+      skipCliq: true, skipTechChannel: true,
+    }).catch(() => {})
+    res.json({ ok: true })
+  } catch (e) {
+    console.error('[need-job-now]', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // Route info for Head-to-the-Job: the REAL street address. The Books
 // contacts LIST omits addresses entirely (documented in zoho.js) — the
 // first version searched Maps by shop name and navigated a tech toward

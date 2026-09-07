@@ -1034,7 +1034,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           invoices open prefilled from this card, and on success the
           requested card completes + leaves the board. */}
       {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
-        <UploadReportButton job={job} onUploadReport={onUploadReport} onInvoiceFromJob={onInvoiceFromJob} />
+        <UploadReportButton job={job} onUploadReport={onUploadReport} onInvoiceFromJob={onInvoiceFromJob} onEdit={onEdit} />
       )}
 
       {/* Compact board (Mark 2026-09-03): buttons live behind this
@@ -2541,7 +2541,42 @@ function CustomerNoteModal({ job, initialItems, onSave, onClose }) {
   )
 }
 
-function UploadReportButton({ job, onUploadReport, onInvoiceFromJob }) {
+// "I'm here" (Mark 2026-09-05): tech at the car taps it → urgent Kat
+// ping in dispatch + her bell, then the card editor opens so he can fix
+// VIN/vehicle/notes while standing next to the vehicle.
+function ImHereButton({ job, onEdit }) {
+  const [state, setState] = useState('idle') // idle | busy | sent
+  return (
+    <button
+      onClick={async e => {
+        e.stopPropagation()
+        if (state === 'busy') return
+        setState('busy')
+        try {
+          const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/need-job-now`, { method: 'POST' })
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)
+          setState('sent')
+          onEdit && onEdit(job)
+        } catch (err) {
+          setState('idle')
+          alert(`Couldn't reach Kat: ${err.message}`)
+        }
+      }}
+      className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
+      style={{
+        backgroundColor: state === 'sent' ? '#f0fdf4' : '#fef2f2',
+        border: `1.5px solid ${state === 'sent' ? '#bbf7d0' : '#fecaca'}`,
+        padding: '10px 0', minHeight: '44px',
+      }}
+    >
+      <span className="text-sm font-bold" style={{ color: state === 'sent' ? '#16a34a' : '#dc2626' }}>
+        {state === 'sent' ? '✓ Kat pinged — update the card info' : state === 'busy' ? '⏳ Pinging Kat…' : "🚨 I'm here — need job ASAP"}
+      </span>
+    </button>
+  )
+}
+
+function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
   const [busy, setBusy] = useState(false)
   const [showChooser, setShowChooser] = useState(false)
   const inputRef = useRef(null)
@@ -2626,6 +2661,7 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob }) {
           {busy ? '⏳ Working…' : '🧾 Create Job'}
         </span>
       </button>
+      <ImHereButton job={job} onEdit={onEdit} />
     </>
   )
 }
@@ -2774,7 +2810,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
       {/* Upload Report → Invoice — same request-flow shortcut as the
           desktop card. */}
       {job.status === 'job_requested' && !job.invoiced && onUploadReport && (
-        <UploadReportButton job={job} onUploadReport={onUploadReport} onInvoiceFromJob={onInvoiceFromJob} />
+        <UploadReportButton job={job} onUploadReport={onUploadReport} onInvoiceFromJob={onInvoiceFromJob} onEdit={onEdit} />
       )}
     </div>
   )
