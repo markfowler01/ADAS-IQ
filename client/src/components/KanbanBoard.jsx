@@ -2722,7 +2722,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
       </div>
 
       {/* Action button — Create Invoices if ready, else Ready to Invoice */}
-      {!job.invoiced && (
+      {!job.invoiced && job.status !== 'job_requested' && (
         canInvoice ? (
           <button
             onClick={e => { e.stopPropagation(); onCreateInvoices && onCreateInvoices(job) }}
@@ -2745,7 +2745,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
       )}
 
       {/* Waiting on Parts — same one-tap park as the desktop card. */}
-      {onMoveToPendingParts && !job.invoiced && !canInvoice && job.status !== 'pending_parts' && (
+      {onMoveToPendingParts && !job.invoiced && !canInvoice && job.status !== 'pending_parts' && job.status !== 'job_requested' && (
         <button
           onClick={e => { e.stopPropagation(); onMoveToPendingParts(job) }}
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
@@ -2757,7 +2757,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
       )}
 
       {/* ADAS Report — same generate + download as the desktop card. */}
-      {onDownloadReport && (
+      {onDownloadReport && job.status !== 'job_requested' && (
         <button
           onClick={e => { e.stopPropagation(); onDownloadReport(job) }}
           disabled={reportBusy}
