@@ -34,6 +34,7 @@ import { toSpoken } from '../services/toSpoken.js'
 import { dayShape } from '../services/dayShape.js'
 import { buildProgress, formatProgress, standing, moneyShort } from '../services/progressStrip.js'
 import { fetchYtdByDay } from '../services/salesRollup.js'
+import { overdue as holdOverdue, birthdays as holdBirthdays } from '../services/hold.js'
 import { subtraction, formatSubtraction } from '../services/subtraction.js'
 import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
 import { evaluate as evaluatePace, projectMonth } from '../services/paceModel.js'
@@ -602,6 +603,18 @@ function bar(pctVal, color, w = 300) {
     </tr></table>`
 }
 
+function formatHold(h) {
+  if (!h || (!h.late.length && !h.birthdays.length)) return ''
+  const L = ['', 'The Hold']
+  for (const b of h.birthdays.slice(0, 3)) {
+    L.push(`${b.contact.name} — birthday ${b.days === 0 ? 'today' : b.days === 1 ? 'tomorrow' : `in ${b.days} days`}.`)
+  }
+  for (const x of h.late) {
+    L.push(`${x.contact.name} — ${x.st.daysSince} days, ${x.st.circle.toLowerCase()} circle wants every ${x.st.target}.`)
+  }
+  return L.join('\n')
+}
+
 function progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD) {
   if (!prog) return ''
   const r = x => Math.round(x * 100)
@@ -653,7 +666,7 @@ function progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD) {
   <div style="font:400 11px/16px ${SANS};color:${SOFT};padding-top:4px;">Bar is dollars booked. The mark is where the calendar is.</div>`
 }
 
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog, d2) {
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog, d2, hold) {
   const label = t => `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
   const block = (title, inner) => inner
     ? `<tr><td style="padding:32px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
@@ -671,6 +684,15 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
     const tail = v.onPlan ? '' : ` Gap ${m0(Math.abs(v.gap))}.`
     return line(`${name} days ${v.onPlan ? 'on plan at' : 'at'} <strong style="font-weight:600;">${m0(v.avg)}</strong> against ${m0(v.target)}. ${v.days} so far.<span style="color:${col};">${tail}</span>`)
   }
+  // Birthdays first — they are dated and they expire. Overdue contacts are a
+  // standing condition and can wait behind them.
+  const holdHtml = hold && (hold.late.length || hold.birthdays.length) ? [
+    ...hold.birthdays.slice(0, 3).map(x =>
+      line(`<strong style="font-weight:600;">${esc(x.contact.name)}</strong> — birthday ${x.days === 0 ? 'today' : x.days === 1 ? 'tomorrow' : `in ${x.days} days`}.`)),
+    ...hold.late.map(x =>
+      line(`<strong style="font-weight:600;">${esc(x.contact.name)}</strong> — ${x.st.daysSince} days. ${esc(x.st.circle)} circle, every ${x.st.target}.`, x.st.weight >= 3 ? ACCENT : INK)),
+  ].join('') : ''
+
   const paceHtml = pace ? [
     pace.bucketToday
       ? line(`Today is a <strong style="font-weight:600;">${pace.bucketToday}</strong> day. Target ${m0(pace.bucketToday === 'push' ? pace.push.target : pace.steady.target)}.`)
@@ -752,6 +774,7 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
 
   <tr><td style="padding:30px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
 
+  ${holdHtml ? block('The Hold', holdHtml) : ''}
   ${prog ? block('Sales against goal', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
   ${block('Cash', cashHtml)}
   ${block('Pace', paceHtml)}
@@ -1143,13 +1166,21 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // The strip runs on booked dollars per day for the whole year, not on the
   // month total the rest of the brief uses. Best-effort: if Books is slow or
   // down the brief still ships, just without the strip.
+  // The Hold — who has gone quiet. Best-effort: a relationship list must
+  // never be the reason the brief is late.
+  const hold = await safe('hold', async () => {
+    const t = ptDate()
+    const [due, bd] = await Promise.all([holdOverdue(req, t, 3), holdBirthdays(req, t, 14)])
+    return { ...due, birthdays: bd }
+  })
   const roll = await safe('sales-rollup', () => fetchYtdByDay(req, { year: Number(ptDate().slice(0, 4)) }))
   const prog = roll?.byDay ? buildProgress({
     today: ptDate(), byDay: roll.byDay, monthlyGoal: goalRec.goal, ratio: ratioRec.ratio,
   }) : null
   const paceText = (pace ? formatPace(pace) : '') +
     (prog ? formatProgress(prog) : '') +
-    (numbers ? formatNumbers(numbers, goalRec.goal) : '')
+    (numbers ? formatNumbers(numbers, goalRec.goal) : '') +
+    (hold ? formatHold(hold) : '')
 
   // Triage is best-effort and capped: it rides inside the brief's gateway
   // request, and an unread inbox must never be why the brief is late.
@@ -1247,7 +1278,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
   const ar = buildAR(b.revenue)
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog, d2)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog, d2, hold)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -1575,7 +1606,7 @@ router.get('/page', async (req, res) => {
 .bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
 .bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
 <div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
-${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null, null)}
+${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null, null, null)}
 </body></html>`)
   } catch (e) { res.status(500).send(String(e.message)) }
 })
@@ -1630,6 +1661,13 @@ router.get('/email-preview', async (req, res) => {
       : null
     const projection = pace ? projectMonth(pace, ratioRec.ratio) : null
     const numbers = pace ? buildNumbers(b.revenue, pace, ratioRec.ratio, projection) : null
+    // The Hold — who has gone quiet. Best-effort: a relationship list must
+    // never be the reason the brief is late.
+    const hold = await safe('hold', async () => {
+      const t = ptDate()
+      const [due, bd] = await Promise.all([holdOverdue(req, t, 3), holdBirthdays(req, t, 14)])
+      return { ...due, birthdays: bd }
+    })
     const roll = await safe('sales-rollup', () => fetchYtdByDay(req, { year: Number(ptDate().slice(0, 4)) }))
     const prog = roll?.byDay ? buildProgress({
       today: ptDate(), byDay: roll.byDay, monthlyGoal: goalRec.goal, ratio: ratioRec.ratio,
@@ -1639,7 +1677,7 @@ router.get('/email-preview', async (req, res) => {
     res.type('html').send(formatBriefHtml(
       b, big3, tr, `https://absoluteadas.com/audio/ada-morning-${ptDate()}.mp3`,
       null, null, pace, null, buildAR(b.revenue), numbers,
-      goalRec.goal, ANALYTICS_URL, prog, d2))
+      goalRec.goal, ANALYTICS_URL, prog, d2, hold))
   } catch (e) { res.status(500).type('text/plain').send(String(e.stack || e.message)) }
 })
 

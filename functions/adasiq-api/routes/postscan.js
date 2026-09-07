@@ -346,6 +346,17 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] tc-backup piggyback failed (non-fatal):', e.message)
   }
 
+  // Nightly Zoho Books mirror refresh (books scan B-02, Mark 2026-09-07)
+  // — after 8pm PT, current + previous 2 months. Read-only pull; never
+  // runs until the first import has been confirmed by Mark.
+  try {
+    const { maybeNightlyMirror } = await import('../services/zohoMirror.js')
+    const zm = await maybeNightlyMirror(req)
+    if (zm.fired) console.log('[postscan] zoho mirror:', JSON.stringify({ invoices: zm.invoices, payments: zm.payments }))
+  } catch (e) {
+    console.warn('[postscan] zoho-mirror piggyback failed (non-fatal):', e.message)
+  }
+
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
   // the Books invoice webhook. Every hourly tick, sweep the last two PT
   // days of sent invoices; the per-invoice dedup stamp makes repeated

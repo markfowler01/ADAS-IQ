@@ -17,6 +17,7 @@ import extractRoImageRouter from './routes/extract-ro-image.js'
 import extractVinImageRouter from './routes/extract-vin-image.js'
 import tsbRouter from './routes/tsb.js'
 import cloningRouter from './routes/cloning.js'
+import zohoMirrorRouter from './routes/zohoMirror.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
@@ -80,6 +81,7 @@ import operationsRouter from './routes/operations.js'
 import booksFromExtractRouter from './routes/books-from-extract.js'
 import payrollRouter from './routes/payroll.js'
 import scalingRouter from './routes/scaling.js'
+import holdRouter from './routes/hold.js'
 import briefingRouter, { sendDailyBriefing, planDay, buildBriefingForPlan } from './routes/briefing.js'
 import eveningRouter, { sendEveningCheckin } from './routes/eveningCheckin.js'
 import coachRouter, { runWeeklyReview, computeWeekPlan, deliverWeekPlan, runFridayQ, runFamilyDevotional } from './routes/coach.js'
@@ -213,6 +215,7 @@ app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRout
 app.use('/api/extract-vin-image', requireAuth, extractLimiter, extractVinImageRouter)
 app.use('/api/tsb', requireAuth, tsbRouter)
 app.use('/api/cloning', requireAuth, cloningRouter)
+app.use('/api/zoho-mirror', requireAuth, requireStaff, zohoMirrorRouter)
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
@@ -1044,6 +1047,7 @@ app.use('/api/scaling', requireAuth, scalingRouter)
 
 // Ops daily briefing — endpoints self-gate on x-cron-secret (no requireAuth)
 app.use('/api/briefing', briefingRouter)
+app.use('/api/hold', holdRouter)
 app.post('/api/cron/daily-briefing', async (req, res) => {
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   if ((req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })

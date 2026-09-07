@@ -9,6 +9,7 @@ import ServicesTab from './books/ServicesTab'
 import ReportsTab from './books/ReportsTab'
 import ExpensesTab from './books/ExpensesTab'
 import DepositsTab from './books/DepositsTab'
+import ZohoMirrorTab from './books/ZohoMirrorTab'
 import BonusCalculator from './books/BonusCalculator'
 
 // ── Main BooksScreen ──────────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ export default function BooksScreen({ user, onLogout, currentScreen, onNavigate 
   useEffect(() => { loadJobs() }, [loadJobs])
 
   const tabs = [
+    { id: 'mirror',    label: '🪞 Zoho Mirror' },
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'queue',     label: 'Billing Queue' },
     { id: 'invoices',  label: 'Invoices' },
@@ -112,6 +114,8 @@ export default function BooksScreen({ user, onLogout, currentScreen, onNavigate 
         </div>
 
         {/* Tab content */}
+        {tab === 'mirror' && <ZohoMirrorTab user={user} />}
+
         {tab === 'dashboard' && (
           <DashboardTab
             invoices={invoices}
