@@ -7,7 +7,7 @@ import Navbar from '../components/Navbar'
 
 const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
-const fileUrl = (id, dl) => `${API_BASE}/api/recruit/file/${id}?t=${encodeURIComponent(getToken())}${dl ? '&dl=1' : ''}`
+const fileUrl = (id, dl) => `${API_BASE}/api/public/recruit/file/${id}?t=${encodeURIComponent(getToken())}${dl ? '&dl=1' : ''}`
 const STAGE_COLORS = {
   new: '#CD4419', contacted: '#b45309', phone_screen: '#1d4ed8', ride_along: '#7e22ce',
   offer: '#0e7490', hired: '#15803d', did_not_hire: '#6b7280', do_not_hire: '#dc2626',

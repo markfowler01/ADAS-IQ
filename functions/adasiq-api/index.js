@@ -15,7 +15,7 @@ import { holidayPosterRouter } from './routes/holidayPoster.js'
 import { cronMonitorRouter } from './routes/cronMonitor.js'
 import extractRoImageRouter from './routes/extract-ro-image.js'
 import extractVinImageRouter from './routes/extract-vin-image.js'
-import tsbRouter from './routes/tsb.js'
+import tsbRouter, { tsbPublicRouter } from './routes/tsb.js'
 import cloningRouter from './routes/cloning.js'
 import zohoMirrorRouter from './routes/zohoMirror.js'
 import recruitRouter, { publicRouter as recruitPublicRouter } from './routes/recruit.js'
@@ -220,6 +220,7 @@ app.use('/api/zoho-mirror', requireAuth, requireStaff, zohoMirrorRouter)
 app.use('/api/recruit', requireAuth, requireStaff, recruitRouter)
 // Public website intake form (absoluteadas.com/careers) — no auth, honeypot inside.
 app.use('/api/public/recruit', recruitPublicRouter)
+app.use('/api/public/tsb', tsbPublicRouter)  // token-checked photo streaming
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)

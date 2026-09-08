@@ -433,20 +433,18 @@ async function fetchWdFile(fileId) {
 
 // GET /photo/:fileId?t=<auth token> — <img> tags can't send headers, so
 // the token rides the query string; verified the same way as the header.
-router.get('/photo/:fileId', async (req, res) => {
+// Photos are served from /api/public/tsb/photo/:fileId?t=<token> — the
+// staff mount's requireAuth can't see a query token, and <img> tags
+// can't send headers.
+export const tsbPublicRouter = express.Router()
+tsbPublicRouter.get('/photo/:fileId', async (req, res) => {
   try {
-    if (req.query.t) {
-      const { verifyToken } = await import('./auth.js')
-      const u = verifyToken(String(req.query.t))
-      if (!u) return res.status(401).json({ error: 'unauthorized' })
-    }
-    // (no t param: requireAuth on the mount already validated the header)
+    const { verifyToken } = await import('./auth.js')
+    if (!req.query.t || !verifyToken(String(req.query.t))) return res.status(401).json({ error: 'unauthorized' })
     const { buf, mime } = await fetchWdFile(String(req.params.fileId))
     res.setHeader('Cache-Control', 'private, max-age=86400')
     res.type(mime).send(buf)
-  } catch (e) {
-    res.status(404).json({ error: 'Photo not found' })
-  }
+  } catch (e) { res.status(404).json({ error: 'Photo not found' }) }
 })
 
 export default router

@@ -200,6 +200,20 @@ async function handleApply(req, res) {
     res.status(500).json({ error: 'Server error — please call or text us instead.' })
   }
 }
+// GET /api/public/recruit/file/:fileId?t=<auth token> — <img>/<a> can't
+// send headers, so the token rides the query string and is verified here
+// (the staff mount's requireAuth would 401 it first otherwise).
+publicRouter.get('/file/:fileId', async (req, res) => {
+  try {
+    const { verifyToken } = await import('./auth.js')
+    if (!req.query.t || !verifyToken(String(req.query.t))) return res.status(401).json({ error: 'unauthorized' })
+    const { buf, mime } = await fetchWdFile(String(req.params.fileId))
+    res.setHeader('Cache-Control', 'private, max-age=86400')
+    if (req.query.dl) res.setHeader('Content-Disposition', 'attachment')
+    res.type(mime).send(buf)
+  } catch (e) { res.status(404).json({ error: 'File not found' }) }
+})
+
 publicRouter.options('/apply', (req, res) => {
   res.set('Access-Control-Allow-Origin', '*')
   res.set('Access-Control-Allow-Headers', 'Content-Type')
@@ -209,19 +223,6 @@ publicRouter.options('/apply', (req, res) => {
 // ── STAFF: pipeline board ───────────────────────────────────────────────
 const router = express.Router()
 const isOwner = req => String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
-
-router.get('/file/:fileId', async (req, res) => {
-  try {
-    if (req.query.t) {
-      const { verifyToken } = await import('./auth.js')
-      if (!verifyToken(String(req.query.t))) return res.status(401).json({ error: 'unauthorized' })
-    }
-    const { buf, mime } = await fetchWdFile(String(req.params.fileId))
-    res.setHeader('Cache-Control', 'private, max-age=86400')
-    if (req.query.dl) res.setHeader('Content-Disposition', 'attachment')
-    res.type(mime).send(buf)
-  } catch (e) { res.status(404).json({ error: 'File not found' }) }
-})
 
 router.get('/', async (req, res) => {
   try { res.json({ stages: STAGES, candidates: await readAll(req) }) }

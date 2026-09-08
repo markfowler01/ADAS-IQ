@@ -153,9 +153,9 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
                   <div className="flex gap-1.5 mt-2 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
                     {t.photos.map(ph => (
                       <img key={ph.file_id}
-                        src={`${API_BASE}/api/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`}
+                        src={`${API_BASE}/api/public/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`}
                         alt="" loading="lazy"
-                        onClick={e => { e.stopPropagation(); window.open(`${API_BASE}/api/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`, '_blank') }}
+                        onClick={e => { e.stopPropagation(); window.open(`${API_BASE}/api/public/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`, '_blank') }}
                         className="rounded-lg flex-shrink-0"
                         style={{ height: open ? 120 : 60, width: 'auto', objectFit: 'cover', border: '1px solid #ebebeb' }}
                       />
@@ -528,7 +528,7 @@ function TsbPhotoEditor({ tsb }) {
       <div className="flex gap-1.5 flex-wrap mb-2">
         {photos.map(ph => (
           <div key={ph.file_id} className="relative">
-            <img src={`${API_BASE}/api/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`} alt=""
+            <img src={`${API_BASE}/api/public/tsb/photo/${ph.file_id}?t=${encodeURIComponent(getToken())}`} alt=""
               className="rounded-lg" style={{ height: 64, width: 64, objectFit: 'cover', border: '1px solid #ebebeb' }} />
             <button onClick={() => remove(ph.file_id)}
               className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full text-white text-xs font-bold flex items-center justify-center"
