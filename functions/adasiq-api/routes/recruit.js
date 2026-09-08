@@ -131,7 +131,8 @@ async function storeFiles(req, files, name) {
   for (const f of list) if ((f.fieldname === 'photo' && !isImg(f)) || (f.fieldname === 'resume' && !isDoc(f))) console.log('[recruit files] skipped', f.fieldname, f.mimetype)
   if (!photo && !resume) return out
   try {
-    const { getAccessToken, uploadFileToFolder } = await import('../services/workdrive.js')
+    const { getAccessToken } = await import('../services/zoho.js')
+    const { uploadFileToFolder } = await import('../services/workdrive.js')
     const wdToken = await getAccessToken()
     const folderId = await ensureCandidateFolder(req, wdToken)
     if (!folderId) return out
@@ -149,7 +150,7 @@ async function storeFiles(req, files, name) {
   return out
 }
 async function fetchWdFile(fileId) {
-  const { getAccessToken } = await import('../services/workdrive.js')
+  const { getAccessToken } = await import('../services/zoho.js')
   const wdToken = await getAccessToken()
   const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, {
     headers: { Authorization: `Zoho-oauthtoken ${wdToken}` }, responseType: 'arraybuffer', timeout: 25000, maxContentLength: 30 * 1024 * 1024,

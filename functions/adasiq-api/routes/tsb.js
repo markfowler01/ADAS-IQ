@@ -389,7 +389,7 @@ router.post('/:id/photo', (req, res) => {
       const tsbs = await readAllTsbs(req)
       const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
       if (!tsb) return res.status(404).json({ error: 'TSB not found' })
-      const { getAccessToken } = await import('../services/workdrive.js')
+      const { getAccessToken } = await import('../services/zoho.js')
       const wdToken = await getAccessToken()
       const folderId = await ensureTsbFolder(req, wdToken)
       if (!folderId) return res.status(500).json({ error: 'Could not create the TSB photos folder in WorkDrive.' })
@@ -420,7 +420,7 @@ router.delete('/:id/photo/:fileId', async (req, res) => {
 })
 
 async function fetchWdFile(fileId) {
-  const { getAccessToken } = await import('../services/workdrive.js')
+  const { getAccessToken } = await import('../services/zoho.js')
   const wdToken = await getAccessToken()
   const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, {
     headers: { Authorization: `Zoho-oauthtoken ${wdToken}` },
