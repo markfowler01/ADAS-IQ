@@ -242,6 +242,28 @@ router.post('/confirm', async (req, res) => {
       confirmed_at: confirmed ? new Date().toISOString() : null,
     })
     await upsertKV(req, metaKey(jobId), value)
+    // Website bookings (Mark 2026-09-07): confirming texts the shop.
+    // The contact phone lives in the card notes ("📞 425-555-0100").
+    if (confirmed) {
+      try {
+        const { readJobsPublic } = await import('./jobs.js')
+        const job = (await readJobsPublic(req)).find(j => String(j.id) === jobId)
+        const notes = String(job?.notes || '')
+        const phone = (notes.match(/📞\s*([\d-]{10,14})/) || [])[1]
+        if (job && notes.includes('🌐 Website booking') && phone) {
+          const win = (notes.match(/Website booking · ([^\n]+)/) || [])[1] || ''
+          const day = job.scheduled_date ? new Date(`${String(job.scheduled_date).slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'the day you asked for'
+          const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
+          const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+          const { sendTwilioSMS } = await import('../services/twilio.js')
+          const cfg = await resolvePhoneConfig(req)
+          await Promise.race([
+            sendTwilioSMS({ to: phone, body: `Absolute ADAS: confirmed for ${day}${win ? `, ${win.toLowerCase()}` : ''}${vehicle ? ` (${vehicle})` : ''}. Reply here with any changes. See you then.`, from: 'local', cfg }),
+            new Promise(r => setTimeout(r, 8000)),
+          ])
+        }
+      } catch (e) { console.log('[schedule confirm sms]', e.message) }
+    }
     res.json({ ok: true, job_id: jobId, confirmed })
   } catch (err) {
     console.error('[schedule confirm]', err.message)

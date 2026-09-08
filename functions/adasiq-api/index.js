@@ -19,6 +19,7 @@ import tsbRouter, { tsbPublicRouter } from './routes/tsb.js'
 import cloningRouter from './routes/cloning.js'
 import zohoMirrorRouter from './routes/zohoMirror.js'
 import recruitRouter, { publicRouter as recruitPublicRouter } from './routes/recruit.js'
+import { publicRouter as bookingPublicRouter } from './routes/booking.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
@@ -220,6 +221,7 @@ app.use('/api/zoho-mirror', requireAuth, requireStaff, zohoMirrorRouter)
 app.use('/api/recruit', requireAuth, requireStaff, recruitRouter)
 // Public website intake form (absoluteadas.com/careers) — no auth, honeypot inside.
 app.use('/api/public/recruit', recruitPublicRouter)
+app.use('/api/public/booking', bookingPublicRouter)  // website: book a calibration / Revenue Snapshot
 app.use('/api/public/tsb', tsbPublicRouter)  // token-checked photo streaming
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)

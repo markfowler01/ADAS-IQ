@@ -1566,5 +1566,5 @@ router.post('/:id/enroute', async (req, res) => {
   }
 })
 
-export { getAllJobs as readJobsPublic, updateJob as updateJobPublic, deleteJob as deleteJobPublic, insertJob as insertJobPublic }
+export { getAllJobs as readJobsPublic, updateJob as updateJobPublic, deleteJob as deleteJobPublic, insertJob as insertJobPublic, resolveJobFolder as resolveJobFolderPublic }
 export default router
