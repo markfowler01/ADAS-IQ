@@ -9,7 +9,7 @@ const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
 const fileUrl = (id, dl) => `${API_BASE}/api/public/recruit/file/${id}?t=${encodeURIComponent(getToken())}${dl ? '&dl=1' : ''}`
 const STAGE_COLORS = {
-  new: '#CD4419', contacted: '#b45309', phone_screen: '#1d4ed8', ride_along: '#7e22ce',
+  new: '#CD4419', contacted: '#b45309', project: '#0f766e', phone_screen: '#1d4ed8', ride_along: '#7e22ce',
   offer: '#0e7490', hired: '#15803d', did_not_hire: '#6b7280', do_not_hire: '#dc2626',
 }
 const daysSince = iso => { const d = new Date(iso); return isNaN(d) ? '' : Math.floor((Date.now() - d) / 86400000) }
@@ -165,7 +165,12 @@ function CandidateCard({ c, stages, onOpen, showStage }) {
       <p className="text-xs mt-0.5" style={{ color: '#666' }}>{[c.role, c.city].filter(Boolean).join(' · ') || 'No role given'}</p>
       {(c.experience || c.message) && <p className="text-xs mt-1.5" style={{ color: '#888' }}>{String(c.experience || c.message).slice(0, 90)}{String(c.experience || c.message).length > 90 ? '…' : ''}</p>}
       <div className="flex items-center justify-between mt-2">
-        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>{c.source || 'manual'}</span>
+        <span className="flex items-center gap-1">
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>{c.source || 'manual'}</span>
+          {c.project_received_at
+            ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={c.project_words_ok === 'yes' ? { backgroundColor: '#e6f4ea', color: '#15803d' } : { backgroundColor: '#fef2f2', color: '#dc2626' }}>{c.project_words_ok === 'yes' ? '✅ project' : '❌ words missing'}</span>
+            : c.project_sent_at ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#ecfeff', color: '#0e7490' }}>🧪 sent</span> : null}
+        </span>
         <span className="text-[10px]" style={{ color: '#aaa' }}>{showStage && stage ? `${stage.label} · ` : ''}{d === '' ? '' : d === 0 ? 'today' : `${d}d`}</span>
       </div>
     </div>
@@ -199,6 +204,39 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           <span className="ml-auto text-lg" title="Rating">
             {[1, 2, 3, 4, 5].map(n => <button key={n} onClick={() => onPatch({ rating: c.rating === n ? 0 : n })} style={{ color: n <= c.rating ? '#f59e0b' : '#ddd' }}>★</button>)}
           </span>
+        </div>
+
+        <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1px solid #99f6e4' }}>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#0f766e' }}>🧪 First project</p>
+            {!c.project_received_at && (
+              <button onClick={async () => {
+                if (!c.email) return alert('No email on this candidate.')
+                if (!window.confirm(c.project_sent_at ? 'Send the project email again?' : 'Send the project email now (instead of waiting for the 2-hour timer)?')) return
+                try {
+                  const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/send-project`, { method: 'POST' })
+                  const j = await r.json(); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+                  onPatch({ project_sent_at: new Date().toISOString() }, '📨 Project email sent')
+                } catch (e) { alert(`Send failed: ${e.message}`) }
+              }} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#0f766e', border: '1px solid #99f6e4' }}>
+                {c.project_sent_at ? '↻ Resend email' : '📨 Send now'}
+              </button>
+            )}
+          </div>
+          <p className="text-xs mt-1" style={{ color: '#555' }}>
+            {c.project_received_at
+              ? <>Received {new Date(c.project_received_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · <b style={{ color: c.project_words_ok === 'yes' ? '#15803d' : '#dc2626' }}>{c.project_words_ok === 'yes' ? '✅ "Same Day. Done Right." present' : '❌ required words missing'}</b></>
+              : c.project_sent_at ? <>Email sent {new Date(c.project_sent_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · waiting on their video + doc (72h)</>
+              : <>Goes out automatically ~2 hours after they applied.</>}
+          </p>
+          {c.project_received_at && (
+            <div className="flex gap-2 mt-2 flex-wrap">
+              {c.project_doc_id && <a href={fileUrl(c.project_doc_id, true)} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: 'white', color: '#1a1a1a', border: '1px solid #e0dbd6' }}>📄 Word doc</a>}
+              {c.project_video && (c.project_video.startsWith('wd:')
+                ? <a href={fileUrl(c.project_video.slice(3), true)} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>🎬 Download video</a>
+                : <a href={c.project_video} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>▶ Watch video</a>)}
+            </div>
+          )}
         </div>
 
         <p className="text-[11px] font-bold uppercase tracking-widest mb-1.5" style={{ color: '#888' }}>Stage</p>

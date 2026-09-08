@@ -21,6 +21,7 @@ import axios from 'axios'
 export const STAGES = [
   { id: 'new',          label: '📥 New' },
   { id: 'contacted',    label: '📞 Contacted' },
+  { id: 'project',      label: '🧪 Project' },
   { id: 'phone_screen', label: '🎙 Phone Screen' },
   { id: 'ride_along',   label: '🚐 Ride-Along' },
   { id: 'offer',        label: '📝 Offer' },
@@ -42,6 +43,9 @@ function rowToCandidate(r) {
     message: r.cand_message || '', stage: r.cand_stage || 'new', notes: r.cand_notes || '',
     resume_url: r.cand_resume_url || '', photo_id: r.cand_photo_id || '', rating: Number(r.cand_rating) || 0,
     created_at: r.cand_created_at || r.CREATEDTIME || '', updated_at: r.cand_updated_at || '',
+    project_token: r.cand_project_token || '', project_sent_at: r.cand_project_sent_at || '',
+    project_doc_id: r.cand_project_doc_id || '', project_video: r.cand_project_video || '',
+    project_received_at: r.cand_project_received_at || '', project_words_ok: r.cand_project_words_ok || '',
   }
 }
 
@@ -71,33 +75,54 @@ async function insertCandidate(req, c) {
   return rowToCandidate(row)
 }
 
-// ── Notify Mark: email + Cliq (both bounded, non-fatal) ─────────────────
-async function notifyMark(c) {
+// ── Notify Mark: email (photo inline + photo/resume attached) + Cliq ────
+// Resend carries attachments (same path as the hours report); Zoho Mail
+// is the no-attachment fallback. Both bounded, non-fatal.
+async function notifyMark(c, files = {}) {
+  const esc = t => String(t).replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]))
   const lines = [
     `Name: ${c.name}`, `Phone: ${c.phone || '—'}`, `Email: ${c.email || '—'}`, `City: ${c.city || '—'}`,
     `Applying for: ${c.role || '—'}`, `Availability: ${c.availability || '—'}`, `Certs/licenses: ${c.certs || '—'}`,
     `Heard about us: ${c.source || '—'}`, '', `Experience:`, c.experience || '—', '', `Message:`, c.message || '—',
   ]
   const text = lines.join('\n')
+  const photo = files.photo, resume = files.resume
+  const MAX_ATTACH = 10 * 1024 * 1024
+  const attachments = []
+  if (photo && photo.size <= MAX_ATTACH) attachments.push({ filename: `photo-${(c.name || 'applicant').replace(/[^A-Za-z0-9]+/g, '-')}.${(photo.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg')}`, content: photo.buffer.toString('base64') })
+  if (resume && resume.size <= MAX_ATTACH) attachments.push({ filename: resume.originalname || 'resume.pdf', content: resume.buffer.toString('base64') })
+  const inlinePhoto = photo && photo.size <= 4 * 1024 * 1024
+    ? `<img src="data:${photo.mimetype};base64,${photo.buffer.toString('base64')}" alt="" style="width:140px;height:140px;object-fit:cover;border-radius:12px;border:1px solid #ddd;display:block;margin:0 0 14px">` : ''
+  const boardUrl = 'https://adas-iq-904191467.development.catalystserverless.com/app/'
+  const html = `<div style="font-family:Inter,Arial,sans-serif;font-size:14px;color:#1a1a1a">${inlinePhoto}` +
+    `<pre style="font-family:Inter,Arial,sans-serif;font-size:14px;white-space:pre-wrap;margin:0 0 14px">${esc(text)}</pre>` +
+    `${resume ? '<p>📄 Resume attached.</p>' : '<p style="color:#888">No resume uploaded.</p>'}` +
+    `<p><a href="${boardUrl}" style="color:#CD4419;font-weight:700">Open the Recruiting board →</a></p></div>`
+  const subject = `🧑‍🔧 New applicant: ${c.name}${c.role ? ` — ${c.role}` : ''}`
   const tasks = []
   tasks.push((async () => {
-    const { getMailAccessToken, getMailAccountIdFor, sendMail } = await import('../services/mail.js')
-    const token = await getMailAccessToken()
-    const accountId = await getMailAccountIdFor(token, 'mark@absoluteadas.com')
-    await sendMail(token, accountId, {
-      to: 'mark@absoluteadas.com',
-      subject: `🧑‍🔧 New applicant: ${c.name}${c.role ? ` — ${c.role}` : ''}`,
-      body: `<pre style="font-family:Inter,Arial,sans-serif;font-size:14px;white-space:pre-wrap">${text.replace(/[<>&]/g, ch => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch]))}</pre>` +
-            `<p><a href="https://adas-iq-904191467.development.catalystserverless.com/app/">Open the Recruiting board</a></p>`,
-    })
-  })().catch(e => console.warn('[recruit email]', e.message)))
+    try {
+      const { sendBroadcast, resendConfigured } = await import('../services/brewResend.js')
+      if (resendConfigured()) {
+        const r = await sendBroadcast({ recipients: ['mark@absoluteadas.com'], subject, text, html, attachments, fromName: 'Absolute ADAS app', replyTo: c.email || undefined })
+        if (r?.sent) return
+      }
+      throw new Error('resend unavailable')
+    } catch (e1) {
+      console.log('[recruit email] resend fallback → zoho mail:', e1.message)
+      const { getMailAccessToken, getMailAccountIdFor, sendMail } = await import('../services/mail.js')
+      const token = await getMailAccessToken()
+      const accountId = await getMailAccountIdFor(token, 'mark@absoluteadas.com')
+      await sendMail(token, accountId, { to: 'mark@absoluteadas.com', subject, body: html })
+    }
+  })().catch(e => console.log('[recruit email] FAILED:', e.message)))
   tasks.push((async () => {
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
       `🧑‍🔧 *New applicant: ${c.name}*${c.role ? ` · ${c.role}` : ''}${c.city ? ` · ${c.city}` : ''}\n` +
-      `${c.phone || ''}${c.email ? ` · ${c.email}` : ''}\n${clip(c.experience || c.message, 240)}`)
-  })().catch(e => console.warn('[recruit cliq]', e.message)))
-  await Promise.race([Promise.all(tasks), new Promise(r => setTimeout(r, 12000))])
+      `${c.phone || ''}${c.email ? ` · ${c.email}` : ''}${photo ? ' · 📷' : ''}${resume ? ' · 📄' : ''}\n${clip(c.experience || c.message, 240)}`)
+  })().catch(e => console.log('[recruit cliq] FAILED:', e.message)))
+  await Promise.race([Promise.all(tasks), new Promise(r => setTimeout(r, 14000))])
 }
 
 // ── Files (Mark 2026-09-07: "upload a picture and a resume spot") ──────
@@ -193,7 +218,8 @@ async function handleApply(req, res) {
       certs: b.certs, availability: b.availability, source: b.source || 'website', message: b.message, stage: 'new',
       ...(await storeFiles(req, req.files, name)),
     })
-    await notifyMark(c)
+    const _list = Array.isArray(req.files) ? req.files : []
+    await notifyMark(c, { photo: _list.find(f => f.fieldname === 'photo'), resume: _list.find(f => f.fieldname === 'resume') })
     res.json({ ok: true })
   } catch (e) {
     console.error('[recruit apply]', e.message)
@@ -214,6 +240,93 @@ publicRouter.get('/file/:fileId', async (req, res) => {
   } catch (e) { console.log('[recruit file]', e.response?.status, e.message); res.status(e.response?.status === 401 ? 502 : 404).json({ error: 'File not found' }) }
 })
 
+// ── First project (Mark 2026-09-07) ─────────────────────────────────────
+import { buildProjectEmail, projectPageHtml, docxText, hasRequiredWords, newToken, PROJECT_DELAY_HOURS } from '../services/recruitProject.js'
+
+async function findByToken(req, token) {
+  if (!token || token.length < 16) return null
+  const app = catalyst.initialize(req)
+  const rows = await app.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE cand_project_token = '${q(token)}' LIMIT 1`)
+  const r = rows?.[0]?.[TABLE] || rows?.[0]
+  return r ? rowToCandidate(r) : null
+}
+
+async function sendProjectEmail(req, c) {
+  const app = catalyst.initialize(req)
+  const token = c.project_token || newToken()
+  const { subject, html, text } = buildProjectEmail({ ...c, project_token: token })
+  const { sendBroadcast, resendConfigured } = await import('../services/brewResend.js')
+  if (!resendConfigured()) throw new Error('Resend not configured')
+  const r = await sendBroadcast({ recipients: [c.email], subject, html, text, fromName: 'Mark Fowler · Absolute ADAS', replyTo: 'mark@absoluteadas.com' })
+  if (!r?.sent) throw new Error(r?.results?.[0]?.error || 'send failed')
+  await app.datastore().table(TABLE).updateRow({ ROWID: String(c.id), cand_project_token: token, cand_project_sent_at: new Date().toISOString(), cand_updated_at: new Date().toISOString() })
+  return token
+}
+
+// Hourly sweep (postscan piggyback): applied ≥ 2h ago, has an email,
+// still New/Contacted, not yet sent. Anyone Mark already passed on is skipped.
+export async function maybeSendProjectEmails(req) {
+  const all = await readAll(req)
+  const cutoff = Date.now() - PROJECT_DELAY_HOURS * 3600 * 1000
+  const due = all.filter(c => c.email && !c.project_sent_at && ['new', 'contacted'].includes(c.stage) && new Date(c.created_at).getTime() <= cutoff)
+  const out = { due: due.length, sent: 0, failed: 0 }
+  for (const c of due.slice(0, 20)) {
+    try { await sendProjectEmail(req, c); out.sent++ } catch (e) { out.failed++; console.log('[recruit project] send failed', c.id, e.message) }
+  }
+  return out
+}
+
+// Public: the upload page + submission
+publicRouter.get('/project/:token', async (req, res) => {
+  const c = await findByToken(req, String(req.params.token)).catch(() => null)
+  if (!c) return res.status(404).send('<p style="font-family:sans-serif;padding:40px">This link isn\'t valid. Reply to Mark\'s email and he\'ll send a fresh one.</p>')
+  res.set('Content-Type', 'text/html; charset=utf-8').send(projectPageHtml(c, { done: !!c.project_received_at }))
+})
+const projectUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } }).any()
+publicRouter.post('/project/:token', (req, res) => {
+  projectUpload(req, res, async err => {
+    const c = await findByToken(req, String(req.params.token)).catch(() => null)
+    if (!c) return res.status(404).send('Invalid link')
+    const page = (opts) => res.set('Content-Type', 'text/html; charset=utf-8').send(projectPageHtml(c, opts))
+    if (err) return page({ error: err.message })
+    try {
+      const b = req.body || {}
+      if (b.website) return res.status(400).send('Invalid submission')
+      const files = Array.isArray(req.files) ? req.files : []
+      const doc = files.find(f => f.fieldname === 'doc')
+      const video = files.find(f => f.fieldname === 'video')
+      const link = String(b.video_link || '').trim().slice(0, 255)
+      if (!doc) return page({ error: 'Please attach your Word document (.docx).' })
+      if (!video && !link) return page({ error: 'Add a video link or upload the video file.' })
+      let wordsOk = 'no'
+      try { wordsOk = hasRequiredWords(docxText(doc.buffer)) ? 'yes' : 'no' } catch (e) { return page({ error: `That doesn\'t look like a .docx file (${e.message}). Save it as Word format and try again.` }) }
+      const { getAccessToken } = await import('../services/zoho.js')
+      const { uploadFileToFolder } = await import('../services/workdrive.js')
+      const wdToken = await getAccessToken()
+      const folderId = await ensureCandidateFolder(req, wdToken)
+      const safe = String(c.name || 'candidate').replace(/[^A-Za-z0-9 _-]/g, '').trim().slice(0, 40) || 'candidate'
+      const docId = wdId(await uploadFileToFolder(folderId, `${safe} - project.docx`, doc.buffer, wdToken, doc.mimetype))
+      let videoRef = link
+      if (video) videoRef = 'wd:' + wdId(await uploadFileToFolder(folderId, `${safe} - project video.${(video.originalname || 'mp4').split('.').pop().slice(0, 5)}`, video.buffer, wdToken, video.mimetype))
+      const app = catalyst.initialize(req)
+      await app.datastore().table(TABLE).updateRow({
+        ROWID: String(c.id), cand_project_doc_id: docId, cand_project_video: videoRef.slice(0, 255),
+        cand_project_received_at: new Date().toISOString(), cand_project_words_ok: wordsOk,
+        cand_stage: ['new', 'contacted'].includes(c.stage) ? 'project' : c.stage, cand_updated_at: new Date().toISOString(),
+      })
+      try {
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        await Promise.race([postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
+          `🧪 *Project received: ${c.name}*${c.role ? ` · ${c.role}` : ''}\n${wordsOk === 'yes' ? '✅ "Same Day. Done Right." present' : '❌ required words MISSING'} · ${video ? '🎬 video uploaded' : '🔗 video link'}\nOpen the Recruiting board to review.`), new Promise(r => setTimeout(r, 6000))])
+      } catch { /* non-fatal */ }
+      page({ done: true })
+    } catch (e) {
+      console.log('[recruit project]', e.message)
+      page({ error: 'Something went wrong on our end. Reply to Mark\'s email and attach the files instead.' })
+    }
+  })
+})
+
 publicRouter.options('/apply', (req, res) => {
   res.set('Access-Control-Allow-Origin', '*')
   res.set('Access-Control-Allow-Headers', 'Content-Type')
@@ -227,6 +340,16 @@ const isOwner = req => String(req.user?.email || '').toLowerCase().startsWith('m
 router.get('/', async (req, res) => {
   try { res.json({ stages: STAGES, candidates: await readAll(req) }) }
   catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+router.post('/:id/send-project', async (req, res) => {
+  try {
+    const c = (await readAll(req)).find(x => x.id === String(req.params.id))
+    if (!c) return res.status(404).json({ error: 'Candidate not found' })
+    if (!c.email) return res.status(400).json({ error: 'No email on this candidate' })
+    await sendProjectEmail(req, c)
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 router.post('/', async (req, res) => {

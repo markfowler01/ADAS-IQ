@@ -357,6 +357,15 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] zoho-mirror piggyback failed (non-fatal):', e.message)
   }
 
+  // Recruiting "first project" emails (Mark 2026-09-07) — ~2h after apply.
+  try {
+    const { maybeSendProjectEmails } = await import('./recruit.js')
+    const rp = await maybeSendProjectEmails(req)
+    if (rp.due) console.log('[postscan] recruit project emails:', JSON.stringify(rp))
+  } catch (e) {
+    console.warn('[postscan] recruit-project piggyback failed (non-fatal):', e.message)
+  }
+
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
   // the Books invoice webhook. Every hourly tick, sweep the last two PT
   // days of sent invoices; the per-invoice dedup stamp makes repeated
