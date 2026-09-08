@@ -9,7 +9,7 @@ const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
 const STAGE_COLORS = {
   new: '#CD4419', contacted: '#b45309', phone_screen: '#1d4ed8', ride_along: '#7e22ce',
-  offer: '#0e7490', hired: '#15803d', passed: '#6b7280',
+  offer: '#0e7490', hired: '#15803d', did_not_hire: '#6b7280', do_not_hire: '#dc2626',
 }
 const daysSince = iso => { const d = new Date(iso); return isNaN(d) ? '' : Math.floor((Date.now() - d) / 86400000) }
 const digits = s => String(s || '').replace(/[^\d+]/g, '')
@@ -60,7 +60,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
   }
 
   const byStage = useMemo(() => Object.fromEntries(stages.map(s => [s.id, cands.filter(c => c.stage === s.id)])), [stages, cands])
-  const activeStages = stages.filter(s => !['hired', 'passed'].includes(s.id))
+  const activeStages = stages.filter(s => !['hired', 'did_not_hire', 'do_not_hire'].includes(s.id))
   const current = cands.find(c => c.id === open)
 
   return (
@@ -102,7 +102,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
               ))}
             </div>
             <div className="flex flex-col gap-2">
-              {(mobileStage === 'active' ? cands.filter(c => !['hired', 'passed'].includes(c.stage)) : (byStage[mobileStage] || [])).map(c => (
+              {(mobileStage === 'active' ? cands.filter(c => !['hired', 'did_not_hire', 'do_not_hire'].includes(c.stage)) : (byStage[mobileStage] || [])).map(c => (
                 <CandidateCard key={c.id} c={c} stages={stages} onOpen={() => setOpen(c.id)} showStage={mobileStage === 'active'} />
               ))}
             </div>
