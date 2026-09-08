@@ -154,7 +154,7 @@ async function storeFiles(req, files, name) {
 async function fetchWdFile(fileId) {
   const { getAccessToken } = await import('../services/zoho.js')
   const wdToken = await getAccessToken()
-  const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, {
+  const r = await axios.get(`https://workdrive.zoho.com/api/v1/download/${fileId}`, {
     headers: { Authorization: `Zoho-oauthtoken ${wdToken}` }, responseType: 'arraybuffer', timeout: 25000, maxContentLength: 30 * 1024 * 1024,
   })
   return { buf: Buffer.from(r.data), mime: r.headers['content-type'] || 'application/octet-stream' }
@@ -211,7 +211,7 @@ publicRouter.get('/file/:fileId', async (req, res) => {
     res.setHeader('Cache-Control', 'private, max-age=86400')
     if (req.query.dl) res.setHeader('Content-Disposition', 'attachment')
     res.type(mime).send(buf)
-  } catch (e) { res.status(404).json({ error: 'File not found' }) }
+  } catch (e) { console.log('[recruit file]', e.response?.status, e.message); res.status(e.response?.status === 401 ? 502 : 404).json({ error: 'File not found' }) }
 })
 
 publicRouter.options('/apply', (req, res) => {

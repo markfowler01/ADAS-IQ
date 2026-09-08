@@ -424,7 +424,7 @@ router.delete('/:id/photo/:fileId', async (req, res) => {
 async function fetchWdFile(fileId) {
   const { getAccessToken } = await import('../services/zoho.js')
   const wdToken = await getAccessToken()
-  const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, {
+  const r = await axios.get(`https://workdrive.zoho.com/api/v1/download/${fileId}`, {
     headers: { Authorization: `Zoho-oauthtoken ${wdToken}` },
     responseType: 'arraybuffer', timeout: 25000, maxContentLength: 30 * 1024 * 1024,
   })
@@ -444,7 +444,7 @@ tsbPublicRouter.get('/photo/:fileId', async (req, res) => {
     const { buf, mime } = await fetchWdFile(String(req.params.fileId))
     res.setHeader('Cache-Control', 'private, max-age=86400')
     res.type(mime).send(buf)
-  } catch (e) { res.status(404).json({ error: 'Photo not found' }) }
+  } catch (e) { console.log('[tsb photo]', e.response?.status, e.message); res.status(404).json({ error: 'Photo not found' }) }
 })
 
 export default router
