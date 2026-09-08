@@ -18,6 +18,7 @@ import extractVinImageRouter from './routes/extract-vin-image.js'
 import tsbRouter from './routes/tsb.js'
 import cloningRouter from './routes/cloning.js'
 import zohoMirrorRouter from './routes/zohoMirror.js'
+import recruitRouter, { publicRouter as recruitPublicRouter } from './routes/recruit.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
@@ -216,6 +217,9 @@ app.use('/api/extract-vin-image', requireAuth, extractLimiter, extractVinImageRo
 app.use('/api/tsb', requireAuth, tsbRouter)
 app.use('/api/cloning', requireAuth, cloningRouter)
 app.use('/api/zoho-mirror', requireAuth, requireStaff, zohoMirrorRouter)
+app.use('/api/recruit', requireAuth, requireStaff, recruitRouter)
+// Public website intake form (absoluteadas.com/careers) — no auth, honeypot inside.
+app.use('/api/public/recruit', recruitPublicRouter)
 app.use('/api/extract-business-card', requireAuth, extractLimiter, extractBusinessCardRouter)
 app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)

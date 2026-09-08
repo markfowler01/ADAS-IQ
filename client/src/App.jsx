@@ -30,6 +30,7 @@ import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
 import TipsScreen from './pages/TipsScreen'
+import RecruitingScreen from './pages/RecruitingScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
 import SoftphonePanel from './components/SoftphonePanel'
@@ -339,6 +340,9 @@ function MainApp() {
       )}
       {screen === 'tips' && (
         <TipsScreen {...navProps} />
+      )}
+      {screen === 'recruit' && (
+        <RecruitingScreen {...navProps} />
       )}
       {screen === 'books' && (
         <BooksScreen onBack={() => setScreen('upload')} {...navProps} />

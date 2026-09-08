@@ -30,6 +30,7 @@ const MORE_GROUPS = [
     { id: 'mileage',   label: 'Mileage' },
     { id: 'payroll',   label: 'Payroll', ownerOnly: true },
     { id: 'team',      label: 'Team' },
+    { id: 'recruit',   label: 'Recruiting', adminOnly: true },
   ]},
   { label: 'Intelligence', links: [
     { id: 'daily-review', label: 'Daily Review', ownerOnly: true },
