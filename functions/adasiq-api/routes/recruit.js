@@ -21,7 +21,8 @@ export const STAGES = [
   { id: 'ride_along',   label: '🚐 Ride-Along' },
   { id: 'offer',        label: '📝 Offer' },
   { id: 'hired',        label: '✅ Hired' },
-  { id: 'passed',       label: '❌ Passed' },
+  { id: 'did_not_hire', label: '❌ Did Not Hire' },
+  { id: 'do_not_hire',  label: '🚫 Do Not Hire' },
 ]
 const STAGE_IDS = new Set(STAGES.map(s => s.id))
 const TABLE = 'AdasCandidates'
