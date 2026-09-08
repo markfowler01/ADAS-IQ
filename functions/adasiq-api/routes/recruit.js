@@ -14,6 +14,8 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import multer from 'multer'
+// uploadFileToFolder resolves to { fileId } (sometimes a bare id) — always keep the string.
+const wdId = r => String((r && typeof r === 'object') ? (r.fileId || r.id || r.resource_id || '') : (r || ''))
 import axios from 'axios'
 
 export const STAGES = [
@@ -140,11 +142,11 @@ async function storeFiles(req, files, name) {
     const stamp = Date.now()
     if (photo) {
       const ext = (photo.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
-      out.photo_id = String(await uploadFileToFolder(folderId, `${safe} - photo ${stamp}.${ext}`, photo.buffer, wdToken, photo.mimetype))
+      out.photo_id = wdId(await uploadFileToFolder(folderId, `${safe} - photo ${stamp}.${ext}`, photo.buffer, wdToken, photo.mimetype)))
     }
     if (resume) {
       const ext = resume.originalname?.includes('.') ? resume.originalname.split('.').pop().toLowerCase().slice(0, 5) : 'pdf'
-      out.resume_url = String(await uploadFileToFolder(folderId, `${safe} - resume ${stamp}.${ext}`, resume.buffer, wdToken, resume.mimetype))
+      out.resume_url = wdId(await uploadFileToFolder(folderId, `${safe} - resume ${stamp}.${ext}`, resume.buffer, wdToken, resume.mimetype)))
     }
   } catch (e) { console.log('[recruit files] FAILED:', e.message, e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : '') }
   return out

@@ -10,6 +10,8 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import multer from 'multer'
+// uploadFileToFolder resolves to { fileId } (sometimes a bare id) — always keep the string.
+const wdId = r => String((r && typeof r === 'object') ? (r.fileId || r.id || r.resource_id || '') : (r || ''))
 import axios from 'axios'
 
 const router = express.Router()
@@ -396,7 +398,7 @@ router.post('/:id/photo', (req, res) => {
       const ext = (req.file.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
       const filename = `TSB-${tsb.number || tsb.id}-${Date.now()}.${ext}`
       const { uploadFileToFolder } = await import('../services/workdrive.js')
-      const fileId = await uploadFileToFolder(folderId, filename, req.file.buffer, wdToken, req.file.mimetype)
+      const fileId = wdId(await uploadFileToFolder(folderId, filename, req.file.buffer, wdToken, req.file.mimetype))
       tsb.photos = Array.isArray(tsb.photos) ? tsb.photos : []
       tsb.photos.push({ file_id: fileId, name: filename, mime: req.file.mimetype })
       await writeTsb(req, tsb)
