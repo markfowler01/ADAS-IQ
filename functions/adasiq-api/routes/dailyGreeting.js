@@ -196,7 +196,14 @@ async function deliver(recipient, msg) {
 // → sendDailyBriefing) can piggyback this side of the morning routine on
 // the cron trigger that's already set up in Catalyst — one console cron
 // fires both Mark's own briefing and the whole-team good-morning fan-out.
-export async function sendMorningKickoff(req) {
+//
+// ONCE-PER-DAY GATE LIVES HERE, INSIDE THE SENDER (2026-09-08). Three
+// triggers can reach this function (postscan hourly piggyback, the
+// daily-greeting cron, the 7:30 daily-briefing cron) and the briefing
+// path skipped the stamp check → Kat + Joyce were greeted twice. Every
+// caller now goes through claimKickoffDay(); only an explicit
+// { force: true } (manual ?force=1 test) can bypass it.
+export async function sendMorningKickoff(req, { force = false } = {}) {
   const dateStr = todayPT()
   const yesterday = yesterdayPT(dateStr)
   const monthStart = monthStartPT(dateStr)
@@ -205,6 +212,20 @@ export async function sendMorningKickoff(req) {
 
   // Skip weekends entirely. Sat/Sun = shop closed; no need to bug the team.
   if (!opener) return { date: dateStr, weekday, skipped: 'weekend', results: [] }
+
+  if (!force) {
+    let claim
+    try { claim = await claimKickoffDay(req, dateStr) }
+    catch (e) {
+      // Gate unreadable → do NOT send. A missed greeting beats a double.
+      console.log('[kickoff-gate] failed — NOT sending:', e.message)
+      return { date: dateStr, weekday, skipped: 'gate-failed', error: e.message, results: [] }
+    }
+    if (!claim.claimed) {
+      console.log('[kickoff-gate] already sent today at', claim.at, claim.raced ? '(raced)' : '')
+      return { date: dateStr, weekday, skipped: 'already sent today', at: claim.at, results: [] }
+    }
+  }
 
   // Monday special-case (Mark 2026-07-13): yesterday is Sunday — always
   // a goose egg. Report FRIDAY's sales instead, plus a total for the
@@ -312,77 +333,64 @@ function isInKickoffWindow(h, m) {
   return nowTotal >= startTotal && nowTotal < endTotal
 }
 
-async function readKickoffFiredKey(req, dateStr) {
+async function readKickoffRows(req, dateStr) {
   // AppConfig datastore, NOT the raw Cache REST API — cache calls fail
   // silently on cron-context runs and Kat got greeted 4x (2026-09-02).
+  // Throws on failure so the caller stands down instead of guessing.
   const key = `morning_kickoff_${dateStr}`
   const app = catalyst.initialize(req)
   const rows = await app.zcql().executeZCQLQuery(
-    `SELECT config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 1`
-  ).catch(() => [])
-  const r0 = rows?.[0]?.AppConfig || rows?.[0] || null
-  return r0?.config_value || null
+    `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 10`
+  )
+  return (rows || []).map(r => r?.AppConfig || r).filter(r => r?.ROWID)
 }
 
-async function stampKickoffFired(req, dateStr) {
-  const key = `morning_kickoff_${dateStr}`
+// Atomic-enough day claim. Insert our stamp, then re-read every stamp for
+// the day: the LOWEST ROWID wins. Two triggers landing in the same second
+// both insert, but only one sees its own row as the winner — the other
+// stands down. No read-then-write window to slip through.
+const lowestId = ids => ids.map(x => BigInt(x)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0]
+export async function claimKickoffDay(req, dateStr) {
+  const before = await readKickoffRows(req, dateStr)
+  if (before.length) return { claimed: false, at: before[0].config_value }
   const app = catalyst.initialize(req)
-  await app.datastore().table('AppConfig')
-    .insertRow({ config_key: key, config_value: new Date().toISOString() })
-  // Read-back verify — a stamp that didn't land means tomorrow's dedup
-  // is broken, and we want the log to scream today.
-  const check = await readKickoffFiredKey(req, dateStr)
-  if (!check) throw new Error('kickoff stamp verify failed')
+  const ins = await app.datastore().table('AppConfig')
+    .insertRow({ config_key: `morning_kickoff_${dateStr}`, config_value: new Date().toISOString() })
+  const myId = String(ins?.ROWID || '')
+  const after = await readKickoffRows(req, dateStr)
+  if (!after.length) throw new Error('kickoff stamp verify failed')
+  if (!myId) throw new Error('kickoff stamp insert returned no ROWID')
+  const winner = String(lowestId(after.map(r => r.ROWID)))
+  if (winner !== myId) return { claimed: false, raced: true, at: after[0].config_value }
+  return { claimed: true }
 }
 
-// Piggyback entry point — called from postscan.js /run (and any other
-// hourly cron we want as a fallback). Returns a small status object; all
-// exceptions are caught and returned as { fired: false, error }.
+// Piggyback entry point — called from postscan.js /run. Only adds the
+// time window; the once-per-day gate is inside sendMorningKickoff.
 export async function maybeFireMorningKickoff(req) {
-  const dateStr = todayPT()
   const { h, m } = hourMinutePT()
   if (!isInKickoffWindow(h, m)) {
     return { fired: false, reason: `outside window (${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')} PT)` }
   }
   try {
-    const already = await readKickoffFiredKey(req, dateStr)
-    if (already) return { fired: false, reason: 'already sent today', at: already }
-  } catch (e) {
-    console.warn('[kickoff-dedup] cache read failed, will send anyway:', e.message)
-  }
-  try {
-    // CLAIM the day BEFORE sending — a raced second trigger sees the
-    // stamp and stands down. If the claim itself fails we do NOT send
-    // (better a missed greeting than four of them).
-    await stampKickoffFired(req, dateStr)
-  } catch (e) {
-    console.error('[kickoff-dedup] could not claim stamp — NOT sending:', e.message)
-    return { fired: false, error: `stamp claim failed: ${e.message}` }
-  }
-  try {
     const summary = await sendMorningKickoff(req)
-    return { fired: true, ...summary }
+    return { fired: !summary.skipped, ...summary }
   } catch (e) {
-    console.error('[kickoff] send failed after claim:', e.message)
+    console.log('[kickoff] send failed:', e.message)
     return { fired: false, error: e.message }
   }
 }
 
-// Cron-fired endpoint — same once-per-day dedup as the piggyback (the
-// unguarded direct call double-greeted Kat on 2026-09-01: Catalyst cron
-// at 7:49 after the piggyback's 7:04 send). ?force=1 for manual tests.
+// Cron-fired endpoint. Gate is inside the sender; ?force=1 bypasses it for
+// a deliberate manual test (this DMs real people — use sparingly).
+// ?stamp_only=1 claims today without sending (mute a day by hand).
 router.post('/', requireCronSecret, async (req, res) => {
   try {
     if (req.query.stamp_only === '1') {
-      await stampKickoffFired(req, todayPT()).catch(() => {})
-      return res.json({ ok: true, stamped: todayPT() })
+      const claim = await claimKickoffDay(req, todayPT()).catch(e => ({ claimed: false, error: e.message }))
+      return res.json({ ok: true, stamped: todayPT(), ...claim })
     }
-    if (req.query.force !== '1') {
-      const already = await readKickoffFiredKey(req, todayPT()).catch(() => null)
-      if (already) return res.json({ ok: true, fired: false, reason: 'already sent today', at: already })
-      await stampKickoffFired(req, todayPT())
-    }
-    const summary = await sendMorningKickoff(req)
+    const summary = await sendMorningKickoff(req, { force: req.query.force === '1' })
     res.json({ ok: true, ...summary })
   } catch (e) {
     console.error('[daily-greeting]', e.message, e.stack)
@@ -390,12 +398,11 @@ router.post('/', requireCronSecret, async (req, res) => {
   }
 })
 
-// Manual "run now" — same auth. Useful for testing without waiting for
-// the cron window. Runs 7 days a week (does NOT enforce the weekend skip)
-// so you can inspect the shape whenever.
+// Manual "run now" — same auth, same gate. Add ?force=1 to send even if
+// today already went out (weekend skip still applies).
 router.post('/run', requireCronSecret, async (req, res) => {
   try {
-    const summary = await sendMorningKickoff(req)
+    const summary = await sendMorningKickoff(req, { force: req.query.force === '1' })
     res.json({ ok: true, ...summary })
   } catch (e) {
     console.error('[daily-greeting run]', e.message, e.stack)

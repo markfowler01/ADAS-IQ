@@ -1304,6 +1304,9 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // three — five times over during one afternoon of testing. Real people get
   // pinged by a developer pressing a button; that is never acceptable.
   // Testing is now opt-out by default and only the scheduled path fans out.
+  // sendMorningKickoff carries its own once-per-day gate (AppConfig
+  // morning_kickoff_<date>, 2026-09-08) — if the hourly postscan piggyback
+  // already sent it, this call returns { skipped: 'already sent today' }.
   const kickoff = !doKickoff
     ? { fired: false, reason: 'skipped — not the scheduled run' }
     : await safe('morning-kickoff', async () => {
