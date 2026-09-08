@@ -101,15 +101,10 @@ async function notifyMark(c) {
 // ── Files (Mark 2026-09-07: "upload a picture and a resume spot") ──────
 // Stored in a dedicated WorkDrive folder; streamed back through
 // /api/recruit/file/:id so the board can show them behind auth.
-const fileUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 12 * 1024 * 1024, files: 2 },
-  fileFilter(req, file, cb) {
-    const ok = file.fieldname === 'photo' ? file.mimetype.startsWith('image/')
-      : /pdf|msword|officedocument|image\//.test(file.mimetype)
-    cb(ok ? null : new Error(file.fieldname === 'photo' ? 'Photo must be an image' : 'Resume must be a PDF, Word doc, or image'), ok)
-  },
-}).fields([{ name: 'photo', maxCount: 1 }, { name: 'resume', maxCount: 1 }])
+// Plain multer like the (working) jobs photo upload: no fileFilter, no
+// field map — Catalyst dropped every file part when those were set.
+// Types are validated in storeFiles instead.
+const fileUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } }).any()
 
 async function cfgRow(app, key) {
   const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${q(key)}' LIMIT 1`).catch(() => [])
@@ -128,7 +123,12 @@ async function ensureCandidateFolder(req, wdToken) {
 }
 async function storeFiles(req, files, name) {
   const out = { photo_id: '', resume_url: '' }
-  const photo = files?.photo?.[0], resume = files?.resume?.[0]
+  const list = Array.isArray(files) ? files : Object.values(files || {}).flat()
+  const isImg = f => /^image\//.test(f.mimetype)
+  const isDoc = f => /pdf|msword|officedocument|^image\//.test(f.mimetype)
+  const photo = list.find(f => f.fieldname === 'photo' && isImg(f))
+  const resume = list.find(f => f.fieldname === 'resume' && isDoc(f))
+  for (const f of list) if ((f.fieldname === 'photo' && !isImg(f)) || (f.fieldname === 'resume' && !isDoc(f))) console.log('[recruit files] skipped', f.fieldname, f.mimetype)
   if (!photo && !resume) return out
   try {
     const { getAccessToken, uploadFileToFolder } = await import('../services/workdrive.js')
@@ -145,7 +145,7 @@ async function storeFiles(req, files, name) {
       const ext = resume.originalname?.includes('.') ? resume.originalname.split('.').pop().toLowerCase().slice(0, 5) : 'pdf'
       out.resume_url = String(await uploadFileToFolder(folderId, `${safe} - resume ${stamp}.${ext}`, resume.buffer, wdToken, resume.mimetype))
     }
-  } catch (e) { console.warn('[recruit files]', e.message) }
+  } catch (e) { console.log('[recruit files] FAILED:', e.message, e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : '') }
   return out
 }
 async function fetchWdFile(fileId) {
@@ -159,10 +159,22 @@ async function fetchWdFile(fileId) {
 
 // ── PUBLIC: website intake form ─────────────────────────────────────────
 export const publicRouter = express.Router()
-publicRouter.post('/apply', express.json({ limit: '64kb' }), express.urlencoded({ extended: false, limit: '64kb' }), (req, res, next) => {
+// Multer FIRST (it no-ops on non-multipart), then the urlencoded/json
+// parsers for the plain-form path. With the parsers ahead of multer,
+// Catalyst delivered the text fields but zero file parts (2026-09-07).
+// Single-handler shape like the jobs upload route. NOTE (2026-09-07,
+// found the hard way): Catalyst's gateway truncates a multipart body at
+// any field value that STARTS with "(" — e.g. "(425) 555-0100" — so the
+// website form normalizes values before sending (see careers form JS).
+publicRouter.post('/apply', (req, res) => {
+  const ct = String(req.headers['content-type'] || '')
+  const parse = ct.includes('multipart/form-data') ? fileUpload
+    : ct.includes('application/x-www-form-urlencoded') ? express.urlencoded({ extended: false, limit: '64kb' })
+    : express.json({ limit: '64kb' })
+  parse(req, res, err => { if (err) return res.status(400).json({ error: err.message }); handleApply(req, res) })
+})
+async function handleApply(req, res) {
   res.set('Access-Control-Allow-Origin', '*')
-  fileUpload(req, res, err => err ? res.status(400).json({ error: err.message }) : next())
-}, async (req, res) => {
   try {
     const b = req.body || {}
     if (b.website && String(b.website).trim() !== '') return res.status(400).json({ error: 'Invalid submission' })  // honeypot
@@ -172,6 +184,7 @@ publicRouter.post('/apply', express.json({ limit: '64kb' }), express.urlencoded(
     if (!name) return res.status(400).json({ error: 'Name is required' })
     if (!phone && !email) return res.status(400).json({ error: 'A phone number or email is required' })
     if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'That email doesn\'t look right' })
+    console.log('[recruit apply]', name, '· files:', (Array.isArray(req.files) ? req.files : []).map(f => `${f.fieldname}:${f.size}`).join(',') || 'none')
     const c = await insertCandidate(req, {
       name, phone, email, city: b.city, role: b.role || b.position, experience: b.experience,
       certs: b.certs, availability: b.availability, source: b.source || 'website', message: b.message, stage: 'new',
@@ -183,7 +196,7 @@ publicRouter.post('/apply', express.json({ limit: '64kb' }), express.urlencoded(
     console.error('[recruit apply]', e.message)
     res.status(500).json({ error: 'Server error — please call or text us instead.' })
   }
-})
+}
 publicRouter.options('/apply', (req, res) => {
   res.set('Access-Control-Allow-Origin', '*')
   res.set('Access-Control-Allow-Headers', 'Content-Type')
