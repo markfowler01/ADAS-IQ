@@ -142,6 +142,30 @@ router.post('/rewrite-justification', async (req, res) => {
   }
 })
 
+// Rivian's published labor for every ADAS calibration visit (Mark's
+// Rivian labor table, 2026-09-08). Hours ride in the trigger chip so the
+// report shows them; the justification is Rivian's own description.
+const RIVIAN_BASE_ITEMS = [
+  {
+    calibration_name: 'Pre ADAS-Calibration Vehicle Inspection',
+    cal_type: 'Rivian base', trigger: '0.5 hr · every Rivian', line_references: '',
+    justification: 'Rivian required pre-calibration inspection: tire pressure check, firmware check and update launch as required, estimate review, and required calibration repair planning. Published Rivian labor time 0.5 hr.',
+    enabled: true, base_item: true,
+  },
+  {
+    calibration_name: 'RiDE Set-Up',
+    cal_type: 'Rivian base', trigger: '0.3 hr · every Rivian', line_references: '',
+    justification: 'One-time RiDE (Rivian Diagnostic Environment) set-up: connection and initial software setup prior to performing the calibration process. Published Rivian labor time 0.3 hr.',
+    enabled: true, base_item: true,
+  },
+  {
+    calibration_name: 'Driver Assistance Calibration Setup',
+    cal_type: 'Rivian base', trigger: '1.0 hr · every Rivian', line_references: '',
+    justification: 'Rivian Driver Assistance calibration setup: setup of the approved target placement system and the alignment checks with the vehicle during the initial calibration process, plus time to store the equipment after use. Published Rivian labor time 1.0 hr.',
+    enabled: true, base_item: true,
+  },
+]
+
 router.post('/', (req, res, next) => {
   upload.single('pdf')(req, res, (err) => {
     if (err) {
@@ -196,11 +220,27 @@ router.post('/', (req, res, next) => {
       }
     }
 
+    // Rivian base procedures (Mark 2026-09-08): every Rivian scrub carries
+    // Rivian's published pre-calibration labor as REQUIRED base lines on
+    // the Absolute ADAS report + invoice, then whatever calibrations the
+    // estimate actually needs. Names match the Zoho Books items Mark is
+    // adding for Rivian — keep them identical so the invoice matcher
+    // finds them by exact name.
+    if (/rivian/i.test(String(data.make || '')) || /rivian/i.test(String(data.vehicle || ''))) {
+      const have = new Set((data.calibrations || []).map(c => String(c.calibration_name || '').toLowerCase().trim()))
+      const base = RIVIAN_BASE_ITEMS.filter(b => !have.has(b.calibration_name.toLowerCase()))
+      if (base.length) {
+        data.calibrations = [...base.map(b => ({ ...b })), ...(data.calibrations || [])]
+        console.log(`[extract] Rivian: added ${base.length} base procedure line(s)`)
+      }
+    }
+
     // Auto-learn: save all detected calibrations as rules (non-blocking, runs after response)
     // Applies to every PDF type — CCC, Kinetic, and any future formats
     if (!data._demo && data.make && data.year && data.calibrations?.length) {
       setImmediate(() => {
         for (const cal of data.calibrations) {
+          if (cal.base_item) continue   // Rivian base labor is not a calibration rule
           saveCalibrationAsRule(req, {
             make: data.make,
             model: data.model || '',
