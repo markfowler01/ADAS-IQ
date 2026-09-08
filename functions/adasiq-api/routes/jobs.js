@@ -291,7 +291,7 @@ async function notifyJobDispatched(req, job) {
     `🚐 *${teslaTag}${cashTag}Dispatched to ${job.technician}* · ${shop}`,
     `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${scheduled}`,
     tesla ? `⚡ TESLA — use Tesla pricing.` : null,
-    isCash ? `💵 CASH — max $${CASH_MAX_OUT_OF_POCKET} out of pocket. Only static cals + SAS + SWS billed.` : null,
+    isCash ? `💵 CASH — CP pricing, max $${CASH_MAX_OUT_OF_POCKET} out of pocket.` : null,
   ].filter(Boolean).join('\n')
   await postToCliqChannel(AA_JOBS_CHANNEL, msg)
     .catch(e => console.warn('[aajobs job_dispatched]', e.message))
@@ -326,12 +326,8 @@ async function notifyReadyToInvoiceCash(req, job) {
   const msg = [
     `💵 *CASH CUSTOMER — Ready to Invoice*`,
     `${job.shop_name || 'Job'}${vehicle ? ' · ' + vehicle : ''}${roNum ? ' · RO# ' + roNum : ''}`,
-    `⚠️ *ZERO these lines before creating invoice:*`,
-    `   • Calibration ID cost`,
-    `   • Post-Collision Safety Inspection (PCSI)`,
-    `   • Post Scan`,
-    `💰 Max out-of-pocket: $${CASH_MAX_OUT_OF_POCKET}`,
-    `📋 Auto-applied: ${summarizeCashPricing(cals)}`,
+    `Price it on the 💵 Cash (CP) schedule — the app caps the total at $${CASH_MAX_OUT_OF_POCKET} automatically.`,
+    `📋 ${summarizeCashPricing(cals)}`,
   ].join('\n')
   try { await postToCliqChannel(AA_JOBS_CHANNEL, msg) }
   catch (e) { console.warn('[aajobs ready_invoice cash]', e.message) }

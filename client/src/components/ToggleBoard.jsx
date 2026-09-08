@@ -16,6 +16,16 @@ function todayPT() {
 }
 
 const ORANGE = '#CD4419'
+const CASH_GREEN = '#15803d'
+const CASH_CAP = 700
+
+// Mirrors services/cashPricing.js isCashInsurerOrBlank — the Kinetic
+// upload rule (Mark 2026-09-08): blank insurer OR cash → cash job.
+function isCashInsurerOrBlank(insurer) {
+  const s = String(insurer || '').trim()
+  if (!s) return true
+  return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(s) || /\b(cash|customer pay|self pay)\b/i.test(s)
+}
 
 export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout, currentScreen, onNavigate }) {
   const [calibrations, setCalibrations] = useState(() => {
@@ -31,7 +41,17 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [submitting, setSubmitting] = useState(false)
   const [pricePreview, setPricePreview] = useState(null)   // review-before-create modal
   const [previewBusy, setPreviewBusy] = useState(false)
-  const [poolOverride, setPoolOverride] = useState(null)    // review-modal schedule pick
+  // 💵 Swap to Cash (Mark 2026-09-08): one button. On → insurer "Cash",
+  // CP schedule, $700 cap. Pre-pressed when the report's insurer is blank
+  // or says cash. Kat taps it to flip either way.
+  const [cashMode, setCashMode] = useState(() => isCashInsurerOrBlank(jobData?.insurer))
+  const [poolOverride, setPoolOverride] = useState(() => (isCashInsurerOrBlank(jobData?.insurer) ? 'CP' : null))    // review-modal schedule pick
+  const insurerOut = cashMode ? 'Cash' : (jobData?.insurer || '')
+  function toggleCash() {
+    const next = !cashMode
+    setCashMode(next)
+    setPoolOverride(next ? 'CP' : null)
+  }
   const [rowPrices, setRowPrices] = useState(null)          // name(lower) → {rate, needs_price}; _fixed_total
   const [creatingJob, setCreatingJob] = useState(false)
   const [invoiceResult, setInvoiceResult] = useState(null)
@@ -56,7 +76,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       const payload = {
         shop: jobData.shop,
         ro_number: jobData.ro_number,
-        insurer: jobData.insurer,
+        insurer: insurerOut,
         vin: jobData.vin,
         vehicle: jobData.vehicle,
         year: jobData.year,
@@ -115,9 +135,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            insurer: jobData.insurer || '',
+            insurer: insurerOut,
             make: jobData.make || '',
             customer_id: selectedCustomer?.id || null,
+            pool_override: poolOverride || null,
             calibrations: all,
           }),
         })
@@ -140,7 +161,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     })()
     return () => { dead = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCustomer?.id])
+  }, [selectedCustomer?.id, cashMode])
 
   const liveTotal = rowPrices
     ? Math.round((selected.reduce((sum, c) => {
@@ -161,7 +182,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          insurer: jobData.insurer || '',
+          insurer: insurerOut,
           make: jobData.make || '',
           customer_id: selectedCustomer?.id || null,
           pool_override: pool || null,
@@ -214,7 +235,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         salespersonName: selectedSalesperson?.name || null,
         shop: jobData.shop,
         ro_number: jobData.ro_number,
-        insurer: jobData.insurer,
+        insurer: insurerOut,
         vin: jobData.vin,
         vehicle: jobData.vehicle,
         year: jobData.year,
@@ -290,7 +311,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             make: jobData.make || '',
             model: jobData.model || '',
             vin: jobData.vin || '',
-            insurer: jobData.insurer || '',
+            insurer: insurerOut,
             technician: selectedSalesperson?.name || '',
             scheduled_date: jobDate || '',
             calibrations: JSON.stringify(calList),
@@ -355,7 +376,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         customerName: selectedCustomer?.name || null,
         shop: jobData.shop,
         ro_number: jobData.ro_number,
-        insurer: jobData.insurer,
+        insurer: insurerOut,
         vin: jobData.vin,
         vehicle: jobData.vehicle,
         year: jobData.year,
@@ -398,7 +419,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             shop_name: selectedCustomer?.name || jobData.shop || '',
             vehicle: [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '),
             year: jobData.year || '', make: jobData.make || '', model: jobData.model || '',
-            vin: jobData.vin || '', insurer: jobData.insurer || '',
+            vin: jobData.vin || '', insurer: insurerOut,
             technician: selectedSalesperson?.name || '',
             scheduled_date: jobDate || '',
             calibrations: JSON.stringify(calList),
@@ -456,7 +477,24 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         )}
 
         {/* Job card */}
-        <JobCard job={jobData} />
+        <JobCard job={{ ...jobData, insurer: cashMode ? '💵 Cash' : jobData.insurer }} />
+
+        {/* 💵 Swap to Cash — one tap either way */}
+        <button type="button" onClick={toggleCash} disabled={submitting || creatingJob}
+          className="w-full rounded-xl px-4 py-3 text-sm font-bold text-left flex items-center gap-3"
+          style={cashMode
+            ? { backgroundColor: CASH_GREEN, color: 'white', boxShadow: '0 2px 10px rgba(21,128,61,0.25)' }
+            : { backgroundColor: 'white', color: CASH_GREEN, border: `2px solid ${CASH_GREEN}` }}>
+          <span className="text-xl leading-none">💵</span>
+          <span className="flex-1">
+            {cashMode ? 'CASH JOB — CP pricing · $700 max' : 'Swap to Cash'}
+            <span className="block text-xs font-medium" style={{ opacity: 0.85 }}>
+              {cashMode
+                ? (isCashInsurerOrBlank(jobData?.insurer) ? 'Report had no insurer — tap to undo if it\'s an insurance job' : 'Tap to undo')
+                : 'Customer paying out of pocket? Tap: CP schedule + $700 cap.'}
+            </span>
+          </span>
+        </button>
 
         {/* Customer + Salesperson pickers */}
         <CustomerPicker
@@ -640,7 +678,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           {pricePreview && (
         <PriceReviewModal
           preview={pricePreview}
-          insurer={jobData.insurer}
+          insurer={insurerOut}
           poolOverride={poolOverride}
           onPool={changePool}
           onClose={() => setPricePreview(null)}
@@ -768,6 +806,12 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
     })
   const total = Math.round(effective.reduce((sum, l) => sum + l.amount, 0) * 100) / 100
   const flagged = effective.filter(l => l.needs_price)
+  // Cash cap (Mark 2026-09-08): CP schedule never bills over $700. The
+  // server adds the same adjustment line on the estimate.
+  const isCashPool = preview.insurer_pool === 'CP'
+  const capLimit = preview.cash_cap?.limit || CASH_CAP
+  const capAdj = isCashPool && total > capLimit ? Math.round((capLimit - total) * 100) / 100 : 0
+  const finalTotal = Math.round((total + capAdj) * 100) / 100
 
   function confirm() {
     const overrides = {}
@@ -948,11 +992,18 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
             </div>
           )}
         </div>
-        {preview.insurer_pool === 'CP' && total > 700 && (
-          <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
-            style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>
-            💵 CASH · ${Number(total).toFixed(2)} is over the $700 cash cap — trim lines or confirm with Mark before creating.
-          </p>
+        {isCashPool && (
+          <div className="rounded-lg px-3 py-2 mb-3 text-xs font-semibold"
+            style={{ backgroundColor: '#dcfce7', color: '#166534' }}>
+            {capAdj < 0 ? (
+              <div className="flex justify-between items-center">
+                <span>💵 Cash cap — $700 max</span>
+                <span>−${Math.abs(capAdj).toFixed(2)}</span>
+              </div>
+            ) : (
+              <span>💵 Cash — CP pricing, under the $700 cap</span>
+            )}
+          </div>
         )}
         {flagged.length > 0 && (
           <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
@@ -967,7 +1018,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
           <button onClick={confirm} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
             style={{ backgroundColor: ORANGE }}>
-            {busy ? 'Creating…' : `Create invoice — $${Number(total).toFixed(2)} →`}
+            {busy ? 'Creating…' : `Create invoice — $${Number(finalTotal).toFixed(2)} →`}
           </button>
         </div>
       </div>

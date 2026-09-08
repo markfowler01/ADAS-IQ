@@ -669,7 +669,26 @@ export async function createDraftQuote({
     }
     return { name: String(a.name || '').slice(0, 90), rate: Number(a.rate) || 0, quantity }
   })
-  const lineItems = [...fixedLineItems, ...calLineItems, ...extraLineItems]
+  let lineItems = [...fixedLineItems, ...calLineItems, ...extraLineItems]
+
+  // Cash cap (Mark 2026-09-08): on the CP schedule the estimate never
+  // exceeds $700. List prices stay on their lines; a negative "Cash cap"
+  // line carries the difference. Enforced here regardless of how the
+  // pool was picked (button, chip, or insurer auto-detect).
+  let cashCap = null
+  if (insurerPrefix === 'CP') {
+    const { cashCapFor, cashCapLine } = await import('./cashPricing.js')
+    const itemById = new Map(allItems.map(it => [String(it.item_id), Number(it.rate) || 0]))
+    const priced = lineItems.map(li => ({
+      rate: li.rate != null ? Number(li.rate) : (itemById.get(String(li.item_id)) || 0),
+      quantity: Number(li.quantity) || 1,
+    }))
+    cashCap = cashCapFor(priced)
+    if (cashCap.capped) {
+      lineItems.push(cashCapLine(cashCap))
+      console.log(`[zoho] 💵 cash cap applied: list $${cashCap.list_total} → $${cashCap.total} (${cashCap.adjustment})`)
+    }
+  }
 
   if (unmatchedItems.length > 0) {
     console.warn('[zoho] Unmatched items (added to notes):', unmatchedItems)
@@ -704,6 +723,7 @@ export async function createDraftQuote({
     `Priced in Absolute ADAS app · ${insurerPrefix || 'standard'} schedule` +
       (auditEdits ? ` · ${auditEdits} line edit${auditEdits > 1 ? 's' : ''}` : '') +
       (auditAdds ? ` · ${auditAdds} added line${auditAdds > 1 ? 's' : ''}` : ''),
+    cashCap?.capped ? `💵 Cash customer — $700 cap applied (list $${cashCap.list_total.toFixed(2)})` : (cashCap ? '💵 Cash customer — CP pricing, under the $700 cap' : null),
     unmatchedItems.length > 0
       ? `Items needing manual pricing:\n${unmatchedItems.map(n => `  - ${n}`).join('\n')}`
       : null,
@@ -760,6 +780,7 @@ export async function createDraftQuote({
   let res
   let attempt = 0
   const MAX_ATTEMPTS = 10
+  let capFolded = false
   while (attempt < MAX_ATTEMPTS) {
     const suffix = attempt === 0 ? '' : `.${attempt}`
     const currentNumber = `${estimateNumber}${suffix}`
@@ -804,6 +825,29 @@ export async function createDraftQuote({
         continue
       }
 
+      // Cash cap fallback: if Books refuses the negative adjustment line,
+      // fold the cap into the rates instead (proportional, last line
+      // absorbs rounding) and try once more.
+      if (cashCap?.capped && !capFolded && /rate|negative|amount|greater than zero/i.test(errMsg)) {
+        const { CASH_CAP_LINE_NAME } = await import('./cashPricing.js')
+        const itemById = new Map(allItems.map(it => [String(it.item_id), Number(it.rate) || 0]))
+        const kept = lineItems.filter(li => li.name !== CASH_CAP_LINE_NAME)
+        const factor = cashCap.total / cashCap.list_total
+        let running = 0
+        kept.forEach((li, i) => {
+          const qty = Number(li.quantity) || 1
+          const list = li.rate != null ? Number(li.rate) : (itemById.get(String(li.item_id)) || 0)
+          let rate = Math.floor(list * factor * 100) / 100
+          if (i === kept.length - 1) rate = Math.round((cashCap.total - running) / qty * 100) / 100
+          running += rate * qty
+          li.rate = rate
+        })
+        lineItems = kept
+        body.line_items = lineItems
+        capFolded = true
+        console.log('[zoho] 💵 cash cap: negative line refused — folded into rates, retrying')
+        continue
+      }
       const friendlyMsg = zohoMsg.toLowerCase().includes('greater than zero')
         ? 'Invoice total is $0 — make sure your Zoho Books items have prices set (Zoho Books → Items → edit each item → set Rate).'
         : `Zoho Books error: "${zohoMsg}"`
@@ -1190,11 +1234,17 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
     .map(it => ({ name: it.name, rate: Number(it.rate) || 0, in_pool: inPool(it) }))
     .sort((a, z) => a.name.localeCompare(z.name))
   const pool_items = [...swapEligible.filter(it => it.in_pool), ...swapEligible.filter(it => !it.in_pool)]
+  let cash_cap = null
+  if (insurerPrefix === 'CP') {
+    const { cashCapFor, CASH_MAX_OUT_OF_POCKET } = await import('./cashPricing.js')
+    cash_cap = { limit: CASH_MAX_OUT_OF_POCKET, ...cashCapFor(lines) }
+  }
   return {
     insurer_pool: insurerPrefix || 'standard',
     pool_items,
     lines,
     total: Math.round(lines.reduce((sum, l) => sum + l.amount, 0) * 100) / 100,
+    cash_cap,
   }
 }
 

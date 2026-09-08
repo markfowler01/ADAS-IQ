@@ -8,7 +8,7 @@ import { generateADASIQPdf } from '../services/pdf.js'
 import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder } from '../services/workdrive.js'
 import { getAccessToken as getWdToken } from '../services/zoho.js'
 import { getAllRules } from '../services/calibrationRulesService.js'
-import { isCashCustomer, computeCashLineItems, summarizeCashPricing, CASH_MAX_OUT_OF_POCKET } from '../services/cashPricing.js'
+import { isCashCustomer, cashCapFor, cashCapLine, CASH_MAX_OUT_OF_POCKET } from '../services/cashPricing.js'
 import { readJobsPublic, updateJobPublic } from './jobs.js'
 
 const router = express.Router()
@@ -1213,20 +1213,26 @@ router.post('/invoices/from-job', async (req, res) => {
         retail_amount: (Number(li.qty) || 1) * (Number(li.rate) || 175),
       }))
     } else if (cashJob) {
-      // Cash schedule: 0/1/2+ calibration tier + SAS/SWS add-ons under a
-      // $700 total ceiling + PCSI / Post Scan / Calibration ID cost zeroed.
-      // See services/cashPricing.js for the full ruleset.
-      const cashLines = computeCashLineItems(calibrations)
-      retailLineItems = cashLines.map(li => ({
-        id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        description: li.name + (li.cash_note ? ` — ${li.cash_note}` : ''),
-        qty: li.qty,
-        rate: li.rate,
-        amount: li.amount,
-        retail_amount: li.amount,
-        cash_note: li.cash_note,
-      }))
-      console.log(`[books from-job] cash-customer pricing applied for job ${job.id}: ${summarizeCashPricing(calibrations)}`)
+      // Cash (Mark 2026-09-08): catalog prices, then the $700 cap as a
+      // negative adjustment line. See services/cashPricing.js.
+      retailLineItems = calibrations.map(cal => {
+        const svc = findService(cal.name)
+        const rate = resolvePrice(svc, cal.name)
+        return {
+          id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          description: (cal.name || '') + (cal.mode ? ` (${cal.mode})` : ''),
+          qty: 1, rate, amount: rate, retail_amount: rate, no_match: !svc,
+        }
+      })
+      const cap = cashCapFor(retailLineItems.map(li => ({ rate: li.rate, quantity: li.qty })))
+      if (cap.capped) {
+        const capLine = cashCapLine(cap)
+        retailLineItems.push({
+          id: `li_${Date.now()}_cap`, description: capLine.name, qty: 1,
+          rate: capLine.rate, amount: capLine.rate, retail_amount: capLine.rate, cash_note: 'cash cap',
+        })
+      }
+      console.log(`[books from-job] cash pricing for job ${job.id}: list $${cap.list_total} → $${cap.total}`)
     } else {
       retailLineItems = calibrations.map(cal => {
         const svc = findService(cal.name)
@@ -1248,7 +1254,7 @@ router.post('/invoices/from-job', async (req, res) => {
     // Also enforce the invoice type is "single" (shop only) since insurance
     // billing doesn't apply to a cash customer.
     const cashNotesSuffix = cashJob
-      ? `\n\n💵 CASH CUSTOMER — Flat pricing schedule applied. Max out-of-pocket: $${CASH_MAX_OUT_OF_POCKET}. Calibration ID cost, PCSI, and Post Scan zeroed per policy.`
+      ? `\n\n💵 CASH CUSTOMER — CP pricing, $${CASH_MAX_OUT_OF_POCKET} max out of pocket.`
       : ''
 
     // Apply discount to shop line items
