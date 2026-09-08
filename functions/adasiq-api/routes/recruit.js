@@ -104,7 +104,7 @@ async function notifyMark(c, files = {}) {
     try {
       const { sendBroadcast, resendConfigured } = await import('../services/brewResend.js')
       if (resendConfigured()) {
-        const r = await sendBroadcast({ recipients: ['mark@absoluteadas.com'], subject, text, html, attachments, fromName: 'Absolute ADAS app', replyTo: c.email || undefined })
+        const r = await sendBroadcast({ recipients: ['mark@absoluteadas.com'], subject, text, html, attachments, fromEmail: 'info@absoluteadas.com', fromName: 'Absolute ADAS app', replyTo: c.email || undefined })
         if (r?.sent) return
       }
       throw new Error('resend unavailable')
@@ -257,7 +257,7 @@ async function sendProjectEmail(req, c) {
   const { subject, html, text } = buildProjectEmail({ ...c, project_token: token })
   const { sendBroadcast, resendConfigured } = await import('../services/brewResend.js')
   if (!resendConfigured()) throw new Error('Resend not configured')
-  const r = await sendBroadcast({ recipients: [c.email], subject, html, text, fromName: 'Mark Fowler · Absolute ADAS', replyTo: 'mark@absoluteadas.com' })
+  const r = await sendBroadcast({ recipients: [c.email], subject, html, text, fromEmail: 'mark@absoluteadas.com', fromName: 'Mark Fowler', replyTo: 'mark@absoluteadas.com' })
   if (!r?.sent) throw new Error(r?.results?.[0]?.error || 'send failed')
   await app.datastore().table(TABLE).updateRow({ ROWID: String(c.id), cand_project_token: token, cand_project_sent_at: new Date().toISOString(), cand_updated_at: new Date().toISOString() })
   return token

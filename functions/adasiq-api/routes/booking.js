@@ -63,7 +63,7 @@ async function emailShop(to, subject, html, text) {
   try {
     const { sendBroadcast, resendConfigured } = await import('../services/brewResend.js')
     if (!resendConfigured()) return
-    await sendBroadcast({ recipients: [to], subject, html, text, fromName: 'Absolute ADAS', replyTo: 'mark@absoluteadas.com' })
+    await sendBroadcast({ recipients: [to], subject, html, text, fromEmail: 'info@absoluteadas.com', fromName: 'Absolute ADAS', replyTo: 'info@absoluteadas.com' })
   } catch (e) { console.log('[booking email]', e.message) }
 }
 
