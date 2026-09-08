@@ -438,6 +438,15 @@ router.post('/', async (req, res) => {
     // Needs Dispatch step. Tech-requested cards (via_request) keep
     // their job_requested status for the Waiting-for-Kat flow.
     const body = { ...req.body }
+    // A request is only a request when it says so (via_request). Anything
+    // else asking for job_requested — a created job with a Books quote,
+    // an old client, a stray default — is filed at Needs Dispatch
+    // (Mark 2026-09-08: "if she creates a job and it does not get
+    // dispatched it needs to be in needs to be dispatched").
+    if (body.status === 'job_requested' && !body.via_request) {
+      console.log(`[jobs POST] job_requested without via_request → need_dispatch (${body.shop_name || ''} ${body.quote_number || ''})`)
+      body.status = 'need_dispatch'
+    }
     const autoStatus = dispatchedStatusFor(body.technician)
     const autoDispatched = !body.via_request && autoStatus &&
       (!body.status || body.status === 'need_dispatch')
