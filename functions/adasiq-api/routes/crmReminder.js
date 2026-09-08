@@ -196,10 +196,22 @@ function shopRow(shop, isOverdue, today) {
  * Protected by X-Cron-Secret (CRM_CRON_SECRET env var).
  * Sends Mark a morning briefing: follow-up list + pipeline action steps.
  */
+// OFF (Mark 2026-09-08: "pretty much useless, I haven't been using this
+// CRM — can you stop this email?"). The console cron `crm-reminder` may
+// still tick at 7:30; this endpoint answers it with a no-op so nothing is
+// sent. Re-enable by setting env CRM_BRIEFING_ENABLED=1 on the function
+// (no redeploy needed) — or better, delete the cron in the console to
+// free the slot.
+const CRM_BRIEFING_ENABLED = String(process.env.CRM_BRIEFING_ENABLED || '').trim() === '1'
+
 router.get('/run', async (req, res) => {
   const cronSecret = process.env.CRM_CRON_SECRET
   if (cronSecret && req.headers['x-cron-secret'] !== cronSecret) {
     return res.status(401).json({ error: 'Unauthorized' })
+  }
+  if (!CRM_BRIEFING_ENABLED) {
+    console.log('[crm-reminder] disabled (Mark 2026-09-08) — not sending')
+    return res.json({ ok: true, skipped: 'disabled — CRM morning briefing turned off 2026-09-08' })
   }
 
   try {

@@ -220,7 +220,7 @@ Hourly cron reads `postscan@absoluteadas.com` inbox → extracts RO# from subjec
 | backup | GET `/api/backup/run` | Every 5 hours | `backup-2026` |
 | mailagenthourly | POST `/api/mail-agent/run` | Every 1 hour | `MAIL_AGENT_CRON_SECRET` |
 | garmindailysync | POST `/api/garmin/sync` | Daily 03:00 PT | `GARMIN_CRON_SECRET` |
-| crm-reminder | GET `/api/crm-reminder/run` | Daily 07:30 PT | `CRM_CRON_SECRET` |
+| crm-reminder | GET `/api/crm-reminder/run` | Daily 07:30 PT | `CRM_CRON_SECRET` | **OFF since 2026-09-08** — endpoint no-ops unless env `CRM_BRIEFING_ENABLED=1`; delete this cron in the console to free the slot |
 | stuck-jobs | POST `/api/cron/stuck-jobs` | Daily ~08:00 PT | `BILLING_CRON_SECRET` |
 
 **Stuck-job digest** (`/api/cron/stuck-jobs`): flags jobs parked too long — `dispatched_*` 3+ days, `pending_parts` 7+ days (age by `created_at`). Digest → Mark channel + Kat DM. Silent when nothing's stuck.
