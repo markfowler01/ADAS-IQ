@@ -2,11 +2,12 @@
 // Recruit. Website form → candidate lands in New → drag/tap through the
 // stages → notes, rating, call/text/email from the card.
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { API_BASE, apiFetch } from '../utils/api.js'
+import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 
 const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
+const fileUrl = (id, dl) => `${API_BASE}/api/recruit/file/${id}?t=${encodeURIComponent(getToken())}${dl ? '&dl=1' : ''}`
 const STAGE_COLORS = {
   new: '#CD4419', contacted: '#b45309', phone_screen: '#1d4ed8', ride_along: '#7e22ce',
   offer: '#0e7490', hired: '#15803d', did_not_hire: '#6b7280', do_not_hire: '#dc2626',
@@ -155,7 +156,10 @@ function CandidateCard({ c, stages, onOpen, showStage }) {
   return (
     <div onClick={onOpen} className="bg-white rounded-xl p-3 cursor-pointer shadow-sm" style={{ border: `2px solid ${STAGE_COLORS[c.stage] || '#e0dbd6'}` }}>
       <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-bold leading-snug" style={{ color: '#1a1a1a' }}>{c.name}</p>
+        <div className="flex items-center gap-2 min-w-0">
+          {c.photo_id && <img src={fileUrl(c.photo_id)} alt="" className="rounded-full flex-shrink-0" style={{ width: 32, height: 32, objectFit: 'cover', border: '1px solid #e0dbd6' }} />}
+          <p className="text-sm font-bold leading-snug" style={{ color: '#1a1a1a' }}>{c.name}</p>
+        </div>
         {c.rating > 0 && <span className="text-[11px] flex-shrink-0" style={{ color: '#f59e0b' }}>{'★'.repeat(c.rating)}</span>}
       </div>
       <p className="text-xs mt-0.5" style={{ color: '#666' }}>{[c.role, c.city].filter(Boolean).join(' · ') || 'No role given'}</p>
@@ -177,9 +181,12 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ backgroundColor: 'rgba(0,0,0,.5)' }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-lg p-5 overflow-y-auto" style={{ maxHeight: '92vh' }}>
         <div className="flex items-start justify-between mb-2">
-          <div>
+          <div className="flex items-center gap-3">
+            {c.photo_id && <a href={fileUrl(c.photo_id)} target="_blank" rel="noreferrer"><img src={fileUrl(c.photo_id)} alt="" className="rounded-xl" style={{ width: 56, height: 56, objectFit: 'cover', border: '1px solid #e0dbd6' }} /></a>}
+            <div>
             <h2 className="text-lg font-extrabold" style={{ color: '#1a1a1a' }}>{c.name}</h2>
             <p className="text-xs" style={{ color: '#888' }}>{[c.role, c.city, c.source].filter(Boolean).join(' · ')} · applied {new Date(c.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+            </div>
           </div>
           <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
         </div>
@@ -188,7 +195,7 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           {c.phone && <a href={`tel:${digits(c.phone)}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>📞 Call</a>}
           {c.phone && <a href={`sms:${digits(c.phone)}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>💬 Text</a>}
           {c.email && <a href={`mailto:${c.email}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>✉️ Email</a>}
-          {c.resume_url && <a href={c.resume_url} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>📄 Resume</a>}
+          {c.resume_url && <a href={/^https?:/.test(c.resume_url) ? c.resume_url : fileUrl(c.resume_url, true)} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>📄 Resume</a>}
           <span className="ml-auto text-lg" title="Rating">
             {[1, 2, 3, 4, 5].map(n => <button key={n} onClick={() => onPatch({ rating: c.rating === n ? 0 : n })} style={{ color: n <= c.rating ? '#f59e0b' : '#ddd' }}>★</button>)}
           </span>

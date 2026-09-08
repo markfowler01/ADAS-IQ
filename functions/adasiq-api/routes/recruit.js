@@ -13,6 +13,8 @@
 // ends the function once res goes out.
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import multer from 'multer'
+import axios from 'axios'
 
 export const STAGES = [
   { id: 'new',          label: '📥 New' },
@@ -36,7 +38,7 @@ function rowToCandidate(r) {
     city: r.cand_city || '', role: r.cand_role || '', experience: r.cand_experience || '',
     certs: r.cand_certs || '', availability: r.cand_availability || '', source: r.cand_source || '',
     message: r.cand_message || '', stage: r.cand_stage || 'new', notes: r.cand_notes || '',
-    resume_url: r.cand_resume_url || '', rating: Number(r.cand_rating) || 0,
+    resume_url: r.cand_resume_url || '', photo_id: r.cand_photo_id || '', rating: Number(r.cand_rating) || 0,
     created_at: r.cand_created_at || r.CREATEDTIME || '', updated_at: r.cand_updated_at || '',
   }
 }
@@ -61,7 +63,7 @@ async function insertCandidate(req, c) {
     cand_city: clip(c.city, 120), cand_role: clip(c.role, 100), cand_experience: clip(c.experience, 10000),
     cand_certs: clip(c.certs, 255), cand_availability: clip(c.availability, 120), cand_source: clip(c.source, 100),
     cand_message: clip(c.message, 10000), cand_stage: STAGE_IDS.has(c.stage) ? c.stage : 'new',
-    cand_notes: clip(c.notes, 10000), cand_resume_url: clip(c.resume_url, 255),
+    cand_notes: clip(c.notes, 10000), cand_resume_url: clip(c.resume_url, 255), cand_photo_id: clip(c.photo_id, 120),
     cand_rating: Number(c.rating) || 0, cand_created_at: now, cand_updated_at: now,
   })
   return rowToCandidate(row)
@@ -96,10 +98,71 @@ async function notifyMark(c) {
   await Promise.race([Promise.all(tasks), new Promise(r => setTimeout(r, 12000))])
 }
 
+// ── Files (Mark 2026-09-07: "upload a picture and a resume spot") ──────
+// Stored in a dedicated WorkDrive folder; streamed back through
+// /api/recruit/file/:id so the board can show them behind auth.
+const fileUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 12 * 1024 * 1024, files: 2 },
+  fileFilter(req, file, cb) {
+    const ok = file.fieldname === 'photo' ? file.mimetype.startsWith('image/')
+      : /pdf|msword|officedocument|image\//.test(file.mimetype)
+    cb(ok ? null : new Error(file.fieldname === 'photo' ? 'Photo must be an image' : 'Resume must be a PDF, Word doc, or image'), ok)
+  },
+}).fields([{ name: 'photo', maxCount: 1 }, { name: 'resume', maxCount: 1 }])
+
+async function cfgRow(app, key) {
+  const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${q(key)}' LIMIT 1`).catch(() => [])
+  return rows?.[0]?.AppConfig || rows?.[0] || null
+}
+async function ensureCandidateFolder(req, wdToken) {
+  const app = catalyst.initialize(req)
+  const r = await cfgRow(app, 'recruit_files_folder_id')
+  const saved = r?.config_value ? String(r.config_value).replace(/"/g, '') : ''
+  if (saved) return saved
+  const { createJobFolder } = await import('../services/workdrive.js')
+  const f = await createJobFolder('Absolute ADAS Candidates', wdToken)
+  const id = f?.folderId
+  if (id) await app.datastore().table('AppConfig').insertRow({ config_key: 'recruit_files_folder_id', config_value: JSON.stringify(id) })
+  return id
+}
+async function storeFiles(req, files, name) {
+  const out = { photo_id: '', resume_url: '' }
+  const photo = files?.photo?.[0], resume = files?.resume?.[0]
+  if (!photo && !resume) return out
+  try {
+    const { getAccessToken, uploadFileToFolder } = await import('../services/workdrive.js')
+    const wdToken = await getAccessToken()
+    const folderId = await ensureCandidateFolder(req, wdToken)
+    if (!folderId) return out
+    const safe = String(name || 'candidate').replace(/[^A-Za-z0-9 _-]/g, '').trim().slice(0, 40) || 'candidate'
+    const stamp = Date.now()
+    if (photo) {
+      const ext = (photo.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
+      out.photo_id = String(await uploadFileToFolder(folderId, `${safe} - photo ${stamp}.${ext}`, photo.buffer, wdToken, photo.mimetype))
+    }
+    if (resume) {
+      const ext = resume.originalname?.includes('.') ? resume.originalname.split('.').pop().toLowerCase().slice(0, 5) : 'pdf'
+      out.resume_url = String(await uploadFileToFolder(folderId, `${safe} - resume ${stamp}.${ext}`, resume.buffer, wdToken, resume.mimetype))
+    }
+  } catch (e) { console.warn('[recruit files]', e.message) }
+  return out
+}
+async function fetchWdFile(fileId) {
+  const { getAccessToken } = await import('../services/workdrive.js')
+  const wdToken = await getAccessToken()
+  const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, {
+    headers: { Authorization: `Zoho-oauthtoken ${wdToken}` }, responseType: 'arraybuffer', timeout: 25000, maxContentLength: 30 * 1024 * 1024,
+  })
+  return { buf: Buffer.from(r.data), mime: r.headers['content-type'] || 'application/octet-stream' }
+}
+
 // ── PUBLIC: website intake form ─────────────────────────────────────────
 export const publicRouter = express.Router()
-publicRouter.post('/apply', express.json({ limit: '64kb' }), express.urlencoded({ extended: false, limit: '64kb' }), async (req, res) => {
+publicRouter.post('/apply', express.json({ limit: '64kb' }), express.urlencoded({ extended: false, limit: '64kb' }), (req, res, next) => {
   res.set('Access-Control-Allow-Origin', '*')
+  fileUpload(req, res, err => err ? res.status(400).json({ error: err.message }) : next())
+}, async (req, res) => {
   try {
     const b = req.body || {}
     if (b.website && String(b.website).trim() !== '') return res.status(400).json({ error: 'Invalid submission' })  // honeypot
@@ -112,6 +175,7 @@ publicRouter.post('/apply', express.json({ limit: '64kb' }), express.urlencoded(
     const c = await insertCandidate(req, {
       name, phone, email, city: b.city, role: b.role || b.position, experience: b.experience,
       certs: b.certs, availability: b.availability, source: b.source || 'website', message: b.message, stage: 'new',
+      ...(await storeFiles(req, req.files, name)),
     })
     await notifyMark(c)
     res.json({ ok: true })
@@ -129,6 +193,19 @@ publicRouter.options('/apply', (req, res) => {
 // ── STAFF: pipeline board ───────────────────────────────────────────────
 const router = express.Router()
 const isOwner = req => String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+
+router.get('/file/:fileId', async (req, res) => {
+  try {
+    if (req.query.t) {
+      const { verifyToken } = await import('./auth.js')
+      if (!verifyToken(String(req.query.t))) return res.status(401).json({ error: 'unauthorized' })
+    }
+    const { buf, mime } = await fetchWdFile(String(req.params.fileId))
+    res.setHeader('Cache-Control', 'private, max-age=86400')
+    if (req.query.dl) res.setHeader('Content-Disposition', 'attachment')
+    res.type(mime).send(buf)
+  } catch (e) { res.status(404).json({ error: 'File not found' }) }
+})
 
 router.get('/', async (req, res) => {
   try { res.json({ stages: STAGES, candidates: await readAll(req) }) }
