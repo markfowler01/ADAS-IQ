@@ -2,8 +2,11 @@
 // calibration, keys, cloning — quick to create (voice-typed, AI-cleaned)
 // and searchable. Phase 1: store + CRUD. Phase 2 adds the ask-Claude box.
 //
-// Storage: AppConfig index-row pattern (same as shop quotes) — durable,
-// write-verified, no console table setup needed.
+// Storage: Datastore table AdasTsb (created via Catalyst MCP 2026-09-07),
+// one row per TSB keyed by tsb_id. Columns carry a tsb_ prefix because
+// Datastore rejects reserved words (title/number/…) as column names.
+// The small config bit (photo folder id) stays on the AppConfig
+// index-row pattern.
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import multer from 'multer'
@@ -11,13 +14,55 @@ import axios from 'axios'
 
 const router = express.Router()
 
-const INDEX_KEY = 'tsb_index'
-const ROW_KEY = id => `tsb:${id}`.slice(0, 64)
+const TABLE = 'AdasTsb'
+const ZCQL_PAGE = 300
 export const TSB_CATEGORIES = ['calibration', 'keys', 'cloning', 'general']
+
+const q = s => String(s ?? '').replace(/'/g, "''")
+// Datastore stores 4-byte UTF-8 (emoji) as '?', so strip it on write.
+const clean = (s, max) => String(s ?? '').replace(/[\u{10000}-\u{10FFFF}]/gu, '').slice(0, max)
+
+const toRow = t => ({
+  tsb_id: String(t.id), tsb_number: clean(t.number, 30), tsb_title: clean(t.title, 120), tsb_body: clean(t.body, 10000),
+  tsb_category: TSB_CATEGORIES.includes(t.category) ? t.category : 'general',
+  make: clean(t.make, 100), model: clean(t.model, 100), year_from: clean(t.year_from, 10), year_to: clean(t.year_to, 10),
+  tools: clean(t.tools, 255), author: clean(t.author, 100),
+  photos_json: JSON.stringify(Array.isArray(t.photos) ? t.photos : []).slice(0, 10000),
+  created_at: clean(t.created_at, 40), updated_at: clean(t.updated_at, 40), updated_by: clean(t.updated_by, 100),
+})
+const fromRow = r => {
+  let photos = []
+  try { photos = JSON.parse(r.photos_json || '[]') } catch { photos = [] }
+  const t = {
+    id: String(r.tsb_id || ''), title: r.tsb_title || '', body: r.tsb_body || '', category: r.tsb_category || 'general',
+    make: r.make || '', model: r.model || '', year_from: r.year_from || '', year_to: r.year_to || '',
+    tools: r.tools || '', author: r.author || '', created_at: r.created_at || '',
+  }
+  if (r.tsb_number) t.number = r.tsb_number
+  if (Array.isArray(photos) && photos.length) t.photos = photos
+  if (r.updated_at) { t.updated_at = r.updated_at; t.updated_by = r.updated_by || '' }
+  return t
+}
+
+// ZCQL results come wrapped { AdasTsb: {...} }; ROWIDs stay strings.
+async function zcqlAll(app, sqlNoLimit) {
+  const out = []
+  for (let off = 0; ; off += ZCQL_PAGE) {
+    const rows = await app.zcql().executeZCQLQuery(`${sqlNoLimit} LIMIT ${off}, ${ZCQL_PAGE}`)
+    const batch = (rows || []).map(r => r?.[TABLE] || r).filter(Boolean)
+    out.push(...batch)
+    if (batch.length < ZCQL_PAGE) break
+  }
+  return out
+}
+async function findRowId(app, id) {
+  const rows = await zcqlAll(app, `SELECT ROWID FROM ${TABLE} WHERE tsb_id = '${q(id)}'`)
+  return rows[0]?.ROWID ? String(rows[0].ROWID) : null
+}
 
 async function cfgRow(app, key) {
   const rows = await app.zcql().executeZCQLQuery(
-    `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+    `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${q(key)}' LIMIT 1`
   ).catch(() => [])
   return rows?.[0]?.AppConfig || rows?.[0] || null
 }
@@ -25,40 +70,29 @@ async function cfgSet(app, key, value) {
   const table = app.datastore().table('AppConfig')
   const str = JSON.stringify(value)
   const r = await cfgRow(app, key)
-  if (r?.ROWID) await table.updateRow({ ROWID: r.ROWID, config_value: str })
+  if (r?.ROWID) await table.updateRow({ ROWID: String(r.ROWID), config_value: str })
   else await table.insertRow({ config_key: key, config_value: str })
 }
-async function readIndex(app) {
-  const r = await cfgRow(app, INDEX_KEY)
-  try { return JSON.parse(r?.config_value || '[]') } catch { return [] }
-}
+
 export async function readAllTsbs(req) {
   const app = catalyst.initialize(req)
-  const ids = await readIndex(app)
-  if (!ids.length) return []
-  const rows = await Promise.all(ids.map(async id => {
-    const r = await cfgRow(app, ROW_KEY(id))
-    try { return JSON.parse(r?.config_value || 'null') } catch { return null }
-  }))
-  return rows.filter(Boolean)
+  const rows = await zcqlAll(app, `SELECT * FROM ${TABLE} ORDER BY ROWID`)
+  return rows.map(fromRow)
 }
 async function writeTsb(req, tsb) {
   const app = catalyst.initialize(req)
-  await cfgSet(app, ROW_KEY(tsb.id), tsb)
-  const ids = await readIndex(app)
-  if (!ids.includes(tsb.id)) {
-    ids.push(tsb.id)
-    await cfgSet(app, INDEX_KEY, ids)
-  }
-  const check = await cfgRow(app, ROW_KEY(tsb.id))
-  if (!check?.config_value) throw new Error('TSB write did not persist — try again')
+  const table = app.datastore().table(TABLE)
+  const row = toRow(tsb)
+  const rid = await findRowId(app, tsb.id)
+  if (rid) await table.updateRow({ ROWID: rid, ...row })
+  else await table.insertRow(row)
+  const check = await findRowId(app, tsb.id)
+  if (!check) throw new Error('TSB write did not persist — try again')
 }
 async function removeTsb(req, id) {
   const app = catalyst.initialize(req)
-  const ids = (await readIndex(app)).filter(x => x !== id)
-  await cfgSet(app, INDEX_KEY, ids)
-  const r = await cfgRow(app, ROW_KEY(id))
-  if (r?.ROWID) await app.datastore().table('AppConfig').deleteRow(String(r.ROWID)).catch(() => {})
+  const rid = await findRowId(app, id)
+  if (rid) await app.datastore().table(TABLE).deleteRow(rid)
 }
 
 // Voice-typed tips arrive messy. Claude tidies grammar and writes a

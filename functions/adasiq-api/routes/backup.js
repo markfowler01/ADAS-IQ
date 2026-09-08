@@ -144,7 +144,7 @@ router.get('/run', async (req, res) => {
 
     // Read everything in parallel
     const [crmShops, jobHistory, jobs, calRules, booksInvoices, booksServices, booksExpenses, booksDeposits, pinnedShops,
-           phoneConfig, smsThreads, callsLog, voicemails] = await Promise.all([
+           phoneConfig, smsThreads, callsLog, voicemails, zbInvoices, zbPayments, tsbs] = await Promise.all([
       readShopsForBackup(),
       readCache(segment, 'job_history'),
       readDatastore(app, 'Jobs'),
@@ -161,6 +161,11 @@ router.get('/run', async (req, res) => {
       readCache(segment, 'sms_threads'),
       readCache(segment, 'calls_log'),
       readCache(segment, 'voicemails'),
+      // Datastore tables added 2026-09-07 (Catalyst MCP): Zoho Books
+      // mirror (invoices + payments) and the TSB library.
+      readDatastore(app, 'AdasInvoices'),
+      readDatastore(app, 'AdasPayments'),
+      readDatastore(app, 'AdasTsb'),
     ])
 
     // Read invoice counter (scalar, not array)
@@ -184,6 +189,11 @@ router.get('/run', async (req, res) => {
         deposits:      Array.isArray(booksDeposits)  ? booksDeposits  : [],
         invoice_counter: booksCounter,
       },
+      zoho_mirror: {
+        invoices: zbInvoices,
+        payments: zbPayments,
+      },
+      tsbs: tsbs,
       phone: {
         config:     phoneConfig || {},
         sms_threads: Array.isArray(smsThreads) ? smsThreads : [],
@@ -203,6 +213,9 @@ router.get('/run', async (req, res) => {
         sms_threads:       Array.isArray(smsThreads) ? smsThreads.length : 0,
         calls_log:         Array.isArray(callsLog)   ? callsLog.length   : 0,
         voicemails:        Array.isArray(voicemails) ? voicemails.length : 0,
+        zoho_invoices:     Array.isArray(zbInvoices) ? zbInvoices.length : 0,
+        zoho_payments:     Array.isArray(zbPayments) ? zbPayments.length : 0,
+        tsbs:              Array.isArray(tsbs)       ? tsbs.length       : 0,
       },
     }
 

@@ -1,32 +1,51 @@
 // Zoho Books → app read-only MIRROR (Mark 2026-09-07, books scan B-02).
 //
 // Zoho stays the system of record. This layer pulls invoices + customer
-// payments into DURABLE Datastore rows (AppConfig, chunked by month,
-// write-verified) so the app can show AR-by-shop, aging, and job-linked
-// money without ever writing to Zoho. Nothing existing is touched: the
-// legacy cache-backed Books module keeps its own paths.
+// payments into DURABLE Datastore tables so the app can show AR-by-shop,
+// aging, and job-linked money without ever writing to Zoho. Nothing
+// existing is touched: the legacy cache-backed Books module keeps its
+// own paths.
 //
-// Storage (all Datastore, never Cache):
-//   zb_inv_meta:<YYYY-MM>   → { chunks, count, total, synced_at }
-//   zb_inv:<YYYY-MM>:<n>    → [invoice, …]  (≤ CHUNK records)
-//   zb_pay_meta:<YYYY-MM>   → { chunks, count, total, synced_at }
-//   zb_pay:<YYYY-MM>:<n>    → [payment, …]
-//   zb_meta                 → { last_sync, months, invoices, payments }
-//   zb_mirror:<YYYY-MM-DD>  → nightly stamp
+// Storage (all Datastore, never Cache) — tables created via Catalyst MCP
+// 2026-09-07:
+//   AdasInvoices   one row per Zoho invoice   (key zoho_invoice_id, bucketed by inv_month)
+//   AdasPayments   one row per Zoho payment   (key zoho_payment_id, bucketed by pay_month)
+//   AppConfig      zb_meta → { last_sync, months, last_run }
+//                  zb_mirror:<YYYY-MM-DD> → nightly stamp
+//
+// Column names carry inv_/pay_ prefixes because Datastore rejects
+// reserved words (date, status, …) as column names.
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { getAccessToken } from './zoho.js'
 
 const ZOHO_API_BASE = 'https://www.zohoapis.com/books/v3'
-const CHUNK = 40
+const BATCH = 100        // rows per Datastore bulk call
+const ZCQL_PAGE = 300    // hard ZCQL cap per SELECT
 
 const orgParam = () => ({ organization_id: process.env.ZOHO_ORGANIZATION_ID })
 const hdr = token => ({ Authorization: `Zoho-oauthtoken ${token}` })
+const q = s => String(s ?? '').replace(/'/g, "''")
+const r2 = n => Math.round((Number(n) || 0) * 100) / 100
+const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out }
 
-// ── Datastore helpers (index-row pattern, write-verified) ───────────────
+// ── Datastore helpers ───────────────────────────────────────────────────
+// ZCQL results come wrapped { TableName: {...} }; ROWIDs must stay strings.
+async function zcqlAll(app, table, sqlNoLimit) {
+  const out = []
+  for (let off = 0; ; off += ZCQL_PAGE) {
+    const rows = await app.zcql().executeZCQLQuery(`${sqlNoLimit} LIMIT ${off}, ${ZCQL_PAGE}`)
+    const batch = (rows || []).map(r => r?.[table] || r).filter(Boolean)
+    out.push(...batch)
+    if (batch.length < ZCQL_PAGE) break
+  }
+  return out
+}
+
+// AppConfig index rows for the small bits of state (meta + nightly stamp).
 async function cfgRow(app, key) {
   const rows = await app.zcql().executeZCQLQuery(
-    `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+    `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${q(key)}' LIMIT 1`
   ).catch(() => [])
   return rows?.[0]?.AppConfig || rows?.[0] || null
 }
@@ -34,7 +53,7 @@ async function cfgSet(app, key, value) {
   const table = app.datastore().table('AppConfig')
   const str = JSON.stringify(value)
   const r = await cfgRow(app, key)
-  if (r?.ROWID) await table.updateRow({ ROWID: r.ROWID, config_value: str })
+  if (r?.ROWID) await table.updateRow({ ROWID: String(r.ROWID), config_value: str })
   else await table.insertRow({ config_key: key, config_value: str })
   const check = await cfgRow(app, key)
   if (!check?.config_value) throw new Error(`Mirror write did not persist: ${key}`)
@@ -43,9 +62,49 @@ async function cfgGet(app, key, fallback) {
   const r = await cfgRow(app, key)
   try { return r?.config_value ? JSON.parse(r.config_value) : fallback } catch { return fallback }
 }
-async function cfgDel(app, key) {
-  const r = await cfgRow(app, key)
-  if (r?.ROWID) await app.datastore().table('AppConfig').deleteRow(String(r.ROWID)).catch(() => {})
+
+// ── Table maps: app-facing record shape ⇄ Datastore row ────────────────
+// The app-facing shape is unchanged from the AppConfig era, so the
+// routes + ZohoMirrorTab keep working as-is.
+const KINDS = {
+  inv: {
+    table: 'AdasInvoices', key: 'zoho_invoice_id', month: 'inv_month',
+    toRow: (i, ym, synced_at) => ({
+      zoho_invoice_id: i.invoice_id, invoice_number: i.invoice_number, customer_id: i.customer_id,
+      customer_name: String(i.customer_name || '').slice(0, 255), salesperson_name: String(i.salesperson_name || '').slice(0, 100),
+      reference_number: String(i.reference_number || '').slice(0, 255), inv_status: i.status,
+      inv_date: i.date, inv_due_date: i.due_date, inv_total: r2(i.total), inv_balance: r2(i.balance),
+      last_payment_date: i.last_payment_date, zoho_updated_time: String(i.updated_time || '').slice(0, 40),
+      inv_month: ym, synced_at,
+    }),
+    fromRow: r => ({
+      invoice_id: String(r.zoho_invoice_id || ''), invoice_number: r.invoice_number || '',
+      customer_id: String(r.customer_id || ''), customer_name: r.customer_name || '',
+      salesperson_name: r.salesperson_name || '', reference_number: r.reference_number || '',
+      status: r.inv_status || '', date: r.inv_date || '', due_date: r.inv_due_date || '',
+      total: r2(r.inv_total), balance: r2(r.inv_balance), last_payment_date: r.last_payment_date || '',
+      updated_time: r.zoho_updated_time || '', job_ref: r.job_ref || '',
+    }),
+    amount: i => i.total,
+  },
+  pay: {
+    table: 'AdasPayments', key: 'zoho_payment_id', month: 'pay_month',
+    toRow: (p, ym, synced_at) => ({
+      zoho_payment_id: p.payment_id, payment_number: p.payment_number, customer_id: p.customer_id,
+      customer_name: String(p.customer_name || '').slice(0, 255), pay_date: p.date, pay_amount: r2(p.amount),
+      payment_mode: String(p.payment_mode || '').slice(0, 50), reference_number: String(p.reference_number || '').slice(0, 255),
+      invoice_numbers: String(p.invoice_numbers || '').slice(0, 10000), pay_description: String(p.description || '').slice(0, 10000),
+      pay_month: ym, synced_at,
+    }),
+    fromRow: r => ({
+      payment_id: String(r.zoho_payment_id || ''), payment_number: r.payment_number || '',
+      customer_id: String(r.customer_id || ''), customer_name: r.customer_name || '',
+      date: r.pay_date || '', amount: r2(r.pay_amount), payment_mode: r.payment_mode || '',
+      reference_number: r.reference_number || '', invoice_numbers: r.invoice_numbers || '',
+      description: r.pay_description || '',
+    }),
+    amount: p => p.amount,
+  },
 }
 
 // ── Month helpers ───────────────────────────────────────────────────────
@@ -101,7 +160,7 @@ export async function fetchZohoInvoices(token, ym) {
     balance:          Number(inv.balance || 0) || 0,
     last_payment_date: inv.last_payment_date || '',
     updated_time:     inv.updated_time || inv.last_modified_time || '',
-  }))
+  })).filter(i => i.invoice_id)
 }
 
 export async function fetchZohoPayments(token, ym) {
@@ -118,27 +177,63 @@ export async function fetchZohoPayments(token, ym) {
     reference_number: p.reference_number || '',
     invoice_numbers:  p.invoice_numbers || (Array.isArray(p.invoices) ? p.invoices.map(i => i.invoice_number).join(',') : ''),
     description:      p.description || '',
-  }))
+  })).filter(p => p.payment_id)
 }
 
-// ── Chunked month writes (idempotent: Zoho is truth, month is rebuilt) ──
+// ── Month upsert (idempotent: Zoho is truth, keyed by Zoho id) ──────────
+// 1. rows already in the table for this month  → stale-candidate set
+// 2. rows already in the table for these Zoho ids (any month — an invoice
+//    re-dated across months must UPDATE, not violate the unique key)
+// 3. insert new / update known / delete what Zoho no longer returns for
+//    the month, then write-verify the row count.
 async function writeMonth(app, kind, ym, records) {
-  const metaKey = `zb_${kind}_meta:${ym}`
-  const prev = await cfgGet(app, metaKey, { chunks: 0 })
-  const chunks = []
-  for (let i = 0; i < records.length; i += CHUNK) chunks.push(records.slice(i, i + CHUNK))
-  for (let n = 0; n < chunks.length; n++) await cfgSet(app, `zb_${kind}:${ym}:${n}`, chunks[n])
-  for (let n = chunks.length; n < (prev.chunks || 0); n++) await cfgDel(app, `zb_${kind}:${ym}:${n}`)
-  const total = records.reduce((s, r) => s + (kind === 'inv' ? r.total : r.amount), 0)
-  await cfgSet(app, metaKey, { chunks: chunks.length, count: records.length, total: Math.round(total * 100) / 100, synced_at: new Date().toISOString() })
-  return { count: records.length, total }
+  const K = KINDS[kind]
+  const table = app.datastore().table(K.table)
+  const synced_at = new Date().toISOString()
+
+  const inMonth = await zcqlAll(app, K.table, `SELECT ROWID, ${K.key} FROM ${K.table} WHERE ${K.month} = '${q(ym)}'`)
+  const rowidByKey = new Map(inMonth.map(r => [String(r[K.key]), String(r.ROWID)]))
+  const ids = records.map(r => String(kind === 'inv' ? r.invoice_id : r.payment_id))
+  for (const part of chunk(ids, 100)) {
+    const found = await zcqlAll(app, K.table,
+      `SELECT ROWID, ${K.key} FROM ${K.table} WHERE ${K.key} IN (${part.map(id => `'${q(id)}'`).join(',')})`)
+    for (const r of found) rowidByKey.set(String(r[K.key]), String(r.ROWID))
+  }
+
+  const inserts = [], updates = []
+  const keep = new Set()
+  for (const rec of records) {
+    const row = K.toRow(rec, ym, synced_at)
+    const rid = rowidByKey.get(String(row[K.key]))
+    keep.add(String(row[K.key]))
+    if (rid) updates.push({ ROWID: rid, ...row })
+    else inserts.push(row)
+  }
+  const stale = inMonth.filter(r => !keep.has(String(r[K.key]))).map(r => String(r.ROWID))
+
+  for (const b of chunk(inserts, BATCH)) await table.insertRows(b)
+  for (const b of chunk(updates, BATCH)) await table.updateRows(b)
+  for (const b of chunk(stale, BATCH)) await table.deleteRows(b)
+
+  const after = await zcqlAll(app, K.table, `SELECT ROWID FROM ${K.table} WHERE ${K.month} = '${q(ym)}'`)
+  if (after.length !== records.length) {
+    throw new Error(`Mirror write did not persist for ${K.table} ${ym}: expected ${records.length} rows, found ${after.length}`)
+  }
+  const total = records.reduce((s, r) => s + K.amount(r), 0)
+  return { count: records.length, total, inserted: inserts.length, updated: updates.length, removed: stale.length }
 }
+
 export async function readMonth(req, kind, ym) {
+  const K = KINDS[kind]
   const app = catalyst.initialize(req)
-  const meta = await cfgGet(app, `zb_${kind}_meta:${ym}`, null)
-  if (!meta) return []
-  const parts = await Promise.all(Array.from({ length: meta.chunks || 0 }, (_, n) => cfgGet(app, `zb_${kind}:${ym}:${n}`, [])))
-  return parts.flat()
+  const rows = await zcqlAll(app, K.table, `SELECT * FROM ${K.table} WHERE ${K.month} = '${q(ym)}' ORDER BY ROWID`)
+  return rows.map(K.fromRow)
+}
+export async function readAll(req, kind) {
+  const K = KINDS[kind]
+  const app = catalyst.initialize(req)
+  const rows = await zcqlAll(app, K.table, `SELECT * FROM ${K.table} ORDER BY ROWID`)
+  return rows.map(K.fromRow)
 }
 
 // ── Sync ────────────────────────────────────────────────────────────────
@@ -152,20 +247,22 @@ export async function syncMonths(req, months, { dryRun = false } = {}) {
     const [invs, pays] = await Promise.all([fetchZohoInvoices(token, ym), fetchZohoPayments(token, ym)])
     const it = invs.reduce((s, r) => s + r.total, 0)
     const pt = pays.reduce((s, r) => s + r.amount, 0)
+    const entry = { month: ym, invoices: invs.length, invoice_total: r2(it), payments: pays.length, payment_total: r2(pt) }
     if (!dryRun) {
-      await writeMonth(app, 'inv', ym, invs)
-      await writeMonth(app, 'pay', ym, pays)
+      const wi = await writeMonth(app, 'inv', ym, invs)
+      const wp = await writeMonth(app, 'pay', ym, pays)
+      entry.writes = { invoices: { inserted: wi.inserted, updated: wi.updated, removed: wi.removed }, payments: { inserted: wp.inserted, updated: wp.updated, removed: wp.removed } }
     }
-    result.months.push({ month: ym, invoices: invs.length, invoice_total: Math.round(it * 100) / 100, payments: pays.length, payment_total: Math.round(pt * 100) / 100 })
+    result.months.push(entry)
     result.invoices += invs.length; result.payments += pays.length
     result.invoice_total += it; result.payment_total += pt
   }
-  result.invoice_total = Math.round(result.invoice_total * 100) / 100
-  result.payment_total = Math.round(result.payment_total * 100) / 100
+  result.invoice_total = r2(result.invoice_total)
+  result.payment_total = r2(result.payment_total)
   if (!dryRun) {
     const meta = await cfgGet(app, 'zb_meta', { months: [] })
     const known = new Set([...(meta.months || []), ...months])
-    await cfgSet(app, 'zb_meta', { last_sync: new Date().toISOString(), months: [...known].sort(), last_run: result })
+    await cfgSet(app, 'zb_meta', { last_sync: new Date().toISOString(), months: [...known].sort(), last_run: result, storage: 'datastore' })
   }
   return result
 }
@@ -199,7 +296,7 @@ export async function buildSummary(req) {
   const meta = await readMeta(req)
   const months = meta.months || []
   const today = todayPT()
-  const all = (await Promise.all(months.map(ym => readMonth(req, 'inv', ym)))).flat()
+  const all = await readAll(req, 'inv')
   const open = all.filter(i => i.balance > 0 && !['draft', 'void'].includes(i.status))
   const daysPast = i => Math.max(0, Math.floor((new Date(today) - new Date(i.due_date || i.date)) / 86400000))
   const bucket = d => d <= 0 ? 'current' : d <= 30 ? '1-30' : d <= 60 ? '31-60' : d <= 90 ? '61-90' : '90+'
@@ -215,7 +312,6 @@ export async function buildSummary(req) {
   const cur = today.slice(0, 7)
   const mtd = all.filter(i => i.date.startsWith(cur) && !['draft', 'void'].includes(i.status))
   const paysCur = await readMonth(req, 'pay', cur)
-  const r2 = n => Math.round(n * 100) / 100
   return {
     last_sync: meta.last_sync, months_mirrored: months.length,
     invoices_mirrored: all.length,

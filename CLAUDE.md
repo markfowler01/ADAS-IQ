@@ -48,6 +48,8 @@ Internal operations tool for Absolute ADAS: job board (Kanban), invoicing, CRM, 
 | Data | Storage |
 |------|---------|
 | Jobs | Catalyst Datastore `Jobs` table |
+| Zoho Books mirror (invoices, payments) | Catalyst Datastore `AdasInvoices` / `AdasPayments` (keyed by Zoho id, `inv_month`/`pay_month`; `zb_meta` in `AppConfig`). Zoho is truth; never write money to Cache. |
+| TSB library | Catalyst Datastore `AdasTsb` (keyed by `tsb_id`; photos JSON in `photos_json`) |
 | CRM shops | Catalyst Cache key `crm_shops` |
 | Notifications | Catalyst Cache key `adas_iq_notifications` |
 | Invoices (local) | Catalyst Cache key `adas_iq_invoices` |

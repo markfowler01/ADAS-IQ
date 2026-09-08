@@ -28,12 +28,14 @@ router.get('/preview', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
-// Commit: rebuilds each month's mirror from Zoho. Owner only.
+// Commit: upserts each month's mirror from Zoho into AdasInvoices /
+// AdasPayments. Owner only. Capped at 6 months per call so a run stays
+// under the 30s API-gateway cap — import a year in two or three passes.
 router.post('/sync', async (req, res) => {
   try {
     if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark can run a mirror sync.' })
     const months = monthsFromQuery({ ...req.query, ...(req.body || {}) })
-    if (!months.length || months.length > 36) return res.status(400).json({ error: 'Give from/to as YYYY-MM (max 36 months).' })
+    if (!months.length || months.length > 6) return res.status(400).json({ error: 'Give from/to as YYYY-MM (max 6 months per sync — run it again for the next batch).' })
     res.json(await syncMonths(req, months))
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
