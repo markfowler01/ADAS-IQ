@@ -60,6 +60,33 @@ router.post('/create-item', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Owner/secret diagnostic: search Books for a name across contacts,
+// estimates, invoices, items. Read-only. (Mark 2026-09-09: LM duplicates.)
+router.get('/books-search', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
+    const q = String(req.query.q || '').trim()
+    if (!q) return res.status(400).json({ error: 'q required' })
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const H = { headers: { Authorization: `Zoho-oauthtoken ${token}` }, timeout: 20000, validateStatus: s => s < 500 }
+    const org = process.env.ZOHO_ORGANIZATION_ID
+    const get = (path, params) => axios.get(`https://www.zohoapis.com/books/v3/${path}`, { ...H, params: { organization_id: org, per_page: 200, ...params } }).then(r => r.data)
+    const [contacts, estimates, invoices, items] = await Promise.all([
+      get('contacts', { contact_name_contains: q }),
+      get('estimates', { customer_name_contains: q }),
+      get('invoices', { customer_name_contains: q }),
+      get('items', { name_contains: q }),
+    ])
+    res.json({
+      contacts: (contacts.contacts || []).map(c => ({ id: c.contact_id, name: c.contact_name, type: c.contact_type, status: c.status, created: c.created_time, outstanding: c.outstanding_receivable_amount })),
+      estimates: (estimates.estimates || []).map(e => ({ id: e.estimate_id, number: e.estimate_number, customer: e.customer_name, date: e.date, status: e.status, total: e.total, ref: e.reference_number, created: e.created_time })),
+      invoices: (invoices.invoices || []).map(i => ({ id: i.invoice_id, number: i.invoice_number, customer: i.customer_name, date: i.date, status: i.status, total: i.total, ref: i.reference_number, created: i.created_time })),
+      items: (items.items || []).map(i => ({ id: i.item_id, name: i.name, rate: i.rate, status: i.status })),
+    })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const [map, catalog] = await Promise.all([
