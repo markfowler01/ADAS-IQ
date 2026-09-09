@@ -65,6 +65,22 @@ async function checkAndStampAlerted(req, dedupId) {
   return false
 }
 
+// Same tombstone the board's DELETE writes (`deleted_estimate:<id>`) —
+// performSyncQuotes skips tombstoned estimates on import.
+async function tombstoneEstimate(req, estId) {
+  if (!estId) return
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const key = `deleted_estimate:${estId}`.slice(0, 64)
+    const existing = await app.zcql().executeZCQLQuery(
+      `SELECT ROWID FROM AppConfig WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+    )
+    if (!existing?.[0]) {
+      await app.datastore().table('AppConfig').insertRow({ config_key: key, config_value: new Date().toISOString() })
+    }
+  } catch (e) { console.warn('[invoice] tombstone failed (non-fatal):', e.message) }
+}
+
 export async function processSentInvoice(req, invoice, jobsCache) {
   const invoiceNumber   = invoice.invoice_number || invoice.number || ''
   const referenceNumber = (invoice.reference_number || invoice.reference || '').toString()
@@ -94,9 +110,12 @@ export async function processSentInvoice(req, invoice, jobsCache) {
   const jobs = jobsCache || await readJobsPublic(req)
   let matchedJob = null
 
+  let matchVia = null   // 'vin' | 'ro' | 'name' — name alone is a weak match
+
   // Match strategy 1: VIN (most reliable)
   if (vin && vin.length > 5) {
     matchedJob = jobs.find(j => j.vin && j.vin.toUpperCase() === vin.toUpperCase() && !j.invoiced)
+    if (matchedJob) matchVia = 'vin'
   }
 
   // Match strategy 2: reference_number contains RO# from job notes
@@ -111,6 +130,7 @@ export async function processSentInvoice(req, invoice, jobsCache) {
       }
       return invoiceNumber ? j.notes.toLowerCase().includes(invoiceNumber.toLowerCase()) : false
     })
+    if (matchedJob) matchVia = 'ro'
   }
 
   // Match strategy 3: customer name (only if exactly 1 match)
@@ -118,7 +138,7 @@ export async function processSentInvoice(req, invoice, jobsCache) {
     const customerJobs = jobs.filter(j =>
       j.shop_name && j.shop_name.toLowerCase().trim() === customerName && !j.invoiced
     )
-    if (customerJobs.length === 1) matchedJob = customerJobs[0]
+    if (customerJobs.length === 1) { matchedJob = customerJobs[0]; matchVia = 'name' }
     else if (customerJobs.length > 1) {
       console.warn(`[invoice] Ambiguous — ${customerJobs.length} unmatched jobs for "${customerName}". Skipping match.`)
     }
@@ -126,12 +146,21 @@ export async function processSentInvoice(req, invoice, jobsCache) {
 
   if (alreadyAlerted) {
     // Alerts already went out — just make sure the board is clean.
-    if (matchedJob) {
+    // Mark 2026-09-08 ("why does this keep popping up"): this branch ran
+    // every hour from the sweep and, on a NAME-ONLY match, deleted
+    // whatever lone card that shop had — including a fresh sync-imported
+    // request for a different vehicle. With no tombstone, the next sync
+    // re-imported it and re-alerted. Now: only a VIN / RO match may
+    // remove a card here, and the estimate is tombstoned so it stays gone.
+    if (matchedJob && matchVia !== 'name') {
+      await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
       await deleteJobPublic(req, matchedJob.id)
-        .then(() => console.log(`[invoice] Removed already-alerted job ${matchedJob.id} from board`))
+        .then(() => console.log(`[invoice] Removed already-alerted job ${matchedJob.id} from board (matched by ${matchVia})`))
         .catch(e => console.warn('[invoice] board cleanup failed (non-fatal):', e.message))
+    } else if (matchedJob) {
+      console.log(`[invoice] already-alerted #${invoiceNumber}: name-only match on job ${matchedJob.id} — leaving the card alone`)
     }
-    return { action: 'already-alerted', invoice_number: invoiceNumber, job_id: matchedJob?.id }
+    return { action: 'already-alerted', invoice_number: invoiceNumber, job_id: matchedJob?.id, match: matchVia }
   }
 
   // No job matched — still alert Mark so an invoice never goes unnoticed.
@@ -226,7 +255,9 @@ export async function processSentInvoice(req, invoice, jobsCache) {
     console.warn('[invoice] #Dispatch day-total alert failed (non-fatal):', e.message)
   }
 
-  // Invoice is out the door — remove the card from the board.
+  // Invoice is out the door — remove the card from the board. Tombstone
+  // its estimate first so the hourly quote sync can't bring it back.
+  await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
   await deleteJobPublic(req, matchedJob.id)
     .then(() => console.log(`[invoice] Removed invoiced job ${matchedJob.id} from board`))
     .catch(e => console.warn('[invoice] board cleanup failed (non-fatal):', e.message))
