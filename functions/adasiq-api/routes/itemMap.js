@@ -87,6 +87,51 @@ router.get('/books-search', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Owner/secret: dedupe Books customers by exact name (Mark 2026-09-09:
+// "several duplicates for L-M … remove all the duplicates that have a
+// zero dollar amount"). Keeps every contact with money on it
+// (outstanding/unused credits) and anything Books refuses to delete
+// (has transactions). dry=1 (default) only reports. Deletes are capped
+// per call so a run stays under the 30s gateway.
+router.post('/dedupe-contacts', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
+    const name = String(req.body?.name || '').trim()
+    const dry = String(req.body?.dry ?? '1') !== '0'
+    const limit = Math.min(80, Number(req.body?.limit) || 60)
+    if (!name) return res.status(400).json({ error: 'name required' })
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const H = { headers: { Authorization: `Zoho-oauthtoken ${token}` }, timeout: 20000, validateStatus: s => s < 500 }
+    const org = process.env.ZOHO_ORGANIZATION_ID
+    const all = []
+    for (let page = 1; page <= 10; page++) {
+      const r = await axios.get('https://www.zohoapis.com/books/v3/contacts', { ...H, params: { organization_id: org, per_page: 200, page, contact_name_contains: name, contact_type: 'customer' } })
+      all.push(...(r.data?.contacts || []))
+      if (!r.data?.page_context?.has_more_page) break
+    }
+    const exact = all.filter(c => String(c.contact_name || '').trim().toLowerCase() === name.toLowerCase())
+    const money = c => Number(c.outstanding_receivable_amount || 0) !== 0 || Number(c.unused_credits_receivable_amount || 0) !== 0
+    const keep = exact.filter(money)
+    const candidates = exact.filter(c => !money(c)).sort((a, b) => String(a.created_time).localeCompare(String(b.created_time)))
+    // If NOTHING carries money, keep the oldest one so the name survives.
+    if (!keep.length && candidates.length) keep.push(candidates.shift())
+    const out = { name, matched: exact.length, keep: keep.map(c => ({ id: c.contact_id, created: c.created_time, outstanding: c.outstanding_receivable_amount })), to_delete: candidates.length, dry, deleted: 0, refused: [] }
+    if (!dry) {
+      const t0 = Date.now()
+      for (const c of candidates.slice(0, limit)) {
+        if (Date.now() - t0 > 22000) break
+        const d = await axios.delete(`https://www.zohoapis.com/books/v3/contacts/${c.contact_id}`, { ...H, params: { organization_id: org } })
+        if (d.data?.code === 0) out.deleted++
+        else out.refused.push({ id: c.contact_id, msg: d.data?.message })
+      }
+      out.remaining = candidates.length - out.deleted - out.refused.length
+      console.log(`[dedupe-contacts] "${name}": deleted ${out.deleted}, refused ${out.refused.length}, remaining ${out.remaining}`)
+    }
+    res.json(out)
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const [map, catalog] = await Promise.all([

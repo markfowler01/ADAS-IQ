@@ -134,19 +134,29 @@ export async function fetchAccountsPage({ page = 1, perPage = 200, fields } = {}
 /**
  * Search for an existing Lead by company name.
  */
+// Returns the Lead or null when Zoho says "no results" (204/404).
+// THROWS when the search itself fails (401 scope, 400 bad criteria,
+// network). Mark 2026-09-09: a failed search used to come back as null,
+// every sync then CREATED a new lead, converted it, and Zoho's CRM→Books
+// link minted a fresh "L-M Body Shop Inc" customer each run — 200+ $0
+// duplicates. A search we can't trust must never turn into a create.
+// (The value is no longer pre-encoded — axios encodes params once; the
+// double-encoding was what turned names with spaces/hyphens into 400s.)
 export async function findLeadByName(companyName) {
   const token = await getCrmAccessToken()
+  const safe = String(companyName || '').replace(/[(),]/g, ' ').trim()
   try {
     const res = await axios.get(`${CRM_API}/Leads/search`, {
       headers: crmHeaders(token),
-      params: { criteria: `(Company:equals:${encodeURIComponent(companyName)})`, fields: 'Company,Phone,Email,Lead_Status,First_Name,Last_Name' },
+      params: { criteria: `(Company:equals:${safe})`, fields: 'Company,Phone,Email,Lead_Status,First_Name,Last_Name' },
       timeout: 10000,
+      validateStatus: st => st === 200 || st === 204 || st === 404,
     })
     return res.data?.data?.[0] || null
   } catch (e) {
-    if (e.response?.status === 204 || e.response?.status === 404 || e.response?.status === 400) return null
-    console.warn(`[zohoCrm] Lead search failed for "${companyName}":`, e.response?.status, e.response?.data?.message || e.message)
-    return null
+    const msg = `${e.response?.status || ''} ${e.response?.data?.message || e.message}`.trim()
+    console.warn(`[zohoCrm] Lead search FAILED for "${companyName}" — not creating:`, msg)
+    throw new Error(`CRM lead search failed: ${msg}`)
   }
 }
 
@@ -311,8 +321,15 @@ export async function syncAllShopsToZohoCrm(shops) {
 
   for (const shop of shops) {
     try {
-      // Check if lead already exists
-      const existing = await findLeadByName(shop.shop_name)
+      // Check if lead already exists. A FAILED search skips the shop —
+      // it never falls through to create (see findLeadByName).
+      let existing
+      try { existing = await findLeadByName(shop.shop_name) }
+      catch (searchErr) {
+        errorDetails.push(`${shop.shop_name}: ${searchErr.message}`)
+        errors++
+        continue
+      }
 
       if (existing) {
         // Update existing lead
@@ -425,15 +442,19 @@ export async function syncNewsletterSubscriberToCrm({ email, name, shop, source 
       })
       existing = res.data?.data?.[0] || null
     } catch (e) {
-      if (![204, 400, 404].includes(e.response?.status)) {
-        console.warn('[zohoCrm] Email search error:', e.message)
+      if (![204, 404].includes(e.response?.status)) {
+        // Search broken (scope, network) → we can't know if they exist.
+        // Never create on a guess (Mark 2026-09-09 duplicate cleanup).
+        console.warn('[zohoCrm] Email search error — not creating:', e.response?.status || '', e.message)
+        return
       }
     }
   }
 
-  // 2. Fall back to company name search
+  // 2. Fall back to company name search (throws on failure → no create)
   if (!existing && shop) {
-    existing = await findLeadByName(shop)
+    try { existing = await findLeadByName(shop) }
+    catch (e) { console.warn('[zohoCrm] subscriber name search failed — not creating:', e.message); return }
   }
 
   if (existing) {
