@@ -6,6 +6,7 @@
 // you open this when a new quote hits in the middle of a busy day.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import SalesStopSheet, { SalesStopScoreboard } from '../components/SalesStopSheet'
 import { JobPhotosSheet, TakePhotosControl, photoProgress, gateApplies } from '../components/JobPhotos'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
@@ -778,6 +779,8 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [quoteRequestOpen, setQuoteRequestOpen] = useState(false)
   const [readyInvoiceJob,  setReadyInvoiceJob]  = useState(null)
   const [photoGateJob,     setPhotoGateJob]     = useState(null)   // 📸 photos-first before Ready to Invoice
+  const [salesStopOpen,    setSalesStopOpen]    = useState(false)  // 🚐 sales stop sheet
+  const [salesStopTick,    setSalesStopTick]    = useState(0)      // bumps the scoreboard after a stop
   const refreshTimerRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -1155,7 +1158,17 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           >
             📖 TSB Tips
           </button>
+          <button
+            onClick={() => setSalesStopOpen(true)}
+            className="text-sm font-bold rounded-2xl px-4 py-3 text-white"
+            style={{ backgroundColor: '#15803d' }}
+          >
+            🚐 Sales stop
+          </button>
         </div>
+
+        {/* 🚐 Sales stops scoreboard (Mark 2026-09-09) */}
+        <SalesStopScoreboard user={user} onOpen={() => setSalesStopOpen(true)} refreshKey={salesStopTick} />
 
         {/* Needs-Dispatch alert — moved to TOP + red styled 2026-07-09
             per Mark: "jobs that need to be dispatched, I want them at
@@ -1264,6 +1277,10 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           onAssign={handleAssign}
           onClose={() => { setInsertJob(null); setSuggestions(null) }}
         />
+      )}
+
+      {salesStopOpen && (
+        <SalesStopSheet user={user} onClose={() => setSalesStopOpen(false)} onLogged={() => setSalesStopTick(t => t + 1)} />
       )}
 
       {photoGateJob && (

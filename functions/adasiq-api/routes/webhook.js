@@ -234,6 +234,7 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
       const bell = await bellFallback(req, `Invoice sent: #${invoiceNumber}`, cliqMsg.replace(/\*/g, ''))
       if (!bell) await releaseInvoiceAlert(req, claimRow)
     }
+    try { const { trackNewCustomerBonus } = await import('./salesStops.js'); await trackNewCustomerBonus(req, invoice) } catch (e) { console.log('[invoice] bonus tracking failed (non-fatal):', e.message) }
     return { action: 'no-match-alerted', invoice_number: invoiceNumber, cliq: ok }
   }
 
@@ -307,6 +308,13 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
     if (!bell) await releaseInvoiceAlert(req, claimRow)
   }
   console.log(`[invoice] alert summary #${invoiceNumber}: ${JSON.stringify(results)}`)
+
+  // 💰 Sales-stop bonus (Mark 2026-09-09): a tech's stop that became a
+  // NEW customer earns 1% of that customer's first-30-day invoices.
+  try {
+    const { trackNewCustomerBonus } = await import('./salesStops.js')
+    await trackNewCustomerBonus(req, invoice)
+  } catch (e) { console.log('[invoice] bonus tracking failed (non-fatal):', e.message) }
 
   // Invoice is out the door — remove the card from the board. Tombstone
   // its estimate first so the hourly quote sync can't bring it back.

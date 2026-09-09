@@ -91,7 +91,7 @@ async function getAllShops(req) {
 }
 
 // Exported for the dispatch-map feature (geocoding cron, map data endpoint).
-export { getAllShops }
+export { getAllShops, insertShop, updateShop }
 
 async function insertShop(req, shopData) {
   const table = getTable(req)

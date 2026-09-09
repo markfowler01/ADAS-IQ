@@ -26,6 +26,7 @@ import customersRouter from './routes/customers.js'
 import salespersonsRouter from './routes/salespersons.js'
 import techStatsRouter from './routes/techStats.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
+import salesStopsRouter from './routes/salesStops.js'
 import { smsWebhookRouter, smsAuthRouter } from './routes/sms.js'
 import { voiceWebhookRouter, voicemailsAuthRouter, callsAuthRouter } from './routes/voice.js'
 import { phoneHealthRouter } from './routes/phoneHealth.js'
@@ -305,6 +306,7 @@ app.post('/api/client-error', requireAuth, async (req, res) => {
 app.use('/api/estimates', requireAuth, estimatesRouter)
 app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
+app.use('/api/sales-stops', requireAuth, salesStopsRouter)
 app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/push', requireAuth, pushRouter)
 app.use('/api/item-map', requireAuth, requireStaff, itemMapRouter)
