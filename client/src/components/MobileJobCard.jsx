@@ -5,6 +5,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
+import { TakePhotosControl } from './JobPhotos'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
 // Estimate totals for card price tags (Mark 2026-08-30: totals on all
@@ -403,6 +404,8 @@ export default function MobileJobCard({
       </div>
 
       {job.status !== 'job_requested' && (<>
+      {/* 📸 Job photo set (Mark 2026-09-08) — one tap opens the camera */}
+      <TakePhotosControl job={job} />
       {wdUrl ? (
         <a href={wdUrl} target="_blank" rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}

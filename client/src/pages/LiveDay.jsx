@@ -6,6 +6,7 @@
 // you open this when a new quote hits in the middle of a busy day.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { JobPhotosSheet, TakePhotosControl, photoProgress, gateApplies } from '../components/JobPhotos'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
 import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstimateTotals } from '../components/MobileJobCard.jsx'
@@ -355,6 +356,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
           </div>
           <CustomerNoteBox items={parseNoteItems(customerNotes?.[normShopName(current.shop_name)])} />
           <HeadToJobButton job={current} techName={tech.name} />
+          <div className="mb-1.5"><TakePhotosControl job={current} /></div>
           {/* Ready to Invoice — flips job status, which moves it to the
               Ready to Invoice column on the Kanban and posts to #aajobs +
               #Dispatch (Cliq fan-out lives in routes/jobs.js). */}
@@ -775,6 +777,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [jobRequestOpen,   setJobRequestOpen]   = useState(false)
   const [quoteRequestOpen, setQuoteRequestOpen] = useState(false)
   const [readyInvoiceJob,  setReadyInvoiceJob]  = useState(null)
+  const [photoGateJob,     setPhotoGateJob]     = useState(null)   // 📸 photos-first before Ready to Invoice
   const refreshTimerRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -932,6 +935,9 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   // Submit / Skip handlers below.
   function handleReadyToInvoice(job) {
     if (!job?.id) return
+    // 📸 Photos first (Mark 2026-09-08): the modal doesn't scold, it
+    // opens the camera on the first missing shot. Server enforces too.
+    if (gateApplies(job) && !photoProgress(job).complete) { setPhotoGateJob(job); return }
     setReadyInvoiceJob(job)
   }
 
@@ -945,12 +951,18 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     try {
       const body = { status: 'ready_invoice' }
       if (extraServices && extraServices.trim()) body.extra_services = extraServices.trim()
+      if (job._photoOverride) body.photo_override = job._photoOverride
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
       const json = await res.json()
+      if (res.status === 409 && json.photo_gate) {
+        showToast(`📸 ${json.error}`)
+        setPhotoGateJob(job)
+        return
+      }
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
       showToast(`🟢 ${job.shop_name || 'Job'} → Ready to Invoice`)
       await load()
@@ -1251,6 +1263,16 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           suggestions={suggestions}
           onAssign={handleAssign}
           onClose={() => { setInsertJob(null); setSuggestions(null) }}
+        />
+      )}
+
+      {photoGateJob && (
+        <JobPhotosSheet
+          job={photoGateJob}
+          mode="gate"
+          user={user}
+          onClose={() => setPhotoGateJob(null)}
+          onComplete={(j, override) => { setPhotoGateJob(null); setReadyInvoiceJob({ ...j, _photoOverride: override || '' }) }}
         />
       )}
 

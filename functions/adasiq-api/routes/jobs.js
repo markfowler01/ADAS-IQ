@@ -143,6 +143,9 @@ function rowToJob(row) {
     folder_url:       row.folder_url       || '',
     invoice_number:   row.invoice_number   || '',
     invoice_status:   row.invoice_status   || '',
+    photo_slots:      row.photo_slots      || '',
+    odo_before:       row.odo_before       || '',
+    odo_after:        row.odo_after        || '',
   }
 }
 
@@ -175,6 +178,9 @@ function jobToRow(job) {
     folder_url:       job.folder_url       || '',
     invoice_number:   job.invoice_number   || '',
     invoice_status:   job.invoice_status   || '',
+    photo_slots:      typeof job.photo_slots === 'string' ? job.photo_slots : (job.photo_slots ? JSON.stringify(job.photo_slots) : ''),
+    odo_before:       String(job.odo_before ?? '').slice(0, 20),
+    odo_after:        String(job.odo_after ?? '').slice(0, 20),
   }
 }
 
@@ -631,6 +637,33 @@ router.patch('/:id', async (req, res) => {
     }
 
     const merged = { ...currentJob, ...req.body }
+
+    // 📸 Photo gate (Mark 2026-09-08): a job can't go Ready to Invoice
+    // until its photo set is complete and the test drive is over a mile.
+    // Enforced here so no client path skips it. Mark alone can override
+    // with a reason (logged on the card + #dispatch).
+    if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
+      const { photoProgress, gateApplies, describeMissing } = await import('../services/jobPhotos.js')
+      if (gateApplies(merged)) {
+        const prog = photoProgress(merged)
+        const isOwner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+        const override = String(req.body.photo_override || '').trim()
+        if (!prog.complete && !(isOwner && override)) {
+          const missing = describeMissing(prog)
+          photoGateNudge(req, merged, missing).catch(() => {})
+          return res.status(409).json({
+            error: `Photos first — still need: ${missing.join(', ')}.`,
+            photo_gate: true, missing: prog.missing, problems: prog.problems, progress: prog,
+          })
+        }
+        if (!prog.complete && override) {
+          merged.notes = `${merged.notes ? merged.notes + '\n' : ''}📸 Photo gate overridden by Mark: ${override} (missing: ${describeMissing(prog).join(', ')})`
+          postToCliqChannel(DISPATCH_CHANNEL, `📸 *Photo gate overridden* · ${merged.shop_name || 'Job'} · ${override}\nMissing: ${describeMissing(prog).join(', ')}`).catch(() => {})
+        }
+      }
+      delete merged.photo_override
+    }
+
     const updated = await updateJob(req, req.params.id, merged)
 
     if (req.body.status === 'complete' && currentJob.status !== 'complete') {
@@ -1278,6 +1311,92 @@ async function resolveJobFolder(req, job, wdToken) {
   }
   return null
 }
+
+// One #dispatch line per job per day when a tech hits the photo gate,
+// so Kat knows why a job is stalled without the tech having to explain.
+async function photoGateNudge(req, job, missing) {
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const key = `photo_block:${job.id}:${day}`.slice(0, 64)
+    const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`)
+    if (rows?.[0]) return
+    await app.datastore().table('AppConfig').insertRow({ config_key: key, config_value: new Date().toISOString() })
+    await postToCliqChannel(DISPATCH_CHANNEL,
+      `📸 *Photos missing* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''}${job.technician ? ' · ' + job.technician : ''}\n` +
+      `Ready to Invoice is waiting on: ${missing.join(', ')}.`)
+  } catch (e) { console.log('[photo-gate nudge]', e.message) }
+}
+
+// POST /api/jobs/:id/photo-slot — one photo into one slot of the job's
+// photo set (Mark 2026-09-08). Multipart field "photo"; optional "slot"
+// (lf|rf|lr|rr|vin|odo_before|odo_after|setup). No slot → Claude sorts
+// it. Odometer slots get their miles read (tech can correct via PATCH
+// odo_before / odo_after). File lands in the job's WorkDrive folder
+// with a self-describing name and the slot map is saved on the row.
+router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No photo. Send the image in the "photo" field.' })
+    const { SLOTS, parseSlots, photoProgress, fileNameFor, classifyPhoto, MAX_SETUP_PHOTOS } = await import('../services/jobPhotos.js')
+    const table = getTable(req)
+    const row = await table.getRow(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Job not found' })
+    const job = rowToJob(row)
+    const slots = parseSlots(job.photo_slots)
+
+    let slotKey = String(req.body?.slot || '').trim()
+    let miles = req.body?.miles != null && req.body.miles !== '' ? Number(req.body.miles) : null
+    const known = new Set(SLOTS.map(s => s.key))
+    const needsClassify = !known.has(slotKey) || (/^odo_/.test(slotKey) && miles == null)
+    let ai = null
+    if (needsClassify) {
+      try { ai = await classifyPhoto(req.file.buffer, req.file.mimetype) } catch (e) { console.log('[photo-slot] classify failed:', e.message) }
+      if (!known.has(slotKey)) {
+        if (ai?.slot === 'odometer') slotKey = slots.odo_before?.fileId ? 'odo_after' : 'odo_before'
+        else if (ai && known.has(ai.slot) && ai.confidence >= 0.5) slotKey = ai.slot
+        else return res.status(422).json({ error: 'Could not tell which shot this is — pick the slot.', suggested: ai?.slot || null })
+      }
+      if (/^odo_/.test(slotKey) && miles == null && ai?.miles != null) miles = ai.miles
+    }
+    const slotDef = SLOTS.find(s => s.key === slotKey)
+    if (slotDef.multi && (slots.setup || []).length >= MAX_SETUP_PHOTOS) {
+      return res.status(400).json({ error: `Setup photos are full (${MAX_SETUP_PHOTOS}).` })
+    }
+
+    const wdToken = await getAccessToken()
+    const folderId = await resolveJobFolder(req, job, wdToken)
+    if (!folderId) return res.status(404).json({ error: 'No WorkDrive folder for this job yet.' })
+    const idx = slotDef.multi ? (slots.setup || []).length : 0
+    const name = fileNameFor(slotKey, job, idx, req.file.mimetype)
+    const up = await uploadFileToFolder(folderId, name, req.file.buffer, wdToken, req.file.mimetype)
+    const fileId = String(up?.fileId || up?.id || up || '')
+    const entry = { fileId, name, at: new Date().toISOString() }
+    if (slotDef.multi) slots.setup = [...(slots.setup || []), entry]
+    else slots[slotKey] = entry
+
+    const patch = { photo_slots: JSON.stringify(slots) }
+    if (!job.folder_url) patch.folder_url = `https://workdrive.zoho.com/folder/${folderId}`
+    if (slotKey === 'odo_before' && miles != null) patch.odo_before = String(miles)
+    if (slotKey === 'odo_after' && miles != null) patch.odo_after = String(miles)
+    const updated = await updateJob(req, job.id, { ...job, ...patch })
+    console.log(`[photo-slot] job ${job.id} ← ${name}${miles != null ? ` (${miles} mi)` : ''}${ai ? ` [ai ${ai.slot} ${ai.confidence}]` : ''}`)
+    res.json({ ok: true, slot: slotKey, miles, name, fileId, job: updated, progress: photoProgress(updated) })
+  } catch (err) {
+    console.error('[photo-slot]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/jobs/:id/photo-progress — checklist state for a card.
+router.get('/:id/photo-progress', async (req, res) => {
+  try {
+    const { photoProgress, gateApplies, SLOTS } = await import('../services/jobPhotos.js')
+    const row = await getTable(req).getRow(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Job not found' })
+    const job = rowToJob(row)
+    res.json({ ok: true, progress: photoProgress(job), gate: gateApplies(job), slots: SLOTS, photo_slots: job.photo_slots, odo_before: job.odo_before, odo_after: job.odo_after })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 
 // Internal WorkDrive link for the team — opens the WorkDrive APP on
 // phones (every tech has it). The external zohoexternal link is

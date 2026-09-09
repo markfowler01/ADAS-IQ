@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
+import { TakePhotosControl } from './JobPhotos'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
@@ -803,7 +804,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 
       {/* Job number (Zoho) */}
       {(job.invoice_number || job.quote_number || isRequestJob(job)) && (
-        <p className="mb-1.5"><JobIdPill job={job} /></p>
+        <p className="mb-1.5 flex items-center gap-1.5 flex-wrap"><JobIdPill job={job} /><TakePhotosControl job={job} compact /></p>
       )}
 
       {/* Customer notes — amber sticky, per shop, set via the 📌 */}
@@ -2709,7 +2710,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
         {vehicle || 'Unknown vehicle'}
       </p>
       {(job.invoice_number || job.quote_number || isRequestJob(job)) && (
-        <p className="mb-1.5"><JobIdPill job={job} size="xs" /></p>
+        <p className="mb-1.5 flex items-center gap-1.5 flex-wrap"><JobIdPill job={job} size="xs" /><TakePhotosControl job={job} compact /></p>
       )}
 
       {/* Customer notes — amber sticky, per shop */}
