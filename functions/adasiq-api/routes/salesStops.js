@@ -320,13 +320,27 @@ router.post('/', async (req, res) => {
     let bonusStatus = ''
     try { bonusStatus = (await hasPriorInvoices(shop.shop_name, today)) ? '' : 'pending' } catch { bonusStatus = 'pending' }
 
-    const inserted = await tbl(req).insertRow({
+    // lat/lng columns hold 4 decimals (~11 m); phones send 8+, which the
+    // Datastore rejects as "Invalid input value" (Mark's first stop,
+    // 2026-09-09). Round, and leave the keys out entirely when unknown.
+    const row = {
       tech, shop_name: shop.shop_name, shop_key: key, shop_id: String(shop.id || ''), outcome, stop_note: note,
       person_name: person.name, person_title: person.title, person_email: person.email, person_phone: person.phone,
       got_card: gotCard ? 'yes' : 'no', stop_at: now, stop_date: today,
-      lat: Number.isFinite(Number(b.lat)) ? Number(b.lat) : null, lng: Number.isFinite(Number(b.lng)) ? Number(b.lng) : null,
       new_shop: newShop ? 'yes' : 'no', bonus_status: bonusStatus, bonus_json: '',
-    })
+    }
+    if (Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lng))) {
+      row.lat = Math.round(Number(b.lat) * 10000) / 10000
+      row.lng = Math.round(Number(b.lng) * 10000) / 10000
+    }
+    let inserted
+    try { inserted = await tbl(req).insertRow(row) }
+    catch (e) {
+      // Never lose the stop over coordinates — retry without them.
+      console.log('[sales-stop] insert failed, retrying without lat/lng:', e.message)
+      delete row.lat; delete row.lng
+      inserted = await tbl(req).insertRow(row)
+    }
     const stop = rowToStop(inserted)
 
     // Van newsletter if we got an email (same as the counter flow).
