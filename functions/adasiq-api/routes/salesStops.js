@@ -125,30 +125,88 @@ function miles(a, b, c, d) {
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a)) * Math.cos(toR(c)) * Math.sin(dLng / 2) ** 2
   return 2 * R * Math.asin(Math.sqrt(h))
 }
+// Shops a tech can stop at = CRM shops ∪ Books customers (anything in
+// the dispatch geocache). CRM shops with an address but no coordinates
+// get geocoded on the fly (a few per call) and cached. Each row carries
+// days since the last invoice so "haven't been there in a while" shops
+// rise to the top — the seed of the relationship radar.
+let _invCache = { at: 0, byKey: {} }
+async function lastInvoiceByShop() {
+  if (Date.now() - _invCache.at < 10 * 60 * 1000) return _invCache.byKey
+  try {
+    const { listInvoicesForDateRange } = await import('../services/zoho.js')
+    const to = todayPT(), from = addDays(to, -180)
+    const inv = await listInvoicesForDateRange(from, to)
+    const byKey = {}
+    for (const i of inv) {
+      const k = shopKeyOf(i.customer_name)
+      if (!k) continue
+      if (!byKey[k] || i.date > byKey[k].date) byKey[k] = { date: i.date, name: i.customer_name }
+      byKey[k].count = (byKey[k].count || 0) + 1
+    }
+    _invCache = { at: Date.now(), byKey }
+  } catch (e) { console.log('[sales-stop] invoice lookup failed:', e.message) }
+  return _invCache.byKey
+}
+const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00Z') - new Date(a + 'T12:00:00Z')) / 86400000)
+
 router.get('/nearby', async (req, res) => {
   try {
     const lat = Number(req.query.lat), lng = Number(req.query.lng)
+    const hasLoc = Number.isFinite(lat) && Number.isFinite(lng)
     const qs = String(req.query.q || '').trim().toLowerCase()
-    const [shops, stops] = await Promise.all([getAllShops(req), allStops(req).catch(() => [])])
-    let coords = {}
-    try {
-      const { readGeocache, normalizeKey } = await import('../services/geocoding.js')
-      const cache = await readGeocache(req)
-      coords = Object.fromEntries(Object.entries(cache).map(([k, v]) => [k, v]))
-      coords._norm = normalizeKey
-    } catch { /* no coords → alphabetical */ }
+    const geo = await import('../services/geocoding.js')
+    const [shops, stops, cache, lastInv] = await Promise.all([
+      getAllShops(req), allStops(req).catch(() => []), geo.readGeocache(req).catch(() => ({})), lastInvoiceByShop(),
+    ])
+    const norm = geo.normalizeKey
+    // Union: CRM shops first, then Books customers the CRM doesn't know.
+    const seen = new Set()
+    const rows = []
+    for (const sh of shops) {
+      seen.add(shopKeyOf(sh.shop_name))
+      rows.push({ id: sh.id, shop_name: sh.shop_name, pipeline_stage: sh.pipeline_stage, address: sh.address || '', in_crm: true })
+    }
+    for (const [k, v] of Object.entries(cache)) {
+      if (!k || typeof v !== 'object' || v.lat == null) continue
+      const name = v.shop_name || k
+      if (seen.has(shopKeyOf(name))) continue
+      seen.add(shopKeyOf(name))
+      rows.push({ id: '', shop_name: name, pipeline_stage: 'active', address: v.address || '', in_crm: false })
+    }
+    // Geocode a few CRM shops that still have no coordinates (cached after).
+    let geocoded = 0
+    const raw = {}
+    for (const r of rows) {
+      if (!r.in_crm || !r.address || geocoded >= 6) continue
+      const c = cache[norm(r.shop_name)]
+      if (c && c.lat != null) continue
+      const g = await geo.geocodeAddress(r.address).catch(() => null)
+      geocoded++
+      if (g && g.lat != null) { cache[norm(r.shop_name)] = { ...g, address: r.address, geocoded_at: new Date().toISOString() }; raw[norm(r.shop_name)] = cache[norm(r.shop_name)] }
+    }
+    if (Object.keys(raw).length) {
+      try { const cur = await geo.readGeocacheRaw(req); await geo.writeGeocache(req, { ...cur, ...raw }) } catch (e) { console.log('[sales-stop] geocache write failed:', e.message) }
+    }
     const lastStop = {}
-    for (const s of stops) if (!lastStop[s.shop_key]) lastStop[s.shop_key] = s
-    const rows = shops.map(s => {
-      const c = coords._norm ? coords[coords._norm(s.shop_name)] : null
-      const dist = (c && Number.isFinite(lat) && Number.isFinite(lng) && c.lat != null) ? miles(lat, lng, c.lat, c.lng) : null
-      const ls = lastStop[shopKeyOf(s.shop_name)]
-      return { id: s.id, shop_name: s.shop_name, pipeline_stage: s.pipeline_stage, address: s.address || '', distance_mi: dist == null ? null : Math.round(dist * 10) / 10, last_stop: ls ? { tech: ls.tech, date: ls.date } : null }
+    for (const st of stops) if (!lastStop[st.shop_key]) lastStop[st.shop_key] = st
+    const today = todayPT()
+    const out = rows.map(r => {
+      const c = cache[norm(r.shop_name)]
+      const dist = (hasLoc && c && c.lat != null) ? miles(lat, lng, c.lat, c.lng) : null
+      const ls = lastStop[shopKeyOf(r.shop_name)]
+      const li = lastInv[shopKeyOf(r.shop_name)]
+      return {
+        ...r, distance_mi: dist == null ? null : Math.round(dist * 10) / 10,
+        last_stop: ls ? { tech: ls.tech, date: ls.date } : null,
+        last_job: li ? li.date : null, days_since_job: li ? daysBetween(li.date, today) : null, jobs_180d: li?.count || 0,
+      }
     })
-    let out
-    if (qs) out = rows.filter(r => r.shop_name.toLowerCase().includes(qs)).slice(0, 25)
-    else out = rows.filter(r => r.distance_mi != null).sort((a, b) => a.distance_mi - b.distance_mi).slice(0, 15)
-    res.json({ ok: true, shops: out, has_location: Number.isFinite(lat) && Number.isFinite(lng) })
+    let list
+    if (qs) list = out.filter(r => r.shop_name.toLowerCase().includes(qs)).slice(0, 25)
+    else if (hasLoc) list = out.filter(r => r.distance_mi != null).sort((a, b) => a.distance_mi - b.distance_mi).slice(0, 15)
+    else list = out.sort((a, b) => (b.days_since_job ?? -1) - (a.days_since_job ?? -1)).slice(0, 25)
+    res.json({ ok: true, shops: list, has_location: hasLoc, geocoded })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
