@@ -148,6 +148,39 @@ async function lastInvoiceByShop() {
   } catch (e) { console.log('[sales-stop] invoice lookup failed:', e.message) }
   return _invCache.byKey
 }
+// Forgiving search (Mark 2026-09-09, "Maiko" for Maaco): every typed
+// word must match a word in the shop name or its address by prefix, or
+// within 2 letters of edit distance. Scored so exact/prefix hits rank
+// above fuzzy ones.
+function lev(a, b) {
+  if (a === b) return 0
+  const m = a.length, n = b.length
+  if (!m) return n; if (!n) return m
+  let prev = Array.from({ length: n + 1 }, (_, j) => j)
+  for (let i = 1; i <= m; i++) {
+    const cur = [i]
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    prev = cur
+  }
+  return prev[n]
+}
+function fuzzyFilter(rows, query) {
+  const words = query.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  if (!words.length) return rows
+  const scored = []
+  for (const r of rows) {
+    const hay = `${r.shop_name} ${r.address || ''}`.toLowerCase()
+    const tokens = hay.split(/[^a-z0-9]+/).filter(Boolean)
+    let score = 0, ok = true
+    for (const w of words) {
+      if (hay.includes(w)) { score += 3; continue }
+      const near = tokens.some(t => t.startsWith(w) || (w.length >= 4 && lev(w, t.slice(0, Math.max(w.length, 3))) <= (w.length >= 6 ? 2 : 1)) || (w.length >= 4 && lev(w, t) <= 2))
+      if (near) score += 1; else { ok = false; break }
+    }
+    if (ok) scored.push({ r, score })
+  }
+  return scored.sort((a, b) => b.score - a.score || (a.r.distance_mi ?? 999) - (b.r.distance_mi ?? 999)).map(x => x.r)
+}
 const daysBetween = (a, b) => Math.round((new Date(b + 'T12:00:00Z') - new Date(a + 'T12:00:00Z')) / 86400000)
 
 router.get('/nearby', async (req, res) => {
@@ -220,7 +253,7 @@ router.get('/nearby', async (req, res) => {
       }
     })
     let list
-    if (qs) list = out.filter(r => r.shop_name.toLowerCase().includes(qs)).slice(0, 25)
+    if (qs) list = fuzzyFilter(out, qs).slice(0, 25)
     else if (hasLoc) list = out.filter(r => r.distance_mi != null).sort((a, b) => a.distance_mi - b.distance_mi).slice(0, 15)
     else {
       // No location: body shops first (CRM shops + repeat customers),

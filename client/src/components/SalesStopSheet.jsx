@@ -163,15 +163,24 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
           </div>
         ) : step === 1 ? (
           <div>
-            <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search a shop… or type a new one"
-              className="w-full rounded-xl px-3 py-3 text-sm mb-2" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
+            <div className="sticky top-0 bg-white pb-2 z-10">
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search a shop… typos are fine"
+                autoFocus inputMode="search" enterKeyHint="search"
+                className="w-full rounded-xl px-3 py-3 text-base" style={{ border: '1.5px solid #e0dbd6', outline: 'none' }} />
+              {query.trim().length > 1 && (
+                <button onClick={() => { setShop({ shop_name: query.trim(), isNew: true }); setStep(2) }}
+                  className="w-full rounded-xl py-3 mt-2 text-sm font-bold" style={{ backgroundColor: '#fff5f0', color: ORANGE, border: `1.5px dashed ${ORANGE}` }}>
+                  ➕ Not in the list? Add “{query.trim()}”
+                </button>
+              )}
+            </div>
             <div className="text-[11px] font-semibold mb-1" style={{ color: '#888' }}>
               {query ? 'Matches' : locState === 'ok' ? '📍 Nearest to the van' : locState === 'denied' ? 'Location off — search by name' : 'Finding the van…'}{loading ? ' · loading' : ''}
             </div>
             <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #ebe7e3' }}>
               {shops.map((s, i) => (
                 <button key={s.id} onClick={() => { setShop({ ...s, isNew: false }); setStep(2) }}
-                  className="w-full text-left px-3 py-3 flex items-center gap-2" style={{ borderTop: i ? '1px solid #f1ede9' : 'none', backgroundColor: 'white' }}>
+                  className="w-full text-left px-3 flex items-center gap-2 active:bg-orange-50" style={{ borderTop: i ? '1px solid #f1ede9' : 'none', backgroundColor: 'white', minHeight: '56px', paddingTop: '10px', paddingBottom: '10px' }}>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>{s.shop_name}</div>
                     <div className="text-[11px]" style={{ color: '#888' }}>
@@ -185,12 +194,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
               ))}
               {!loading && shops.length === 0 && <div className="px-3 py-4 text-sm text-center" style={{ color: '#888' }}>{query ? 'No CRM shop matches.' : 'No shops with a location nearby. Search by name.'}</div>}
             </div>
-            {query.trim().length > 2 && (
-              <button onClick={() => { setShop({ shop_name: query.trim(), isNew: true }); setStep(2) }}
-                className="w-full rounded-xl py-3 text-sm font-bold" style={{ backgroundColor: '#fff5f0', color: ORANGE, border: `1.5px dashed ${ORANGE}` }}>
-                ➕ New shop: “{query.trim()}”
-              </button>
-            )}
+
           </div>
         ) : (
           <div>
