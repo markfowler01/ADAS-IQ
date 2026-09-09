@@ -2,7 +2,8 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { readJobsPublic, updateJobPublic, deleteJobPublic, performSyncQuotes } from './jobs.js'
 import { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, TECHNICIANS_CHANNEL, DISPATCH_CHANNEL, AA_JOBS_CHANNEL } from '../services/cliq.js'
-import { listInvoicesForDateRange } from '../services/zoho.js'
+import { listInvoicesForDateRange, getAccessToken } from '../services/zoho.js'
+import axios from 'axios'
 
 // Running per-day invoiced total for the #Dispatch summary (Mark
 // 2026-07-11). One AppConfig row per PT day:
@@ -51,18 +52,62 @@ const router = express.Router()
 // every post-sent state.
 const SENT_STATUSES = ['sent', 'viewed', 'accepted', 'partially_paid', 'paid', 'overdue']
 
-async function checkAndStampAlerted(req, dedupId) {
-  if (!dedupId) return false
+// Alert-once claim (rebuilt 2026-09-09 after BBR 10908 alerted nobody):
+//   • race-safe — Books fires 2-3 webhook payloads within 200ms; every
+//     caller inserts, then the LOWEST ROWID wins, the rest stand down.
+//   • releasable — if every channel fails, the winner deletes its claim
+//     so the hourly sweep retries next hour instead of "already alerted".
+const stampKeyFor = id => `invoice_alerted:${id}`.slice(0, 64)
+async function claimInvoiceAlert(req, dedupId) {
+  if (!dedupId) return { claimed: true, rowId: null }
   const app = catalyst.initialize(req, { type: 'advancedio' })
-  const stampKey = `invoice_alerted:${dedupId}`.slice(0, 64)
-  const rows = await app.zcql().executeZCQLQuery(
-    `SELECT ROWID FROM AppConfig WHERE config_key = '${stampKey.replace(/'/g, "''")}' LIMIT 1`
-  )
-  if (rows?.[0]) return true
-  await app.datastore().table('AppConfig').insertRow({
-    config_key: stampKey, config_value: new Date().toISOString(),
-  })
+  const key = stampKeyFor(dedupId).replace(/'/g, "''")
+  const read = async () => (await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 10`) || [])
+    .map(r => r?.AppConfig || r).filter(r => r?.ROWID).map(r => String(r.ROWID))
+  if ((await read()).length) return { claimed: false }
+  const ins = await app.datastore().table('AppConfig').insertRow({ config_key: stampKeyFor(dedupId), config_value: new Date().toISOString() })
+  const mine = String(ins?.ROWID || '')
+  const all = await read()
+  const winner = all.map(x => BigInt(x)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0]
+  if (!mine || String(winner) !== mine) return { claimed: false }
+  return { claimed: true, rowId: mine }
+}
+async function releaseInvoiceAlert(req, rowId) {
+  if (!rowId) return
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    await app.datastore().table('AppConfig').deleteRow(rowId)
+    console.log('[invoice] alert claim released — sweep will retry')
+  } catch (e) { console.log('[invoice] claim release failed:', e.message) }
+}
+
+// Cliq with retries + VISIBLE logging (console.warn never reaches the
+// Catalyst log viewer, which is why 9:05 today left no trace).
+async function cliqTry(label, fn, tries = 3) {
+  for (let i = 1; i <= tries; i++) {
+    try {
+      await fn()
+      console.log(`[invoice] ✓ ${label}${i > 1 ? ` (attempt ${i})` : ''}`)
+      return true
+    } catch (e) {
+      const msg = `${e.response?.status || ''} ${e.response?.data?.message || e.message}`.trim()
+      console.log(`[invoice] ✗ ${label} attempt ${i}/${tries}: ${msg}`)
+      if (i < tries) await new Promise(r => setTimeout(r, i === 1 ? 1500 : 3000))
+    }
+  }
   return false
+}
+
+// Bell + email fallback so an invoice is never silent even with Cliq down.
+async function bellFallback(req, title, body) {
+  try {
+    const { createNotification } = await import('./notifications.js')
+    for (const who of [{ to: 'Mark', toEmail: 'mf@absoluteadas.com' }, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com' }]) {
+      await createNotification(req, { ...who, type: 'invoice_sent', title, body, skipCliq: true, skipTechChannel: true })
+    }
+    console.log('[invoice] ✓ bell+email fallback delivered')
+    return true
+  } catch (e) { console.log('[invoice] ✗ bell fallback failed:', e.message); return false }
 }
 
 // Same tombstone the board's DELETE writes (`deleted_estimate:<id>`) —
@@ -78,10 +123,10 @@ async function tombstoneEstimate(req, estId) {
     if (!existing?.[0]) {
       await app.datastore().table('AppConfig').insertRow({ config_key: key, config_value: new Date().toISOString() })
     }
-  } catch (e) { console.warn('[invoice] tombstone failed (non-fatal):', e.message) }
+  } catch (e) { console.log('[invoice] tombstone failed (non-fatal):', e.message) }
 }
 
-export async function processSentInvoice(req, invoice, jobsCache) {
+export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
   const invoiceNumber   = invoice.invoice_number || invoice.number || ''
   const referenceNumber = (invoice.reference_number || invoice.reference || '').toString()
   const customerName    = (invoice.customer_name || invoice.contact_name || '').toLowerCase().trim()
@@ -99,12 +144,16 @@ export async function processSentInvoice(req, invoice, jobsCache) {
     return { action: 'skipped', reason: `status "${status}" — not sent` }
   }
 
-  // Dedup FIRST — matched or not, an invoice alerts exactly once.
+  // Claim FIRST — matched or not, an invoice alerts exactly once. The
+  // claim is released below if nothing got through.
   let alreadyAlerted = false
+  let claimRow = null
   try {
-    alreadyAlerted = await checkAndStampAlerted(req, invoiceNumber || referenceNumber)
+    const c = await claimInvoiceAlert(req, invoiceNumber || referenceNumber)
+    alreadyAlerted = !c.claimed
+    claimRow = c.rowId
   } catch (e) {
-    console.warn('[invoice] dedup check failed — sending anyway:', e.message)
+    console.log('[invoice] claim check failed — sending anyway:', e.message)
   }
 
   const jobs = jobsCache || await readJobsPublic(req)
@@ -140,7 +189,7 @@ export async function processSentInvoice(req, invoice, jobsCache) {
     )
     if (customerJobs.length === 1) { matchedJob = customerJobs[0]; matchVia = 'name' }
     else if (customerJobs.length > 1) {
-      console.warn(`[invoice] Ambiguous — ${customerJobs.length} unmatched jobs for "${customerName}". Skipping match.`)
+      console.log(`[invoice] Ambiguous — ${customerJobs.length} unmatched jobs for "${customerName}". Skipping match.`)
     }
   }
 
@@ -156,27 +205,36 @@ export async function processSentInvoice(req, invoice, jobsCache) {
       await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
       await deleteJobPublic(req, matchedJob.id)
         .then(() => console.log(`[invoice] Removed already-alerted job ${matchedJob.id} from board (matched by ${matchVia})`))
-        .catch(e => console.warn('[invoice] board cleanup failed (non-fatal):', e.message))
+        .catch(e => console.log('[invoice] board cleanup failed (non-fatal):', e.message))
     } else if (matchedJob) {
       console.log(`[invoice] already-alerted #${invoiceNumber}: name-only match on job ${matchedJob.id} — leaving the card alone`)
     }
     return { action: 'already-alerted', invoice_number: invoiceNumber, job_id: matchedJob?.id, match: matchVia }
   }
 
-  // No job matched — still alert Mark so an invoice never goes unnoticed.
+  // No job matched — still alert so an invoice never goes unnoticed.
+  // A replay (card already gone) fans out to #dispatch + #aajobs too.
   if (!matchedJob) {
-    console.log('[invoice] No matching job found for invoice', invoiceNumber)
+    console.log('[invoice] No matching job found for invoice', invoiceNumber, opts.replay ? '(replay)' : '')
     const cliqMsg = [
-      `💰 *Invoice Sent — #${invoiceNumber}*`,
+      `💰 *Invoice Sent — #${invoiceNumber}*${opts.replay ? ' · 🔁 replayed' : ''}`,
       '',
       `🏢 ${customerName || 'Unknown customer'}`,
       referenceNumber ? `📋 RO#: ${referenceNumber}` : null,
       totalStr ? `💵 Total: ${totalStr}` : null,
-      `⚠️ No matching job found in Absolute ADAS`,
+      opts.replay ? `ℹ️ Card was already invoiced and off the board` : `⚠️ No matching job found in Absolute ADAS`,
     ].filter(l => l !== null).join('\n')
-    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e =>
-      console.warn('[invoice] Cliq alert failed (non-fatal):', e.message))
-    return { action: 'no-match-alerted', invoice_number: invoiceNumber }
+    const ok = []
+    ok.push(await cliqTry('Mark alert channel', () => postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg)))
+    if (opts.replay) {
+      ok.push(await cliqTry('#dispatch', () => postToCliqChannel(DISPATCH_CHANNEL, cliqMsg)))
+      ok.push(await cliqTry('#aajobs', () => postToCliqChannel(AA_JOBS_CHANNEL, `✅ *Invoiced* · ${customerName || 'Unknown'}${referenceNumber ? ' · RO# ' + referenceNumber : ''}${totalStr ? ' · ' + totalStr : ''}`)))
+    }
+    if (!ok.some(Boolean)) {
+      const bell = await bellFallback(req, `Invoice sent: #${invoiceNumber}`, cliqMsg.replace(/\*/g, ''))
+      if (!bell) await releaseInvoiceAlert(req, claimRow)
+    }
+    return { action: 'no-match-alerted', invoice_number: invoiceNumber, cliq: ok }
   }
 
   // Update just this one job row — atomic, no overwrite risk
@@ -200,7 +258,7 @@ export async function processSentInvoice(req, invoice, jobsCache) {
   // Day accumulator once — feeds Mark's alert channel and #Dispatch.
   let acc = null
   try { acc = await bumpDayInvoiceTotal(req, Number(total) || 0) }
-  catch (e) { console.warn('[invoice] day-total bump failed (non-fatal):', e.message) }
+  catch (e) { console.log('[invoice] day-total bump failed (non-fatal):', e.message) }
 
   const cliqMsg = [
     `💰 *Invoice Sent — #${invoiceNumber}*`,
@@ -216,53 +274,48 @@ export async function processSentInvoice(req, invoice, jobsCache) {
     acc ? `📊 Today's revenue: $${Number(acc.total).toFixed(2)} · ${acc.count} invoice${acc.count === 1 ? '' : 's'}` : null,
   ].filter(l => l !== null).join('\n')
 
-  await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e =>
-    console.warn('[invoice] Cliq alert failed (non-fatal):', e.message))
-
-  // Simpler ping to #technicians — shop, RO#, vehicle, invoiced
   const techMsg = [
     `✅ *RO# ${roNum || 'N/A'} — invoiced*`,
     `🏢 ${matchedJob.shop_name || customerName || 'Unknown shop'}${vehicle ? ' · 🚗 ' + vehicle : ''}`,
   ].join('\n')
-  await postToCliqChannel(TECHNICIANS_CHANNEL, techMsg).catch(e =>
-    console.warn('[invoice] #technicians alert failed (non-fatal):', e.message))
+  const aaMsg = [
+    `✅ *Invoiced* · ${matchedJob.shop_name || customerName || 'Unknown shop'}`,
+    vehicle ? `🚗 ${vehicle}` : null,
+    matchedJob.technician ? `👤 ${matchedJob.technician}` : null,
+  ].filter(Boolean).join('\n')
+  const dispatchMsg = [
+    `💰 *Invoiced* · ${matchedJob.shop_name || customerName || 'Unknown shop'}`,
+    vehicle ? `🚗 ${vehicle}` : null,
+    totalStr ? `💵 ${totalStr}` : null,
+    ...(acc ? [
+      `──────────`,
+      `📊 *Today: $${Number(acc.total).toFixed(2)}* · ${acc.count} invoice${acc.count === 1 ? '' : 's'}`,
+    ] : []),
+  ].filter(Boolean).join('\n')
 
-  // Quick #aajobs ping (Mark 2026-07-13): shop, vehicle, tech, invoiced.
-  try {
-    const aaMsg = [
-      `✅ *Invoiced* · ${matchedJob.shop_name || customerName || 'Unknown shop'}`,
-      vehicle ? `🚗 ${vehicle}` : null,
-      matchedJob.technician ? `👤 ${matchedJob.technician}` : null,
-    ].filter(Boolean).join('\n')
-    await postToCliqChannel(AA_JOBS_CHANNEL, aaMsg)
-  } catch (e) {
-    console.warn('[invoice] #aajobs invoiced ping failed (non-fatal):', e.message)
+  // Fan-out with retries; every result logged. If Cliq is down for all
+  // four, fall back to bell+email for Mark + Kat; if even that fails,
+  // release the claim so the hourly sweep tries again.
+  const results = {
+    mark: await cliqTry('Mark alert channel', () => postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg)),
+    technicians: await cliqTry('#technicians', () => postToCliqChannel(TECHNICIANS_CHANNEL, techMsg)),
+    aajobs: await cliqTry('#aajobs', () => postToCliqChannel(AA_JOBS_CHANNEL, aaMsg)),
+    dispatch: await cliqTry('#dispatch', () => postToCliqChannel(DISPATCH_CHANNEL, dispatchMsg)),
   }
-
-  // #Dispatch invoice summary + running day total (Mark 2026-07-11).
-  try {
-    const dispatchMsg = [
-      `💰 *Invoiced* · ${matchedJob.shop_name || customerName || 'Unknown shop'}`,
-      vehicle ? `🚗 ${vehicle}` : null,
-      totalStr ? `💵 ${totalStr}` : null,
-      ...(acc ? [
-        `──────────`,
-        `📊 *Today: $${Number(acc.total).toFixed(2)}* · ${acc.count} invoice${acc.count === 1 ? '' : 's'}`,
-      ] : []),
-    ].filter(Boolean).join('\n')
-    await postToCliqChannel(DISPATCH_CHANNEL, dispatchMsg)
-  } catch (e) {
-    console.warn('[invoice] #Dispatch day-total alert failed (non-fatal):', e.message)
+  if (!Object.values(results).some(Boolean)) {
+    const bell = await bellFallback(req, `Invoice sent: #${invoiceNumber} · ${matchedJob.shop_name || customerName || ''}`, cliqMsg.replace(/\*/g, ''))
+    if (!bell) await releaseInvoiceAlert(req, claimRow)
   }
+  console.log(`[invoice] alert summary #${invoiceNumber}: ${JSON.stringify(results)}`)
 
   // Invoice is out the door — remove the card from the board. Tombstone
   // its estimate first so the hourly quote sync can't bring it back.
   await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
   await deleteJobPublic(req, matchedJob.id)
     .then(() => console.log(`[invoice] Removed invoiced job ${matchedJob.id} from board`))
-    .catch(e => console.warn('[invoice] board cleanup failed (non-fatal):', e.message))
+    .catch(e => console.log('[invoice] board cleanup failed (non-fatal):', e.message))
 
-  return { action: 'alerted', invoice_number: invoiceNumber, job_id: matchedJob.id }
+  return { action: 'alerted', invoice_number: invoiceNumber, job_id: matchedJob.id, cliq: results }
 }
 
 // Pull-based backstop (Mark 2026-07-13, after the Books workflow rule
@@ -309,6 +362,36 @@ router.post('/zoho-books', async (req, res) => {
   } catch (err) {
     console.error('[webhook] Error:', err.message)
     res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /webhooks/zoho-books/replay  { invoice_number }  — owner or cron
+// secret. Re-sends the alert for one invoice (Mark 2026-09-09: BBR 10908
+// alerted nobody). Clears the claim, pulls the invoice from Books, runs
+// the normal pipeline with replay=true.
+router.post('/zoho-books/replay', async (req, res) => {
+  try {
+    const owner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+    const secret = String(process.env.BILLING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+    if (!owner && String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(403).json({ error: 'Owner only.' })
+    const number = String(req.body?.invoice_number || req.query.invoice_number || '').trim()
+    if (!number) return res.status(400).json({ error: 'invoice_number required' })
+    const token = await getAccessToken()
+    const r = await axios.get('https://www.zohoapis.com/books/v3/invoices', {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID, invoice_number: number }, timeout: 15000,
+    })
+    const inv = (r.data?.invoices || []).find(i => String(i.invoice_number) === number) || r.data?.invoices?.[0]
+    if (!inv) return res.status(404).json({ error: `Invoice ${number} not found in Books` })
+    // clear any claim so the pipeline runs again
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const key = stampKeyFor(inv.invoice_number || inv.reference_number).replace(/'/g, "''")
+    const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 10`)
+    for (const row of rows || []) { const id = (row?.AppConfig || row)?.ROWID; if (id) await app.datastore().table('AppConfig').deleteRow(String(id)).catch(() => {}) }
+    const result = await processSentInvoice(req, inv, null, { replay: true })
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    console.error('[webhook replay]', err.message)
+    res.status(500).json({ error: err.response?.data?.message || err.message })
   }
 })
 

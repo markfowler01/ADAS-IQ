@@ -234,6 +234,28 @@ router.get('/books-contact/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Cliq health (Mark 2026-09-09): granted scopes + a one-line test post
+// to Mark's alert channel. Owner/secret only.
+router.get('/cliq-scope', async (req, res) => {
+  try {
+    const rt = process.env.ZOHO_CLIQ_REFRESH_TOKEN || process.env.ZOHO_TASKS_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN || ''
+    const which = process.env.ZOHO_CLIQ_REFRESH_TOKEN ? 'ZOHO_CLIQ_REFRESH_TOKEN' : process.env.ZOHO_TASKS_REFRESH_TOKEN ? 'ZOHO_TASKS_REFRESH_TOKEN' : 'ZOHO_REFRESH_TOKEN'
+    const p = new URLSearchParams({ grant_type: 'refresh_token', client_id: process.env.ZOHO_CLIENT_ID, client_secret: process.env.ZOHO_CLIENT_SECRET, refresh_token: rt })
+    const t = await axios.post('https://accounts.zoho.com/oauth/v2/token', p.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 12000, validateStatus: s => s < 500 })
+    res.json({ ok: true, env_var: which, scope: String(t.data?.scope || t.data?.error || '') })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/cliq-test', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
+    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+    const msg = String(req.body?.msg || `🧪 Cliq test from the app · ${new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}`)
+    const t0 = Date.now()
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg)
+    res.json({ ok: true, ms: Date.now() - t0 })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message, status: e.response?.status, data: e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : null }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const [map, catalog] = await Promise.all([
