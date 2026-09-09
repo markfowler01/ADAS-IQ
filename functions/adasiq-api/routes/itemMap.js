@@ -114,8 +114,10 @@ router.post('/dedupe-contacts', async (req, res) => {
     const money = c => Number(c.outstanding_receivable_amount || 0) !== 0 || Number(c.unused_credits_receivable_amount || 0) !== 0
     const keep = exact.filter(money)
     const candidates = exact.filter(c => !money(c)).sort((a, b) => String(a.created_time).localeCompare(String(b.created_time)))
-    // If NOTHING carries money, keep the oldest one so the name survives.
-    if (!keep.length && candidates.length) keep.push(candidates.shift())
+    // If NOTHING carries money, keep the oldest one so the name survives —
+    // unless keep_one=0 (the real customer lives under another name).
+    const keepOne = String(req.body?.keep_one ?? '1') !== '0'
+    if (!keep.length && candidates.length && keepOne) keep.push(candidates.shift())
     const out = { name, matched: exact.length, keep: keep.map(c => ({ id: c.contact_id, created: c.created_time, outstanding: c.outstanding_receivable_amount })), to_delete: candidates.length, dry, deleted: 0, refused: [] }
     if (!dry) {
       const t0 = Date.now()
@@ -123,7 +125,9 @@ router.post('/dedupe-contacts', async (req, res) => {
         if (Date.now() - t0 > 22000) break
         const d = await axios.delete(`https://www.zohoapis.com/books/v3/contacts/${c.contact_id}`, { ...H, params: { organization_id: org } })
         if (d.data?.code === 0) out.deleted++
+        else if (d.status === 429 || /rate|too many/i.test(String(d.data?.message))) { out.rate_limited = true; break }
         else out.refused.push({ id: c.contact_id, msg: d.data?.message })
+        await new Promise(r => setTimeout(r, 650))   // Books allows ~100 req/min
       }
       out.remaining = candidates.length - out.deleted - out.refused.length
       console.log(`[dedupe-contacts] "${name}": deleted ${out.deleted}, refused ${out.refused.length}, remaining ${out.remaining}`)
