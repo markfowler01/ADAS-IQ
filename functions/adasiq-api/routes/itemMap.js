@@ -16,6 +16,50 @@ import { getItemCatalogForAudit } from '../services/zoho.js'
 
 const router = express.Router()
 
+// ── Zoho Books items: scope probe + create (Mark 2026-09-09: "wait you
+// can add items in zoho books") ─────────────────────────────────────────
+// Creating items needs ZohoBooks.settings.CREATE on the Books refresh
+// token. /books-scope reports what the token was granted (scope string
+// only — never the token). /create-item is owner-or-cron-secret only.
+import axios from 'axios'
+const ownerOrSecret = req => {
+  const owner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+  const secret = String(process.env.BILLING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+  return owner || String(req.headers['x-cron-secret'] || '').trim() === secret
+}
+router.get('/books-scope', async (req, res) => {
+  try {
+    const p = new URLSearchParams({
+      grant_type: 'refresh_token', client_id: process.env.ZOHO_CLIENT_ID,
+      client_secret: process.env.ZOHO_CLIENT_SECRET, refresh_token: process.env.ZOHO_REFRESH_TOKEN || '',
+    })
+    const t = await axios.post('https://accounts.zoho.com/oauth/v2/token', p.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 12000, validateStatus: s => s < 500,
+    })
+    const scope = String(t.data?.scope || t.data?.error || '')
+    res.json({ ok: true, scope, can_create_items: /ZohoBooks\.(settings\.(CREATE|ALL)|fullaccess\.all)/i.test(scope) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/create-item', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Only Mark can add Zoho Books items.' })
+    const { name, rate, description } = req.body || {}
+    if (!name || !Number.isFinite(Number(rate))) return res.status(400).json({ error: 'name and rate required' })
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const r = await axios.post('https://www.zohoapis.com/books/v3/items', {
+      name: String(name).slice(0, 100), rate: Number(rate), description: String(description || '').slice(0, 2000), product_type: 'service',
+    }, {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID },
+      timeout: 15000, validateStatus: s => s < 500,
+    })
+    if (r.data?.code !== 0) return res.status(400).json({ error: r.data?.message || 'Zoho refused', code: r.data?.code })
+    const it = r.data.item || {}
+    console.log(`[books item] created "${it.name}" $${it.rate} (${it.item_id})`)
+    res.json({ ok: true, item: { item_id: it.item_id, name: it.name, rate: it.rate } })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const [map, catalog] = await Promise.all([
