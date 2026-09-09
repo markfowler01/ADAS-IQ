@@ -19,17 +19,23 @@ const OUTCOMES = [
 
 function useLocation() {
   const [loc, setLoc] = useState(null)
-  const [state, setState] = useState('asking')
-  useEffect(() => {
+  const [state, setState] = useState('asking')   // asking | ok | denied | none | slow
+  function ask() {
     if (!navigator.geolocation) { setState('none'); return }
+    setState('asking')
+    const slow = setTimeout(() => setState(st => (st === 'asking' ? 'slow' : st)), 5000)
     navigator.geolocation.getCurrentPosition(
-      p => { setLoc({ lat: p.coords.latitude, lng: p.coords.longitude }); setState('ok') },
-      () => setState('denied'),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+      p => { clearTimeout(slow); setLoc({ lat: p.coords.latitude, lng: p.coords.longitude }); setState('ok') },
+      () => { clearTimeout(slow); setState('denied') },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 },
     )
-  }, [])
-  return { loc, state }
+  }
+  useEffect(() => { ask() }, [])
+  return { loc, state, ask }
 }
+const LAST_KEY = 'aa_last_sales_stop_shop'
+function readLastShop() { try { return JSON.parse(localStorage.getItem(LAST_KEY) || 'null') } catch { return null } }
+function writeLastShop(s) { try { localStorage.setItem(LAST_KEY, JSON.stringify({ shop_name: s.shop_name, id: s.id || '', at: new Date().toISOString() })) } catch {} }
 
 function Confetti() {
   const bits = Array.from({ length: 28 }, (_, i) => i)
@@ -47,8 +53,12 @@ function Confetti() {
 }
 
 export default function SalesStopSheet({ user, onClose, onLogged }) {
-  const { loc, state: locState } = useLocation()
+  const { loc, state: locState, ask: askLocation } = useLocation()
   const [step, setStep] = useState(1)
+  const [tab, setTab] = useState('near')          // near | mine | all
+  const [mine, setMine] = useState([])
+  const [lastShop] = useState(() => readLastShop())
+  const [personOpen, setPersonOpen] = useState(false)
   const [shops, setShops] = useState([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
@@ -64,7 +74,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
   const [error, setError] = useState('')
   const camRef = useRef(null)
 
-  // Load nearby (or search) shops
+  // Load the list for the active tab (search overrides the tab)
   useEffect(() => {
     let dead = false
     const t = setTimeout(async () => {
@@ -73,13 +83,27 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
         const p = new URLSearchParams()
         if (loc) { p.set('lat', loc.lat); p.set('lng', loc.lng) }
         if (query.trim()) p.set('q', query.trim())
+        else if (tab === 'all') p.set('all', '1')
         const r = await apiFetch(`${API_BASE}/api/sales-stops/nearby?${p}`)
         const d = await r.json()
         if (!dead && r.ok) setShops(d.shops || [])
       } catch { /* list stays */ } finally { if (!dead) setLoading(false) }
     }, query ? 250 : 0)
     return () => { dead = true; clearTimeout(t) }
-  }, [loc, query, locState])
+  }, [loc, query, locState, tab])
+
+  // "Mine" — shops this tech has stopped at, newest first
+  useEffect(() => {
+    let dead = false
+    const tech = String(user?.name || '').split(' ')[0]
+    apiFetch(`${API_BASE}/api/sales-stops/recent?tech=${encodeURIComponent(tech)}`).then(r => r.json()).then(d => {
+      if (dead || !d.ok) return
+      const seen = new Set(); const out = []
+      for (const st of d.stops || []) { if (seen.has(st.shop_key)) continue; seen.add(st.shop_key); out.push({ id: st.shop_id, shop_name: st.shop_name, pipeline_stage: 'active', last_stop: { tech: st.tech, date: st.date }, distance_mi: null }) }
+      setMine(out)
+    }).catch(() => {})
+    return () => { dead = true }
+  }, [user?.name])
 
   function pickOutcome(id) {
     setOutcome(id)
@@ -116,6 +140,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      writeLastShop(d.shop || shop)
       setDone(d); onLogged && onLogged(d)
     } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
@@ -173,28 +198,59 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
                   ➕ Not in the list? Add “{query.trim()}”
                 </button>
               )}
+              {!query.trim() && (
+                <div className="grid grid-cols-3 gap-1 mt-2 rounded-xl p-1" style={{ backgroundColor: '#f5f3f0' }}>
+                  {[['near', '📍 Near me'], ['mine', '🚐 Mine'], ['all', 'A–Z']].map(([id, label]) => (
+                    <button key={id} onClick={() => setTab(id)} className="rounded-lg py-2 text-sm font-bold"
+                      style={tab === id ? { backgroundColor: 'white', color: '#1a1a1a', boxShadow: '0 1px 3px rgba(0,0,0,.12)' } : { color: '#777' }}>{label}</button>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {/* Same shop as last time — one tap */}
+            {!query.trim() && lastShop?.shop_name && (
+              <button onClick={() => { setShop({ shop_name: lastShop.shop_name, id: lastShop.id || '', isNew: false }); setStep(2) }}
+                className="w-full text-left rounded-xl px-3 py-3 mb-2 flex items-center gap-2" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac' }}>
+                <span className="text-xl">↩️</span>
+                <span className="flex-1 min-w-0"><span className="block font-bold text-sm truncate" style={{ color: GREEN }}>{lastShop.shop_name}</span><span className="block text-[11px]" style={{ color: '#666' }}>your last stop · tap for a repeat</span></span>
+              </button>
+            )}
+
+            {/* Location state — never silent */}
+            {!query.trim() && tab === 'near' && locState !== 'ok' && (
+              <button onClick={askLocation} className="w-full rounded-xl px-3 py-2.5 mb-2 text-sm font-bold text-left flex items-center gap-2"
+                style={{ backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
+                <span>📍</span>
+                <span className="flex-1">{locState === 'asking' ? 'Finding the van…' : locState === 'slow' ? 'Still finding you… tap to retry, or use Mine / A–Z' : locState === 'denied' ? 'Location is off — tap to allow, or use Mine / A–Z' : 'No location on this device — use Mine / A–Z'}</span>
+                {(locState === 'asking' || locState === 'slow') && <span className="animate-pulse">⏳</span>}
+              </button>
+            )}
+
             <div className="text-[11px] font-semibold mb-1" style={{ color: '#888' }}>
-              {query ? 'Matches' : locState === 'ok' ? '📍 Nearest to the van' : locState === 'denied' ? 'Location off — search by name' : 'Finding the van…'}{loading ? ' · loading' : ''}
+              {query ? 'Matches' : tab === 'mine' ? 'Shops you\'ve stopped at' : tab === 'all' ? 'Every shop, A to Z' : locState === 'ok' ? '📍 Nearest to the van' : 'Longest since a job'}{loading ? ' · loading' : ''}
             </div>
             <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #ebe7e3' }}>
-              {shops.map((s, i) => (
-                <button key={s.id} onClick={() => { setShop({ ...s, isNew: false }); setStep(2) }}
+              {(!query.trim() && tab === 'mine' ? mine : shops).map((s, i) => (
+                <button key={s.id || s.shop_name} onClick={() => { setShop({ ...s, isNew: false }); setStep(2) }}
                   className="w-full text-left px-3 flex items-center gap-2 active:bg-orange-50" style={{ borderTop: i ? '1px solid #f1ede9' : 'none', backgroundColor: 'white', minHeight: '56px', paddingTop: '10px', paddingBottom: '10px' }}>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>{s.shop_name}</div>
                     <div className="text-[11px]" style={{ color: '#888' }}>
                       {STAGE[s.pipeline_stage] || s.pipeline_stage}
                       {s.days_since_job != null ? ` · last job ${s.days_since_job === 0 ? 'today' : `${s.days_since_job}d ago`}` : ''}
-                      {s.last_stop ? ` · stop ${s.last_stop.date} (${s.last_stop.tech})` : ' · never stopped'}
+                      {s.last_stop ? ` · stop ${s.last_stop.date}${s.last_stop.tech ? ` (${s.last_stop.tech})` : ''}` : ' · never stopped'}
                     </div>
                   </div>
                   {s.distance_mi != null && <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>{s.distance_mi} mi</span>}
                 </button>
               ))}
-              {!loading && shops.length === 0 && <div className="px-3 py-4 text-sm text-center" style={{ color: '#888' }}>{query ? 'No CRM shop matches.' : 'No shops with a location nearby. Search by name.'}</div>}
+              {!loading && (!query.trim() && tab === 'mine' ? mine : shops).length === 0 && (
+                <div className="px-3 py-4 text-sm text-center" style={{ color: '#888' }}>
+                  {query ? 'No match — use the Add button above.' : tab === 'mine' ? 'No stops logged yet. Your first one shows up here.' : tab === 'near' && locState !== 'ok' ? 'Waiting on location — or search by name.' : 'Nothing here yet.'}
+                </div>
+              )}
             </div>
-
           </div>
         ) : (
           <div>
@@ -209,7 +265,12 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
                 </button>
               ))}
             </div>
-            {(outcome === 'card' || outcome === 'talked') && (
+            {outcome && outcome !== 'card' && !personOpen && !cardPreview && !person.name && (
+              <button onClick={() => setPersonOpen(true)} className="w-full rounded-xl py-2.5 mb-3 text-sm font-semibold" style={{ backgroundColor: 'white', color: '#555', border: '1px dashed #d6d0ca' }}>
+                + add who you met (optional)
+              </button>
+            )}
+            {(outcome === 'card' || personOpen || cardPreview || person.name) && (
               <div className="rounded-xl p-3 mb-3" style={{ border: '1px solid #ebe7e3' }}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: '#888' }}>Who did you meet?</div>
@@ -228,9 +289,11 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
             <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} placeholder="One line — tap the mic on your keyboard and say it"
               className="w-full rounded-xl p-3 text-sm mb-3" style={{ border: '1px solid #e0dbd6', outline: 'none', resize: 'none' }} />
             {error && <div className="text-sm mb-2 px-3 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{error}</div>}
-            <button onClick={save} disabled={!canSave} className="w-full rounded-xl py-3.5 text-base font-extrabold text-white" style={{ backgroundColor: GREEN, opacity: canSave ? 1 : .45 }}>
-              {saving ? 'Saving…' : '✅ Log the stop'}
-            </button>
+            <div className="sticky bottom-0 bg-white pt-2 -mx-4 px-4 pb-1" style={{ boxShadow: '0 -6px 12px rgba(255,255,255,.9)' }}>
+              <button onClick={save} disabled={!canSave} className="w-full rounded-xl py-3.5 text-base font-extrabold text-white" style={{ backgroundColor: GREEN, opacity: canSave ? 1 : .45 }}>
+                {saving ? 'Saving…' : !shop ? 'Pick a shop' : !outcome ? 'Pick what happened' : '✅ Log the stop'}
+              </button>
+            </div>
           </div>
         )}
       </div>

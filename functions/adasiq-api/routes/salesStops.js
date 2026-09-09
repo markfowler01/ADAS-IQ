@@ -198,7 +198,12 @@ router.get('/nearby', async (req, res) => {
     const rows = []
     for (const sh of shops) {
       seen.add(shopKeyOf(sh.shop_name))
-      rows.push({ id: sh.id, shop_name: sh.shop_name, pipeline_stage: sh.pipeline_stage, address: sh.address || '', in_crm: true })
+      // "Stopped before" from CRM history too (visit activities / last_contact),
+      // not just the new SalesStops table — so a shop Mark has hit for
+      // years doesn't read "never stopped".
+      const visits = (Array.isArray(sh.activities) ? sh.activities : []).filter(a => a && (a.type === 'visit' || a.type === 'meeting'))
+      const lastVisit = visits.map(a => String(a.at || '').slice(0, 10)).filter(Boolean).sort().pop() || String(sh.last_contact || '').slice(0, 10) || null
+      rows.push({ id: sh.id, shop_name: sh.shop_name, pipeline_stage: sh.pipeline_stage, address: sh.address || '', in_crm: true, crm_last_visit: lastVisit, crm_visits: visits.length })
     }
     for (const [k, v] of Object.entries(cache)) {
       if (!k || typeof v !== 'object') continue
@@ -248,12 +253,14 @@ router.get('/nearby', async (req, res) => {
       const li = lastInv[shopKeyOf(r.shop_name)]
       return {
         ...r, distance_mi: dist == null ? null : Math.round(dist * 10) / 10,
-        last_stop: ls ? { tech: ls.tech, date: ls.date } : null,
+        last_stop: ls ? { tech: ls.tech, date: ls.date } : (r.crm_last_visit ? { tech: '', date: r.crm_last_visit, from_crm: true } : null),
         last_job: li ? li.date : null, days_since_job: li ? daysBetween(li.date, today) : null, jobs_180d: li?.count || 0,
       }
     })
+    const wantAll = String(req.query.all || '') === '1'
     let list
     if (qs) list = fuzzyFilter(out, qs).slice(0, 25)
+    else if (wantAll) list = out.sort((a, b) => a.shop_name.localeCompare(b.shop_name)).slice(0, 300)
     else if (hasLoc) list = out.filter(r => r.distance_mi != null).sort((a, b) => a.distance_mi - b.distance_mi).slice(0, 15)
     else {
       // No location: body shops first (CRM shops + repeat customers),
