@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
@@ -716,13 +717,13 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       onDragStart={(e) => onDragStart(e, job)}
       onClick={() => onEdit(job)}
       className="bg-white rounded-xl shadow-sm p-3 cursor-pointer select-none transition-shadow hover:shadow-md active:opacity-75"
-      style={{
+      style={
         // Active jobs wear the brand orange like quoted cards wear blue
         // (Mark 2026-08-30). Complete stays green-tinted; cards inside
-        // the blue quote jacket keep a quiet border.
-        border: isComplete ? '2px solid #a8d5b5' : job.status === 'quoted' ? '1px solid #ebebeb' : `2px solid ${ORANGE}`,
-        backgroundColor: isComplete ? '#f8fff9' : 'white',
-      }}
+        // the blue quote jacket keep a quiet border. Requests are the
+        // dashed, tinted ones (2026-09-08) — same as the schedule.
+        cardFrame(job, { complete: isComplete })
+      }
     >
       {/* Price bar — top of the card, like the quoted jacket (Mark
           2026-08-30: "I want the price on the top bar like the quoted") */}
@@ -801,11 +802,8 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       )}
 
       {/* Job number (Zoho) */}
-      {(job.invoice_number || job.quote_number) && (
-        <p className="text-xs font-medium mb-1" style={{ color: '#6b7280' }}>
-          <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
-          {job.invoice_number || job.quote_number}
-        </p>
+      {(job.invoice_number || job.quote_number || isRequestJob(job)) && (
+        <p className="mb-1.5"><JobIdPill job={job} /></p>
       )}
 
       {/* Customer notes — amber sticky, per shop, set via the 📌 */}
@@ -2694,7 +2692,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
   return (
     <div
       className="rounded-xl p-4"
-      style={{ backgroundColor: 'white', border: '1px solid #e8e4e0' }}
+      style={isRequestJob(job) ? cardFrame(job) : { backgroundColor: 'white', border: '1px solid #e8e4e0' }}
     >
       {/* Top row: shop + status badge — tapping here opens edit */}
       <div className="flex items-start justify-between gap-2 mb-1.5 cursor-pointer active:opacity-70"
@@ -2710,6 +2708,9 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
       <p className="text-sm mb-1 cursor-pointer" style={{ color: '#555' }} onClick={() => onEdit(job)}>
         {vehicle || 'Unknown vehicle'}
       </p>
+      {(job.invoice_number || job.quote_number || isRequestJob(job)) && (
+        <p className="mb-1.5"><JobIdPill job={job} size="xs" /></p>
+      )}
 
       {/* Customer notes — amber sticky, per shop */}
       <CustomerNoteBox items={parseNoteItems(customerNote)} />

@@ -378,6 +378,8 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
               className={`sched-chip ${overdueP ? 'overdue' : (unconf ? 'unconf' : '')}`}
             >
               {j.shop_name || 'Unknown shop'}{!overdueP && unconf ? ' ⏳' : ''}
+              <span className="sched-pill req">REQUEST</span>
+              {(j.quote_number || j.ro_number) && <span className="sched-pill id quiet">{j.quote_number || j.ro_number}</span>}
               <span className="veh">{vehicleOf(j) || 'Vehicle TBD'}{calsOf(j).length ? ` · ${calsOf(j).slice(0, 2).join(', ')}` : ''}</span>
               <span className="loc">
                 {cityOf(j) ? `📍 ${cityOf(j)}` : ''}
@@ -390,6 +392,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
         {dayJobs.map(j => (
           <div key={j.id} className="sched-chip booked">
             {j.shop_name || 'Unknown shop'}
+            {(j.invoice_number || j.quote_number || j.ro_number) && <span className="sched-pill id">{j.invoice_number || j.quote_number || j.ro_number}</span>}
             <span className="veh">{vehicleOf(j) || 'Vehicle TBD'}{calsOf(j).length ? ` · ${calsOf(j).slice(0, 2).join(', ')}` : ''}</span>
             <span className="loc">
               {cityOf(j) ? `📍 ${cityOf(j)}` : ''}
@@ -434,10 +437,17 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
         .sched-dnum { font-size:16px; font-weight:700; }
         .sched-dow { font-size:10px; font-weight:700; color:#8a8a8a; letter-spacing:1px; }
         .is-today .sched-dow { color:${ORANGE}; }
-        .sched-chip { font-size:12px; font-weight:600; border-radius:8px; padding:4px 7px; line-height:1.3; cursor:grab; background:${ORANGE}; color:white; }
-        .sched-chip.unconf { background:#fff5f0; color:${ORANGE}; border:1.5px dashed ${ORANGE}; }
-        .sched-chip.overdue { background:#dc2626; }
+        /* Same language as the Jobs board cards (2026-09-08): REQUEST =
+           tinted + dashed, quiet; REAL JOB = white + solid border with the
+           job id in a solid orange pill, so jobs stand out. */
+        .sched-chip { font-size:12px; font-weight:600; border-radius:8px; padding:4px 7px; line-height:1.3; cursor:grab; background:#fff5f0; color:#1a1a1a; border:1.5px dashed ${ORANGE}; }
+        .sched-chip.unconf { color:${ORANGE}; }
+        .sched-chip.overdue { background:#fef2f2; color:#b91c1c; border:1.5px dashed #dc2626; }
         .sched-chip.booked { background:#fff; color:#1a1a1a; border:2px solid ${ORANGE}; cursor:default; }
+        .sched-pill { display:inline-block; font-size:9.5px; font-weight:800; border-radius:999px; padding:1px 6px; margin-left:4px; vertical-align:middle; letter-spacing:.02em; }
+        .sched-pill.req { background:#fff; color:${ORANGE}; border:1.5px dashed ${ORANGE}; }
+        .sched-pill.id { background:${ORANGE}; color:#fff; font-family:'IBM Plex Mono',monospace; }
+        .sched-pill.id.quiet { background:#fff; color:#8a8a8a; border:1px solid #e0dbd6; }
         .sched-chip .veh { display:block; font-weight:400; font-size:11px; opacity:.9; }
         .sched-chip .loc { display:block; font-weight:700; font-size:11px; }
         .sched-jobsline { margin-top:auto; font-size:10.5px; color:#9c9c9c; display:flex; align-items:center; gap:5px; padding-top:4px; border-top:1px solid #f4f1ee; }

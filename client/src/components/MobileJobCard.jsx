@@ -4,6 +4,7 @@
 // support.
 
 import { useState, useRef, useEffect } from 'react'
+import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
 // Estimate totals for card price tags (Mark 2026-08-30: totals on all
@@ -265,10 +266,7 @@ export default function MobileJobCard({
     <div
       onClick={handleEdit}
       className={`bg-white rounded-xl shadow-sm p-3 select-none transition-shadow ${handleEdit ? 'cursor-pointer hover:shadow-md active:opacity-75' : ''}`}
-      style={{
-        border: isComplete ? '2px solid #a8d5b5' : job.status === 'quoted' ? '1px solid #ebebeb' : `2px solid ${ORANGE}`,
-        backgroundColor: isComplete ? '#f8fff9' : 'white',
-      }}
+      style={cardFrame(job, { complete: isComplete })}
     >
       {cardTotal > 0 && (
         <div className="flex justify-end -mt-1 mb-1">
@@ -303,11 +301,8 @@ export default function MobileJobCard({
         </p>
       )}
 
-      {(job.invoice_number || job.quote_number) && (
-        <p className="text-xs font-medium mb-1" style={{ color: '#6b7280' }}>
-          <span style={{ color: '#999', fontWeight: 400 }}>Job: </span>
-          {job.invoice_number || job.quote_number}
-        </p>
+      {(job.invoice_number || job.quote_number || isRequestJob(job)) && (
+        <p className="mb-1.5"><JobIdPill job={job} /></p>
       )}
 
       <CustomerNoteBox items={noteItems} />
