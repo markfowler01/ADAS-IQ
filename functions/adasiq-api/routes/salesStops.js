@@ -168,11 +168,17 @@ router.get('/nearby', async (req, res) => {
       rows.push({ id: sh.id, shop_name: sh.shop_name, pipeline_stage: sh.pipeline_stage, address: sh.address || '', in_crm: true })
     }
     for (const [k, v] of Object.entries(cache)) {
-      if (!k || typeof v !== 'object' || v.lat == null) continue
+      if (!k || typeof v !== 'object') continue
       const name = v.shop_name || k
       if (seen.has(shopKeyOf(name))) continue
       seen.add(shopKeyOf(name))
       rows.push({ id: '', shop_name: name, pipeline_stage: 'active', address: v.address || '', in_crm: false })
+    }
+    // …and anyone invoiced in the last 180 days, even if never geocoded.
+    for (const v of Object.values(lastInv)) {
+      if (!v?.name || seen.has(shopKeyOf(v.name))) continue
+      seen.add(shopKeyOf(v.name))
+      rows.push({ id: '', shop_name: v.name, pipeline_stage: 'active', address: '', in_crm: false })
     }
     // Geocode a few CRM shops that still have no coordinates (cached after).
     let geocoded = 0
