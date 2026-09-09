@@ -6,7 +6,7 @@ const CRM_API = 'https://www.zohoapis.com/crm/v6'
 let cachedToken = null
 let tokenExpiresAt = 0
 
-async function getCrmAccessToken() {
+export async function getCrmAccessToken() {
   const now = Date.now()
   if (cachedToken && now < tokenExpiresAt - 60_000) return cachedToken
 

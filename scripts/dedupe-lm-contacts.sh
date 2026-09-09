@@ -9,6 +9,7 @@
 #         DRY=1 ./scripts/dedupe-lm-contacts.sh      (report only)
 set -u
 NAME="${NAME:-L-M Body Shop Inc}"
+MODE="${MODE:-books}"     # books = Zoho Books customers · crm = Zoho CRM leads/accounts/contacts
 BASE="https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api"
 ENVF="$(dirname "$0")/../functions/adasiq-api/.env"
 SEC="$(grep -h '^BILLING_CRON_SECRET\|^MORNING_CRON_SECRET' "$ENVF" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
@@ -18,6 +19,15 @@ DRYFLAG="${DRY:-0}"
 [ "$DRYFLAG" = "1" ] && DRYV="1" || DRYV="0"
 
 for i in $(seq 1 30); do
+  if [ "$MODE" = "crm" ]; then
+    R="$(/usr/bin/curl -s -m 29 -X POST "$BASE/api/item-map/dedupe-crm" \
+      -H "X-Auth-Token: $TOK" -H "x-cron-secret: $SEC" -H 'Content-Type: application/json' \
+      -d "{\"name\":\"$NAME\",\"dry\":\"$DRYV\"}")"
+    echo "pass $i: $R" | head -c 600; echo
+    [ "$DRYV" = "1" ] && exit 0
+    echo "$R" | grep -q '"partial":true' || { echo "done"; exit 0; }
+    sleep 5; continue
+  fi
   R="$(/usr/bin/curl -s -m 29 -X POST "$BASE/api/item-map/dedupe-contacts" \
     -H "X-Auth-Token: $TOK" -H "x-cron-secret: $SEC" -H 'Content-Type: application/json' \
     -d "{\"name\":\"$NAME\",\"dry\":\"$DRYV\",\"keep_one\":\"0\",\"limit\":34}")"

@@ -136,6 +136,89 @@ router.post('/dedupe-contacts', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// ── Zoho CRM side of the same mess (Mark 2026-09-09 "saying the word") ──
+// Every broken sync run created a Lead → converted it → Account (+ a
+// Contact). Dedupe by exact name: keep the OLDEST Lead and Account (and
+// the Contacts on that Account), delete the rest. CRM deletes go to the
+// recycle bin (recoverable for 60 days). dry=1 default.
+const CRM_API = 'https://www.zohoapis.com/crm/v6'
+async function crmListRecent(token, module, fields, sinceISO) {
+  const out = []
+  for (let page = 1; page <= 10; page++) {
+    const r = await axios.get(`${CRM_API}/${module}`, {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` }, timeout: 20000, validateStatus: st => st < 500,
+      params: { fields, page, per_page: 200, sort_by: 'Created_Time', sort_order: 'desc' },
+    })
+    if (r.status === 204) break
+    if (r.status !== 200) throw new Error(`CRM ${module} list ${r.status}: ${r.data?.message || ''}`)
+    const rows = r.data?.data || []
+    out.push(...rows)
+    const last = rows[rows.length - 1]?.Created_Time || ''
+    if (!r.data?.info?.more_records || (sinceISO && last && last < sinceISO)) break
+  }
+  return out
+}
+router.get('/crm-scope', async (req, res) => {
+  try {
+    const p = new URLSearchParams({
+      grant_type: 'refresh_token', client_id: process.env.ZOHO_CLIENT_ID,
+      client_secret: process.env.ZOHO_CLIENT_SECRET, refresh_token: process.env.ZOHO_CRM_REFRESH_TOKEN || '',
+    })
+    const t = await axios.post('https://accounts.zoho.com/oauth/v2/token', p.toString(), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 12000, validateStatus: s => s < 500,
+    })
+    res.json({ ok: true, scope: String(t.data?.scope || t.data?.error || '') })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/dedupe-crm', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
+    const name = String(req.body?.name || '').trim()
+    const dry = String(req.body?.dry ?? '1') !== '0'
+    const since = String(req.body?.since || '2026-08-01')
+    if (!name) return res.status(400).json({ error: 'name required' })
+    const { getCrmAccessToken } = await import('../services/zohoCrm.js')
+    const token = await getCrmAccessToken()
+    const same = v => String(v || '').trim().toLowerCase() === name.toLowerCase()
+    const byOldest = (a, b) => String(a.Created_Time).localeCompare(String(b.Created_Time))
+
+    const leads = (await crmListRecent(token, 'Leads', 'id,Company,Lead_Status,Created_Time', since)).filter(l => same(l.Company)).sort(byOldest)
+    const accounts = (await crmListRecent(token, 'Accounts', 'id,Account_Name,Created_Time', since)).filter(a => same(a.Account_Name)).sort(byOldest)
+    const keepAccount = accounts[0] || null
+    const contacts = (await crmListRecent(token, 'Contacts', 'id,Full_Name,Account_Name,Created_Time', since))
+      .filter(c => same(c.Account_Name?.name)).sort(byOldest)
+    const delLeads = leads.slice(1), delAccounts = accounts.slice(1)
+    const delContacts = contacts.filter(c => !keepAccount || String(c.Account_Name?.id) !== String(keepAccount.id))
+
+    const out = {
+      name, dry, since,
+      leads: { matched: leads.length, keep: leads[0]?.id || null, to_delete: delLeads.length },
+      accounts: { matched: accounts.length, keep: keepAccount?.id || null, to_delete: delAccounts.length },
+      contacts: { matched: contacts.length, to_delete: delContacts.length },
+      deleted: { Leads: 0, Accounts: 0, Contacts: 0 }, errors: [],
+    }
+    if (!dry) {
+      const t0 = Date.now()
+      for (const [module, rows] of [['Contacts', delContacts], ['Accounts', delAccounts], ['Leads', delLeads]]) {
+        for (let i = 0; i < rows.length; i += 100) {
+          if (Date.now() - t0 > 22000) { out.partial = true; break }
+          const ids = rows.slice(i, i + 100).map(r => r.id).join(',')
+          const d = await axios.delete(`${CRM_API}/${module}`, {
+            headers: { Authorization: `Zoho-oauthtoken ${token}` }, timeout: 20000, validateStatus: st => st < 500,
+            params: { ids, wf_trigger: 'false' },
+          })
+          const okCount = (d.data?.data || []).filter(x => x.code === 'SUCCESS').length
+          out.deleted[module] += okCount
+          if (d.status !== 200) out.errors.push(`${module}: ${d.status} ${d.data?.message || ''}`)
+          await new Promise(r => setTimeout(r, 1000))
+        }
+      }
+      console.log(`[dedupe-crm] "${name}":`, JSON.stringify(out.deleted), out.errors.join(' | '))
+    }
+    res.json(out)
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const [map, catalog] = await Promise.all([
