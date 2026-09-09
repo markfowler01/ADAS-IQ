@@ -3,7 +3,12 @@ import { API_BASE, apiFetch } from '../utils/api.js'
 
 const ORANGE = '#CD4419'
 
-export default function JobRequestModal({ onClose, onSubmit, defaultDate }) {
+// mode 'job' | 'quote' (Mark 2026-09-09: "I want all the same questions
+// that are in the requested job to be in the requested quote") — one
+// form, two tags. Quote mode adds the insurer and submits request_type
+// 'quote' so Kat's alert still reads 📝 Quote Requested.
+export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode = 'job' }) {
+  const isQuote = mode === 'quote'
   const [customers,    setCustomers]    = useState([])
   const [custLoading,  setCustLoading]  = useState(true)
   const [custSearch,   setCustSearch]   = useState('')
@@ -17,6 +22,7 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate }) {
   const [model,       setModel]       = useState('')
   const [lastFourVin, setLastFourVin] = useState('')
   const [notes,       setNotes]       = useState('')
+  const [insurer,     setInsurer]     = useState('')
   // Optional — a dated request lands on the Schedule calendar that day;
   // no date puts it in the Unscheduled lane for Kat to place. The
   // Schedule page pre-fills this when adding straight onto a day.
@@ -149,9 +155,11 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate }) {
         model:      String(model    || '').trim(),
         vin:        lastFourVin ? `****${lastFourVin.toUpperCase()}` : '',
         technician: technician,
+        insurer:    String(insurer || '').trim(),
         notes:      String(notes || '').trim(),
         scheduled_date: schedDate || '',
         status:     'job_requested',
+        request_type: isQuote ? 'quote' : 'job',
       })
       onClose()
     } catch (e) {
@@ -173,8 +181,8 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate }) {
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between px-6 py-4 flex-shrink-0" style={{ borderBottom: '1px solid #ebebeb' }}>
           <div>
-            <h2 className="text-base font-bold" style={{ color: '#1a1a1a' }}>Request a Job</h2>
-            <p className="text-xs mt-0.5" style={{ color: '#aaa' }}>Kat will be notified automatically</p>
+            <h2 className="text-base font-bold" style={{ color: '#1a1a1a' }}>{isQuote ? 'Request a Quote' : 'Request a Job'}</h2>
+            <p className="text-xs mt-0.5" style={{ color: '#aaa' }}>{isQuote ? 'Kat drafts the estimate from this' : 'Kat will be notified automatically'}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
@@ -418,6 +426,22 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate }) {
                 onBlur={e  => (e.target.style.borderColor = '#ddd')}
               />
             </div>
+          </div>
+
+          {/* Insurer (blank = cash) */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">
+              Insurer <span style={{ color: '#bbb', textTransform: 'none' }}>(blank = cash)</span>
+            </label>
+            <input
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none"
+              style={{ borderColor: '#ddd' }}
+              value={insurer}
+              onChange={e => setInsurer(e.target.value)}
+              placeholder="State Farm, Allstate, cash…"
+              onFocus={e => (e.target.style.borderColor = ORANGE)}
+              onBlur={e  => (e.target.style.borderColor = '#ddd')}
+            />
           </div>
 
           {/* Last 4 of VIN */}

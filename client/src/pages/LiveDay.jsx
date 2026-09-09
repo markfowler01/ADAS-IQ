@@ -12,7 +12,6 @@ import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
 import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstimateTotals } from '../components/MobileJobCard.jsx'
 import JobRequestModal from '../components/JobRequestModal.jsx'
-import QuoteRequestModal from '../components/QuoteRequestModal.jsx'
 
 const ORANGE = '#CD4419'
 const TECH_COLOR = { Mark: '#CD4419', Jayden: '#1F8B8B' }
@@ -881,6 +880,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       vehicle:      [formData.year, formData.make, formData.model].filter(Boolean).join(' '),
       vin:          formData.vin          || formData.last_four_vin || '',
       technician:   formData.technician   || '',
+      insurer:      formData.insurer      || '',
       notes,
       quote_number: formData.ro_number    || '',
       scheduled_date: formData.scheduled_date || '',
@@ -906,15 +906,24 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   // uses request_type:'quote' to prefix the Cliq post with 📝 Quote
   // Requested so it's clear the ask is for a price, not to schedule.
   async function handleQuoteRequest(formData) {
+    // Same form as a job request (Mark 2026-09-09) — customer picker,
+    // tech, RO, vehicle, VIN, insurer, date, notes, estimate scan.
+    const notes = [
+      formData.ro_number ? `RO# ${formData.ro_number}` : '',
+      formData.notes || '',
+    ].filter(Boolean).join('\n')
     const payload = {
       shop_name:    formData.shop_name    || '',
       year:         formData.year         || '',
       make:         formData.make         || '',
       model:        formData.model        || '',
       vehicle:      [formData.year, formData.make, formData.model].filter(Boolean).join(' '),
-      vin:          formData.vin          || '',
+      vin:          formData.vin          || formData.last_four_vin || '',
       insurer:      formData.insurer      || '',
-      notes:        formData.notes        || '',
+      technician:   formData.technician   || '',
+      notes,
+      quote_number: formData.ro_number    || '',
+      scheduled_date: formData.scheduled_date || '',
       status:       'job_requested',
       calibrations: '[]',
       via_request:  true,
@@ -1309,7 +1318,8 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       )}
 
       {quoteRequestOpen && (
-        <QuoteRequestModal
+        <JobRequestModal
+          mode="quote"
           onClose={() => setQuoteRequestOpen(false)}
           onSubmit={handleQuoteRequest}
         />

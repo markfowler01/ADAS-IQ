@@ -403,9 +403,10 @@ export default function MobileJobCard({
         </div>
       </div>
 
-      {job.status !== 'job_requested' && (<>
-      {/* 📸 Job photo set (Mark 2026-09-08) — one tap opens the camera */}
+      {/* 📸 Job photo set (Mark 2026-09-08) — one tap opens the camera.
+          Shown on requests too (2026-09-09): shoot before Kat creates the job. */}
       <TakePhotosControl job={job} />
+      {job.status !== 'job_requested' && (<>
       {wdUrl ? (
         <a href={wdUrl} target="_blank" rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}

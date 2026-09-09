@@ -1373,10 +1373,11 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
         return
       }
       const data = await res.json()
-      // Extraction succeeded → the request card's job is done. Complete
-      // (logs history/completions) then delete so the board stays clean.
-      // Only after a good extraction — a failed upload leaves the card.
-      await cleanupRequestCard(job)
+      // The request card CONVERTS into the job (Mark 2026-09-09) — no
+      // delete, no second card. The editor PATCHes this same card, so
+      // photos, odometer reads, and notes the tech already added stay.
+      Object.assign(data, requestCarry(job))
+      if (!data.shop) data.shop = job.shop_name || ''
       onExtracted(data, file)
     } catch (e) {
       showToast(e.message || 'Upload failed — check your connection and try again.')
@@ -1385,8 +1386,21 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     }
   }
 
-  // Complete + delete a request card once Kat has taken it over —
-  // shared by the PDF path above and the from-job-info path below.
+  // What the editors need to convert a request card in place.
+  function requestCarry(job) {
+    return {
+      _requestId: job.id,
+      _request: {
+        folder_url: job.folder_url || '', photo_slots: job.photo_slots || '',
+        odo_before: job.odo_before || '', odo_after: job.odo_after || '',
+        created_at: job.created_at || '', technician: job.technician || '',
+        scheduled_date: job.scheduled_date || '',
+      },
+    }
+  }
+
+  // Legacy: complete + delete a request card. No longer used by the two
+  // conversion paths (2026-09-09) — kept for the rare manual cleanup.
   async function cleanupRequestCard(job) {
     try {
       await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
@@ -1427,8 +1441,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       claim:     job.claim || '',
       calibrations: calNames,
       notes:     job.notes || '',
+      ...requestCarry(job),
     }
-    await cleanupRequestCard(job)
     onManualInvoice(data)
   }
   const [calReviewJob, setCalReviewJob] = useState(null)
@@ -2654,7 +2668,7 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
           minHeight: '44px',
           opacity: busy ? 0.6 : 1,
         }}
-        title="Upload the report PDF — opens invoice creation prefilled, and clears this request card"
+        title="Upload the report PDF — opens invoice creation prefilled; this request card becomes the job"
       >
         <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>
           {busy ? '⏳ Working…' : '🧾 Create Job'}

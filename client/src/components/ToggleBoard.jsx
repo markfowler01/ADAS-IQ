@@ -61,11 +61,18 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
   // Job date (Mark 2026-09-03): the auto-created card was hardcoded to
   // TODAY, so jobs booked for a future day vanished off the scheduler.
-  const [jobDate, setJobDate] = useState(() => todayPT())
+  const [jobDate, setJobDate] = useState(() => jobData?._request?.scheduled_date || todayPT())
   const [kanbanWarning, setKanbanWarning] = useState(null)
   // One WorkDrive folder per job (Mark 2026-07-29): whichever button
   // runs first records the folder here; the other button reuses it.
-  const [sharedFolder, setSharedFolder] = useState(null)
+  // Request-card conversion (Mark 2026-09-09): when this editor was opened
+  // from a request card, we PATCH that card into the job instead of
+  // creating a second one — the tech's photos/odometer stay with it, and
+  // the report PDFs go into the folder those photos already created.
+  const requestId = jobData?._requestId || null
+  const requestFolderUrl = jobData?._request?.folder_url || ''
+  const requestFolderId = (requestFolderUrl.match(/workdrive\.zoho\.com\/(?:folder|home[^ ]*?\/folders)\/([a-z0-9]+)/i) || [])[1] || null
+  const [sharedFolder, setSharedFolder] = useState(() => (requestFolderId ? { id: requestFolderId, url: requestFolderUrl } : null))
 
   const selected = calibrations.filter((c) => c.enabled)
   const removed = calibrations.filter((c) => !c.enabled)
@@ -299,8 +306,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           name: cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${i + 1}`,
           mode: cal.cal_type || cal.mode || 'Static',
         }))
-        const jobRes = await apiFetch(`${API_BASE}/api/jobs`, {
-          method: 'POST',
+        const jobRes = await apiFetch(requestId ? `${API_BASE}/api/jobs/${requestId}` : `${API_BASE}/api/jobs`, {
+          method: requestId ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             zoho_estimate_id: data.quoteId || '',
@@ -318,7 +325,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             report_url: data.quoteUrl || data.folderUrl || '',
             quote_number: data.quoteNumber || '',
             quote_url: data.quoteUrl || '',
-            folder_url: data.shareLink || data.folderUrl || '',
+            folder_url: data.shareLink || data.folderUrl || requestFolderUrl || '',
             // A job Kat CREATES is never a request (Mark 2026-09-08): it
             // lands at Needs Dispatch, or straight on the tech's column
             // when one is picked. Requests only come from the request
@@ -413,8 +420,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           name: cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${i + 1}`,
           mode: cal.cal_type || cal.mode || 'Static',
         }))
-        const jobRes = await apiFetch(`${API_BASE}/api/jobs`, {
-          method: 'POST',
+        const jobRes = await apiFetch(requestId ? `${API_BASE}/api/jobs/${requestId}` : `${API_BASE}/api/jobs`, {
+          method: requestId ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             shop_name: selectedCustomer?.name || jobData.shop || '',
@@ -429,7 +436,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             // 2026-07-27) — public zohoexternal link, so the card's
             // WorkDrive button never hunts for (or creates) a second
             // folder and outside users can open it.
-            folder_url: data.folder_url || sharedFolder?.url || '',
+            folder_url: data.folder_url || sharedFolder?.url || requestFolderUrl || '',
             quote_number: jobData.ro_number || '',
             // A job Kat CREATES is never a request (Mark 2026-09-08): it
             // lands at Needs Dispatch, or straight on the tech's column

@@ -297,8 +297,10 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
           name: cal.calibration_name || `Calibration ${i + 1}`,
           mode: 'Static',
         }))
-        await apiFetch(`${API_BASE}/api/jobs`, {
-          method: 'POST',
+        // Opened from a request card → PATCH that card into the job
+        // (Mark 2026-09-09) instead of creating a second one.
+        await apiFetch(p._requestId ? `${API_BASE}/api/jobs/${p._requestId}` : `${API_BASE}/api/jobs`, {
+          method: p._requestId ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             zoho_estimate_id: data.quoteId || '',
@@ -314,6 +316,9 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
             calibrations:   JSON.stringify(calList),
             notes:          `RO#: ${roNumber || ''} | Quote: ${data.quoteNumber || ''}`,
             report_url:     data.quoteUrl || '',
+            quote_number:   data.quoteNumber || '',
+            quote_url:      data.quoteUrl || '',
+            folder_url:     data.shareLink || data.folderUrl || p._request?.folder_url || '',
             status:         'need_dispatch',
           }),
         })
