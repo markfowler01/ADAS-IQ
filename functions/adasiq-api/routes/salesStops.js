@@ -222,7 +222,12 @@ router.get('/nearby', async (req, res) => {
     let list
     if (qs) list = out.filter(r => r.shop_name.toLowerCase().includes(qs)).slice(0, 25)
     else if (hasLoc) list = out.filter(r => r.distance_mi != null).sort((a, b) => a.distance_mi - b.distance_mi).slice(0, 15)
-    else list = out.sort((a, b) => (b.days_since_job ?? -1) - (a.days_since_job ?? -1)).slice(0, 25)
+    else {
+      // No location: body shops first (CRM shops + repeat customers),
+      // longest since a job at the top; one-off cash customers last.
+      const rank = r => (r.in_crm ? 0 : (r.jobs_180d >= 2 ? 1 : 2))
+      list = out.sort((a, b) => rank(a) - rank(b) || (b.days_since_job ?? -1) - (a.days_since_job ?? -1)).slice(0, 30)
+    }
     res.json({ ok: true, shops: list, has_location: hasLoc, geocoded })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })

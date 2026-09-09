@@ -175,7 +175,9 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>{s.shop_name}</div>
                     <div className="text-[11px]" style={{ color: '#888' }}>
-                      {STAGE[s.pipeline_stage] || s.pipeline_stage}{s.last_stop ? ` · last stop ${s.last_stop.date} (${s.last_stop.tech})` : ' · never stopped'}
+                      {STAGE[s.pipeline_stage] || s.pipeline_stage}
+                      {s.days_since_job != null ? ` · last job ${s.days_since_job === 0 ? 'today' : `${s.days_since_job}d ago`}` : ''}
+                      {s.last_stop ? ` · stop ${s.last_stop.date} (${s.last_stop.tech})` : ' · never stopped'}
                     </div>
                   </div>
                   {s.distance_mi != null && <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>{s.distance_mi} mi</span>}
