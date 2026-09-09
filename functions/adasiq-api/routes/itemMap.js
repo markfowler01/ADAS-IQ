@@ -219,6 +219,21 @@ router.post('/dedupe-crm', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Owner/secret: one Books contact's origin fields (who/what created it).
+router.get('/books-contact/:id', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const r = await axios.get(`https://www.zohoapis.com/books/v3/contacts/${req.params.id}`, {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000, validateStatus: st => st < 500,
+    })
+    const c = r.data?.contact || {}
+    const pick = ['contact_id', 'contact_name', 'company_name', 'source', 'created_time', 'created_by_name', 'last_modified_time', 'zcrm_account_id', 'zcrm_contact_id', 'crm_owner_id', 'is_crm_customer', 'is_linked_with_zohocrm', 'outstanding_receivable_amount', 'status', 'email', 'phone', 'customer_sub_type']
+    res.json(Object.fromEntries(pick.filter(k => c[k] !== undefined).map(k => [k, c[k]])))
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const [map, catalog] = await Promise.all([
