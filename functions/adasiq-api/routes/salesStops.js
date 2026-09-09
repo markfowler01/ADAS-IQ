@@ -174,6 +174,17 @@ router.get('/nearby', async (req, res) => {
       seen.add(shopKeyOf(name))
       rows.push({ id: '', shop_name: name, pipeline_stage: 'active', address: v.address || '', in_crm: false })
     }
+    // …and every shop with a card on the Jobs board (new customers whose
+    // first invoice hasn't gone out yet, e.g. Perfect Reflections).
+    try {
+      const { readJobsPublic } = await import('./jobs.js')
+      for (const j of await readJobsPublic(req)) {
+        const name = String(j.shop_name || '').trim()
+        if (!name || seen.has(shopKeyOf(name))) continue
+        seen.add(shopKeyOf(name))
+        rows.push({ id: '', shop_name: name, pipeline_stage: 'active', address: '', in_crm: false })
+      }
+    } catch (e) { console.log('[sales-stop] jobs union failed:', e.message) }
     // …and anyone invoiced in the last 180 days, even if never geocoded.
     for (const v of Object.values(lastInv)) {
       if (!v?.name || seen.has(shopKeyOf(v.name))) continue
