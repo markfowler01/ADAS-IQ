@@ -69,17 +69,23 @@ export async function readBig3(req, shopName) {
 // Save (learn) a shop's rule. Creates the CRM shop if it isn't there yet
 // so the rule has somewhere to live. Pings #dispatch + Mark when a rule
 // changes (a wrong rule applied silently is the one real risk).
-export async function saveBig3(req, shopName, rules, by = '') {
+export async function saveBig3(req, shopName, rules, by = '', extra = {}) {
   const clean = normalizeRules(rules)
   if (!clean || !shopName) return null
   let shop = await findShopByName(req, shopName)
-  const before = shop ? normalizeRules(parseBR(shop).big3) : null
-  const same = before && BIG3.every(b => before[b.key] === clean[b.key])
-  if (same) return { shop_id: shop.id, changed: false }
-  const br = { ...(shop ? parseBR(shop) : {}), big3: clean, big3_set_by: by || 'app', big3_set_at: new Date().toISOString() }
+  const prevBR = shop ? parseBR(shop) : {}
+  const before = shop ? normalizeRules(prevBR.big3) : null
+  // Optional cost-invoice discount + customer type ride along (Mark's list, 2026-09-10).
+  const pct = Number.isFinite(Number(extra.discount_pct)) ? Number(extra.discount_pct) : null
+  const ctype = extra.customer_type ? String(extra.customer_type) : null
+  const sameBig3 = before && BIG3.every(b => before[b.key] === clean[b.key])
+  const sameExtra = (pct == null || Number(prevBR.discount_value) === pct) && (!ctype || prevBR.customer_type === ctype)
+  if (sameBig3 && sameExtra) return { shop_id: shop.id, changed: false }
+  const br = { ...prevBR, big3: clean, big3_set_by: by || 'app', big3_set_at: new Date().toISOString(),
+    ...(pct != null ? { discount_type: 'percentage', discount_value: pct } : {}), ...(ctype ? { customer_type: ctype } : {}) }
   if (shop) shop = await updateShop(req, shop.id, { ...shop, billing_rules: br })
   else shop = await insertShop(req, { shop_name: shopName, pipeline_stage: 'active', referral_source: 'Invoice', billing_rules: br, people: [], activities: [] })
-  const line = `🧾 *Big 3 rule ${before ? 'changed' : 'set'} · ${shop.shop_name}*\n${describeRules(clean)}${before ? `\n(was: ${describeRules(before)})` : ''}\nby ${by || 'app'}`
+  const line = `🧾 *Big 3 rule ${before ? 'changed' : 'set'} · ${shop.shop_name}*\n${describeRules(clean)}${pct != null ? ` · cost-invoice discount ${pct}%` : ''}${before ? `\n(was: ${describeRules(before)})` : ''}\nby ${by || 'app'}`
   postToCliqChannel(DISPATCH_CHANNEL, line).catch(() => {})
   postToCliqChannelById(MARK_ALERT_CHANNEL_ID, line).catch(() => {})
   console.log(`[big3] ${shop.shop_name}: ${describeRules(clean)} (by ${by || 'app'})`)

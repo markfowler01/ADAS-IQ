@@ -310,7 +310,7 @@ router.put('/big3-by-name', async (req, res) => {
     const name = String(req.body?.shop_name || '').trim()
     const rules = b3.normalizeRules(req.body?.rules)
     if (!name || !rules) return res.status(400).json({ error: 'shop_name and rules required' })
-    const r = await b3.saveBig3(req, name, rules, req.user?.name || req.user?.email || '')
+    const r = await b3.saveBig3(req, name, rules, req.body?.by || req.user?.name || req.user?.email || '', { discount_pct: req.body?.discount_pct, customer_type: req.body?.customer_type })
     res.json({ ok: true, ...r, rules })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
