@@ -12,9 +12,9 @@ const GREEN = '#15803d'
 const STAGE = { target: '🎯 Target', contacted: '📞 Contacted', interested: '🤝 Interested', proposal: '📋 Proposal', active: '✅ Customer', second_active: '✅ Customer', lost: '❌ Lost', denied: '❌ Denied' }
 
 const OUTCOMES = [
-  { id: 'talked', emoji: '🤝', label: 'Talked to someone', hint: 'Estimator, manager, owner, anyone' },
-  { id: 'cards',  emoji: '📇', label: 'Left cards', hint: 'Nobody free — still counts' },
-  { id: 'card',   emoji: '📸', label: 'Got a business card', hint: 'Snap it — I fill in the rest' },
+  { id: 'talked',     emoji: '🤝', label: 'Talked to someone', hint: 'Estimator, manager, owner, anyone' },
+  { id: 'interested', emoji: '🔥', label: 'They showed interest', hint: 'Moves them to Interested · follow-up in 3 days' },
+  { id: 'card',       emoji: '📸', label: 'Got a business card', hint: 'Snap it — I fill in the rest' },
 ]
 
 function useLocation() {
@@ -59,6 +59,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
   const [mine, setMine] = useState([])
   const [lastShop] = useState(() => readLastShop())
   const [personOpen, setPersonOpen] = useState(false)
+  const [leftCard, setLeftCard] = useState(false)   // 📇 rides along with any outcome
   const [shops, setShops] = useState([])
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
@@ -131,12 +132,12 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
   }
 
   async function save() {
-    if (!shop || !outcome) return
+    if (!shop || !effectiveOutcome) return
     setSaving(true); setError('')
     try {
       const r = await apiFetch(`${API_BASE}/api/sales-stops`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop_name: shop.shop_name, shop_id: shop.id || '', outcome, note, person, lat: loc?.lat ?? null, lng: loc?.lng ?? null, tech: user?.name || '' }),
+        body: JSON.stringify({ shop_name: shop.shop_name, shop_id: shop.id || '', outcome: effectiveOutcome, left_card: leftCard, note, person, lat: loc?.lat ?? null, lng: loc?.lng ?? null, tech: user?.name || '' }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -145,7 +146,8 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
     } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
 
-  const canSave = !!shop && !!outcome && !saving
+  const effectiveOutcome = outcome || (leftCard ? 'cards' : null)
+  const canSave = !!shop && !!effectiveOutcome && !saving
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
@@ -265,6 +267,12 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
                 </button>
               ))}
             </div>
+            <button type="button" onClick={() => setLeftCard(v => !v)}
+              className="w-full rounded-2xl px-4 py-3 mb-3 text-left flex items-center gap-3"
+              style={leftCard ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#1a1a1a', border: '1.5px dashed #c9c2bb' }}>
+              <span className="text-2xl">📇</span>
+              <span><span className="block font-bold">{leftCard ? 'Left our card ✓' : 'Left our card'}</span><span className="block text-xs" style={{ opacity: .8 }}>Tap to add to any of the above · alone counts as "nobody free"</span></span>
+            </button>
             {outcome && outcome !== 'card' && !personOpen && !cardPreview && !person.name && (
               <button onClick={() => setPersonOpen(true)} className="w-full rounded-xl py-2.5 mb-3 text-sm font-semibold" style={{ backgroundColor: 'white', color: '#555', border: '1px dashed #d6d0ca' }}>
                 + add who you met (optional)
@@ -291,7 +299,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
             {error && <div className="text-sm mb-2 px-3 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{error}</div>}
             <div className="sticky bottom-0 bg-white pt-2 -mx-4 px-4 pb-1" style={{ boxShadow: '0 -6px 12px rgba(255,255,255,.9)' }}>
               <button onClick={save} disabled={!canSave} className="w-full rounded-xl py-3.5 text-base font-extrabold text-white" style={{ backgroundColor: GREEN, opacity: canSave ? 1 : .45 }}>
-                {saving ? 'Saving…' : !shop ? 'Pick a shop' : !outcome ? 'Pick what happened' : '✅ Log the stop'}
+                {saving ? 'Saving…' : !shop ? 'Pick a shop' : !effectiveOutcome ? 'Pick what happened' : '✅ Log the stop'}
               </button>
             </div>
           </div>

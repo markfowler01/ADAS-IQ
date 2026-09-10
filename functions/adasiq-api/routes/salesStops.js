@@ -32,9 +32,10 @@ const shopKeyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const todayPT = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const addDays = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
 const OUTCOMES = {
-  talked: { label: 'Talked to someone', emoji: '🤝' },
-  cards:  { label: 'Left cards — nobody free', emoji: '📇' },
-  card:   { label: 'Got a business card', emoji: '📇✨' },
+  talked:     { label: 'Talked to someone', emoji: '🤝' },
+  interested: { label: 'They showed interest', emoji: '🔥' },   // Mark 2026-09-09
+  cards:      { label: 'Left cards — nobody free', emoji: '📇' },
+  card:       { label: 'Got a business card', emoji: '📇✨' },
 }
 
 function tbl(req) { return catalyst.initialize(req, { type: 'advancedio' }).datastore().table(TABLE) }
@@ -45,7 +46,7 @@ function rowToStop(r) {
   return {
     id: String(r.ROWID), tech: r.tech || '', shop_name: r.shop_name || '', shop_key: r.shop_key || '', shop_id: r.shop_id || '',
     outcome: r.outcome || '', note: r.stop_note || '', person: { name: r.person_name || '', title: r.person_title || '', email: r.person_email || '', phone: r.person_phone || '' },
-    got_card: r.got_card === 'yes', at: r.stop_at || '', date: r.stop_date || '', lat: r.lat ?? null, lng: r.lng ?? null,
+    got_card: r.got_card === 'yes', left_card: r.left_card === 'yes', at: r.stop_at || '', date: r.stop_date || '', lat: r.lat ?? null, lng: r.lng ?? null,
     new_shop: r.new_shop === 'yes', bonus_status: r.bonus_status || '', bonus,
   }
 }
@@ -283,6 +284,8 @@ router.post('/', async (req, res) => {
     const p = b.person || {}
     const person = { name: String(p.name || '').trim().slice(0, 120), title: String(p.title || '').trim().slice(0, 80), email: String(p.email || '').trim().toLowerCase().slice(0, 200), phone: String(p.phone || '').trim().slice(0, 40) }
     const gotCard = outcome === 'card' || !!(person.name && (person.email || person.phone))
+    // "Left our card" rides along with ANY outcome (Mark 2026-09-09).
+    const leftCard = outcome === 'cards' || String(b.left_card) === 'true' || b.left_card === 'yes'
     if (!shopName) return res.status(400).json({ error: 'Pick a shop first.' })
 
     // CRM: find or create the shop, then log the visit on it.
@@ -291,11 +294,12 @@ router.post('/', async (req, res) => {
     let shop = shops.find(s => shopKeyOf(s.shop_name) === key)
     let newShop = false
     const now = new Date().toISOString(), today = todayPT()
-    const summary = `🚐 Sales stop by ${tech} — ${OUTCOMES[outcome].label}${person.name ? ` · met ${person.name}${person.title ? ` (${person.title})` : ''}` : ''}${note ? ` — ${note}` : ''}`
+    const summary = `🚐 Sales stop by ${tech} — ${OUTCOMES[outcome].label}${leftCard && outcome !== 'cards' ? ' · left our card' : ''}${person.name ? ` · met ${person.name}${person.title ? ` (${person.title})` : ''}` : ''}${note ? ` — ${note}` : ''}`
     const activity = { type: 'visit', summary, at: now, by: tech, source: 'sales-stop' }
     if (!shop) {
       shop = await insertShop(req, {
-        shop_name: shopName, pipeline_stage: 'contacted', referral_source: `Sales stop (${tech})`,
+        shop_name: shopName, pipeline_stage: outcome === 'interested' ? 'interested' : 'contacted', referral_source: `Sales stop (${tech})`,
+        next_followup: outcome === 'interested' ? addDays(today, 3) : '',
         contact_name: person.name || '', phone: person.phone || '', email: person.email || '', last_contact: today,
         people: person.name ? [{ id: `p_${Date.now()}`, name: person.name, title: person.title, email: person.email, phone: person.phone, source: 'sales-stop', added_by: tech, added_at: now }] : [],
         activities: [activity], notes: '',
@@ -313,6 +317,10 @@ router.post('/', async (req, res) => {
       const activities = [activity, ...(Array.isArray(shop.activities) ? shop.activities : [])].slice(0, 200)
       const patch = { ...shop, people, activities, last_contact: today }
       if (shop.pipeline_stage === 'target') patch.pipeline_stage = 'contacted'
+      // 🔥 Interest moves the pipeline and books a follow-up in 3 days so
+      // Kat/Mark see it on the CRM's due list.
+      if (outcome === 'interested' && ['target', 'contacted'].includes(patch.pipeline_stage)) patch.pipeline_stage = 'interested'
+      if (outcome === 'interested' && !patch.next_followup) patch.next_followup = addDays(today, 3)
       shop = await updateShop(req, shop.id, patch)
     }
 
@@ -326,7 +334,7 @@ router.post('/', async (req, res) => {
     const row = {
       tech, shop_name: shop.shop_name, shop_key: key, shop_id: String(shop.id || ''), outcome, stop_note: note,
       person_name: person.name, person_title: person.title, person_email: person.email, person_phone: person.phone,
-      got_card: gotCard ? 'yes' : 'no', stop_at: now, stop_date: today,
+      got_card: gotCard ? 'yes' : 'no', left_card: leftCard ? 'yes' : 'no', stop_at: now, stop_date: today,
       new_shop: newShop ? 'yes' : 'no', bonus_status: bonusStatus, bonus_json: '',
     }
     if (Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lng))) {
@@ -353,7 +361,8 @@ router.post('/', async (req, res) => {
     const mine = stats.techs.find(t => t.tech === tech)
     const line = [
       `🚐 *${tech} stopped by ${shop.shop_name}*${newShop ? ' (new to the CRM)' : ''}`,
-      `${OUTCOMES[outcome].emoji} ${OUTCOMES[outcome].label}${person.name ? ` · met ${person.name}${person.title ? ` (${person.title})` : ''}` : ''}`,
+      `${OUTCOMES[outcome].emoji} ${OUTCOMES[outcome].label}${leftCard && outcome !== 'cards' ? ' · 📇 left our card' : ''}${person.name ? ` · met ${person.name}${person.title ? ` (${person.title})` : ''}` : ''}`,
+      outcome === 'interested' ? `🔥 Interested — follow-up on the CRM due list in 3 days` : null,
       note ? `📝 ${note}` : null,
       bonusStatus === 'pending' ? `🎯 Never invoiced — first job here pays ${tech} 1% of their first 30 days` : null,
       mine ? `📊 ${mine.week}/${mine.goal} this week${mine.streak >= 2 ? ` · 🔥 ${mine.streak}-day streak` : ''}${mine.hit ? ' · GET SOME!!!' : ''}` : null,
