@@ -2782,6 +2782,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
           >{insurerPricingBadge(job).label}</span>
         )}
+        {job.status !== 'job_requested' && <Big3Badge shopName={job.shop_name} />}
         {isTeslaJob(job) && (
           <span
             className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
