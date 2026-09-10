@@ -61,6 +61,8 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
   const [personOpen, setPersonOpen] = useState(false)
   const [leftCard, setLeftCard] = useState(false)   // 📇 rides along with any outcome
   const [shops, setShops] = useState([])
+  const [places, setPlaces] = useState([])       // 📍 Google, nearby / by name
+  const [placesLoading, setPlacesLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [query, setQuery] = useState('')
   const [shop, setShop] = useState(null)          // { shop_name, id?, isNew }
@@ -92,6 +94,27 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
     }, query ? 250 : 0)
     return () => { dead = true; clearTimeout(t) }
   }, [loc, query, locState, tab])
+
+  // 📍 Google Places: body shops around the van (no query) or the typed
+  // name biased to the van. One call per pause in typing.
+  useEffect(() => {
+    let dead = false
+    const qv = query.trim()
+    if (!loc && qv.length < 2) { setPlaces([]); return }
+    if (!qv && tab !== 'near') { setPlaces([]); return }
+    const t = setTimeout(async () => {
+      setPlacesLoading(true)
+      try {
+        const p = new URLSearchParams()
+        if (loc) { p.set('lat', loc.lat); p.set('lng', loc.lng) }
+        if (qv) p.set('q', qv)
+        const r = await apiFetch(`${API_BASE}/api/sales-stops/find-place?${p}`)
+        const d = await r.json()
+        if (!dead && r.ok) setPlaces(d.places || [])
+      } catch { /* optional */ } finally { if (!dead) setPlacesLoading(false) }
+    }, qv ? 450 : 0)
+    return () => { dead = true; clearTimeout(t) }
+  }, [loc, query, tab])
 
   // "Mine" — shops this tech has stopped at, newest first
   useEffect(() => {
@@ -137,7 +160,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
     try {
       const r = await apiFetch(`${API_BASE}/api/sales-stops`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop_name: shop.shop_name, shop_id: shop.id || '', outcome: effectiveOutcome, left_card: leftCard, note, person, lat: loc?.lat ?? null, lng: loc?.lng ?? null, tech: user?.name || '' }),
+        body: JSON.stringify({ shop_name: shop.shop_name, shop_id: shop.id || '', place: shop.place || null, outcome: effectiveOutcome, left_card: leftCard, note, person, lat: loc?.lat ?? null, lng: loc?.lng ?? null, tech: user?.name || '' }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -247,12 +270,30 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
                   {s.distance_mi != null && <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>{s.distance_mi} mi</span>}
                 </button>
               ))}
-              {!loading && (!query.trim() && tab === 'mine' ? mine : shops).length === 0 && (
-                <div className="px-3 py-4 text-sm text-center" style={{ color: '#888' }}>
-                  {query ? 'No match — use the Add button above.' : tab === 'mine' ? 'No stops logged yet. Your first one shows up here.' : tab === 'near' && locState !== 'ok' ? 'Waiting on location — or search by name.' : 'Nothing here yet.'}
-                </div>
-              )}
             </div>
+            {/* 📍 Google — the shop you're standing at */}
+            {(places.length > 0 || placesLoading) && (!query.trim() ? tab === 'near' : true) && (
+              <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1.5px solid #bfdbfe' }}>
+                <div className="px-3 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+                  📍 Google · {query.trim() ? 'matches near you' : 'body shops around the van'}{placesLoading ? ' · looking…' : ''}
+                </div>
+                {places.filter(pl => !shops.some(s => s.shop_name.toLowerCase() === pl.name.toLowerCase())).map((pl, i) => (
+                  <button key={pl.place_id || i} onClick={() => { setShop({ shop_name: pl.name, id: '', isNew: true, place: pl }); setStep(2) }}
+                    className="w-full text-left px-3 flex items-center gap-2 active:bg-blue-50" style={{ borderTop: i ? '1px solid #f1ede9' : 'none', backgroundColor: 'white', minHeight: '56px', paddingTop: '10px', paddingBottom: '10px' }}>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>{pl.name}</div>
+                      <div className="text-[11px] truncate" style={{ color: '#888' }}>{pl.address}{pl.phone ? ` · ${pl.phone}` : ''} · adds to CRM with location</div>
+                    </div>
+                    {pl.distance_mi != null && <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>{pl.distance_mi} mi</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            {!loading && !placesLoading && places.length === 0 && (!query.trim() && tab === 'mine' ? mine : shops).length === 0 && (
+              <div className="px-3 py-4 text-sm text-center" style={{ color: '#888' }}>
+                {query ? 'No match anywhere — use the Add button above.' : tab === 'mine' ? 'No stops logged yet. Your first one shows up here.' : tab === 'near' && locState !== 'ok' ? 'Waiting on location — or search by name.' : 'Nothing here yet.'}
+              </div>
+            )}
           </div>
         ) : (
           <div>

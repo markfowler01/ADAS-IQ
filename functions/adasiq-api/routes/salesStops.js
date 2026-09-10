@@ -273,6 +273,51 @@ router.get('/nearby', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ── Google Places from the parking lot (Mark 2026-09-10) ─────────────────
+// Body shops near the van (no query) or a name search biased to the van's
+// location. Same Places key + geocache the dispatch map uses.
+async function findPlaces({ q, lat, lng, limit = 6 }) {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY
+  if (!apiKey) return []
+  const hasLoc = Number.isFinite(lat) && Number.isFinite(lng)
+  const body = { textQuery: q ? `${q} auto body` : 'auto body shop collision repair', maxResultCount: Math.min(10, limit + 2) }
+  if (hasLoc) body.locationBias = { circle: { center: { latitude: lat, longitude: lng }, radius: q ? 8000 : 1600 } }
+  const r = await axios.post('https://places.googleapis.com/v1/places:searchText', body, {
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.googleMapsUri,places.location' },
+    timeout: 8000, validateStatus: st => st < 500,
+  })
+  const out = (r.data?.places || []).map(p => {
+    const plat = p.location?.latitude, plng = p.location?.longitude
+    return {
+      name: p.displayName?.text || '', address: p.formattedAddress || '', phone: p.nationalPhoneNumber || '',
+      website: p.websiteUri || '', maps_url: p.googleMapsUri || '', place_id: p.id || '', lat: plat ?? null, lng: plng ?? null,
+      distance_mi: hasLoc && plat != null ? Math.round(miles(lat, lng, plat, plng) * 10) / 10 : null,
+    }
+  }).filter(p => p.name)
+  if (hasLoc) out.sort((a, b) => (a.distance_mi ?? 99) - (b.distance_mi ?? 99))
+  return out.slice(0, limit)
+}
+router.get('/find-place', async (req, res) => {
+  try {
+    const lat = Number(req.query.lat), lng = Number(req.query.lng)
+    const q = String(req.query.q || '').trim()
+    if (!q && !(Number.isFinite(lat) && Number.isFinite(lng))) return res.json({ ok: true, places: [] })
+    res.json({ ok: true, places: await findPlaces({ q, lat, lng }) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// Write a shop's coordinates straight into the dispatch geocache.
+async function cacheShopCoords(req, shopName, place) {
+  if (!place || place.lat == null || place.lng == null) return
+  try {
+    const geo = await import('../services/geocoding.js')
+    const cur = await geo.readGeocacheRaw(req)
+    cur[geo.normalizeKey(shopName)] = { lat: place.lat, lng: place.lng, address: place.address || '', geocoded_at: new Date().toISOString(), geocode_status: 'ok', geocode_source: 'places-sales-stop', place_id: place.place_id || '' }
+    await geo.writeGeocache(req, cur)
+  } catch (e) { console.log('[sales-stop] geocache write failed:', e.message) }
+}
+const nameKeyLoose = n => shopKeyOf(n).replace(/(autobody|bodyshop|collision|repair|center|centre|inc|llc|auto|body|shop)/g, '')
+
 // ── Log a stop ───────────────────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
@@ -288,23 +333,42 @@ router.post('/', async (req, res) => {
     const leftCard = outcome === 'cards' || String(b.left_card) === 'true' || b.left_card === 'yes'
     if (!shopName) return res.status(400).json({ error: 'Pick a shop first.' })
 
-    // CRM: find or create the shop, then log the visit on it.
-    const shops = await getAllShops(req)
+    // Google Places pick (parking-lot flow): real name/address/phone/coords.
+    let place = b.place && typeof b.place === 'object' ? b.place : null
+    // Typed-in new shop with a location → try Google once, quietly.
+    const shopsAll = await getAllShops(req)
+    const keyTyped = shopKeyOf(shopName)
+    if (!place && Number.isFinite(Number(b.lat)) && Number.isFinite(Number(b.lng)) && !shopsAll.some(s => shopKeyOf(s.shop_name) === keyTyped)) {
+      try {
+        const hits = await findPlaces({ q: shopName, lat: Number(b.lat), lng: Number(b.lng), limit: 1 })
+        const h = hits[0]
+        if (h && (h.distance_mi == null || h.distance_mi <= 2) && (lev(nameKeyLoose(h.name), nameKeyLoose(shopName)) <= 3 || nameKeyLoose(h.name).includes(nameKeyLoose(shopName)) || nameKeyLoose(shopName).includes(nameKeyLoose(h.name)))) place = h
+      } catch (e) { console.log('[sales-stop] quiet place lookup failed:', e.message) }
+    }
+    // CRM: find or create the shop, then log the visit on it. A Places
+    // pick that matches an existing CRM shop loosely reuses that record.
+    const shops = shopsAll
     const key = shopKeyOf(shopName)
     let shop = shops.find(s => shopKeyOf(s.shop_name) === key)
+    if (!shop && place) {
+      const lk = nameKeyLoose(place.name)
+      shop = shops.find(s => nameKeyLoose(s.shop_name) === lk || (lk.length >= 5 && lev(nameKeyLoose(s.shop_name), lk) <= 2))
+    }
     let newShop = false
     const now = new Date().toISOString(), today = todayPT()
     const summary = `🚐 Sales stop by ${tech} — ${OUTCOMES[outcome].label}${leftCard && outcome !== 'cards' ? ' · left our card' : ''}${person.name ? ` · met ${person.name}${person.title ? ` (${person.title})` : ''}` : ''}${note ? ` — ${note}` : ''}`
     const activity = { type: 'visit', summary, at: now, by: tech, source: 'sales-stop' }
     if (!shop) {
       shop = await insertShop(req, {
-        shop_name: shopName, pipeline_stage: outcome === 'interested' ? 'interested' : 'contacted', referral_source: `Sales stop (${tech})`,
+        shop_name: place?.name || shopName, pipeline_stage: outcome === 'interested' ? 'interested' : 'contacted', referral_source: `Sales stop (${tech})`,
         next_followup: outcome === 'interested' ? addDays(today, 3) : '',
-        contact_name: person.name || '', phone: person.phone || '', email: person.email || '', last_contact: today,
+        address: place?.address || '', notes: place?.maps_url ? `Google Maps: ${place.maps_url}${place.website ? `\nWebsite: ${place.website}` : ''}` : '',
+        contact_name: person.name || '', phone: person.phone || place?.phone || '', email: person.email || '', last_contact: today,
         people: person.name ? [{ id: `p_${Date.now()}`, name: person.name, title: person.title, email: person.email, phone: person.phone, source: 'sales-stop', added_by: tech, added_at: now }] : [],
-        activities: [activity], notes: '',
+        activities: [activity],
       })
       newShop = true
+      await cacheShopCoords(req, shop.shop_name, place)
     } else {
       const people = Array.isArray(shop.people) ? [...shop.people] : []
       if (person.name) {
@@ -316,6 +380,11 @@ router.post('/', async (req, res) => {
       }
       const activities = [activity, ...(Array.isArray(shop.activities) ? shop.activities : [])].slice(0, 200)
       const patch = { ...shop, people, activities, last_contact: today }
+      if (place) {
+        if (!patch.address && place.address) patch.address = place.address
+        if (!patch.phone && place.phone) patch.phone = place.phone
+        await cacheShopCoords(req, shop.shop_name, place)
+      }
       if (shop.pipeline_stage === 'target') patch.pipeline_stage = 'contacted'
       // 🔥 Interest moves the pipeline and books a follow-up in 3 days so
       // Kat/Mark see it on the CRM's due list.
