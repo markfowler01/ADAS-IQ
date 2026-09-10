@@ -396,3 +396,15 @@ export async function uploadFileToFolder(folderId, filename, buffer, accessToken
 
   return { fileId }
 }
+
+
+// Move a WorkDrive file to Trash (status 51). Used when a tech deletes a
+// wrong job photo (Mark 2026-09-10). Best effort — callers never fail on it.
+export async function trashFile(fileId, accessToken) {
+  const axios = (await import('axios')).default
+  const r = await axios.patch(`https://www.zohoapis.com/workdrive/api/v1/files/${fileId}`,
+    { data: { attributes: { status: '51' }, type: 'files' } },
+    { headers: { Authorization: `Zoho-oauthtoken ${accessToken}`, 'Content-Type': 'application/vnd.api+json' }, timeout: 15000, validateStatus: s => s < 500 })
+  if (r.status >= 400) throw new Error(`WorkDrive trash ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`)
+  return true
+}

@@ -1387,6 +1387,54 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
   }
 })
 
+// DELETE /api/jobs/:id/photo-slot/:slot[?fileId=] — remove a wrong photo
+// (Mark 2026-09-10: "one of my technicians put the wrong pictures in
+// there"). Clears the slot (or one setup entry by fileId), wipes the
+// odometer reading for odo slots, and moves the WorkDrive file to Trash
+// (best effort — the slot is cleared even if WorkDrive is slow).
+router.delete('/:id/photo-slot/:slot', async (req, res) => {
+  try {
+    const { SLOTS, parseSlots, photoProgress } = await import('../services/jobPhotos.js')
+    const slotKey = String(req.params.slot || '')
+    const slotDef = SLOTS.find(s => s.key === slotKey)
+    if (!slotDef) return res.status(400).json({ error: 'Unknown slot' })
+    const table = getTable(req)
+    const row = await table.getRow(req.params.id)
+    if (!row) return res.status(404).json({ error: 'Job not found' })
+    const job = rowToJob(row)
+    const slots = parseSlots(job.photo_slots)
+    const wantId = String(req.query.fileId || '')
+    let removed = []
+    if (slotDef.multi) {
+      const keep = [], gone = []
+      for (const e of slots.setup || []) ((wantId ? String(e.fileId) === wantId : false) ? gone : keep).push(e)
+      if (!wantId && (slots.setup || []).length) gone.push(slots.setup.pop())   // no id → drop the newest
+      slots.setup = wantId ? keep : (slots.setup || [])
+      removed = gone
+    } else {
+      if (slots[slotKey]) removed = [slots[slotKey]]
+      delete slots[slotKey]
+    }
+    const patch = { photo_slots: JSON.stringify(slots) }
+    if (slotKey === 'odo_before') patch.odo_before = ''
+    if (slotKey === 'odo_after') patch.odo_after = ''
+    const updated = await updateJob(req, job.id, { ...job, ...patch })
+    // Trash the files in WorkDrive after the slot is cleared.
+    for (const e of removed) {
+      if (!e?.fileId) continue
+      try {
+        const { trashFile } = await import('../services/workdrive.js')
+        await trashFile(String(e.fileId), await getAccessToken())
+      } catch (err) { console.log(`[photo-slot] trash failed for ${e.fileId}:`, err.message) }
+    }
+    console.log(`[photo-slot] job ${job.id} − ${slotKey}${wantId ? ' ' + wantId : ''} (${removed.length} file${removed.length === 1 ? '' : 's'})`)
+    res.json({ ok: true, slot: slotKey, removed: removed.length, job: updated, progress: photoProgress(updated) })
+  } catch (err) {
+    console.error('[photo-slot delete]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/jobs/:id/photo-progress — checklist state for a card.
 router.get('/:id/photo-progress', async (req, res) => {
   try {

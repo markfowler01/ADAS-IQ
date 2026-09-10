@@ -161,6 +161,25 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   }, [job.odo_before, job.odo_after])
 
   function shoot(slotKey) { setCurrent(slotKey); setTimeout(() => camRef.current?.click(), 0) }
+  // × on a filled slot (Mark 2026-09-10): clears it on the card and trashes
+  // the WorkDrive file. Setup photos delete one at a time by fileId.
+  const [removing, setRemoving] = useState(null)
+  async function removePhoto(slotKey, fileId = null, label = '') {
+    if (!window.confirm(`Delete ${label || SLOTS.find(s => s.key === slotKey)?.label || 'this photo'}?`)) return
+    setRemoving(`${slotKey}:${fileId || ''}`)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/photo-slot/${slotKey}${fileId ? `?fileId=${encodeURIComponent(fileId)}` : ''}`, { method: 'DELETE' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      // drop any local preview for that slot so the row reads empty
+      for (const it of items) if (it.slot === slotKey && (!fileId || it.result?.fileId === fileId)) { it.status = 'removed'; it._applied = true }
+      notify()
+      setJob(d.job); onJobUpdated && onJobUpdated(d.job)
+      const p = photoProgress(d.job)
+      setCurrent(p.missing[0] || 'setup')
+    } catch (e) { alert(`Couldn't delete: ${e.message}`) }
+    finally { setRemoving(null) }
+  }
   function onCamFile(e) {
     const f = e.target.files?.[0]; e.target.value = ''
     if (!f) return
@@ -291,9 +310,27 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                   style={filled ? { backgroundColor: 'white', color: '#888', border: '1px solid #ddd' } : { backgroundColor: ORANGE, color: 'white' }}>
                   {filled ? (s.multi ? '+ more' : 'redo') : '📸'}
                 </button>
+                {filled && !s.multi && (
+                  <button type="button" onClick={() => removePhoto(s.key)} disabled={removing === `${s.key}:`}
+                    title="Delete this photo" aria-label="Delete this photo"
+                    className="w-8 h-8 rounded-full flex items-center justify-center text-base font-bold"
+                    style={{ backgroundColor: '#fef2f2', color: RED, border: '1px solid #fecaca', opacity: removing === `${s.key}:` ? .5 : 1 }}>×</button>
+                )}
               </div>
             )
           })}
+          {/* Setup photos: one × each */}
+          {prog.setupCount > 0 && (
+            <div className="px-3 pb-2 flex flex-wrap gap-1.5" style={{ backgroundColor: 'white' }}>
+              {(prog.slots.setup || []).map((e, i) => (
+                <span key={e.fileId || i} className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-full pl-2 pr-1 py-0.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
+                  Setup {i + 1}
+                  <button type="button" onClick={() => removePhoto('setup', e.fileId, `Setup photo ${i + 1}`)} disabled={removing === `setup:${e.fileId}`}
+                    aria-label={`Delete setup photo ${i + 1}`} className="w-5 h-5 rounded-full flex items-center justify-center font-bold" style={{ backgroundColor: '#fef2f2', color: RED }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="px-3 py-2 text-xs font-bold" style={{ borderTop: '1px solid #f1ede9', backgroundColor: prog.miles.ok ? '#dcfce7' : '#fff', color: prog.miles.ok ? GREEN : (prog.miles.delta != null ? RED : '#888') }}>
             🚗 Test drive: {prog.miles.delta == null ? 'need both odometer shots' : `${prog.miles.delta} mi ${prog.miles.ok ? '✓' : `— need more than ${MIN_MILES}`}`}
           </div>
