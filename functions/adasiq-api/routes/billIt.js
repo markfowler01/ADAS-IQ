@@ -26,6 +26,11 @@ const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
 const org = () => ({ organization_id: process.env.ZOHO_ORGANIZATION_ID })
 const r2 = n => Math.round((Number(n) || 0) * 100) / 100
 const NO_DISCOUNT = /calibration identification report|^sfp?\s*[-\s].*post[- ]?scan/i
+// Books' goods/service flag is unreliable (Pre-Calibration Scan, Subaru
+// MonoCam, AMFAM scans… are typed "goods"). A line is a PART only when
+// Books says goods AND the name doesn't read like work we did.
+const LOOKS_LIKE_SERVICE = /scan|calibrat|inspection|labor|set-?up|program|diagnos|report|snapshot|aim|alignment|ride|remove|install|r&i|r & i/i
+const isPart = l => l.product_type === 'goods' && !LOOKS_LIKE_SERVICE.test(l.name || '')
 
 async function getEstimate(token, id) {
   const r = await axios.get(`${API}/estimates/${id}`, { headers: H(token), params: org(), timeout: 15000, validateStatus: s => s < 500 })
@@ -78,10 +83,11 @@ async function buildPreview(req, job) {
   ]
   const discounted = lines.map(li => {
     const amount = r2(li.rate * li.quantity)
-    const eligible = pct != null && pct > 0 && amount > 0 && li.product_type !== 'goods' && !NO_DISCOUNT.test(li.name || '')
+    const part = isPart(li)
+    const eligible = pct != null && pct > 0 && amount > 0 && !part && !NO_DISCOUNT.test(li.name || '')
     const disc = eligible ? pct : 0
     const cost = r2(amount * (1 - disc / 100))
-    return { ...li, amount, discount_pct: disc, cost_amount: cost, why: !eligible && amount > 0 && pct ? (li.product_type === 'goods' ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
+    return { ...li, amount, is_part: part, discount_pct: disc, cost_amount: cost, why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
   })
   const insuranceTotal = r2(discounted.reduce((s, l) => s + l.amount, 0))
   const costTotal = r2(discounted.reduce((s, l) => s + l.cost_amount, 0))
@@ -92,13 +98,14 @@ async function buildPreview(req, job) {
   if (job.invoiced || job.billed_via_app) warnings.push(`This card is already marked invoiced${job.billed_via_app ? ` (via app ${job.billed_via_app})` : ''}.`)
   if (pct == null) warnings.push(`No cost-invoice discount on file for ${shopName} — set the customer type / % on the CRM Billing tab. Preview shows 0%.`)
   if (!emails.length) warnings.push('No email on the Books contact — add one in Books or type it below.')
-  if (est.status === 'invoiced') warnings.push('Books says this estimate is already invoiced.')
+  const alreadyConverted = est.status === 'invoiced'
+  if (alreadyConverted) warnings.push('Books says this estimate was already converted to an invoice (by hand?) — the button will not bill it again.')
   return {
     ok: true, job_id: job.id, shop_name: shopName, estimate_id: est.estimate_id, estimate_number: est.estimate_number, estimate_status: est.status,
     customer_id: est.customer_id, customer_type: customerType, discount_pct: pct ?? 0, emails,
     lines: discounted, insurance_total: insuranceTotal, cost_total: costTotal, saved: r2(insuranceTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
-    can_bill: !existing && !job.billed_via_app && !!emails.length,
+    can_bill: !existing && !alreadyConverted && !job.billed_via_app && !!emails.length, already_converted: alreadyConverted,
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default',
   }
 }
@@ -121,6 +128,7 @@ router.post('/:id/bill', async (req, res) => {
     if (!emails.length) return res.status(400).json({ error: 'No email to send to.' })
     if (p.existing_invoice) return res.status(409).json({ error: `Already billed — invoice ${p.existing_invoice.number} exists in Books.`, preview: p })
     if (job.billed_via_app) return res.status(409).json({ error: `Already billed via the app (${job.billed_via_app}).` })
+    if (p.already_converted) return res.status(409).json({ error: `Already billed — Books shows estimate ${p.estimate_number} converted to an invoice.`, preview: p })
     const by = req.user?.name || req.user?.email || 'staff'
     const pct = Number(req.body?.discount_pct ?? p.discount_pct) || 0
     const token = await getAccessToken()
@@ -143,7 +151,7 @@ router.post('/:id/bill', async (req, res) => {
     }
     // 3. Cost invoice: same lines, per-line discount, same number, Due on Receipt
     // Re-apply the % Kat chose in the modal (may differ from the rule on file).
-    const eligible = l => l.amount > 0 && l.product_type !== 'goods' && !NO_DISCOUNT.test(l.name || '')
+    const eligible = l => l.amount > 0 && !isPart(l) && !NO_DISCOUNT.test(l.name || '')
     p.lines = p.lines.map(l => { const d = pct > 0 && eligible(l) ? pct : 0; return { ...l, discount_pct: d, cost_amount: r2(l.amount * (1 - d / 100)) } })
     p.cost_total = r2(p.lines.reduce((s, l) => s + l.cost_amount, 0)); p.saved = r2(p.insurance_total - p.cost_total)
     const invLines = p.lines.map(l => ({

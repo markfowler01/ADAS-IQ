@@ -46,7 +46,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
 
   // Recompute cost lines client-side when Kat edits the % (server recomputes on send).
   const lines = (p?.lines || []).map(l => {
-    const eligible = l.discount_pct > 0 || (l.why === '' && l.amount > 0 && l.product_type !== 'goods')
+    const eligible = l.discount_pct > 0 || (l.why === '' && l.amount > 0 && !l.is_part)
     const d = eligible && pct > 0 ? pct : 0
     return { ...l, d, cost: Math.round(l.amount * (1 - d / 100) * 100) / 100 }
   })
