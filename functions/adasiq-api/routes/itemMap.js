@@ -248,11 +248,13 @@ router.get('/cliq-scope', async (req, res) => {
 router.post('/cliq-test', async (req, res) => {
   try {
     if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
-    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+    const { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
     const msg = String(req.body?.msg || `🧪 Cliq test from the app · ${new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })}`)
+    const channel = String(req.body?.channel || '').trim()   // unique name, e.g. salesmarketing
     const t0 = Date.now()
-    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg)
-    res.json({ ok: true, ms: Date.now() - t0 })
+    if (channel) await postToCliqChannel(channel, msg)
+    else await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg)
+    res.json({ ok: true, ms: Date.now() - t0, channel: channel || 'mark-alerts' })
   } catch (e) { res.status(500).json({ ok: false, error: e.message, status: e.response?.status, data: e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : null }) }
 })
 
