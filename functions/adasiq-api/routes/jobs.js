@@ -146,6 +146,7 @@ function rowToJob(row) {
     photo_slots:      row.photo_slots      || '',
     odo_before:       row.odo_before       || '',
     odo_after:        row.odo_after        || '',
+    request_type:     row.request_type     || '',   // 'quote' | 'job' | '' (Mark 2026-09-10: Quotes Requested column)
   }
 }
 
@@ -181,6 +182,7 @@ function jobToRow(job) {
     photo_slots:      typeof job.photo_slots === 'string' ? job.photo_slots : (job.photo_slots ? JSON.stringify(job.photo_slots) : ''),
     odo_before:       String(job.odo_before ?? '').slice(0, 20),
     odo_after:        String(job.odo_after ?? '').slice(0, 20),
+    request_type:     (job.status || 'need_dispatch') === 'job_requested' ? String(job.request_type || '').slice(0, 10) : '',
   }
 }
 

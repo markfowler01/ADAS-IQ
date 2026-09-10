@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
+import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import { Big3Badge } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -51,6 +51,11 @@ function normShopName(name) {
     .replace(/\s+/g, ' ')
     .trim()
 }
+
+// Quote requests share status job_requested but live in their own blue
+// column (Mark 2026-09-10). colOf() is the board's column for a job.
+const QUOTE_COL = { id: 'quote_requested', label: '📝 Quotes Requested', blue: true }
+const colOf = j => (j?.status === 'job_requested' && String(j?.request_type || '').toLowerCase() === 'quote') ? 'quote_requested' : j?.status
 
 const COLUMNS = [
   { id: 'job_requested',    label: 'Job Requested' },
@@ -190,6 +195,7 @@ function jobToPayload(job) {
     invoiced:         job.invoiced         || false,
     zoho_estimate_id: job.zoho_estimate_id || '',
     quote_number:     job.quote_number     || '',
+    request_type:     job.request_type     || '',
     quote_url:        job.quote_url        || '',
     folder_url:       job.folder_url       || '',
     invoice_number:   job.invoice_number   || '',
@@ -1067,8 +1073,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
         onDragOver={(e) => onDragOver(e, column.id)}
         onDrop={(e) => onDrop(e, column.id)}
       >
-        <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={{ backgroundColor: ORANGE, opacity: 0.75 }}>
-          <span className="text-white text-xs font-bold truncate">{column.label}</span>
+        <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={column.blue ? { backgroundColor: '#dbeafe', border: '1.5px dashed #60a5fa' } : { backgroundColor: ORANGE, opacity: 0.75 }}>
+          <span className="text-xs font-bold truncate" style={{ color: column.blue ? '#1d4ed8' : 'white' }}>{column.label}</span>
           <span className="text-xs font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>{jobs.length}</span>
         </div>
         <div className="flex-1 rounded-xl p-2 min-h-32 flex flex-col items-center justify-start gap-2 pt-4" style={{ backgroundColor: '#f9f8f7', border: '2px dashed transparent' }}>
@@ -1096,13 +1102,13 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
       {/* Column header */}
       <div
         className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between"
-        style={{ backgroundColor: ORANGE }}
+        style={column.blue ? { backgroundColor: '#dbeafe', border: '1.5px dashed #60a5fa' } : { backgroundColor: ORANGE }}
       >
         <div className="flex items-center gap-2">
-          <span className="text-white text-sm font-bold">{column.label}</span>
+          <span className="text-sm font-bold" style={{ color: column.blue ? '#1d4ed8' : 'white' }}>{column.label}</span>
           <span
             className="text-xs font-bold px-1.5 py-0.5 rounded-full"
-            style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}
+            style={column.blue ? { backgroundColor: 'rgba(29,78,216,0.15)', color: '#1d4ed8' } : { backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}
           >
             {jobs.length}
           </span>
@@ -1116,6 +1122,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
               title="Collapse column"
             >–</button>
           )}
+          {!column.blue && (
           <button
             onClick={() => onNewJob(column.id)}
             className="w-6 h-6 rounded-full flex items-center justify-center text-white font-bold text-lg leading-none transition-opacity hover:opacity-80"
@@ -1124,6 +1131,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
           >
             +
           </button>
+          )}
         </div>
       </div>
 
@@ -1610,7 +1618,9 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     e.preventDefault()
     setDragOverCol(null)
     if (!dragJob) return
-    if (dragJob.status === colId) { setDragJob(null); return }
+    if (colOf(dragJob) === colId) { setDragJob(null); return }
+    const targetStatus = colId === 'quote_requested' ? 'job_requested' : colId
+    const targetRequestType = colId === 'quote_requested' ? 'quote' : (colId === 'job_requested' ? 'job' : '')
 
     // Dropping onto Ready to Invoice with photos missing → photos first.
     if (colId === 'ready_invoice' && !photoProgress(dragJob).complete) {
@@ -1619,7 +1629,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     const previousStatus = dragJob.status
     // Auto-assign technician when dropped into a dispatch column
     const autoTech = DISPATCH_TECH[colId]
-    const updatedJob = { ...dragJob, status: colId, ...(autoTech ? { technician: autoTech } : {}) }
+    const updatedJob = { ...dragJob, status: targetStatus, request_type: targetRequestType, ...(autoTech ? { technician: autoTech } : {}) }
 
     // Optimistic update
     setJobs(prev => prev.map(j => j.id === dragJob.id ? updatedJob : j))
@@ -1945,8 +1955,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   const toggleCardExpand = (job) =>
     setExpandedCardId(prev => String(prev) === String(job.id) ? null : job.id)
 
-  const jobsByStatus = COLUMNS.reduce((acc, col) => {
-    acc[col.id] = visibleJobs.filter(j => j.status === col.id)
+  const jobsByStatus = [QUOTE_COL, ...COLUMNS].reduce((acc, col) => {
+    acc[col.id] = visibleJobs.filter(j => colOf(j) === col.id)
     return acc
   }, {})
 
@@ -2181,14 +2191,15 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               {/* Column chips — swipe sideways, tap to filter the list */}
               <div className="flex gap-1.5 overflow-x-auto pb-2 -mx-1 px-1" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
                 {[{ id: 'all', label: 'All', n: visibleJobs.length },
-                  ...COLUMNS.map(c => ({ id: c.id, label: c.label.replace('Dispatched to ', '').replace('Pending / Waiting on ', '').replace(' to Dispatch', ' Dispatch'), n: visibleJobs.filter(j => j.status === c.id).length })),
+                  { id: 'quote_requested', label: '📝 Quote Req', n: (jobsByStatus.quote_requested || []).length },
+                  ...COLUMNS.map(c => ({ id: c.id, label: c.label.replace('Dispatched to ', '').replace('Pending / Waiting on ', '').replace(' to Dispatch', ' Dispatch'), n: (jobsByStatus[c.id] || []).length })),
                   { id: 'quotes', label: '📤 Quotes', n: quotedJobs.length }]
                   .map(t => (
                   <button key={t.id}
                     onClick={() => pickMobileCol(t.id)}
                     className="text-xs font-bold rounded-full px-3 py-2 flex-shrink-0"
                     style={mobileCol === t.id
-                      ? { backgroundColor: t.id === 'quotes' ? '#1d4ed8' : ORANGE, color: 'white' }
+                      ? { backgroundColor: (t.id === 'quotes' || t.id === 'quote_requested') ? '#1d4ed8' : ORANGE, color: 'white' }
                       : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: t.n > 0 ? '#1a1a1a' : '#bbb' }}
                   >{t.label} {t.n > 0 ? t.n : ''}</button>
                 ))}
@@ -2213,13 +2224,13 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               )}
 
               <div className="flex flex-col gap-3 pb-6">
-                {mobileCol !== 'quotes' && (mobileCol === 'all' ? visibleJobs.filter(j => j.status !== 'quoted') : visibleJobs.filter(j => j.status === mobileCol)).length === 0 ? (
+                {mobileCol !== 'quotes' && (mobileCol === 'all' ? visibleJobs.filter(j => j.status !== 'quoted') : visibleJobs.filter(j => colOf(j) === mobileCol)).length === 0 ? (
                   <p className="text-center text-sm py-12" style={{ color: '#aaa' }}>No jobs here</p>
                 ) : mobileCol === 'quotes' ? null : (
                   (mobileCol === 'all'
                     ? visibleJobs.filter(j => j.status !== 'quoted')
                         .sort((a, b) => COLUMNS.findIndex(c => c.id === a.status) - COLUMNS.findIndex(c => c.id === b.status))
-                    : visibleJobs.filter(j => j.status === mobileCol)
+                    : visibleJobs.filter(j => colOf(j) === mobileCol)
                   ).map((job, idx, arr) => (
                     <div key={job.ROWID || job.id}>
                       {/* Status header when the column changes (All view) */}
@@ -2302,13 +2313,13 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   ))}
                 </div>
               </div>
-              {COLUMNS.map(col => (
+              {[QUOTE_COL, ...COLUMNS].map(col => (
                 <KanbanColumn
                   key={col.id}
                   column={col}
                   expandedId={expandedCardId}
                   onToggleExpand={toggleCardExpand}
-                  slim={(col.id === 'complete' && !showCompleted) || ((jobsByStatus[col.id] || []).length === 0 && col.id !== 'job_requested')}
+                  slim={(col.id === 'complete' && !showCompleted) || ((jobsByStatus[col.id] || []).length === 0 && col.id !== 'job_requested' && col.id !== 'quote_requested')}
                   onUnslim={() => setShowCompleted(true)}
                   onSlim={col.id === 'complete' && showCompleted ? () => setShowCompleted(false) : null}
                   slimTotal={col.id === 'complete'

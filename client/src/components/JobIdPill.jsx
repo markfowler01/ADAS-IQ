@@ -11,10 +11,13 @@
 const ORANGE = '#CD4419'
 
 export const isRequestJob = job => (job?.status || '') === 'job_requested'
+export const isQuoteRequest = job => isRequestJob(job) && String(job?.request_type || '').toLowerCase() === 'quote'
+const BLUE = '#1d4ed8'
 
 export function cardFrame(job, { complete = false } = {}) {
   if (complete) return { border: '2px solid #a8d5b5', backgroundColor: '#f8fff9' }
   if (job?.status === 'quoted') return { border: '1px solid #ebebeb', backgroundColor: 'white' }
+  if (isQuoteRequest(job)) return { border: '1.5px dashed #60a5fa', backgroundColor: '#eff6ff' }
   if (isRequestJob(job)) return { border: `1.5px dashed ${ORANGE}`, backgroundColor: '#fff5f0' }
   return { border: `2px solid ${ORANGE}`, backgroundColor: 'white' }
 }
@@ -30,9 +33,10 @@ export default function JobIdPill({ job, size = 'sm' }) {
     ? 'text-[10px] font-extrabold rounded-full px-1.5 py-0.5 inline-block align-middle'
     : 'text-[11px] font-extrabold rounded-full px-2 py-0.5 inline-block align-middle'
   if (req) {
+    const quote = isQuoteRequest(job)
     return (
       <span className="inline-flex items-center gap-1 flex-wrap">
-        <span className={base} style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px dashed ${ORANGE}` }}>REQUEST</span>
+        <span className={base} style={quote ? { backgroundColor: 'white', color: BLUE, border: '1.5px dashed #60a5fa' } : { backgroundColor: 'white', color: ORANGE, border: `1.5px dashed ${ORANGE}` }}>{quote ? 'QUOTE REQUEST' : 'REQUEST'}</span>
         {id && <span className={base} style={{ backgroundColor: 'white', color: '#8a8a8a', border: '1px solid #e0dbd6', fontFamily: "'IBM Plex Mono', monospace" }}>{id}</span>}
       </span>
     )
