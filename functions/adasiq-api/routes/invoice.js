@@ -131,7 +131,8 @@ router.post('/preview', async (req, res) => {
       big3Rules,
       req,
     })
-    res.json({ ...out, shop_default_pool: shopDefault, big3: { rules: big3Rules, source: fromModal ? 'modal' : (saved.rules ? 'shop' : 'unset'), shop_name: saved.shop_name || shopName, set_by: saved.set_by || '', set_at: saved.set_at || '' } })
+    const { withDefaults } = await import('../services/big3.js')
+    res.json({ ...out, shop_default_pool: shopDefault, big3: { rules: withDefaults(big3Rules), source: fromModal ? 'modal' : (saved.rules ? 'shop' : 'unset'), shop_name: saved.shop_name || shopName, set_by: saved.set_by || '', set_at: saved.set_at || '' } })
   } catch (e) {
     console.error('[invoice preview]', e.message)
     res.status(500).json({ error: e.message })

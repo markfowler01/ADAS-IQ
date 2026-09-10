@@ -35,6 +35,7 @@ import { dayShape } from '../services/dayShape.js'
 import { buildProgress, formatProgress, standing, moneyShort } from '../services/progressStrip.js'
 import { fetchYtdByDay } from '../services/salesRollup.js'
 import { overdue as holdOverdue, birthdays as holdBirthdays } from '../services/hold.js'
+import { recruitingBrief, shopsBrief, formatPipeline } from '../services/pipelineBrief.js'
 import { subtraction, formatSubtraction } from '../services/subtraction.js'
 import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
 import { evaluate as evaluatePace, projectMonth } from '../services/paceModel.js'
@@ -484,7 +485,7 @@ function formatFull(b, pace) {
   // two bucket targets. The old block reported a third, blended figure against
   // a $50,000 goal the pace section no longer uses — two different answers to
   // the same question, in the same brief.
-  L.push(`Field ops: ${b.todaysJobs.length} jobs scheduled today. Jaden has ${b.jadenToday.length} today (${b.jaden.length} on the board). ${b.openJobs.length} open jobs total.`)
+  L.push(`Field ops: ${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} scheduled today. Jaden has ${b.jadenToday.length} today (${b.jaden.length} on the board). ${b.openJobs.length} open jobs total.`)
   L.push(`Pipeline: ${b.shops.length} shops, ${b.followups.length} follow-ups due.`)
   if (b.events.length) {
     L.push('')
@@ -666,7 +667,7 @@ function progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD) {
   <div style="font:400 11px/16px ${SANS};color:${SOFT};padding-top:4px;">Bar is dollars booked. The mark is where the calendar is.</div>`
 }
 
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog, d2, hold) {
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog, d2, hold, recruit, shopPipe) {
   const label = t => `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
   const block = (title, inner) => inner
     ? `<tr><td style="padding:32px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
@@ -686,6 +687,27 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   }
   // Birthdays first — they are dated and they expire. Overdue contacts are a
   // standing condition and can wait behind them.
+  const STAGE_LBL = { new: 'New', contacted: 'Contacted', project: 'Project', phone_screen: 'Phone Screen', ride_along: 'Ride-Along', offer: 'Offer' }
+  const recruitHtml = recruit && !recruit.error && (recruit.fresh?.length || recruit.stalled?.length) ? [
+    ...recruit.fresh.map(c => line(`<strong style="font-weight:600;">${esc(c.name)}</strong> applied${c.certs ? ` — ${esc(c.certs)}` : ''}.`, GOOD)),
+    ...recruit.stalled.slice(0, 3).map(c =>
+      line(`${esc(c.name)} — ${c.idleDays} days in ${esc(STAGE_LBL[c.stage] || c.stage)}.`, ACCENT)),
+  ].join('') : ''
+
+  const shopsHtml = shopPipe && !shopPipe.error && (shopPipe.due?.length || shopPipe.quiet?.length || shopPipe.todaysTwo?.length) ? [
+    ...shopPipe.due.slice(0, 4).map(s2 => line(
+      `<strong style="font-weight:600;">${esc(s2.shop_name)}</strong> — ${s2.daysLate > 0 ? `follow-up ${s2.daysLate} ${s2.daysLate === 1 ? 'day' : 'days'} late` : 'follow-up due today'}.`,
+      s2.daysLate > 0 ? ACCENT : INK)),
+    ...(shopPipe.todaysTwo?.length ? [
+      line(`<strong style="font-weight:600;">${shopPipe.todaysTwo.map(x => esc(x.shop_name)).join('</strong> and <strong style="font-weight:600;">')}</strong> — never contacted. Call one today.`.replace(/\.\s*—/, ' —')),
+      line(`${shopPipe.neverTouched.length} of ${shopPipe.activeTotal} shops have no contact logged.`, SOFT),
+    ] : []),
+    ...(shopPipe.quiet.length ? [line(
+      shopPipe.quiet.length === 1
+        ? `${esc(shopPipe.quiet[0].shop_name)} — ${shopPipe.quiet[0].idleDays} days, no contact.`
+        : `${shopPipe.quiet.length} targets past 30 days. Longest ${esc(shopPipe.quiet[0].shop_name)} at ${shopPipe.quiet[0].idleDays}.`, SOFT)] : []),
+  ].join('') : ''
+
   const holdHtml = hold && (hold.late.length || hold.birthdays.length) ? [
     ...hold.birthdays.slice(0, 3).map(x =>
       line(`<strong style="font-weight:600;">${esc(x.contact.name)}</strong> — birthday ${x.days === 0 ? 'today' : x.days === 1 ? 'tomorrow' : `in ${x.days} days`}.`)),
@@ -775,6 +797,8 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   <tr><td style="padding:30px 34px 0 34px;"><div style="border-top:1px solid ${RULE};"></div></td></tr>
 
   ${holdHtml ? block('The Hold', holdHtml) : ''}
+  ${recruitHtml ? block('Recruiting', recruitHtml) : ''}
+  ${shopsHtml ? block('Shops', shopsHtml) : ''}
   ${prog ? block('Sales against goal', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
   ${block('Cash', cashHtml)}
   ${block('Pace', paceHtml)}
@@ -1168,6 +1192,13 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // down the brief still ships, just without the strip.
   // The Hold — who has gone quiet. Best-effort: a relationship list must
   // never be the reason the brief is late.
+  // Recruiting board and the shop CRM. Both read Datastore directly rather
+  // than over HTTP — the shops route is session-gated and the brief has no
+  // session. Best-effort, like everything else in here.
+  const [recruit, shopPipe] = await Promise.all([
+    safe('recruit', () => recruitingBrief(req, ptDate())),
+    safe('shops-pipe', () => shopsBrief(req, ptDate())),
+  ])
   const hold = await safe('hold', async () => {
     const t = ptDate()
     const [due, bd] = await Promise.all([holdOverdue(req, t, 3), holdBirthdays(req, t, 14)])
@@ -1180,7 +1211,8 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const paceText = (pace ? formatPace(pace) : '') +
     (prog ? formatProgress(prog) : '') +
     (numbers ? formatNumbers(numbers, goalRec.goal) : '') +
-    (hold ? formatHold(hold) : '')
+    (hold ? formatHold(hold) : '') +
+    formatPipeline(recruit, shopPipe)
 
   // Triage is best-effort and capped: it rides inside the brief's gateway
   // request, and an unread inbox must never be why the brief is late.
@@ -1278,7 +1310,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
   const ar = buildAR(b.revenue)
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog, d2, hold)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog, d2, hold, recruit, shopPipe)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -1609,7 +1641,7 @@ router.get('/page', async (req, res) => {
 .bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
 .bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
 <div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
-${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null, null, null)}
+${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null, null, null, null, null)}
 </body></html>`)
   } catch (e) { res.status(500).send(String(e.message)) }
 })
@@ -1666,6 +1698,13 @@ router.get('/email-preview', async (req, res) => {
     const numbers = pace ? buildNumbers(b.revenue, pace, ratioRec.ratio, projection) : null
     // The Hold — who has gone quiet. Best-effort: a relationship list must
     // never be the reason the brief is late.
+    // Recruiting board and the shop CRM. Both read Datastore directly rather
+    // than over HTTP — the shops route is session-gated and the brief has no
+    // session. Best-effort, like everything else in here.
+    const [recruit, shopPipe] = await Promise.all([
+      safe('recruit', () => recruitingBrief(req, ptDate())),
+      safe('shops-pipe', () => shopsBrief(req, ptDate())),
+    ])
     const hold = await safe('hold', async () => {
       const t = ptDate()
       const [due, bd] = await Promise.all([holdOverdue(req, t, 3), holdBirthdays(req, t, 14)])
@@ -1680,7 +1719,7 @@ router.get('/email-preview', async (req, res) => {
     res.type('html').send(formatBriefHtml(
       b, big3, tr, `https://absoluteadas.com/audio/ada-morning-${ptDate()}.mp3`,
       null, null, pace, null, buildAR(b.revenue), numbers,
-      goalRec.goal, ANALYTICS_URL, prog, d2, hold))
+      goalRec.goal, ANALYTICS_URL, prog, d2, hold, recruit, shopPipe))
   } catch (e) { res.status(500).type('text/plain').send(String(e.stack || e.message)) }
 })
 

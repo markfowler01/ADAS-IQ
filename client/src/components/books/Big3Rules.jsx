@@ -12,14 +12,19 @@ export const BIG3 = [
   { key: 'pcsi',      label: 'Post Collision Safety Inspection' },
   { key: 'post_scan', label: 'Post-Scan' },
 ]
+// Two states (Mark 2026-09-10): all three are on every invoice —
+// Charge = the paid item, Included = the "(included)" $0 item.
 export const MODES = [
-  { id: 'bill',     label: 'We bill it',        color: '#15803d', bg: '#dcfce7' },
-  { id: 'included', label: 'No charge',         color: '#1d4ed8', bg: '#dbeafe' },
-  { id: 'shop',     label: 'Shop handles it',   color: '#6b7280', bg: '#f3f4f6' },
+  { id: 'charge',   label: 'Charge',   color: '#15803d', bg: '#dcfce7' },
+  { id: 'included', label: 'Included', color: '#1d4ed8', bg: '#dbeafe' },
 ]
+const LEGACY = { bill: 'charge', shop: 'included' }
+export const normalizeMode = m => LEGACY[m] || m
 export function describeRules(rules) {
   if (!rules) return 'no rule yet'
-  return BIG3.map(b => `${b.label}: ${MODES.find(m => m.id === rules[b.key])?.label?.toLowerCase() || 'default'}`).join(' · ')
+  const charge = BIG3.filter(b => normalizeMode(rules[b.key]) === 'charge').map(b => b.label)
+  const inc = BIG3.filter(b => normalizeMode(rules[b.key]) === 'included').map(b => b.label)
+  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null].filter(Boolean).join(' · ') || 'no rule yet'
 }
 
 // The three rows of chips. rules = { cal_id, pcsi, post_scan } (any may be unset).
@@ -32,7 +37,7 @@ export function Big3Picker({ rules, onChange, disabled = false, compact = false 
           <span className={`${compact ? 'text-[11px]' : 'text-xs'} font-semibold flex-1 min-w-0 truncate`} style={{ color: '#1a1a1a' }}>{b.label}</span>
           <div className="flex gap-1">
             {MODES.map(m => {
-              const on = r[b.key] === m.id
+              const on = normalizeMode(r[b.key]) === m.id
               return (
                 <button key={m.id} type="button" disabled={disabled} onClick={() => onChange({ ...r, [b.key]: m.id })}
                   className={`${compact ? 'text-[10px] px-2 py-1' : 'text-[11px] px-2.5 py-1.5'} font-bold rounded-full`}
@@ -71,13 +76,13 @@ export function Big3Badge({ shopName, size = 'xs' }) {
   if (!shopName) return null
   const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
   if (!entry?.rules) {
-    return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e' }} title="No Big 3 rule for this shop yet — the first invoice will ask">🧾 Big 3: no rule yet</span>
+    return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e' }} title="No Big 3 rule yet — default: Cal ID charged, PCSI + Post-Scan included. The first invoice will ask.">🧾 Big 3: default (no rule yet)</span>
   }
   const r = entry.rules
-  const bill = BIG3.filter(b => r[b.key] === 'bill').map(b => b.key === 'pcsi' ? 'PCSI' : b.key === 'post_scan' ? 'Post-Scan' : 'Cal ID')
-  const shop = BIG3.filter(b => r[b.key] === 'shop').map(b => b.key === 'pcsi' ? 'PCSI' : b.key === 'post_scan' ? 'Post-Scan' : 'Cal ID')
-  const text = bill.length ? `We bill: ${bill.join(' · ')}` : 'We bill none of the Big 3'
-  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#dcfce7', color: '#166534' }} title={`${text}${shop.length ? ` · shop handles: ${shop.join(', ')}` : ''}`}>🧾 {text}{shop.length ? ` · shop: ${shop.join(', ')}` : ''}</span>
+  const short = b => b.key === 'pcsi' ? 'PCSI' : b.key === 'post_scan' ? 'Post-Scan' : 'Cal ID'
+  const charge = BIG3.filter(b => normalizeMode(r[b.key]) === 'charge').map(short)
+  const text = charge.length ? `Charge: ${charge.join(' · ')}` : 'All 3 included'
+  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#dcfce7', color: '#166534' }} title={describeRules(r)}>🧾 {text}</span>
 }
 
 // CRM Billing tab block — loads and saves the shop's rule.
@@ -125,7 +130,7 @@ export default function Big3Rules({ shop }) {
         <div>
           <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🧾 Big 3 rule</div>
           <div className="text-xs" style={{ color: '#666' }}>
-            {complete ? `Applied to every invoice · set by ${meta.set_by || '—'}${meta.set_at ? ` on ${String(meta.set_at).slice(0, 10)}` : ''}` : 'No rule yet — the first invoice will ask, or set it here.'}
+            {complete ? `Applied to every invoice · set by ${meta.set_by || '—'}${meta.set_at ? ` on ${String(meta.set_at).slice(0, 10)}` : ''}` : 'No rule yet — invoices use the default (Cal ID charged, PCSI + Post-Scan included) until you set it here or on the first invoice.'}
           </div>
         </div>
         <button type="button" onClick={save} disabled={!dirty || saving}

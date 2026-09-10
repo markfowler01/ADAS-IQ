@@ -796,7 +796,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
   const baseLines = preview.lines.map(li => {
     const swap = swaps[li.requested] && poolByName[swaps[li.requested]]
     let out
-    if (li.big3) out = { ...li, _state: li.big3 === 'bill' ? 'paid' : 'included', _toggle: false }
+    if (li.big3) out = { ...li, _state: li.big3 === 'charge' ? 'paid' : 'included', _toggle: false }
     else if (swap) out = { ...li, name: swap.name, rate: swap.rate, needs_price: false, included: false, _swapped: true, _toggle: false }
     else if (li.paid_option && stateOf(li) === 'paid') out = { ...li, name: li.paid_option.name, rate: li.paid_option.rate, included: false, _state: 'paid', _toggle: true }
     else if (li.zero_option && stateOf(li) === 'included') out = { ...li, rate: 0, included: true, _state: 'included', _toggle: true }
@@ -896,7 +896,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             <div className="flex items-center justify-between mb-1.5">
               <div className="text-[11px] font-bold" style={{ color: '#1a1a1a' }}>🧾 Big 3 for {shopName || big3.shop_name || 'this shop'}</div>
               <div className="text-[10px]" style={{ color: '#888' }}>
-                {big3.source === 'shop' ? `shop rule${big3.set_by ? ` · ${big3.set_by}` : ''}${big3.set_at ? ` ${String(big3.set_at).slice(5, 10)}` : ''}` : big3.source === 'modal' ? 'edited here' : 'no rule yet — pick once, it\'s remembered'}
+                {big3.source === 'shop' ? `shop rule${big3.set_by ? ` · ${big3.set_by}` : ''}${big3.set_at ? ` ${String(big3.set_at).slice(5, 10)}` : ''}` : big3.source === 'modal' ? 'edited here' : 'default — confirm once, it\'s remembered'}
               </div>
             </div>
             <Big3Picker rules={big3.rules} onChange={onBig3} disabled={busy} compact />

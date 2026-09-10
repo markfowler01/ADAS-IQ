@@ -49,7 +49,7 @@ function rowToCandidate(r) {
   }
 }
 
-async function readAll(req) {
+export async function readAll(req) {
   const app = catalyst.initialize(req)
   const out = []
   for (let off = 0; ; off += 300) {

@@ -10,13 +10,22 @@
 import { getAllShops, insertShop, updateShop } from '../routes/shops.js'
 import { postToCliqChannel, postToCliqChannelById, DISPATCH_CHANNEL, MARK_ALERT_CHANNEL_ID } from './cliq.js'
 
+// Mark 2026-09-10 (v2): ALL THREE go on EVERY invoice — "so people get
+// used to seeing it and eventually we can start charging them". Per shop
+// each is either charged or shown as the "(included)" $0 item.
+//   base      = the $0 "(included)" Books item (always exists)
+//   paid      = the charged Books item; post_scan is pool-aware (AS/SFP/
+//               AmFam have their own) and falls back to Post-Calibration Scan
 export const BIG3 = [
-  { key: 'cal_id',    base: 'Calibration Identification Report',        label: 'Cal ID report' },
-  { key: 'pcsi',      base: 'Post Collision Safety Inspection 1 (L-M)', label: 'Post Collision Safety Inspection' },
-  { key: 'post_scan', base: 'Post-Scan (L-M)',                          label: 'Post-Scan' },
+  { key: 'cal_id',    base: 'Calibration Identification Report (included)',        paid: 'Calibration Identification Report',        label: 'Cal ID report' },
+  { key: 'pcsi',      base: 'Post Collision Safety Inspection 1 (included)', paid: 'Post Collision Safety Inspection 1',        label: 'Post Collision Safety Inspection' },
+  { key: 'post_scan', base: 'Post-Scan (included)',                          paid: 'Post-Scan', paidFallback: 'Post-Calibration Scan', label: 'Post-Scan' },
 ]
-export const MODES = { bill: 'We bill it', included: 'We do it · no charge', shop: 'Shop handles it' }
+export const MODES = { charge: 'Charge', included: 'Included' }
+// Until a shop has a rule: Cal ID charged (as today), the other two included.
+export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', post_scan: 'included' }
 export const BASE_TO_KEY = Object.fromEntries(BIG3.map(b => [b.base, b.key]))
+const LEGACY = { bill: 'charge', shop: 'included' }
 
 const shopKeyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const loose = s => shopKeyOf(s).replace(/(autobody|bodyshop|collision|repair|center|centre|inc|llc|auto|body|shop)/g, '')
@@ -24,12 +33,15 @@ const loose = s => shopKeyOf(s).replace(/(autobody|bodyshop|collision|repair|cen
 export function normalizeRules(r) {
   if (!r || typeof r !== 'object') return null
   const out = {}
-  for (const b of BIG3) if (MODES[r[b.key]]) out[b.key] = r[b.key]
+  for (const b of BIG3) { const v = LEGACY[r[b.key]] || r[b.key]; if (MODES[v]) out[b.key] = v }
   return Object.keys(out).length ? out : null
 }
+export function withDefaults(rules) { return { ...DEFAULT_RULES, ...(normalizeRules(rules) || {}) } }
 export function describeRules(rules) {
   if (!rules) return 'no rule yet'
-  return BIG3.map(b => `${b.label}: ${rules[b.key] ? MODES[rules[b.key]].toLowerCase() : 'default'}`).join(' · ')
+  const charge = BIG3.filter(b => rules[b.key] === 'charge').map(b => b.label)
+  const inc = BIG3.filter(b => rules[b.key] === 'included').map(b => b.label)
+  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null].filter(Boolean).join(' · ') || 'no rule yet'
 }
 
 export async function findShopByName(req, name) {
@@ -123,9 +135,9 @@ export async function suggestBig3(shopName, limit = 5) {
   const suggested = {}
   for (const key of Object.keys(seen)) {
     if (!invoices.length) continue
-    if (seen[key].paid > 0 && seen[key].paid >= seen[key].zero) suggested[key] = 'bill'
-    else if (seen[key].zero > 0) suggested[key] = 'included'
-    else suggested[key] = 'shop'
+    // Two states: charged on most recent invoices → charge, else included
+    // (never on the invoice at all also reads as included — it goes on now).
+    suggested[key] = (seen[key].paid > 0 && seen[key].paid >= seen[key].zero) ? 'charge' : 'included'
   }
   return { invoices: invoices.length, suggested: invoices.length ? suggested : null, evidence }
 }

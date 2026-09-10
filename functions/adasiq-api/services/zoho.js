@@ -511,10 +511,12 @@ export async function createDraftQuote({
   // Fixed items — always included on every invoice. The review modal can
   // swap an included (L-M) $0 service for its PAID catalog item (Mark
   // 2026-08-29: "i want the option for our paid option").
+  // Big 3 (Mark 2026-09-10): the "(included)" $0 items are the base; a
+  // shop rule of Charge swaps in the paid item. Always all three.
   const baseFixedNames = [
-    'Calibration Identification Report',
-    'Post Collision Safety Inspection 1 (L-M)',
-    'Post-Scan (L-M)',
+    'Calibration Identification Report (included)',
+    'Post Collision Safety Inspection 1 (included)',
+    'Post-Scan (included)',
   ]
   const fixedNames = baseFixedNames.map(n => (fixedOverrides && fixedOverrides[n]) || n)
   console.log(`[zoho] Fixed items: ${fixedNames.join(', ')}${Array.isArray(fixedZero) && fixedZero.length ? ` (comped to $0: ${fixedZero.join(', ')})` : ''}`)
@@ -620,19 +622,17 @@ export async function createDraftQuote({
   const b3Zero = new Set(Array.isArray(fixedZero) ? fixedZero : [])
   const b3Remove = new Set()
   let big3Note = ''
-  if (big3Rules) {
+  {
+    const rulesEff = b3.withDefaults(big3Rules)
     for (const b of b3.BIG3) {
-      const mode = big3Rules[b.key]
-      if (!mode) continue
-      const baseItem = itemByName.get(b.base.toLowerCase())
-      const baseRate = Number(baseItem?.rate) || 0
-      if (mode === 'shop') b3Remove.add(b.base)
-      else if (mode === 'bill' && baseRate === 0) {
-        const paid = paidAlternativeFor(allItems, insurerPrefix, b.base)
-        if (paid && !b3Overrides[b.base]) b3Overrides[b.base] = paid.name
-      } else if (mode === 'included' && baseRate > 0) b3Zero.add(b.base)
+      if (rulesEff[b.key] !== 'charge') continue      // Included = the base "(included)" item as-is
+      if (b3Overrides[b.base]) continue                // explicit modal pick wins
+      const paid = itemByName.get(b.paid.toLowerCase())
+        || paidAlternativeFor(allItems, insurerPrefix, b.base)
+        || (b.paidFallback ? itemByName.get(b.paidFallback.toLowerCase()) : null)
+      if (paid) b3Overrides[b.base] = paid.name
     }
-    big3Note = `Big 3 rule (${shop || customerName || 'shop'}): ${b3.describeRules(big3Rules)}`
+    big3Note = `Big 3 (${shop || customerName || 'shop'}): ${b3.describeRules(rulesEff)}${big3Rules ? '' : ' — default, no shop rule yet'}`
     console.log(`[zoho] ${big3Note}`)
   }
   const fixedLineItems = baseFixedNames.map((baseName) => {
@@ -1162,11 +1162,13 @@ export async function listAllEstimates() {
 // preferred, standard otherwise. Shared by preview + create for Big 3 rules.
 export function paidAlternativeFor(allItems, insurerPrefix, fixedName) {
   const norm = str => String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-  const base = norm(String(fixedName).replace(/\(l-m\)/i, '').replace(/\b1\b/, ''))
+  const base = norm(String(fixedName).replace(/\((l-m|included)\)/i, '').replace(/\b1\b/, ''))
   if (!base) return null
-  const candidates = allItems.filter(it => Number(it.rate) > 0 && !/l-m/i.test(it.name) && norm(it.name).replace(/\b1\b/, '').includes(base))
+  const candidates = allItems.filter(it => Number(it.rate) > 0 && !/l-m|included/i.test(it.name) && norm(it.name).replace(/\b1\b/, '').includes(base))
   if (!candidates.length) return null
-  const pooled = insurerPrefix ? candidates.filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name)) : []
+  // State Farm items are prefixed "SFP - " (and a few "SF - "); AS/AMFAM/CP as-is.
+  const poolRe = insurerPrefix ? (insurerPrefix === 'SF' ? /^(SF|SFP)\s*[-\s]/i : new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i')) : null
+  const pooled = poolRe ? candidates.filter(it => poolRe.test(it.name)) : []
   const standard = candidates.filter(it => !PREFIXED.test(it.name))
   const pick = pooled[0] || standard[0] || null
   return pick ? { name: pick.name, rate: Number(pick.rate) || 0, item_id: pick.item_id } : null
@@ -1196,24 +1198,23 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
   const previewPoolKey = insurerPrefix || 'STD'
   const itemByNamePrev = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
   const fixedNames = [
-    'Calibration Identification Report',
-    'Post Collision Safety Inspection 1 (L-M)',
-    'Post-Scan (L-M)',
+    'Calibration Identification Report (included)',
+    'Post Collision Safety Inspection 1 (included)',
+    'Post-Scan (included)',
   ]
   // Paid variant of an included (L-M) service — e.g. "Post-Scan (L-M)"
   // at $0 vs the standalone paid Post-Scan item. Insurer pool preferred.
   const norm = str => String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
   function findPaidAlternative(fixedName) {
-    const base = norm(fixedName.replace(/\(l-m\)/i, '').replace(/\b1\b/, ''))
+    const base = norm(fixedName.replace(/\((l-m|included)\)/i, '').replace(/\b1\b/, ''))
     if (!base) return null
     const candidates = allItems.filter(it =>
       Number(it.rate) > 0 &&
-      !/l-m/i.test(it.name) &&
+      !/l-m|included/i.test(it.name) &&
       norm(it.name).replace(/\b1\b/, '').includes(base))
     if (!candidates.length) return null
-    const pooled = insurerPrefix
-      ? candidates.filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name))
-      : []
+    const poolRe = insurerPrefix ? (insurerPrefix === 'SF' ? /^(SF|SFP)\s*[-\s]/i : new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i')) : null
+    const pooled = poolRe ? candidates.filter(it => poolRe.test(it.name)) : []
     const standard = candidates.filter(it => !PREFIXED.test(it.name))
     const pick = pooled[0] || standard[0] || null
     return pick ? { name: pick.name, rate: Number(pick.rate) || 0 } : null
@@ -1254,29 +1255,26 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
       lines.push({ name, requested: name, rate: 0, quantity, amount: 0, needs_price: true, included: false, swappable: !isFixed })
     }
   }
-  // Big 3 per-shop rule (Mark 2026-09-10): bill / included / shop.
-  const { BIG3: B3 } = await import('./big3.js')
+  // Big 3 per-shop rule (Mark 2026-09-10 v2): every one of the three is
+  // on every invoice — Charge = paid item, Included = "(included)" $0.
+  const b3mod = await import('./big3.js')
+  const rulesEff = b3mod.withDefaults(big3Rules)
   const big3Applied = {}
-  for (const n of fixedNames) {
-    const key = (B3.find(b => b.base === n) || {}).key
-    const mode = key && big3Rules ? big3Rules[key] : null
-    if (mode === 'shop') { big3Applied[key] = { mode, line: null }; continue }
-    if (mode === 'bill' || mode === 'included') {
-      const baseItem = itemByNamePrev.get(n.toLowerCase())
-      const baseRate = Number(baseItem?.rate) || 0
-      let line
-      if (mode === 'bill') {
-        const paid = baseRate > 0 ? { name: baseItem.name, rate: baseRate } : paidAlternativeFor(allItems, insurerPrefix, n)
-        line = paid
-          ? { name: paid.name, requested: n, rate: paid.rate, quantity: 1, amount: paid.rate, needs_price: false, included: false, swappable: false, big3: 'bill' }
-          : { name: n, requested: n, rate: 0, quantity: 1, amount: 0, needs_price: true, included: false, swappable: false, big3: 'bill' }
-      } else {
-        line = { name: baseItem?.name || n, requested: n, rate: 0, quantity: 1, amount: 0, needs_price: false, included: true, swappable: false, big3: 'included' }
-      }
-      lines.push(line); big3Applied[key] = { mode, line: line.name }
-      continue
+  for (const b of b3mod.BIG3) {
+    const mode = rulesEff[b.key]
+    const baseItem = itemByNamePrev.get(b.base.toLowerCase())
+    let line
+    if (mode === 'charge') {
+      const paid = itemByNamePrev.get(b.paid.toLowerCase())
+        || paidAlternativeFor(allItems, insurerPrefix, b.base)
+        || (b.paidFallback ? itemByNamePrev.get(b.paidFallback.toLowerCase()) : null)
+      line = paid
+        ? { name: paid.name, requested: b.base, rate: Number(paid.rate) || 0, quantity: 1, amount: Number(paid.rate) || 0, needs_price: false, included: false, swappable: false, big3: 'charge' }
+        : { name: b.paid, requested: b.base, rate: 0, quantity: 1, amount: 0, needs_price: true, included: false, swappable: false, big3: 'charge' }
+    } else {
+      line = { name: baseItem?.name || b.base, requested: b.base, rate: 0, quantity: 1, amount: 0, needs_price: !baseItem, included: true, swappable: false, big3: 'included' }
     }
-    push(n, 1, true)
+    lines.push(line); big3Applied[b.key] = { mode, line: line.name }
   }
   for (const c of calibrations || []) push(c.calibration_name || c.name, Number(c.quantity) || 1, false)
   // The insurer's tier catalog (SF - 3a, AS - 3C Complex, ...) for the

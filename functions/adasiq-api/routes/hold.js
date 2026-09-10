@@ -77,4 +77,20 @@ router.post('/import', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
+router.get('/pipeline-debug', async (req, res) => {
+  const { recruitingBrief, shopsBrief } = await import('../services/pipelineBrief.js')
+  const { ptDate } = await import('../services/ptDate.js')
+  const t = ptDate()
+  const [r, sh] = await Promise.all([
+    recruitingBrief(req, t).catch(e => ({ error: e.message })),
+    shopsBrief(req, t).catch(e => ({ error: e.message })),
+  ])
+  res.json({
+    today: t,
+    recruiting: { error: r.error, live: r.liveTotal, counts: r.counts, fresh: (r.fresh || []).map(c => c.name), stalled: (r.stalled || []).map(c => `${c.name}:${c.idleDays}d`) },
+    shops: { error: sh.error, active: sh.activeTotal, due: (sh.due || []).length, quiet: (sh.quiet || []).length, never: (sh.neverTouched || []).length,
+             sampleDue: (sh.due || []).slice(0,3).map(x => `${x.shop_name}:${x.daysLate}d`) },
+  })
+})
+
 export default router

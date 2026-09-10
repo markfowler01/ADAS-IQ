@@ -301,6 +301,18 @@ router.get('/:id/big3-suggest', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Big 3 by shop NAME (creates the CRM shop if needed) — for seeding rules.
+router.put('/big3-by-name', async (req, res) => {
+  try {
+    const b3 = await import('../services/big3.js')
+    const name = String(req.body?.shop_name || '').trim()
+    const rules = b3.normalizeRules(req.body?.rules)
+    if (!name || !rules) return res.status(400).json({ error: 'shop_name and rules required' })
+    const r = await b3.saveBig3(req, name, rules, req.user?.name || req.user?.email || '')
+    res.json({ ok: true, ...r, rules })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // Big 3 rule on a CRM shop (Mark 2026-09-10) — read/set from the Billing tab.
 router.get('/:id/big3', async (req, res) => {
   try {
