@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
-import { Big3Badge } from './books/Big3Rules.jsx'
+import { Big3Badge, DrpBadge } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
@@ -828,7 +828,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status !== 'job_requested' && <p className="mb-1"><Big3Badge shopName={job.shop_name} /></p>}
+      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
@@ -2782,7 +2782,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
           >{insurerPricingBadge(job).label}</span>
         )}
-        {job.status !== 'job_requested' && <Big3Badge shopName={job.shop_name} />}
+        {job.status !== 'job_requested' && <><Big3Badge shopName={job.shop_name} /> <DrpBadge shopName={job.shop_name} /></>}
         {isTeslaJob(job) && (
           <span
             className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"

@@ -43,6 +43,7 @@ function rowToShop(row) {
     custom_competitors: typeof r.custom_competitors === 'string' ? parse(r.custom_competitors) : (r.custom_competitors || []),
     denied_reasons:    typeof r.denied_reasons === 'string' ? parse(r.denied_reasons) : (r.denied_reasons || []),
     billing_rules:     typeof r.billing_rules === 'string' ? parse(r.billing_rules) : (r.billing_rules || null),
+    drps:              typeof r.drps === 'string' ? (parse(r.drps) || []) : (r.drps || []),   // DRP insurers (Mark 2026-09-10)
     denied_reason:     r.denied_reason     || '',
     kinetic_in_bed:    r.kinetic_in_bed === 'true' || r.kinetic_in_bed === true,
     zoho_contact_id:   r.zoho_contact_id   || '',
@@ -76,6 +77,7 @@ function shopToRow(shop) {
     custom_competitors: JSON.stringify(shop.custom_competitors || []),
     denied_reasons:    JSON.stringify(shop.denied_reasons || []),
     billing_rules:     JSON.stringify(shop.billing_rules || null),
+    drps:              JSON.stringify(Array.isArray(shop.drps) ? shop.drps : []),
     denied_reason:     shop.denied_reason     || '',
     kinetic_in_bed:    String(Boolean(shop.kinetic_in_bed)),
     zoho_contact_id:   shop.zoho_contact_id   || '',

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import Big3Rules from './books/Big3Rules.jsx'
+import Big3Rules, { DrpRules } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import {
   STAGES, ACTIVITY_TYPES, TITLES,
@@ -838,6 +838,7 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete }) {
           {tab === 'jobs' && <JobsTab shopName={form.shop_name} />}
           {tab === 'billing' && (<>
             <Big3Rules shop={form} />
+            <DrpRules shop={form} />
             <BillingRulesEditor
               shop={form}
               onSave={updated => {

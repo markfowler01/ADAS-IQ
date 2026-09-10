@@ -7,6 +7,7 @@ import GooglePlacesModal from './GooglePlacesModal'
 import CRMBroadcastModal from './CRMBroadcastModal'
 import ShopDetailPanel from './ShopDetailPanel'
 import VanContactModal from './VanContactModal'
+import NewCustomerModal from './NewCustomerModal.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -469,6 +470,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [crmSyncing, setCrmSyncing] = useState(false)
   const [showBroadcast, setShowBroadcast] = useState(false)
   const [showVanContact, setShowVanContact] = useState(false)
+  const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [syncing,       setSyncing]       = useState(false)
   const [calCounts,     setCalCounts]     = useState({})
 
@@ -602,6 +604,14 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
                 onFocus={e => e.target.style.borderColor = ORANGE}
                 onBlur={e => e.target.style.borderColor = '#e0dbd6'} />
             </div>
+
+            {/* ➕ New Customer — shop, people, DRPs, Big 3 in one go (Mark 2026-09-10) */}
+            <button onClick={() => setShowNewCustomer(true)}
+              className="text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 text-white"
+              style={{ backgroundColor: '#15803d' }}
+              title="Add a new customer with contacts, DRPs and the Big 3 rule">
+              ➕<span className="hidden sm:inline">New Customer</span>
+            </button>
 
             {/* 🧾 Active shops with no Big 3 rule (Mark 2026-09-10) */}
             {big3Missing.length > 0 && (
@@ -933,6 +943,13 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
       )}
 
       {/* Van Contact Modal — CRM row + Van newsletter enrollment in one submit */}
+      {showNewCustomer && (
+        <NewCustomerModal
+          onClose={() => setShowNewCustomer(false)}
+          onCreated={() => fetchShops()}
+        />
+      )}
+
       {showVanContact && (
         <VanContactModal
           shops={shops}

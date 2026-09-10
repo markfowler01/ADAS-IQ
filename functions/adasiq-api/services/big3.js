@@ -97,7 +97,8 @@ export async function big3Map(req) {
     const br = parseBR(sh)
     const rules = normalizeRules(br.big3)
     const complete = rules && BIG3.every(b => rules[b.key])
-    if (rules) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete }
+    const drps = Array.isArray(sh.drps) ? sh.drps : []
+    if (rules || drps.length) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete: !!complete, drps }
     if (!complete && ['active', 'second_active', 'active2'].includes(sh.pipeline_stage)) missing.push({ id: sh.id, shop_name: sh.shop_name })
   }
   return { map, missing }

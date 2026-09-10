@@ -53,6 +53,69 @@ export function Big3Picker({ rules, onChange, disabled = false, compact = false 
   )
 }
 
+// ── DRPs (Mark 2026-09-10): which insurers the shop is direct-repair for ──
+export const DRP_OPTIONS = ['State Farm', 'Allstate', 'GEICO', 'Progressive', 'USAA', 'Farmers', 'Liberty Mutual', 'Nationwide', 'American Family', 'Safeco', 'PEMCO', 'Travelers', 'Hartford', 'Mutual of Enumclaw']
+export function DrpChips({ value = [], onChange, compact = false }) {
+  const [custom, setCustom] = useState('')
+  const has = v => value.some(x => x.toLowerCase() === v.toLowerCase())
+  const toggle = v => onChange(has(v) ? value.filter(x => x.toLowerCase() !== v.toLowerCase()) : [...value, v])
+  const extras = value.filter(v => !DRP_OPTIONS.some(o => o.toLowerCase() === v.toLowerCase()))
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1">
+        {[...DRP_OPTIONS, ...extras].map(o => (
+          <button key={o} type="button" onClick={() => toggle(o)}
+            className={`${compact ? 'text-[10px] px-2 py-0.5' : 'text-[11px] px-2.5 py-1'} font-bold rounded-full`}
+            style={has(o) ? { backgroundColor: '#1d4ed8', color: 'white' } : { backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+            {o}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-1 mt-1.5">
+        <input value={custom} onChange={e => setCustom(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && custom.trim()) { toggle(custom.trim()); setCustom('') } }}
+          placeholder="Other insurer + Enter" className="text-xs rounded-md px-2 py-1 flex-1" style={{ border: '1px solid #e0dbd6' }} />
+        <button type="button" onClick={() => { if (custom.trim()) { toggle(custom.trim()); setCustom('') } }} className="text-[11px] font-bold rounded-md px-2" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Add</button>
+      </div>
+    </div>
+  )
+}
+// CRM Billing-tab block for DRPs.
+export function DrpRules({ shop }) {
+  const [drps, setDrps] = useState(Array.isArray(shop?.drps) ? shop.drps : [])
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  useEffect(() => { setDrps(Array.isArray(shop?.drps) ? shop.drps : []); setDirty(false) }, [shop?.id])
+  async function save() {
+    setSaving(true); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ drps }) })
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`)
+      invalidateBig3Map(); setDirty(false); setMsg('✓ Saved')
+    } catch (e) { setMsg(`Couldn't save: ${e.message}`) } finally { setSaving(false) }
+  }
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ border: '1.5px solid #bfdbfe', backgroundColor: '#eff6ff' }}>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🏦 DRPs</div>
+          <div className="text-xs" style={{ color: '#666' }}>Insurers this shop is direct-repair for — shows on their job cards</div>
+        </div>
+        <button type="button" onClick={save} disabled={!dirty || saving} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1d4ed8', opacity: !dirty || saving ? .4 : 1 }}>{saving ? 'Saving…' : 'Save DRPs'}</button>
+      </div>
+      <DrpChips value={drps} onChange={v => { setDrps(v); setDirty(true) }} />
+      {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
+    </div>
+  )
+}
+export function DrpBadge({ shopName, size = 'xs' }) {
+  const map = useBig3Map()
+  const entry = map[shopKeyOf(shopName)]
+  if (!entry?.drps?.length) return null
+  const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
+  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#dbeafe', color: '#1e40af' }} title="Direct-repair programs">🏦 DRP: {entry.drps.join(' · ')}</span>
+}
+
 // ── Rule map for card badges (one fetch per session, 5-min refresh) ─────
 let _map = null, _mapAt = 0, _mapPromise = null
 const shopKeyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
