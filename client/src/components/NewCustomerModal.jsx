@@ -10,7 +10,7 @@ import { Big3Picker, DrpChips, describeRules } from './books/Big3Rules.jsx'
 const ORANGE = '#CD4419'
 const GREEN = '#15803d'
 const ROLES = ['Owner', 'General Manager', 'Estimator', 'Service Advisor', 'Parts Manager', 'Accounting', 'Receptionist', 'Other']
-const DEFAULT_BIG3 = { cal_id: 'charge', pcsi: 'included', post_scan: 'included' }
+const DEFAULT_BIG3 = { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
 const blankPerson = role => ({ id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, role, name: '', phone: '', email: '' })
 
 export default function NewCustomerModal({ onClose, onCreated }) {

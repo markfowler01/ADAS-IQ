@@ -11,20 +11,25 @@ export const BIG3 = [
   { key: 'cal_id',    label: 'Cal ID report' },
   { key: 'pcsi',      label: 'Post Collision Safety Inspection' },
   { key: 'post_scan', label: 'Post-Scan' },
+  // Big FOUR (Mark 2026-09-10): Snapshot replaces Post-Scan when charged —
+  // the shop does its own post-scan but lets us do a snapshot.
+  { key: 'snapshot',  label: 'Calibration Snapshot', modes: ['charge', 'off'], hint: 'Charge = replaces Post-Scan' },
 ]
 // Two states (Mark 2026-09-10): all three are on every invoice —
 // Charge = the paid item, Included = the "(included)" $0 item.
 export const MODES = [
   { id: 'charge',   label: 'Charge',   color: '#15803d', bg: '#dcfce7' },
   { id: 'included', label: 'Included', color: '#1d4ed8', bg: '#dbeafe' },
+  { id: 'off',      label: 'Off',      color: '#6b7280', bg: '#f3f4f6' },
 ]
 const LEGACY = { bill: 'charge', shop: 'included' }
 export const normalizeMode = m => LEGACY[m] || m
 export function describeRules(rules) {
   if (!rules) return 'no rule yet'
-  const charge = BIG3.filter(b => normalizeMode(rules[b.key]) === 'charge').map(b => b.label)
-  const inc = BIG3.filter(b => normalizeMode(rules[b.key]) === 'included').map(b => b.label)
-  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null].filter(Boolean).join(' · ') || 'no rule yet'
+  const snap = normalizeMode(rules.snapshot) === 'charge'
+  const charge = BIG3.filter(b => normalizeMode(rules[b.key]) === 'charge' && !(b.key === 'post_scan' && snap)).map(b => b.label)
+  const inc = BIG3.filter(b => normalizeMode(rules[b.key]) === 'included' && !(b.key === 'post_scan' && snap)).map(b => b.label)
+  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null, snap ? 'Post-Scan off (snapshot instead)' : null].filter(Boolean).join(' · ') || 'no rule yet'
 }
 
 // The three rows of chips. rules = { cal_id, pcsi, post_scan } (any may be unset).
@@ -34,9 +39,9 @@ export function Big3Picker({ rules, onChange, disabled = false, compact = false 
     <div className="flex flex-col gap-1.5">
       {BIG3.map(b => (
         <div key={b.key} className={`flex items-center gap-2 ${compact ? '' : 'py-0.5'}`}>
-          <span className={`${compact ? 'text-[11px]' : 'text-xs'} font-semibold flex-1 min-w-0 truncate`} style={{ color: '#1a1a1a' }}>{b.label}</span>
+          <span className={`${compact ? 'text-[11px]' : 'text-xs'} font-semibold flex-1 min-w-0 truncate`} style={{ color: '#1a1a1a' }} title={b.hint || ''}>{b.label}{b.hint && !compact ? <span className="font-normal" style={{ color: '#888' }}> · {b.hint}</span> : null}</span>
           <div className="flex gap-1">
-            {MODES.map(m => {
+            {MODES.filter(m => (b.modes || ['charge', 'included']).includes(m.id)).map(m => {
               const on = normalizeMode(r[b.key]) === m.id
               return (
                 <button key={m.id} type="button" disabled={disabled} onClick={() => onChange({ ...r, [b.key]: m.id })}
@@ -142,8 +147,9 @@ export function Big3Badge({ shopName, size = 'xs' }) {
     return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e' }} title="No Big 3 rule yet — default: Cal ID charged, PCSI + Post-Scan included. The first invoice will ask.">🧾 Big 3: default (no rule yet)</span>
   }
   const r = entry.rules
-  const short = b => b.key === 'pcsi' ? 'PCSI' : b.key === 'post_scan' ? 'Post-Scan' : 'Cal ID'
-  const charge = BIG3.filter(b => normalizeMode(r[b.key]) === 'charge').map(short)
+  const short = b => b.key === 'pcsi' ? 'PCSI' : b.key === 'post_scan' ? 'Post-Scan' : b.key === 'snapshot' ? 'Snapshot' : 'Cal ID'
+  const snapOn = normalizeMode(r.snapshot) === 'charge'
+  const charge = BIG3.filter(b => normalizeMode(r[b.key]) === 'charge' && !(b.key === 'post_scan' && snapOn)).map(short)
   const text = charge.length ? `Charge: ${charge.join(' · ')}` : 'All 3 included'
   return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#dcfce7', color: '#166534' }} title={describeRules(r)}>🧾 {text}</span>
 }
@@ -164,7 +170,7 @@ export default function Big3Rules({ shop }) {
     }).catch(() => {})
     return () => { dead = true }
   }, [shop?.id])
-  const complete = rules && BIG3.every(b => rules[b.key])
+  const complete = rules && BIG3.filter(b => b.key !== 'snapshot').every(b => rules[b.key])
   const [suggest, setSuggest] = useState(null)
   const [suggesting, setSuggesting] = useState(false)
   async function askHistory() {

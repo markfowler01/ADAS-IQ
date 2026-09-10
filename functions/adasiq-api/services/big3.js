@@ -16,14 +16,19 @@ import { postToCliqChannel, postToCliqChannelById, DISPATCH_CHANNEL, MARK_ALERT_
 //   base      = the $0 "(included)" Books item (always exists)
 //   paid      = the charged Books item; post_scan is pool-aware (AS/SFP/
 //               AmFam have their own) and falls back to Post-Calibration Scan
+// Big FOUR (Mark 2026-09-10): Calibration Snapshot joins the list. It has
+// no "(included)" twin — it's Charge or Off — and it REPLACES Post-Scan:
+// used when the shop does its own post-scan but lets us do a snapshot.
+// Snapshot = charge ⇒ Post-Scan is left off the invoice entirely.
 export const BIG3 = [
   { key: 'cal_id',    base: 'Calibration Identification Report (included)',        paid: 'Calibration Identification Report',        label: 'Cal ID report' },
   { key: 'pcsi',      base: 'Post Collision Safety Inspection 1 (included)', paid: 'Post Collision Safety Inspection 1',        label: 'Post Collision Safety Inspection' },
   { key: 'post_scan', base: 'Post-Scan (included)',                          paid: 'Post-Scan', paidFallback: 'Post-Calibration Scan', label: 'Post-Scan' },
+  { key: 'snapshot',  base: null,                                            paid: 'Calibration Snapshot', label: 'Calibration Snapshot', modes: ['charge', 'off'] },
 ]
-export const MODES = { charge: 'Charge', included: 'Included' }
-// Until a shop has a rule: Cal ID charged (as today), the other two included.
-export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', post_scan: 'included' }
+export const MODES = { charge: 'Charge', included: 'Included', off: 'Off' }
+// Until a shop has a rule: Cal ID charged (as today), PCSI + Post-Scan included, Snapshot off.
+export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
 export const BASE_TO_KEY = Object.fromEntries(BIG3.map(b => [b.base, b.key]))
 const LEGACY = { bill: 'charge', shop: 'included' }
 
@@ -33,15 +38,20 @@ const loose = s => shopKeyOf(s).replace(/(autobody|bodyshop|collision|repair|cen
 export function normalizeRules(r) {
   if (!r || typeof r !== 'object') return null
   const out = {}
-  for (const b of BIG3) { const v = LEGACY[r[b.key]] || r[b.key]; if (MODES[v]) out[b.key] = v }
+  for (const b of BIG3) {
+    const v = LEGACY[r[b.key]] || r[b.key]
+    const allowed = b.modes || ['charge', 'included']
+    if (allowed.includes(v)) out[b.key] = v
+  }
   return Object.keys(out).length ? out : null
 }
 export function withDefaults(rules) { return { ...DEFAULT_RULES, ...(normalizeRules(rules) || {}) } }
 export function describeRules(rules) {
   if (!rules) return 'no rule yet'
-  const charge = BIG3.filter(b => rules[b.key] === 'charge').map(b => b.label)
-  const inc = BIG3.filter(b => rules[b.key] === 'included').map(b => b.label)
-  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null].filter(Boolean).join(' · ') || 'no rule yet'
+  const charge = BIG3.filter(b => rules[b.key] === 'charge' && !(b.key === 'post_scan' && rules.snapshot === 'charge')).map(b => b.label)
+  const inc = BIG3.filter(b => rules[b.key] === 'included' && !(b.key === 'post_scan' && rules.snapshot === 'charge')).map(b => b.label)
+  const off = rules.snapshot === 'charge' ? ['Post-Scan (snapshot instead)'] : []
+  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null, off.length ? `Off: ${off.join(', ')}` : null].filter(Boolean).join(' · ') || 'no rule yet'
 }
 
 export async function findShopByName(req, name) {

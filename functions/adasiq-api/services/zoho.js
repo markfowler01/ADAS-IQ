@@ -215,7 +215,7 @@ async function fetchItemCatalog(token) {
     const items = res.data?.items || []
     allItems = allItems.concat(items
       .filter((i) => String(i.status || 'active').toLowerCase() === 'active')
-      .map((i) => ({ item_id: i.item_id, name: i.name, rate: i.rate || 0 })))
+      .map((i) => ({ item_id: i.item_id, name: i.name, rate: i.rate || 0, product_type: i.product_type || 'service' })))
     hasMore = res.data?.page_context?.has_more_page === true
     page++
   }
@@ -622,9 +622,16 @@ export async function createDraftQuote({
   const b3Zero = new Set(Array.isArray(fixedZero) ? fixedZero : [])
   const b3Remove = new Set()
   let big3Note = ''
+  let snapshotLine = null
   {
     const rulesEff = b3.withDefaults(big3Rules)
+    if (rulesEff.snapshot === 'charge') {
+      b3Remove.add('Post-Scan (included)')             // snapshot instead of post-scan
+      const it = itemByName.get('calibration snapshot')
+      snapshotLine = it ? { item_id: it.item_id, description: '', quantity: 1 } : { name: 'Calibration Snapshot', description: 'NEEDS PRICE — item not in Books catalog', rate: 0, quantity: 1 }
+    }
     for (const b of b3.BIG3) {
+      if (!b.base) continue                             // snapshot handled above
       if (rulesEff[b.key] !== 'charge') continue      // Included = the base "(included)" item as-is
       if (b3Overrides[b.base]) continue                // explicit modal pick wins
       const paid = itemByName.get(b.paid.toLowerCase())
@@ -636,12 +643,13 @@ export async function createDraftQuote({
     console.log(`[zoho] ${big3Note}`)
   }
   const fixedLineItems = baseFixedNames.map((baseName) => {
-    if (b3Remove.has(baseName)) { console.log(`[zoho] Big 3: "${baseName}" left off — shop handles it`); return null }
+    if (b3Remove.has(baseName)) { console.log(`[zoho] Big 4: "${baseName}" left off — snapshot instead`); return null }
     const name = b3Overrides[baseName] || baseName
     const li = buildLineItem(name, '')
     if (li && b3Zero.has(baseName)) li.rate = 0
     return li
   }).filter(Boolean)
+  if (snapshotLine) fixedLineItems.push(snapshotLine)
   const calLineItems = calibrations.map((cal) => {
     // Review-modal line edits (Mark 2026-08-29 "ok yes"): remove, custom
     // rate, custom quantity — all decided on the review screen.
@@ -1260,8 +1268,19 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
   const b3mod = await import('./big3.js')
   const rulesEff = b3mod.withDefaults(big3Rules)
   const big3Applied = {}
+  const snapshotOn = rulesEff.snapshot === 'charge'
   for (const b of b3mod.BIG3) {
     const mode = rulesEff[b.key]
+    if (b.key === 'snapshot') {
+      if (mode !== 'charge') { big3Applied[b.key] = { mode: 'off', line: null }; continue }
+      const it = itemByNamePrev.get(b.paid.toLowerCase())
+      const line = it
+        ? { name: it.name, requested: b.paid, rate: Number(it.rate) || 0, quantity: 1, amount: Number(it.rate) || 0, needs_price: false, included: false, swappable: false, big3: 'charge' }
+        : { name: b.paid, requested: b.paid, rate: 0, quantity: 1, amount: 0, needs_price: true, included: false, swappable: false, big3: 'charge' }
+      lines.push(line); big3Applied[b.key] = { mode, line: line.name }
+      continue
+    }
+    if (b.key === 'post_scan' && snapshotOn) { big3Applied[b.key] = { mode: 'off', line: null, why: 'snapshot instead' }; continue }
     const baseItem = itemByNamePrev.get(b.base.toLowerCase())
     let line
     if (mode === 'charge') {

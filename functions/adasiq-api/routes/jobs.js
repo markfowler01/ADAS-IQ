@@ -147,6 +147,8 @@ function rowToJob(row) {
     odo_before:       row.odo_before       || '',
     odo_after:        row.odo_after        || '',
     request_type:     row.request_type     || '',   // 'quote' | 'job' | '' (Mark 2026-09-10: Quotes Requested column)
+    extra_items:      row.extra_items      || '',   // JSON [{item_id,name,rate,quantity,note}] added by the tech at Ready to Invoice
+    billed_via_app:   row.billed_via_app   || '',   // '💸 Bill it' stamp: "<who> <when>"
   }
 }
 
@@ -183,6 +185,8 @@ function jobToRow(job) {
     odo_before:       String(job.odo_before ?? '').slice(0, 20),
     odo_after:        String(job.odo_after ?? '').slice(0, 20),
     request_type:     (job.status || 'need_dispatch') === 'job_requested' ? String(job.request_type || '').slice(0, 10) : '',
+    extra_items:      typeof job.extra_items === 'string' ? job.extra_items : (job.extra_items ? JSON.stringify(job.extra_items) : ''),
+    billed_via_app:   String(job.billed_via_app || '').slice(0, 40),
   }
 }
 
@@ -1454,6 +1458,21 @@ router.delete('/:id/photo-slot/:slot', async (req, res) => {
     console.error('[photo-slot delete]', err.message)
     res.status(500).json({ error: err.message })
   }
+})
+
+// GET /api/jobs/catalog — Books items for the tech's "add an item" picker
+// at Ready to Invoice (Mark 2026-09-10: "have the technician add the
+// actual item"). Cached 10 min. Services + goods, name/rate/type only.
+let _catCache = { at: 0, items: [] }
+router.get('/catalog', async (req, res) => {
+  try {
+    if (Date.now() - _catCache.at > 10 * 60 * 1000) {
+      const { fetchItemCatalog } = await import('../services/zoho.js')
+      const { allItems } = await fetchItemCatalog(await getAccessToken())
+      _catCache = { at: Date.now(), items: (allItems || []).map(i => ({ item_id: i.item_id, name: i.name, rate: Number(i.rate) || 0, type: i.product_type || 'service' })).sort((a, b) => a.name.localeCompare(b.name)) }
+    }
+    res.json({ ok: true, items: _catCache.items })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 // GET /api/jobs/:id/photo-progress — checklist state for a card.

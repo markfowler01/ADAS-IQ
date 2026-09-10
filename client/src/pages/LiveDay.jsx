@@ -434,6 +434,18 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
 
 function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
   const [text, setText] = useState('')
+  // Real Books items instead of a text (Mark 2026-09-10: "have the
+  // technician add the actual item"). Searchable catalog, qty, note.
+  const [catalog, setCatalog] = useState([])
+  const [q, setQ] = useState('')
+  const [items, setItems] = useState([])
+  useEffect(() => {
+    let dead = false
+    apiFetch(`${API_BASE}/api/jobs/catalog`).then(r => r.json()).then(d => { if (!dead && d.ok) setCatalog(d.items || []) }).catch(() => {})
+    return () => { dead = true }
+  }, [])
+  const hits = q.trim().length >= 2 ? catalog.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8) : []
+  const addItem = it => { setItems(xs => [...xs, { item_id: it.item_id, name: it.name, rate: it.rate, quantity: 1, type: it.type }]); setQ('') }
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
       style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
@@ -454,9 +466,33 @@ function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
           <button onClick={onClose} className="text-xl px-1" style={{ color: '#888' }}>×</button>
         </div>
 
-        <div className="text-sm mb-2" style={{ color: '#1a1a1a' }}>
-          Any other services to add? Kat will pull these into the invoice.
+        <div className="text-sm mb-1" style={{ color: '#1a1a1a' }}>
+          Add anything extra you did — pick the real item so it lands on the invoice.
         </div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search items… (key fob, programming, part)"
+          className="w-full rounded-xl px-3 py-2.5 text-sm mb-1" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
+        {hits.length > 0 && (
+          <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #ebe7e3' }}>
+            {hits.map(it => (
+              <button key={it.item_id} type="button" onClick={() => addItem(it)} className="w-full text-left px-3 py-2 flex justify-between text-sm" style={{ borderTop: '1px solid #f1ede9', backgroundColor: 'white' }}>
+                <span className="truncate" style={{ color: '#1a1a1a' }}>{it.name}{it.type === 'goods' ? ' · part' : ''}</span><span style={{ color: '#555' }}>${Number(it.rate).toFixed(2)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {items.length > 0 && (
+          <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1.5px solid #bbf7d0' }}>
+            {items.map((it, i) => (
+              <div key={i} className="flex items-center gap-2 px-3 py-2 text-sm" style={{ borderTop: i ? '1px solid #f1ede9' : 'none', backgroundColor: '#f0fdf4' }}>
+                <span className="flex-1 truncate font-semibold" style={{ color: '#166534' }}>{it.name}</span>
+                <input type="number" min="1" value={it.quantity} onChange={e => setItems(xs => xs.map((x, j) => j === i ? { ...x, quantity: Math.max(1, Number(e.target.value) || 1) } : x))} className="w-12 text-xs rounded-md px-1 py-0.5 text-center" style={{ border: '1px solid #bbf7d0' }} />
+                <span className="text-xs" style={{ color: '#555' }}>${(it.rate * it.quantity).toFixed(2)}</span>
+                <button type="button" onClick={() => setItems(xs => xs.filter((_, j) => j !== i))} className="w-6 h-6 rounded-full font-bold" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="text-xs mb-1" style={{ color: '#888' }}>Notes for Kat (optional)</div>
         <textarea
           value={text}
           onChange={e => setText(e.target.value)}
@@ -469,15 +505,15 @@ function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
 
         <div className="flex gap-2 mt-3">
           <button
-            onClick={() => onSubmit('')}
+            onClick={() => onSubmit('', [])}
             className="flex-1 rounded-xl py-2.5 text-sm font-semibold"
             style={{ backgroundColor: 'white', color: '#666', border: '1px solid #e0dbd6' }}
           >Skip · No extras</button>
           <button
-            onClick={() => onSubmit(text)}
+            onClick={() => onSubmit(text, items)}
             className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white"
             style={{ backgroundColor: '#7e22ce' }}
-          >{text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
+          >{items.length ? `🟢 Ready · ${items.length} item${items.length === 1 ? '' : 's'} added` : text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
         </div>
       </div>
     </div>
@@ -956,13 +992,16 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   // Called by the modal — flips the job to ready_invoice, optionally
   // attaching extra_services text that surfaces on the Kanban card + in
   // the Cliq #Dispatch alert so Kat can pull them into the invoice.
-  async function submitReadyToInvoice(extraServices) {
+  async function submitReadyToInvoice(extraServices, extraItems = []) {
     const job = readyInvoiceJob
     if (!job?.id) return
     setReadyInvoiceJob(null)
     try {
       const body = { status: 'ready_invoice' }
-      if (extraServices && extraServices.trim()) body.extra_services = extraServices.trim()
+      const itemText = (extraItems || []).map(i => `${i.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ')
+      const note = [itemText, (extraServices || '').trim()].filter(Boolean).join(' · ')
+      if (note) body.extra_services = note
+      if (extraItems?.length) body.extra_items = JSON.stringify(extraItems.map(i => ({ item_id: i.item_id, name: i.name, rate: i.rate, quantity: i.quantity })))
       if (job._photoOverride) body.photo_override = job._photoOverride
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PATCH',

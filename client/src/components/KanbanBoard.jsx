@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import { Big3Badge, DrpBadge } from './books/Big3Rules.jsx'
+import BillItModal from './BillItModal.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
@@ -669,7 +670,7 @@ function QuoteJacket({ q, job, readOnly, busy, onAction, children }) {
   )
 }
 
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote, estimateTotal, expanded = true, onToggleExpand = null }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote, estimateTotal, expanded = true, onToggleExpand = null }) {
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
@@ -983,6 +984,17 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </button>
       )}
 
+      {/* 💸 Bill it (Mark 2026-09-10): insurance + cost invoice in one go, reviewed first. Staff only. */}
+      {onBillIt && !job.invoiced && !job.billed_via_app && (job.status === 'ready_invoice' || job.status === 'complete') && job.zoho_estimate_id && (
+        <button onClick={e => { e.stopPropagation(); onBillIt(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 text-white"
+          style={{ backgroundColor: '#15803d', padding: '11px 0', minHeight: '44px', boxShadow: '0 3px 10px rgba(21,128,61,.25)' }}>
+          <span className="text-sm font-extrabold">💸 Bill it — insurance + cost invoice</span>
+        </button>
+      )}
+      {job.billed_via_app && (
+        <div className="text-[11px] mt-2 px-2 py-1 rounded-lg" style={{ backgroundColor: '#f0fdf4', color: '#166534' }}>💸 Billed via app · {job.billed_via_app}</div>
+      )}
       {/* Create Invoices button — only on ready_invoice or complete */}
       {job.invoiced ? (
         <div className="w-full flex items-center justify-center gap-2 rounded-xl mt-2"
@@ -1058,7 +1070,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote, estimateTotals, expandedId, onToggleExpand, slim, onUnslim, onSlim, slimTotal }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote, estimateTotals, expandedId, onToggleExpand, slim, onUnslim, onSlim, slimTotal }) {
   const isOver = dragOverCol === column.id
 
   // Slim column (compact board, Mark 2026-09-03): empty columns and the
@@ -1175,6 +1187,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onMoveToPendingParts={onMoveToPendingParts}
             onUploadReport={onUploadReport}
             onInvoiceFromJob={onInvoiceFromJob}
+            onBillIt={onBillIt}
             onDownloadReport={onDownloadReport}
             reportBusyId={reportBusyId}
             customerNotes={customerNotes}
@@ -1456,6 +1469,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     onManualInvoice(data)
   }
   const [calReviewJob, setCalReviewJob] = useState(null)
+  const [billItJob, setBillItJob] = useState(null)   // 💸 Bill it review modal (staff only)
   // 📸 Photos-first before Ready to Invoice, on the board too (Mark
   // 2026-09-10). The sheet opens on the first missing shot; when the set
   // is complete it hands off to the calibration review as before.
@@ -2250,6 +2264,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                         onCreateInvoices={setInvoicingJob}
                         onUploadReport={handleCardReportUpload}
                         onInvoiceFromJob={handleInvoiceFromJob}
+                  onBillIt={isTechnician ? null : setBillItJob}
                         onDownloadReport={handleDownloadAdasReport}
                         reportBusyId={reportBusyId}
                         customerNotes={customerNotes}
@@ -2344,6 +2359,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onMoveToPendingParts={handleMoveToPendingParts}
                   onUploadReport={handleCardReportUpload}
                   onInvoiceFromJob={handleInvoiceFromJob}
+                  onBillIt={isTechnician ? null : setBillItJob}
                   onDownloadReport={handleDownloadAdasReport}
                   reportBusyId={reportBusyId}
                   customerNotes={customerNotes}
@@ -2370,6 +2386,10 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           onJobUpdated={j => setJobs(prev => prev.map(x => x.id === j.id ? { ...x, ...j } : x))}
           onComplete={(j, override) => { setPhotoGateJob(null); setPhotoOverride(override || ''); setCalReviewJob({ ...photoGateJob, ...j }) }}
         />
+      )}
+
+      {billItJob && (
+        <BillItModal job={billItJob} user={user} onClose={() => setBillItJob(null)} onBilled={() => { setBillItJob(null); fetchJobs() }} />
       )}
 
       {calReviewJob && (
@@ -2721,7 +2741,7 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
   )
 }
 
-function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts, onCreateInvoices, onUploadReport, onInvoiceFromJob, onDownloadReport, reportBusyId, customerNotes }) {
+function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts, onCreateInvoices, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes }) {
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
@@ -2816,6 +2836,13 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
 
+      {onBillIt && !job.invoiced && !job.billed_via_app && canInvoice && job.zoho_estimate_id && (
+        <button onClick={e => { e.stopPropagation(); onBillIt(job) }}
+          className="w-full flex items-center justify-center gap-2 rounded-xl mb-2 text-white"
+          style={{ backgroundColor: '#15803d', padding: '11px 0', minHeight: '44px' }}>
+          <span className="text-sm font-extrabold">💸 Bill it</span>
+        </button>
+      )}
       {/* Action button — Create Invoices if ready, else Ready to Invoice */}
       {!job.invoiced && job.status !== 'job_requested' && (
         canInvoice ? (
