@@ -86,9 +86,11 @@ export async function saveBig3(req, shopName, rules, by = '', extra = {}) {
   if (shop) shop = await updateShop(req, shop.id, { ...shop, billing_rules: br })
   else shop = await insertShop(req, { shop_name: shopName, pipeline_stage: 'active', referral_source: 'Invoice', billing_rules: br, people: [], activities: [] })
   const line = `🧾 *Big 3 rule ${before ? 'changed' : 'set'} · ${shop.shop_name}*\n${describeRules(clean)}${pct != null ? ` · cost-invoice discount ${pct}%` : ''}${before ? `\n(was: ${describeRules(before)})` : ''}\nby ${by || 'app'}`
-  postToCliqChannel(DISPATCH_CHANNEL, line).catch(() => {})
-  postToCliqChannelById(MARK_ALERT_CHANNEL_ID, line).catch(() => {})
-  console.log(`[big3] ${shop.shop_name}: ${describeRules(clean)} (by ${by || 'app'})`)
+  if (!extra.silent) {
+    postToCliqChannel(DISPATCH_CHANNEL, line).catch(() => {})
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, line).catch(() => {})
+  }
+  console.log(`[big3] ${shop.shop_name}: ${describeRules(clean)}${pct != null ? ` · ${pct}%` : ''} (by ${by || 'app'}${extra.silent ? ', silent' : ''})`)
   return { shop_id: shop.id, changed: true }
 }
 
