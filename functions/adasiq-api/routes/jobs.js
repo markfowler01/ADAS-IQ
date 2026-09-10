@@ -639,6 +639,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const table = getTable(req)
     const currentRow = await table.getRow(req.params.id)
+    if (!currentRow) return res.status(404).json({ error: 'Job not found — it may have been invoiced or deleted. Refresh the board.' })
     const currentJob = rowToJob(currentRow)
 
     // Auto-status-move: if technician is newly assigned (or changed) and the
