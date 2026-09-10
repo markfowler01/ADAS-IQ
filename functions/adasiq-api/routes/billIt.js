@@ -87,7 +87,7 @@ async function buildPreview(req, job) {
     const eligible = pct != null && pct > 0 && amount > 0 && !part && !NO_DISCOUNT.test(li.name || '')
     const disc = eligible ? pct : 0
     const cost = r2(amount * (1 - disc / 100))
-    return { ...li, amount, is_part: part, discount_pct: disc, cost_amount: cost, why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
+    return { ...li, amount, is_part: part, never_discount: NO_DISCOUNT.test(li.name || ''), discount_pct: disc, cost_amount: cost, why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
   })
   const insuranceTotal = r2(discounted.reduce((s, l) => s + l.amount, 0))
   const costTotal = r2(discounted.reduce((s, l) => s + l.cost_amount, 0))
@@ -144,13 +144,8 @@ router.post('/:id/bill', async (req, res) => {
       const u = await axios.put(`${API}/estimates/${p.estimate_id}`, { line_items: merged }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
       if (u.data?.code !== 0) throw new Error(`Could not add extras to the estimate: ${u.data?.message || u.status}`)
     }
-    // 2. Insurance invoice = the estimate, emailed as-is
-    if (!dry) {
-      const e1 = await axios.post(`${API}/estimates/${p.estimate_id}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
-      if (e1.data?.code !== 0) throw new Error(`Estimate email failed: ${e1.data?.message || e1.status}`)
-    }
-    // 3. Cost invoice: same lines, per-line discount, same number, Due on Receipt
-    // Re-apply the % Kat chose in the modal (may differ from the rule on file).
+    // 2. Cost invoice FIRST (same lines, per-line discount, same number, Due
+    //    on Receipt) — if Books rejects it, nothing has been emailed yet.
     const eligible = l => l.amount > 0 && !isPart(l) && !NO_DISCOUNT.test(l.name || '')
     p.lines = p.lines.map(l => { const d = pct > 0 && eligible(l) ? pct : 0; return { ...l, discount_pct: d, cost_amount: r2(l.amount * (1 - d / 100)) } })
     p.cost_total = r2(p.lines.reduce((s, l) => s + l.cost_amount, 0)); p.saved = r2(p.insurance_total - p.cost_total)
@@ -167,19 +162,25 @@ router.post('/:id/bill', async (req, res) => {
         notes: `Cost invoice · ${pct}% partnership discount${p.customer_type ? ` (${p.customer_type.replace(/_/g, ' ')})` : ''} on services · billed via Absolute ADAS app by ${by} · from estimate ${p.estimate_number}`,
         custom_fields: [], salesperson_name: job.technician || '',
       }
-      const c = await axios.post(`${API}/invoices`, body, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
+      // Books auto-numbers invoices; this flag lets us reuse the estimate number.
+      const c = await axios.post(`${API}/invoices`, body, { headers: H(token), params: { ...org(), ignore_auto_number_generation: true }, timeout: 20000, validateStatus: s => s < 500 })
       if (c.data?.code !== 0) {
-        // Number collision or custom-number setting → let Books number it
-        if (/invoice number|already exists|duplicate/i.test(String(c.data?.message || ''))) {
+        // Number collision / numbering rule → let Books number it, note the estimate in the reference.
+        if (/number|already exists|duplicate/i.test(String(c.data?.message || ''))) {
           delete body.invoice_number
           const c2 = await axios.post(`${API}/invoices`, body, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
           if (c2.data?.code !== 0) throw new Error(`Cost invoice failed: ${c2.data?.message || c2.status}`)
           inv = c2.data.invoice
         } else throw new Error(`Cost invoice failed: ${c.data?.message || c.status}`)
       } else inv = c.data.invoice
+      // 3. Insurance invoice = the estimate, emailed as-is
+      const e1 = await axios.post(`${API}/estimates/${p.estimate_id}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
+      if (e1.data?.code !== 0) console.log('[bill-it] estimate email failed:', e1.data?.message)
       // 4. Email the cost invoice
       const e2 = await axios.post(`${API}/invoices/${inv.invoice_id}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
       if (e2.data?.code !== 0) console.log('[bill-it] cost invoice email failed:', e2.data?.message)
+      const emailNote = [e1.data?.code !== 0 ? `estimate email failed (${e1.data?.message})` : '', e2.data?.code !== 0 ? `invoice email failed (${e2.data?.message})` : ''].filter(Boolean).join('; ')
+      if (emailNote) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${inv.invoice_number}: invoice created but ${emailNote} — send from Books by hand.`).catch(() => {})
       // Stamp the card
       await updateJobPublic(req, job.id, { ...job, invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,
         notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: insurance invoice (estimate ${p.estimate_number}) + cost invoice ${inv.invoice_number} at ${pct}% → ${emails.join(', ')}` })

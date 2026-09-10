@@ -46,9 +46,11 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
 
   // Recompute cost lines client-side when Kat edits the % (server recomputes on send).
   const lines = (p?.lines || []).map(l => {
-    const eligible = l.discount_pct > 0 || (l.why === '' && l.amount > 0 && !l.is_part)
+    // Same rule as the server: services only, never parts, never Cal ID / SF post-scan.
+    const eligible = l.amount > 0 && !l.is_part && !l.never_discount
     const d = eligible && pct > 0 ? pct : 0
-    return { ...l, d, cost: Math.round(l.amount * (1 - d / 100) * 100) / 100 }
+    const why = l.amount > 0 && !eligible ? (l.is_part ? 'part — no discount' : 'never discounted') : ''
+    return { ...l, d, why, cost: Math.round(l.amount * (1 - d / 100) * 100) / 100 }
   })
   const insTotal = lines.reduce((s, l) => s + l.amount, 0)
   const costTotal = lines.reduce((s, l) => s + l.cost, 0)
