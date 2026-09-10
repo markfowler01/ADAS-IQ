@@ -35,6 +35,10 @@ export const ADA_CHANNEL_ID = 'P6015142000001219001'
 // URL: https://cliq.zoho.com/company/883116359/channels/aajobs
 export const AA_JOBS_CHANNEL = 'aajobs'
 
+// #Sales & Marketing (Mark 2026-09-10): every sales-stop post — stops,
+// interest, new-customer bonuses. Channel ID O6015142000000681003.
+export const SALES_CHANNEL = 'salesmarketing'
+
 // Dispatch channel — requests (job + quote) fan into #dispatch in addition
 // to #aajobs so the dispatch conversation stays with the people running
 // the schedule, not buried in the shared jobs feed.

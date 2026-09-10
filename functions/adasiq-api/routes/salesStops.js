@@ -2,7 +2,7 @@
 // in under a minute — pick the shop (nearest first), tap an outcome,
 // optionally scan a business card, one-line note. Lands in the CRM
 // (activity log, people, last_contact, target→contacted), posts to
-// #aajobs, and feeds the Live Day scoreboard: stops this week vs goal,
+// #Sales & Marketing, and feeds the Live Day scoreboard: stops this week vs goal,
 // streak, leaderboard.
 //
 // Money rule (Mark): stops carry NO bonus. A stop that turns into a NEW
@@ -19,7 +19,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import axios from 'axios'
 import { getAllShops, insertShop, updateShop } from './shops.js'
-import { postToCliqChannel, AA_JOBS_CHANNEL } from '../services/cliq.js'
+import { postToCliqChannel, SALES_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
 const TABLE = 'SalesStops'
@@ -425,7 +425,7 @@ router.post('/', async (req, res) => {
       import('../services/fromTheVan.js').then(m => m.addVanSubscriber({ email: person.email, firstName: person.name.split(' ')[0], lastName: person.name.split(' ').slice(1).join(' ') })).catch(() => {})
     }
 
-    // Team credit in #aajobs + fresh stats for the confetti screen.
+    // Team credit in #Sales & Marketing + fresh stats for the confetti screen.
     const stats = buildStats(await allStops(req), await weekGoal(req))
     const mine = stats.techs.find(t => t.tech === tech)
     const line = [
@@ -436,7 +436,7 @@ router.post('/', async (req, res) => {
       bonusStatus === 'pending' ? `🎯 Never invoiced — first job here pays ${tech} 1% of their first 30 days` : null,
       mine ? `📊 ${mine.week}/${mine.goal} this week${mine.streak >= 2 ? ` · 🔥 ${mine.streak}-day streak` : ''}${mine.hit ? ' · GET SOME!!!' : ''}` : null,
     ].filter(Boolean).join('\n')
-    await postToCliqChannel(AA_JOBS_CHANNEL, line).catch(e => console.log('[sales-stop] #aajobs post failed:', e.message))
+    await postToCliqChannel(SALES_CHANNEL, line).catch(e => console.log('[sales-stop] #Sales & Marketing post failed:', e.message))
 
     res.status(201).json({ ok: true, stop, shop: { id: shop.id, shop_name: shop.shop_name, pipeline_stage: shop.pipeline_stage }, new_shop: newShop, bonus_pending: bonusStatus === 'pending', stats: mine, leaderboard: stats.leaderboard })
   } catch (e) {
@@ -511,7 +511,7 @@ export async function trackNewCustomerBonus(req, invoice) {
       bj.sales = Math.round((bj.invoices.reduce((s, i) => s + i.total, 0)) * 100) / 100
       bj.bonus = Math.round(bj.sales * BONUS_RATE * 100) / 100
       await tbl(req).updateRow({ ROWID: active.id, bonus_json: JSON.stringify(bj) })
-      await postToCliqChannel(AA_JOBS_CHANNEL, `💰 *${active.tech}'s new customer ${customer}* invoiced again · $${total.toFixed(2)} → bonus now $${bj.bonus.toFixed(2)} (1% of $${bj.sales.toFixed(2)}, window to ${bj.window_end})`).catch(() => {})
+      await postToCliqChannel(SALES_CHANNEL, `💰 *${active.tech}'s new customer ${customer}* invoiced again · $${total.toFixed(2)} → bonus now $${bj.bonus.toFixed(2)} (1% of $${bj.sales.toFixed(2)}, window to ${bj.window_end})`).catch(() => {})
       return { tech: active.tech, bonus: bj.bonus }
     }
 
@@ -527,7 +527,7 @@ export async function trackNewCustomerBonus(req, invoice) {
     const bj = { first_invoice_date: date, window_end: addDays(date, BONUS_WINDOW_DAYS), invoices: [{ number, date, total }], sales: total, bonus: Math.round(total * BONUS_RATE * 100) / 100, rate: BONUS_RATE }
     await tbl(req).updateRow({ ROWID: recent.id, bonus_status: 'active', bonus_json: JSON.stringify(bj) })
     for (const s of stops.filter(x => x.id !== recent.id && x.bonus_status === 'pending')) await tbl(req).updateRow({ ROWID: s.id, bonus_status: '' }).catch(() => {})
-    await postToCliqChannel(AA_JOBS_CHANNEL, `💰🎉 *NEW CUSTOMER — ${customer}* · ${recent.tech}'s stop on ${recent.date} just paid off!\nFirst invoice ${number} · $${total.toFixed(2)} → ${recent.tech} earns 1% of everything they invoice through ${bj.window_end}. Bonus so far: $${bj.bonus.toFixed(2)}. GET SOME!!!`).catch(() => {})
+    await postToCliqChannel(SALES_CHANNEL, `💰🎉 *NEW CUSTOMER — ${customer}* · ${recent.tech}'s stop on ${recent.date} just paid off!\nFirst invoice ${number} · $${total.toFixed(2)} → ${recent.tech} earns 1% of everything they invoice through ${bj.window_end}. Bonus so far: $${bj.bonus.toFixed(2)}. GET SOME!!!`).catch(() => {})
     console.log(`[sales-stop bonus] ${recent.tech} ← ${customer} first invoice ${number} $${total}`)
     return { tech: recent.tech, bonus: bj.bonus, first: true }
   } catch (e) {
