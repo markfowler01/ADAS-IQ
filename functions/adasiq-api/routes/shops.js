@@ -287,6 +287,26 @@ router.post('/card-note', async (req, res) => {
 })
 
 // GET /api/shops
+// Big 3 rule on a CRM shop (Mark 2026-09-10) — read/set from the Billing tab.
+router.get('/:id/big3', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    const b3 = await import('../services/big3.js')
+    const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
+    res.json({ ok: true, rules: b3.normalizeRules(br.big3), set_by: br.big3_set_by || '', set_at: br.big3_set_at || '', modes: b3.MODES, big3: b3.BIG3 })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/:id/big3', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    const b3 = await import('../services/big3.js')
+    const rules = b3.normalizeRules(req.body?.rules || req.body)
+    if (!rules) return res.status(400).json({ error: 'rules required: cal_id / pcsi / post_scan = bill | included | shop' })
+    const r = await b3.saveBig3(req, shop.shop_name, rules, req.user?.name || req.user?.email || '')
+    res.json({ ok: true, ...r, rules })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const shops = await getAllShops(req)

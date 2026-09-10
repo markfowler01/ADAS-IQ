@@ -8,6 +8,7 @@ import CustomerPicker from './CustomerPicker'
 import SalespersonPicker from './SalespersonPicker'
 import Navbar from './Navbar'
 import LoadingSplash from './LoadingSplash.jsx'
+import { Big3Picker, describeRules as describeBig3 } from './books/Big3Rules.jsx'
 
 function todayPT() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -46,6 +47,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // or says cash. Kat taps it to flip either way.
   const [cashMode, setCashMode] = useState(() => isCashInsurerOrBlank(jobData?.insurer))
   const [poolOverride, setPoolOverride] = useState(() => (isCashInsurerOrBlank(jobData?.insurer) ? 'CP' : null))    // review-modal schedule pick
+  // 🧾 Big 3 rule (Mark 2026-09-10): null = use the shop's saved rule;
+  // an object = Kat's edit in the modal (remembered on create by default).
+  const [big3Rules, setBig3Rules] = useState(null)
+  const [big3Save, setBig3Save] = useState(true)
   const insurerOut = cashMode ? 'Cash' : (jobData?.insurer || '')
   function toggleCash() {
     const next = !cashMode
@@ -144,7 +149,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             insurer: insurerOut,
             make: jobData.make || '',
             customer_id: selectedCustomer?.id || null,
+            shop_name: selectedCustomer?.name || jobData.shop || '',
             pool_override: poolOverride || null,
+            big3_rules: big3Rules,
             calibrations: all,
           }),
         })
@@ -178,7 +185,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 
   // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
   // in Books — same review pattern as sending a quote.
-  async function openPriceReview(pool = poolOverride) {
+  async function openPriceReview(pool = poolOverride, rules = big3Rules) {
     if (typeof pool !== 'string') pool = poolOverride  // DOM event guard
     if (selected.length === 0) return
     setPreviewBusy(true)
@@ -191,7 +198,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           insurer: insurerOut,
           make: jobData.make || '',
           customer_id: selectedCustomer?.id || null,
+          shop_name: selectedCustomer?.name || jobData.shop || '',
           pool_override: pool || null,
+          big3_rules: rules || null,
           calibrations: selected.map(({ _id, ...rest }) => rest),
         }),
       })
@@ -208,6 +217,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   function changePool(pool) {
     setPoolOverride(pool)
     openPriceReview(pool)
+  }
+  function changeBig3(rules) {
+    setBig3Rules(rules)
+    openPriceReview(poolOverride, rules)
   }
 
   async function handleApprove(fixedOverrides = null, fixedZero = null, lineOverrides = null, lineEdits = null, addedItems = null) {
@@ -265,6 +278,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         line_edits: lineEdits && Object.keys(lineEdits).length ? lineEdits : null,
         added_items: addedItems && addedItems.length ? addedItems : null,
         pool_override: poolOverride || null,
+        big3_rules: big3Rules || pricePreview?.big3?.rules || null,
+        big3_save: big3Save,
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
@@ -676,6 +691,11 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           insurer={insurerOut}
           poolOverride={poolOverride}
           onPool={changePool}
+          big3={pricePreview.big3}
+          onBig3={changeBig3}
+          big3Save={big3Save}
+          onBig3Save={setBig3Save}
+          shopName={selectedCustomer?.name || jobData.shop || ''}
           onClose={() => setPricePreview(null)}
           onConfirm={handleApprove}
           busy={submitting || previewBusy}
@@ -738,7 +758,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 // carry, priced by the real matcher, fully editable before anything
 // exists in Books — schedule picker, tier swaps, included/paid toggles,
 // inline rate edit, quantity stepper, add + remove lines.
-function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onConfirm, busy }) {
+function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3, big3Save, onBig3Save, shopName, onClose, onConfirm, busy }) {
   const [picks, setPicks] = useState({})       // fixed toggle: name → 'paid' | 'included'
   const [swaps, setSwaps] = useState({})       // name → catalog item pick
   const [swapOpen, setSwapOpen] = useState(null)
@@ -776,7 +796,8 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
   const baseLines = preview.lines.map(li => {
     const swap = swaps[li.requested] && poolByName[swaps[li.requested]]
     let out
-    if (swap) out = { ...li, name: swap.name, rate: swap.rate, needs_price: false, included: false, _swapped: true, _toggle: false }
+    if (li.big3) out = { ...li, _state: li.big3 === 'bill' ? 'paid' : 'included', _toggle: false }
+    else if (swap) out = { ...li, name: swap.name, rate: swap.rate, needs_price: false, included: false, _swapped: true, _toggle: false }
     else if (li.paid_option && stateOf(li) === 'paid') out = { ...li, name: li.paid_option.name, rate: li.paid_option.rate, included: false, _state: 'paid', _toggle: true }
     else if (li.zero_option && stateOf(li) === 'included') out = { ...li, rate: 0, included: true, _state: 'included', _toggle: true }
     else out = { ...li, _state: stateOf(li), _toggle: !!(li.paid_option || li.zero_option) }
@@ -867,6 +888,24 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, onClose, onC
             </button>
           ))}
         </div>
+        {/* 🧾 Big 3 rule for this shop (Mark 2026-09-10) */}
+        {big3 && (
+          <div className="rounded-xl p-3 mb-2" style={big3.source === 'unset' && !(big3.rules && ['cal_id','pcsi','post_scan'].every(k => big3.rules[k]))
+            ? { backgroundColor: '#fffbeb', border: '1.5px solid #fde68a' }
+            : { backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0' }}>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="text-[11px] font-bold" style={{ color: '#1a1a1a' }}>🧾 Big 3 for {shopName || big3.shop_name || 'this shop'}</div>
+              <div className="text-[10px]" style={{ color: '#888' }}>
+                {big3.source === 'shop' ? `shop rule${big3.set_by ? ` · ${big3.set_by}` : ''}${big3.set_at ? ` ${String(big3.set_at).slice(5, 10)}` : ''}` : big3.source === 'modal' ? 'edited here' : 'no rule yet — pick once, it\'s remembered'}
+              </div>
+            </div>
+            <Big3Picker rules={big3.rules} onChange={onBig3} disabled={busy} compact />
+            <label className="flex items-center gap-2 mt-2 text-[11px]" style={{ color: '#555' }}>
+              <input type="checkbox" checked={!!big3Save} onChange={e => onBig3Save(e.target.checked)} />
+              Remember for {shopName || big3.shop_name || 'this shop'} (every invoice from now on)
+            </label>
+          </div>
+        )}
         <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #eee' }}>
           {effective.map((li, i) => (
             <div key={li._key} className="px-3 py-2 text-sm"

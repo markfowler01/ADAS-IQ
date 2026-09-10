@@ -482,6 +482,7 @@ export async function createDraftQuote({
   lineEdits,
   addedItems,
   poolOverride,
+  big3Rules = null,
   req,
 }) {
   const token = await getAccessToken()
@@ -612,10 +613,33 @@ export async function createDraftQuote({
   // Fixed items first, then calibrations. A rate:0 on an item_id line
   // overrides the catalog rate in Books — that's how a paid fixed item
   // (Cal ID) gets comped when the review modal picks Included.
+  // Big 3 per-shop rule (Mark 2026-09-10) — translated into the same
+  // override / comp / omit mechanics the review modal already uses.
+  const b3 = await import('./big3.js')
+  const b3Overrides = { ...(fixedOverrides || {}) }
+  const b3Zero = new Set(Array.isArray(fixedZero) ? fixedZero : [])
+  const b3Remove = new Set()
+  let big3Note = ''
+  if (big3Rules) {
+    for (const b of b3.BIG3) {
+      const mode = big3Rules[b.key]
+      if (!mode) continue
+      const baseItem = itemByName.get(b.base.toLowerCase())
+      const baseRate = Number(baseItem?.rate) || 0
+      if (mode === 'shop') b3Remove.add(b.base)
+      else if (mode === 'bill' && baseRate === 0) {
+        const paid = paidAlternativeFor(allItems, insurerPrefix, b.base)
+        if (paid && !b3Overrides[b.base]) b3Overrides[b.base] = paid.name
+      } else if (mode === 'included' && baseRate > 0) b3Zero.add(b.base)
+    }
+    big3Note = `Big 3 rule (${shop || customerName || 'shop'}): ${b3.describeRules(big3Rules)}`
+    console.log(`[zoho] ${big3Note}`)
+  }
   const fixedLineItems = baseFixedNames.map((baseName) => {
-    const name = (fixedOverrides && fixedOverrides[baseName]) || baseName
+    if (b3Remove.has(baseName)) { console.log(`[zoho] Big 3: "${baseName}" left off — shop handles it`); return null }
+    const name = b3Overrides[baseName] || baseName
     const li = buildLineItem(name, '')
-    if (li && Array.isArray(fixedZero) && fixedZero.includes(baseName)) li.rate = 0
+    if (li && b3Zero.has(baseName)) li.rate = 0
     return li
   }).filter(Boolean)
   const calLineItems = calibrations.map((cal) => {
@@ -724,6 +748,7 @@ export async function createDraftQuote({
       (auditEdits ? ` · ${auditEdits} line edit${auditEdits > 1 ? 's' : ''}` : '') +
       (auditAdds ? ` · ${auditAdds} added line${auditAdds > 1 ? 's' : ''}` : ''),
     cashCap?.capped ? `💵 Cash customer — $700 cap applied (list $${cashCap.list_total.toFixed(2)})` : (cashCap ? '💵 Cash customer — CP pricing, under the $700 cap' : null),
+    big3Note || null,
     unmatchedItems.length > 0
       ? `Items needing manual pricing:\n${unmatchedItems.map(n => `  - ${n}`).join('\n')}`
       : null,
@@ -1133,7 +1158,21 @@ export async function listAllEstimates() {
 // review modal, "i want to use that for createing invoices also"). Same
 // catalog, Item Map, insurer pool, and fixed items as createDraftQuote —
 // but nothing is written to Books.
-export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride }) {
+// Paid variant of a $0 "(L-M)" fixed item (Post-Scan, PCSI). Insurer pool
+// preferred, standard otherwise. Shared by preview + create for Big 3 rules.
+export function paidAlternativeFor(allItems, insurerPrefix, fixedName) {
+  const norm = str => String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const base = norm(String(fixedName).replace(/\(l-m\)/i, '').replace(/\b1\b/, ''))
+  if (!base) return null
+  const candidates = allItems.filter(it => Number(it.rate) > 0 && !/l-m/i.test(it.name) && norm(it.name).replace(/\b1\b/, '').includes(base))
+  if (!candidates.length) return null
+  const pooled = insurerPrefix ? candidates.filter(it => new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i').test(it.name)) : []
+  const standard = candidates.filter(it => !PREFIXED.test(it.name))
+  const pick = pooled[0] || standard[0] || null
+  return pick ? { name: pick.name, rate: Number(pick.rate) || 0, item_id: pick.item_id } : null
+}
+
+export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride, big3Rules = null }) {
   const token = await getAccessToken()
   let itemMap = null
   if (req) {
@@ -1215,7 +1254,30 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
       lines.push({ name, requested: name, rate: 0, quantity, amount: 0, needs_price: true, included: false, swappable: !isFixed })
     }
   }
-  for (const n of fixedNames) push(n, 1, true)
+  // Big 3 per-shop rule (Mark 2026-09-10): bill / included / shop.
+  const { BIG3: B3 } = await import('./big3.js')
+  const big3Applied = {}
+  for (const n of fixedNames) {
+    const key = (B3.find(b => b.base === n) || {}).key
+    const mode = key && big3Rules ? big3Rules[key] : null
+    if (mode === 'shop') { big3Applied[key] = { mode, line: null }; continue }
+    if (mode === 'bill' || mode === 'included') {
+      const baseItem = itemByNamePrev.get(n.toLowerCase())
+      const baseRate = Number(baseItem?.rate) || 0
+      let line
+      if (mode === 'bill') {
+        const paid = baseRate > 0 ? { name: baseItem.name, rate: baseRate } : paidAlternativeFor(allItems, insurerPrefix, n)
+        line = paid
+          ? { name: paid.name, requested: n, rate: paid.rate, quantity: 1, amount: paid.rate, needs_price: false, included: false, swappable: false, big3: 'bill' }
+          : { name: n, requested: n, rate: 0, quantity: 1, amount: 0, needs_price: true, included: false, swappable: false, big3: 'bill' }
+      } else {
+        line = { name: baseItem?.name || n, requested: n, rate: 0, quantity: 1, amount: 0, needs_price: false, included: true, swappable: false, big3: 'included' }
+      }
+      lines.push(line); big3Applied[key] = { mode, line: line.name }
+      continue
+    }
+    push(n, 1, true)
+  }
   for (const c of calibrations || []) push(c.calibration_name || c.name, Number(c.quantity) || 1, false)
   // The insurer's tier catalog (SF - 3a, AS - 3C Complex, ...) for the
   // review modal's swap picker. Only pool items — a handful, not the
@@ -1245,6 +1307,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
     lines,
     total: Math.round(lines.reduce((sum, l) => sum + l.amount, 0) * 100) / 100,
     cash_cap,
+    big3_applied: big3Applied,
   }
 }
 

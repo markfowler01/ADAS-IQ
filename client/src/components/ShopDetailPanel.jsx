@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import Big3Rules from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import {
   STAGES, ACTIVITY_TYPES, TITLES,
@@ -835,14 +836,15 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete }) {
             />
           )}
           {tab === 'jobs' && <JobsTab shopName={form.shop_name} />}
-          {tab === 'billing' && (
+          {tab === 'billing' && (<>
+            <Big3Rules shop={form} />
             <BillingRulesEditor
               shop={form}
               onSave={updated => {
                 setForm(f => ({ ...f, billing_rules: updated.billing_rules }))
               }}
             />
-          )}
+          </>)}
         </div>
 
         {/* Footer */}

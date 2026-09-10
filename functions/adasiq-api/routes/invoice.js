@@ -101,7 +101,7 @@ router.post('/preview', async (req, res) => {
         { name: 'Calibration Identification Report', rate: 15, quantity: 1, amount: 15, needs_price: false, included: false },
         { name: 'Post-Scan (L-M)', rate: 0, quantity: 1, amount: 0, needs_price: false, included: true },
         { name: 'Front Radar Calibration', rate: 450, quantity: 1, amount: 450, needs_price: false, included: false },
-      ] })
+      ], big3: { rules: null, source: 'unset', shop_name: req.body?.shop_name || '', set_by: '', set_at: '' } })
     }
     const { previewInvoiceLines } = await import('../services/zoho.js')
     // Shop default schedule (fix #3): no explicit pick → the shop's
@@ -117,14 +117,21 @@ router.post('/preview', async (req, res) => {
         if (shopDefault) poolOverride = shopDefault
       } catch { /* auto-detect */ }
     }
+    // Big 3 rule: the modal's edit wins, else the shop's saved rule.
+    const { readBig3, normalizeRules } = await import('../services/big3.js')
+    const shopName = String(req.body?.shop_name || '').trim()
+    const fromModal = normalizeRules(req.body?.big3_rules)
+    const saved = shopName ? await readBig3(req, shopName).catch(() => ({ rules: null })) : { rules: null }
+    const big3Rules = fromModal || saved.rules || null
     const out = await previewInvoiceLines({
       insurer: req.body?.insurer || '',
       make: req.body?.make || '',
       calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
       poolOverride,
+      big3Rules,
       req,
     })
-    res.json({ ...out, shop_default_pool: shopDefault })
+    res.json({ ...out, shop_default_pool: shopDefault, big3: { rules: big3Rules, source: fromModal ? 'modal' : (saved.rules ? 'shop' : 'unset'), shop_name: saved.shop_name || shopName, set_by: saved.set_by || '', set_at: saved.set_at || '' } })
   } catch (e) {
     console.error('[invoice preview]', e.message)
     res.status(500).json({ error: e.message })
@@ -152,6 +159,13 @@ router.post('/', async (req, res) => {
       ? await cleanDescriptions(calibrations)
       : calibrations
 
+    // Big 3 rule for this invoice: modal edit → saved shop rule → none.
+    const b3 = await import('../services/big3.js')
+    let big3Rules = b3.normalizeRules(req.body.big3_rules)
+    if (!big3Rules && (customerName || shop)) {
+      try { big3Rules = (await b3.readBig3(req, customerName || shop)).rules } catch { big3Rules = null }
+    }
+
     const result = await createDraftQuote({
       customerId: customerId || null,
       customerName: customerName || null,
@@ -178,8 +192,16 @@ router.post('/', async (req, res) => {
       lineEdits: req.body.line_edits || null,
       addedItems: Array.isArray(req.body.added_items) ? req.body.added_items : null,
       poolOverride: req.body.pool_override || null,
+      big3Rules: big3Rules,
       req,
     })
+
+    // Learn the Big 3 rule for this shop (Mark 2026-09-10) — unless the
+    // modal unticked "remember".
+    if (big3Rules && req.body.big3_save !== false && (customerName || shop)) {
+      try { await b3.saveBig3(req, customerName || shop, big3Rules, req.user?.name || req.user?.email || '') }
+      catch (e) { console.warn('[invoice] big3 save failed (non-fatal):', e.message) }
+    }
 
     // Remember this shop's schedule when it was explicitly picked (fix #3)
     if (req.body.pool_override && customerId) {
