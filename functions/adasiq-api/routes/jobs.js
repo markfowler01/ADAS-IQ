@@ -1467,8 +1467,8 @@ let _catCache = { at: 0, items: [] }
 router.get('/catalog', async (req, res) => {
   try {
     if (Date.now() - _catCache.at > 10 * 60 * 1000) {
-      const { fetchItemCatalog } = await import('../services/zoho.js')
-      const { allItems } = await fetchItemCatalog(await getAccessToken())
+      const { getItemCatalogForAudit } = await import('../services/zoho.js')
+      const { allItems } = await getItemCatalogForAudit()
       _catCache = { at: Date.now(), items: (allItems || []).map(i => ({ item_id: i.item_id, name: i.name, rate: Number(i.rate) || 0, type: i.product_type || 'service' })).sort((a, b) => a.name.localeCompare(b.name)) }
     }
     res.json({ ok: true, items: _catCache.items })
