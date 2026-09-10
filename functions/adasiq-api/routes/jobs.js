@@ -540,6 +540,24 @@ router.put('/:id', async (req, res) => {
       if (!prevStatus) prevStatus = cur.status
     } catch {}
 
+    // 📸 Photo gate on the PUT path too (board drag-drop) — same rule as
+    // PATCH: no Ready to Invoice until the photo set is complete.
+    if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') {
+      const { photoProgress, describeMissing } = await import('../services/jobPhotos.js')
+      let cur = null
+      try { cur = rowToJob(await getTable(req).getRow(req.params.id)) } catch {}
+      const merged = { ...(cur || {}), ...req.body }
+      const prog = photoProgress(merged)
+      const isOwner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+      const override = String(req.body.photo_override || '').trim()
+      if (!prog.complete && !(isOwner && override)) {
+        const missing = describeMissing(prog)
+        photoGateNudge(req, merged, missing).catch(() => {})
+        return res.status(409).json({ error: `Photos first — still need: ${missing.join(', ')}.`, photo_gate: true, missing: prog.missing, problems: prog.problems, progress: prog })
+      }
+      delete req.body.photo_override
+    }
+
     const updated = await updateJob(req, req.params.id, req.body)
 
     if (req.body.status === 'complete' && prevStatus !== 'complete') {

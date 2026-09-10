@@ -53,10 +53,9 @@ export function photoProgress(job) {
   return { filled, total: SLOTS.length, missing, setupCount: (slots.setup || []).length, miles: { before, after, delta, ok: milesOk }, complete: missing.length === 0 && milesOk, problems, slots }
 }
 
-export function gateApplies(job) {
-  const c = String(job?.created_at || '').slice(0, 10)
-  return !!c && c >= PHOTO_GATE_FROM
-}
+// Every job, every button (Mark 2026-09-10). Kept as a function so the
+// call sites don't change.
+export function gateApplies() { return true }
 
 // Statuses where a tech is on the car and photos make sense.
 export function photosRelevant(job) {

@@ -70,10 +70,10 @@ export function photoProgress(job) {
   }
 }
 
-export function gateApplies(job) {
-  const created = String(job?.created_at || '').slice(0, 10)
-  return !!created && created >= PHOTO_GATE_FROM
-}
+// Mark 2026-09-10: "if the technician clicks ready to invoice and all
+// eight pictures are not there I want to queue the pictures" — every job,
+// no start date. (PHOTO_GATE_FROM kept for reference only.)
+export function gateApplies() { return true }
 
 export function slotLabel(key) { return SLOTS.find(s => s.key === key)?.label || key }
 

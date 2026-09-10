@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
-import { TakePhotosControl } from './JobPhotos'
+import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
@@ -1446,6 +1446,11 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     onManualInvoice(data)
   }
   const [calReviewJob, setCalReviewJob] = useState(null)
+  // 📸 Photos-first before Ready to Invoice, on the board too (Mark
+  // 2026-09-10). The sheet opens on the first missing shot; when the set
+  // is complete it hands off to the calibration review as before.
+  const [photoGateJob, setPhotoGateJob] = useState(null)
+  const [photoOverride, setPhotoOverride] = useState('')   // Mark-only reason, rides on the PATCH
   const [search, setSearch] = useState('')
   const [regionFilter, setRegionFilter] = useState('')
   const [techFilter, setTechFilter] = useState('')
@@ -1605,6 +1610,10 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     if (!dragJob) return
     if (dragJob.status === colId) { setDragJob(null); return }
 
+    // Dropping onto Ready to Invoice with photos missing → photos first.
+    if (colId === 'ready_invoice' && !photoProgress(dragJob).complete) {
+      const j = dragJob; setDragJob(null); setPhotoGateJob(j); return
+    }
     const previousStatus = dragJob.status
     // Auto-assign technician when dropped into a dispatch column
     const autoTech = DISPATCH_TECH[colId]
@@ -1640,6 +1649,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
   // Opens the calibration review modal — actual status change happens after confirmation
   function handleMoveToReadyInvoice(job) {
+    setPhotoOverride('')
+    if (!photoProgress(job).complete) { setPhotoGateJob(job); return }
     setCalReviewJob(job)
   }
 
@@ -1713,10 +1724,17 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
         body: JSON.stringify({
           calibrations: JSON.stringify(updatedCals),
           status: 'ready_invoice',
+          ...(photoOverride ? { photo_override: photoOverride } : {}),
         }),
       })
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}))
+        if (res.status === 409 && errData.photo_gate) {
+          setJobs(prev => prev.map(j => j.id === job.id ? job : j))
+          showToast(`📸 ${errData.error}`)
+          setPhotoGateJob(job)
+          return
+        }
         throw new Error(errData.error || 'Update failed')
       }
     } catch (e) {
@@ -2330,6 +2348,17 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       {(scrubbing || uploading) && <LoadingSplash overlay label="Scrubbing report" />}
 
       {/* Calibration Review Modal — intercepts "Ready to Invoice" click */}
+      {photoGateJob && (
+        <JobPhotosSheet
+          job={photoGateJob}
+          mode="gate"
+          user={user}
+          onClose={() => setPhotoGateJob(null)}
+          onJobUpdated={j => setJobs(prev => prev.map(x => x.id === j.id ? { ...x, ...j } : x))}
+          onComplete={(j, override) => { setPhotoGateJob(null); setPhotoOverride(override || ''); setCalReviewJob({ ...photoGateJob, ...j }) }}
+        />
+      )}
+
       {calReviewJob && (
         <CalibrationReviewModal
           job={calReviewJob}
