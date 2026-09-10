@@ -57,17 +57,17 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
 
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '94vh' }}>
+      <div className="bg-white w-full rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '96vh', maxWidth: 'min(1400px, 98vw)' }}>
         <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid #ebebeb' }}>
           <div>
             <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>💸 Bill it · review before anything is sent</div>
-            <div className="font-bold text-base" style={{ color: '#1a1a1a' }}>{p?.shop_name || job.shop_name}{p?.estimate_number ? ` · ${p.estimate_number}` : ''}</div>
+            <div className="font-bold text-xl" style={{ color: '#1a1a1a' }}>{p?.shop_name || job.shop_name}{p?.estimate_number ? ` · ${p.estimate_number}` : ''}</div>
           </div>
           <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
         </div>
 
         <div className="px-5 py-4 overflow-y-auto space-y-3">
-          {err && <div className="text-sm px-3 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{err}</div>}
+          {err && <div className="text-base px-3 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{err}</div>}
           {!p && !err && <div className="text-sm py-6 text-center" style={{ color: '#888' }}>Reading the estimate from Books…</div>}
           {done && (
             <div className="rounded-xl p-4" style={{ backgroundColor: done.dry ? '#fffbeb' : '#f0fdf4', border: `1.5px solid ${done.dry ? '#fde68a' : '#86efac'}` }}>
@@ -81,41 +81,41 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
           )}
           {p && !done && (<>
             {p.warnings.length > 0 && (
-              <div className="rounded-xl p-3 text-xs space-y-1" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
+              <div className="rounded-xl p-3 text-sm space-y-1" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
                 {p.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
               </div>
             )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="rounded-xl overflow-hidden" style={{ border: '1.5px solid #bfdbfe' }}>
-                <div className="px-3 py-2 text-xs font-bold" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>🏦 Insurance invoice · estimate {p.estimate_number} as-is</div>
+                <div className="px-4 py-3 text-base font-bold" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>🏦 Insurance invoice · estimate {p.estimate_number} as-is</div>
                 {lines.map((l, i) => (
-                  <div key={i} className="flex justify-between gap-2 px-3 py-1.5 text-xs" style={{ borderTop: '1px solid #f1f5f9' }}>
-                    <span className="truncate" style={{ color: '#1a1a1a' }}>{l.name}{l.quantity > 1 ? ` ×${l.quantity}` : ''}{l._extra ? ' ➕' : ''}</span>
-                    <span className="flex-shrink-0" style={{ color: '#555' }}>{fmt(l.amount)}</span>
+                  <div key={i} className="flex justify-between gap-3 px-4 py-2.5 text-base" style={{ borderTop: '1px solid #f1f5f9' }}>
+                    <span style={{ color: '#1a1a1a' }}>{l.name}{l.quantity > 1 ? ` ×${l.quantity}` : ''}{l._extra ? ' ➕' : ''}</span>
+                    <span className="flex-shrink-0 tabular-nums" style={{ color: '#555' }}>{fmt(l.amount)}</span>
                   </div>
                 ))}
-                <div className="flex justify-between px-3 py-2 text-sm font-extrabold" style={{ borderTop: '1px solid #e2e8f0', color: '#1a1a1a' }}><span>Total</span><span>{fmt(insTotal)}</span></div>
+                <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: '2px solid #e2e8f0', color: '#1a1a1a' }}><span>Total</span><span className="tabular-nums">{fmt(insTotal)}</span></div>
               </div>
               <div className="rounded-xl overflow-hidden" style={{ border: '1.5px solid #bbf7d0' }}>
-                <div className="px-3 py-2 text-xs font-bold flex items-center justify-between" style={{ backgroundColor: '#f0fdf4', color: GREEN }}>
+                <div className="px-4 py-3 text-base font-bold flex items-center justify-between" style={{ backgroundColor: '#f0fdf4', color: GREEN }}>
                   <span>💸 Cost invoice · {p.customer_type ? p.customer_type.replace(/_/g, ' ') : 'shop'} discount</span>
                   <span className="flex items-center gap-1">
-                    <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-14 text-xs rounded-md px-1.5 py-0.5 text-right" style={{ border: '1px solid #bbf7d0' }} />%
+                    <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-20 text-lg font-bold rounded-md px-2 py-1 text-right" style={{ border: '2px solid #86efac' }} />%
                   </span>
                 </div>
                 {lines.map((l, i) => (
-                  <div key={i} className="flex justify-between gap-2 px-3 py-1.5 text-xs" style={{ borderTop: '1px solid #f1f5f9' }}>
-                    <span className="truncate" style={{ color: '#1a1a1a' }}>{l.name}{l.quantity > 1 ? ` ×${l.quantity}` : ''}{l.d ? <span style={{ color: GREEN }}> −{l.d}%</span> : l.why ? <span style={{ color: '#888' }}> · {l.why}</span> : null}</span>
-                    <span className="flex-shrink-0" style={{ color: l.d ? GREEN : '#555' }}>{fmt(l.cost)}</span>
+                  <div key={i} className="flex justify-between gap-3 px-4 py-2.5 text-base" style={{ borderTop: '1px solid #f1f5f9' }}>
+                    <span style={{ color: '#1a1a1a' }}>{l.name}{l.quantity > 1 ? ` ×${l.quantity}` : ''}{l.d ? <span className="font-bold" style={{ color: GREEN }}> −{l.d}%</span> : l.why ? <span style={{ color: '#888' }}> · {l.why}</span> : null}</span>
+                    <span className="flex-shrink-0 tabular-nums font-semibold" style={{ color: l.d ? GREEN : '#555' }}>{fmt(l.cost)}</span>
                   </div>
                 ))}
-                <div className="flex justify-between px-3 py-2 text-sm font-extrabold" style={{ borderTop: '1px solid #dcfce7', color: GREEN }}><span>Total · Due on Receipt</span><span>{fmt(costTotal)}</span></div>
+                <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: '2px solid #dcfce7', color: GREEN }}><span>Total · Due on Receipt</span><span className="tabular-nums">{fmt(costTotal)}</span></div>
               </div>
             </div>
             <div>
               <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Send both to</label>
-              <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="shop@email.com, second@email.com" className="w-full rounded-lg px-3 py-2 text-sm" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
-              <div className="text-[11px] mt-1" style={{ color: '#888' }}>From the Books contact. Saves the shop {fmt(insTotal - costTotal)}. Rule on file: {p.rule}.</div>
+              <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="shop@email.com, second@email.com" className="w-full rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
+              <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact. Saves the shop {fmt(insTotal - costTotal)}. Rule on file: {p.rule}.</div>
             </div>
             {isOwner && (
               <label className="flex items-center gap-2 text-xs" style={{ color: '#92400e' }}>
@@ -127,8 +127,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
 
         {p && !done && (
           <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}>
-            <button onClick={onClose} className="flex-1 rounded-xl py-2.5 text-sm font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
-            <button onClick={send} disabled={busy || (!dry && !p.can_bill)} className="flex-[2] rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: dry ? '#92400e' : GREEN, opacity: busy || (!dry && !p.can_bill) ? .45 : 1 }}>
+            <button onClick={onClose} className="flex-1 rounded-xl py-3.5 text-base font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
+            <button onClick={send} disabled={busy || (!dry && !p.can_bill)} className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: dry ? '#92400e' : GREEN, opacity: busy || (!dry && !p.can_bill) ? .45 : 1 }}>
               {busy ? 'Sending…' : dry ? '🧪 Dry run' : `💸 Send both — ${fmt(insTotal)} insurance · ${fmt(costTotal)} cost`}
             </button>
           </div>
