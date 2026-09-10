@@ -48,6 +48,38 @@ export function Big3Picker({ rules, onChange, disabled = false, compact = false 
   )
 }
 
+// ── Rule map for card badges (one fetch per session, 5-min refresh) ─────
+let _map = null, _mapAt = 0, _mapPromise = null
+const shopKeyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+export function useBig3Map() {
+  const [map, setMap] = useState(_map || {})
+  useEffect(() => {
+    if (_map && Date.now() - _mapAt < 5 * 60 * 1000) { setMap(_map); return }
+    if (!_mapPromise) {
+      _mapPromise = apiFetch(`${API_BASE}/api/shops/big3-map`).then(r => r.json()).then(d => { _map = d.map || {}; _mapAt = Date.now(); _mapPromise = null; return _map }).catch(() => { _mapPromise = null; return _map || {} })
+    }
+    _mapPromise.then(m => setMap(m || {}))
+  }, [])
+  return map
+}
+export function invalidateBig3Map() { _map = null; _mapAt = 0 }
+
+// "🧾 We bill: PCSI · Post-Scan" on a job card (visible-badge rule).
+export function Big3Badge({ shopName, size = 'xs' }) {
+  const map = useBig3Map()
+  const entry = map[shopKeyOf(shopName)]
+  if (!shopName) return null
+  const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
+  if (!entry?.rules) {
+    return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e' }} title="No Big 3 rule for this shop yet — the first invoice will ask">🧾 Big 3: no rule yet</span>
+  }
+  const r = entry.rules
+  const bill = BIG3.filter(b => r[b.key] === 'bill').map(b => b.key === 'pcsi' ? 'PCSI' : b.key === 'post_scan' ? 'Post-Scan' : 'Cal ID')
+  const shop = BIG3.filter(b => r[b.key] === 'shop').map(b => b.key === 'pcsi' ? 'PCSI' : b.key === 'post_scan' ? 'Post-Scan' : 'Cal ID')
+  const text = bill.length ? `We bill: ${bill.join(' · ')}` : 'We bill none of the Big 3'
+  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#dcfce7', color: '#166534' }} title={`${text}${shop.length ? ` · shop handles: ${shop.join(', ')}` : ''}`}>🧾 {text}{shop.length ? ` · shop: ${shop.join(', ')}` : ''}</span>
+}
+
 // CRM Billing tab block — loads and saves the shop's rule.
 export default function Big3Rules({ shop }) {
   const [rules, setRules] = useState(null)
@@ -65,12 +97,24 @@ export default function Big3Rules({ shop }) {
     return () => { dead = true }
   }, [shop?.id])
   const complete = rules && BIG3.every(b => rules[b.key])
+  const [suggest, setSuggest] = useState(null)
+  const [suggesting, setSuggesting] = useState(false)
+  async function askHistory() {
+    setSuggesting(true); setSuggest(null)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/big3-suggest`)
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setSuggest(d)
+    } catch (e) { setSuggest({ error: e.message }) } finally { setSuggesting(false) }
+  }
   async function save() {
     setSaving(true); setMsg('')
     try {
       const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/big3`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules }) })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      invalidateBig3Map()
       setDirty(false); setMsg(d.changed ? '✓ Saved — applies to every invoice for this shop' : '✓ No change')
       setMeta({ set_by: 'you', set_at: new Date().toISOString() })
     } catch (e) { setMsg(`Couldn't save: ${e.message}`) } finally { setSaving(false) }
@@ -91,6 +135,28 @@ export default function Big3Rules({ shop }) {
       </div>
       <Big3Picker rules={rules} onChange={r => { setRules(r); setDirty(true) }} />
       {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
+      <div className="mt-2 flex items-center gap-2 flex-wrap">
+        <button type="button" onClick={askHistory} disabled={suggesting} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+          {suggesting ? 'Reading Books…' : '🔍 Suggest from invoice history'}
+        </button>
+        {suggest?.error && <span className="text-[11px]" style={{ color: '#b91c1c' }}>{suggest.error}</span>}
+        {suggest && !suggest.error && (suggest.suggested
+          ? <>
+              <span className="text-[11px]" style={{ color: '#555' }}>Last {suggest.invoices} invoice{suggest.invoices === 1 ? '' : 's'} say: {describeRules(suggest.suggested)}</span>
+              <button type="button" onClick={() => { setRules(suggest.suggested); setDirty(true) }} className="text-[11px] font-bold rounded-full px-2.5 py-1 text-white" style={{ backgroundColor: '#1d4ed8' }}>Use this</button>
+            </>
+          : <span className="text-[11px]" style={{ color: '#888' }}>No invoices found in Books for this exact name.</span>)}
+      </div>
+      {suggest?.evidence?.length > 0 && (
+        <div className="mt-2 text-[10px] rounded-lg overflow-hidden" style={{ border: '1px solid #e5e7eb' }}>
+          {suggest.evidence.map(e => (
+            <div key={e.number} className="flex gap-2 px-2 py-1" style={{ borderTop: '1px solid #f1f5f9', color: '#555' }}>
+              <span className="font-mono w-24 truncate">{e.number}</span><span className="w-20">{e.date}</span>
+              <span>Cal ID {e.cal_id}</span><span>PCSI {e.pcsi}</span><span>Post-Scan {e.post_scan}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

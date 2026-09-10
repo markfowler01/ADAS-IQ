@@ -287,6 +287,20 @@ router.post('/card-note', async (req, res) => {
 })
 
 // GET /api/shops
+// Big 3: every shop's rule (card badges) + active shops without one.
+router.get('/big3-map', async (req, res) => {
+  try { const b3 = await import('../services/big3.js'); res.json({ ok: true, ...(await b3.big3Map(req)) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+// Big 3: suggestion from the shop's recent Books invoices (Kat confirms).
+router.get('/:id/big3-suggest', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    const b3 = await import('../services/big3.js')
+    res.json({ ok: true, shop_name: shop.shop_name, ...(await b3.suggestBig3(shop.shop_name)) })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 // Big 3 rule on a CRM shop (Mark 2026-09-10) — read/set from the Billing tab.
 router.get('/:id/big3', async (req, res) => {
   try {
@@ -525,6 +539,18 @@ router.patch('/:id', async (req, res) => {
     const current = rowToShop(await table.getRow(String(req.params.id)))
     const merged = { ...current, ...req.body }
     const updated = await updateShop(req, req.params.id, merged)
+
+    // New customer with no Big 3 rule → ask for it once (Mark 2026-09-10).
+    if (req.body.pipeline_stage && /^(active|second_active|active2)$/.test(req.body.pipeline_stage) && !/^(active|second_active|active2)$/.test(current.pipeline_stage || '')) {
+      try {
+        const b3 = await import('../services/big3.js')
+        const cur = await b3.readBig3(req, updated.shop_name)
+        if (!cur.rules) {
+          const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+          await postToCliqChannel(DISPATCH_CHANNEL, `🧾 *${updated.shop_name} just went Active* — set their Big 3 rule (CRM → shop → Billing) so the first invoice comes out right. Cal ID / PCSI / Post-Scan: we bill, no charge, or shop handles.`)
+        }
+      } catch (e) { console.log('[shops] big3 onboarding ping failed:', e.message) }
+    }
 
     // Auto-sync stage changes to Zoho CRM (non-blocking)
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) {

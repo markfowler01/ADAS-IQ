@@ -455,6 +455,11 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [toast,         setToast]         = useState(null)
   const [search,        setSearch]        = useState('')
   const [stageFilter,   setStageFilter]   = useState('')
+  const [big3Missing,   setBig3Missing]   = useState([])     // active shops with no Big 3 rule
+  const [big3Only,      setBig3Only]      = useState(false)
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/shops/big3-map`).then(r => r.json()).then(d => { if (d.ok) setBig3Missing(d.missing || []) }).catch(() => {})
+  }, [shops.length])
   const [regionFilter,  setRegionFilter]  = useState('')
   const [showOverdue,   setShowOverdue]   = useState(false)
   const [dragShop,      setDragShop]      = useState(null)
@@ -552,6 +557,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
     if (isTech && s.assigned_to !== user.techName) return false
     if (showOverdue && !isOverdue(s) && !isDueToday(s)) return false
     if (stageFilter  && s.pipeline_stage !== stageFilter)  return false
+    if (big3Only && !big3Missing.some(m => m.id === s.id)) return false
     if (regionFilter && s.region !== regionFilter)         return false
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -596,6 +602,16 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
                 onFocus={e => e.target.style.borderColor = ORANGE}
                 onBlur={e => e.target.style.borderColor = '#e0dbd6'} />
             </div>
+
+            {/* 🧾 Active shops with no Big 3 rule (Mark 2026-09-10) */}
+            {big3Missing.length > 0 && (
+              <button onClick={() => setBig3Only(v => !v)}
+                className="text-sm font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5"
+                style={big3Only ? { backgroundColor: '#92400e', color: 'white' } : { backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #fde68a' }}
+                title="Active customers whose Cal ID / PCSI / Post-Scan rule isn't set yet">
+                🧾 {big3Missing.length} without Big 3 rule
+              </button>
+            )}
 
             {/* Van Contact — one-tap: adds to CRM shop record AND enrolls in Van newsletter */}
             <button onClick={() => setShowVanContact(true)}

@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect } from 'react'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { TakePhotosControl } from './JobPhotos'
+import { Big3Badge } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
 // Estimate totals for card price tags (Mark 2026-08-30: totals on all
@@ -317,6 +318,7 @@ export default function MobileJobCard({
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
+      {job.status !== 'job_requested' && <p className="mb-1"><Big3Badge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span

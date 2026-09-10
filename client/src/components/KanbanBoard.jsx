@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
+import { Big3Badge } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
@@ -821,6 +822,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
+      {job.status !== 'job_requested' && <p className="mb-1"><Big3Badge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span

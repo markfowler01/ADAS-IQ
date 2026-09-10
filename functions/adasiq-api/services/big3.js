@@ -73,3 +73,59 @@ export async function saveBig3(req, shopName, rules, by = '') {
   console.log(`[big3] ${shop.shop_name}: ${describeRules(clean)} (by ${by || 'app'})`)
   return { shop_id: shop.id, changed: true }
 }
+
+
+// ── Phase 2 ──────────────────────────────────────────────────────────────
+// Every shop's rule at once (for card badges) + which active shops have
+// none yet.
+export async function big3Map(req) {
+  const shops = await getAllShops(req)
+  const map = {}, missing = []
+  for (const sh of shops) {
+    const br = parseBR(sh)
+    const rules = normalizeRules(br.big3)
+    const complete = rules && BIG3.every(b => rules[b.key])
+    if (rules) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete }
+    if (!complete && ['active', 'second_active', 'active2'].includes(sh.pipeline_stage)) missing.push({ id: sh.id, shop_name: sh.shop_name })
+  }
+  return { map, missing }
+}
+
+// Suggest a rule from the shop's last few Books invoices: a paid line →
+// bill, a $0 (L-M) line → included, never on the invoice → shop handles.
+export async function suggestBig3(shopName, limit = 5) {
+  const axios = (await import('axios')).default
+  const { getAccessToken } = await import('./zoho.js')
+  const token = await getAccessToken()
+  const H = { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000 }
+  const list = await axios.get('https://www.zohoapis.com/books/v3/invoices', { ...H, params: { ...H.params, customer_name: shopName, per_page: limit, sort_column: 'date', sort_order: 'D' } })
+  const invoices = (list.data?.invoices || []).filter(i => String(i.customer_name || '').toLowerCase() === String(shopName).toLowerCase()).slice(0, limit)
+  const tests = {
+    cal_id:    n => /calibration identification/i.test(n),
+    pcsi:      n => /post collision safety inspection/i.test(n),
+    post_scan: n => /post[- ]?scan/i.test(n) && !/pre\s*&|pre and/i.test(n),
+  }
+  const evidence = []
+  const seen = { cal_id: { paid: 0, zero: 0 }, pcsi: { paid: 0, zero: 0 }, post_scan: { paid: 0, zero: 0 } }
+  for (const inv of invoices) {
+    const d = await axios.get(`https://www.zohoapis.com/books/v3/invoices/${inv.invoice_id}`, H)
+    const lines = d.data?.invoice?.line_items || []
+    const row = { number: inv.invoice_number, date: inv.date, cal_id: '—', pcsi: '—', post_scan: '—' }
+    for (const key of Object.keys(tests)) {
+      const hits = lines.filter(l => tests[key](String(l.name || l.description || '')))
+      if (!hits.length) continue
+      const paid = hits.some(l => Number(l.rate) > 0 || Number(l.item_total) > 0)
+      if (paid) { seen[key].paid++; row[key] = `$${hits.reduce((a, l) => a + (Number(l.item_total) || Number(l.rate) || 0), 0)}` }
+      else { seen[key].zero++; row[key] = '$0' }
+    }
+    evidence.push(row)
+  }
+  const suggested = {}
+  for (const key of Object.keys(seen)) {
+    if (!invoices.length) continue
+    if (seen[key].paid > 0 && seen[key].paid >= seen[key].zero) suggested[key] = 'bill'
+    else if (seen[key].zero > 0) suggested[key] = 'included'
+    else suggested[key] = 'shop'
+  }
+  return { invoices: invoices.length, suggested: invoices.length ? suggested : null, evidence }
+}
