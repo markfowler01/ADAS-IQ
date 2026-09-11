@@ -625,34 +625,27 @@ router.post('/:id/bill', async (req, res) => {
       await cfgSet(app, DISCOUNTS_KEY, discounts)
     }
 
-    // 1. Insurance invoice: re-render + re-send the estimate at list.
+    // Same document Kat makes by hand (services/costInvoice.js): pinned
+    // template, header fields from the estimate, standard notes/terms,
+    // per-line discount (never parts / Cal ID / SF post-scan), Due on
+    // Receipt, same number as the estimate. Invoice is created BEFORE any
+    // email goes out so a Books rejection sends nothing.
+    const ci = await import('../services/costInvoice.js')
     const insTemplate = await resolveInsuranceTemplateId(req, token)
     await applyTemplate(token, q.estimate_id, insTemplate)
-    await emailEstimate(token, q.estimate_id, emails)
-
-    // 2. Cost invoice: same lines, shop discount, sent as a separate
-    // email (shops forward the insurance one to the insurer untouched).
-    const lineItems = (est.line_items || []).map(li => ({
-      ...(li.item_id ? { item_id: li.item_id } : { name: li.name }),
-      description: li.description || '',
-      rate: li.rate,
-      quantity: li.quantity,
-    }))
-    const invRes = await axios.post(`${ZOHO_API_BASE}/invoices`, {
-      customer_id: est.customer_id,
-      reference_number: q.ro_number ? `RO ${q.ro_number}` : est.estimate_number,
-      salesperson_name: est.salesperson_name || q.salesperson || '',
-      line_items: lineItems,
-      discount: `${pct}%`,
-      discount_type: 'entity_level',
-      is_discount_before_tax: true,
-      notes: `Partnership discount ${pct}% applied · from quote ${est.estimate_number}`,
-    }, { headers: zohoHeaders(token), params: orgParam(), timeout: 20000 })
-    const inv = invRes.data?.invoice
+    const tpl = await ci.resolveTemplates(token, '')
+    const byId = new Map()
+    try { const { allItems } = await (await import('../services/zoho.js')).getItemCatalogForAudit(); for (const it of allItems || []) byId.set(String(it.item_id), it) } catch { /* product_type falls back to service */ }
+    const lines = ci.applyDiscount((est.line_items || []).map(li => ({
+      item_id: li.item_id || null, name: li.name, description: li.description || '', rate: Number(li.rate) || 0, quantity: Number(li.quantity) || 1,
+      product_type: byId.get(String(li.item_id))?.product_type || 'service',
+    })), pct)
+    const inv = await ci.createCostInvoice({ token, app, est, lines, pct, customerType: '', technician: q.salesperson || '', by: req.user?.name || req.user?.email || 'staff', templates: tpl })
     if (!inv?.invoice_id) throw new Error('Cost invoice creation returned no invoice')
-    await axios.post(`${ZOHO_API_BASE}/invoices/${inv.invoice_id}/email`,
-      { to_mail_ids: emails },
-      { headers: zohoHeaders(token), params: orgParam(), timeout: 20000 })
+    // 1. Insurance invoice: the estimate at list. 2. Cost invoice.
+    await emailEstimate(token, q.estimate_id, emails)
+    const e2 = await ci.emailInvoice(token, inv.invoice_id, emails)
+    if (e2) console.log('[shop-quotes bill] cost invoice email failed:', e2)
 
     const now = new Date().toISOString()
     Object.assign(q, {

@@ -15,27 +15,18 @@
 // never to goods/parts, the Calibration Identification Report, or the
 // State Farm Post-Scan item; $0 lines untouched.
 import express from 'express'
-import axios from 'axios'
 import { getAccessToken, getItemCatalogForAudit } from '../services/zoho.js'
 import { readJobsPublic, updateJobPublic } from './jobs.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 
+import axios from 'axios'
+import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, invoiceCustomFields, createCostInvoice, emailEstimate, emailInvoice } from '../services/costInvoice.js'
+import catalyst from 'zcatalyst-sdk-node'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
 const org = () => ({ organization_id: process.env.ZOHO_ORGANIZATION_ID })
 const r2 = n => Math.round((Number(n) || 0) * 100) / 100
-const NO_DISCOUNT = /calibration identification report|^sfp?\s*[-\s].*post[- ]?scan/i
-// Books' goods/service flag is unreliable (Pre-Calibration Scan, Subaru
-// MonoCam, AMFAM scans… are typed "goods"). A line is a PART only when
-// Books says goods AND the name doesn't read like work we did.
-const LOOKS_LIKE_SERVICE = /scan|calibrat|inspection|labor|set-?up|program|diagnos|report|snapshot|aim|alignment|ride|remove|install|r&i|r & i/i
-const isPart = l => l.product_type === 'goods' && !LOOKS_LIKE_SERVICE.test(l.name || '')
-
-async function getEstimate(token, id) {
-  const r = await axios.get(`${API}/estimates/${id}`, { headers: H(token), params: org(), timeout: 15000, validateStatus: s => s < 500 })
-  return r.data?.estimate || null
-}
 async function invoiceByNumber(token, number) {
   const r = await axios.get(`${API}/invoices`, { headers: H(token), params: { ...org(), invoice_number: number }, timeout: 15000, validateStatus: s => s < 500 })
   return (r.data?.invoices || []).find(i => i.invoice_number === number) || null
@@ -48,45 +39,6 @@ async function contactEmails(token, customerId) {
   return [...new Set((primary.length ? primary : withEmail).map(p => String(p.email).toLowerCase()))]
 }
 
-// PDF templates (Mark 2026-09-11: "it is not using the right PDF
-// templates"). Books has no default flagged, so we pin by name:
-//   insurance invoice (the estimate) → "Absolute List invoice"
-//   cost invoice → "Retail - Absolute ADAS" for retail, else "Absolute ADAS vrs 1"
-// Cached 6h in memory; applied + verified before any email goes out.
-const TEMPLATE_RULES = {
-  estimate: [/absolute list invoice/i],
-  invoice_retail: [/retail/i, /absolute adas vrs/i],
-  invoice: [/absolute adas vrs/i],
-}
-let _tplCache = { at: 0, estimate: [], invoice: [] }
-async function templates(token) {
-  if (Date.now() - _tplCache.at < 6 * 3600e3 && (_tplCache.estimate.length || _tplCache.invoice.length)) return _tplCache
-  const [e, i] = await Promise.all([
-    axios.get(`${API}/estimates/templates`, { headers: H(token), params: org(), timeout: 12000, validateStatus: s => s < 500 }),
-    axios.get(`${API}/invoices/templates`, { headers: H(token), params: org(), timeout: 12000, validateStatus: s => s < 500 }),
-  ])
-  _tplCache = { at: Date.now(), estimate: e.data?.templates || [], invoice: i.data?.templates || [] }
-  return _tplCache
-}
-function pickTemplate(list, patterns) {
-  for (const re of patterns) { const hit = list.find(t => re.test(t.template_name || '')); if (hit) return hit }
-  return null
-}
-async function resolveTemplates(token, customerType) {
-  const t = await templates(token).catch(() => ({ estimate: [], invoice: [] }))
-  const est = pickTemplate(t.estimate, TEMPLATE_RULES.estimate)
-  const inv = pickTemplate(t.invoice, /retail/i.test(customerType || '') ? TEMPLATE_RULES.invoice_retail : TEMPLATE_RULES.invoice)
-  return { estimate: est ? { id: est.template_id, name: est.template_name } : null, invoice: inv ? { id: inv.template_id, name: inv.template_name } : null }
-}
-async function applyEstimateTemplate(token, estimateId, tpl) {
-  const r = await axios.put(`${API}/estimates/${estimateId}/templates/${tpl.id}`, {}, { headers: H(token), params: org(), timeout: 15000, validateStatus: s => s < 500 })
-  const got = r.data?.estimate?.template_id || (await getEstimate(token, estimateId))?.template_id
-  if (String(got) !== String(tpl.id)) throw new Error(`The "${tpl.name}" template did not apply to estimate — nothing sent.`)
-}
-async function applyInvoiceTemplate(token, invoiceId, tpl) {
-  const r = await axios.put(`${API}/invoices/${invoiceId}/templates/${tpl.id}`, {}, { headers: H(token), params: org(), timeout: 15000, validateStatus: s => s < 500 })
-  if (r.data?.code !== 0) throw new Error(`The "${tpl.name}" template did not apply to the invoice — invoice created but NOT emailed.`)
-}
 
 // Everything the modal shows. Pure read except for nothing — no writes.
 async function buildPreview(req, job) {
@@ -155,12 +107,6 @@ async function buildPreview(req, job) {
     _est: { custom_fields: est.custom_fields || [], terms: est.terms || '', notes: est.notes || '', reference_number: est.reference_number || '', salesperson_name: est.salesperson_name || '' },
   }
 }
-// Estimate custom fields → invoice custom fields. Same labels, different
-// api_names in Books (estimate cf_calibration_docs = invoice cf_calibration).
-const INVOICE_CF_BY_LABEL = { 'Scan Report and Documentation': 'cf_calibration', 'RO#': 'cf_ro_1', 'Year': 'cf_year', 'Make': 'cf_make', 'Model': 'cf_model', 'VIN': 'cf_vin', 'Insurer': 'cf_insurer' }
-function invoiceCustomFields(estFields) {
-  return (estFields || []).map(c => { const api = INVOICE_CF_BY_LABEL[c.label]; return api && c.value !== '' && c.value != null ? { api_name: api, value: c.value } : null }).filter(Boolean)
-}
 const pub = p => { const { _byId, _byName, _est, ...rest } = p; return rest }
 
 // Kat edited the lines in the modal → rebuild the line set from her list.
@@ -227,54 +173,19 @@ router.post('/:id/bill', async (req, res) => {
     const changedLines = !same
     // Pin the insurance-invoice look before anything is emailed (strict, like shop quotes).
     if (!dry) await applyEstimateTemplate(token, p.estimate_id, p.templates.estimate)
-    // 2. Cost invoice FIRST (same lines, per-line discount, same number, Due
-    //    on Receipt) — if Books rejects it, nothing has been emailed yet.
-    const eligible = l => l.amount > 0 && !isPart(l) && !NO_DISCOUNT.test(l.name || '')
-    p.lines = p.lines.map(l => { const d = pct > 0 && eligible(l) ? pct : 0; return { ...l, discount_pct: d, cost_amount: r2(l.amount * (1 - d / 100)) } })
+    // 2. Cost invoice FIRST — same lines, per-line rule at the % Kat chose,
+    //    same number, Due on Receipt, Kat's header/notes/terms. If Books
+    //    rejects it, nothing has been emailed yet.
+    p.lines = applyDiscount(p.lines, pct)
     p.cost_total = r2(p.lines.reduce((s, l) => s + l.cost_amount, 0)); p.saved = r2(p.insurance_total - p.cost_total)
-    const invLines = p.lines.map(l => ({
-      ...(l.item_id ? { item_id: l.item_id } : { name: l.name }), description: l.description || '', rate: l.rate, quantity: l.quantity,
-      ...(l.discount_pct > 0 ? { discount: `${l.discount_pct}%` } : {}),
-    }))
     let inv = null
     if (!dry) {
-      const est = p._est
-      const body = {
-        customer_id: p.customer_id, invoice_number: p.estimate_number, reference_number: est.reference_number || job.quote_number || p.estimate_number,
-        date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), payment_terms: 0, payment_terms_label: 'Due on Receipt',
-        discount_type: 'item_level', is_discount_before_tax: true, line_items: invLines,
-        ...(est.terms ? { terms: est.terms } : {}),
-        custom_fields: invoiceCustomFields(est.custom_fields), salesperson_name: est.salesperson_name || job.technician || '', template_id: p.templates.invoice.id,
-      }
-      // Books auto-numbers invoices; this flag lets us reuse the estimate number.
-      const postInvoice = async b => axios.post(`${API}/invoices`, b, { headers: H(token), params: { ...org(), ignore_auto_number_generation: true }, timeout: 20000, validateStatus: s => s < 500 })
-      let c = await postInvoice(body)
-      if (c.data?.code !== 0 && /custom ?field|cf_/i.test(String(c.data?.message || ''))) {
-        // A field that doesn't exist on invoices (e.g. Insurer) — drop it and go again.
-        console.log('[bill-it] custom field rejected, retrying without:', c.data?.message)
-        body.custom_fields = body.custom_fields.filter(f => f.api_name !== 'cf_insurer')
-        c = await postInvoice(body)
-        if (c.data?.code !== 0 && /custom ?field|cf_/i.test(String(c.data?.message || ''))) { body.custom_fields = []; c = await postInvoice(body) }
-      }
-      if (c.data?.code !== 0) {
-        // Number collision / numbering rule → let Books number it, note the estimate in the reference.
-        if (/number|already exists|duplicate/i.test(String(c.data?.message || ''))) {
-          delete body.invoice_number
-          const c2 = await axios.post(`${API}/invoices`, body, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
-          if (c2.data?.code !== 0) throw new Error(`Cost invoice failed: ${c2.data?.message || c2.status}`)
-          inv = c2.data.invoice
-        } else throw new Error(`Cost invoice failed: ${c.data?.message || c.status}`)
-      } else inv = c.data.invoice
-      if (String(inv.template_id) !== String(p.templates.invoice.id)) await applyInvoiceTemplate(token, inv.invoice_id, p.templates.invoice)
-      // Audit trail stays inside Books (comment), never on the customer's PDF.
-      await axios.post(`${API}/invoices/${inv.invoice_id}/comments`, { description: `Cost invoice · ${pct}% partnership discount${p.customer_type ? ` (${p.customer_type.replace(/_/g, ' ')})` : ''} on services · billed via Absolute ADAS app by ${by} · from estimate ${p.estimate_number}` }, { headers: H(token), params: org(), timeout: 12000, validateStatus: s => s < 500 }).catch(() => {})
-      // 3. Insurance invoice = the estimate, emailed as-is
-      const e1 = await axios.post(`${API}/estimates/${p.estimate_id}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
-      if (e1.data?.code !== 0) console.log('[bill-it] estimate email failed:', e1.data?.message)
-      // 4. Email the cost invoice
-      const e2 = await axios.post(`${API}/invoices/${inv.invoice_id}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
-      if (e2.data?.code !== 0) console.log('[bill-it] cost invoice email failed:', e2.data?.message)
-      const emailNote = [e1.data?.code !== 0 ? `estimate email failed (${e1.data?.message})` : '', e2.data?.code !== 0 ? `invoice email failed (${e2.data?.message})` : ''].filter(Boolean).join('; ')
+      const estFull = await getEstimate(token, p.estimate_id)
+      inv = await createCostInvoice({ token, app: catalyst.initialize(req), est: estFull, lines: p.lines, pct, customerType: p.customer_type, technician: job.technician, by, templates: p.templates })
+      // 3. Insurance invoice = the estimate, emailed as-is. 4. Cost invoice emailed.
+      const e1 = await emailEstimate(token, p.estimate_id, emails)
+      const e2 = await emailInvoice(token, inv.invoice_id, emails)
+      const emailNote = [e1 ? `estimate email failed (${e1})` : '', e2 ? `invoice email failed (${e2})` : ''].filter(Boolean).join('; ')
       if (emailNote) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${inv.invoice_number}: invoice created but ${emailNote} — send from Books by hand.`).catch(() => {})
       // Stamp the card
       await updateJobPublic(req, job.id, { ...job, invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,

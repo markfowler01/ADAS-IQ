@@ -166,6 +166,9 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Send both to</label>
               <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="shop@email.com, second@email.com" className="w-full rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
               <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact. Saves the shop {fmt(insTotal - costTotal)}. Rule on file: {p.rule}.</div>
+              {p.templates && (
+                <div className="text-sm mt-1" style={{ color: '#888' }}>PDF templates: insurance → <b>{p.templates.estimate?.name || 'missing'}</b> · cost → <b>{p.templates.invoice?.name || 'missing'}</b>. Header carries RO#, Year/Make/Model, VIN and the scan-report link, same as Kat's.</div>
+              )}
             </div>
             {isOwner && (
               <label className="flex items-center gap-2 text-sm" style={{ color: '#92400e' }}>
