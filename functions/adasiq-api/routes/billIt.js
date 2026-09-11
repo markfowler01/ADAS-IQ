@@ -78,7 +78,7 @@ async function buildPreview(req, job) {
   })
 
   const lines = [
-    ...(est.line_items || []).map(li => ({ item_id: li.item_id || null, name: li.name, description: li.description || '', rate: Number(li.rate) || 0, quantity: Number(li.quantity) || 1, product_type: byId.get(String(li.item_id))?.product_type || 'service', _extra: false })),
+    ...(est.line_items || []).map(li => ({ line_item_id: li.line_item_id, item_id: li.item_id || null, name: li.name, description: li.description || '', rate: Number(li.rate) || 0, quantity: Number(li.quantity) || 1, product_type: byId.get(String(li.item_id))?.product_type || 'service', _extra: false })),
     ...extraLines,
   ]
   const discounted = lines.map(li => {
@@ -107,14 +107,28 @@ async function buildPreview(req, job) {
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
     can_bill: !existing && !alreadyConverted && !job.billed_via_app && !!emails.length, already_converted: alreadyConverted,
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default',
+    _byId: byId, _byName: byName,
   }
+}
+const pub = p => { const { _byId, _byName, ...rest } = p; return rest }
+
+// Kat edited the lines in the modal → rebuild the line set from her list.
+function linesFromEdit(p, edited) {
+  return edited.map(x => {
+    const it = x.item_id ? p._byId.get(String(x.item_id)) : p._byName.get(String(x.name || '').toLowerCase().trim())
+    const rate = r2(x.rate), quantity = Number(x.quantity) || 1
+    const name = it?.name || x.name || 'Item'
+    const product_type = it?.product_type || x.product_type || 'service'
+    const amount = r2(rate * quantity)
+    return { line_item_id: x.line_item_id || null, item_id: it?.item_id || x.item_id || null, name, description: x.description || '', rate, quantity, product_type, amount, is_part: isPart({ product_type, name }), never_discount: NO_DISCOUNT.test(name), _extra: !!x._extra, _edited: true }
+  }).filter(l => l.quantity > 0)
 }
 
 router.post('/:id/bill/preview', async (req, res) => {
   try {
     const job = (await readJobsPublic(req)).find(j => String(j.id) === String(req.params.id))
     if (!job) return res.status(404).json({ error: 'Job not found' })
-    res.json(await buildPreview(req, job))
+    res.json(pub(await buildPreview(req, job)))
   } catch (e) { res.status(e.status || 500).json({ error: e.response?.data?.message || e.message }) }
 })
 
@@ -126,24 +140,39 @@ router.post('/:id/bill', async (req, res) => {
     const p = await buildPreview(req, job)
     const emails = (Array.isArray(req.body?.emails) && req.body.emails.length ? req.body.emails : p.emails).map(e => String(e).trim().toLowerCase()).filter(e => /.+@.+\..+/.test(e))
     if (!emails.length) return res.status(400).json({ error: 'No email to send to.' })
-    if (p.existing_invoice) return res.status(409).json({ error: `Already billed — invoice ${p.existing_invoice.number} exists in Books.`, preview: p })
+    if (p.existing_invoice) return res.status(409).json({ error: `Already billed — invoice ${p.existing_invoice.number} exists in Books.`, preview: pub(p) })
     if (job.billed_via_app) return res.status(409).json({ error: `Already billed via the app (${job.billed_via_app}).` })
-    if (p.already_converted) return res.status(409).json({ error: `Already billed — Books shows estimate ${p.estimate_number} converted to an invoice.`, preview: p })
+    if (p.already_converted) return res.status(409).json({ error: `Already billed — Books shows estimate ${p.estimate_number} converted to an invoice.`, preview: pub(p) })
     const by = req.user?.name || req.user?.email || 'staff'
     const pct = Number(req.body?.discount_pct ?? p.discount_pct) || 0
     const token = await getAccessToken()
 
-    // 1. Extras → estimate (so the insurance invoice carries them too)
-    const extraLines = p.lines.filter(l => l._extra)
-    if (extraLines.length && !dry) {
-      const est = await getEstimate(token, p.estimate_id)
-      const merged = [
-        ...(est.line_items || []).map(li => ({ line_item_id: li.line_item_id, item_id: li.item_id, name: li.name, description: li.description, rate: li.rate, quantity: li.quantity })),
-        ...extraLines.map(l => ({ ...(l.item_id ? { item_id: l.item_id } : { name: l.name }), description: l.description, rate: l.rate, quantity: l.quantity })),
-      ]
-      const u = await axios.put(`${API}/estimates/${p.estimate_id}`, { line_items: merged }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
-      if (u.data?.code !== 0) throw new Error(`Could not add extras to the estimate: ${u.data?.message || u.status}`)
+    // 1. Make the Books estimate match what Kat approved on the left side:
+    //    her edits (price / qty / removed / added) + the tech's extras.
+    //    The insurance invoice IS the estimate, so both documents agree.
+    const edited = Array.isArray(req.body?.lines) ? linesFromEdit(p, req.body.lines) : null
+    if (edited) {
+      if (!edited.length) return res.status(400).json({ error: 'Nothing left to bill — the estimate needs at least one line.' })
+      p.lines = edited
+      p.insurance_total = r2(edited.reduce((s, l) => s + l.amount, 0))
     }
+    const original = (await getEstimate(token, p.estimate_id))?.line_items || []
+    const same = original.length === p.lines.length && original.every((li, i) => {
+      const l = p.lines[i]; return l && String(li.item_id || '') === String(l.item_id || '') && r2(li.rate) === r2(l.rate) && Number(li.quantity) === Number(l.quantity) && (li.name === l.name)
+    })
+    if (!same && !dry) {
+      const lineItems = p.lines.map(l => ({
+        ...(l.line_item_id ? { line_item_id: l.line_item_id } : {}), ...(l.item_id ? { item_id: l.item_id } : { name: l.name }),
+        description: l.description || '', rate: l.rate, quantity: l.quantity,
+      }))
+      const u = await axios.put(`${API}/estimates/${p.estimate_id}`, { line_items: lineItems }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
+      if (u.data?.code !== 0) throw new Error(`Could not update the estimate in Books: ${u.data?.message || u.status}`)
+      // Books re-issues line_item_ids; re-read so the invoice mirrors exactly what it now holds.
+      const fresh = (u.data.estimate?.line_items || [])
+      if (fresh.length === p.lines.length) p.lines = p.lines.map((l, i) => ({ ...l, line_item_id: fresh[i].line_item_id, item_id: fresh[i].item_id || l.item_id, rate: r2(fresh[i].rate), quantity: Number(fresh[i].quantity), amount: r2(fresh[i].rate * fresh[i].quantity) }))
+      p.insurance_total = r2(p.lines.reduce((s, l) => s + l.amount, 0))
+    }
+    const changedLines = !same
     // 2. Cost invoice FIRST (same lines, per-line discount, same number, Due
     //    on Receipt) — if Books rejects it, nothing has been emailed yet.
     const eligible = l => l.amount > 0 && !isPart(l) && !NO_DISCOUNT.test(l.name || '')
@@ -189,11 +218,12 @@ router.post('/:id/bill', async (req, res) => {
       `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}*`,
       `Insurance invoice (estimate ${p.estimate_number}) $${p.insurance_total.toFixed(2)} → ${emails.join(', ')}`,
       `Cost invoice ${inv?.invoice_number || p.estimate_number} at ${pct}% → $${p.cost_total.toFixed(2)} (saves the shop $${p.saved.toFixed(2)})${p.extras_count ? ` · ${p.extras_count} extra item${p.extras_count === 1 ? '' : 's'} added` : ''}`,
+      changedLines ? `Estimate ${p.estimate_number} updated in Books to match the review` : '',
       `by ${by}`,
-    ].join('\n')
+    ].filter(Boolean).join('\n')
     await postToCliqChannel(DISPATCH_CHANNEL, summary).catch(() => {})
     console.log(`[bill-it] ${dry ? 'DRY' : 'LIVE'} ${p.shop_name} ${p.estimate_number} ${pct}% by ${by}`)
-    res.json({ ok: true, dry, invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, preview: p })
+    res.json({ ok: true, dry, invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, estimate_updated: changedLines, preview: pub(p) })
   } catch (e) {
     console.error('[bill-it]', e.message)
     res.status(e.status || 500).json({ error: e.response?.data?.message || e.message })
