@@ -115,6 +115,8 @@ export async function createCostInvoice({ token, app, est, lines, pct, customerT
   }))
   const body = {
     customer_id: est.customer_id, invoice_number: est.estimate_number, reference_number: est.reference_number || est.estimate_number,
+    // Link to the estimate like Books' own "Convert to Invoice" (estimate → status invoiced).
+    estimate_id: est.estimate_id,
     date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), payment_terms: 0, payment_terms_label: 'Due on Receipt',
     discount_type: 'item_level', is_discount_before_tax: true, line_items: invLines,
     notes: text.notes, terms: text.terms,
@@ -126,6 +128,7 @@ export async function createCostInvoice({ token, app, est, lines, pct, customerT
   const post = b => axios.post(`${API}/invoices`, b, { headers: H(token), params: { ...org(), ignore_auto_number_generation: true }, timeout: 20000, validateStatus: s => s < 500 })
   let c = await post(body)
   const msg = () => String(c.data?.message || '')
+  if (c.data?.code !== 0 && /estimate/i.test(msg())) { console.log('[cost-invoice] estimate link rejected, retrying without:', msg()); delete body.estimate_id; c = await post(body) }
   if (c.data?.code !== 0 && /payment|gateway/i.test(msg())) { console.log('[cost-invoice] payment options rejected, retrying without:', msg()); delete body.payment_options; c = await post(body) }
   if (c.data?.code !== 0 && /custom ?field|cf_/i.test(msg())) {
     console.log('[cost-invoice] custom field rejected, retrying without insurer:', msg())
