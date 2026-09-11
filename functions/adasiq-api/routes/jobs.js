@@ -619,7 +619,7 @@ router.put('/:id', async (req, res) => {
         const msg = [
           `🟢 *Ready to Invoice* · ${shop}`,
           `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
-          `🏦 ${insurer}`,
+          ...payLines(updated, insurer),
           extras ? `\n🚨 *ALERT — EXTRA SERVICES TO ADD TO INVOICE:*\n${extras}` : null,
         ].filter(Boolean).join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
@@ -769,7 +769,7 @@ router.patch('/:id', async (req, res) => {
         const msg = [
           `🟢 *Ready to Invoice* · ${shop}`,
           `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
-          `🏦 ${insurer}`,
+          ...payLines(updated, insurer),
           extras ? `\n🚨 *ALERT — EXTRA SERVICES TO ADD TO INVOICE:*\n${extras}` : null,
         ].filter(Boolean).join('\n')
         await postToCliqChannel(AA_JOBS_CHANNEL, msg)
@@ -905,7 +905,7 @@ router.patch('/:id/complete', async (req, res) => {
       const msg = [
         `🟢 *Ready to Invoice* · ${shop}`,
         `${vehicle || 'Vehicle TBD'}${roNum ? ' · RO# ' + roNum : ''}${tech}`,
-        `🏦 ${insurer}`,
+        ...payLines(updated, insurer),
       ].join('\n')
       await postToCliqChannel(AA_JOBS_CHANNEL, msg)
         .catch(e => console.warn('[aajobs job_ready_invoice complete]', e.message))
@@ -1452,6 +1452,17 @@ function tireGate(req, res, merged) {
   if (!missing.length) return false
   res.status(409).json({ error: `Post-collision safety inspection first — still need: ${missing.join(', ')}. Confirm it on the Ready to Invoice screen.`, tires_gate: true, pcsi_gate: true, missing })
   return true
+}
+// Payment line(s) for the Ready-to-Invoice channel post (Mark 2026-09-11:
+// "put in the cash and then the dollar amount… make it very alert").
+function payLines(job, insurer) {
+  const q = String(job?.cash_quoted || '').trim()
+  if (q) return [
+    `\n💵💵💵 *CUSTOMER PAY — TOLD $${q}* 💵💵💵`,
+    `*Bill as CASH · total must be $${q} · 0% discount · quote already capped*`,
+  ]
+  if (_cash.isCashCustomer(job)) return [`💵 *CASH CUSTOMER* · CP pricing · max $${_cash.CASH_MAX_OUT_OF_POCKET}`]
+  return [`🏦 ${insurer}`]
 }
 // 💵 The tech picked $350 / $700 → the Books quote is capped at that number
 // right away, so Kat's manual Convert and Bill it both land on the promise.
