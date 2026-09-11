@@ -6,6 +6,7 @@
 // you open this when a new quote hits in the middle of a busy day.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from '../components/ReadyChecks.jsx'
 import SalesStopSheet, { SalesStopScoreboard } from '../components/SalesStopSheet'
 import { JobPhotosSheet, TakePhotosControl, photoProgress, gateApplies } from '../components/JobPhotos'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -434,6 +435,8 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
 
 function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
   const [text, setText] = useState('')
+  const [checks, setChecks] = useState({ ...DEFAULT_CHECKS })
+  const checksOk = readyChecksValid(checks, job)
   // Real Books items instead of a text (Mark 2026-09-10: "have the
   // technician add the actual item"). Searchable catalog, qty, note.
   const [catalog, setCatalog] = useState([])
@@ -466,6 +469,7 @@ function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
           <button onClick={onClose} className="text-xl px-1" style={{ color: '#888' }}>×</button>
         </div>
 
+        <div className="mb-3"><ReadyChecks job={job} value={checks} onChange={setChecks} /></div>
         <div className="text-sm mb-1" style={{ color: '#1a1a1a' }}>
           Add anything extra you did — pick the real item so it lands on the invoice.
         </div>
@@ -505,15 +509,17 @@ function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
 
         <div className="flex gap-2 mt-3">
           <button
-            onClick={() => onSubmit('', [])}
+            onClick={() => onSubmit('', [], checks)}
+            disabled={!checksOk}
             className="flex-1 rounded-xl py-2.5 text-sm font-semibold"
-            style={{ backgroundColor: 'white', color: '#666', border: '1px solid #e0dbd6' }}
+            style={{ backgroundColor: 'white', color: '#666', border: '1px solid #e0dbd6', opacity: checksOk ? 1 : .45 }}
           >Skip · No extras</button>
           <button
-            onClick={() => onSubmit(text, items)}
+            onClick={() => onSubmit(text, items, checks)}
+            disabled={!checksOk}
             className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white"
-            style={{ backgroundColor: '#7e22ce' }}
-          >{items.length ? `🟢 Ready · ${items.length} item${items.length === 1 ? '' : 's'} added` : text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
+            style={{ backgroundColor: '#7e22ce', opacity: checksOk ? 1 : .45 }}
+          >{!checksOk ? `☐ ${readyChecksMissing(checks, job)[0]}` : items.length ? `🟢 Ready · ${items.length} item${items.length === 1 ? '' : 's'} added` : text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
         </div>
       </div>
     </div>
@@ -992,14 +998,15 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   // Called by the modal — flips the job to ready_invoice, optionally
   // attaching extra_services text that surfaces on the Kanban card + in
   // the Cliq #Dispatch alert so Kat can pull them into the invoice.
-  async function submitReadyToInvoice(extraServices, extraItems = []) {
+  async function submitReadyToInvoice(extraServices, extraItems = [], checks = null) {
     const job = readyInvoiceJob
     if (!job?.id) return
     setReadyInvoiceJob(null)
     try {
       const body = { status: 'ready_invoice' }
+      if (checks) Object.assign(body, readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician))
       const itemText = (extraItems || []).map(i => `${i.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ')
-      const note = [itemText, (extraServices || '').trim()].filter(Boolean).join(' · ')
+      const note = [itemText, (extraServices || '').trim(), checks ? readyChecksNote(checks, job) : ''].filter(Boolean).join(' · ')
       if (note) body.extra_services = note
       if (extraItems?.length) body.extra_items = JSON.stringify(extraItems.map(i => ({ item_id: i.item_id, name: i.name, rate: i.rate, quantity: i.quantity })))
       if (job._photoOverride) body.photo_override = job._photoOverride
@@ -1014,8 +1021,9 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
         setPhotoGateJob(job)
         return
       }
+      if (res.status === 409 && json.tires_gate) { showToast(`🛞 ${json.error}`); setReadyInvoiceJob(job); return }
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
-      showToast(`🟢 ${job.shop_name || 'Job'} → Ready to Invoice`)
+      showToast(body.cash_quoted ? `💵 Customer pay · told $${body.cash_quoted} — Kat notified · Ready to Invoice` : `🟢 ${job.shop_name || 'Job'} → Ready to Invoice`)
       await load()
     } catch (e) {
       showToast(`Failed: ${e.message}`)

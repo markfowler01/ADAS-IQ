@@ -3,6 +3,7 @@ import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import { Big3Badge, DrpBadge } from './books/Big3Rules.jsx'
 import BillItModal from './BillItModal.jsx'
+import { needsWindshieldCheck } from './MobileJobCard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
@@ -839,6 +840,12 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >⚡ TESLA · Tesla pricing</span>
         </p>
       )}
+      {needsWindshieldCheck(job) && job.status !== 'complete' && !job.invoiced && (
+        <p className="mb-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#f59e0b', color: '#1a1a1a', letterSpacing: '0.06em' }}
+            title="Windshield camera on this job — check the glass before calibrating">🪟 WINDSHIELD CAMERA · check glass first</span>
+        </p>
+      )}
 
       {/* Insurer OR Cash badge — cash = blank insurer or standard self-pay markers.
           Bright green so Kat + tech can't miss it: cash jobs have different
@@ -849,7 +856,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
             style={{ background: '#15803d', color: '#fff', letterSpacing: '0.06em' }}
             title="Cash customer — max $700 out of pocket, PCSI / Post Scan / Calibration ID cost zeroed"
-          >💵 CASH · max $700</span>
+          >{job.cash_quoted ? `💵 CUSTOMER PAY · told $${job.cash_quoted}` : '💵 CASH · max $700'}</span>
         </p>
       ) : job.insurer && (
         <p className="text-xs font-medium mb-1 truncate" style={{ color: '#2563eb' }}>
@@ -1734,13 +1741,13 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   }
 
   // Called by CalibrationReviewModal "Done" button with the final calibration list
-  async function handleCalReviewConfirm(updatedCals) {
+  async function handleCalReviewConfirm(updatedCals, extras = {}) {
     const job = calReviewJob
     if (!job) return
     setCalReviewJob(null)
 
     // Optimistic update — show new cals + ready_invoice immediately
-    const updatedJob = { ...job, calibrations: JSON.stringify(updatedCals), status: 'ready_invoice' }
+    const updatedJob = { ...job, calibrations: JSON.stringify(updatedCals), status: 'ready_invoice', ...extras }
     setJobs(prev => prev.map(j => j.id === job.id ? updatedJob : j))
 
     try {
@@ -1750,6 +1757,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
         body: JSON.stringify({
           calibrations: JSON.stringify(updatedCals),
           status: 'ready_invoice',
+          ...extras,
           ...(photoOverride ? { photo_override: photoOverride } : {}),
         }),
       })
@@ -1761,8 +1769,15 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           setPhotoGateJob(job)
           return
         }
+        if (res.status === 409 && errData.tires_gate) {
+          setJobs(prev => prev.map(j => j.id === job.id ? job : j))
+          showToast(`🛞 ${errData.error}`)
+          setCalReviewJob(job)
+          return
+        }
         throw new Error(errData.error || 'Update failed')
       }
+      if (extras.cash_quoted) showToast(`💵 Customer pay · told $${extras.cash_quoted} — Kat and #dispatch notified`)
     } catch (e) {
       setJobs(prev => prev.map(j => j.id === job.id ? job : j))
       showToast(e.message || 'Failed to move job. Try again.')
@@ -2395,6 +2410,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       {calReviewJob && (
         <CalibrationReviewModal
           job={calReviewJob}
+          user={user}
           onConfirm={handleCalReviewConfirm}
           onClose={() => setCalReviewJob(null)}
         />
@@ -2815,7 +2831,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
             style={{ background: '#15803d', color: '#fff', fontSize: 10, letterSpacing: '0.06em' }}
             title="Cash customer — max $700"
-          >💵 CASH</span>
+          >{job.cash_quoted ? `💵 TOLD $${job.cash_quoted}` : '💵 CASH'}</span>
         ) : (job.insurer && <span>🏢 {job.insurer}</span>)}
       </div>
 

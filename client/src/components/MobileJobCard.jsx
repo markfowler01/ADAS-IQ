@@ -44,6 +44,14 @@ const COLUMNS = [
 // Cash detection — mirrors services/cashPricing.js. Blank insurer is
 // NOT cash (fixed 2026-07-08 per Mark: "if there's an insurance company
 // it's not cash").
+// 🪟 Windshield-camera alert (Mark 2026-09-11): "check the windshield before
+// calibrating" — aftermarket glass, bracket, cracks, tint band.
+export function needsWindshieldCheck(job) {
+  let cals = []
+  try { cals = typeof job?.calibrations === 'string' ? JSON.parse(job.calibrations || '[]') : (job?.calibrations || []) } catch { cals = [] }
+  return (Array.isArray(cals) ? cals : []).some(c => /windshield|front[- ]?(facing )?camera|forward[- ]?(facing )?camera|fwd camera|mono ?cam|lane ?(keep|departure) camera/i.test(String(c?.name || c?.type || c?.calibration_name || c || '')))
+}
+
 export function isCashCustomerJob(job) {
   if (!job) return false
   const ins = String(job.insurer || '').trim()
@@ -335,7 +343,7 @@ export default function MobileJobCard({
             className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
             style={{ background: '#15803d', color: '#fff', letterSpacing: '0.06em' }}
             title="Cash customer — max $700 out of pocket"
-          >💵 CASH · max $700</span>
+          >{job.cash_quoted ? `💵 CUSTOMER PAY · told $${job.cash_quoted}` : '💵 CASH · max $700'}</span>
         </p>
       ) : job.insurer && (
         <p className="text-xs font-medium mb-1 truncate" style={{ color: '#2563eb' }}>
@@ -353,6 +361,11 @@ export default function MobileJobCard({
         </div>
       )}
 
+      {needsWindshieldCheck(job) && !isComplete && (
+        <div className="mb-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b' }}>
+          🪟 WINDSHIELD CAMERA — check the glass before calibrating (aftermarket, bracket, cracks, tint)
+        </div>
+      )}
       <div className="flex flex-wrap gap-1 mb-2">
         {calArr.map((c, i) => {
           const label = c.name || c.type || c.calibration_name || ''

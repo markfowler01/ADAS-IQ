@@ -149,6 +149,8 @@ function rowToJob(row) {
     request_type:     row.request_type     || '',   // 'quote' | 'job' | '' (Mark 2026-09-10: Quotes Requested column)
     extra_items:      row.extra_items      || '',   // JSON [{item_id,name,rate,quantity,note}] added by the tech at Ready to Invoice
     billed_via_app:   row.billed_via_app   || '',   // '💸 Bill it' stamp: "<who> <when>"
+    cash_quoted:      row.cash_quoted      || '',   // customer-pay number the customer was told (350 / 700)
+    tires_set:        row.tires_set        || '',   // "36F/36R psi · tech · when"
   }
 }
 
@@ -187,6 +189,8 @@ function jobToRow(job) {
     request_type:     (job.status || 'need_dispatch') === 'job_requested' ? String(job.request_type || '').slice(0, 10) : '',
     extra_items:      typeof job.extra_items === 'string' ? job.extra_items : (job.extra_items ? JSON.stringify(job.extra_items) : ''),
     billed_via_app:   String(job.billed_via_app || '').slice(0, 40),
+    cash_quoted:      String(job.cash_quoted || '').slice(0, 20),
+    tires_set:        String(job.tires_set || '').slice(0, 120),
   }
 }
 
@@ -561,6 +565,8 @@ router.put('/:id', async (req, res) => {
         photoGateNudge(req, merged, missing).catch(() => {})
         return res.status(409).json({ error: `Photos first — still need: ${missing.join(', ')}.`, photo_gate: true, missing: prog.missing, problems: prog.problems, progress: prog })
       }
+      if (tireGate(req, res, merged)) return
+      relayCustomerPay(req, req.body, cur)
       delete req.body.photo_override
     }
 
@@ -686,6 +692,8 @@ router.patch('/:id', async (req, res) => {
           postToCliqChannel(DISPATCH_CHANNEL, `📸 *Photo gate overridden* · ${merged.shop_name || 'Job'} · ${override}\nMissing: ${describeMissing(prog).join(', ')}`).catch(() => {})
         }
       }
+      if (tireGate(req, res, merged)) return
+      relayCustomerPay(req, merged, currentJob)
       delete merged.photo_override
     }
 
@@ -1422,6 +1430,31 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+
+// 🛞 Tire gate (Mark 2026-09-11): every job needs "all four set to the
+// manufacturer spec" confirmed at Ready to Invoice. Same override as photos.
+function tireGate(req, res, merged) {
+  const isOwner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+  const override = String(req.body.photo_override || '').trim()
+  if (String(merged.tires_set || '').trim() || (isOwner && override)) return false
+  res.status(409).json({ error: 'Tire pressures first — set all four to the manufacturer spec and confirm it on the Ready to Invoice screen.', tires_gate: true })
+  return true
+}
+// 💵 Customer pay relay (Mark 2026-09-11): the advisor tells the tech "that's
+// customer pay" mid-job and a number ($350 / $700) gets quoted — Kat and
+// #dispatch need to know both, and the card must read CASH from here on.
+function relayCustomerPay(req, merged, prev) {
+  const q = String(req.body.cash_quoted || '').trim()
+  if (!q || String(prev?.cash_quoted || '') === q) return
+  const { isCashInsurerOrBlank } = _cash
+  if (!isCashInsurerOrBlank(merged.insurer)) merged.insurer = 'Customer Pay'
+  const who = req.user?.techName || req.user?.name || req.user?.email || 'tech'
+  const line = `💵 *CUSTOMER PAY · told $${q}* — ${merged.shop_name || 'Job'} · ${merged.vehicle || ''}${merged.quote_number ? ` · ${merged.quote_number}` : ''}\nby ${who} at Ready to Invoice — bill as cash, max $${q}.`
+  postToCliqChannel(DISPATCH_CHANNEL, line).catch(() => {})
+  createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'ready_invoice', title: `💵 Customer pay · told $${q} · ${merged.shop_name || ''}`, body: `${merged.vehicle || ''} — ${who} says the customer was told $${q}. Bill as cash.`, jobId: req.params.id, job: merged, skipCliq: true, skipTechChannel: true }).catch(() => {})
+  merged.notes = `${merged.notes ? merged.notes + '\n' : ''}💵 Customer pay — told $${q} (${who})`
+}
+import * as _cash from '../services/cashPricing.js'
 
 // DELETE /api/jobs/:id/photo-slot/:slot[?fileId=] — remove a wrong photo
 // (Mark 2026-09-10: "one of my technicians put the wrong pictures in

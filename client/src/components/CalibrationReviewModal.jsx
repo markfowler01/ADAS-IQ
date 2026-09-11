@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from './ReadyChecks.jsx'
 
 const API_BASE = ''
 const ORANGE = '#CD4419'
@@ -25,7 +26,9 @@ function normalizeCal(c) {
  *   onConfirm(updatedCals) — called with the final calibration array
  *   onClose()    — called when dismissed without confirming
  */
-export default function CalibrationReviewModal({ job, onConfirm, onClose }) {
+export default function CalibrationReviewModal({ job, onConfirm, onClose, user = null }) {
+  const [checks, setChecks] = useState({ ...DEFAULT_CHECKS })
+  const checksOk = readyChecksValid(checks, job)
   const [cals, setCals] = useState(() => {
     let c = []
     try { c = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : (job.calibrations || []) } catch {}
@@ -73,8 +76,12 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose }) {
   })
 
   async function handleConfirm() {
+    if (!checksOk) return
     setSaving(true)
-    await onConfirm(cals)
+    const patch = readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician)
+    const note = readyChecksNote(checks, job)
+    if (note) patch.extra_services = note
+    await onConfirm(cals, patch)
     setSaving(false)
   }
 
@@ -269,9 +276,10 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose }) {
 
         {/* ── Sticky footer ── */}
         <div className="px-5 pb-8 pt-4" style={{ borderTop: '1px solid #f0ece8' }}>
+          <div className="mb-3"><ReadyChecks job={job} value={checks} onChange={setChecks} /></div>
           <button
             onClick={handleConfirm}
-            disabled={saving}
+            disabled={saving || !checksOk}
             className="w-full rounded-2xl font-bold text-white transition-opacity"
             style={{
               backgroundColor: saving ? '#c4b5fd' : '#7e22ce',
@@ -280,7 +288,7 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose }) {
               opacity: saving ? 0.7 : 1,
             }}
           >
-            {saving ? 'Saving…' : 'Done — Move to Ready to Invoice'}
+            {saving ? 'Saving…' : !checksOk ? `☐ ${readyChecksMissing(checks, job)[0]}` : 'Done — Move to Ready to Invoice'}
           </button>
         </div>
       </div>

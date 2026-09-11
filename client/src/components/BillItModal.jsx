@@ -157,6 +157,18 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
             </div>
           )}
           {p && !done && (<>
+            {p.cash_quoted && (
+              <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={{ backgroundColor: '#dcfce7', border: '2px solid #15803d' }}>
+                <div>
+                  <div className="font-extrabold text-base" style={{ color: '#14532d' }}>💵 CUSTOMER PAY — the customer was told ${p.cash_quoted}</div>
+                  <div className="text-sm" style={{ color: '#166534' }}>Insurance column is {fmt(insTotal)}. Bill as cash: {insTotal > Number(p.cash_quoted) ? `add the cap line so both documents total $${p.cash_quoted}` : 'already at or under the quoted number'}. Discount should be 0% for cash.</div>
+                </div>
+                {insTotal > Number(p.cash_quoted) && !lines.some(l => /cash cap/i.test(l.name)) && (
+                  <button type="button" onClick={() => { setLines(ls => [...ls, { name: `Cash cap — $${p.cash_quoted} max`, description: 'Customer pay — priced at the number the customer was told', rate: -r2(insTotal - Number(p.cash_quoted)), quantity: 1, product_type: 'service', is_part: false, never_discount: true, _added: true, _edited: true }]); setPct(0) }}
+                    className="rounded-xl px-4 font-extrabold text-white" style={{ minHeight: 44, backgroundColor: GREEN }}>Match ${p.cash_quoted} + 0%</button>
+                )}
+              </div>
+            )}
             {p.warnings.length > 0 && (
               <div className="rounded-xl p-3 text-sm space-y-1" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
                 {p.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
