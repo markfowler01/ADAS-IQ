@@ -81,6 +81,7 @@ router.get('/books-invoice', async (req, res) => {
     if (!hit) return res.status(404).json({ error: 'not found' })
     const d = await axios.get(`https://www.zohoapis.com/books/v3/invoices/${hit.invoice_id}`, { headers: H, params: P, timeout: 12000, validateStatus: s => s < 500 })
     const inv = d.data?.invoice || {}
+    if (req.query.raw) { const { line_items, custom_fields, ...rest } = inv; return res.json(rest) }
     res.json({ ok: true, invoice_number: inv.invoice_number, template_id: inv.template_id, template_name: inv.template_name, template_type: inv.template_type, payment_terms: inv.payment_terms, payment_terms_label: inv.payment_terms_label, discount_type: inv.discount_type, discount: inv.discount, is_discount_before_tax: inv.is_discount_before_tax, notes: inv.notes, terms: inv.terms, salesperson_name: inv.salesperson_name, reference_number: inv.reference_number, custom_fields: inv.custom_fields, line_items: (inv.line_items || []).map(l => ({ name: l.name, rate: l.rate, quantity: l.quantity, discount: l.discount, discount_amount: l.discount_amount, item_total: l.item_total })), total: inv.total, sub_total: inv.sub_total, status: inv.status, created_by: inv.created_by_name || inv.created_by_id })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
