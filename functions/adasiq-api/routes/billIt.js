@@ -15,7 +15,7 @@
 // never to goods/parts, the Calibration Identification Report, or the
 // State Farm Post-Scan item; $0 lines untouched.
 import express from 'express'
-import { getAccessToken, getItemCatalogForAudit } from '../services/zoho.js'
+import { getAccessToken, getItemCatalogForAudit, resolvePricingPool, paidAlternativeFor } from '../services/zoho.js'
 import { readJobsPublic, updateJobPublic } from './jobs.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 
@@ -73,13 +73,15 @@ async function buildPreview(req, job) {
     ...(est.line_items || []).map(li => ({ line_item_id: li.line_item_id, item_id: li.item_id || null, name: li.name, description: li.description || '', rate: Number(li.rate) || 0, quantity: Number(li.quantity) || 1, product_type: byId.get(String(li.item_id))?.product_type || 'service', _extra: false })),
     ...extraLines,
   ]
+  const insurerCf = (est.custom_fields || []).find(c => c.label === 'Insurer')?.value || job.insurer || ''
+  const big3Block = { rules: big3.withDefaults(rule.rules), set_by: rule.set_by || '', set_at: rule.set_at || '', has_rule: !!rule.rules, items: big3Items(big3, catalog, byName, insurerCf) }
   const discounted = lines.map(li => {
     const amount = r2(li.rate * li.quantity)
     const part = isPart(li)
     const eligible = pct != null && pct > 0 && amount > 0 && !part && !NO_DISCOUNT.test(li.name || '')
     const disc = eligible ? pct : 0
     const cost = r2(amount * (1 - disc / 100))
-    return { ...li, amount, is_part: part, never_discount: NO_DISCOUNT.test(li.name || ''), discount_pct: disc, cost_amount: cost, why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
+    return { ...li, amount, big3_key: big3KeyFor(li.name), is_part: part, never_discount: NO_DISCOUNT.test(li.name || ''), discount_pct: disc, cost_amount: cost, why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
   })
   const insuranceTotal = r2(discounted.reduce((s, l) => s + l.amount, 0))
   const costTotal = r2(discounted.reduce((s, l) => s + l.cost_amount, 0))
@@ -107,12 +109,40 @@ async function buildPreview(req, job) {
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
     can_bill: !existing && !alreadyConverted && !job.billed_via_app && !!emails.length && !!tpl.estimate && !!tpl.invoice, already_converted: alreadyConverted,
     templates: { estimate: tpl.estimate, invoice: tpl.invoice, estimate_current: est.template_name || '' },
+    big3: big3Block,
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default',
     _byId: byId, _byName: byName,
     _est: { custom_fields: est.custom_fields || [], terms: est.terms || '', notes: est.notes || '', reference_number: est.reference_number || '', salesperson_name: est.salesperson_name || '' },
   }
 }
 const pub = p => { const { _byId, _byName, _est, ...rest } = p; return rest }
+
+// Which Big 4 slot a line belongs to (by name — Books items vary by insurer pool).
+export function big3KeyFor(name) {
+  const n = String(name || '').toLowerCase()
+  if (/calibration identification report/.test(n)) return 'cal_id'
+  if (/post collision safety inspection|\bpcsi\b/.test(n)) return 'pcsi'
+  if (/calibration snapshot/.test(n)) return 'snapshot'
+  if (/post[- ]?(calibration )?scan/.test(n)) return 'post_scan'
+  return null
+}
+// The base "(included)" $0 item and the paid item per slot, for THIS shop's insurer pool.
+function big3Items(big3, catalog, byName, insurer) {
+  const pool = resolvePricingPool(insurer, null)
+  const out = {}
+  for (const b of big3.BIG3) {
+    const base = b.base ? byName.get(b.base.toLowerCase()) : null
+    const paid = byName.get(String(b.paid).toLowerCase())
+      || (b.base ? paidAlternativeFor(catalog.allItems || [], pool, b.base) : null)
+      || (b.paidFallback ? byName.get(b.paidFallback.toLowerCase()) : null)
+    out[b.key] = {
+      label: b.label, modes: b.modes || ['charge', 'included'],
+      base: base ? { item_id: base.item_id, name: base.name, rate: 0, product_type: base.product_type || 'service' } : null,
+      paid: paid ? { item_id: paid.item_id, name: paid.name, rate: Number(paid.rate) || 0, product_type: paid.product_type || 'service' } : null,
+    }
+  }
+  return out
+}
 
 // Kat edited the lines in the modal → rebuild the line set from her list.
 function linesFromEdit(p, edited) {
@@ -176,6 +206,14 @@ router.post('/:id/bill', async (req, res) => {
       p.insurance_total = r2(p.lines.reduce((s, l) => s + l.amount, 0))
     }
     const changedLines = !same
+    // Big 4 rule from the modal → remember for the shop (pings #dispatch like the review modal).
+    if (req.body?.big3_rules && req.body?.big3_save !== false && !dry) {
+      try {
+        const b3 = await import('../services/big3.js')
+        const want = b3.withDefaults(req.body.big3_rules), have = p.big3?.rules || {}
+        if (JSON.stringify(want) !== JSON.stringify(have)) await b3.saveBig3(req, p.shop_name, want, by)
+      } catch (e) { console.log('[bill-it] big3 save failed (non-fatal):', e.message) }
+    }
     // Pin the insurance-invoice look before anything is emailed (strict, like shop quotes).
     if (!dry) await applyEstimateTemplate(token, p.estimate_id, p.templates.estimate)
     // 2. Cost invoice FIRST — same lines, per-line rule at the % Kat chose,

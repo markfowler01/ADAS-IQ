@@ -10,6 +10,7 @@
 // before either document is emailed — so both always agree.
 import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { Big3Picker, describeRules, normalizeMode } from './books/Big3Rules.jsx'
 
 const ORANGE = '#CD4419'
 const GREEN = '#15803d'
@@ -18,6 +19,35 @@ const r2 = n => Math.round((Number(n) || 0) * 100) / 100
 // Same words the server uses to tell a real part from a service typed "goods" in Books.
 const LOOKS_LIKE_SERVICE = /scan|calibrat|inspection|labor|set-?up|program|diagnos|report|snapshot|aim|alignment|ride|remove|install|r&i|r & i/i
 const NO_DISCOUNT = /calibration identification report|^sfp?\s*[-\s].*post[- ]?scan/i
+// Which Big 4 slot a line is (mirrors the server's big3KeyFor).
+const big3KeyFor = name => {
+  const n = String(name || '').toLowerCase()
+  if (/calibration identification report/.test(n)) return 'cal_id'
+  if (/post collision safety inspection|\bpcsi\b/.test(n)) return 'pcsi'
+  if (/calibration snapshot/.test(n)) return 'snapshot'
+  if (/post[- ]?(calibration )?scan/.test(n)) return 'post_scan'
+  return null
+}
+const BIG3_ORDER = ['cal_id', 'pcsi', 'post_scan', 'snapshot']
+// Rebuild the Big 4 lines from a rule: Charge → paid item, Included → "(included)" $0 item,
+// Off → none; Snapshot charge ⇒ no Post-Scan line at all (Mark: "no post scan with snapshot").
+function applyBig3(lines, rules, items) {
+  const others = lines.filter(l => !l.big3_key)
+  const firstIdx = lines.findIndex(l => l.big3_key)
+  const fresh = []
+  for (const key of BIG3_ORDER) {
+    const it = items?.[key]; if (!it) continue
+    let mode = normalizeMode(rules[key]) || 'off'
+    if (key === 'post_scan' && normalizeMode(rules.snapshot) === 'charge') mode = 'off'
+    if (key === 'snapshot' && mode !== 'charge') continue
+    const pick = mode === 'charge' ? it.paid : mode === 'included' ? it.base : null
+    if (!pick) continue
+    const prev = lines.find(l => l.big3_key === key && (l.name === pick.name))
+    fresh.push(prev ? { ...prev, rate: pick.rate, quantity: prev.quantity || 1 } : { item_id: pick.item_id, name: pick.name, description: '', rate: pick.rate, quantity: 1, product_type: pick.product_type || 'service', is_part: false, never_discount: NO_DISCOUNT.test(pick.name), big3_key: key, _edited: true })
+  }
+  const at = firstIdx < 0 ? 0 : Math.min(firstIdx, others.length)
+  return [...others.slice(0, at), ...fresh, ...others.slice(at)]
+}
 
 export default function BillItModal({ job, user, onClose, onBilled }) {
   const [p, setP] = useState(null)
@@ -30,6 +60,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   const [dry, setDry] = useState(false)
   const [catalog, setCatalog] = useState([])
   const [q, setQ] = useState('')
+  const [rules, setRules] = useState(null)
+  const [remember, setRemember] = useState(true)
   const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
 
   useEffect(() => {
@@ -38,16 +70,17 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
       const d = await r.json().catch(() => ({}))
       if (dead) return
       if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
-      setP(d); setLines((d.lines || []).map(l => ({ ...l }))); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct)
+      setP(d); setLines((d.lines || []).map(l => ({ ...l, big3_key: l.big3_key || big3KeyFor(l.name) }))); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct); setRules(d.big3?.rules || null)
     }).catch(e => !dead && setErr(e.message))
     apiFetch(`${API_BASE}/api/jobs/catalog`).then(r => r.json()).then(d => { if (!dead && d.ok) setCatalog(d.items || []) }).catch(() => {})
     return () => { dead = true }
   }, [job.id])
 
+  function changeRules(next) { setRules(next); setLines(ls => applyBig3(ls, next, p?.big3?.items)) }
   function setLine(i, patch) { setLines(ls => ls.map((l, j) => j === i ? { ...l, ...patch, _edited: true } : l)) }
   function removeLine(i) { setLines(ls => ls.filter((_, j) => j !== i)) }
   function addItem(it) {
-    setLines(ls => [...ls, { item_id: it.item_id, name: it.name, description: '', rate: r2(it.rate), quantity: 1, product_type: it.type || 'service', is_part: it.type === 'goods' && !LOOKS_LIKE_SERVICE.test(it.name), never_discount: NO_DISCOUNT.test(it.name), _added: true, _edited: true }])
+    setLines(ls => [...ls, { item_id: it.item_id, name: it.name, description: '', rate: r2(it.rate), quantity: 1, product_type: it.type || 'service', is_part: it.type === 'goods' && !LOOKS_LIKE_SERVICE.test(it.name), never_discount: NO_DISCOUNT.test(it.name), big3_key: big3KeyFor(it.name), _added: true, _edited: true }])
     setQ('')
   }
   const hits = q.trim().length >= 2 ? catalog.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8) : []
@@ -72,7 +105,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!dry && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
     setBusy(true); setErr('')
     try {
-      const body = { emails: list, discount_pct: pct, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
+      const body = { emails: list, discount_pct: pct, big3_rules: rules || undefined, big3_save: !!(rules && remember), lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -113,6 +146,21 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 {p.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
               </div>
             )}
+            {rules && p.big3 && (
+              <div className="rounded-xl p-3" style={{ backgroundColor: p.big3.has_rule ? '#f0fdf4' : '#fffbeb', border: `1.5px solid ${p.big3.has_rule ? '#bbf7d0' : '#fde68a'}` }}>
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🧾 Big 4 for {p.shop_name}</span>
+                  <span className="text-xs" style={{ color: '#888' }}>{p.big3.has_rule ? `shop rule · ${p.big3.set_by || 'saved'}` : 'no shop rule yet — default shown'}</span>
+                </div>
+                <Big3Picker rules={rules} onChange={changeRules} />
+                <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
+                  <label className="flex items-center gap-2 text-xs" style={{ color: '#555' }}>
+                    <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember for {p.shop_name} (every invoice from now on)
+                  </label>
+                  <span className="text-xs" style={{ color: '#888' }}>{describeRules(rules)}</span>
+                </div>
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* LEFT — editable estimate */}
               <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bfdbfe' }}>
@@ -122,7 +170,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 </div>
                 {rows.map((l, i) => (
                   <div key={i} className="flex items-center gap-2 px-3 py-2 text-base" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: l._added ? '#f0fdf4' : 'white' }}>
-                    <span className="flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{l.name}{l._extra ? ' ➕' : ''}{l._added ? <span className="text-xs font-bold" style={{ color: GREEN }}> · added</span> : null}</span>
+                    <span className="flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{l.big3_key ? '🧾 ' : ''}{l.name}{l._extra ? ' ➕' : ''}{l._added ? <span className="text-xs font-bold" style={{ color: GREEN }}> · added</span> : null}</span>
                     <input type="number" step="1" min="1" value={l.quantity} onChange={e => setLine(i, { quantity: Math.max(1, Number(e.target.value) || 1) })} style={{ ...cell, width: 54 }} title="Qty" />
                     <span style={{ color: '#94a3b8' }}>×</span>
                     <input type="number" step="0.01" min="0" value={l.rate} onChange={e => setLine(i, { rate: e.target.value })} onBlur={e => setLine(i, { rate: r2(e.target.value) })} style={{ ...cell, width: 96 }} title="Price" />
