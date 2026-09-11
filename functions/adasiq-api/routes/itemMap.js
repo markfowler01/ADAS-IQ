@@ -60,6 +60,22 @@ router.get('/books-templates', async (req, res) => {
       recent: (recent.data?.invoices || []).slice(0, 12).map(x => ({ n: x.invoice_number, customer: x.customer_name, template: x.template_name || x.template_id, date: x.date })) })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
+// Full invoice by number (template + terms + discount shape) — for comparing hand-made vs app-made.
+router.get('/books-invoice', async (req, res) => {
+  try {
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const H = { Authorization: `Zoho-oauthtoken ${token}` }
+    const P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const n = String(req.query.n || '')
+    const list = await axios.get('https://www.zohoapis.com/books/v3/invoices', { headers: H, params: { ...P, invoice_number: n }, timeout: 12000, validateStatus: s => s < 500 })
+    const hit = (list.data?.invoices || []).find(i => i.invoice_number === n)
+    if (!hit) return res.status(404).json({ error: 'not found' })
+    const d = await axios.get(`https://www.zohoapis.com/books/v3/invoices/${hit.invoice_id}`, { headers: H, params: P, timeout: 12000, validateStatus: s => s < 500 })
+    const inv = d.data?.invoice || {}
+    res.json({ ok: true, invoice_number: inv.invoice_number, template_id: inv.template_id, template_name: inv.template_name, template_type: inv.template_type, payment_terms: inv.payment_terms, payment_terms_label: inv.payment_terms_label, discount_type: inv.discount_type, discount: inv.discount, is_discount_before_tax: inv.is_discount_before_tax, notes: inv.notes, terms: inv.terms, salesperson_name: inv.salesperson_name, reference_number: inv.reference_number, custom_fields: inv.custom_fields, line_items: (inv.line_items || []).map(l => ({ name: l.name, rate: l.rate, quantity: l.quantity, discount: l.discount, discount_amount: l.discount_amount, item_total: l.item_total })), total: inv.total, sub_total: inv.sub_total, status: inv.status, created_by: inv.created_by_name || inv.created_by_id })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
 router.post('/create-item', async (req, res) => {
   try {
     if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Only Mark can add Zoho Books items.' })
