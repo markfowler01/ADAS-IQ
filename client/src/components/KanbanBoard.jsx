@@ -989,7 +989,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         <button onClick={e => { e.stopPropagation(); onBillIt(job) }}
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 text-white"
           style={{ backgroundColor: '#15803d', padding: '11px 0', minHeight: '44px', boxShadow: '0 3px 10px rgba(21,128,61,.25)' }}>
-          <span className="text-sm font-extrabold">💸 Bill it — insurance + cost invoice</span>
+          <span className="text-sm font-extrabold">💸 Create invoices — Bill it</span>
         </button>
       )}
       {job.billed_via_app && (
@@ -1002,7 +1002,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           <span className="text-sm font-semibold" style={{ color: '#16a34a' }}>Invoiced</span>
         </div>
-      ) : (job.status === 'ready_invoice' || job.status === 'complete') ? (
+      ) : (onBillIt && job.zoho_estimate_id && !job.billed_via_app && (job.status === 'ready_invoice' || job.status === 'complete')) ? null : (job.status === 'ready_invoice' || job.status === 'complete') ? (
         <button
           onClick={e => { e.stopPropagation(); onCreateInvoices && onCreateInvoices(job) }}
           className="w-full flex items-center justify-center gap-2 rounded-xl transition-all mt-2"
@@ -2836,16 +2836,15 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
 
-      {onBillIt && !job.invoiced && !job.billed_via_app && canInvoice && job.zoho_estimate_id && (
-        <button onClick={e => { e.stopPropagation(); onBillIt(job) }}
-          className="w-full flex items-center justify-center gap-2 rounded-xl mb-2 text-white"
-          style={{ backgroundColor: '#15803d', padding: '11px 0', minHeight: '44px' }}>
-          <span className="text-sm font-extrabold">💸 Bill it</span>
-        </button>
-      )}
-      {/* Action button — Create Invoices if ready, else Ready to Invoice */}
+      {/* Action button — Bill it (Books quote) / legacy Create Invoices if ready, else Ready to Invoice */}
       {!job.invoiced && job.status !== 'job_requested' && (
-        canInvoice ? (
+        (canInvoice && onBillIt && job.zoho_estimate_id && !job.billed_via_app) ? (
+          <button onClick={e => { e.stopPropagation(); onBillIt(job) }}
+            className="w-full flex items-center justify-center gap-2 rounded-xl text-white active:opacity-60"
+            style={{ backgroundColor: '#15803d', padding: '11px 0', minHeight: '44px' }}>
+            <span className="text-sm font-extrabold">💸 Create invoices — Bill it</span>
+          </button>
+        ) : canInvoice ? (
           <button
             onClick={e => { e.stopPropagation(); onCreateInvoices && onCreateInvoices(job) }}
             className="w-full flex items-center justify-center gap-2 rounded-xl transition-all active:opacity-60"
