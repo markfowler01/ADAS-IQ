@@ -1179,7 +1179,9 @@ export function paidAlternativeFor(allItems, insurerPrefix, fixedName) {
   // State Farm items are prefixed "SFP - " (and a few "SF - "); AS/AMFAM/CP as-is.
   const poolRe = insurerPrefix ? (insurerPrefix === 'SF' ? /^(SF|SFP)\s*[-\s]/i : new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i')) : null
   const pooled = poolRe ? candidates.filter(it => poolRe.test(it.name)) : []
-  const standard = candidates.filter(it => !PREFIXED.test(it.name))
+  // Standard (no insurer prefix) must START with the base words — "Showcase
+  // Post-Scan" is a shop-specific item, not the standard Post-Scan.
+  const standard = candidates.filter(it => !PREFIXED.test(it.name) && norm(it.name).replace(/\b1\b/, '').trim().startsWith(base))
   const pick = pooled[0] || standard[0] || null
   return pick ? { name: pick.name, rate: Number(pick.rate) || 0, item_id: pick.item_id } : null
 }
