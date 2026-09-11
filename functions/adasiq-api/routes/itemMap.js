@@ -68,6 +68,14 @@ router.get('/books-invoice', async (req, res) => {
     const H = { Authorization: `Zoho-oauthtoken ${token}` }
     const P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
     const n = String(req.query.n || '')
+    if (req.query.estimate) {
+      const el = await axios.get('https://www.zohoapis.com/books/v3/estimates', { headers: H, params: { ...P, estimate_number: n }, timeout: 12000, validateStatus: s => s < 500 })
+      const eh = (el.data?.estimates || []).find(i => i.estimate_number === n)
+      if (!eh) return res.status(404).json({ error: 'estimate not found' })
+      const ed = await axios.get(`https://www.zohoapis.com/books/v3/estimates/${eh.estimate_id}`, { headers: H, params: P, timeout: 12000, validateStatus: s => s < 500 })
+      const est = ed.data?.estimate || {}
+      return res.json({ ok: true, estimate_number: est.estimate_number, template_name: est.template_name, notes: est.notes, terms: est.terms, reference_number: est.reference_number, salesperson_name: est.salesperson_name, custom_fields: (est.custom_fields || []).map(c => ({ api_name: c.api_name, label: c.label, value: c.value, customfield_id: c.customfield_id, show_on_pdf: c.show_on_pdf })) })
+    }
     const list = await axios.get('https://www.zohoapis.com/books/v3/invoices', { headers: H, params: { ...P, invoice_number: n }, timeout: 12000, validateStatus: s => s < 500 })
     const hit = (list.data?.invoices || []).find(i => i.invoice_number === n)
     if (!hit) return res.status(404).json({ error: 'not found' })
