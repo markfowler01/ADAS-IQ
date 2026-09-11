@@ -78,7 +78,7 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose, user =
   async function handleConfirm() {
     if (!checksOk) return
     setSaving(true)
-    const patch = readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician)
+    const patch = readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician, job)
     const note = readyChecksNote(checks, job)
     if (note) patch.extra_services = note
     await onConfirm(cals, patch)

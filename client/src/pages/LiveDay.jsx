@@ -1004,7 +1004,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     setReadyInvoiceJob(null)
     try {
       const body = { status: 'ready_invoice' }
-      if (checks) Object.assign(body, readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician))
+      if (checks) Object.assign(body, readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician, job))
       const itemText = (extraItems || []).map(i => `${i.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ')
       const note = [itemText, (extraServices || '').trim(), checks ? readyChecksNote(checks, job) : ''].filter(Boolean).join(' · ')
       if (note) body.extra_services = note

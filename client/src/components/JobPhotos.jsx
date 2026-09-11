@@ -6,7 +6,7 @@
 // costs a photo.
 //
 // Mirrors services/jobPhotos.js (slots, progress, gate date).
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
 const ORANGE = '#CD4419'
@@ -195,6 +195,26 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   function resolveNeedsSlot(item, slotKey) {
     item.slot = slotKey; item.status = 'queued'; item.error = null; notify(); pump()
   }
+  // 🛞 Tire pressures live in the checklist (Mark 2026-09-11: "like the
+  // pictures — one of those lines, not after Ready to Invoice"). Default
+  // 36 F / 36 R, editable; saved on the card as tires_set.
+  const parseTires = t => { const m = /(\d+)F\/(\d+)R/.exec(String(t || '')); return { front: m ? Number(m[1]) : 36, rear: m ? Number(m[2]) : 36 } }
+  const [tire, setTire] = useState(() => parseTires(initialJob.tires_set))
+  const [tireBusy, setTireBusy] = useState(false)
+  const tiresDone = !!String(job.tires_set || '').trim()
+  useEffect(() => { if (job.tires_set) setTire(parseTires(job.tires_set)) }, [job.tires_set])
+  async function saveTires() {
+    setTireBusy(true)
+    try {
+      const who = user?.techName || user?.name || user?.email || job.technician || 'tech'
+      const stamp = `${Number(tire.front) || 36}F/${Number(tire.rear) || 36}R psi · ${who} · ${new Date().toISOString().slice(0, 16)}`
+      const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tires_set: stamp }) })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setJob(d); onJobUpdated && onJobUpdated(d)
+    } catch (e) { alert(`Couldn't save tire pressures: ${e.message}`) }
+    finally { setTireBusy(false) }
+  }
   const [copied, setCopied] = useState(false)
   async function copyVin(v) {
     try { await navigator.clipboard.writeText(v); setCopied(true); setTimeout(() => setCopied(false), 1500) }
@@ -253,7 +273,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           </button>
         ) : (
           <div className="rounded-2xl py-4 px-4 mb-3 text-center font-extrabold text-lg" style={{ backgroundColor: '#dcfce7', color: GREEN }}>
-            ✓ Photo set complete{prog.miles.delta != null ? ` · test drive ${prog.miles.delta} mi` : ''}
+            ✓ Photo set complete{prog.miles.delta != null ? ` · test drive ${prog.miles.delta} mi` : ''}{tiresDone ? ` · 🛞 ${tire.front}/${tire.rear} psi` : ' · 🛞 tires next'}
           </div>
         )}
 
@@ -301,7 +321,28 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
             const local = items.find(i => i.slot === s.key && (i.status === 'done' || i.status === 'uploading' || i.status === 'queued'))
             const isCur = current === s.key
             return (
-              <div key={s.key} className="flex items-center gap-2 px-3 py-2" style={{ borderTop: s.n === 1 ? 'none' : '1px solid #f1ede9', backgroundColor: isCur && !filled ? '#fff5f0' : 'white' }}>
+              <Fragment key={s.key}>
+              {s.key === 'lf' && (
+                <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #f1ede9', backgroundColor: tiresDone ? 'white' : '#fff7ed' }}>
+                  <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base" style={{ backgroundColor: tiresDone ? '#dcfce7' : '#f5f3f0', color: tiresDone ? GREEN : '#bbb' }}>{tiresDone ? '✓' : '🛞'}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-bold" style={{ color: tiresDone ? GREEN : '#1a1a1a' }}>Tire pressures — manufacturer spec</div>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <span className="text-[11px]" style={{ color: '#888' }}>F</span>
+                      <input type="number" inputMode="numeric" min="20" max="80" value={tire.front} onChange={e => setTire(t => ({ ...t, front: e.target.value }))} className="w-14 text-sm rounded-md px-1 py-1 text-center font-bold" style={{ border: '1px solid #e0dbd6' }} />
+                      <span className="text-[11px]" style={{ color: '#888' }}>R</span>
+                      <input type="number" inputMode="numeric" min="20" max="80" value={tire.rear} onChange={e => setTire(t => ({ ...t, rear: e.target.value }))} className="w-14 text-sm rounded-md px-1 py-1 text-center font-bold" style={{ border: '1px solid #e0dbd6' }} />
+                      <span className="text-[11px]" style={{ color: '#888' }}>psi{tiresDone ? ' · set' : ''}</span>
+                    </div>
+                  </div>
+                  <button type="button" onClick={saveTires} disabled={tireBusy}
+                    className="text-xs font-bold rounded-full px-2.5 py-1.5"
+                    style={tiresDone ? { backgroundColor: 'white', color: '#888', border: '1px solid #ddd' } : { backgroundColor: ORANGE, color: 'white' }}>
+                    {tireBusy ? '…' : tiresDone ? 'update' : 'All 4 set ✓'}
+                  </button>
+                </div>
+              )}
+              <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: s.n === 1 ? 'none' : '1px solid #f1ede9', backgroundColor: isCur && !filled ? '#fff5f0' : 'white' }}>
                 {local?.preview ? <img src={local.preview} alt="" className="w-9 h-9 rounded-lg object-cover" />
                   : <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base" style={{ backgroundColor: filled ? '#dcfce7' : '#f5f3f0', color: filled ? GREEN : '#bbb' }}>{filled ? '✓' : s.n}</span>}
                 <div className="flex-1 min-w-0">
@@ -350,6 +391,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                     style={{ backgroundColor: '#fef2f2', color: RED, border: '1px solid #fecaca', opacity: removing === `${s.key}:` ? .5 : 1 }}>×</button>
                 )}
               </div>
+              </Fragment>
             )
           })}
           {/* Setup photos: one × each */}
@@ -371,12 +413,12 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         {mode === 'gate' && (
           <div className="flex flex-col gap-2">
-            <button type="button" disabled={!prog.complete || pending > 0} onClick={() => onComplete && onComplete(job)}
+            <button type="button" disabled={!prog.complete || !tiresDone || pending > 0} onClick={() => onComplete && onComplete(job)}
               className="w-full rounded-xl py-3 text-sm font-bold text-white"
-              style={{ backgroundColor: '#7e22ce', opacity: prog.complete && pending === 0 ? 1 : .45 }}>
-              🟢 Continue → Ready to Invoice
+              style={{ backgroundColor: '#7e22ce', opacity: prog.complete && tiresDone && pending === 0 ? 1 : .45 }}>
+              {prog.complete && !tiresDone ? '🛞 Set the tire pressures first' : '🟢 Continue → Ready to Invoice'}
             </button>
-            {isOwner && !prog.complete && (
+            {isOwner && !(prog.complete && tiresDone) && (
               overrideOpen ? (
                 <div className="rounded-xl p-2" style={{ border: '1px dashed #ddd' }}>
                   <input value={overrideText} onChange={e => setOverrideText(e.target.value)} placeholder="Why (goes on the card + #dispatch)"

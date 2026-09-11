@@ -12,11 +12,12 @@ import { needsWindshieldCheck } from './MobileJobCard.jsx'
 const GREEN = '#15803d'
 const ORANGE = '#CD4419'
 
-export const DEFAULT_CHECKS = { cash: 'no', belts: false, airbags: false, front: 36, rear: 36, tiresOk: false, windshieldOk: false }
+export const DEFAULT_CHECKS = { cash: 'no', belts: false, airbags: false, windshieldOk: false }
+const parseTires = t => { const m = /(\d+)F\/(\d+)R/.exec(String(t || '')); return m ? { front: Number(m[1]), rear: Number(m[2]) } : null }
 
 export function readyChecksValid(v, job) {
   if (!v.belts || !v.airbags) return false
-  if (!v.tiresOk) return false
+  if (!parseTires(job?.tires_set)) return false          // set in the photo checklist
   if (v.cash === 'yes') return false                       // picked "yes" but no number yet
   if (needsWindshieldCheck(job) && !v.windshieldOk) return false
   return true
@@ -25,16 +26,16 @@ export function readyChecksMissing(v, job) {
   const out = []
   if (!v.belts) out.push('check the seat belts')
   if (!v.airbags) out.push('inspect the airbag system')
-  if (!v.tiresOk) out.push('confirm the tire pressures')
+  if (!parseTires(job?.tires_set)) out.push('set the tire pressures in the photo checklist')
   if (v.cash === 'yes') out.push('pick $350 or $700')
   if (needsWindshieldCheck(job) && !v.windshieldOk) out.push('confirm the windshield check')
   return out
 }
 // → fields for the PATCH that moves the job to Ready to Invoice
-export function readyChecksToPatch(v, who) {
+export function readyChecksToPatch(v, who, job = null) {
   const at = new Date().toISOString()
-  const stamp = `${Number(v.front) || 36}F/${Number(v.rear) || 36}R psi · ${who || 'tech'} · ${at.slice(0, 16)}`
-  const patch = { tires_set: stamp, pcsi_checks: JSON.stringify({ belts: !!v.belts, airbags: !!v.airbags, front: Number(v.front) || 36, rear: Number(v.rear) || 36, windshield: !!v.windshieldOk, by: who || '', at }) }
+  const t = parseTires(job?.tires_set) || { front: 36, rear: 36 }
+  const patch = { pcsi_checks: JSON.stringify({ belts: !!v.belts, airbags: !!v.airbags, front: t.front, rear: t.rear, windshield: !!v.windshieldOk, by: who || '', at }) }
   if (v.cash === '350' || v.cash === '700') patch.cash_quoted = v.cash
   return patch
 }
@@ -86,21 +87,9 @@ export default function ReadyChecks({ job, value, onChange, compact = false }) {
         </button>
       </div>
 
-      {/* 🛞 Tires */}
-      <div className="rounded-xl p-3" style={{ backgroundColor: v.tiresOk ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${v.tiresOk ? '#86efac' : '#fdba74'}` }}>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-bold flex-1" style={{ color: '#1a1a1a' }}>🛞 Tire pressures</span>
-          <label className="flex items-center gap-1 text-xs" style={{ color: '#555' }}>F
-            <input type="number" inputMode="numeric" min="20" max="80" value={v.front} onChange={e => set({ front: e.target.value })} className="w-16 rounded-lg px-2 text-center font-bold" style={{ ...big, border: '1px solid #e0dbd6' }} />
-          </label>
-          <label className="flex items-center gap-1 text-xs" style={{ color: '#555' }}>R
-            <input type="number" inputMode="numeric" min="20" max="80" value={v.rear} onChange={e => set({ rear: e.target.value })} className="w-16 rounded-lg px-2 text-center font-bold" style={{ ...big, border: '1px solid #e0dbd6' }} />
-          </label>
-          <span className="text-xs" style={{ color: '#888' }}>psi</span>
-        </div>
-        <button type="button" onClick={() => set({ tiresOk: !v.tiresOk })} className="mt-2 w-full rounded-xl font-bold text-left px-3 flex items-center gap-2" style={{ ...big, backgroundColor: v.tiresOk ? GREEN : 'white', color: v.tiresOk ? 'white' : '#9a3412', border: `1.5px solid ${v.tiresOk ? GREEN : '#fdba74'}` }}>
-          <span className="text-xl">{v.tiresOk ? '☑' : '☐'}</span> All four set to the manufacturer spec
-        </button>
+      {/* 🛞 Tires — shown for reference; set in the photo checklist */}
+      <div className="rounded-xl px-3 py-2 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: parseTires(job?.tires_set) ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${parseTires(job?.tires_set) ? '#86efac' : '#fdba74'}`, color: parseTires(job?.tires_set) ? GREEN : '#9a3412' }}>
+        <span className="text-xl">{parseTires(job?.tires_set) ? '☑' : '☐'}</span> 🛞 Tire pressures {parseTires(job?.tires_set) ? `${parseTires(job.tires_set).front}/${parseTires(job.tires_set).rear} psi · set` : '— set them in the photo checklist'}
       </div>
 
       {/* 🪟 Windshield */}
