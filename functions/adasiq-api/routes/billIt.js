@@ -104,7 +104,7 @@ async function buildPreview(req, job) {
   if (alreadyConverted) warnings.push('Books says this estimate was already converted to an invoice (by hand?) — the button will not bill it again.')
   return {
     ok: true, job_id: job.id, shop_name: shopName, estimate_id: est.estimate_id, estimate_number: est.estimate_number, estimate_status: est.status,
-    customer_id: est.customer_id, customer_type: customerType, discount_pct: pct ?? 0, emails,
+    customer_id: est.customer_id, customer_type: customerType, discount_pct: pct ?? 0, has_discount: pct != null, emails,
     lines: discounted, insurance_total: insuranceTotal, cost_total: costTotal, saved: r2(insuranceTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
     can_bill: !existing && !alreadyConverted && !job.billed_via_app && !!emails.length && !!tpl.estimate && !!tpl.invoice, already_converted: alreadyConverted,
@@ -210,12 +210,17 @@ router.post('/:id/bill', async (req, res) => {
     // Learn (Mark 2026-09-11): a shop with no rule yet gets whatever this
     // first invoice used — no switch needed. Shops with a rule only change
     // when Kat flips a switch and leaves "remember" on.
-    if (req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false)) && !dry) {
+    // Remember the discount too (Mark 2026-09-11: "if I set their discount to
+    // 25% I want it to remember this") — whenever it differs from the file.
+    const learnPct = !dry && (!p.has_discount || Number(p.discount_pct) !== pct)
+    const saveRules = req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
+    if (!dry && (saveRules || learnPct)) {
       try {
         const b3 = await import('../services/big3.js')
-        const want = b3.withDefaults(req.body.big3_rules), have = p.big3?.rules || {}
-        if (JSON.stringify(want) !== JSON.stringify(have)) await b3.saveBig3(req, p.shop_name, want, by)
-      } catch (e) { console.log('[bill-it] big3 save failed (non-fatal):', e.message) }
+        const want = saveRules ? b3.withDefaults(req.body.big3_rules) : b3.withDefaults(p.big3?.rules)
+        const r = await b3.saveBig3(req, p.shop_name, want, by, learnPct ? { discount_pct: pct, customer_type: p.customer_type || 'body_shop' } : {})
+        if (r?.changed) console.log(`[bill-it] learned for ${p.shop_name}: ${b3.describeRules(want)}${learnPct ? ` · ${pct}%` : ''}`)
+      } catch (e) { console.log('[bill-it] rule/discount save failed (non-fatal):', e.message) }
     }
     // Pin the insurance-invoice look before anything is emailed (strict, like shop quotes).
     if (!dry) await applyEstimateTemplate(token, p.estimate_id, p.templates.estimate)

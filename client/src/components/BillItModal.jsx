@@ -244,6 +244,9 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Send both to</label>
               <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="shop@email.com, second@email.com" className="w-full rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
               <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact. Saves the shop {fmt(insTotal - costTotal)}. Rule on file: {p.rule}.</div>
+              {(!p.has_discount || Number(p.discount_pct) !== Number(pct)) && Number(pct) >= 0 && (
+                <div className="text-sm mt-1 font-semibold" style={{ color: '#92400e' }}>🧠 {p.has_discount ? `${p.shop_name} is on file at ${p.discount_pct}% — sending at ${pct}% updates the shop to ${pct}%.` : `No discount on file for ${p.shop_name} — ${pct}% will be remembered for next time.`}</div>
+              )}
               {p.templates && (
                 <div className="text-sm mt-1" style={{ color: '#888' }}>PDF templates: insurance → <b>{p.templates.estimate?.name || 'missing'}</b> · cost → <b>{p.templates.invoice?.name || 'missing'}</b>. Header carries RO#, Year/Make/Model, VIN and the scan-report link, same as Kat's.</div>
               )}
