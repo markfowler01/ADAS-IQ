@@ -84,7 +84,12 @@ async function buildPreview(req, job) {
   const insuranceTotal = r2(discounted.reduce((s, l) => s + l.amount, 0))
   const costTotal = r2(discounted.reduce((s, l) => s + l.cost_amount, 0))
   const tpl = await resolveTemplates(token, customerType)
-  const existing = await invoiceByNumber(token, est.estimate_number)
+  let existing = await invoiceByNumber(token, est.estimate_number)
+  // Books' own link (Convert to Invoice, or our invoiced_estimate_id) — catches a hand conversion under a different number.
+  if (!existing && Array.isArray(est.invoice_ids) && est.invoice_ids.length) {
+    const r = await axios.get(`${API}/invoices/${est.invoice_ids[0]}`, { headers: H(token), params: org(), timeout: 15000, validateStatus: s => s < 500 }).catch(() => null)
+    if (r?.data?.invoice) existing = r.data.invoice
+  }
   const emails = est.customer_id ? await contactEmails(token, est.customer_id).catch(() => []) : []
   const warnings = []
   if (existing) warnings.push(`Invoice ${existing.invoice_number} already exists in Books (${existing.status}) — billed by hand? The button will not create a second one.`)

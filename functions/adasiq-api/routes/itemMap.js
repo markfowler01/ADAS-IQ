@@ -100,6 +100,17 @@ router.post('/convert-probe', async (req, res) => {
     const P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
     const call = (method, path, params = {}, data) => axios({ method, url: `${B}${path}`, headers: H, params: { ...P, ...params }, data, timeout: 20000, validateStatus: s => s < 500 }).then(r => r.data)
     const { action, estimate_number, invoice_id } = req.body || {}
+    if (action === 'link') {
+      const inv = (await call('get', `/invoices/${invoice_id}`))?.invoice
+      if (!inv || inv.customer_name !== 'Test') return res.status(403).json({ error: 'probe only links invoices on the Test customer' })
+      const list0 = await call('get', '/estimates', { estimate_number })
+      const eh0 = (list0.estimates || []).find(e => e.estimate_number === estimate_number)
+      if (!eh0) return res.status(404).json({ error: 'estimate not found' })
+      const { linkInvoiceToEstimate } = await import('../services/costInvoice.js')
+      const linked = await linkInvoiceToEstimate(token, invoice_id, eh0.estimate_id)
+      const after = (await call('get', `/estimates/${eh0.estimate_id}`))?.estimate
+      return res.json({ ok: true, inv_estimate_id: linked.estimate_id, estimate_status_after: after?.status, invoice_ids: after?.invoice_ids })
+    }
     if (action === 'delete') {
       const inv = (await call('get', `/invoices/${invoice_id}`))?.invoice
       if (!inv || inv.customer_name !== 'Test') return res.status(403).json({ error: 'probe only deletes invoices on the Test customer' })

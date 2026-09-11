@@ -115,8 +115,10 @@ export async function createCostInvoice({ token, app, est, lines, pct, customerT
   }))
   const body = {
     customer_id: est.customer_id, invoice_number: est.estimate_number, reference_number: est.reference_number || est.estimate_number,
-    // Link to the estimate like Books' own "Convert to Invoice" (estimate → status invoiced).
-    estimate_id: est.estimate_id,
+    // Link to the estimate like Books' own "Convert to Invoice": the quote
+    // flips to INVOICED and lists this invoice (probed 2026-09-11 — the
+    // field is invoiced_estimate_id; a plain estimate_id is ignored).
+    invoiced_estimate_id: est.estimate_id,
     date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), payment_terms: 0, payment_terms_label: 'Due on Receipt',
     discount_type: 'item_level', is_discount_before_tax: true, line_items: invLines,
     notes: text.notes, terms: text.terms,
@@ -128,7 +130,7 @@ export async function createCostInvoice({ token, app, est, lines, pct, customerT
   const post = b => axios.post(`${API}/invoices`, b, { headers: H(token), params: { ...org(), ignore_auto_number_generation: true }, timeout: 20000, validateStatus: s => s < 500 })
   let c = await post(body)
   const msg = () => String(c.data?.message || '')
-  if (c.data?.code !== 0 && /estimate/i.test(msg())) { console.log('[cost-invoice] estimate link rejected, retrying without:', msg()); delete body.estimate_id; c = await post(body) }
+  if (c.data?.code !== 0 && /estimate/i.test(msg())) { console.log('[cost-invoice] estimate link rejected, retrying without:', msg()); delete body.invoiced_estimate_id; c = await post(body) }
   if (c.data?.code !== 0 && /payment|gateway/i.test(msg())) { console.log('[cost-invoice] payment options rejected, retrying without:', msg()); delete body.payment_options; c = await post(body) }
   if (c.data?.code !== 0 && /custom ?field|cf_/i.test(msg())) {
     console.log('[cost-invoice] custom field rejected, retrying without insurer:', msg())
@@ -156,4 +158,12 @@ export async function emailEstimate(token, estimateId, emails) {
 export async function emailInvoice(token, invoiceId, emails) {
   const r = await axios.post(`${API}/invoices/${invoiceId}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
   return r.data?.code === 0 ? null : (r.data?.message || `HTTP ${r.status}`)
+}
+
+// Link an existing invoice to its quote after the fact (earlier app-made
+// invoices were created without the link). Quote flips to INVOICED.
+export async function linkInvoiceToEstimate(token, invoiceId, estimateId) {
+  const r = await axios.put(`${API}/invoices/${invoiceId}`, { invoiced_estimate_id: estimateId }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
+  if (r.data?.code !== 0) throw new Error(`Link failed: ${r.data?.message || r.status}`)
+  return r.data.invoice
 }
