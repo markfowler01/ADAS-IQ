@@ -151,6 +151,7 @@ function rowToJob(row) {
     billed_via_app:   row.billed_via_app   || '',   // '💸 Bill it' stamp: "<who> <when>"
     cash_quoted:      row.cash_quoted      || '',   // customer-pay number the customer was told (350 / 700)
     tires_set:        row.tires_set        || '',   // "36F/36R psi · tech · when"
+    pcsi_checks:      row.pcsi_checks      || '',   // JSON {belts, airbags, front, rear, windshield, by, at}
   }
 }
 
@@ -191,6 +192,7 @@ function jobToRow(job) {
     billed_via_app:   String(job.billed_via_app || '').slice(0, 40),
     cash_quoted:      String(job.cash_quoted || '').slice(0, 20),
     tires_set:        String(job.tires_set || '').slice(0, 120),
+    pcsi_checks:      String(job.pcsi_checks || '').slice(0, 255),
   }
 }
 
@@ -571,6 +573,7 @@ router.put('/:id', async (req, res) => {
     }
 
     const updated = await updateJob(req, req.params.id, req.body)
+    if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') await writePcsiStory(req, updated)
 
     if (req.body.status === 'complete' && prevStatus !== 'complete') {
       logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
@@ -698,6 +701,7 @@ router.patch('/:id', async (req, res) => {
     }
 
     const updated = await updateJob(req, req.params.id, merged)
+    if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') await writePcsiStory(req, updated)
 
     if (req.body.status === 'complete' && currentJob.status !== 'complete') {
       logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
@@ -1436,9 +1440,30 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
 function tireGate(req, res, merged) {
   const isOwner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
   const override = String(req.body.photo_override || '').trim()
-  if (String(merged.tires_set || '').trim() || (isOwner && override)) return false
-  res.status(409).json({ error: 'Tire pressures first — set all four to the manufacturer spec and confirm it on the Ready to Invoice screen.', tires_gate: true })
+  if (isOwner && override) return false
+  let c = null
+  try { c = merged.pcsi_checks ? JSON.parse(merged.pcsi_checks) : null } catch { c = null }
+  const missing = []
+  if (!c?.belts) missing.push('seat belts')
+  if (!c?.airbags) missing.push('airbag system')
+  if (!String(merged.tires_set || '').trim() && !(c?.front || c?.rear)) missing.push('tire pressures')
+  if (!missing.length) return false
+  res.status(409).json({ error: `Post-collision safety inspection first — still need: ${missing.join(', ')}. Confirm it on the Ready to Invoice screen.`, tires_gate: true, pcsi_gate: true, missing })
   return true
+}
+// Write the PCSI story onto the Books quote (fallback Post-Scan / first line).
+// Runs before the response (Catalyst ends the function once res goes out).
+async function writePcsiStory(req, job) {
+  try {
+    if (!job?.zoho_estimate_id || !job?.pcsi_checks) return
+    const { buildStory, writeStoryToEstimate } = await import('../services/pcsiStory.js')
+    const { photoProgress } = await import('../services/jobPhotos.js')
+    const story = buildStory(job, null, photoProgress(job).miles?.delta ?? null)
+    if (!story) return
+    const token = await getAccessToken()
+    const r = await Promise.race([writeStoryToEstimate(token, job.zoho_estimate_id, story), new Promise(res => setTimeout(() => res({ timeout: true }), 8000))])
+    console.log(`[pcsi-story] job ${job.id} → ${r?.timeout ? 'TIMEOUT' : r ? `"${r.line}"${r.unchanged ? ' (unchanged)' : ''}` : 'no estimate line'}`)
+  } catch (e) { console.log('[pcsi-story] failed (non-fatal):', e.message) }
 }
 // 💵 Customer pay relay (Mark 2026-09-11): the advisor tells the tech "that's
 // customer pay" mid-job and a number ($350 / $700) gets quoted — Kat and

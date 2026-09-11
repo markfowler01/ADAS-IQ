@@ -12,9 +12,10 @@ import { needsWindshieldCheck } from './MobileJobCard.jsx'
 const GREEN = '#15803d'
 const ORANGE = '#CD4419'
 
-export const DEFAULT_CHECKS = { cash: 'no', front: 36, rear: 36, tiresOk: false, windshieldOk: false }
+export const DEFAULT_CHECKS = { cash: 'no', belts: false, airbags: false, front: 36, rear: 36, tiresOk: false, windshieldOk: false }
 
 export function readyChecksValid(v, job) {
+  if (!v.belts || !v.airbags) return false
   if (!v.tiresOk) return false
   if (v.cash === 'yes') return false                       // picked "yes" but no number yet
   if (needsWindshieldCheck(job) && !v.windshieldOk) return false
@@ -22,6 +23,8 @@ export function readyChecksValid(v, job) {
 }
 export function readyChecksMissing(v, job) {
   const out = []
+  if (!v.belts) out.push('check the seat belts')
+  if (!v.airbags) out.push('inspect the airbag system')
   if (!v.tiresOk) out.push('confirm the tire pressures')
   if (v.cash === 'yes') out.push('pick $350 or $700')
   if (needsWindshieldCheck(job) && !v.windshieldOk) out.push('confirm the windshield check')
@@ -29,8 +32,9 @@ export function readyChecksMissing(v, job) {
 }
 // → fields for the PATCH that moves the job to Ready to Invoice
 export function readyChecksToPatch(v, who) {
-  const stamp = `${Number(v.front) || 36}F/${Number(v.rear) || 36}R psi · ${who || 'tech'} · ${new Date().toISOString().slice(0, 16)}`
-  const patch = { tires_set: stamp }
+  const at = new Date().toISOString()
+  const stamp = `${Number(v.front) || 36}F/${Number(v.rear) || 36}R psi · ${who || 'tech'} · ${at.slice(0, 16)}`
+  const patch = { tires_set: stamp, pcsi_checks: JSON.stringify({ belts: !!v.belts, airbags: !!v.airbags, front: Number(v.front) || 36, rear: Number(v.rear) || 36, windshield: !!v.windshieldOk, by: who || '', at }) }
   if (v.cash === '350' || v.cash === '700') patch.cash_quoted = v.cash
   return patch
 }
@@ -69,6 +73,17 @@ export default function ReadyChecks({ job, value, onChange, compact = false }) {
             {v.cash === 'yes' && <div className="text-xs mt-1 font-semibold" style={{ color: ORANGE }}>Pick the number — Kat bills exactly that.</div>}
           </div>
         )}
+      </div>
+
+      {/* 🦺 PCSI: belts + airbags */}
+      <div className="rounded-xl p-3 space-y-2" style={{ backgroundColor: v.belts && v.airbags ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${v.belts && v.airbags ? '#86efac' : '#fdba74'}` }}>
+        <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🦺 Post Collision Safety Inspection</div>
+        <button type="button" onClick={() => set({ belts: !v.belts })} className="w-full rounded-xl font-bold text-left px-3 flex items-center gap-2" style={{ ...big, backgroundColor: v.belts ? GREEN : 'white', color: v.belts ? 'white' : '#9a3412', border: `1.5px solid ${v.belts ? GREEN : '#fdba74'}` }}>
+          <span className="text-xl">{v.belts ? '☑' : '☐'}</span> Seat belts checked at every position (latch + retract)
+        </button>
+        <button type="button" onClick={() => set({ airbags: !v.airbags })} className="w-full rounded-xl font-bold text-left px-3 flex items-center gap-2" style={{ ...big, backgroundColor: v.airbags ? GREEN : 'white', color: v.airbags ? 'white' : '#9a3412', border: `1.5px solid ${v.airbags ? GREEN : '#fdba74'}` }}>
+          <span className="text-xl">{v.airbags ? '☑' : '☐'}</span> Airbag system visually inspected (no light, covers intact)
+        </button>
       </div>
 
       {/* 🛞 Tires */}

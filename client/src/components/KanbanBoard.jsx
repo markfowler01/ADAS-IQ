@@ -840,6 +840,12 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >⚡ TESLA · Tesla pricing</span>
         </p>
       )}
+      {job.pcsi_checks && (
+        <p className="mb-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#dcfce7', color: '#166534', letterSpacing: '0.06em' }}
+            title={`Post-collision safety inspection done · ${job.tires_set || ''}`}>✅ PCSI · {(() => { try { const c = JSON.parse(job.pcsi_checks); return `${c.front}/${c.rear} psi` } catch { return 'done' } })()}</span>
+        </p>
+      )}
       {needsWindshieldCheck(job) && job.status !== 'complete' && !job.invoiced && (
         <p className="mb-1">
           <span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#f59e0b', color: '#1a1a1a', letterSpacing: '0.06em' }}

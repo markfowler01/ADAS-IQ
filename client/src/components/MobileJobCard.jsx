@@ -361,6 +361,9 @@ export default function MobileJobCard({
         </div>
       )}
 
+      {job.pcsi_checks && (
+        <div className="mb-1"><span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#dcfce7', color: '#166534' }}>✅ PCSI done</span></div>
+      )}
       {needsWindshieldCheck(job) && !isComplete && (
         <div className="mb-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b' }}>
           🪟 WINDSHIELD CAMERA — check the glass before calibrating (aftermarket, bracket, cracks, tint)

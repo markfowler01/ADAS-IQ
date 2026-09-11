@@ -212,7 +212,9 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 </div>
                 {rows.map((l, i) => (
                   <div key={i} className="flex items-center gap-2 px-3 py-2 text-base" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: l._added ? '#f0fdf4' : 'white' }}>
-                    <span className="flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{l.big3_key ? '🧾 ' : ''}{l.name}{l._extra ? ' ➕' : ''}{l._added ? <span className="text-xs font-bold" style={{ color: GREEN }}> · added</span> : null}</span>
+                    <span className="flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{l.big3_key ? '🧾 ' : ''}{l.name}{l._extra ? ' ➕' : ''}{l._added ? <span className="text-xs font-bold" style={{ color: GREEN }}> · added</span> : null}
+                      {/Post-collision safety inspection:/i.test(l.description || '') && <div className="text-xs font-normal mt-0.5" style={{ color: '#166534' }}>🦺 {l.description.split(/\n/).find(x => /Post-collision safety inspection:/i.test(x))}</div>}
+                    </span>
                     <input type="number" step="1" min="1" value={l.quantity} onChange={e => setLine(i, { quantity: Math.max(1, Number(e.target.value) || 1) })} style={{ ...cell, width: 54 }} title="Qty" />
                     <span style={{ color: '#94a3b8' }}>×</span>
                     <input type="number" step="0.01" min="0" value={l.rate} onChange={e => setLine(i, { rate: e.target.value })} onBlur={e => setLine(i, { rate: r2(e.target.value) })} style={{ ...cell, width: 96 }} title="Price" />
