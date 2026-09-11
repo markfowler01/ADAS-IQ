@@ -14,7 +14,18 @@ export const isRequestJob = job => (job?.status || '') === 'job_requested'
 export const isQuoteRequest = job => isRequestJob(job) && String(job?.request_type || '').toLowerCase() === 'quote'
 const BLUE = '#1d4ed8'
 
+// 💵 Customer pay (Mark 2026-09-11): the whole card goes green once the tech
+// picks cash at Ready to Invoice — darker green for $700, light green for
+// $350 — a visual cue on top of the written badge.
+export function cashFrame(job) {
+  const q = String(job?.cash_quoted || '')
+  if (q === '700') return { border: '2.5px solid #15803d', backgroundColor: '#86efac' }
+  if (q === '350') return { border: '2.5px solid #4ade80', backgroundColor: '#dcfce7' }
+  return null
+}
 export function cardFrame(job, { complete = false } = {}) {
+  const cash = cashFrame(job)
+  if (cash) return cash
   if (complete) return { border: '2px solid #a8d5b5', backgroundColor: '#f8fff9' }
   if (job?.status === 'quoted') return { border: '1px solid #ebebeb', backgroundColor: 'white' }
   if (isQuoteRequest(job)) return { border: '1.5px dashed #60a5fa', backgroundColor: '#eff6ff' }

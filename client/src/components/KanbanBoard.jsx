@@ -863,6 +863,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             style={{ background: '#15803d', color: '#fff', letterSpacing: '0.06em' }}
             title="Cash customer — max $700 out of pocket, PCSI / Post Scan / Calibration ID cost zeroed"
           >{job.cash_quoted ? `💵 CUSTOMER PAY · told $${job.cash_quoted}` : '💵 CASH · max $700'}</span>
+          {job.cash_quoted && <span className="ml-1 text-[11px] font-extrabold" style={{ color: '#14532d' }}>{job.cash_quoted === '700' ? '$700 · dark green' : '$350 · light green'}</span>}
         </p>
       ) : job.insurer && (
         <p className="text-xs font-medium mb-1 truncate" style={{ color: '#2563eb' }}>
@@ -2791,7 +2792,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
   return (
     <div
       className="rounded-xl p-4"
-      style={isRequestJob(job) ? cardFrame(job) : { backgroundColor: 'white', border: '1px solid #e8e4e0' }}
+      style={(isRequestJob(job) || job.cash_quoted) ? cardFrame(job) : { backgroundColor: 'white', border: '1px solid #e8e4e0' }}
     >
       {/* Top row: shop + status badge — tapping here opens edit */}
       <div className="flex items-start justify-between gap-2 mb-1.5 cursor-pointer active:opacity-70"
