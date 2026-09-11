@@ -487,7 +487,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
-      {submitting && <LoadingSplash overlay label="Creating invoice" />}
+      {submitting && <LoadingSplash overlay label="Creating job" />}
       {creatingJob && <LoadingSplash overlay label="Creating job" />}
 
       <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-5">
@@ -725,7 +725,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
                   cursor: selected.length === 0 || submitting || creatingJob || previewBusy ? 'not-allowed' : 'pointer',
                 }}
               >
-                {submitting ? 'Creating Invoice...' : previewBusy ? 'Pricing lines…' : 'Create Zoho Books Invoice'}
+                {submitting ? 'Creating job…' : previewBusy ? 'Pricing lines…' : 'Create job'}
               </button>
 
               {/* Divider */}
@@ -1059,7 +1059,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
           <button onClick={confirm} disabled={busy}
             className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
             style={{ backgroundColor: ORANGE }}>
-            {busy ? 'Creating…' : `Create invoice — $${Number(finalTotal).toFixed(2)} →`}
+            {busy ? 'Creating…' : `Create job — $${Number(finalTotal).toFixed(2)} →`}
           </button>
         </div>
       </div>
@@ -1187,7 +1187,7 @@ function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate }) {
     <div className="rounded-xl px-5 py-4 flex flex-col gap-3" style={{ backgroundColor: '#f0faf4', border: '1.5px solid #6fcf97' }}>
       <div className="flex items-center gap-2">
         <span className="text-lg">✓</span>
-        <span className="font-semibold text-sm" style={{ color: '#1a6b3a' }}>Zoho Books Invoice Created</span>
+        <span className="font-semibold text-sm" style={{ color: '#1a6b3a' }}>Job created · quote saved in Books</span>
       </div>
 
       <div className="grid grid-cols-2 gap-2 text-sm">
