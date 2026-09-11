@@ -152,9 +152,16 @@ async function buildPreview(req, job) {
     templates: { estimate: tpl.estimate, invoice: tpl.invoice, estimate_current: est.template_name || '' },
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default',
     _byId: byId, _byName: byName,
+    _est: { custom_fields: est.custom_fields || [], terms: est.terms || '', notes: est.notes || '', reference_number: est.reference_number || '', salesperson_name: est.salesperson_name || '' },
   }
 }
-const pub = p => { const { _byId, _byName, ...rest } = p; return rest }
+// Estimate custom fields → invoice custom fields. Same labels, different
+// api_names in Books (estimate cf_calibration_docs = invoice cf_calibration).
+const INVOICE_CF_BY_LABEL = { 'Scan Report and Documentation': 'cf_calibration', 'RO#': 'cf_ro_1', 'Year': 'cf_year', 'Make': 'cf_make', 'Model': 'cf_model', 'VIN': 'cf_vin', 'Insurer': 'cf_insurer' }
+function invoiceCustomFields(estFields) {
+  return (estFields || []).map(c => { const api = INVOICE_CF_BY_LABEL[c.label]; return api && c.value !== '' && c.value != null ? { api_name: api, value: c.value } : null }).filter(Boolean)
+}
+const pub = p => { const { _byId, _byName, _est, ...rest } = p; return rest }
 
 // Kat edited the lines in the modal → rebuild the line set from her list.
 function linesFromEdit(p, edited) {
@@ -231,15 +238,24 @@ router.post('/:id/bill', async (req, res) => {
     }))
     let inv = null
     if (!dry) {
+      const est = p._est
       const body = {
-        customer_id: p.customer_id, invoice_number: p.estimate_number, reference_number: job.quote_number || p.estimate_number,
+        customer_id: p.customer_id, invoice_number: p.estimate_number, reference_number: est.reference_number || job.quote_number || p.estimate_number,
         date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), payment_terms: 0, payment_terms_label: 'Due on Receipt',
         discount_type: 'item_level', is_discount_before_tax: true, line_items: invLines,
-        notes: `Cost invoice · ${pct}% partnership discount${p.customer_type ? ` (${p.customer_type.replace(/_/g, ' ')})` : ''} on services · billed via Absolute ADAS app by ${by} · from estimate ${p.estimate_number}`,
-        custom_fields: [], salesperson_name: job.technician || '', template_id: p.templates.invoice.id,
+        ...(est.terms ? { terms: est.terms } : {}),
+        custom_fields: invoiceCustomFields(est.custom_fields), salesperson_name: est.salesperson_name || job.technician || '', template_id: p.templates.invoice.id,
       }
       // Books auto-numbers invoices; this flag lets us reuse the estimate number.
-      const c = await axios.post(`${API}/invoices`, body, { headers: H(token), params: { ...org(), ignore_auto_number_generation: true }, timeout: 20000, validateStatus: s => s < 500 })
+      const postInvoice = async b => axios.post(`${API}/invoices`, b, { headers: H(token), params: { ...org(), ignore_auto_number_generation: true }, timeout: 20000, validateStatus: s => s < 500 })
+      let c = await postInvoice(body)
+      if (c.data?.code !== 0 && /custom ?field|cf_/i.test(String(c.data?.message || ''))) {
+        // A field that doesn't exist on invoices (e.g. Insurer) — drop it and go again.
+        console.log('[bill-it] custom field rejected, retrying without:', c.data?.message)
+        body.custom_fields = body.custom_fields.filter(f => f.api_name !== 'cf_insurer')
+        c = await postInvoice(body)
+        if (c.data?.code !== 0 && /custom ?field|cf_/i.test(String(c.data?.message || ''))) { body.custom_fields = []; c = await postInvoice(body) }
+      }
       if (c.data?.code !== 0) {
         // Number collision / numbering rule → let Books number it, note the estimate in the reference.
         if (/number|already exists|duplicate/i.test(String(c.data?.message || ''))) {
@@ -250,6 +266,8 @@ router.post('/:id/bill', async (req, res) => {
         } else throw new Error(`Cost invoice failed: ${c.data?.message || c.status}`)
       } else inv = c.data.invoice
       if (String(inv.template_id) !== String(p.templates.invoice.id)) await applyInvoiceTemplate(token, inv.invoice_id, p.templates.invoice)
+      // Audit trail stays inside Books (comment), never on the customer's PDF.
+      await axios.post(`${API}/invoices/${inv.invoice_id}/comments`, { description: `Cost invoice · ${pct}% partnership discount${p.customer_type ? ` (${p.customer_type.replace(/_/g, ' ')})` : ''} on services · billed via Absolute ADAS app by ${by} · from estimate ${p.estimate_number}` }, { headers: H(token), params: org(), timeout: 12000, validateStatus: s => s < 500 }).catch(() => {})
       // 3. Insurance invoice = the estimate, emailed as-is
       const e1 = await axios.post(`${API}/estimates/${p.estimate_id}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
       if (e1.data?.code !== 0) console.log('[bill-it] estimate email failed:', e1.data?.message)
