@@ -207,7 +207,10 @@ router.post('/:id/bill', async (req, res) => {
     }
     const changedLines = !same
     // Big 4 rule from the modal → remember for the shop (pings #dispatch like the review modal).
-    if (req.body?.big3_rules && req.body?.big3_save !== false && !dry) {
+    // Learn (Mark 2026-09-11): a shop with no rule yet gets whatever this
+    // first invoice used — no switch needed. Shops with a rule only change
+    // when Kat flips a switch and leaves "remember" on.
+    if (req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false)) && !dry) {
       try {
         const b3 = await import('../services/big3.js')
         const want = b3.withDefaults(req.body.big3_rules), have = p.big3?.rules || {}
@@ -233,7 +236,8 @@ router.post('/:id/bill', async (req, res) => {
       const emailNote = [e1 ? `estimate email failed (${e1})` : '', e2 ? `invoice email failed (${e2})` : ''].filter(Boolean).join('; ')
       if (emailNote) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${inv.invoice_number}: invoice created but ${emailNote} — send from Books by hand.`).catch(() => {})
       // Stamp the card
-      await updateJobPublic(req, job.id, { ...job, invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,
+      // Mark 2026-09-11: "after I send both invoices… I want it gone" → Completed column.
+      await updateJobPublic(req, job.id, { ...job, status: 'complete', invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,
         notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: insurance invoice (estimate ${p.estimate_number}) + cost invoice ${inv.invoice_number} at ${pct}% → ${emails.join(', ')}` })
     }
     const summary = [

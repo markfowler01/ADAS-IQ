@@ -120,7 +120,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!dry && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
     setBusy(true); setErr('')
     try {
-      const body = { emails: list, discount_pct: pct, big3_rules: rulesTouched ? rules : undefined, big3_save: !!(rulesTouched && remember), lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
+      const learnNew = !!(rules && p.big3 && !p.big3.has_rule)   // first invoice for this shop → remember what we did
+      const body = { emails: list, discount_pct: pct, big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -168,6 +169,20 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                   <span className="text-xs" style={{ color: '#888' }}>{p.big3.has_rule ? `shop rule · ${p.big3.set_by || 'saved'}` : 'no shop rule yet — default shown'}</span>
                 </div>
                 <Big3Picker rules={rules} onChange={changeRules} />
+                {(() => {
+                  // Nudge (Mark 2026-09-11): "if we normally do not charge for post scans and all of a sudden we do, I want to be notified".
+                  if (!p.big3?.has_rule) return <div className="text-xs mt-2" style={{ color: '#92400e' }}>🧠 First invoice for {p.shop_name} — whatever you send will be remembered as this shop's rule.</div>
+                  const saved = p.big3.rules || {}
+                  const labels = { cal_id: 'Cal ID report', pcsi: 'PCSI', post_scan: 'Post-Scan', snapshot: 'Calibration Snapshot' }
+                  const word = m => normalizeMode(m) === 'charge' ? 'charge for' : normalizeMode(m) === 'included' ? 'include (no charge)' : 'leave off'
+                  const diffs = Object.keys(labels).filter(k => normalizeMode(rules[k]) !== normalizeMode(saved[k]))
+                  if (!diffs.length) return null
+                  return (
+                    <div className="rounded-lg px-3 py-2 mt-2 text-xs space-y-0.5" style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b' }}>
+                      {diffs.map(k => <div key={k}>⚠️ You normally <b>{word(saved[k])}</b> {labels[k]} at {p.shop_name}, this invoice will <b>{word(rules[k])}</b> it.{rulesTouched && remember ? ' Saving as the new rule.' : ''}</div>)}
+                    </div>
+                  )
+                })()}
                 <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
                   <label className="flex items-center gap-2 text-xs" style={{ color: rulesTouched ? '#555' : '#aaa' }}>
                     <input type="checkbox" checked={remember} disabled={!rulesTouched} onChange={e => setRemember(e.target.checked)} /> {rulesTouched ? `Remember for ${p.shop_name} (every invoice from now on)` : 'Change a switch to update this shop\'s rule'}

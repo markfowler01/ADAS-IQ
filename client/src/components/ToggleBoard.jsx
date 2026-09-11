@@ -292,6 +292,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       if (data.folderId || data.shareLink || data.folderUrl) {
         setSharedFolder({ id: data.folderId || null, url: data.shareLink || data.folderUrl || '' })
       }
+      // Mark 2026-09-11: "after a quote is sent… I want it to go back to the
+      // jobs view". Clean result → straight to the board (the card is there).
+      // Anything worth reading (unmatched items, no folder) keeps the card up.
+      if (!data.unmatchedItems?.length && (data.folderId || data.folderUrl || data.shareLink) && onNavigate) {
+        setTimeout(() => onNavigate('kanban'), 900)
+      }
 
       // Save to server history (fire-and-forget)
       try {
@@ -428,6 +434,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       if (data.folder_id || data.folder_url) {
         setSharedFolder(prev => ({ id: data.folder_id || prev?.id || null, url: data.folder_url || prev?.url || '' }))
       }
+      if (onNavigate) setTimeout(() => onNavigate('kanban'), 900)
 
       // Also auto-create a Kanban ticket so the job flows like any other
       try {
