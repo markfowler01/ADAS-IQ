@@ -292,6 +292,8 @@ app.post('/api/client-error', requireAuth, async (req, res) => {
   try {
     const b = req.body || {}
     const who = req.user?.techName || req.user?.email || 'someone'
+    // Also in the function log so it can be searched later (Cliq alone is easy to miss).
+    console.log(`[client-error] ${who} · screen ${b.screen || '?'} · ${String(b.message || '').slice(0, 300)} · ${String(b.component || '').split('\n').filter(Boolean).slice(0, 4).join(' > ').slice(0, 400)} · ${String(b.url || '')}`)
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./services/cliq.js')
     await Promise.race([
       postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
