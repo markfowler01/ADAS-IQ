@@ -1172,7 +1172,9 @@ export function paidAlternativeFor(allItems, insurerPrefix, fixedName) {
   const norm = str => String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
   const base = norm(String(fixedName).replace(/\((l-m|included)\)/i, '').replace(/\b1\b/, ''))
   if (!base) return null
-  const candidates = allItems.filter(it => Number(it.rate) > 0 && !/l-m|included/i.test(it.name) && norm(it.name).replace(/\b1\b/, '').includes(base))
+  // A combo item ("Pre & Post-Scan") must never stand in for the Post-Scan slot.
+  const combo = /\bpre\b.*\bpost\b|\bpre\s*[&\/+]/i
+  const candidates = allItems.filter(it => Number(it.rate) > 0 && !/l-m|included/i.test(it.name) && !combo.test(it.name) && norm(it.name).replace(/\b1\b/, '').includes(base))
   if (!candidates.length) return null
   // State Farm items are prefixed "SFP - " (and a few "SF - "); AS/AMFAM/CP as-is.
   const poolRe = insurerPrefix ? (insurerPrefix === 'SF' ? /^(SF|SFP)\s*[-\s]/i : new RegExp(`^${insurerPrefix}\\s*[-\\s]`, 'i')) : null
