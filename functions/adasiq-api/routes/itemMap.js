@@ -85,6 +85,51 @@ router.get('/books-invoice', async (req, res) => {
     res.json({ ok: true, invoice_number: inv.invoice_number, template_id: inv.template_id, template_name: inv.template_name, template_type: inv.template_type, payment_terms: inv.payment_terms, payment_terms_label: inv.payment_terms_label, discount_type: inv.discount_type, discount: inv.discount, is_discount_before_tax: inv.is_discount_before_tax, notes: inv.notes, terms: inv.terms, salesperson_name: inv.salesperson_name, reference_number: inv.reference_number, custom_fields: inv.custom_fields, line_items: (inv.line_items || []).map(l => ({ name: l.name, rate: l.rate, quantity: l.quantity, discount: l.discount, discount_amount: l.discount_amount, item_total: l.item_total })), total: inv.total, sub_total: inv.sub_total, status: inv.status, created_by: inv.created_by_name || inv.created_by_id })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
+// Convert-to-invoice probe (Mark 2026-09-11 plan step 1). ONLY works on
+// estimates whose Books customer is literally "Test". Actions:
+//   editpage  → GET the prefilled conversion payload Books' own UI uses
+//   create    → POST /invoices with extra query params / body / line fields
+//   delete    → delete an invoice (Test customer only)
+//   estimate  → read the estimate's status + linked invoices
+router.post('/convert-probe', async (req, res) => {
+  try {
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const B = 'https://www.zohoapis.com/books/v3'
+    const H = { Authorization: `Zoho-oauthtoken ${token}` }
+    const P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const call = (method, path, params = {}, data) => axios({ method, url: `${B}${path}`, headers: H, params: { ...P, ...params }, data, timeout: 20000, validateStatus: s => s < 500 }).then(r => r.data)
+    const { action, estimate_number, invoice_id } = req.body || {}
+    if (action === 'delete') {
+      const inv = (await call('get', `/invoices/${invoice_id}`))?.invoice
+      if (!inv || inv.customer_name !== 'Test') return res.status(403).json({ error: 'probe only deletes invoices on the Test customer' })
+      return res.json(await call('delete', `/invoices/${invoice_id}`))
+    }
+    const list = await call('get', '/estimates', { estimate_number })
+    const eh = (list.estimates || []).find(e => e.estimate_number === estimate_number)
+    if (!eh) return res.status(404).json({ error: 'estimate not found' })
+    const est = (await call('get', `/estimates/${eh.estimate_id}`))?.estimate
+    if (!est || est.customer_name !== 'Test') return res.status(403).json({ error: 'probe only works on the Test customer' })
+    if (action === 'estimate') return res.json({ status: est.status, estimate_id: est.estimate_id, invoices: est.invoices || est.invoice_ids || null, keys: Object.keys(est).filter(k => /invoice/i.test(k)) })
+    if (action === 'editpage') {
+      const out = {}
+      for (const path of [`/invoices/editpage/fromestimate`, `/invoices/editpage`, `/invoices/fromestimate`]) {
+        const d = await call('get', path, { estimate_id: est.estimate_id })
+        out[path] = { code: d.code, message: d.message, keys: Object.keys(d).slice(0, 40), invoice_keys: d.invoice ? Object.keys(d.invoice).filter(k => /estimate|item|reference|template|custom/i.test(k)) : null, line0: d.invoice?.line_items?.[0] ? Object.keys(d.invoice.line_items[0]).filter(k => /estimate|id/i.test(k)) : null, est_fields: d.invoice ? { estimate_id: d.invoice.estimate_id, estimate_number: d.invoice.estimate_number, reference_number: d.invoice.reference_number } : null }
+      }
+      return res.json(out)
+    }
+    if (action === 'create') {
+      const lines = (est.line_items || []).map(li => ({ item_id: li.item_id, description: li.description || '', rate: li.rate, quantity: li.quantity, ...(req.body.line_extra === 'estimate_item_id' ? { estimate_item_id: li.line_item_id } : {}) }))
+      const body = { customer_id: est.customer_id, line_items: lines, ...(req.body.body_extra || {}) }
+      const d = await call('post', '/invoices', req.body.params_extra || {}, body)
+      const inv = d.invoice
+      const after = (await call('get', `/estimates/${est.estimate_id}`))?.estimate
+      return res.json({ code: d.code, message: d.message, invoice_id: inv?.invoice_id, invoice_number: inv?.invoice_number, inv_estimate_id: inv?.estimate_id, estimate_status_after: after?.status, estimate_invoice_keys: after ? Object.fromEntries(Object.entries(after).filter(([k]) => /invoice/i.test(k))) : null })
+    }
+    res.status(400).json({ error: 'unknown action' })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
 router.post('/create-item', async (req, res) => {
   try {
     if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Only Mark can add Zoho Books items.' })
