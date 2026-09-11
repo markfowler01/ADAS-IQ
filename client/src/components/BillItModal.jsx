@@ -61,6 +61,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   const [catalog, setCatalog] = useState([])
   const [q, setQ] = useState('')
   const [rules, setRules] = useState(null)
+  const [rulesTouched, setRulesTouched] = useState(false)
   const [remember, setRemember] = useState(true)
   const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
 
@@ -70,13 +71,27 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
       const d = await r.json().catch(() => ({}))
       if (dead) return
       if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
-      setP(d); setLines((d.lines || []).map(l => ({ ...l, big3_key: l.big3_key || big3KeyFor(l.name) }))); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct); setRules(d.big3?.rules || null)
+      const ls = (d.lines || []).map(l => ({ ...l, big3_key: l.big3_key || big3KeyFor(l.name) }))
+      setP(d); setLines(ls); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct)
+      // Picker starts from what is actually ON the estimate (a paid line = Charge,
+      // a $0 line = Included, missing = Off), falling back to the shop rule —
+      // so a click changes only the slot Kat clicked.
+      if (d.big3?.rules) {
+        const eff = { ...d.big3.rules }
+        for (const key of BIG3_ORDER) {
+          const hit = ls.filter(l => l.big3_key === key)
+          if (hit.length) eff[key] = hit.some(l => Number(l.rate) > 0) ? 'charge' : 'included'
+          else if (key === 'post_scan' || key === 'snapshot') eff[key] = 'off'
+        }
+        if (eff.snapshot === 'charge') eff.post_scan = d.big3.rules.post_scan
+        setRules(eff)
+      }
     }).catch(e => !dead && setErr(e.message))
     apiFetch(`${API_BASE}/api/jobs/catalog`).then(r => r.json()).then(d => { if (!dead && d.ok) setCatalog(d.items || []) }).catch(() => {})
     return () => { dead = true }
   }, [job.id])
 
-  function changeRules(next) { setRules(next); setLines(ls => applyBig3(ls, next, p?.big3?.items)) }
+  function changeRules(next) { setRules(next); setRulesTouched(true); setLines(ls => applyBig3(ls, next, p?.big3?.items)) }
   function setLine(i, patch) { setLines(ls => ls.map((l, j) => j === i ? { ...l, ...patch, _edited: true } : l)) }
   function removeLine(i) { setLines(ls => ls.filter((_, j) => j !== i)) }
   function addItem(it) {
@@ -105,7 +120,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!dry && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
     setBusy(true); setErr('')
     try {
-      const body = { emails: list, discount_pct: pct, big3_rules: rules || undefined, big3_save: !!(rules && remember), lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
+      const body = { emails: list, discount_pct: pct, big3_rules: rulesTouched ? rules : undefined, big3_save: !!(rulesTouched && remember), lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -154,8 +169,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 </div>
                 <Big3Picker rules={rules} onChange={changeRules} />
                 <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
-                  <label className="flex items-center gap-2 text-xs" style={{ color: '#555' }}>
-                    <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember for {p.shop_name} (every invoice from now on)
+                  <label className="flex items-center gap-2 text-xs" style={{ color: rulesTouched ? '#555' : '#aaa' }}>
+                    <input type="checkbox" checked={remember} disabled={!rulesTouched} onChange={e => setRemember(e.target.checked)} /> {rulesTouched ? `Remember for ${p.shop_name} (every invoice from now on)` : 'Change a switch to update this shop\'s rule'}
                   </label>
                   <span className="text-xs" style={{ color: '#888' }}>{describeRules(rules)}</span>
                 </div>
