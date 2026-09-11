@@ -1372,7 +1372,7 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     let slotKey = String(req.body?.slot || '').trim()
     let miles = req.body?.miles != null && req.body.miles !== '' ? Number(req.body.miles) : null
     const known = new Set(SLOTS.map(s => s.key))
-    const needsClassify = !known.has(slotKey) || (/^odo_/.test(slotKey) && miles == null)
+    const needsClassify = !known.has(slotKey) || (/^odo_/.test(slotKey) && miles == null) || slotKey === 'vin'
     let ai = null
     if (needsClassify) {
       try { ai = await classifyPhoto(req.file.buffer, req.file.mimetype) } catch (e) { console.log('[photo-slot] classify failed:', e.message) }
@@ -1396,16 +1396,27 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     const up = await uploadFileToFolder(folderId, name, req.file.buffer, wdToken, req.file.mimetype)
     const fileId = String(up?.fileId || up?.id || up || '')
     const entry = { fileId, name, at: new Date().toISOString() }
+    // VIN plate (Mark 2026-09-11): read the VIN off the label, keep it on the
+    // slot (copyable in the sheet), fill the card's VIN if blank, flag a mismatch.
+    let vinInfo = null
+    if (slotKey === 'vin') {
+      const read = ai?.vin || null
+      const cardVin = String(job.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+      entry.vin = read
+      entry.vin_mismatch = !!(read && cardVin && cardVin !== read)
+      vinInfo = { read, card: cardVin || null, mismatch: entry.vin_mismatch }
+    }
     if (slotDef.multi) slots.setup = [...(slots.setup || []), entry]
     else slots[slotKey] = entry
 
     const patch = { photo_slots: JSON.stringify(slots) }
+    if (vinInfo?.read && !vinInfo.card) patch.vin = vinInfo.read
     if (!job.folder_url) patch.folder_url = `https://workdrive.zoho.com/folder/${folderId}`
     if (slotKey === 'odo_before' && miles != null) patch.odo_before = String(miles)
     if (slotKey === 'odo_after' && miles != null) patch.odo_after = String(miles)
     const updated = await updateJob(req, job.id, { ...job, ...patch })
     console.log(`[photo-slot] job ${job.id} ← ${name}${miles != null ? ` (${miles} mi)` : ''}${ai ? ` [ai ${ai.slot} ${ai.confidence}]` : ''}`)
-    res.json({ ok: true, slot: slotKey, miles, name, fileId, job: updated, progress: photoProgress(updated) })
+    res.json({ ok: true, slot: slotKey, miles, vin: vinInfo, name, fileId, job: updated, progress: photoProgress(updated) })
   } catch (err) {
     console.error('[photo-slot]', err.message)
     res.status(500).json({ error: err.message })

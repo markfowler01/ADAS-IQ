@@ -13,15 +13,16 @@ const ORANGE = '#CD4419'
 const GREEN = '#15803d'
 const RED = '#b91c1c'
 
+// Order (Mark 2026-09-11): cluster → VIN → LF → RF → RR → LR → setup → post-cal cluster.
 export const SLOTS = [
-  { key: 'lf',         n: 1, label: 'Left front corner',       short: 'LF corner',  hint: 'Stand at the driver headlight. Whole car in the shot.' },
-  { key: 'rf',         n: 2, label: 'Right front corner',      short: 'RF corner',  hint: 'Same shot from the passenger headlight.' },
-  { key: 'lr',         n: 3, label: 'Left rear corner',        short: 'LR corner',  hint: 'Driver tail light. Whole car in.' },
-  { key: 'rr',         n: 4, label: 'Right rear corner',       short: 'RR corner',  hint: 'Passenger tail light. Whole car in.' },
-  { key: 'vin',        n: 5, label: 'VIN plate',               short: 'VIN',        hint: 'Door-jamb sticker or dash plate, straight on.' },
-  { key: 'odo_before', n: 6, label: 'Odometer — before drive', short: 'Odo before', hint: 'Dash on, miles readable.' },
-  { key: 'odo_after',  n: 7, label: 'Odometer — after drive',  short: 'Odo after',  hint: 'After the test drive. Needs more than 1 mile.' },
-  { key: 'setup',      n: 8, label: 'Calibration setup',       short: 'Setup',      hint: 'Targets, rig, tablet. Snap as many as you want.', multi: true },
+  { key: 'odo_before', n: 1, label: 'Cluster — odometer before',  short: 'Odo before', hint: 'Dash on, total miles readable. Before the test drive.' },
+  { key: 'vin',        n: 2, label: 'VIN plate',                  short: 'VIN',        hint: 'Door-jamb sticker or dash plate, straight on. We read the VIN for you.' },
+  { key: 'lf',         n: 3, label: 'Left front corner',          short: 'LF corner',  hint: 'Stand at the driver headlight. Whole car in the shot.' },
+  { key: 'rf',         n: 4, label: 'Right front corner',         short: 'RF corner',  hint: 'Same shot from the passenger headlight.' },
+  { key: 'rr',         n: 5, label: 'Right rear corner',          short: 'RR corner',  hint: 'Passenger tail light. Whole car in.' },
+  { key: 'lr',         n: 6, label: 'Left rear corner',           short: 'LR corner',  hint: 'Driver tail light. Whole car in.' },
+  { key: 'setup',      n: 7, label: 'Calibration setup',          short: 'Setup',      hint: 'Targets, rig, tablet. Snap as many as you want.', multi: true },
+  { key: 'odo_after',  n: 8, label: 'Cluster — odometer after calibration', short: 'Odo after', hint: 'After the test drive. Needs more than 1 mile over the first shot.' },
 ]
 export const MIN_MILES = 1.0
 export const PHOTO_GATE_FROM = '2026-09-09'
@@ -194,6 +195,18 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   function resolveNeedsSlot(item, slotKey) {
     item.slot = slotKey; item.status = 'queued'; item.error = null; notify(); pump()
   }
+  const [copied, setCopied] = useState(false)
+  async function copyVin(v) {
+    try { await navigator.clipboard.writeText(v); setCopied(true); setTimeout(() => setCopied(false), 1500) }
+    catch { window.prompt('Copy the VIN:', v) }
+  }
+  async function useVin(v) {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ vin: v }) })
+      const d = await r.json()
+      if (r.ok) { setJob(d); onJobUpdated && onJobUpdated(d) }
+    } catch { /* tech can retry */ }
+  }
   async function saveMiles(which) {
     const v = odoEdit[which]
     const body = which === 'before' ? { odo_before: v } : { odo_after: v }
@@ -204,7 +217,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
     } catch { /* keep the edit box, tech can retry */ }
   }
 
-  const cur = SLOTS.find(s => s.key === current) || SLOTS[7]
+  const cur = SLOTS.find(s => s.key === current) || SLOTS.find(s => s.key === 'setup')
   const pending = items.filter(i => i.status === 'queued' || i.status === 'uploading').length
   const needsSlot = items.filter(i => i.status === 'needs_slot')
   const failed = items.filter(i => i.status === 'failed')
@@ -293,6 +306,27 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                   : <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base" style={{ backgroundColor: filled ? '#dcfce7' : '#f5f3f0', color: filled ? GREEN : '#bbb' }}>{filled ? '✓' : s.n}</span>}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold" style={{ color: filled ? GREEN : '#1a1a1a' }}>{s.label}{s.multi && prog.setupCount ? ` (${prog.setupCount})` : ''}</div>
+                  {s.key === 'vin' && filled && (() => {
+                    const read = prog.slots.vin?.vin || null
+                    const cardVin = String(job.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+                    const mismatch = !!(read && cardVin && cardVin !== read)
+                    return (
+                      <div className="mt-0.5">
+                        {read ? (
+                          <div className="flex items-center gap-1 flex-wrap">
+                            <span className="text-xs font-bold tracking-wider" style={{ fontFamily: 'IBM Plex Mono, monospace', color: mismatch ? RED : '#1a1a1a' }}>{read}</span>
+                            <button type="button" onClick={() => copyVin(read)} className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: copied ? '#dcfce7' : '#f5f3f0', color: copied ? GREEN : '#555', border: '1px solid #e0dbd6' }}>{copied ? 'Copied ✓' : 'Copy'}</button>
+                          </div>
+                        ) : <div className="text-[11px]" style={{ color: '#888' }}>Couldn't read the VIN — redo the shot straight on.</div>}
+                        {mismatch && (
+                          <div className="text-[11px] mt-0.5 flex items-center gap-1 flex-wrap" style={{ color: RED }}>
+                            ⚠️ Card says {cardVin}
+                            <button type="button" onClick={() => useVin(read)} className="font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: RED }}>Use the plate's VIN</button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                   {(s.key === 'odo_before' || s.key === 'odo_after') && filled && (
                     <div className="flex items-center gap-1 mt-0.5">
                       <input value={s.key === 'odo_before' ? odoEdit.before : odoEdit.after}

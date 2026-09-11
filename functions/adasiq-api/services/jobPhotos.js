@@ -16,17 +16,19 @@
 // itself: "01 LF corner · <RO>.jpg", "06 Odo before · <RO>.jpg", …
 import Anthropic from '@anthropic-ai/sdk'
 
+// Order (Mark 2026-09-11): cluster → VIN → LF → RF → RR → LR → setup → post-cal cluster.
 export const SLOTS = [
-  { key: 'lf',         n: 1, label: 'Left front corner',      file: 'LF corner',   hint: 'Stand at the left headlight, get the whole car in.' },
-  { key: 'rf',         n: 2, label: 'Right front corner',     file: 'RF corner',   hint: 'Same shot from the right headlight.' },
-  { key: 'lr',         n: 3, label: 'Left rear corner',       file: 'LR corner',   hint: 'Left tail light, whole car in.' },
-  { key: 'rr',         n: 4, label: 'Right rear corner',      file: 'RR corner',   hint: 'Right tail light, whole car in.' },
-  { key: 'vin',        n: 5, label: 'VIN plate',              file: 'VIN plate',   hint: 'Door-jamb sticker or dash plate, straight on.' },
-  { key: 'odo_before', n: 6, label: 'Odometer — before drive', file: 'Odo before', hint: 'Dash on, miles readable.' },
-  { key: 'odo_after',  n: 7, label: 'Odometer — after drive',  file: 'Odo after',  hint: 'After the test drive. Needs more than 1 mile.' },
-  { key: 'setup',      n: 8, label: 'Calibration setup',      file: 'Setup',       hint: 'Targets, rig, tablet — snap as many as you want.', multi: true },
+  { key: 'odo_before', n: 1, label: 'Cluster — odometer before', file: 'Odo before', hint: 'Dash on, total miles readable. Before the test drive.' },
+  { key: 'vin',        n: 2, label: 'VIN plate',                 file: 'VIN plate',  hint: 'Door-jamb sticker or dash plate, straight on. We read the VIN for you.' },
+  { key: 'lf',         n: 3, label: 'Left front corner',         file: 'LF corner',  hint: 'Stand at the driver headlight, whole car in.' },
+  { key: 'rf',         n: 4, label: 'Right front corner',        file: 'RF corner',  hint: 'Same shot from the passenger headlight.' },
+  { key: 'rr',         n: 5, label: 'Right rear corner',         file: 'RR corner',  hint: 'Passenger tail light, whole car in.' },
+  { key: 'lr',         n: 6, label: 'Left rear corner',          file: 'LR corner',  hint: 'Driver tail light, whole car in.' },
+  { key: 'setup',      n: 7, label: 'Calibration setup',         file: 'Setup',      hint: 'Targets, rig, tablet — snap as many as you want.', multi: true },
+  { key: 'odo_after',  n: 8, label: 'Cluster — odometer after calibration', file: 'Odo after', hint: 'After the test drive. Needs more than 1 mile over the first shot.' },
 ]
 export const MIN_TEST_DRIVE_MILES = 1.0
+export const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/
 export const MAX_SETUP_PHOTOS = 10
 // Gate applies to jobs created from this PT date on (Mark: jobs already
 // in progress at go-live aren't blocked).
@@ -118,13 +120,15 @@ export async function classifyPhoto(buffer, mimeType, { wantSlot = true } = {}) 
           `- "setup": calibration equipment — targets, radar reflector, rig, frame, scan tool / tablet screen, doppler simulator\n` +
           `- "unknown": none of the above\n` +
           `US-market cars: the LEFT side is the driver side. If the photo shows the odometer, also read the total mileage as a number (ignore trip meters).\n` +
-          `Return ONLY raw JSON: {"slot":"<category>","miles":<number or null>,"confidence":<0-1>}` },
+          `If the photo shows a VIN label or plate, read the 17-character VIN exactly as printed (VINs never contain the letters I, O or Q); otherwise null.\n` +
+          `Return ONLY raw JSON: {"slot":"<category>","miles":<number or null>,"vin":<17-char string or null>,"confidence":<0-1>}` },
       ],
     }],
   })
   const raw = String(msg.content?.[0]?.text || '').trim().replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
   try {
     const p = JSON.parse(raw)
-    return { slot: String(p.slot || 'unknown'), miles: Number.isFinite(Number(p.miles)) ? Number(p.miles) : null, confidence: Number(p.confidence) || 0 }
-  } catch { return { slot: 'unknown', miles: null, confidence: 0 } }
+    const vin = String(p.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    return { slot: String(p.slot || 'unknown'), miles: Number.isFinite(Number(p.miles)) ? Number(p.miles) : null, vin: VIN_RE.test(vin) ? vin : null, confidence: Number(p.confidence) || 0 }
+  } catch { return { slot: 'unknown', miles: null, vin: null, confidence: 0 } }
 }
