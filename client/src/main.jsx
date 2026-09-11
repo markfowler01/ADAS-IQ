@@ -11,7 +11,8 @@ window.addEventListener('vite:preloadError', (e) => {
   e.preventDefault()
   const key = 'adas_chunk_reload_at'
   const last = Number(sessionStorage.getItem(key) || 0)
-  if (Date.now() - last > 15000) { sessionStorage.setItem(key, String(Date.now())); window.location.reload() }
+  // Cache-busting navigation (a plain reload can hand back the same stale index.html).
+  if (Date.now() - last > 15000) { sessionStorage.setItem(key, String(Date.now())); window.location.replace(window.location.pathname + '?v=' + Date.now()) }
 })
 
 ReactDOM.createRoot(document.getElementById('root')).render(

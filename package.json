@@ -13,7 +13,7 @@
     "server": "node --watch server/index.js",
     "start": "node server/index.js",
     "deploy:function": "./scripts/deploy-gate.sh && catalyst deploy --only functions:adasiq-api",
-    "deploy:client": "npm run build && catalyst deploy --only client"
+    "deploy:client": "npm run build && ./scripts/archive-client-assets.sh && catalyst deploy --only client"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
