@@ -52,7 +52,12 @@ router.get('/books-templates', async (req, res) => {
       axios.get('https://www.zohoapis.com/books/v3/invoices/templates', { headers: H, params: P, timeout: 12000, validateStatus: s => s < 500 }),
     ])
     const slim = t => ({ template_id: t.template_id, template_name: t.template_name, template_type: t.template_type, is_default: !!t.is_default })
-    res.json({ ok: true, estimate_templates: (e.data?.templates || []).map(slim), invoice_templates: (i.data?.templates || []).map(slim) })
+    // Which template do the recent hand-made invoices actually use?
+    const recent = await axios.get('https://www.zohoapis.com/books/v3/invoices', { headers: H, params: { ...P, per_page: 25, sort_column: 'created_time', sort_order: 'D' }, timeout: 12000, validateStatus: s => s < 500 })
+    const usage = {}
+    for (const inv of recent.data?.invoices || []) { const k = inv.template_name || inv.template_id || '?'; usage[k] = (usage[k] || 0) + 1 }
+    res.json({ ok: true, estimate_templates: (e.data?.templates || []).map(slim), invoice_templates: (i.data?.templates || []).map(slim), recent_invoice_template_usage: usage,
+      recent: (recent.data?.invoices || []).slice(0, 12).map(x => ({ n: x.invoice_number, customer: x.customer_name, template: x.template_name || x.template_id, date: x.date })) })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 router.post('/create-item', async (req, res) => {
