@@ -1459,7 +1459,7 @@ function payLines(job, insurer) {
   const q = String(job?.cash_quoted || '').trim()
   if (q) return [
     `\n💵💵💵 *CUSTOMER PAY — TOLD $${q}* 💵💵💵`,
-    `*Bill as CASH · total must be $${q} · 0% discount · quote already capped*`,
+    `*Bill as CASH · total must be $${q}*`,
   ]
   if (_cash.isCashCustomer(job)) return [`💵 *CASH CUSTOMER* · CP pricing · max $${_cash.CASH_MAX_OUT_OF_POCKET}`]
   return [`🏦 ${insurer}`]
