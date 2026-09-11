@@ -167,3 +167,14 @@ export async function linkInvoiceToEstimate(token, invoiceId, estimateId) {
   if (r.data?.code !== 0) throw new Error(`Link failed: ${r.data?.message || r.status}`)
   return r.data.invoice
 }
+
+// After the emails go out, make sure the quote still reads INVOICED (belt
+// and braces — emailing an estimate could touch its status). Idempotent.
+export async function ensureLinked(token, invoiceId, estimateId) {
+  const est = await getEstimate(token, estimateId).catch(() => null)
+  if (!est) return null
+  const linked = Array.isArray(est.invoice_ids) && est.invoice_ids.map(String).includes(String(invoiceId))
+  if (est.status === 'invoiced' && linked) return est.status
+  await linkInvoiceToEstimate(token, invoiceId, estimateId).catch(e => console.log('[cost-invoice] relink failed:', e.message))
+  return (await getEstimate(token, estimateId).catch(() => null))?.status || null
+}

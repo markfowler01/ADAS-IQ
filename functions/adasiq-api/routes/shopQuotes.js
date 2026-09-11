@@ -646,6 +646,7 @@ router.post('/:id/bill', async (req, res) => {
     await emailEstimate(token, q.estimate_id, emails)
     const e2 = await ci.emailInvoice(token, inv.invoice_id, emails)
     if (e2) console.log('[shop-quotes bill] cost invoice email failed:', e2)
+    await ci.ensureLinked(token, inv.invoice_id, q.estimate_id)
 
     const now = new Date().toISOString()
     Object.assign(q, {

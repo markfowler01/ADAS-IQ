@@ -20,7 +20,7 @@ import { readJobsPublic, updateJobPublic } from './jobs.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 
 import axios from 'axios'
-import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, invoiceCustomFields, createCostInvoice, emailEstimate, emailInvoice } from '../services/costInvoice.js'
+import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, invoiceCustomFields, createCostInvoice, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
 import catalyst from 'zcatalyst-sdk-node'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
@@ -190,6 +190,8 @@ router.post('/:id/bill', async (req, res) => {
       // 3. Insurance invoice = the estimate, emailed as-is. 4. Cost invoice emailed.
       const e1 = await emailEstimate(token, p.estimate_id, emails)
       const e2 = await emailInvoice(token, inv.invoice_id, emails)
+      const quoteStatus = await ensureLinked(token, inv.invoice_id, p.estimate_id)
+      console.log(`[bill-it] quote ${p.estimate_number} status after billing: ${quoteStatus}`)
       const emailNote = [e1 ? `estimate email failed (${e1})` : '', e2 ? `invoice email failed (${e2})` : ''].filter(Boolean).join('; ')
       if (emailNote) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${inv.invoice_number}: invoice created but ${emailNote} — send from Books by hand.`).catch(() => {})
       // Stamp the card
