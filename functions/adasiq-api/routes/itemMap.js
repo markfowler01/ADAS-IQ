@@ -40,6 +40,21 @@ router.get('/books-scope', async (req, res) => {
     res.json({ ok: true, scope, can_create_items: /ZohoBooks\.(settings\.(CREATE|ALL)|fullaccess\.all)/i.test(scope) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// PDF templates in Books (estimate + invoice) — so Bill it can pin the right ones.
+router.get('/books-templates', async (req, res) => {
+  try {
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const H = { Authorization: `Zoho-oauthtoken ${token}` }
+    const P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const [e, i] = await Promise.all([
+      axios.get('https://www.zohoapis.com/books/v3/estimates/templates', { headers: H, params: P, timeout: 12000, validateStatus: s => s < 500 }),
+      axios.get('https://www.zohoapis.com/books/v3/invoices/templates', { headers: H, params: P, timeout: 12000, validateStatus: s => s < 500 }),
+    ])
+    const slim = t => ({ template_id: t.template_id, template_name: t.template_name, template_type: t.template_type, is_default: !!t.is_default })
+    res.json({ ok: true, estimate_templates: (e.data?.templates || []).map(slim), invoice_templates: (i.data?.templates || []).map(slim) })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
 router.post('/create-item', async (req, res) => {
   try {
     if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Only Mark can add Zoho Books items.' })
