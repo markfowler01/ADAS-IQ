@@ -574,6 +574,7 @@ router.put('/:id', async (req, res) => {
 
     const updated = await updateJob(req, req.params.id, req.body)
     if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') await writePcsiStory(req, updated)
+    if (req.body.cash_quoted && String(cur?.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
     if (req.body.status === 'complete' && prevStatus !== 'complete') {
       logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
@@ -702,6 +703,7 @@ router.patch('/:id', async (req, res) => {
 
     const updated = await updateJob(req, req.params.id, merged)
     if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') await writePcsiStory(req, updated)
+    if (req.body.cash_quoted && String(currentJob.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
     if (req.body.status === 'complete' && currentJob.status !== 'complete') {
       logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
@@ -1450,6 +1452,18 @@ function tireGate(req, res, merged) {
   if (!missing.length) return false
   res.status(409).json({ error: `Post-collision safety inspection first — still need: ${missing.join(', ')}. Confirm it on the Ready to Invoice screen.`, tires_gate: true, pcsi_gate: true, missing })
   return true
+}
+// 💵 The tech picked $350 / $700 → the Books quote is capped at that number
+// right away, so Kat's manual Convert and Bill it both land on the promise.
+async function applyCashQuoted(req, job) {
+  try {
+    if (!job?.zoho_estimate_id || !job?.cash_quoted) return
+    const { applyCashCapToEstimate } = await import('../services/estimateCash.js')
+    const token = await getAccessToken()
+    const r = await Promise.race([applyCashCapToEstimate(token, job.zoho_estimate_id, job.cash_quoted), new Promise(res => setTimeout(() => res({ timeout: true }), 8000))])
+    console.log(`[cash-quoted] job ${job.id} → $${job.cash_quoted}: ${r?.timeout ? 'TIMEOUT' : r ? `list $${r.list_total} → $${r.total}${r.capped ? ' (cap line added)' : ' (under the number, no cap)'}` : 'no estimate'}`)
+    if (r && !r.timeout) postToCliqChannel(DISPATCH_CHANNEL, `💵 Quote ${r.estimate_number} re-priced for customer pay: list $${r.list_total.toFixed(2)} → $${r.total.toFixed(2)}${r.capped ? ' (cap line added)' : ''}`).catch(() => {})
+  } catch (e) { console.log('[cash-quoted] failed (non-fatal):', e.message) }
 }
 // Write the PCSI story onto the Books quote (fallback Post-Scan / first line).
 // Runs before the response (Catalyst ends the function once res goes out).

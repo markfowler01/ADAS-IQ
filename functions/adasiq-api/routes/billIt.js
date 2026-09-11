@@ -54,8 +54,9 @@ async function buildPreview(req, job) {
   const rule = await big3.readBig3(req, shopName)
   const shop = rule.shop_id ? await big3.findShopByName(req, shopName) : null
   const br = shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {}
-  const pct = Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null
-  const customerType = br.customer_type || ''
+  const cashJob = !!String(job.cash_quoted || '').trim()
+  const pct = cashJob ? 0 : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null)
+  const customerType = cashJob ? 'cash' : (br.customer_type || '')
   const byName = new Map((catalog.allItems || []).map(it => [String(it.name).toLowerCase().trim(), it]))
   const byId = new Map((catalog.allItems || []).map(it => [String(it.item_id), it]))
 
@@ -97,6 +98,7 @@ async function buildPreview(req, job) {
   if (existing) warnings.push(`Invoice ${existing.invoice_number} already exists in Books (${existing.status}) — billed by hand? The button will not create a second one.`)
   if (job.invoiced || job.billed_via_app) warnings.push(`This card is already marked invoiced${job.billed_via_app ? ` (via app ${job.billed_via_app})` : ''}.`)
   if (pct == null) warnings.push(`No cost-invoice discount on file for ${shopName} — set the customer type / % on the CRM Billing tab. Preview shows 0%.`)
+  if (cashJob) warnings.push(`💵 Customer pay — told $${job.cash_quoted}. Quote already capped at that number; discount is 0%.`)
   if (!emails.length) warnings.push('No email on the Books contact — add one in Books or type it below.')
   if (!tpl.estimate) warnings.push('No estimate PDF template named "Absolute List invoice" in Books — the button will not send until it exists.')
   if (!tpl.invoice) warnings.push('No invoice PDF template named "Absolute ADAS vrs 1" (or "Retail…") in Books — the button will not send until it exists.')
