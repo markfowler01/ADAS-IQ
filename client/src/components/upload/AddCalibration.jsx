@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { ORANGE } from '../ui/ReviewKit.jsx'
 
-export default function AddCalibration({ existingNames = [], onAdd, onCancel, vehicle = {} }) {
+export default function AddCalibration({ existingNames = [], onAdd, onCancel, vehicle = {}, inline = false }) {
   const [writing, setWriting] = useState('')   // name being written up by the AI
   // Mark 2026-09-14: "from the Zoho Books menu" — the search is the Books
   // item catalog (same list Bill it uses), so what you add is a real item
@@ -63,11 +63,13 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel, ve
   }
 
   return (
-    <div className="rounded-lg p-3" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE}` }}>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>＋ Add a calibration Kinetic missed</span>
-        <button type="button" onClick={onCancel} className="text-xs font-semibold" style={{ color: '#888' }}>close</button>
-      </div>
+    <div className={inline ? '' : 'rounded-lg p-3'} style={inline ? {} : { backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE}` }}>
+      {!inline && (
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>＋ Add a calibration Kinetic missed</span>
+          <button type="button" onClick={onCancel} className="text-xs font-semibold" style={{ color: '#888' }}>close</button>
+        </div>
+      )}
       {writing && <div className="text-xs font-semibold mb-2" style={{ color: '#7c3aed' }}>🪄 Writing why {writing} is required…</div>}
       <input autoFocus value={q} onChange={e => setQ(e.target.value)} disabled={!!writing} placeholder="Search calibrations in Zoho Books… (e.g. blind spot, radar, camera)"
         className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', outline: 'none' }}

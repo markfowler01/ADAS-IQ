@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import AddCalibration from './upload/AddCalibration.jsx'
 import { Panel, Chip, Eyebrow, PrimaryButton } from './ui/ReviewKit.jsx'
 import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from './ReadyChecks.jsx'
 
@@ -132,95 +133,12 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose, user =
             </div>
           </Panel>
 
-          {/* Quick Add — top 10 */}
-          {!loading && topTen.length > 0 && (
-            <>
-              <Eyebrow style={{ marginBottom: 6 }}>Quick add · most common</Eyebrow>
-              <div className="flex flex-wrap gap-1.5 mb-4">
-                {topTen.map(({ name }) => {
-                  const already = calNames.has(name.toLowerCase())
-                  return (
-                    <button key={name} onClick={() => addCal(name)} disabled={already}
-                      className="text-xs font-semibold rounded-full px-2.5 py-1.5"
-                      style={{ backgroundColor: already ? '#f5f3f0' : 'white', color: already ? '#aaa' : '#15803d', border: `1.5px solid ${already ? '#e0dbd6' : '#bbf7d0'}` }}>
-                      {already ? '✓ ' : '+ '}{name}
-                    </button>
-                  )
-                })}
-              </div>
-            </>
-          )}
-
-          {loading && (
-            <div className="flex items-center justify-center py-6">
-              <div className="w-5 h-5 border-2 border-orange-300 border-t-orange-600 rounded-full animate-spin" />
-            </div>
-          )}
-
-          {/* More — searchable */}
-          <button
-            onClick={() => setShowSearch(s => !s)}
-            className="w-full flex items-center justify-between rounded-2xl px-4 mb-3"
-            style={{
-              backgroundColor: '#f5f3f0',
-              border: '1.5px solid #e0dbd6',
-              minHeight: '52px',
-            }}
-          >
-            <span className="text-sm font-medium" style={{ color: '#555' }}>+ More calibrations</span>
-            <span style={{ color: '#aaa', fontSize: '12px' }}>{showSearch ? '▲' : '▼'}</span>
-          </button>
-
-          {showSearch && (
-            <div className="mb-4">
-              <input
-                ref={searchRef}
-                type="text"
-                placeholder="Search calibrations…"
-                value={searchText}
-                onChange={e => setSearchText(e.target.value)}
-                className="w-full rounded-2xl px-4 py-3 text-sm mb-3"
-                style={{
-                  border: '1.5px solid #e0dbd6',
-                  backgroundColor: '#fafafa',
-                  outline: 'none',
-                  fontSize: '15px',
-                }}
-              />
-              <div className="flex flex-col gap-2">
-                {filteredRules.slice(0, 20).map(rule => (
-                  <button
-                    key={rule.id}
-                    onClick={() => {
-                      addCal(rule.calibration_name, {
-                        cal_type: rule.cal_type || '',
-                        rule_id: rule.id,
-                      })
-                      setSearchText('')
-                    }}
-                    className="flex items-center justify-between rounded-2xl px-4 text-left"
-                    style={{
-                      backgroundColor: '#f0fdf4',
-                      border: '1.5px solid #bbf7d0',
-                      minHeight: '52px',
-                    }}
-                  >
-                    <span className="text-sm font-medium" style={{ color: '#15803d' }}>
-                      + {rule.calibration_name}
-                    </span>
-                    {rule.cal_type && (
-                      <span className="text-xs ml-2 flex-shrink-0 px-2 py-1 rounded-md" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>
-                        {rule.cal_type}
-                      </span>
-                    )}
-                  </button>
-                ))}
-                {filteredRules.length === 0 && searchText && (
-                  <p className="text-sm px-2 py-3" style={{ color: '#aaa' }}>No matches for "{searchText}"</p>
-                )}
-              </div>
-            </div>
-          )}
+          {/* ➕ Add from the Zoho Books menu (Mark 2026-09-14) — calibration
+              items only, most-common chips, AI-written justification. */}
+          <Panel tone="green" title="➕ Add a calibration" right="Zoho Books menu · calibrations only" bodyClass="p-3">
+            <AddCalibration inline existingNames={cals.map(c => c.name)} vehicle={{ year: job.year, make: job.make, model: job.model }}
+              onAdd={c => addCal(c.calibration_name, { cal_type: c.cal_type || undefined, justification: c.justification || undefined, item_id: c.item_id || undefined })} />
+          </Panel>
         </div>
 
         {/* ── Sticky footer ── */}
