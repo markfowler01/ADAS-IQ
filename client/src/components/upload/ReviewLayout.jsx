@@ -9,7 +9,7 @@ import { Panel, Row, Eyebrow, Title, Field, Notice, Pill, Switch, Chip, Footer, 
 import CalibrationLine from './CalibrationLine.jsx'
 import CustomerPicker from '../CustomerPicker'
 import SalespersonPicker from '../SalespersonPicker'
-import ManualAddForm from '../ManualAddForm'
+import AddCalibration from './AddCalibration.jsx'
 import { Big3Badge, DrpBadge } from '../books/Big3Rules.jsx'
 
 // Which price list the insurer name will land on (informational — the
@@ -171,9 +171,9 @@ export default function ReviewLayout({
               ))}
               <div className="px-3 py-2" style={{ borderTop: '1px solid #f1f5f9' }}>
                 {showManualForm ? (
-                  <ManualAddForm onAdd={addManual} onCancel={() => setShowManualForm(false)} />
+                  <AddCalibration existingNames={calibrations.map(c => c.calibration_name)} onAdd={cal => { addManual(cal); setShowManualForm(false) }} onCancel={() => setShowManualForm(false)} />
                 ) : (
-                  <button type="button" onClick={() => setShowManualForm(true)} className="w-full rounded-lg py-2 text-sm font-bold" style={{ border: `1.5px dashed ${ORANGE}`, color: ORANGE, backgroundColor: 'white' }}>＋ Add a missed calibration</button>
+                  <button type="button" onClick={() => setShowManualForm(true)} className="w-full rounded-lg py-2 text-sm font-bold" style={{ border: `1.5px dashed ${ORANGE}`, color: ORANGE, backgroundColor: 'white' }}>＋ Add a calibration Kinetic missed</button>
                 )}
               </div>
             </Panel>

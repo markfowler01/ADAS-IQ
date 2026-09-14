@@ -177,8 +177,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       } catch { /* prices are a bonus, never a blocker */ }
     })()
     return () => { dead = true }
+    // Re-price when a calibration is added (Mark 2026-09-14) — names key keeps toggles cheap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCustomer?.id, cashMode])
+  }, [selectedCustomer?.id, cashMode, calibrations.map(c => c.calibration_name).join('|')])
 
   const liveTotal = rowPrices
     ? Math.round((selected.reduce((sum, c) => {
