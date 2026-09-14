@@ -59,7 +59,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // 🧾 Big 3 rule (Mark 2026-09-10): null = use the shop's saved rule;
   // an object = Kat's edit in the modal (remembered on create by default).
   const [big3Rules, setBig3Rules] = useState(null)
-  const [big3Info, setBig3Info] = useState(null)   // { rules, source, set_by } from the pricer — shown on the main screen
+  const [big3Info, setBig3Info] = useState(null)
+  // 💵 Cash cap on the main screen (Mark 2026-09-14): 700 (default) | 350 | 0 = no cap
+  const [cashCap, setCashCap] = useState(700)   // { rules, source, set_by } from the pricer — shown on the main screen
   const [big3Save, setBig3Save] = useState(true)
   const insurerOut = cashMode ? 'Cash' : (jobData?.insurer || '')
   function toggleCash() {
@@ -161,6 +163,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             customer_id: selectedCustomer?.id || null,
             shop_name: selectedCustomer?.name || jobData.shop || '',
             pool_override: poolOverride || null,
+            cash_cap: cashCap,
             big3_rules: big3Rules,
             calibrations: all,
           }),
@@ -186,13 +189,14 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     return () => { dead = true }
     // Re-price when a calibration is added (Mark 2026-09-14) — names key keeps toggles cheap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCustomer?.id, cashMode, poolOverride, JSON.stringify(big3Rules), calibrations.map(c => c.calibration_name).join('|')])
+  }, [selectedCustomer?.id, cashMode, poolOverride, cashCap, JSON.stringify(big3Rules), calibrations.map(c => c.calibration_name).join('|')])
 
   const liveTotal = rowPrices
     ? Math.round((selected.reduce((sum, c) => {
         const pr = rowPrices[String(c.calibration_name || '').toLowerCase()]
         return sum + (pr && !pr.needs_price ? pr.rate * (c.quantity || 1) : 0)
       }, 0) + (rowPrices._fixed_total || 0)) * 100) / 100
+  const liveTotalCapped = (cashMode && liveTotal != null && cashCap > 0 && liveTotal > cashCap) ? cashCap : liveTotal
     : null
 
   // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
@@ -212,6 +216,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           customer_id: selectedCustomer?.id || null,
           shop_name: selectedCustomer?.name || jobData.shop || '',
           pool_override: pool || null,
+          cash_cap: cashCap,
           big3_rules: rules || null,
           calibrations: selected.map(({ _id, ...rest }) => rest),
         }),
@@ -295,6 +300,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         line_edits: lineEdits && Object.keys(lineEdits).length ? lineEdits : null,
         added_items: addedItems && addedItems.length ? addedItems : null,
         pool_override: poolOverride || null,
+            cash_cap: cashCap,
         big3_rules: big3Rules || pricePreview?.big3?.rules || null,
         big3_save: big3Save,
       }
@@ -531,7 +537,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           showManualForm={showManualForm} setShowManualForm={setShowManualForm} addManual={addManual}
           selectedCustomer={selectedCustomer} setSelectedCustomer={setSelectedCustomer} setSelectedSalesperson={setSelectedSalesperson}
           jobDate={jobDate} setJobDate={setJobDate} todayPT={todayPT}
-          liveTotal={liveTotal} selected={selected} removed={removed}
+          liveTotal={liveTotalCapped} listTotal={liveTotal} cashCap={cashCap} setCashCap={setCashCap} selected={selected} removed={removed}
           onCreate={() => openPriceReview()} creating={submitting} previewBusy={previewBusy}
           onCreateLegacy={handleCreateJob} creatingLegacy={creatingJob} busy={submitting || creatingJob}
           invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}

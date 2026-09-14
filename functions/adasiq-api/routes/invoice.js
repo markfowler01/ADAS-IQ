@@ -129,6 +129,7 @@ router.post('/preview', async (req, res) => {
       calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
       poolOverride,
       big3Rules,
+      cashCapLimit: req.body?.cash_cap == null ? null : Number(req.body.cash_cap),
       req,
     })
     const { withDefaults } = await import('../services/big3.js')
@@ -168,6 +169,7 @@ router.post('/', async (req, res) => {
     }
 
     const result = await createDraftQuote({
+      cashCapLimit: req.body?.cash_cap == null ? null : Number(req.body.cash_cap),
       customerId: customerId || null,
       customerName: customerName || null,
       salespersonId: salespersonId || null,

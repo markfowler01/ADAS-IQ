@@ -483,6 +483,7 @@ export async function createDraftQuote({
   addedItems,
   poolOverride,
   big3Rules = null,
+  cashCapLimit = null,   // 700 (default) | 350 | 0 = no cap (Mark 2026-09-14)
   req,
 }) {
   const token = await getAccessToken()
@@ -708,16 +709,18 @@ export async function createDraftQuote({
   // line carries the difference. Enforced here regardless of how the
   // pool was picked (button, chip, or insurer auto-detect).
   let cashCap = null
-  if (insurerPrefix === 'CP') {
-    const { cashCapFor, cashCapLine } = await import('./cashPricing.js')
+  const capLimit = cashCapLimit == null ? null : Number(cashCapLimit)
+  if (insurerPrefix === 'CP' && capLimit !== 0) {
+    const { cashCapFor, cashCapLine, CASH_MAX_OUT_OF_POCKET } = await import('./cashPricing.js')
+    const lim = capLimit && capLimit > 0 ? capLimit : CASH_MAX_OUT_OF_POCKET
     const itemById = new Map(allItems.map(it => [String(it.item_id), Number(it.rate) || 0]))
     const priced = lineItems.map(li => ({
       rate: li.rate != null ? Number(li.rate) : (itemById.get(String(li.item_id)) || 0),
       quantity: Number(li.quantity) || 1,
     }))
-    cashCap = cashCapFor(priced)
+    cashCap = cashCapFor(priced, lim)
     if (cashCap.capped) {
-      lineItems.push(cashCapLine(cashCap))
+      lineItems.push(cashCapLine(cashCap, lim))
       console.log(`[zoho] 💵 cash cap applied: list $${cashCap.list_total} → $${cashCap.total} (${cashCap.adjustment})`)
     }
   }
@@ -864,7 +867,7 @@ export async function createDraftQuote({
       if (cashCap?.capped && !capFolded && /rate|negative|amount|greater than zero/i.test(errMsg)) {
         const { CASH_CAP_LINE_NAME } = await import('./cashPricing.js')
         const itemById = new Map(allItems.map(it => [String(it.item_id), Number(it.rate) || 0]))
-        const kept = lineItems.filter(li => li.name !== CASH_CAP_LINE_NAME)
+        const kept = lineItems.filter(li => !/cash cap/i.test(String(li.name || '')))
         const factor = cashCap.total / cashCap.list_total
         let running = 0
         kept.forEach((li, i) => {
@@ -1186,7 +1189,7 @@ export function paidAlternativeFor(allItems, insurerPrefix, fixedName) {
   return pick ? { name: pick.name, rate: Number(pick.rate) || 0, item_id: pick.item_id } : null
 }
 
-export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride, big3Rules = null }) {
+export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride, big3Rules = null, cashCapLimit = null }) {
   const token = await getAccessToken()
   let itemMap = null
   if (req) {
@@ -1318,9 +1321,11 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
     .sort((a, z) => a.name.localeCompare(z.name))
   const pool_items = [...swapEligible.filter(it => it.in_pool), ...swapEligible.filter(it => !it.in_pool)]
   let cash_cap = null
-  if (insurerPrefix === 'CP') {
+  const capLim = cashCapLimit == null ? null : Number(cashCapLimit)
+  if (insurerPrefix === 'CP' && capLim !== 0) {
     const { cashCapFor, CASH_MAX_OUT_OF_POCKET } = await import('./cashPricing.js')
-    cash_cap = { limit: CASH_MAX_OUT_OF_POCKET, ...cashCapFor(lines) }
+    const lim = capLim && capLim > 0 ? capLim : CASH_MAX_OUT_OF_POCKET
+    cash_cap = { limit: lim, ...cashCapFor(lines, lim) }
   }
   return {
     insurer_pool: insurerPrefix || 'standard',

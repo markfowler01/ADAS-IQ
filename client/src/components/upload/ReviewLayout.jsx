@@ -34,6 +34,7 @@ export default function ReviewLayout({
   invoiceError, kanbanWarning, resultCard, busy,
   dispatch = 'mark', setDispatch = () => {},
   poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {},
+  listTotal = null, cashCap = 700, setCashCap = () => {},
   onOldLook,
 }) {
   const [showNotRequired, setShowNotRequired] = useState(false)
@@ -144,6 +145,21 @@ export default function ReviewLayout({
                 </div>
                 <div className="text-[11px] mt-1" style={{ color: '#888' }}>Auto follows the insurer ({pool.label}). Lines re-price when you change it.</div>
               </div>
+              {cashMode && (
+                <div className="rounded-lg px-2.5 py-2" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac' }}>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="text-xs font-bold" style={{ color: '#166534' }}>💵 Cash cap
+                      <span className="font-normal">{listTotal != null ? (cashCap > 0 && listTotal > cashCap ? ` · list ${fmt(listTotal)} → ${fmt(cashCap)} (cap line −${fmt(listTotal - cashCap)})` : cashCap > 0 ? ` · list ${fmt(listTotal)} is under the cap` : ` · no cap, bills list ${fmt(listTotal)}`) : ''}</span>
+                    </div>
+                    <div className="flex gap-1">
+                      {[[700, '$700 max'], [350, '$350 max'], [0, 'No cap']].map(([v, label]) => (
+                        <button key={v} type="button" onClick={() => setCashCap(v)} disabled={busy} className="rounded-full px-2.5 py-1 text-xs font-bold"
+                          style={{ backgroundColor: cashCap === v ? GREEN : 'white', color: cashCap === v ? 'white' : '#166534', border: `1.5px solid ${cashCap === v ? GREEN : '#86efac'}` }}>{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <Eyebrow>🧾 Big 4 for {shopName || 'this shop'}</Eyebrow>
