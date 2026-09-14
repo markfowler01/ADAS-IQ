@@ -31,11 +31,15 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
     return () => { dead = true }
   }, [])
 
+  // Only calibration-type Books items (Mark: "none of the key stuff, just the top calibrations").
+  const KEY_STUFF = /\bkeys?\b|fob|transponder|remote|blade|prox|smart key|key ?less|immobil/i
+  const CAL_WORDS = /calibrat|scan|radar|camera|sensor|blind|adas|lidar|aim|static|dynamic|inspection|snapshot|steering|seat weight|park|occupant|\bsas\b|\bsws\b|headlamp|night vision|mirror|windshield|ride|set-?up|program|module|360|surround|lane|cruise|collision|report|alignment/i
+  const isCalItem = it => !KEY_STUFF.test(it.name || '') && CAL_WORDS.test(it.name || '')
   const have = new Set(existingNames.map(n => String(n || '').toLowerCase()))
   const quick = topTen.filter(t => !have.has(String(t.name || '').toLowerCase())).slice(0, 10)
   const needle = q.trim().toLowerCase()
   const hits = needle
-    ? items.filter(it => String(it.name || '').toLowerCase().includes(needle) && !have.has(String(it.name || '').toLowerCase())).slice(0, 12)
+    ? items.filter(it => isCalItem(it) && String(it.name || '').toLowerCase().includes(needle) && !have.has(String(it.name || '').toLowerCase())).slice(0, 12)
     : []
   const exact = needle && items.some(it => String(it.name || '').toLowerCase() === needle)
 
@@ -50,7 +54,7 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
         <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>＋ Add a calibration Kinetic missed</span>
         <button type="button" onClick={onCancel} className="text-xs font-semibold" style={{ color: '#888' }}>close</button>
       </div>
-      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search Zoho Books items… (e.g. blind spot, radar, camera)"
+      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search calibrations in Zoho Books… (e.g. blind spot, radar, camera)"
         className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', outline: 'none' }}
         onKeyDown={e => { if (e.key === 'Enter' && needle) { const h = hits[0]; h ? add(h.name, { item_id: h.item_id }) : add(q.trim()) } }} />
       {needle ? (
@@ -61,7 +65,7 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
               <span className="text-xs font-bold tabular-nums" style={{ color: '#15803d' }}>${Number(it.rate || 0).toFixed(0)}</span>
             </button>
           ))}
-          {hits.length === 0 && <div className="px-3 py-2 text-xs" style={{ color: '#888' }}>No Zoho Books item matches "{q.trim()}".</div>}
+          {hits.length === 0 && <div className="px-3 py-2 text-xs" style={{ color: '#888' }}>No calibration item in Zoho Books matches "{q.trim()}".</div>}
           {!exact && (
             <button type="button" onClick={() => add(q.trim())} className="w-full text-left px-3 py-2 text-sm font-semibold" style={{ borderTop: '1px solid #fdeee8', color: ORANGE }}>
               Add "{q.trim()}" as typed
