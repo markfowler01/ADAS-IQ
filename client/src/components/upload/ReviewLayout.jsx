@@ -171,7 +171,7 @@ export default function ReviewLayout({
               ))}
               <div className="px-3 py-2" style={{ borderTop: '1px solid #f1f5f9' }}>
                 {showManualForm ? (
-                  <AddCalibration existingNames={calibrations.map(c => c.calibration_name)} onAdd={cal => { addManual(cal); setShowManualForm(false) }} onCancel={() => setShowManualForm(false)} />
+                  <AddCalibration existingNames={calibrations.map(c => c.calibration_name)} vehicle={veh} onAdd={cal => { addManual(cal); setShowManualForm(false) }} onCancel={() => setShowManualForm(false)} />
                 ) : (
                   <button type="button" onClick={() => setShowManualForm(true)} className="w-full rounded-lg py-2 text-sm font-bold" style={{ border: `1.5px dashed ${ORANGE}`, color: ORANGE, backgroundColor: 'white' }}>＋ Add a calibration Kinetic missed</button>
                 )}

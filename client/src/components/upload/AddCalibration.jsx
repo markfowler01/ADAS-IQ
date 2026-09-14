@@ -8,7 +8,8 @@ import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { ORANGE } from '../ui/ReviewKit.jsx'
 
-export default function AddCalibration({ existingNames = [], onAdd, onCancel }) {
+export default function AddCalibration({ existingNames = [], onAdd, onCancel, vehicle = {} }) {
+  const [writing, setWriting] = useState('')   // name being written up by the AI
   // Mark 2026-09-14: "from the Zoho Books menu" — the search is the Books
   // item catalog (same list Bill it uses), so what you add is a real item
   // with a real price. Chips = the ten we do most.
@@ -43,9 +44,22 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
     : []
   const exact = needle && items.some(it => String(it.name || '').toLowerCase() === needle)
 
-  function add(name, extra = {}) {
-    onAdd({ calibration_name: name, cal_type: extra.cal_type || null, trigger: null, line_references: null, justification: null, enabled: true, item_id: extra.item_id || null, _added: true })
-    setQ('')
+  // Mark 2026-09-14: "with the same why-this-calibration-needs-to-be-performed
+  // with the AI rewrite" — the justification is written automatically on add,
+  // same writer the rows use, so it lands looking like the extracted ones.
+  async function add(name, extra = {}) {
+    setQ(''); setWriting(name)
+    let justification = null
+    try {
+      const r = await apiFetch(`${API_BASE}/api/extract/rewrite-justification`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calibration_name: name, year: vehicle?.year, make: vehicle?.make, model: vehicle?.model, trigger: 'Added by the estimator — missed on the Kinetic report', line_references: '' }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (r.ok && d.justification) justification = d.justification
+    } catch { /* the row still has 🪄 AI rewrite */ }
+    setWriting('')
+    onAdd({ calibration_name: name, cal_type: extra.cal_type || null, trigger: null, line_references: null, justification, enabled: true, item_id: extra.item_id || null, _added: true })
   }
 
   return (
@@ -54,7 +68,8 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
         <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>＋ Add a calibration Kinetic missed</span>
         <button type="button" onClick={onCancel} className="text-xs font-semibold" style={{ color: '#888' }}>close</button>
       </div>
-      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search calibrations in Zoho Books… (e.g. blind spot, radar, camera)"
+      {writing && <div className="text-xs font-semibold mb-2" style={{ color: '#7c3aed' }}>🪄 Writing why {writing} is required…</div>}
+      <input autoFocus value={q} onChange={e => setQ(e.target.value)} disabled={!!writing} placeholder="Search calibrations in Zoho Books… (e.g. blind spot, radar, camera)"
         className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', outline: 'none' }}
         onKeyDown={e => { if (e.key === 'Enter' && needle) { const h = hits[0]; h ? add(h.name, { item_id: h.item_id }) : add(q.trim()) } }} />
       {needle ? (
