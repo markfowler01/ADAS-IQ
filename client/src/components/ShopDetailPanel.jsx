@@ -428,7 +428,7 @@ function PeopleTab({ people, onChange, canTextAsMark = false, shopId = '' }) {
   function updatePerson(id, field, val) { onChange(people.map(p => p.id === id ? { ...p, [field]: val } : p)) }
   function removePerson(id) { onChange(people.filter(p => p.id !== id)); if (expandedId === id) setExpandedId(null) }
 
-  return (
+  return (<>
     <div>
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
@@ -549,6 +549,7 @@ function PeopleTab({ people, onChange, canTextAsMark = false, shopId = '' }) {
       </div>
     </div>
       {textTo && <TextAsMarkModal to={textTo.phone} toName={textTo.name} shopId={shopId} purpose="crm person" onClose={() => setTextTo(null)} />}
+    </>
   )
 }
 
