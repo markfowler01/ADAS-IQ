@@ -215,6 +215,9 @@ function MainApp() {
     setScreen('kanban')
   }
 
+  // Current screen for the blank-screen watchdog (hook lives ABOVE the early returns).
+  useEffect(() => { try { window.__adasScreen = screen } catch {} }, [screen])
+
   // ?preview=upload — open the review screen with a sample report so the
   // layout can be checked without uploading a Kinetic PDF (2026-09-14).
   useEffect(() => {
@@ -251,7 +254,6 @@ function MainApp() {
     return <BodyShopDemoScreen user={user} onLogout={() => { setToken(null); setUser(false) }} />
   }
 
-  useEffect(() => { try { window.__adasScreen = screen } catch {} }, [screen])
   const navScreen = screen === 'review' ? 'upload' : screen
 
   function handleNavigate(id) {
