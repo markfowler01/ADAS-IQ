@@ -40,6 +40,11 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     ]
   })
   const [showManualForm, setShowManualForm] = useState(false)
+  // Where the card lands (Mark 2026-09-14: three buttons up top — Ready to
+  // dispatch / Jayden / Mark; default stays "Mark", as before).
+  const [dispatch, setDispatch] = useState('mark')   // 'need_dispatch' | 'jaden' | 'mark'
+  const dispatchTech = dispatch === 'jaden' ? 'Jayden Goshorn' : dispatch === 'mark' ? 'Mark Fowler' : ''
+  const dispatchStatus = dispatch === 'need_dispatch' ? 'need_dispatch' : `dispatched_${dispatch}`
   // New look (Mark 2026-09-14) — Bill it review kit. Old layout kept behind
   // localStorage adas_upload_look = 'old' for a day so nothing is lost.
   const [oldLook, setOldLook] = useState(() => { try { return localStorage.getItem('adas_upload_look') === 'old' } catch { return false } })
@@ -341,7 +346,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             model: jobData.model || '',
             vin: jobData.vin || '',
             insurer: insurerOut,
-            technician: selectedSalesperson?.name || '',
+            technician: dispatchTech,
             scheduled_date: jobDate || '',
             calibrations: JSON.stringify(calList),
             notes: `RO#: ${jobData.ro_number || ''} | Quote: ${data.quoteNumber || ''}`,
@@ -353,7 +358,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             // lands at Needs Dispatch, or straight on the tech's column
             // when one is picked. Requests only come from the request
             // modals / website / sync — never from this editor.
-            status: 'need_dispatch',
+            status: dispatchStatus,
           }),
         })
         // apiFetch resolves even on 4xx/5xx — must check res.ok explicitly
@@ -523,6 +528,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           onCreate={() => openPriceReview()} creating={submitting} previewBusy={previewBusy}
           onCreateLegacy={handleCreateJob} creatingLegacy={creatingJob} busy={submitting || creatingJob}
           invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}
+          dispatch={dispatch} setDispatch={setDispatch}
           onOldLook={() => { try { localStorage.setItem('adas_upload_look', 'old') } catch {} setOldLook(true) }}
         />
         {priceModal}

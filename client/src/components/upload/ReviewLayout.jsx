@@ -32,6 +32,7 @@ export default function ReviewLayout({
   liveTotal, selected, removed,
   onCreate, creating, previewBusy, onCreateLegacy, creatingLegacy,
   invoiceError, kanbanWarning, resultCard, busy,
+  dispatch = 'mark', setDispatch = () => {},
   onOldLook,
 }) {
   const [showNotRequired, setShowNotRequired] = useState(false)
@@ -60,7 +61,17 @@ export default function ReviewLayout({
             <Eyebrow>📄 Kinetic report · review before creating the job</Eyebrow>
             <Title sub={shopName ? shopName : 'Pick the Zoho customer below'}>{vehicle || 'Vehicle'}</Title>
           </div>
-          <Chip tone={pool.tone === 'gray' ? 'gray' : pool.tone}>{pool.label}</Chip>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Chip tone={pool.tone === 'gray' ? 'gray' : pool.tone}>{pool.label}</Chip>
+            {/* Where the card lands on the Jobs board (Mark 2026-09-14) */}
+            <div className="flex items-center gap-1 rounded-full p-0.5" style={{ backgroundColor: 'white', border: '1.5px solid #e0dbd6' }}>
+              {[['need_dispatch', '📋 Ready to dispatch'], ['jaden', '👤 Jayden'], ['mark', '👤 Mark']].map(([id, label]) => (
+                <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy}
+                  className="rounded-full px-3 py-1.5 text-xs font-bold"
+                  style={{ backgroundColor: dispatch === id ? ORANGE : 'transparent', color: dispatch === id ? 'white' : '#555' }}>{label}</button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {jobData._demo && (
@@ -193,7 +204,7 @@ export default function ReviewLayout({
         <Footer
           note={!selectedCustomer ? 'Pick the Zoho customer to enable Create job' : selected.length === 0 ? 'Turn on at least one calibration' : null}
           secondary={<div className="flex-1 flex items-center gap-3 px-1"><span className="text-xl font-extrabold tabular-nums" style={{ color: '#1a1a1a' }}>{liveTotal != null ? fmt(liveTotal) : '—'}</span><span className="text-xs" style={{ color: '#666' }}><b style={{ color: ORANGE }}>{selected.length}</b> selected · {removed.length} off</span></div>}
-          primary={<PrimaryButton tone="orange" onClick={onCreate} disabled={!canCreate}>{creating ? 'Creating job…' : previewBusy ? 'Pricing lines…' : `Create job${liveTotal != null ? ` — ${fmt(liveTotal)}` : ''} →`}</PrimaryButton>}
+          primary={<PrimaryButton tone="orange" onClick={onCreate} disabled={!canCreate}>{creating ? 'Creating job…' : previewBusy ? 'Pricing lines…' : `Create job${liveTotal != null ? ` — ${fmt(liveTotal)}` : ''} → ${dispatch === 'need_dispatch' ? 'Ready to dispatch' : dispatch === 'jaden' ? 'Jayden' : 'Mark'}`}</PrimaryButton>}
         />
       )}
     </>
