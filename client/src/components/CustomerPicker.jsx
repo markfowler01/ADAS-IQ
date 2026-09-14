@@ -1,4 +1,5 @@
 import { API_BASE, apiFetch } from '../utils/api.js'
+import NewCustomerModal from './NewCustomerModal.jsx'
 import { useState, useEffect, useRef } from 'react'
 
 const ORANGE = '#CD4419'
@@ -62,7 +63,23 @@ export default function CustomerPicker({ shopName, onSelect }) {
   const [selectedName, setSelectedName] = useState(null)
   const [autoMatched, setAutoMatched] = useState(false)
   const [open, setOpen] = useState(false)
+  const [showNew, setShowNew] = useState(false)      // ➕ Create new → the CRM onboarding form (Mark 2026-09-14)
+  const [newMsg, setNewMsg] = useState('')
   const dropdownRef = useRef(null)
+  // The form saves the shop in the CRM AND creates/links the Zoho Books
+  // customer; we drop that customer into this list and select it.
+  function handleCreated(d) {
+    const cid = d?.books?.contact_id
+    const name = d?.books?.contact_name || d?.shop_name || ''
+    if (cid) {
+      setCustomers(cs => cs.some(c => c.contact_id === cid) ? cs : [{ contact_id: cid, contact_name: name }, ...cs])
+      setSelectedId(cid); setSelectedName(name); setAutoMatched(false); onSelect({ id: cid, name })
+      setNewMsg(d.books.created ? `✓ ${name} created in Zoho Books and selected` : `✓ ${name} linked and selected`)
+    } else {
+      setNewMsg(d?.books?.error ? `Shop saved in the CRM but Books failed: ${d.books.error}` : 'Shop saved — pick it from the list once it shows in Books')
+    }
+    setOpen(false)
+  }
 
   useEffect(() => {
     apiFetch(`${API_BASE}/api/customers`)
@@ -118,6 +135,8 @@ export default function CustomerPicker({ shopName, onSelect }) {
 
   return (
     <div>
+      {showNew && <NewCustomerModal initialName={search.trim() || shopName || ''} onClose={() => setShowNew(false)} onCreated={handleCreated} />}
+      {newMsg && <div className="text-xs mb-1 font-semibold" style={{ color: /failed/i.test(newMsg) ? '#b91c1c' : '#15803d' }}>{newMsg}</div>}
       <p
         className="text-xs font-semibold uppercase tracking-widest mb-2"
         style={{ fontFamily: "'IBM Plex Mono', monospace", color: '#999' }}
@@ -223,6 +242,14 @@ export default function CustomerPicker({ shopName, onSelect }) {
                     onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                   >
                     — No customer link
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setShowNew(true); setOpen(false) }}
+                    className="w-full text-left px-4 py-2.5 text-sm font-bold"
+                    style={{ color: ORANGE, borderBottom: '1px solid #f5f2ef', backgroundColor: '#fff5f0' }}
+                  >
+                    ➕ Create new customer{search.trim() ? ` "${search.trim()}"` : shopName ? ` "${shopName}"` : '…'}
                   </button>
 
                   {filtered.length === 0 ? (

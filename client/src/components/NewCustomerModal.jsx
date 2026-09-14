@@ -13,8 +13,8 @@ const ROLES = ['Owner', 'General Manager', 'Estimator', 'Service Advisor', 'Part
 const DEFAULT_BIG3 = { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
 const blankPerson = role => ({ id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, role, name: '', phone: '', email: '' })
 
-export default function NewCustomerModal({ onClose, onCreated }) {
-  const [shop, setShop] = useState({ shop_name: '', address: '', phone: '', email: '', website: '', place: null })
+export default function NewCustomerModal({ onClose, onCreated, initialName = '' }) {
+  const [shop, setShop] = useState({ shop_name: initialName || '', address: '', phone: '', email: '', website: '', place: null })
   const [people, setPeople] = useState([blankPerson('Owner'), blankPerson('Estimator')])
   const [drps, setDrps] = useState([])
   const [big3, setBig3] = useState({ ...DEFAULT_BIG3 })
