@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { Panel, Chip, Eyebrow, PrimaryButton } from './ui/ReviewKit.jsx'
 import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from './ReadyChecks.jsx'
 
 const API_BASE = ''
@@ -98,10 +99,9 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose, user =
         {/* ── Header ── */}
         <div className="flex items-center justify-between px-5 pt-5 pb-4" style={{ borderBottom: '1px solid #f0ece8' }}>
           <div>
-            <h2 className="font-bold text-base" style={{ color: '#1a1a1a' }}>Review Calibrations</h2>
-            <p className="text-xs mt-0.5" style={{ color: '#aaa' }}>
-              {job.shop_name || 'Job'} · Add or remove before invoicing
-            </p>
+            <Eyebrow>🎯 Calibration review · before Ready to Invoice</Eyebrow>
+            <h2 className="font-bold text-base" style={{ color: '#1a1a1a' }}>{job.shop_name || 'Job'}{(job.vehicle || job.make) ? ` · ${job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')}` : ''}</h2>
+            <p className="text-xs" style={{ color: '#666' }}>Confirm what was actually calibrated — this is what gets billed.</p>
           </div>
           <button
             onClick={onClose}
@@ -116,85 +116,34 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose, user =
         <div className="flex-1 overflow-y-auto px-5 py-4">
 
           {/* Current calibrations */}
-          <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#bbb' }}>
-            On This Job ({cals.length})
-          </p>
-
-          {cals.length === 0 && (
-            <p className="text-sm mb-4" style={{ color: '#aaa' }}>No calibrations yet — add from below.</p>
-          )}
-
-          <div className="flex flex-col gap-2 mb-5">
+          <Panel tone="orange" title="🎯 Calibrations on this job" right={`${cals.length} line${cals.length === 1 ? '' : 's'}`} className="mb-3">
+            {cals.length === 0 && <div className="px-3 py-3 text-sm" style={{ color: '#888' }}>No calibrations yet — add from below.</div>}
             {cals.map((c, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between rounded-2xl px-4"
-                style={{
-                  backgroundColor: '#fdf3ef',
-                  border: '1.5px solid #f5d5c8',
-                  minHeight: '52px',
-                }}
-              >
-                <div className="flex-1 min-w-0 pr-3">
-                  <span className="text-sm font-semibold" style={{ color: ORANGE }}>{c.name}</span>
-                  {c.cal_type && (
-                    <span className="ml-2 text-xs px-1.5 py-0.5 rounded-md" style={{ backgroundColor: '#fde8de', color: '#a33510' }}>
-                      {c.cal_type}
-                    </span>
-                  )}
+              <div key={i} className="flex items-center justify-between gap-2 px-3" style={{ borderTop: '1px solid #f1f5f9', minHeight: 40 }}>
+                <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>{c.name}</span>
+                  {c.cal_type && <Chip>{c.cal_type}</Chip>}
                 </div>
-                <button
-                  onClick={() => removeCal(i)}
-                  className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full text-sm font-bold"
-                  style={{ backgroundColor: '#fee2e2', color: '#dc2626' }}
-                  aria-label={`Remove ${c.name}`}
-                >
-                  ✕
-                </button>
+                <button onClick={() => removeCal(i)} className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-full text-sm font-bold" style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }} aria-label={`Remove ${c.name}`}>×</button>
               </div>
             ))}
-          </div>
-
-          {/* PCSI + POST always-present note */}
-          <div className="flex gap-2 mb-5">
-            {['PCSI', 'POST'].map(tag => (
-              <span
-                key={tag}
-                className="text-xs font-semibold px-3 py-1.5 rounded-full"
-                style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}
-              >
-                {tag} — always included
-              </span>
-            ))}
-          </div>
+            <div className="px-3 py-2 flex gap-2 flex-wrap" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#fafaf9' }}>
+              <Chip tone="blue">PCSI · per shop rule</Chip><Chip tone="blue">Post-Scan · per shop rule</Chip><Chip tone="blue">Cal ID · per shop rule</Chip>
+            </div>
+          </Panel>
 
           {/* Quick Add — top 10 */}
           {!loading && topTen.length > 0 && (
             <>
-              <p className="text-xs font-semibold uppercase tracking-widest mb-3" style={{ color: '#bbb' }}>Quick Add</p>
-              <div className="grid grid-cols-2 gap-2 mb-5">
+              <Eyebrow style={{ marginBottom: 6 }}>Quick add · most common</Eyebrow>
+              <div className="flex flex-wrap gap-1.5 mb-4">
                 {topTen.map(({ name }) => {
                   const already = calNames.has(name.toLowerCase())
                   return (
-                    <button
-                      key={name}
-                      onClick={() => addCal(name)}
-                      disabled={already}
-                      className="text-left rounded-2xl px-4 transition-all"
-                      style={{
-                        backgroundColor: already ? '#f5f3f0' : '#f0fdf4',
-                        border: `1.5px solid ${already ? '#e0dbd6' : '#bbf7d0'}`,
-                        color: already ? '#aaa' : '#15803d',
-                        minHeight: '52px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        fontSize: '13px',
-                        fontWeight: 500,
-                      }}
-                    >
-                      <span style={{ fontSize: '16px' }}>{already ? '✓' : '+'}</span>
-                      {name}
+                    <button key={name} onClick={() => addCal(name)} disabled={already}
+                      className="text-xs font-semibold rounded-full px-2.5 py-1.5"
+                      style={{ backgroundColor: already ? '#f5f3f0' : 'white', color: already ? '#aaa' : '#15803d', border: `1.5px solid ${already ? '#e0dbd6' : '#bbf7d0'}` }}>
+                      {already ? '✓ ' : '+ '}{name}
                     </button>
                   )
                 })}
@@ -277,19 +226,12 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose, user =
         {/* ── Sticky footer ── */}
         <div className="px-5 pb-8 pt-4" style={{ borderTop: '1px solid #f0ece8' }}>
           <div className="mb-3"><ReadyChecks job={job} value={checks} onChange={setChecks} /></div>
-          <button
-            onClick={handleConfirm}
-            disabled={saving || !checksOk}
-            className="w-full rounded-2xl font-bold text-white transition-opacity"
-            style={{
-              backgroundColor: saving ? '#c4b5fd' : '#7e22ce',
-              minHeight: '56px',
-              fontSize: '15px',
-              opacity: saving ? 0.7 : 1,
-            }}
-          >
-            {saving ? 'Saving…' : !checksOk ? `☐ ${readyChecksMissing(checks, job)[0]}` : 'Done — Move to Ready to Invoice'}
-          </button>
+          <div className="flex gap-2">
+            <button type="button" onClick={onClose} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #e0dbd6' }}>Cancel</button>
+            <PrimaryButton onClick={handleConfirm} disabled={saving || !checksOk} tone="green">
+              {saving ? 'Saving…' : !checksOk ? `☐ ${readyChecksMissing(checks, job)[0]}` : '🟢 Done — Ready to Invoice'}
+            </PrimaryButton>
+          </div>
         </div>
       </div>
     </div>

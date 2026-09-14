@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { Big3Picker, DrpChips, describeRules } from './books/Big3Rules.jsx'
+import { Panel, Eyebrow } from './ui/ReviewKit.jsx'
 
 const ORANGE = '#CD4419'
 const GREEN = '#15803d'
@@ -96,16 +97,16 @@ export default function NewCustomerModal({ onClose, onCreated, initialName = '' 
       <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '92vh', border: '1px solid #ebebeb' }}>
         <div className="flex items-center justify-between px-5 py-4 flex-shrink-0" style={{ borderBottom: '1px solid #ebebeb' }}>
           <div>
-            <h2 className="text-base font-bold" style={{ color: '#1a1a1a' }}>➕ New Customer</h2>
-            <p className="text-xs" style={{ color: '#888' }}>Everything the first invoice and the job cards need</p>
+            <Eyebrow>➕ New customer · CRM + Zoho Books</Eyebrow>
+            <h2 className="text-base font-bold" style={{ color: '#1a1a1a' }}>{shop.shop_name.trim() || 'New shop'}</h2>
+            <p className="text-xs" style={{ color: '#666' }}>Everything the first invoice and the job cards need</p>
           </div>
           <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
         </div>
 
         <div className="px-5 py-4 overflow-y-auto space-y-5">
           {/* Shop */}
-          <section>
-            <label className={label} style={{ color: '#888' }}>Shop</label>
+          <Panel tone="blue" title="🏢 Shop" bodyClass="p-3">
             <input ref={nameRef} value={shop.shop_name} onChange={e => setShop(s => ({ ...s, shop_name: e.target.value, place: null }))} placeholder="Shop name — start typing, Google fills the rest" className={input} style={inputStyle} />
             {(places.length > 0 || placesBusy) && (
               <div className="rounded-lg overflow-hidden mt-1" style={{ border: '1px solid #bfdbfe' }}>
@@ -123,12 +124,12 @@ export default function NewCustomerModal({ onClose, onCreated, initialName = '' 
               <input value={shop.phone} onChange={e => setShop(s => ({ ...s, phone: e.target.value }))} placeholder="Shop phone" inputMode="tel" className={input} style={inputStyle} />
               <input value={shop.email} onChange={e => setShop(s => ({ ...s, email: e.target.value }))} placeholder="Billing email" inputMode="email" className={input} style={inputStyle} />
             </div>
-          </section>
+          </Panel>
 
           {/* People */}
-          <section>
+          <Panel tone="plain" title="👤 People" right="owner · GM · estimators" bodyClass="p-3">
             <div className="flex items-center justify-between mb-1">
-              <label className={label} style={{ color: '#888', marginBottom: 0 }}>People</label>
+              <span />
               <div className="flex gap-1">
                 <button type="button" onClick={() => setPeople(ps => [...ps, blankPerson('Estimator')])} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: '#fff5f0', color: ORANGE, border: `1px solid ${ORANGE}` }}>+ Estimator</button>
                 <button type="button" onClick={() => setPeople(ps => [...ps, blankPerson('Other')])} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#555', border: '1px solid #ddd' }}>+ Person</button>
@@ -151,28 +152,22 @@ export default function NewCustomerModal({ onClose, onCreated, initialName = '' 
                 </div>
               ))}
             </div>
-          </section>
+          </Panel>
 
           {/* DRPs */}
-          <section>
-            <label className={label} style={{ color: '#888' }}>DRPs — which insurers they're direct-repair for</label>
+          <Panel tone="plain" title="🏦 DRPs" right="which insurers they're direct-repair for" bodyClass="p-3">
             <DrpChips value={drps} onChange={setDrps} />
-          </section>
+          </Panel>
 
           {/* Big 3 */}
-          <section className="rounded-xl p-3" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0' }}>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className={label} style={{ color: '#166534', marginBottom: 0 }}>🧾 Big 3 on their invoices</label>
-              <span className="text-[10px]" style={{ color: '#166534' }}>{describeRules(big3)}</span>
-            </div>
+          <Panel tone="green" title="🧾 Big 4 on their invoices" right={describeRules(big3)} bodyClass="p-3">
             <Big3Picker rules={big3} onChange={setBig3} />
-            <p className="text-[11px] mt-1.5" style={{ color: '#4b5563' }}>All three go on every invoice — Charge bills the item, Included shows it at $0.</p>
-          </section>
+            <p className="text-[11px] mt-1.5" style={{ color: '#4b5563' }}>All go on every invoice — Charge bills the item, Included shows it at $0, Snapshot replaces Post-Scan when charged.</p>
+          </Panel>
 
-          <section>
-            <label className={label} style={{ color: '#888' }}>Notes</label>
+          <Panel tone="plain" title="📝 Notes" bodyClass="p-3">
             <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} placeholder="Gate code, hours, how they like to be billed…" className={input} style={{ ...inputStyle, resize: 'none' }} />
-          </section>
+          </Panel>
           {error && <div className="text-sm px-3 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{error}</div>}
         </div>
 

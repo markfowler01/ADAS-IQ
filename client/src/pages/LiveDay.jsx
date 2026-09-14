@@ -511,14 +511,14 @@ function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
           <button
             onClick={() => onSubmit('', [], checks)}
             disabled={!checksOk}
-            className="flex-1 rounded-xl py-2.5 text-sm font-semibold"
-            style={{ backgroundColor: 'white', color: '#666', border: '1px solid #e0dbd6', opacity: checksOk ? 1 : .45 }}
+            className="flex-1 rounded-xl py-3 text-sm font-semibold"
+            style={{ backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #e0dbd6', opacity: checksOk ? 1 : .45 }}
           >Skip · No extras</button>
           <button
             onClick={() => onSubmit(text, items, checks)}
             disabled={!checksOk}
-            className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white"
-            style={{ backgroundColor: '#7e22ce', opacity: checksOk ? 1 : .45 }}
+            className="flex-[2] rounded-xl py-3 text-base font-bold text-white"
+            style={{ backgroundColor: '#15803d', opacity: checksOk ? 1 : .45 }}
           >{!checksOk ? `☐ ${readyChecksMissing(checks, job)[0]}` : items.length ? `🟢 Ready · ${items.length} item${items.length === 1 ? '' : 's'} added` : text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
         </div>
       </div>
