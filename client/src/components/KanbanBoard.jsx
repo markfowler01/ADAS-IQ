@@ -1174,7 +1174,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
 
       {/* Cards drop zone */}
       <div
-        className="flex-1 rounded-xl p-2 space-y-2 transition-colors min-h-32"
+        className="flex-1 rounded-xl p-2 space-y-2 transition-colors min-h-32 pb-24"
         style={{
           backgroundColor: isOver ? '#fdf3ef' : '#f9f8f7',
           border: isOver ? `2px dashed ${ORANGE}` : '2px dashed transparent',
@@ -2314,9 +2314,12 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
             <div className="hidden md:flex flex-1 overflow-x-auto pb-4" onDragLeave={(e) => {
                 if (!e.currentTarget.contains(e.relatedTarget)) setDragOverCol(null)
               }}>
+            {/* Columns stretch to the tallest one (Mark 2026-09-14: "I can't drag
+                straight over horizontally… I have to drag it all the way up") —
+                the empty space under a short column's cards is a drop target too. */}
             <div
               className="flex gap-4"
-              style={{ alignItems: 'flex-start', minHeight: '100%' }}
+              style={{ alignItems: 'stretch', minHeight: '100%' }}
             >
               <div id="col-quotes" className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
                 <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={{ backgroundColor: '#1d4ed8' }}>
