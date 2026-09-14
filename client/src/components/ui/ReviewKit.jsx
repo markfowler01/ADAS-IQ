@@ -25,8 +25,8 @@ export function Eyebrow({ children, style = {} }) {
 export function Title({ children, sub }) {
   return (
     <div>
-      <div className="font-bold text-xl" style={{ color: '#1a1a1a' }}>{children}</div>
-      {sub && <div className="text-sm" style={{ color: '#666' }}>{sub}</div>}
+      <div className="font-bold text-base" style={{ color: '#1a1a1a' }}>{children}</div>
+      {sub && <div className="text-xs" style={{ color: '#666' }}>{sub}</div>}
     </div>
   )
 }
@@ -37,7 +37,7 @@ export function Panel({ tone = 'plain', title, right, children, className = '', 
   return (
     <div className={`rounded-xl overflow-hidden flex flex-col ${className}`} style={{ border: `1.5px solid ${t.border}`, backgroundColor: 'white' }}>
       {(title || right) && (
-        <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: t.head, color: t.text }}>
+        <div className="px-3 py-2 text-sm font-bold flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: t.head, color: t.text }}>
           <span>{title}</span>
           {right && <span className="text-xs font-semibold" style={{ color: t.text, opacity: .85 }}>{right}</span>}
         </div>
@@ -50,12 +50,12 @@ export function Panel({ tone = 'plain', title, right, children, className = '', 
 /** One-line row: left content, right amount/control, optional grey note under the left. */
 export function Row({ left, right, sub, muted = false, bg, onClick, className = '' }) {
   return (
-    <div onClick={onClick} className={`px-4 text-base ${className}`} style={{ borderTop: '1px solid #f1f5f9', backgroundColor: bg || 'white', opacity: muted ? .5 : 1, cursor: onClick ? 'pointer' : 'default' }}>
-      <div className="flex items-center justify-between gap-3" style={{ minHeight: 45 }}>
+    <div onClick={onClick} className={`px-3 text-sm ${className}`} style={{ borderTop: '1px solid #f1f5f9', backgroundColor: bg || 'white', opacity: muted ? .5 : 1, cursor: onClick ? 'pointer' : 'default' }}>
+      <div className="flex items-center justify-between gap-3" style={{ minHeight: 38 }}>
         <div className="flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{left}</div>
         {right != null && <div className="flex-shrink-0 tabular-nums font-semibold flex items-center gap-2" style={{ color: '#555' }}>{right}</div>}
       </div>
-      {sub && <div className="pb-2 -mt-1 text-sm" style={{ color: '#666' }}>{sub}</div>}
+      {sub && <div className="pb-2 -mt-1 text-xs" style={{ color: '#666' }}>{sub}</div>}
     </div>
   )
 }
@@ -63,7 +63,7 @@ export function Row({ left, right, sub, muted = false, bg, onClick, className = 
 export function TotalRow({ label, value, tone = 'plain' }) {
   const t = TONES[tone] || TONES.plain
   return (
-    <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: `2px solid ${t.border}`, color: tone === 'plain' ? '#1a1a1a' : t.text, marginTop: 'auto' }}>
+    <div className="flex justify-between px-3 py-2.5 text-base font-extrabold" style={{ borderTop: `2px solid ${t.border}`, color: tone === 'plain' ? '#1a1a1a' : t.text, marginTop: 'auto' }}>
       <span>{label}</span><span className="tabular-nums">{value}</span>
     </div>
   )
@@ -74,7 +74,7 @@ export function Notice({ tone = 'amber', children, className = '' }) {
   const s = tone === 'red' ? { backgroundColor: '#fef2f2', border: '1.5px solid #fecaca', color: '#991b1b' }
     : tone === 'green' ? { backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', color: '#166534' }
     : { backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }
-  return <div className={`rounded-xl p-3 text-sm space-y-1 ${className}`} style={s}>{children}</div>
+  return <div className={`rounded-lg px-3 py-2 text-xs space-y-1 ${className}`} style={s}>{children}</div>
 }
 
 /** Pill switch (the Charge / Included look). */
@@ -109,7 +109,7 @@ export function Chip({ tone = 'gray', children }) {
 export function Footer({ secondary, primary, note }) {
   return (
     <div className="sticky bottom-0 left-0 right-0 z-30" style={{ backgroundColor: 'rgba(245,243,240,.96)', backdropFilter: 'blur(6px)', borderTop: '1px solid #e8e4e0' }}>
-      <div className="max-w-3xl mx-auto px-4 py-3">
+      <div className="max-w-5xl mx-auto px-4 py-2.5">
         {note && <div className="text-xs mb-2 text-center font-semibold" style={{ color: '#92400e' }}>{note}</div>}
         <div className="flex gap-2">
           {secondary}
@@ -123,7 +123,7 @@ export function Footer({ secondary, primary, note }) {
 export function PrimaryButton({ children, onClick, disabled = false, tone = 'green', className = '' }) {
   const bg = tone === 'orange' ? ORANGE : tone === 'blue' ? BLUE : GREEN
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={`flex-[2] rounded-xl py-3.5 text-lg font-bold text-white ${className}`} style={{ backgroundColor: bg, opacity: disabled ? .45 : 1 }}>
+    <button type="button" onClick={onClick} disabled={disabled} className={`flex-[2] rounded-xl py-3 text-base font-bold text-white ${className}`} style={{ backgroundColor: bg, opacity: disabled ? .45 : 1 }}>
       {children}
     </button>
   )
@@ -131,7 +131,7 @@ export function PrimaryButton({ children, onClick, disabled = false, tone = 'gre
 
 export function SecondaryButton({ children, onClick, disabled = false }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className="flex-1 rounded-xl py-3.5 text-base font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #e0dbd6', opacity: disabled ? .5 : 1 }}>
+    <button type="button" onClick={onClick} disabled={disabled} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #e0dbd6', opacity: disabled ? .5 : 1 }}>
       {children}
     </button>
   )
@@ -142,7 +142,7 @@ export function Field({ label, value, mono = false, children }) {
   return (
     <div className="min-w-0">
       <Eyebrow>{label}</Eyebrow>
-      <div className="text-base font-semibold truncate" style={{ color: value || children ? '#1a1a1a' : '#bbb', fontFamily: mono ? "'IBM Plex Mono', monospace" : undefined }}>{children || value || '—'}</div>
+      <div className="text-sm font-semibold truncate" style={{ color: value || children ? '#1a1a1a' : '#bbb', fontFamily: mono ? "'IBM Plex Mono', monospace" : undefined }}>{children || value || '—'}</div>
     </div>
   )
 }
