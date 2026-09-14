@@ -9,6 +9,7 @@ import SalespersonPicker from './SalespersonPicker'
 import Navbar from './Navbar'
 import LoadingSplash from './LoadingSplash.jsx'
 import { Big3Picker, describeRules as describeBig3 } from './books/Big3Rules.jsx'
+import ReviewLayout from './upload/ReviewLayout.jsx'
 
 function todayPT() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -39,6 +40,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     ]
   })
   const [showManualForm, setShowManualForm] = useState(false)
+  // New look (Mark 2026-09-14) — Bill it review kit. Old layout kept behind
+  // localStorage adas_upload_look = 'old' for a day so nothing is lost.
+  const [oldLook, setOldLook] = useState(() => { try { return localStorage.getItem('adas_upload_look') === 'old' } catch { return false } })
   const [submitting, setSubmitting] = useState(false)
   const [pricePreview, setPricePreview] = useState(null)   // review-before-create modal
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -484,12 +488,47 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     }
   }
 
+  const priceModal = pricePreview ? (
+<PriceReviewModal
+          preview={pricePreview}
+          insurer={insurerOut}
+          poolOverride={poolOverride}
+          onPool={changePool}
+          big3={pricePreview.big3}
+          onBig3={changeBig3}
+          big3Save={big3Save}
+          onBig3Save={setBig3Save}
+          shopName={selectedCustomer?.name || jobData.shop || ''}
+          onClose={() => setPricePreview(null)}
+          onConfirm={handleApprove}
+          busy={submitting || previewBusy}
+        />
+  ) : null
+  const resultCard = invoiceResult
+    ? <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
+    : jobResult ? <JobSuccessCard result={jobResult} onNavigate={onNavigate} /> : null
+
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
       {submitting && <LoadingSplash overlay label="Creating job" />}
       {creatingJob && <LoadingSplash overlay label="Creating job" />}
 
+      {!oldLook ? (<>
+        <ReviewLayout
+          jobData={jobData} cashMode={cashMode} toggleCash={toggleCash}
+          calibrations={calibrations} rowPrices={rowPrices} toggleCal={toggleCal} updateCalField={updateCalField}
+          showManualForm={showManualForm} setShowManualForm={setShowManualForm} addManual={addManual}
+          selectedCustomer={selectedCustomer} setSelectedCustomer={setSelectedCustomer} setSelectedSalesperson={setSelectedSalesperson}
+          jobDate={jobDate} setJobDate={setJobDate} todayPT={todayPT}
+          liveTotal={liveTotal} selected={selected} removed={removed}
+          onCreate={() => openPriceReview()} creating={submitting} previewBusy={previewBusy}
+          onCreateLegacy={handleCreateJob} creatingLegacy={creatingJob} busy={submitting || creatingJob}
+          invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}
+          onOldLook={() => { try { localStorage.setItem('adas_upload_look', 'old') } catch {} setOldLook(true) }}
+        />
+        {priceModal}
+      </>) : (
       <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-5">
 
         {/* Demo banner */}
@@ -692,22 +731,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             </div>
           )}
 
-          {pricePreview && (
-        <PriceReviewModal
-          preview={pricePreview}
-          insurer={insurerOut}
-          poolOverride={poolOverride}
-          onPool={changePool}
-          big3={pricePreview.big3}
-          onBig3={changeBig3}
-          big3Save={big3Save}
-          onBig3Save={setBig3Save}
-          shopName={selectedCustomer?.name || jobData.shop || ''}
-          onClose={() => setPricePreview(null)}
-          onConfirm={handleApprove}
-          busy={submitting || previewBusy}
-        />
-      )}
+          {priceModal}
       {invoiceResult ? (
             <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
           ) : jobResult ? (
@@ -753,10 +777,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
               <p className="text-xs text-center" style={{ color: '#9ca3af' }}>
                 Safe to test — creates a draft in Absolute ADAS Books only. No Zoho side effects.
               </p>
+              <button type="button" onClick={() => { try { localStorage.removeItem('adas_upload_look') } catch {} setOldLook(false) }} className="text-xs" style={{ color: '#aaa' }}>switch to the new look</button>
             </div>
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

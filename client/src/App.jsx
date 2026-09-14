@@ -215,6 +215,28 @@ function MainApp() {
     setScreen('kanban')
   }
 
+  // ?preview=upload — open the review screen with a sample report so the
+  // layout can be checked without uploading a Kinetic PDF (2026-09-14).
+  useEffect(() => {
+    if (!user || typeof user !== 'object') return
+    try {
+      if (new URLSearchParams(window.location.search).get('preview') !== 'upload') return
+      setJobData({
+        year: '2025', make: 'Rivian', model: 'R1T Adventure', shop: '', ro_number: 'SN034769', insurer: 'First National Ins Co Of America', claim: '061626001-0001', vin: '7FCTGBAA7SN034769',
+        calibrations: [
+          { calibration_name: 'Pre ADAS-Calibration Vehicle Inspection', enabled: true, cal_type: 'Rivian base', trigger: '0.5 hr · every Rivian', justification: 'Rivian required pre-calibration inspection: tire pressure check, firmware check and update launch as required, estimate review, and required calibration repair planning. Published Rivian labor time 0.5 hr.' },
+          { calibration_name: 'Around View Camera', enabled: true, cal_type: 'Static', line_references: '8-10, 58', trigger: 'Bumper Removal -- Rear', justification: 'Around View Camera calibration required per Rivian OEM position statement and ALLDATA ADAS procedure following collision repair. Bumper removal, door adjustment, and door removal operations disturb sensor alignment.' },
+          { calibration_name: 'Side Camera (Lane Change)', enabled: true, cal_type: 'Static', line_references: '8-10', justification: 'Side Camera (Lane Change) calibration required per Rivian OEM position statement and ALLDATA ADAS procedure following collision repair.' },
+          { calibration_name: 'Front Radar', enabled: false, justification: 'Front Radar calibration not required for this repair — the estimate contains no operations that disturb this sensor.' },
+          { calibration_name: 'Park Distance Sensor', enabled: false, justification: 'Not required for this repair.' },
+          { calibration_name: 'Front Windshield Camera (Driver Assistance)', enabled: false, justification: 'Not required for this repair.' },
+        ],
+        _preview: true,
+      })
+      setScreen('review')
+    } catch { /* ignore */ }
+  }, [user])
+
   if (loading) {
     return <LoadingSplash />
   }
