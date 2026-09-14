@@ -59,6 +59,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // 🧾 Big 3 rule (Mark 2026-09-10): null = use the shop's saved rule;
   // an object = Kat's edit in the modal (remembered on create by default).
   const [big3Rules, setBig3Rules] = useState(null)
+  const [big3Info, setBig3Info] = useState(null)   // { rules, source, set_by } from the pricer — shown on the main screen
   const [big3Save, setBig3Save] = useState(true)
   const insurerOut = cashMode ? 'Cash' : (jobData?.insurer || '')
   function toggleCash() {
@@ -178,13 +179,14 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         }
         priceMap._fixed_total = fixedTotal
         setRowPrices(priceMap)
+        if (d.big3) setBig3Info(d.big3)
         if (d.shop_default_pool) setPoolOverride(prev => prev ?? d.shop_default_pool)
       } catch { /* prices are a bonus, never a blocker */ }
     })()
     return () => { dead = true }
     // Re-price when a calibration is added (Mark 2026-09-14) — names key keeps toggles cheap.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCustomer?.id, cashMode, calibrations.map(c => c.calibration_name).join('|')])
+  }, [selectedCustomer?.id, cashMode, poolOverride, JSON.stringify(big3Rules), calibrations.map(c => c.calibration_name).join('|')])
 
   const liveTotal = rowPrices
     ? Math.round((selected.reduce((sum, c) => {
@@ -224,6 +226,11 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     } finally { setPreviewBusy(false) }
   }
 
+  function pickPoolOnScreen(pool) {
+    if (pool === 'CP' && !cashMode) { toggleCash(); return }
+    if (pool !== 'CP' && cashMode) { toggleCash(); setPoolOverride(pool); return }
+    setPoolOverride(pool)
+  }
   function changePool(pool) {
     setPoolOverride(pool)
     openPriceReview(pool)
@@ -529,6 +536,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           onCreateLegacy={handleCreateJob} creatingLegacy={creatingJob} busy={submitting || creatingJob}
           invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}
           dispatch={dispatch} setDispatch={setDispatch}
+          poolOverride={poolOverride} onPool={pickPoolOnScreen}
+          big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={setBig3Rules} big3Save={big3Save} setBig3Save={setBig3Save}
           onOldLook={() => { try { localStorage.setItem('adas_upload_look', 'old') } catch {} setOldLook(true) }}
         />
         {priceModal}

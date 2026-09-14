@@ -10,7 +10,7 @@ import CalibrationLine from './CalibrationLine.jsx'
 import CustomerPicker from '../CustomerPicker'
 import SalespersonPicker from '../SalespersonPicker'
 import AddCalibration from './AddCalibration.jsx'
-import { Big3Badge, DrpBadge } from '../books/Big3Rules.jsx'
+import { Big3Badge, DrpBadge, Big3Picker, describeRules } from '../books/Big3Rules.jsx'
 
 // Which price list the insurer name will land on (informational — the
 // server decides for real in resolvePricingPool).
@@ -33,6 +33,7 @@ export default function ReviewLayout({
   onCreate, creating, previewBusy, onCreateLegacy, creatingLegacy,
   invoiceError, kanbanWarning, resultCard, busy,
   dispatch = 'mark', setDispatch = () => {},
+  poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {},
   onOldLook,
 }) {
   const [showNotRequired, setShowNotRequired] = useState(false)
@@ -42,7 +43,9 @@ export default function ReviewLayout({
   const required = calibrations.filter(c => c.enabled && !isService(c))
   const notRequired = calibrations.filter(c => !c.enabled && !isService(c))
   const services = calibrations.filter(isService)
-  const pool = poolLabel(jobData.insurer, cashMode)
+  const POOLS = [[null, 'Auto'], ['STD', 'Standard'], ['CP', '💵 Cash'], ['SF', 'State Farm'], ['AS', 'Allstate'], ['AMFAM', 'AmFam']]
+  const poolName = { STD: 'Standard pricing', CP: '💵 Cash · CP schedule · $700 max', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'AmFam pricing' }
+  const pool = poolOverride ? { label: poolName[poolOverride] || poolOverride, tone: poolOverride === 'CP' ? 'green' : 'blue' } : poolLabel(jobData.insurer, cashMode)
   const shopName = selectedCustomer?.name || jobData.shop || ''
   const canCreate = !!selectedCustomer && selected.length > 0 && !busy && !previewBusy
   const priceOf = c => rowPrices ? rowPrices[String(c.calibration_name || '').toLowerCase()] : null
@@ -117,7 +120,7 @@ export default function ReviewLayout({
                 <div className="flex items-center gap-2 flex-wrap text-[11px]">
                   <Big3Badge shopName={selectedCustomer.name} size="sm" />
                   <DrpBadge shopName={selectedCustomer.name} size="sm" />
-                  <span style={{ color: '#888' }}>Big 4 + discount apply at the pricing step.</span>
+                  <span style={{ color: '#888' }}>Rule and discount on file — adjust in Pricing below.</span>
                 </div>
               )}
               <SalespersonPicker onSelect={setSelectedSalesperson} />
@@ -125,6 +128,33 @@ export default function ReviewLayout({
                 <Eyebrow>Job date</Eyebrow>
                 <input type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className="rounded-lg px-2.5 py-1.5 text-sm" style={{ border: `1px solid ${jobDate === todayPT() ? '#e0dbd6' : '#e8710a'}` }} />
                 {jobDate !== todayPT() && <span className="text-xs font-semibold" style={{ color: '#e8710a' }}>books for {new Date(jobDate + 'T12:00').toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })}</span>}
+              </div>
+            </Panel>
+
+            {/* 💲 Pricing options on the main screen (Mark 2026-09-14: "all the pricing options should be here") */}
+            <Panel tone="green" title="💲 Pricing" right={big3Info?.source === 'shop' ? `shop rule${big3Info.set_by ? ` · ${big3Info.set_by}` : ''}` : big3Info?.source === 'modal' ? 'edited here' : 'default rule'} bodyClass="p-3 space-y-2">
+              <div>
+                <Eyebrow>Price schedule</Eyebrow>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {POOLS.map(([id, label]) => (
+                    <button key={String(id)} type="button" onClick={() => onPool(id)} disabled={busy}
+                      className="rounded-full px-2.5 py-1 text-xs font-bold"
+                      style={{ backgroundColor: (poolOverride ?? null) === id ? GREEN : 'white', color: (poolOverride ?? null) === id ? 'white' : '#555', border: `1.5px solid ${(poolOverride ?? null) === id ? GREEN : '#e0dbd6'}` }}>{label}</button>
+                  ))}
+                </div>
+                <div className="text-[11px] mt-1" style={{ color: '#888' }}>Auto follows the insurer ({pool.label}). Lines re-price when you change it.</div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <Eyebrow>🧾 Big 4 for {shopName || 'this shop'}</Eyebrow>
+                  <span className="text-[11px]" style={{ color: '#166534' }}>{big3Rules ? describeRules(big3Rules) : ''}</span>
+                </div>
+                <div className="mt-1">
+                  <Big3Picker rules={big3Rules || { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }} onChange={onBig3} compact />
+                </div>
+                <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}>
+                  <input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'} (every invoice from now on)
+                </label>
               </div>
             </Panel>
 
