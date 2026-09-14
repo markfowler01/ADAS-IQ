@@ -26,6 +26,7 @@ import HistoryScreen from './components/HistoryScreen'
 import KanbanBoard from './components/KanbanBoard'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import RepairEstimateScreen from './components/RepairEstimateScreen'
+import EstimatorBoard from './components/estimator/EstimatorBoard'  // repair estimator (2026-09-14)
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
@@ -353,6 +354,9 @@ function MainApp() {
       )}
       {screen === 'estimates' && (
         <RepairEstimateScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'estimator' && (
+        <EstimatorBoard {...navProps} />
       )}
       {screen === 'rules' && (
         <CalibrationRulesScreen onBack={() => setScreen('upload')} {...navProps} />

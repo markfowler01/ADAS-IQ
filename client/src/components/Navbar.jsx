@@ -21,7 +21,7 @@ const MORE_GROUPS = [
     { id: 'quotes',    label: 'Quotes', adminOnly: true },
     { id: 'disputes',  label: 'Disputes', adminOnly: true },
     { id: 'manual',    label: 'Manual Invoice', adminOnly: true },
-    { id: 'estimates', label: 'Repair Estimates', adminOnly: true },
+    { id: 'estimator', label: 'Estimator', adminOnly: true },
   ]},
   { label: 'People & Time', links: [
     { id: 'timeclock', label: 'Time Clock' },

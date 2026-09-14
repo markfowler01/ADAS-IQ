@@ -47,6 +47,7 @@ import webhookRouter from './routes/webhook.js'
 import feedbackRouter from './routes/feedback.js'
 import postscanRouter from './routes/postscan.js'
 import estimatesRouter from './routes/estimates.js'
+import estimatorRouter from './routes/estimator.js'  // repair estimator (2026-09-14): Estimate → Job → Line → Part
 import calibrationRulesRouter from './routes/calibrationRules.js'
 import shopsRouter from './routes/shops.js'
 import booksRouter from './routes/books.js'
@@ -308,6 +309,7 @@ app.post('/api/client-error', requireAuth, async (req, res) => {
   res.json({ ok: true })
 })
 app.use('/api/estimates', requireAuth, estimatesRouter)
+app.use('/api/estimator', requireAuth, estimatorRouter)   // techs read-only inside the router
 app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/sales-stops', requireAuth, salesStopsRouter)

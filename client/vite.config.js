@@ -15,6 +15,7 @@ export default defineConfig({
             return 'vendor'
           }
           // Split heavy admin/ops screens into separate chunks
+          if (id.includes('/estimator/') || id.includes('/lib/estimatorCalc')) return 'estimator'
           if (id.includes('/OpsHub')) return 'ops'
           if (id.includes('/KanbanBoard')) return 'kanban'
           if (id.includes('/CRMScreen') || id.includes('/ShopDetailPanel')
@@ -31,7 +32,8 @@ export default defineConfig({
     proxy: {
       // Proxy API calls to local Catalyst serve (catalyst serve --except client)
       '/server': {
-        target: 'http://localhost:3000',
+        // ADAS_PROXY_TARGET=<live api origin> lets a visual check run against the deployed function
+        target: process.env.ADAS_PROXY_TARGET || 'http://localhost:3000',
         changeOrigin: true,
       },
     },
