@@ -2,7 +2,8 @@ import express from 'express'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { getMailAccessToken, getMailAccountId, sendMail } from '../services/mail.js'
-import { listCustomers } from '../services/zoho.js'
+import { listCustomers, getAccessToken } from '../services/zoho.js'
+import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 import { findLeadByName, createLead, updateLead, convertLead } from '../services/zohoCrm.js'
 
 const router = express.Router()
@@ -313,6 +314,58 @@ router.put('/big3-by-name', async (req, res) => {
     const r = await b3.saveBig3(req, name, rules, req.body?.by || req.user?.name || req.user?.email || '', { discount_pct: req.body?.discount_pct, customer_type: req.body?.customer_type, silent: !!req.body?.silent })
     res.json({ ok: true, ...r, rules })
   } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// 🧾 Zoho Books customer for a CRM shop (Mark 2026-09-14: "does this also
+// add the customer to Zoho Books because I do need that to happen").
+// Links to an existing Books contact by exact name first (the L-M dupes
+// came from blind creates), otherwise creates one: business customer,
+// billing address, phone, the CRM people as contact persons, Due on
+// Receipt. Stores the id on the shop (zoho_contact_id).
+router.post('/:id/books-customer', async (req, res) => {
+  try {
+    if (req.user?.role === 'technician') return res.status(403).json({ error: 'Staff only' })
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    if (shop.zoho_contact_id && !req.body?.relink) return res.json({ ok: true, existing: true, contact_id: shop.zoho_contact_id })
+    const token = await getAccessToken()
+    const B = 'https://www.zohoapis.com/books/v3'
+    const H = { Authorization: `Zoho-oauthtoken ${token}` }
+    const P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const name = String(shop.shop_name || '').trim()
+    if (!name) return res.status(400).json({ error: 'Shop has no name' })
+    const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    // 1. Already in Books under this name? Link, don't duplicate.
+    const found = await axios.get(`${B}/contacts`, { headers: H, params: { ...P, contact_name_contains: name.slice(0, 40), contact_type: 'customer' }, timeout: 15000, validateStatus: s => s < 500 })
+    const hit = (found.data?.contacts || []).find(c => norm(c.contact_name) === norm(name) || norm(c.company_name) === norm(name))
+    if (hit) {
+      await updateShop(req, shop.id, { ...shop, zoho_contact_id: hit.contact_id })
+      return res.json({ ok: true, linked: true, contact_id: hit.contact_id, contact_name: hit.contact_name })
+    }
+    // 2. Create it.
+    let people = shop.people
+    if (typeof people === 'string') { try { people = JSON.parse(people) } catch { people = [] } }
+    const persons = (people || []).filter(p => p?.name).slice(0, 10).map((p, i) => {
+      const parts = String(p.name).trim().split(/\s+/)
+      return { first_name: parts[0] || '', last_name: parts.slice(1).join(' ') || '', email: p.email || '', phone: p.phone || '', designation: p.title || '', is_primary_contact: i === 0 }
+    })
+    const addr = String(shop.address || '').trim()
+    const m = /^(.*?),?\s*([A-Za-z .]+),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?$/.exec(addr)
+    const billing_address = m ? { address: m[1].trim(), city: m[2].trim(), state: m[3], zip: m[4], country: 'U.S.A' } : (addr ? { address: addr, country: 'U.S.A' } : undefined)
+    const body = {
+      contact_name: name, company_name: name, contact_type: 'customer', customer_sub_type: 'business',
+      ...(shop.phone ? { phone: shop.phone } : {}), ...(billing_address ? { billing_address, shipping_address: billing_address } : {}),
+      contact_persons: persons, payment_terms: 0, payment_terms_label: 'Due on Receipt',
+      notes: `Created from the Absolute ADAS app CRM by ${req.user?.name || req.user?.email || 'staff'} on ${new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' })}`,
+    }
+    const c = await axios.post(`${B}/contacts`, body, { headers: H, params: P, timeout: 20000, validateStatus: s => s < 500 })
+    if (c.data?.code !== 0) return res.status(502).json({ error: `Books said: ${c.data?.message || c.status}` })
+    const contact = c.data.contact
+    await updateShop(req, shop.id, { ...shop, zoho_contact_id: contact.contact_id })
+    console.log(`[shops] Books customer created: ${name} (${contact.contact_id}) by ${req.user?.email || 'staff'}`)
+    postToCliqChannel(DISPATCH_CHANNEL, `🧾 *New Zoho Books customer* · ${name}${persons.length ? ` · ${persons.length} contact${persons.length === 1 ? '' : 's'}` : ''} — created from the app's New Customer form`).catch(() => {})
+    res.json({ ok: true, created: true, contact_id: contact.contact_id, contact_name: contact.contact_name })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
 // Big 3 rule on a CRM shop (Mark 2026-09-10) — read/set from the Billing tab.

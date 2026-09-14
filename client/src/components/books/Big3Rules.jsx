@@ -234,3 +234,29 @@ export default function Big3Rules({ shop }) {
     </div>
   )
 }
+
+
+// 🧾 Zoho Books link for a CRM shop — shows the link, or creates/links the customer.
+export function BooksLink({ shop }) {
+  const [state, setState] = useState({ busy: false, msg: '', id: shop?.zoho_contact_id || '' })
+  useEffect(() => { setState(s => ({ ...s, id: shop?.zoho_contact_id || '' })) }, [shop?.zoho_contact_id])
+  async function create() {
+    if (!shop?.id) return
+    setState(s => ({ ...s, busy: true, msg: '' }))
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/books-customer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setState({ busy: false, id: d.contact_id, msg: d.created ? 'Created in Zoho Books ✓' : d.linked ? `Linked to existing Books customer "${d.contact_name}" ✓` : 'Already linked ✓' })
+    } catch (e) { setState(s => ({ ...s, busy: false, msg: `Failed: ${e.message}` })) }
+  }
+  return (
+    <div className="rounded-xl p-3 mb-3 flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: state.id ? '#f0fdf4' : '#fffbeb', border: `1.5px solid ${state.id ? '#bbf7d0' : '#fde68a'}` }}>
+      <div>
+        <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🧾 Zoho Books customer</div>
+        <div className="text-xs" style={{ color: state.id ? '#166534' : '#92400e' }}>{state.msg || (state.id ? `Linked · id ${state.id}` : 'Not in Zoho Books yet — quotes and invoices need this.')}</div>
+      </div>
+      {!state.id && <button type="button" onClick={create} disabled={state.busy || !shop?.id} className="rounded-xl px-3 py-2 text-sm font-bold text-white" style={{ backgroundColor: '#15803d', opacity: state.busy ? .5 : 1 }}>{state.busy ? 'Working…' : 'Create in Zoho Books'}</button>}
+    </div>
+  )
+}

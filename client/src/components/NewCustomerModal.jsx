@@ -74,7 +74,15 @@ export default function NewCustomerModal({ onClose, onCreated }) {
       if (shop.place?.lat != null) {
         apiFetch(`${API_BASE}/api/shops/${encodeURIComponent(name)}/coordinates`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lat: shop.place.lat, lng: shop.place.lng }) }).catch(() => {})
       }
-      onCreated && onCreated(d)
+      // Zoho Books customer too (Mark 2026-09-14) — link if it already exists, else create.
+      let books = null
+      try {
+        const rb = await apiFetch(`${API_BASE}/api/shops/${d.id}/books-customer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+        books = await rb.json().catch(() => ({}))
+        if (!rb.ok) books = { error: books.error || `HTTP ${rb.status}` }
+      } catch (e) { books = { error: e.message } }
+      onCreated && onCreated({ ...d, books })
+      if (books?.error) { setError(`Shop saved in the CRM, but the Zoho Books customer failed: ${books.error}. Open the shop → Billing → "Create in Zoho Books" to retry.`); return }
       onClose()
     } catch (e) { setError(e.message) } finally { setSaving(false) }
   }
