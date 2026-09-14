@@ -297,12 +297,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       if (data.folderId || data.shareLink || data.folderUrl) {
         setSharedFolder({ id: data.folderId || null, url: data.shareLink || data.folderUrl || '' })
       }
-      // Mark 2026-09-11: "after a quote is sent… I want it to go back to the
-      // jobs view". Clean result → straight to the board (the card is there).
-      // Anything worth reading (unmatched items, no folder) keeps the card up.
-      if (!data.unmatchedItems?.length && (data.folderId || data.folderUrl || data.shareLink) && onNavigate) {
-        setTimeout(() => onNavigate('kanban'), 900)
-      }
+      // Mark 2026-09-11: "after a quote is SENT… go back to the jobs view".
+      // The success card stays so the blue 📤 Send quote button can be used;
+      // SendQuoteButton returns to the board once the quote has gone out.
 
       // Save to server history (fire-and-forget)
       try {
@@ -1094,7 +1091,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
   )
 }
 
-function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
+function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNavigate }) {
   const [phase, setPhase] = useState('idle')  // idle | loading | review | sending | sent | error
   const [preview, setPreview] = useState(null)
   const [msg, setMsg] = useState('')
@@ -1134,6 +1131,7 @@ function SendQuoteButton({ result, job, lineCount, selectedCustomer }) {
       if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
       setMsg(`Sent to ${(d.sent_to || []).join(', ')}`)
       setPhase('sent')
+      if (onNavigate) setTimeout(() => onNavigate('kanban'), 1400)   // Mark: back to the Jobs board once the quote is out
     } catch (e) { setMsg(e.message); setPhase('error') }
   }
 
@@ -1224,7 +1222,7 @@ function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate }) {
         {result.quoteNumber && <SuccessField label="Invoice #" value={result.quoteNumber} />}
       </div>
 
-      <SendQuoteButton result={result} job={job} lineCount={lineCount} selectedCustomer={selectedCustomer} />
+      <SendQuoteButton result={result} job={job} lineCount={lineCount} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
 
       {/* Links row */}
       <div className="flex flex-col gap-2 pt-1" style={{ borderTop: '1px solid #b7e4c7' }}>
