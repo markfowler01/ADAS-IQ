@@ -901,6 +901,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
       {detailShop && (
         <ShopDetailPanel
           shop={detailShop}
+          user={user}
           onClose={() => setDetailShop(null)}
           onSave={handleSave}
           onDelete={handleDelete}

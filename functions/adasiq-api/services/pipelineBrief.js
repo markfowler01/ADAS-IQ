@@ -52,8 +52,17 @@ export async function shopsBrief(req, todayISO) {
     .map(s => ({ ...s, daysLate: daysBetween(s.next_followup, todayISO) }))
     .sort((a, b) => b.daysLate - a.daysLate)
 
-  // Targets he has not touched in a month. Not urgent, but this is the pile
-  // that quietly becomes a dead pipeline.
+  // A shop that was contacted or showed interest and then went silent. This is
+  // the expensive leak — someone said yes-ish and nobody went back. Sales stops
+  // (routes/salesStops.js) moves shops target -> contacted -> interested and
+  // stamps last_contact, so these stages now carry real dates.
+  const WARM = { interested: 10, contacted: 21 }
+  const cooling = active
+    .filter(s => WARM[s.pipeline_stage] && s.last_contact && daysBetween(s.last_contact, todayISO) >= WARM[s.pipeline_stage])
+    .map(s => ({ ...s, idleDays: daysBetween(s.last_contact, todayISO) }))
+    .sort((a, b) => (a.pipeline_stage === 'interested' ? -1 : 1) - (b.pipeline_stage === 'interested' ? -1 : 1) || b.idleDays - a.idleDays)
+
+  // Old targets nobody has been back to. Least urgent of the three.
   const quiet = active
     .filter(s => s.pipeline_stage === 'target' && s.last_contact && daysBetween(s.last_contact, todayISO) >= 30)
     .map(s => ({ ...s, idleDays: daysBetween(s.last_contact, todayISO) }))
@@ -73,7 +82,7 @@ export async function shopsBrief(req, todayISO) {
         .filter((v, i, a) => v && a.indexOf(v) === i)
     : []
 
-  return { due, quiet, neverTouched, todaysTwo, activeTotal: active.length }
+  return { due, cooling, quiet, neverTouched, todaysTwo, activeTotal: active.length }
 }
 
 // Plenty of shop names end in "INC." or "LLC." — appending a period gives
@@ -91,12 +100,17 @@ export function formatPipeline(rec, shops) {
     }
   }
 
-  if (shops && !shops.error && (shops.due.length || shops.quiet.length || shops.todaysTwo?.length)) {
+  if (shops && !shops.error && (shops.due.length || shops.cooling?.length || shops.quiet.length || shops.todaysTwo?.length)) {
     L.push('', 'Shops')
     for (const s of shops.due.slice(0, 4)) {
       L.push(s.daysLate > 0
         ? `${s.shop_name} — follow-up was ${s.daysLate} ${s.daysLate === 1 ? 'day' : 'days'} ago.`
         : `${s.shop_name} — follow-up due today.`)
+    }
+    for (const s2 of (shops.cooling || []).slice(0, 3)) {
+      L.push(s2.pipeline_stage === 'interested'
+        ? `${s2.shop_name} showed interest and has gone ${s2.idleDays} days with no contact.`
+        : `${s2.shop_name} was contacted ${s2.idleDays} days ago and nothing since.`)
     }
     if (shops.quiet.length) {
       const top = shops.quiet[0]

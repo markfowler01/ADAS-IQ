@@ -36,6 +36,7 @@ import { buildProgress, formatProgress, standing, moneyShort } from '../services
 import { fetchYtdByDay } from '../services/salesRollup.js'
 import { overdue as holdOverdue, birthdays as holdBirthdays } from '../services/hold.js'
 import { recruitingBrief, shopsBrief, formatPipeline } from '../services/pipelineBrief.js'
+import { crewStatus, formatCrew } from '../services/crew.js'
 import { subtraction, formatSubtraction } from '../services/subtraction.js'
 import { triageInbox, formatTriage, evidenceLine } from '../services/dayCoach.js'
 import { evaluate as evaluatePace, projectMonth } from '../services/paceModel.js'
@@ -667,7 +668,7 @@ function progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD) {
   <div style="font:400 11px/16px ${SANS};color:${SOFT};padding-top:4px;">Bar is dollars booked. The mark is where the calendar is.</div>`
 }
 
-export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog, d2, hold, recruit, shopPipe) {
+export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, closing, ar, numbers, goal, analyticsUrl, prog, d2, hold, recruit, shopPipe, crew) {
   const label = t => `<div style="font:400 12px/1 ${SANS};color:${SOFT};padding-bottom:12px;">${esc(t)}</div>`
   const block = (title, inner) => inner
     ? `<tr><td style="padding:32px 34px 0 34px;">${label(title)}${inner}</td></tr>` : ''
@@ -687,6 +688,17 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   }
   // Birthdays first — they are dated and they expire. Overdue contacts are a
   // standing condition and can wait behind them.
+  const crewHtml = crew && !crew.error ? [
+    line(crew.late?.length ? `${crew.working} of ${crew.total} working.` : `All ${crew.total} working.`,
+         crew.late?.length ? ACCENT : GOOD),
+    ...(crew.late || []).map(x => line(
+      x.age == null ? `${esc(x.name)} (${esc(x.job)}) — no successful run on record.`
+                    : `${esc(x.name)} (${esc(x.job)}) — last ran ${x.age > 1440 ? `${Math.round(x.age / 1440)} days` : `${Math.round(x.age / 60)} hours`} ago.`,
+      ACCENT)),
+    line((crew.roster || []).map(r => `${esc(r.name)} <span style="color:${SOFT};">${esc(r.job)}</span>`).join(' &nbsp;·&nbsp; '), INK),
+    line(`<span style="color:${SOFT};">On call:</span> Marlowe <span style="color:${SOFT};">promises</span> &nbsp;·&nbsp; Scout <span style="color:${SOFT};">stops</span> &nbsp;·&nbsp; Pierce <span style="color:${SOFT};">hiring</span>`, INK),
+  ].join('') : ''
+
   const STAGE_LBL = { new: 'New', contacted: 'Contacted', project: 'Project', phone_screen: 'Phone Screen', ride_along: 'Ride-Along', offer: 'Offer' }
   const recruitHtml = recruit && !recruit.error && (recruit.fresh?.length || recruit.stalled?.length) ? [
     ...recruit.fresh.map(c => line(`<strong style="font-weight:600;">${esc(c.name)}</strong> applied${c.certs ? ` — ${esc(c.certs)}` : ''}.`, GOOD)),
@@ -694,10 +706,15 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
       line(`${esc(c.name)} — ${c.idleDays} days in ${esc(STAGE_LBL[c.stage] || c.stage)}.`, ACCENT)),
   ].join('') : ''
 
-  const shopsHtml = shopPipe && !shopPipe.error && (shopPipe.due?.length || shopPipe.quiet?.length || shopPipe.todaysTwo?.length) ? [
+  const shopsHtml = shopPipe && !shopPipe.error && (shopPipe.due?.length || shopPipe.cooling?.length || shopPipe.quiet?.length || shopPipe.todaysTwo?.length) ? [
     ...shopPipe.due.slice(0, 4).map(s2 => line(
       `<strong style="font-weight:600;">${esc(s2.shop_name)}</strong> — ${s2.daysLate > 0 ? `follow-up ${s2.daysLate} ${s2.daysLate === 1 ? 'day' : 'days'} late` : 'follow-up due today'}.`,
       s2.daysLate > 0 ? ACCENT : INK)),
+    ...(shopPipe.cooling || []).slice(0, 3).map(s2 => line(
+      s2.pipeline_stage === 'interested'
+        ? `<strong style="font-weight:600;">${esc(s2.shop_name)}</strong> — showed interest, ${s2.idleDays} days quiet.`
+        : `<strong style="font-weight:600;">${esc(s2.shop_name)}</strong> — contacted ${s2.idleDays} days ago, nothing since.`,
+      s2.pipeline_stage === 'interested' ? ACCENT : INK)),
     ...(shopPipe.todaysTwo?.length ? [
       line(`<strong style="font-weight:600;">${shopPipe.todaysTwo.map(x => esc(x.shop_name)).join('</strong> and <strong style="font-weight:600;">')}</strong> — never contacted. Call one today.`.replace(/\.\s*—/, ' —')),
       line(`${shopPipe.neverTouched.length} of ${shopPipe.activeTotal} shops have no contact logged.`, SOFT),
@@ -799,6 +816,7 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   ${holdHtml ? block('The Hold', holdHtml) : ''}
   ${recruitHtml ? block('Recruiting', recruitHtml) : ''}
   ${shopsHtml ? block('Shops', shopsHtml) : ''}
+  ${crewHtml ? block('The crew', crewHtml) : ''}
   ${prog ? block('Sales against goal', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
   ${block('Cash', cashHtml)}
   ${block('Pace', paceHtml)}
@@ -1195,6 +1213,9 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // Recruiting board and the shop CRM. Both read Datastore directly rather
   // than over HTTP — the shops route is session-gated and the brief has no
   // session. Best-effort, like everything else in here.
+  // Who on the crew is working. Best-effort — a health check must never be
+  // the reason the brief is late.
+  const crew = await safe('crew', () => crewStatus())
   const [recruit, shopPipe] = await Promise.all([
     safe('recruit', () => recruitingBrief(req, ptDate())),
     safe('shops-pipe', () => shopsBrief(req, ptDate())),
@@ -1212,7 +1233,8 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     (prog ? formatProgress(prog) : '') +
     (numbers ? formatNumbers(numbers, goalRec.goal) : '') +
     (hold ? formatHold(hold) : '') +
-    formatPipeline(recruit, shopPipe)
+    formatPipeline(recruit, shopPipe) +
+    (crew ? formatCrew(crew) : '')
 
   // Triage is best-effort and capped: it rides inside the brief's gateway
   // request, and an unread inbox must never be why the brief is late.
@@ -1310,7 +1332,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
   const page = { url: `${SELF_BASE}/api/briefing/page?date=${ptDate()}&k=${encodeURIComponent(secret)}` }
   const ar = buildAR(b.revenue)
-  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog, d2, hold, recruit, shopPipe)
+  const briefHtml = formatBriefHtml(b, big3, tr, audio?.url || null, page.url, triage, pace, closing, ar, numbers, goalRec.goal, ANALYTICS_URL, prog, d2, hold, recruit, shopPipe, crew)
 
   const emailTo = (process.env.MARK_INBOX_EMAIL || 'mark@absoluteadas.com').trim()
   if (emailTo) {
@@ -1641,7 +1663,7 @@ router.get('/page', async (req, res) => {
 .bar{position:sticky;top:0;z-index:2;background:#f6f3ed;border-bottom:1px solid #e8e3da;padding:12px 14px}
 .bar audio{width:100%;max-width:552px;display:block;margin:0 auto;height:40px}</style></head><body>
 <div class="bar"><audio controls preload="none" src="${audioSrc}"></audio></div>
-${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null, null, null, null, null)}
+${formatBriefHtml(b, big3, tr, null, null, null, null, null, buildAR(b.revenue), null, TARGET, ANALYTICS_URL, null, null, null, null, null, null)}
 </body></html>`)
   } catch (e) { res.status(500).send(String(e.message)) }
 })
@@ -1701,6 +1723,9 @@ router.get('/email-preview', async (req, res) => {
     // Recruiting board and the shop CRM. Both read Datastore directly rather
     // than over HTTP — the shops route is session-gated and the brief has no
     // session. Best-effort, like everything else in here.
+    // Who on the crew is working. Best-effort — a health check must never be
+    // the reason the brief is late.
+    const crew = await safe('crew', () => crewStatus())
     const [recruit, shopPipe] = await Promise.all([
       safe('recruit', () => recruitingBrief(req, ptDate())),
       safe('shops-pipe', () => shopsBrief(req, ptDate())),
@@ -1719,7 +1744,7 @@ router.get('/email-preview', async (req, res) => {
     res.type('html').send(formatBriefHtml(
       b, big3, tr, `https://absoluteadas.com/audio/ada-morning-${ptDate()}.mp3`,
       null, null, pace, null, buildAR(b.revenue), numbers,
-      goalRec.goal, ANALYTICS_URL, prog, d2, hold, recruit, shopPipe))
+      goalRec.goal, ANALYTICS_URL, prog, d2, hold, recruit, shopPipe, crew))
   } catch (e) { res.status(500).type('text/plain').send(String(e.stack || e.message)) }
 })
 

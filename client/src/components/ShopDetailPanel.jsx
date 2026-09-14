@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import TextAsMarkModal from './TextAsMarkModal.jsx'
 import Big3Rules, { DrpRules } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import {
@@ -415,7 +416,8 @@ function InfoTab({ form, setForm }) {
 }
 
 // ─── People Tab ───────────────────────────────────────────────────────────────
-function PeopleTab({ people, onChange }) {
+function PeopleTab({ people, onChange, canTextAsMark = false, shopId = '' }) {
+  const [textTo, setTextTo] = useState(null)   // { phone, name } → TextAsMarkModal
   const [expandedId, setExpandedId] = useState(null)
 
   function addPerson() {
@@ -481,6 +483,12 @@ function PeopleTab({ people, onChange }) {
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                     </svg>
                   </a>
+                  {canTextAsMark && (
+                    <button type="button" onClick={() => setTextTo({ phone: p.phone, name: p.name || '' })}
+                      title="Text as Mark — from your own cell number"
+                      className="h-8 rounded-xl flex items-center justify-center px-2 text-[11px] font-bold"
+                      style={{ backgroundColor: '#fff5f0', color: '#CD4419', border: '1px solid #f5c9b8' }}>💬 as Mark</button>
+                  )}
                 </>}
                 {p.email && (
                   <a href={`mailto:${p.email}`}
@@ -540,6 +548,7 @@ function PeopleTab({ people, onChange }) {
         ))}
       </div>
     </div>
+      {textTo && <TextAsMarkModal to={textTo.phone} toName={textTo.name} shopId={shopId} purpose="crm person" onClose={() => setTextTo(null)} />}
   )
 }
 
@@ -717,7 +726,8 @@ function JobsTab({ shopName }) {
 }
 
 // ─── Main Panel ───────────────────────────────────────────────────────────────
-export default function ShopDetailPanel({ shop, onClose, onSave, onDelete }) {
+export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user = null }) {
+  const canTextAsMark = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
   const [tab,          setTab]          = useState('info')
   const [form,         setForm]         = useState({
     ...shop,
@@ -826,6 +836,8 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete }) {
           {tab === 'people' && (
             <PeopleTab
               people={form.people}
+              canTextAsMark={canTextAsMark}
+              shopId={shop?.id || ''}
               onChange={people => updateForm(f => ({ ...f, people }))}
             />
           )}
