@@ -196,8 +196,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         const pr = rowPrices[String(c.calibration_name || '').toLowerCase()]
         return sum + (pr && !pr.needs_price ? pr.rate * (c.quantity || 1) : 0)
       }, 0) + (rowPrices._fixed_total || 0)) * 100) / 100
-  const liveTotalCapped = (cashMode && liveTotal != null && cashCap > 0 && liveTotal > cashCap) ? cashCap : liveTotal
     : null
+  const liveTotalCapped = (cashMode && liveTotal != null && cashCap > 0 && liveTotal > cashCap) ? cashCap : liveTotal
 
   // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
   // in Books — same review pattern as sending a quote.
