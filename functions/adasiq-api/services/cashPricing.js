@@ -54,10 +54,10 @@ export function cashCapFor(lines, limit = CASH_MAX_OUT_OF_POCKET) {
 }
 
 // The adjustment line itself, in the shape Zoho / the in-app ledger take.
-export function cashCapLine(cap) {
+export function cashCapLine(cap, limit = CASH_MAX_OUT_OF_POCKET) {
   return {
-    name: CASH_CAP_LINE_NAME,
-    description: `Cash customer — list total $${cap.list_total.toFixed(2)} reduced to $${CASH_MAX_OUT_OF_POCKET} per Absolute ADAS cash policy.`,
+    name: limit === CASH_MAX_OUT_OF_POCKET ? CASH_CAP_LINE_NAME : `💵 Cash cap — $${limit} max`,
+    description: `Cash customer — list total $${cap.list_total.toFixed(2)} reduced to $${limit} per Absolute ADAS cash policy.`,
     rate: cap.adjustment,
     quantity: 1,
   }
