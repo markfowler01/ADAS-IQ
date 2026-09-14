@@ -35,6 +35,27 @@
       @keyframes aa-sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       @keyframes aa-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
     </style>
+    <!-- Boot watchdog (Mark 2026-09-11/14 white page): if the app has not
+         drawn anything 8s after load — stale index pointing at deleted
+         chunks, or a crash that emptied the root — reload ONCE with a
+         cache-busting address. Guarded so it can never loop. -->
+    <script>
+      (function () {
+        try {
+          var key = 'adas_boot_reload_at';
+          var last = Number(sessionStorage.getItem(key) || 0);
+          setTimeout(function () {
+            var root = document.getElementById('root');
+            var empty = !root || root.children.length === 0 || (root.innerText || '').trim().length < 20;
+            if (empty && Date.now() - last > 120000) {
+              sessionStorage.setItem(key, String(Date.now()));
+              var u = location.pathname + '?v=' + Date.now() + (location.hash || '');
+              location.replace(u);
+            }
+          }, 8000);
+        } catch (e) {}
+      })();
+    </script>
     <div id="root">
       <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f3f0;font-family:'IBM Plex Sans',system-ui,sans-serif;">
         <div style="display:flex;flex-direction:column;align-items:center;gap:20px;">

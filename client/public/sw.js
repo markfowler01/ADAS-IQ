@@ -26,7 +26,10 @@ self.addEventListener('notificationclick', (event) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
       for (const client of list) {
         if ('navigate' in client && 'focus' in client) {
-          return client.navigate(url).then((c) => (c || client).focus())
+          // A deep link (hash/query) needs the navigation; a plain tap just
+          // brings the open app forward — no full reload of the page.
+          const deep = /[#?]/.test(url)
+          return deep ? client.navigate(url).then((c) => (c || client).focus()) : client.focus()
         }
       }
       return self.clients.openWindow(url)
