@@ -9,8 +9,11 @@ import { API_BASE, apiFetch } from '../../utils/api.js'
 import { ORANGE } from '../ui/ReviewKit.jsx'
 
 export default function AddCalibration({ existingNames = [], onAdd, onCancel }) {
+  // Mark 2026-09-14: "from the Zoho Books menu" — the search is the Books
+  // item catalog (same list Bill it uses), so what you add is a real item
+  // with a real price. Chips = the ten we do most.
   const [topTen, setTopTen] = useState([])
-  const [rules, setRules] = useState([])
+  const [items, setItems] = useState([])
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -18,11 +21,11 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
     let dead = false
     Promise.all([
       apiFetch(`${API_BASE}/api/jobs/top-calibrations`).then(r => r.json()).catch(() => ({ calibrations: [] })),
-      apiFetch(`${API_BASE}/api/calibration-rules`).then(r => r.json()).catch(() => []),
-    ]).then(([top, all]) => {
+      apiFetch(`${API_BASE}/api/jobs/catalog`).then(r => r.json()).catch(() => ({ items: [] })),
+    ]).then(([top, cat]) => {
       if (dead) return
       setTopTen(top?.calibrations || [])
-      setRules(Array.isArray(all) ? all : [])
+      setItems(Array.isArray(cat?.items) ? cat.items : [])
       setLoading(false)
     })
     return () => { dead = true }
@@ -32,12 +35,12 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
   const quick = topTen.filter(t => !have.has(String(t.name || '').toLowerCase())).slice(0, 10)
   const needle = q.trim().toLowerCase()
   const hits = needle
-    ? rules.filter(r => String(r.calibration_name || '').toLowerCase().includes(needle) && !have.has(String(r.calibration_name || '').toLowerCase())).slice(0, 12)
+    ? items.filter(it => String(it.name || '').toLowerCase().includes(needle) && !have.has(String(it.name || '').toLowerCase())).slice(0, 12)
     : []
-  const exact = needle && rules.some(r => String(r.calibration_name || '').toLowerCase() === needle)
+  const exact = needle && items.some(it => String(it.name || '').toLowerCase() === needle)
 
   function add(name, extra = {}) {
-    onAdd({ calibration_name: name, cal_type: extra.cal_type || null, trigger: null, line_references: null, justification: null, enabled: true, rule_id: extra.rule_id || null, _added: true })
+    onAdd({ calibration_name: name, cal_type: extra.cal_type || null, trigger: null, line_references: null, justification: null, enabled: true, item_id: extra.item_id || null, _added: true })
     setQ('')
   }
 
@@ -47,17 +50,18 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
         <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>＋ Add a calibration Kinetic missed</span>
         <button type="button" onClick={onCancel} className="text-xs font-semibold" style={{ color: '#888' }}>close</button>
       </div>
-      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search every calibration… (e.g. blind spot, radar, camera)"
+      <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search Zoho Books items… (e.g. blind spot, radar, camera)"
         className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', outline: 'none' }}
-        onKeyDown={e => { if (e.key === 'Enter' && needle) { const h = hits[0]; h ? add(h.calibration_name, { cal_type: h.cal_type, rule_id: h.id }) : add(q.trim()) } }} />
+        onKeyDown={e => { if (e.key === 'Enter' && needle) { const h = hits[0]; h ? add(h.name, { item_id: h.item_id }) : add(q.trim()) } }} />
       {needle ? (
         <div className="rounded-lg overflow-hidden" style={{ border: '1px solid #f5c9b8', backgroundColor: 'white' }}>
-          {hits.map(r => (
-            <button key={r.id || r.calibration_name} type="button" onClick={() => add(r.calibration_name, { cal_type: r.cal_type, rule_id: r.id })} className="w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2" style={{ borderTop: '1px solid #fdeee8' }}>
-              <span style={{ color: '#1a1a1a' }}>{r.calibration_name}</span>
-              {r.cal_type && <span className="text-[11px]" style={{ color: '#888', fontFamily: "'IBM Plex Mono', monospace" }}>{r.cal_type}</span>}
+          {hits.map(it => (
+            <button key={it.item_id} type="button" onClick={() => add(it.name, { item_id: it.item_id })} className="w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2" style={{ borderTop: '1px solid #fdeee8' }}>
+              <span style={{ color: '#1a1a1a' }}>{it.name}{it.type === 'goods' ? <span className="text-[11px]" style={{ color: '#888' }}> · part</span> : null}</span>
+              <span className="text-xs font-bold tabular-nums" style={{ color: '#15803d' }}>${Number(it.rate || 0).toFixed(0)}</span>
             </button>
           ))}
+          {hits.length === 0 && <div className="px-3 py-2 text-xs" style={{ color: '#888' }}>No Zoho Books item matches "{q.trim()}".</div>}
           {!exact && (
             <button type="button" onClick={() => add(q.trim())} className="w-full text-left px-3 py-2 text-sm font-semibold" style={{ borderTop: '1px solid #fdeee8', color: ORANGE }}>
               Add "{q.trim()}" as typed
@@ -66,7 +70,7 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel }) 
         </div>
       ) : (
         <div>
-          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>{loading ? 'Loading…' : 'Most common'}</div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>{loading ? 'Loading Zoho Books items…' : 'Most common · or search the Books menu above'}</div>
           <div className="flex flex-wrap gap-1.5">
             {quick.map(t => (
               <button key={t.name} type="button" onClick={() => add(t.name)} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#1a1a1a', border: '1px solid #f5c9b8' }}>{t.name}</button>
