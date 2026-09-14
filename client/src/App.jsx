@@ -251,6 +251,7 @@ function MainApp() {
     return <BodyShopDemoScreen user={user} onLogout={() => { setToken(null); setUser(false) }} />
   }
 
+  useEffect(() => { try { window.__adasScreen = screen } catch {} }, [screen])
   const navScreen = screen === 'review' ? 'upload' : screen
 
   function handleNavigate(id) {

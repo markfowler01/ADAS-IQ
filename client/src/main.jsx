@@ -30,6 +30,23 @@ function report(message, extra = {}) {
 window.addEventListener('error', (e) => report(`window.error: ${e.message}`, { stack: String(e.error?.stack || '').slice(0, 1500) }))
 window.addEventListener('unhandledrejection', (e) => report(`unhandledrejection: ${String(e.reason?.message || e.reason || '').slice(0, 300)}`, { stack: String(e.reason?.stack || '').slice(0, 1500) }))
 window.addEventListener('pagehide', () => report('pagehide (tab navigated, reloaded or closed)'))
+// Blank-screen watchdog (Mark 2026-09-14: "after Ready to Invoice it leaves
+// you on a blank screen" — no error, no reload in the log). If the app is
+// showing next to nothing, report WHAT is there: is the React root empty
+// (crash) or is something covering the page (overlay)?
+let __lastBlankReport = 0
+setInterval(() => {
+  try {
+    const root = document.getElementById('root')
+    if (!root || !getToken()) return
+    const text = (root.innerText || '').trim()
+    if (root.children.length > 0 && text.length > 60) return
+    if (Date.now() - __lastBlankReport < 60000) return
+    __lastBlankReport = Date.now()
+    const fixed = [...document.querySelectorAll('div,section')].filter(el => { const cs = getComputedStyle(el); return cs.position === 'fixed' && el.getBoundingClientRect().width > window.innerWidth * .8 && el.getBoundingClientRect().height > window.innerHeight * .8 })
+    report(`blank-screen watchdog: rootChildren=${root.children.length} textLen=${text.length} htmlLen=${root.innerHTML.length} fixedFullscreen=${fixed.length} classes=${fixed.map(f => f.className.slice(0, 60)).join(' | ')} screen=${window.__adasScreen || '?'}`)
+  } catch { /* never throw */ }
+}, 3000)
 
 window.addEventListener('vite:preloadError', (e) => {
   report(`vite:preloadError: ${String(e.payload?.message || '').slice(0, 300)}`)
