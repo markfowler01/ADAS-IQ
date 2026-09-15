@@ -1748,6 +1748,15 @@ router.get('/email-preview', async (req, res) => {
   } catch (e) { res.status(500).type('text/plain').send(String(e.stack || e.message)) }
 })
 
+// Has today's brief already gone out? The GitHub Actions schedule fires twice
+// (once for PDT, once for PST) because Actions cron has no timezone and Mark's
+// 4:40 AM moves against UTC twice a year. The second firing reads this and
+// stops, so DST costs nothing and nobody gets two briefs.
+router.get('/sent-today', async (req, res) => {
+  try { res.json({ ok: true, date: ptDate(), sent: await alreadySentToday(req) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })
 router.post('/send', async (req, res) => { res.json(await sendDailyBriefing(req)) })
 

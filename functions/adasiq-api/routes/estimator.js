@@ -431,6 +431,79 @@ R.post('/rick/describe', staffOnly, async (req, res) => {
   } catch (e) { fail(res, e, 'rick describe') }
 })
 
+// Import a Zoho Books customer as a repair customer with their whole history
+// (Mark 2026-09-15: "transfer over Mindy Grant… with all transactions and
+// repair history"). Books stays untouched. Each Books invoice becomes an
+// estimate marked invoiced (vehicle from the invoice custom fields, lines
+// as flat-priced work), so the car's service history and warranty read
+// exactly like work done in the app. Resumable: already-imported invoices
+// are skipped, so call again until `remaining` is 0.
+R.post('/retail-customers/import-books', staffOnly, async (req, res) => {
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const B = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const name = str(req.body?.name || '', 200).trim(); let contactId = str(req.body?.contact_id || '', 40)
+    const limit = Math.min(Number(req.body?.limit) || 12, 25)
+    const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    // 1. the Books contact
+    let contact = null
+    if (contactId) { const r = await axios.get(`${B}/contacts/${contactId}`, { headers: H, params: P, timeout: 15000, validateStatus: st => st < 500 }); contact = r.data?.contact || null }
+    else if (name) { const r = await axios.get(`${B}/contacts`, { headers: H, params: { ...P, contact_name_contains: name.slice(0, 40), contact_type: 'customer' }, timeout: 15000, validateStatus: st => st < 500 }); const list = r.data?.contacts || []; contact = list.find(c => norm(c.contact_name) === norm(name)) || (list.length === 1 ? list[0] : null); if (!contact && list.length > 1) return res.status(409).json({ error: 'More than one Books customer matches — pick one', candidates: list.map(c => ({ contact_id: c.contact_id, name: c.contact_name, email: c.email, outstanding: c.outstanding_receivable_amount })) }) }
+    if (!contact) return res.status(404).json({ error: `No Zoho Books customer named "${name}"` })
+    contactId = String(contact.contact_id)
+    // 2. the repair customer (find by Books id, else exact name, else create)
+    let rows = unwrap(await zcql(req, `SELECT * FROM ${T.retail} WHERE er_zoho_contact_id = '${esc(contactId)}' LIMIT 1`), T.retail)
+    if (!rows.length) rows = unwrap(await zcql(req, `SELECT * FROM ${T.retail} WHERE er_name = '${esc(contact.contact_name)}' LIMIT 1`), T.retail)
+    const ba = contact.billing_address || {}
+    const fields = { name: contact.contact_name, phone: contact.phone || contact.mobile || (rows[0]?.er_phone || ''), email: contact.email || (rows[0]?.er_email || ''), address: ba.address || (rows[0]?.er_address || ''), city: ba.city || (rows[0]?.er_city || ''), zip: ba.zip || (rows[0]?.er_zip || ''), zoho_contact_id: contactId, updated_at: now() }
+    let customer
+    if (rows.length) { await tbl(req, T.retail).updateRow({ ROWID: String(rows[0].ROWID), ...retailToRow(fields) }); customer = await getRetail(req, String(rows[0].ROWID)) }
+    else { const ins = await tbl(req, T.retail).insertRow(retailToRow({ ...fields, source: 'imported from Zoho Books', vehicles: [], tags: [], last_contact: now(), created_at: now() })); customer = await getRetail(req, String(ins.ROWID)) }
+    // 3. every Books invoice for this contact (all time), minus the ones already imported
+    const invs = []
+    for (let page = 1; page <= 20; page++) { const r = await axios.get(`${B}/invoices`, { headers: H, params: { ...P, customer_id: contactId, per_page: 200, page, sort_column: 'date', sort_order: 'A' }, timeout: 20000 }); invs.push(...(r.data?.invoices || [])); if (r.data?.page_context?.has_more_page !== true) break }
+    const live = invs.filter(i => !['void', 'draft'].includes(String(i.status || '').toLowerCase()))
+    const have = new Set(unwrap(await zcql(req, `SELECT es_zoho_invoice_id FROM ${T.est} WHERE es_customer_id = '${esc(customer.id)}' LIMIT 300`), T.est).map(r => String(r.es_zoho_invoice_id || '')).filter(Boolean))
+    const todo = live.filter(i => !have.has(String(i.invoice_id))).slice(0, limit)
+    const settings = await loadSettings(req)
+    const cf = (inv, ...keys) => { for (const f of inv.custom_fields || []) { const k = String(f.api_name || '').toLowerCase(), l = String(f.label || '').toLowerCase(); if (keys.some(x => k === x || l === x)) return String(f.value || '').trim() } return '' }
+    const imported = []
+    for (const li of todo) {
+      const d = await axios.get(`${B}/invoices/${li.invoice_id}`, { headers: H, params: P, timeout: 20000, validateStatus: st => st < 500 })
+      const inv = d.data?.invoice; if (!inv) continue
+      const notes = String(inv.notes || '')
+      const milesM = notes.match(/(?:odometer|mileage|miles)[^0-9]{0,12}([0-9][0-9,]{3,7})/i) || String(cf(inv, 'cf_odometer', 'odometer', 'mileage')).match(/([0-9][0-9,]{3,7})/)
+      const vehicle = { year: cf(inv, 'cf_year', 'year'), make: cf(inv, 'cf_make', 'make'), model: cf(inv, 'cf_model', 'model'), vin: cf(inv, 'cf_vin', 'vin').toUpperCase().replace(/[^A-Z0-9]/g, ''), plate: cf(inv, 'cf_plate', 'plate', 'license plate') }
+      const lines = (inv.line_items || []).map(x => ({ id: newId(), desc: [x.name, x.description].filter(Boolean).join(' — ').slice(0, 300), rate_key: 'mechanical', hours: 0, rate_override_cents: null, flat_cents: Math.round(Number(x.item_total ?? (Number(x.rate) * Number(x.quantity || 1))) * 100), item_id: x.item_id ? String(x.item_id) : undefined, taxable: Number(x.tax_percentage) > 0 || !!x.tax_id, notes: '', parts: [] }))
+      const subtotal = Math.round(Number(inv.sub_total || 0) * 100), tax = Math.round(Number(inv.tax_total || 0) * 100), discount = Math.round(Number(inv.discount_total ?? inv.discount ?? 0) * 100)
+      const invDate = String(inv.date || li.date || '').slice(0, 10)
+      const e = {
+        number: await nextNumber(req), status: 'invoiced', customer_kind: 'retail', customer_id: customer.id, customer_name: customer.name, customer_type: 'retail',
+        customer_contact: { phone: customer.phone, email: customer.email, address: customer.address, city: customer.city, zip: customer.zip }, zoho_contact_id: contactId, reseller_permit: '',
+        ...vehicle, trim: '', mileage: milesM ? milesM[1] : '', ro_number: cf(inv, 'cf_ro_1', 'ro#', 'ro #', 'ro') || String(inv.reference_number || ''), claim_number: '', insurer: cf(inv, 'cf_insurer', 'insurer'),
+        service_address: customer.address, service_city: customer.city, service_zip: customer.zip,
+        tax_enabled: tax > 0, tax_rate_bp: tax > 0 && subtotal > 0 ? Math.round(tax / Math.max(1, subtotal - discount) * 10000) : 0, zoho_tax_id: '', tax_note: tax > 0 ? '' : 'imported from Zoho Books · no tax on the invoice',
+        supplies_enabled: false, supplies_pct_bp: settings.supplies_pct_bp, supplies_cap_cents: settings.supplies_cap_cents, discount_type: discount > 0 ? 'flat' : 'none', discount_value: discount, detail_level: '',
+        labor_rate_cents: settings.labor_rate_cents || 20000, parts_markup_bp: settings.parts_markup_bp ?? 4000,
+        concern: notes.slice(0, 2000) || `Imported from Zoho Books invoice ${inv.invoice_number}`, notes: `Imported from Zoho Books · invoice ${inv.invoice_number} · status ${inv.status} · balance $${Number(inv.balance || 0).toFixed(2)}`, terms: '', valid_until: '',
+        totals: {}, grand_total_cents: Math.round(Number(inv.total || 0) * 100), flags: [], zoho_invoice_id: String(inv.invoice_id), zoho_invoice_number: String(inv.invoice_number || ''), pushed_at: invDate, push_status: `imported from Books by ${who(req)}`,
+        sent_at: invDate, approved_at: invDate, created_by: 'Zoho Books import', created_at: `${invDate}T12:00:00.000Z`, updated_at: now(),
+      }
+      const row = await tbl(req, T.est).insertRow(estToRow(e)); const estId = String(row.ROWID)
+      const jobName = (lines[0]?.desc || `Invoice ${inv.invoice_number}`).split(' — ')[0].slice(0, 200)
+      await tbl(req, T.job).insertRow(jobToRow({ estimate_id: estId, sort: 0, name: lines.length > 1 ? `Invoice ${inv.invoice_number} · ${lines.length} items` : jobName, invoice_description: lines.map(l => l.desc.split(' — ')[0]).join(', ').slice(0, 255), category: /calibrat|scan|adas|radar|camera/i.test(lines.map(l => l.desc).join(' ')) ? 'calibration' : 'mechanical', status: 'approved', lines, notes: '', authorized_at: `${invDate}T12:00:00.000Z`, authorized_by_name: customer.name, authorized_method: 'written', authorized_by_employee: 'Zoho Books (imported)', authorized_amount_cents: Math.round(Number(inv.total || 0) * 100), created_at: now(), updated_at: now() }))
+      await recompute(req, estId, { touchedJobId: null })
+      // keep the Books total as the number of record on the imported estimate
+      await tbl(req, T.est).updateRow({ ROWID: estId, es_grand_total_cents: Math.round(Number(inv.total || 0) * 100) })
+      if (vehicle.vin || vehicle.make) await rememberVehicle(req, customer.id, { ...vehicle, mileage: e.mileage, last_service: invDate })
+      imported.push({ estimate_id: estId, number: e.number, invoice: inv.invoice_number, date: invDate, total: Number(inv.total || 0), vehicle: [vehicle.year, vehicle.make, vehicle.model].filter(Boolean).join(' '), lines: lines.length })
+    }
+    res.json({ ok: true, customer: await getRetail(req, customer.id), books: { contact_id: contactId, name: contact.contact_name, invoices_total: live.length, outstanding: Number(contact.outstanding_receivable_amount || 0) }, imported, remaining: live.length - have.size - imported.length })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 // Service history + warranty (Mark 2026-09-15)
 R.get('/retail-customers/:id/history', async (req, res) => { try { const { vehicleHistory } = await import('../services/estimator/history.js'); res.json({ ok: true, ...(await vehicleHistory(req, internals, { customer_id: String(req.params.id) })) }) } catch (e) { fail(res, e, 'history') } })
 R.get('/vehicle-history', async (req, res) => { try { const { vehicleHistory } = await import('../services/estimator/history.js'); const vin = String(req.query.vin || '').trim(); const cid = String(req.query.customer_id || '').trim(); if (!vin && !cid) return res.json({ ok: true, vehicles: [] }); res.json({ ok: true, ...(await vehicleHistory(req, internals, vin.length >= 8 ? { vin } : { customer_id: cid })) }) } catch (e) { fail(res, e, 'vehicle history') } })

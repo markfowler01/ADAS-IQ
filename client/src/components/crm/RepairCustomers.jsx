@@ -56,6 +56,7 @@ export default function RepairCustomers({ user, onNavigate, modeToggle }) {
         <div className="flex items-center gap-2">
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, phone, VIN, plate, vehicle" className="px-3 py-2 text-sm w-64 max-w-full" style={inp} />
           {canEdit && <button onClick={() => setAdding(true)} className="rounded-xl px-4 py-2 text-sm font-bold text-white" style={{ backgroundColor: ORANGE }}>＋ New customer</button>}
+          {canEdit && <button onClick={async () => { const name = prompt('Zoho Books customer name to bring over (with all invoices):'); if (!name) return; setErr(''); try { let r = await j('/api/estimator/retail-customers/import-books', body('POST', { name })); let n = r.imported.length; while (r.remaining > 0) { r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: r.books.contact_id })); n += r.imported.length } await load(); setSelId(r.customer.id); alert(`${r.books.name}: ${n} invoice${n === 1 ? '' : 's'} imported as service history`) } catch (e) { setErr(e.message + (e.candidates ? '' : '')) } }} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: '1.5px solid #bfdbfe' }}>⬇ From Zoho Books</button>}
         </div>
       </div>
       {err && <Notice tone="red" className="mb-3">{err} <button className="underline ml-2" onClick={() => setErr('')}>dismiss</button></Notice>}
@@ -168,6 +169,7 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
             {canEdit && (
               <div className="flex gap-2 flex-wrap">
                 <button onClick={() => newEstimate()} disabled={busy === 'est'} className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: ORANGE }}>{busy === 'est' ? 'Creating…' : '📝 New estimate'}</button>
+                {c.zoho_contact_id && <button onClick={async () => { setBusy('imp'); setErr(''); try { let r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); let n = r.imported.length; while (r.remaining > 0) { r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); n += r.imported.length } await load(); alert(n ? `${n} new invoice${n === 1 ? '' : 's'} imported` : 'Already up to date with Books') } catch (e) { setErr(e.message) } finally { setBusy('') } }} disabled={busy === 'imp'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #bfdbfe` }}>{busy === 'imp' ? '…' : '⬇ Pull Books history'}</button>}
                 {!c.zoho_contact_id && <button onClick={books} disabled={busy === 'books'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #bfdbfe` }}>{busy === 'books' ? '…' : '🧾 Create in Books'}</button>}
                 {isOwner && c.phone && <button onClick={() => setTextTo({ phone: c.phone, name: c.name })} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: '#555', border: '1.5px solid #e0dbd6' }}>💬 as Mark</button>}
               </div>
@@ -197,6 +199,7 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
                 </div>
               )}
             </Panel>
+            {c.zoho_contact_id && <BooksAccount contactId={c.zoho_contact_id} onOpenEstimate={onOpenEstimate} />}
             <Panel tone="orange" title={`🔧 Service history · ${(hist?.vehicles || []).reduce((s, v) => s + v.visits, 0)} visit${(hist?.vehicles || []).reduce((s, v) => s + v.visits, 0) === 1 ? '' : 's'}`} right={hist?.warranty ? `guaranteed ${hist.warranty.months} mo / ${Number(hist.warranty.miles).toLocaleString()} mi` : ''}>
               {!hist && <div className="px-3 py-3 text-xs" style={{ color: '#999' }}>Loading…</div>}
               {hist && !hist.vehicles.length && <div className="px-3 py-3 text-xs italic" style={{ color: '#999' }}>No work recorded yet. Approved and invoiced estimates show up here per car, with the odometer at each visit.</div>}
@@ -235,5 +238,23 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
       </div>
       {textTo && <TextAsMarkModal to={textTo.phone} toName={textTo.name} purpose="repair customer" onClose={() => setTextTo(null)} />}
     </div>
+  )
+}
+
+
+// Books account: balance, invoices with what's still owed, and every payment — from the AR mirror.
+function BooksAccount({ contactId, onOpenEstimate }) {
+  const [d, setD] = useState(null); const [err, setErr] = useState('')
+  useEffect(() => { j(`/api/ar/accounts/${contactId}`).then(setD).catch(e => setErr(e.message)) }, [contactId])
+  if (err) return <Notice tone="amber">Books account not in the mirror yet ({err}). It appears after the nightly pull, or tap "Pull accounts" in Books → Accounts.</Notice>
+  if (!d) return null
+  const a = d.account; const open = d.invoices.filter(i => i.balance_cents > 0)
+  return (
+    <Panel tone="blue" title="🏦 Zoho Books account" right={a.books_outstanding_cents > 0 ? <span style={{ color: '#b91c1c' }}>owes {fmtCents(a.books_outstanding_cents)}</span> : 'paid up'}>
+      <div className="px-3 py-2 text-xs" style={{ color: '#555' }}>{d.invoices.length} invoice{d.invoices.length === 1 ? '' : 's'} · {d.payments.length} payment{d.payments.length === 1 ? '' : 's'}{a.last_payment ? ` · last paid ${a.last_payment}` : ''}{a.unused_credits_cents > 0 ? ` · unused credit ${fmtCents(a.unused_credits_cents)}` : ''}</div>
+      {open.map(i => <Row key={i.invoice_id} left={<span className="text-xs"><b>{i.number}</b> · {i.date} · {i.status}</span>} right={<span className="text-xs font-bold" style={{ color: '#b91c1c' }}>due {fmtCents(i.balance_cents)}</span>} />)}
+      {d.payments.slice(0, 8).map(p => <Row key={p.payment_id} left={<span className="text-xs">💳 {p.date} · {p.mode}{p.invoices ? ` · ${p.invoices}` : ''}</span>} right={<span className="text-xs">{fmtCents(p.amount_cents)}</span>} />)}
+      {d.payments.length > 8 && <div className="px-3 pb-2 text-[11px]" style={{ color: '#888' }}>+{d.payments.length - 8} more payments in Books → Accounts</div>}
+    </Panel>
   )
 }
