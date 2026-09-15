@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
-import { STAGES, REGIONS } from './crmConstants.js'
+import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel } from './crmConstants.js'
+import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
 import Navbar from './Navbar'
 import RepairCustomers from './crm/RepairCustomers.jsx'  // repair customers, kept separate from shops (2026-09-14)
 import CRMImportModal from './CRMImportModal'
@@ -203,9 +204,12 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
           {shop.region && (
             <span className="text-xs px-1.5 rounded-full"
               style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.9)', fontSize: '10px' }}>
-              {shop.region}
+              📍 {zoneLabel(shop.region)}
             </span>
           )}
+          {(() => { const sd = staleDays(shop); return sd > 0 && shop.pipeline_stage !== 'target' ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>⏰ {sd}d past the clock</span> : null })()}
+          {shop.fit_score != null && shop.fit_score !== '' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>fit {shop.fit_score}</span>}
+          {shop.next_action && IN_PLAY_STAGES.includes(shop.pipeline_stage) && <span className="text-[10px] px-1.5 py-0.5 rounded-full truncate" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', maxWidth: 180 }}>→ {shop.next_action}</span>}
           {shop.assigned_to && (
             <span className="text-xs px-1.5 rounded-full font-semibold"
               style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white', fontSize: '10px' }}>
@@ -474,6 +478,11 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
     apiFetch(`${API_BASE}/api/shops/big3-map`).then(r => r.json()).then(d => { if (d.ok) setBig3Missing(d.missing || []) }).catch(() => {})
   }, [shops.length])
   const [regionFilter,  setRegionFilter]  = useState('')
+  const [ownerFilter,   setOwnerFilter]   = useState('')
+  const [staleOnly,     setStaleOnly]     = useState(false)
+  const [gridOpen,      setGridOpen]      = useState(false)
+  const [mondayOpen,    setMondayOpen]    = useState(false)
+  const [nextPrompt,    setNextPrompt]    = useState(null)   // { shop, stage } waiting for a next action
   const [showOverdue,   setShowOverdue]   = useState(false)
   const [dragShop,      setDragShop]      = useState(null)
   const [dragOverStage, setDragOverStage] = useState(null)
@@ -534,13 +543,17 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
     showToast('Shop removed')
   }
 
-  async function handleStageChange(shop, newStage) {
-    setShops(prev => prev.map(s => s.id === shop.id ? { ...s, pipeline_stage: newStage } : s))
+  async function handleStageChange(shop, newStage, extra = null) {
+    // Territory rules (2026-09-15): moving into an in-play stage needs a next follow-up + action;
+    // the owner's in-play cap is a warning, not a wall.
+    if (IN_PLAY_STAGES.includes(newStage) && !extra && !shop.next_followup) { setNextPrompt({ shop, stage: newStage }); return }
+    if (IN_PLAY_STAGES.includes(newStage) && !IN_PLAY_STAGES.includes(shop.pipeline_stage)) { const o = ownerOf(shop); if (o && inPlayCount(shops, o) >= IN_PLAY_CAP) setToast(`⚠ ${o} already has ${IN_PLAY_CAP} in play — park something before adding more`) }
+    setShops(prev => prev.map(s => s.id === shop.id ? { ...s, pipeline_stage: newStage, ...(extra || {}) } : s))
     try {
       const res = await apiFetch(`${API_BASE}/api/shops/${shop.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pipeline_stage: newStage }),
+        body: JSON.stringify({ pipeline_stage: newStage, ...(extra || {}) }),
       })
       if (!res.ok) throw new Error('Move failed')
       if (detailShop?.id === shop.id) setDetailShop(s => ({ ...s, pipeline_stage: newStage }))
@@ -572,7 +585,9 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
     if (showOverdue && !isOverdue(s) && !isDueToday(s)) return false
     if (stageFilter  && s.pipeline_stage !== stageFilter)  return false
     if (big3Only && !big3Missing.some(m => m.id === s.id)) return false
-    if (regionFilter && s.region !== regionFilter)         return false
+    if (regionFilter && (regionFilter === 'unzoned' ? !!zoneOf(s) : zoneOf(s) !== regionFilter)) return false
+    if (ownerFilter && ownerOf(s) !== ownerFilter)          return false
+    if (staleOnly && !((staleDays(s) || 0) > 0 && s.pipeline_stage !== 'target')) return false
     if (search.trim()) {
       const q = search.toLowerCase()
       const peopleMatch = (s.people || []).some(p =>
@@ -732,6 +747,9 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
 
         {/* Stats bar */}
         {!loading && !error && <StatsBar shops={shops} />}
+        {!loading && !error && <SetupBanner shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onApplied={n => { setToast(`🗺 Zones and owners set on ${n} shops`); fetchShops() }} />}
+        {!loading && !error && <InPlayBar shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} />}
+        {!loading && !error && gridOpen && <TerritoryGrid shops={shops} onPick={(z, st) => { setRegionFilter(z || 'unzoned'); setStageFilter(st); setShowOverdue(false); setGridOpen(false) }} />}
 
         {/* Filter pills */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
@@ -770,16 +788,19 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
             )
           })}
 
-          {/* Region filters */}
-          {usedRegions.length > 1 && usedRegions.map(r => (
-            <button key={r} onClick={() => setRegionFilter(regionFilter === r ? '' : r)}
+          {/* Zone + owner filters (2026-09-15) */}
+          {ZONES.map(z => { const n = shops.filter(sh => zoneOf(sh) === z.id).length; return (
+            <button key={z.id} onClick={() => setRegionFilter(regionFilter === z.id ? '' : z.id)}
               className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
-              style={regionFilter === r
-                ? { backgroundColor: '#e0e7ff', color: '#3730a3', border: '1px solid #a5b4fc' }
-                : { backgroundColor: '#f5f3f0', color: '#888' }}>
-              📍 {r}
-            </button>
+              style={regionFilter === z.id ? { backgroundColor: '#e0e7ff', color: '#3730a3', border: '1px solid #a5b4fc' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
+              📍 {z.label} ({n})
+            </button>) })}
+          {shops.some(sh => !zoneOf(sh)) && <button onClick={() => setRegionFilter(regionFilter === 'unzoned' ? '' : 'unzoned')} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={regionFilter === 'unzoned' ? { backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#f5f3f0', color: '#888' }}>📍 No zone ({shops.filter(sh => !zoneOf(sh)).length})</button>}
+          {TEAM_MEMBERS.map(o => (
+            <button key={o} onClick={() => setOwnerFilter(ownerFilter === o ? '' : o)} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
+              style={ownerFilter === o ? { backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #86efac' } : { backgroundColor: '#f5f3f0', color: '#888' }}>👤 {o}</button>
           ))}
+          <button onClick={() => setStaleOnly(v => !v)} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={staleOnly ? { backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#f5f3f0', color: '#888' }}>⏰ Gone quiet ({shops.filter(sh => (staleDays(sh) || 0) > 0 && sh.pipeline_stage !== 'target' && !['lost', 'denied'].includes(sh.pipeline_stage)).length})</button>
         </div>
 
         {loading && (
@@ -984,6 +1005,10 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
           }}
         />
       )}
+
+      {nextPrompt && <NextActionModal shop={nextPrompt.shop} stage={nextPrompt.stage} onCancel={() => setNextPrompt(null)} onConfirm={extra => { const p = nextPrompt; setNextPrompt(null); handleStageChange(p.shop, p.stage, extra) }} />}
+
+      {mondayOpen && <MondayModal isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onClose={() => setMondayOpen(false)} onOpenShop={id => { const sh = shops.find(x => x.id === id); if (sh) { setMondayOpen(false); setDetailShop(sh) } }} />}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] px-4 py-2.5 rounded-2xl shadow-xl text-sm font-medium text-white"

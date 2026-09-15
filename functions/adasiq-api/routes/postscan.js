@@ -352,6 +352,7 @@ router.post('/run', async (req, res) => {
   try {
     const { maybeNightlyMirror } = await import('../services/zohoMirror.js')
     const zm = await maybeNightlyMirror(req)
+    try { const { maybeMondayPipeline } = await import('../services/pipeline.js'); const mp = await maybeMondayPipeline(req); if (mp.fired) console.log('[pipeline] monday lists:', JSON.stringify(mp).slice(0, 300)) } catch (e) { console.log('[pipeline] monday failed:', e.message) }
     try { const { maybeNightlyAr } = await import('../services/ar.js'); const ar = await maybeNightlyAr(req); if (ar.fired) console.log('[ar] nightly:', JSON.stringify(ar).slice(0, 400)) } catch (e) { console.log('[ar] nightly failed:', e.message) }
     if (zm.fired) console.log('[postscan] zoho mirror:', JSON.stringify({ invoices: zm.invoices, payments: zm.payments }))
   } catch (e) {

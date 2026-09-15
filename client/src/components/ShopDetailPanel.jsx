@@ -4,7 +4,7 @@ import Big3Rules, { DrpRules, BooksLink } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import {
   STAGES, ACTIVITY_TYPES, TITLES,
-  REFERRAL_SOURCES, LOST_REASONS, DENIED_REASONS, REGIONS, TEAM_MEMBERS, DEFAULT_COMPETITORS,
+  REFERRAL_SOURCES, LOST_REASONS, DENIED_REASONS, REGIONS, ZONES, TEAM_MEMBERS, DEFAULT_COMPETITORS,
 } from './crmConstants.js'
 import CRMTemplatesModal from './CRMTemplatesModal.jsx'
 import BillingRulesEditor from './books/BillingRulesEditor.jsx'
@@ -290,13 +290,13 @@ function InfoTab({ form, setForm }) {
       {/* Region + Assigned To */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Region</label>
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Zone · route day</label>
           <select className="w-full border rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none"
             style={{ borderColor: '#e0dbd6' }}
             value={form.region || ''}
             onChange={e => setField('region', e.target.value)}>
             <option value="">— Select —</option>
-            {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            {ZONES.map(z => <option key={z.id} value={z.id}>{z.label} · {z.owner} · {z.day}</option>)}
           </select>
         </div>
         <div>
@@ -400,6 +400,23 @@ function InfoTab({ form, setForm }) {
           <input className="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none"
             style={{ borderColor: '#e0dbd6' }}
             type="date" value={form.next_followup || ''} onChange={e => setField('next_followup', e.target.value)} />
+        </div>
+      </div>
+
+      {/* Cadence: what the next touch is, and how good a fit this shop is (2026-09-15) */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="col-span-2">
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Next action</label>
+          <input className="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none" style={{ borderColor: '#e0dbd6' }}
+            value={form.next_action || ''} onChange={e => setField('next_action', e.target.value)} placeholder="What the next touch is" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Fit 0–10</label>
+          <div className="flex gap-1">
+            <input className="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none" style={{ borderColor: '#e0dbd6' }} inputMode="numeric"
+              value={form.fit_score ?? ''} onChange={e => setField('fit_score', e.target.value === '' ? '' : Math.max(0, Math.min(10, parseInt(e.target.value, 10) || 0)))} placeholder="—" />
+            <button type="button" title="Suggest from DRPs, volume, contacts" onClick={async () => { try { const r = await apiFetch(`${API_BASE}/api/pipeline/fit-suggest/${shop.id}`); const d = await r.json(); if (d.ok) setField('fit_score', d.fit) } catch {} }} className="text-xs font-bold px-2 rounded-xl" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>✨</button>
+          </div>
         </div>
       </div>
 
@@ -735,6 +752,8 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
     people:     Array.isArray(shop.people)     ? shop.people     : [],
     activities: Array.isArray(shop.activities) ? shop.activities : [],
     next_followup: shop.next_followup || '',
+    next_action: shop.next_action || '',
+    fit_score: shop.fit_score ?? '',
   })
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState(null)

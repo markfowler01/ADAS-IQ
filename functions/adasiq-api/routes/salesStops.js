@@ -132,7 +132,7 @@ function miles(a, b, c, d) {
 // days since the last invoice so "haven't been there in a while" shops
 // rise to the top — the seed of the relationship radar.
 let _invCache = { at: 0, byKey: {} }
-async function lastInvoiceByShop() {
+export async function lastInvoiceByShop() {   // exported 2026-09-15 for the pipeline quiet clock
   if (Date.now() - _invCache.at < 10 * 60 * 1000) return _invCache.byKey
   try {
     const { listInvoicesForDateRange } = await import('../services/zoho.js')
@@ -194,6 +194,7 @@ router.get('/nearby', async (req, res) => {
       getAllShops(req), allStops(req).catch(() => []), geo.readGeocache(req).catch(() => ({})), lastInvoiceByShop(),
     ])
     const norm = geo.normalizeKey
+    const pz = await import('../services/pipeline.js')
     // Union: CRM shops first, then Books customers the CRM doesn't know.
     const seen = new Set()
     const rows = []
@@ -204,7 +205,7 @@ router.get('/nearby', async (req, res) => {
       // years doesn't read "never stopped".
       const visits = (Array.isArray(sh.activities) ? sh.activities : []).filter(a => a && (a.type === 'visit' || a.type === 'meeting'))
       const lastVisit = visits.map(a => String(a.at || '').slice(0, 10)).filter(Boolean).sort().pop() || String(sh.last_contact || '').slice(0, 10) || null
-      rows.push({ id: sh.id, shop_name: sh.shop_name, pipeline_stage: sh.pipeline_stage, address: sh.address || '', in_crm: true, crm_last_visit: lastVisit, crm_visits: visits.length })
+      rows.push({ id: sh.id, shop_name: sh.shop_name, pipeline_stage: sh.pipeline_stage, address: sh.address || '', in_crm: true, crm_last_visit: lastVisit, zone: pz.zoneOf(sh), owner: pz.ownerOf(sh), fit: Number(sh.fit_score) || pz.fitSuggest(sh), in_play: pz.IN_PLAY_STAGES.includes(sh.pipeline_stage), crm_visits: visits.length })
     }
     for (const [k, v] of Object.entries(cache)) {
       if (!k || typeof v !== 'object') continue
@@ -262,7 +263,8 @@ router.get('/nearby', async (req, res) => {
     let list
     if (qs) list = fuzzyFilter(out, qs).slice(0, 25)
     else if (wantAll) list = out.sort((a, b) => a.shop_name.localeCompare(b.shop_name)).slice(0, 300)
-    else if (hasLoc) list = out.filter(r => r.distance_mi != null).sort((a, b) => a.distance_mi - b.distance_mi).slice(0, 15)
+    // Route-day rule (2026-09-15): shops in play (Qualified→Proposal) come first, then by distance.
+    else if (hasLoc) list = out.filter(r => r.distance_mi != null).sort((a, b) => (b.in_play ? 1 : 0) - (a.in_play ? 1 : 0) || a.distance_mi - b.distance_mi).slice(0, 15)
     else {
       // No location: body shops first (CRM shops + repeat customers),
       // longest since a job at the top; one-off cash customers last.

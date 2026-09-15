@@ -48,6 +48,9 @@ function rowToShop(row) {
     denied_reason:     r.denied_reason     || '',
     kinetic_in_bed:    r.kinetic_in_bed === 'true' || r.kinetic_in_bed === true,
     zoho_contact_id:   r.zoho_contact_id   || '',
+    next_action:       r.next_action       || '',   // pipeline cadence (2026-09-15)
+    fit_score:         r.fit_score == null || r.fit_score === '' ? null : Number(r.fit_score),
+    stage_changed_at:  r.stage_changed_at  || '',
     created_at:        r.created_at        || '',
     shop_id:           r.shop_id           || '',
   }
@@ -82,6 +85,9 @@ function shopToRow(shop) {
     denied_reason:     shop.denied_reason     || '',
     kinetic_in_bed:    String(Boolean(shop.kinetic_in_bed)),
     zoho_contact_id:   shop.zoho_contact_id   || '',
+    next_action:       String(shop.next_action || '').slice(0, 255),
+    fit_score:         shop.fit_score == null || shop.fit_score === '' ? null : Math.max(0, Math.min(10, Number(shop.fit_score) || 0)),
+    stage_changed_at:  shop.stage_changed_at  || '',
     created_at:        shop.created_at        || new Date().toISOString(),
     shop_id:           shop.shop_id || shop.id || '',
   }
@@ -591,6 +597,7 @@ router.put('/:id', async (req, res) => {
     const table = getTable(req)
     const current = rowToShop(await table.getRow(String(req.params.id)))
     const merged = { ...current, ...req.body, id: current.id, created_at: current.created_at }
+    if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) merged.stage_changed_at = new Date().toISOString()
     const updated = await updateShop(req, req.params.id, merged)
     res.json(updated)
   } catch (err) {
@@ -605,6 +612,7 @@ router.patch('/:id', async (req, res) => {
     const table = getTable(req)
     const current = rowToShop(await table.getRow(String(req.params.id)))
     const merged = { ...current, ...req.body }
+    if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) merged.stage_changed_at = new Date().toISOString()
     const updated = await updateShop(req, req.params.id, merged)
 
     // New customer with no Big 3 rule → ask for it once (Mark 2026-09-10).
