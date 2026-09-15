@@ -122,7 +122,7 @@ function LostSection({ form, setField }) {
 
 // ─── Denied Section ────────────────────────────────────────────────────────────
 // Shown inside InfoTab when stage = 'denied'. Tracks denial reason + who they currently use.
-function DeniedSection({ form, setField }) {
+function DeniedSection({ form, setField, backup = false }) {
   const [newComp, setNewComp] = useState('')
   const [adding,  setAdding]  = useState(false)
 
@@ -151,6 +151,7 @@ function DeniedSection({ form, setField }) {
 
   return (
     <div className="p-3 rounded-xl space-y-3" style={{ backgroundColor: '#fff5f5', border: '1px solid #fecaca' }}>
+      {!backup && (<>
       {/* Denied reasons — multi-select pills */}
       <div>
         <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wide" style={{ color: '#b91c1c' }}>
@@ -170,10 +171,11 @@ function DeniedSection({ form, setField }) {
         </div>
       </div>
 
+      </>)}
       {/* Who do they currently use */}
       <div>
         <label className="block text-xs font-semibold mb-1.5 uppercase tracking-wide" style={{ color: '#b91c1c' }}>
-          Who Do They Currently Use?
+          {backup ? 'Who is their primary ADAS guy?' : 'Who Do They Currently Use?'}
           <span className="normal-case font-normal ml-1" style={{ color: '#bbb' }}>tap to tag</span>
         </label>
         <div className="flex flex-wrap gap-1.5">
@@ -220,7 +222,7 @@ function DeniedSection({ form, setField }) {
 function InfoTab({ form, setForm }) {
   function setField(k, v) { setForm(f => ({ ...f, [k]: v })) }
   const isLost   = form.pipeline_stage === 'lost'
-  const isDenied = form.pipeline_stage === 'denied'
+  const isDenied = form.pipeline_stage === 'denied' || form.pipeline_stage === 'active2'   // both 'own ADAS guy' columns tag who they use
 
   return (
     <div className="space-y-4">
@@ -248,7 +250,7 @@ function InfoTab({ form, setForm }) {
 
       {/* Denied details — only when Denied is selected */}
       {isDenied && (
-        <DeniedSection form={form} setField={setField} />
+        <DeniedSection form={form} setField={setField} backup={form.pipeline_stage === 'active2'} />
       )}
 
       {/* Shop Name */}

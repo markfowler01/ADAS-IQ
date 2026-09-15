@@ -19,16 +19,16 @@ export const IN_PLAY_CAP = 10
 // Stage ids stay what the app already uses (other features key on them);
 // labels and cadence are the new part. quiet = max days without a touch.
 export const STAGE_META = {
-  target:     { label: 'Target',        quiet: 30,   inplay: false, exit: 'Fit checked: DRPs, car count, current cal vendor, decision maker named' },
-  contacted:  { label: 'Qualified',     quiet: 14,   inplay: true,  exit: 'A real two-way conversation with the decision maker' },
-  interested: { label: 'Engaged',       quiet: 10,   inplay: true,  exit: 'In-person visit done, or they asked for pricing or a demo' },
-  trial:      { label: 'Trial',         quiet: 7,    inplay: true,  exit: 'First job or first quote in their hands' },
-  proposal:   { label: 'Proposal',      quiet: 5,    inplay: true,  exit: 'Partnership discount offered with a number on paper' },
-  active:     { label: 'Active',        quiet: 30,   inplay: false, exit: 'First invoice paid' },
-  active2:    { label: 'Expand',        quiet: 14,   inplay: false, exit: 'Getting some of their cars, not all' },
-  dormant:    { label: 'Dormant',       quiet: 90,   inplay: false, exit: 'Was Active, no job in 60 days' },
-  denied:     { label: 'Do not pursue', quiet: null, inplay: false, exit: 'Reason recorded' },
-  lost:       { label: 'Lost',          quiet: null, inplay: false, exit: 'Reason recorded' },
+  target:     { label: 'Not contacted',                   quiet: 30,   inplay: false, exit: 'Nobody has talked to them yet' },
+  contacted:  { label: 'Contacted',                       quiet: 14,   inplay: true,  exit: 'We reached them; find the decision maker' },
+  interested: { label: 'Shown interest',                  quiet: 10,   inplay: true,  exit: 'They asked questions or want to see more' },
+  proposal:   { label: 'High value offer · free demo',    quiet: 5,    inplay: true,  exit: 'Offer or free calibration demo on the table' },
+  active:     { label: 'Current customer',                quiet: 30,   inplay: false, exit: 'They send us cars' },
+  active2:    { label: 'Own ADAS guy · we are backup',    quiet: 45,   inplay: false, exit: 'We are the backup; tag who they use' },
+  denied:     { label: 'Own ADAS guy · not interested',   quiet: 90,   inplay: false, exit: 'Tag who they use; check back in 90 days' },
+  lost:       { label: 'Lost',                            quiet: null, inplay: false, exit: 'Reason recorded' },
+  trial:      { label: 'High value offer · free demo',    quiet: 5,    inplay: true,  exit: 'legacy id' },
+  dormant:    { label: 'Dormant',                         quiet: 90,   inplay: false, exit: 'legacy id' },
 }
 export const IN_PLAY_STAGES = Object.keys(STAGE_META).filter(k => STAGE_META[k].inplay)
 
@@ -88,17 +88,18 @@ export async function withInvoiceDates(shops) {
   } catch (e) { console.log('[pipeline] invoice dates skipped:', e.message); return shops }
 }
 export function mondayList(shops, owner, today = todayPT()) {
-  const mine = shops.filter(s => ownerOf(s) === owner && !['lost', 'denied'].includes(s.pipeline_stage))
+  const mine = shops.filter(s => ownerOf(s) === owner && s.pipeline_stage !== 'lost')
   const weekEnd = new Date(today); weekEnd.setDate(weekEnd.getDate() + 7); const we = weekEnd.toISOString().slice(0, 10)
   const item = s => ({ id: s.id, shop: s.shop_name, stage: s.pipeline_stage, stage_label: STAGE_META[s.pipeline_stage]?.label || s.pipeline_stage, zone: zoneOf(s), zone_label: ZONE_BY_ID[zoneOf(s)]?.label || 'no zone', next_followup: s.next_followup || '', next_action: s.next_action || '', last_touch: lastTouch(s), stale: staleDays(s, today), fit: Number(s.fit_score) || fitSuggest(s), phone: s.phone || '' })
   const overdue = mine.filter(s => s.next_followup && s.next_followup < today).map(item)
   const due = mine.filter(s => s.next_followup && s.next_followup >= today && s.next_followup <= we).map(item)
-  const stale = mine.filter(s => !overdue.some(o => o.id === s.id) && (staleDays(s, today) || 0) > 0 && s.pipeline_stage !== 'target').map(item).sort((a, b) => b.stale - a.stale)
+  const stale = mine.filter(s => !overdue.some(o => o.id === s.id) && (staleDays(s, today) || 0) > 0 && !['target', 'denied'].includes(s.pipeline_stage)).map(item).sort((a, b) => b.stale - a.stale)
+  const checkBack = mine.filter(s => s.pipeline_stage === 'denied' && (staleDays(s, today) || 0) > 0).map(s => ({ ...item(s), uses: s.lost_to || s.denied_to || '' }))
   const inPlay = mine.filter(s => IN_PLAY_STAGES.includes(s.pipeline_stage)).map(item)
   const targets = mine.filter(s => s.pipeline_stage === 'target').map(item).sort((a, b) => b.fit - a.fit).slice(0, 5)
   const dormant = mine.filter(s => s.pipeline_stage === 'dormant' && (staleDays(s, today) || 0) > 0).map(item)
   const zones = ZONES.filter(z => z.owner === owner).map(z => ({ id: z.id, label: z.label, day: z.day, count: mine.filter(s => zoneOf(s) === z.id).length }))
-  return { owner, today, overdue, due_this_week: due, stale, in_play: inPlay, in_play_cap: IN_PLAY_CAP, targets_to_qualify: targets, dormant_due: dormant, zones }
+  return { owner, today, overdue, due_this_week: due, stale, in_play: inPlay, in_play_cap: IN_PLAY_CAP, targets_to_qualify: targets, dormant_due: dormant, check_back: checkBack, zones }
 }
 export function formatMonday(l) {
   const line = i => `• ${i.shop} (${i.stage_label}${i.zone_label ? ` · ${i.zone_label}` : ''})${i.next_action ? ` — ${i.next_action}` : ''}${i.stale > 0 ? ` · ${i.stale}d past the clock` : ''}`
@@ -108,6 +109,7 @@ export function formatMonday(l) {
   if (l.due_this_week.length) parts.push(`*Due this week (${l.due_this_week.length})*\n${l.due_this_week.slice(0, 8).map(i => `• ${i.next_followup} ${i.shop}${i.next_action ? ` — ${i.next_action}` : ''}`).join('\n')}`)
   if (l.targets_to_qualify.length) parts.push(`*Best targets to qualify*\n${l.targets_to_qualify.map(i => `• ${i.shop} (fit ${i.fit}/10 · ${i.zone_label})`).join('\n')}`)
   if (l.dormant_due.length) parts.push(`*Dormant, time for a call (${l.dormant_due.length})*\n${l.dormant_due.slice(0, 5).map(i => `• ${i.shop}`).join('\n')}`)
+  if (l.check_back?.length) parts.push(`*Own ADAS guy — 90-day check back (${l.check_back.length})*\n${l.check_back.slice(0, 6).map(i => `• ${i.shop}${i.uses ? ` (uses ${i.uses})` : ''} · ${i.zone_label}`).join('\n')}`)
   parts.push(`Route days: ${l.zones.map(z => `${z.label} ${z.day} (${z.count})`).join(' · ')}\nGET SOME!!!`)
   return parts.join('\n\n')
 }

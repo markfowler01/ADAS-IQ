@@ -264,13 +264,14 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
         {lastTouchTxt && <p className="text-xs mb-1.5" style={{ color: '#999', fontStyle: 'italic' }}>Last: {lastTouchTxt}</p>}
         {humanNotes.map((line, i) => <p key={i} className="text-xs mb-0.5" style={{ color: '#666' }}>· {line}</p>)}
 
-        {shop.pipeline_stage === 'denied' && (() => {
-          const reasons = Array.isArray(shop.denied_reasons) ? shop.denied_reasons : shop.denied_reason ? [shop.denied_reason] : []
+        {(shop.pipeline_stage === 'denied' || shop.pipeline_stage === 'active2') && (() => {
+          const reasons = shop.pipeline_stage === 'denied' ? (Array.isArray(shop.denied_reasons) ? shop.denied_reasons : shop.denied_reason ? [shop.denied_reason] : []) : []
           return (
             <div className="flex flex-wrap items-center gap-1.5 mt-1 mb-1">
               {reasons.map(r => <span key={r} className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca' }}>{r}</span>)}
-              {reasons.length === 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>🚫 Do not pursue</span>}
-              {shop.denied_to && <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f9f8f7', color: '#888', border: '1px solid #e0dbd6' }}>Uses {shop.denied_to}</span>}
+              {reasons.length === 0 && shop.pipeline_stage === 'denied' && <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>🚫 Not interested right now</span>}
+              {shop.pipeline_stage === 'active2' && !shop.denied_to && <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }}>🔄 Backup · tag their primary</span>}
+              {shop.denied_to && <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f9f8f7', color: '#444', border: '1px solid #e0dbd6' }}>🏢 Uses {shop.denied_to}</span>}
             </div>
           )
         })()}
@@ -379,6 +380,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [gridOpen,      setGridOpen]      = useState(false)
   const [mondayOpen,    setMondayOpen]    = useState(false)
   const [discoverOpen,  setDiscoverOpen]  = useState(false)
+  const [compFilter,    setCompFilter]    = useState('')
   const [nextPrompt,    setNextPrompt]    = useState(null)   // { shop, stage } waiting for a next action
   const [showOverdue,   setShowOverdue]   = useState(false)
   const [dragShop,      setDragShop]      = useState(null)
@@ -484,6 +486,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
     if (big3Only && !big3Missing.some(m => m.id === s.id)) return false
     if (regionFilter && (regionFilter === 'unzoned' ? !!zoneOf(s) : zoneOf(s) !== regionFilter)) return false
     if (ownerFilter && ownerOf(s) !== ownerFilter)          return false
+    if (compFilter && (s.denied_to || s.lost_to || '') !== compFilter) return false
     if (staleOnly && !((staleDays(s) || 0) > 0 && s.pipeline_stage !== 'target')) return false
     if (search.trim()) {
       const q = search.toLowerCase()
@@ -648,7 +651,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
         {!loading && !error && <InPlayBar shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} />}
         {!loading && !error && filtered.length === 0 && shops.length > 0 && (
           <div className="rounded-xl px-3 py-2 mb-3 text-sm flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
-            <span>No shops match {[regionFilter && (regionFilter === 'unzoned' ? 'No zone' : zoneLabel(regionFilter)), ownerFilter, stageFilter && (STAGES.find(x => x.id === stageFilter)?.label), showOverdue && 'Overdue', staleOnly && 'Gone quiet', big3Only && 'No Big 3 rule', search.trim() && `"${search.trim()}"`].filter(Boolean).join(' + ') || 'these filters'}.</span>
+            <span>No shops match {[regionFilter && (regionFilter === 'unzoned' ? 'No zone' : zoneLabel(regionFilter)), ownerFilter, stageFilter && (STAGES.find(x => x.id === stageFilter)?.label), showOverdue && 'Overdue', staleOnly && 'Gone quiet', compFilter && `uses ${compFilter}`, big3Only && 'No Big 3 rule', search.trim() && `"${search.trim()}"`].filter(Boolean).join(' + ') || 'these filters'}.</span>
             <button onClick={() => { setStageFilter(''); setRegionFilter(''); setShowOverdue(false); setOwnerFilter(''); setStaleOnly(false); setBig3Only(false); setSearch('') }} className="text-xs font-bold px-3 py-1 rounded-full" style={{ backgroundColor: '#92400e', color: 'white' }}>Clear filters</button>
           </div>
         )}
@@ -657,7 +660,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
         {/* Filter pills */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
           {/* All */}
-          <button onClick={() => { setStageFilter(''); setRegionFilter(''); setShowOverdue(false); setOwnerFilter(''); setStaleOnly(false); setBig3Only(false) }}
+          <button onClick={() => { setStageFilter(''); setRegionFilter(''); setShowOverdue(false); setOwnerFilter(''); setStaleOnly(false); setBig3Only(false); setCompFilter('') }}
             className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
             style={!stageFilter && !showOverdue && !regionFilter
               ? { backgroundColor: ORANGE, color: 'white' }
@@ -703,6 +706,9 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
             <button key={o} onClick={() => { setOwnerFilter(ownerFilter === o ? '' : o); setStageFilter(''); setShowOverdue(false) }} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
               style={ownerFilter === o ? { backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #86efac' } : { backgroundColor: '#f5f3f0', color: '#888' }}>👤 {o}</button>
           ))}
+          {(() => { const counts = {}; for (const sh of shops) { const c = sh.denied_to || sh.lost_to; if (c) counts[c] = (counts[c] || 0) + 1 } return Object.entries(counts).sort((a, b) => b[1] - a[1]).map(([c, n]) => (
+            <button key={c} onClick={() => { setCompFilter(compFilter === c ? '' : c); setStageFilter(''); setShowOverdue(false) }} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={compFilter === c ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: '#f5f3f0', color: '#888' }}>🏢 {c} ({n})</button>
+          )) })()}
           <button onClick={() => setStaleOnly(v => !v)} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={staleOnly ? { backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#f5f3f0', color: '#888' }}>⏰ Gone quiet ({shops.filter(sh => (staleDays(sh) || 0) > 0 && sh.pipeline_stage !== 'target' && !['lost', 'denied'].includes(sh.pipeline_stage)).length})</button>
         </div>
 

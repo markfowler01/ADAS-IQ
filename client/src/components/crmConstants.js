@@ -1,24 +1,24 @@
 export const ORANGE = '#CD4419'
 
 export const STAGES = [
-  // Territory plan 2026-09-15: ids stay (other features key on them); labels
-  // are the enterprise-cycle stages, plus two new ids: trial and dormant.
-  { id: 'target',     label: 'Targets',       emoji: '🎯', color: '#7c3aed', bg: '#ede9fe' },
-  { id: 'contacted',  label: 'Qualified',     emoji: '☑️', color: '#b45309', bg: '#fef3c7' },
-  { id: 'interested', label: 'Engaged',       emoji: '🤝', color: '#0e7490', bg: '#cffafe' },
-  { id: 'trial',      label: 'Trial',         emoji: '🧪', color: '#0369a1', bg: '#e0f2fe' },
-  { id: 'proposal',   label: 'Proposal',      emoji: '📋', color: '#c2410c', bg: '#fff7ed' },
-  { id: 'active2',    label: 'Expand',        emoji: '🔄', color: '#0e7490', bg: '#cffafe' },
-  { id: 'active',     label: 'Active',        emoji: '✅', color: '#15803d', bg: '#dcfce7' },
-  { id: 'dormant',    label: 'Dormant',       emoji: '💤', color: '#6b7280', bg: '#f3f4f6' },
-  { id: 'denied',     label: 'Do not pursue', emoji: '🚫', color: '#b91c1c', bg: '#fee2e2' },
-  { id: 'lost',       label: 'Lost',          emoji: '❌', color: '#6b7280', bg: '#f3f4f6' },
+  // Mark's own stages (2026-09-15). Ids stay what the app has always used so
+  // every shop keeps its place; only the words and the order changed.
+  { id: 'target',     label: 'Not contacted',                    emoji: '🎯', color: '#7c3aed', bg: '#ede9fe' },
+  { id: 'contacted',  label: 'Contacted',                        emoji: '📞', color: '#b45309', bg: '#fef3c7' },
+  { id: 'interested', label: 'Shown interest',                   emoji: '🤝', color: '#0e7490', bg: '#cffafe' },
+  { id: 'proposal',   label: 'High value offer · free demo',     emoji: '🎁', color: '#c2410c', bg: '#fff7ed' },
+  { id: 'active',     label: 'Current customer',                 emoji: '✅', color: '#15803d', bg: '#dcfce7' },
+  { id: 'active2',    label: 'Own ADAS guy · we are backup',     emoji: '🔄', color: '#0369a1', bg: '#e0f2fe' },
+  { id: 'denied',     label: 'Own ADAS guy · not interested',    emoji: '🚫', color: '#b91c1c', bg: '#fee2e2' },
+  { id: 'lost',       label: 'Lost',                             emoji: '❌', color: '#6b7280', bg: '#f3f4f6' },
 ]
-// Max quiet days per stage before a shop shows on the Monday list (null = no clock)
-export const STAGE_QUIET = { target: 30, contacted: 14, interested: 10, trial: 7, proposal: 5, active: 30, active2: 14, dormant: 90, denied: null, lost: null }
-export const IN_PLAY_STAGES = ['contacted', 'interested', 'trial', 'proposal']
+// Max quiet days per stage before a shop shows on the Monday list (null = no clock; denied gets a 90-day check-back)
+export const STAGE_QUIET = { target: 30, contacted: 14, interested: 10, proposal: 5, active: 30, active2: 45, denied: 90, lost: null, trial: 5, dormant: 90 }
+export const IN_PLAY_STAGES = ['contacted', 'interested', 'proposal']
 export const IN_PLAY_CAP = 10
-export const STAGE_EXIT = { target: 'Fit checked: DRPs, car count, current cal vendor, decision maker named', contacted: 'Real two-way conversation with the decision maker', interested: 'In-person visit done, or they asked for pricing / a demo', trial: 'First job or first quote in their hands', proposal: 'Partnership discount offered with a number on paper', active: 'First invoice paid', active2: 'Getting some of their cars, not all', dormant: 'Was Active, no job in 60 days' }
+export const STAGE_EXIT = { target: 'Nobody has talked to them yet', contacted: 'We reached them; find the decision maker', interested: 'They asked questions or want to see more', proposal: 'High value offer or free calibration demo on the table', active: 'They send us cars', active2: 'They have their own ADAS guy; we are the backup — tag who', denied: 'They have their own ADAS guy and are not interested right now — tag who' }
+// Stages where "who do they use" matters (competitor tag on the card)
+export const COMPETITOR_STAGES = ['active2', 'denied', 'lost']
 
 export const ACTIVITY_TYPES = [
   { id: 'call',    label: 'Call',    icon: '📞', color: '#15803d', bg: '#dcfce7' },
@@ -49,8 +49,9 @@ export const DENIED_REASONS = [
 
 // Known competitors — shown in Lost/Denied stage competitor pickers
 export const DEFAULT_COMPETITORS = [
-  'AVSC', 'MOS', 'ATE', 'Evergreen', 'Ivan',
-  'Airbag Services', 'Reighn Calibrations', 'ProTech',
+  // Mark 2026-09-15: the calibration companies we run into. AVSC = Audio Visual, Redmond.
+  'Evergreen Calibration', 'AVSC', 'MOS', 'ATE', 'ProTech',
+  'Reighn Calibrations', 'Airbag Services', 'Ivan',
 ]
 
 // Six I-5 zones, Bellingham → Olympia (2026-09-15). Stored in the shop's `region`.
