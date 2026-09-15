@@ -8,7 +8,7 @@ import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Eyebrow, Title, Panel, Row, Notice, Chip, Pill, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
 
 const RED = '#b91c1c', AMBER = '#92400e'
-const $ = c => `$${(Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+const $ = c => `${Number(c) < 0 ? '-' : ''}$${(Math.abs(Number(c || 0)) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
 const post = (url, b) => j(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) })
 const when = iso => iso ? new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'never'
