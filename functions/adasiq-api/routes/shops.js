@@ -107,9 +107,17 @@ function shopToRow(shop) {
 }
 
 async function getAllShops(req) {
-  const table = getTable(req)
-  const rows = await table.getAllRows()
-  return (rows || []).map(rowToShop)
+  // getAllRows() silently caps at 200 rows (found 2026-09-15 when the CRM passed
+  // 200 shops). Page through ZCQL instead; same shape, same export.
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const out = []
+  for (let off = 0; ; off += 300) {
+    const rows = await app.zcql().executeZCQLQuery(`SELECT * FROM CRMShops ORDER BY ROWID LIMIT ${off}, 300`)
+    const batch = (rows || []).map(r => r?.CRMShops || r).filter(Boolean)
+    out.push(...batch)
+    if (batch.length < 300) break
+  }
+  return out.map(rowToShop)
 }
 
 // Exported for the dispatch-map feature (geocoding cron, map data endpoint).
