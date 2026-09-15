@@ -111,7 +111,10 @@ export async function syncCreditNotes(req, months, by = 'system') {
       const byId = new Map(inMonth.map(r => [String(r.cn_creditnote_id), String(r.ROWID)]))
       const keep = new Set(); const ins = [], upd = []
       for (const c of list) {
-        const row = { cn_creditnote_id: String(c.creditnote_id), cn_number: String(c.creditnote_number || '').slice(0, 40), cn_customer_id: String(c.customer_id || ''), cn_customer_name: String(c.customer_name || '').slice(0, 200), cn_date: String(c.date || '').slice(0, 20), cn_status: String(c.status || '').slice(0, 20), cn_total_cents: cents(c.total), cn_balance_cents: cents(c.balance), cn_invoices_json: JSON.stringify(c.invoices || []).slice(0, 4000), cn_month: ym, cn_synced_at: now() }
+        // Which invoices this credit was applied to (detail call; credit notes are few)
+        let applied = []
+        try { const d = await axios.get(`${API}/creditnotes/${c.creditnote_id}`, { headers: H(token), params: org(), timeout: 20000, validateStatus: st => st < 500 }); applied = (d.data?.creditnote?.invoices_credited || []).map(i => ({ invoice_id: String(i.invoice_id || ''), invoice_number: String(i.invoice_number || ''), amount_cents: cents(i.credited_amount ?? i.amount ?? i.amount_applied), date: String(i.date || i.credited_date || '').slice(0, 20) })); await sleep(300) } catch (e) { console.log('[ar] credit note detail failed:', c.creditnote_id, e.message) }
+        const row = { cn_creditnote_id: String(c.creditnote_id), cn_number: String(c.creditnote_number || '').slice(0, 40), cn_customer_id: String(c.customer_id || ''), cn_customer_name: String(c.customer_name || '').slice(0, 200), cn_date: String(c.date || '').slice(0, 20), cn_status: String(c.status || '').slice(0, 20), cn_total_cents: cents(c.total), cn_balance_cents: cents(c.balance), cn_invoices_json: JSON.stringify(applied.length ? applied : (c.invoices || [])).slice(0, 4000), cn_month: ym, cn_synced_at: now() }
         keep.add(row.cn_creditnote_id); counts.total_cents += row.cn_total_cents
         const rid = byId.get(row.cn_creditnote_id); if (rid) upd.push({ ROWID: rid, ...row }); else ins.push(row)
       }
@@ -157,14 +160,21 @@ export async function reconcile(req, by = 'system') {
   const started = now(); const a = app(req); const today = todayPT()
   try {
     const [invoices, payments, accRows, allocs, cns] = await Promise.all([
-      readAll(req, 'inv'), readAll(req, 'pay'), zcqlAll(a, T.acc, `SELECT * FROM ${T.acc}`), zcqlAll(a, T.al, `SELECT al_payment_id, al_invoice_id, al_customer_id, al_amount_cents, al_kind FROM ${T.al}`), zcqlAll(a, T.cn, `SELECT cn_customer_id, cn_balance_cents, cn_total_cents, cn_status FROM ${T.cn}`),
+      readAll(req, 'inv'), readAll(req, 'pay'), zcqlAll(a, T.acc, `SELECT * FROM ${T.acc}`), zcqlAll(a, T.al, `SELECT al_payment_id, al_invoice_id, al_customer_id, al_amount_cents, al_kind FROM ${T.al}`), zcqlAll(a, T.cn, `SELECT cn_customer_id, cn_balance_cents, cn_total_cents, cn_status, cn_invoices_json FROM ${T.cn}`),
     ])
     const accounts = accRows.map(rowToAccount)
     const live = i => !['draft', 'void'].includes(String(i.status || '').toLowerCase())
     const allocByInv = {}; const allocPays = new Set(); let unmatched = 0
     for (const x of allocs) { allocPays.add(String(x.al_payment_id)); if (x.al_kind === 'unapplied') { unmatched++; continue } allocByInv[String(x.al_invoice_id)] = (allocByInv[String(x.al_invoice_id)] || 0) + (Number(x.al_amount_cents) || 0) }
     const coverage = payments.length ? allocPays.size / payments.length : 0
-    const credits = {}; for (const c of cns) if (String(c.cn_status || '') !== 'void') credits[String(c.cn_customer_id)] = (credits[String(c.cn_customer_id)] || 0) + (Number(c.cn_total_cents) || 0)
+    const credits = {}, creditByInv = {}, creditDetailMissing = {}
+    for (const c of cns) {
+      if (String(c.cn_status || '') === 'void') continue
+      credits[String(c.cn_customer_id)] = (credits[String(c.cn_customer_id)] || 0) + (Number(c.cn_total_cents) || 0)
+      let applied = []; try { applied = JSON.parse(c.cn_invoices_json || '[]') } catch { applied = [] }
+      if (!applied.length && (Number(c.cn_total_cents) || 0) > (Number(c.cn_balance_cents) || 0)) creditDetailMissing[String(c.cn_customer_id)] = true
+      for (const x of applied) if (x.invoice_id && Number(x.amount_cents) > 0) creditByInv[String(x.invoice_id)] = (creditByInv[String(x.invoice_id)] || 0) + Number(x.amount_cents)
+    }
     const byCust = {}
     const daysPast = i => Math.max(0, Math.floor((new Date(today) - new Date(i.due_date || i.date)) / 86400000))
     const bucket = d => d <= 0 ? 'current' : d <= 30 ? 'd30' : d <= 60 ? 'd60' : d <= 90 ? 'd90' : 'd90plus'
@@ -173,12 +183,12 @@ export async function reconcile(req, by = 'system') {
       if (!live(i)) continue
       const c = byCust[i.customer_id] || (byCust[i.customer_id] = { name: i.customer_name, app: 0, ledger: 0, open: 0, aging: { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 }, invoices: 0 })
       c.invoices++
-      const bal = cents(i.balance); const total = cents(i.total); const applied = allocByInv[String(i.invoice_id)] || 0
-      const ledgerBal = Math.max(0, total - applied)
+      const bal = cents(i.balance); const total = cents(i.total); const applied = allocByInv[String(i.invoice_id)] || 0; const credited = creditByInv[String(i.invoice_id)] || 0
+      const ledgerBal = Math.max(0, total - applied - credited)
       c.app += bal; c.ledger += ledgerBal
       if (bal > 0) { c.open++; c.aging[bucket(daysPast(i))] += bal }
       // invoice-level check only where we hold allocation detail (or nothing was ever applied)
-      if (coverage > 0 && ledgerBal !== bal && !credits[String(i.customer_id)]) { mismatched++; if (mismatches.length < 25) mismatches.push({ invoice: i.invoice_number, customer: i.customer_name, books_balance_cents: bal, ledger_balance_cents: ledgerBal, total_cents: total }) }
+      if (coverage > 0 && ledgerBal !== bal && !creditDetailMissing[String(i.customer_id)]) { mismatched++; if (mismatches.length < 25) mismatches.push({ invoice: i.invoice_number, customer: i.customer_name, books_balance_cents: bal, ledger_balance_cents: ledgerBal, total_cents: total, paid_cents: applied, credited_cents: credited, hint: bal === 0 && ledgerBal > 0 ? 'paid in Books with no payment or credit behind it — write-off?' : bal > ledgerBal ? 'Books shows more owed than our math' : 'payment applied that Books does not count' }) }
     }
     const lastPay = {}; for (const p of payments) if (!lastPay[p.customer_id] || p.date > lastPay[p.customer_id]) lastPay[p.customer_id] = p.date
     let drift = 0, ledgerDrift = 0; const diffs = [], ledgerDiffs = []; const upd = []; const ledgerRows = []
