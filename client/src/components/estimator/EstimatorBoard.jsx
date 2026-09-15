@@ -7,6 +7,7 @@ import Navbar from '../Navbar'
 import { Eyebrow, Title, Chip, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
 import { fmtCents } from '../../lib/estimatorCalc.js'
 import EstimatorEditor from './EstimatorEditor.jsx'
+import EstimatorSettings from './EstimatorSettings.jsx'
 
 const COLS = [
   { key: 'draft', label: 'Draft', fg: '#666', bg: '#f5f3f0', border: '#e0dbd6' },
@@ -24,6 +25,7 @@ export default function EstimatorBoard({ user, onLogout, currentScreen, onNaviga
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const isTech = user?.role === 'technician'
 
   const load = () => apiFetch(`${API_BASE}/api/estimator`).then(r => r.json()).then(d => { if (d.ok) setList(d.estimates || []); else setErr(d.error || 'load failed') }).catch(e => setErr(e.message)).finally(() => setLoading(false))
@@ -59,9 +61,11 @@ export default function EstimatorBoard({ user, onLogout, currentScreen, onNaviga
           <div className="flex items-center gap-2">
             <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search number, customer, vehicle, RO, VIN" className="px-3 py-2 text-sm rounded-lg w-64 max-w-full" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', outline: 'none' }} />
             {!isTech && <button onClick={create} disabled={creating} className="rounded-xl px-4 py-2 text-sm font-bold text-white" style={{ backgroundColor: ORANGE, opacity: creating ? .5 : 1 }}>{creating ? 'Creating…' : '＋ New estimate'}</button>}
+            {!isTech && <button onClick={() => setSettingsOpen(true)} title="Estimator settings" className="rounded-xl px-3 py-2 text-sm font-bold" style={{ backgroundColor: 'white', color: '#555', border: '1.5px solid #e0dbd6' }}>⚙️</button>}
           </div>
         </div>
         {err && <div className="text-sm px-3 py-2 rounded-lg mb-3" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{err}</div>}
+        {settingsOpen && <EstimatorSettings onClose={() => setSettingsOpen(false)} />}
 
         <div className="flex gap-3 overflow-x-auto pb-4" style={{ alignItems: 'stretch', minHeight: '70vh' }}>
           {COLS.map(col => {

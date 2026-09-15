@@ -9,6 +9,7 @@ import { Eyebrow, Title, Panel, Row, TotalRow, Notice, Pill, Switch, Chip, Foote
 import { computeEstimate, readyToSend, fmtCents, fromCents, toCents } from '../../lib/estimatorCalc.js'
 import JobCard, { Money, MarkupBox, STATUS_STYLE } from './JobCard.jsx'
 import AuthorizeModal from './AuthorizeModal.jsx'
+import ThreeCModal from './ThreeCModal.jsx'
 
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white', borderRadius: 8 }
 const EST_STATUS = {
@@ -50,6 +51,9 @@ export default function EstimatorEditor({ id, user, onBack }) {
   const [custQ, setCustQ] = useState('')
   const [newPerson, setNewPerson] = useState(null)
   const [authJob, setAuthJob] = useState(null)
+  const [threeCJob, setThreeCJob] = useState(null)
+  const [sendOpen, setSendOpen] = useState(false)
+  const [pushOpen, setPushOpen] = useState(false)
   const [declineJob, setDeclineJob] = useState(null)
   const [tplOpen, setTplOpen] = useState(false)
   const [vinBusy, setVinBusy] = useState(false)
@@ -148,14 +152,14 @@ export default function EstimatorEditor({ id, user, onBack }) {
   const adasOn = vinInfo?.adas ? Object.entries({ fcw: 'FCW', aeb: 'AEB', lane_departure: 'LDW', lane_keep: 'Lane keep', blind_spot: 'Blind spot', acc: 'ACC', rear_cross: 'RCTA', park_assist: 'Park assist', backup_cam: 'Backup cam' }).filter(([k]) => /standard|optional/i.test(vinInfo.adas[k] || '')).map(([, l]) => l) : []
 
   const footerPrimary = est.status === 'draft'
-    ? <PrimaryButton tone="orange" onClick={() => setStatus('sent')} disabled={!canEdit || !ready.ok}>📤 Ready to send · {fmtCents(t.grand_total)}</PrimaryButton>
+    ? <PrimaryButton tone="orange" onClick={() => setSendOpen(true)} disabled={!canEdit || !ready.ok}>📤 Send for approval · {fmtCents(t.grand_total + t.recommended_total)}</PrimaryButton>
     : est.status === 'sent'
     ? <PrimaryButton tone="green" onClick={() => setStatus('approved')} disabled={!canEdit || !t.approved_jobs}>✅ Mark approved · {fmtCents(t.grand_total)}</PrimaryButton>
     : est.status === 'approved'
-    ? <PrimaryButton tone="blue" disabled>💸 Push to Zoho Books · next phase</PrimaryButton>
+    ? <PrimaryButton tone="blue" onClick={() => setPushOpen(true)} disabled={!canEdit || !t.approved_jobs}>🧾 Push to Zoho Books · {fmtCents(t.grand_total)}</PrimaryButton>
     : est.status === 'declined' ? <PrimaryButton tone="orange" onClick={() => setStatus('draft')} disabled={!canEdit}>Reopen as draft</PrimaryButton>
     : <PrimaryButton disabled>Invoiced · locked</PrimaryButton>
-  const footerSecondary = est.status === 'sent' ? <SecondaryButton onClick={() => setStatus('draft')} disabled={!canEdit}>Back to draft</SecondaryButton>
+  const footerSecondary = est.status === 'sent' ? <SecondaryButton onClick={() => setSendOpen(true)} disabled={!canEdit}>📤 Resend</SecondaryButton>
     : est.status === 'approved' ? <SecondaryButton onClick={() => setStatus('sent')} disabled={!canEdit}>Back to sent</SecondaryButton>
     : <SecondaryButton onClick={onBack}>← Estimates</SecondaryButton>
 
@@ -175,6 +179,9 @@ export default function EstimatorEditor({ id, user, onBack }) {
             {(est.flags || []).includes('over110') && <Chip tone="orange">⚠ over 110%</Chip>}
             {isTech && <Chip>read only</Chip>}
             <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: S.bg, color: S.fg }}>{S.label}</span>
+            <a href={`${API_BASE}/api/estimator/${id}/pdf${est.status === 'invoiced' ? '?kind=invoice' : ''}`} onClick={async e => { e.preventDefault(); try { const r = await apiFetch(`${API_BASE}/api/estimator/${id}/pdf${est.status === 'invoiced' ? '?kind=invoice' : ''}`); const b = await r.blob(); const u = URL.createObjectURL(b); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60000) } catch (x) { setErr(x.message) } }} className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: BLUE, backgroundColor: '#eff6ff' }}>📄 PDF</a>
+            {est.zoho_invoice_id && <a href={`https://books.zoho.com/app#/invoices/${est.zoho_invoice_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#7c3aed', backgroundColor: '#f3e8ff' }}>🧾 {est.zoho_invoice_number || 'Invoice'} in Books ↗</a>}
+            {!est.zoho_invoice_id && est.zoho_estimate_id && <a href={`https://books.zoho.com/app#/estimates/${est.zoho_estimate_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#7c3aed', backgroundColor: '#f3e8ff' }}>🧾 {est.zoho_estimate_number || 'Estimate'} in Books ↗</a>}
             {canEdit && est.status === 'draft' && <button onClick={async () => { if (!confirm(`Delete ${est.number}?`)) return; await j(`/api/estimator/${id}`, { method: 'DELETE' }); onBack() }} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: '#b91c1c', backgroundColor: '#fef2f2' }}>Delete</button>}
           </div>
         </div>
@@ -307,7 +314,7 @@ export default function EstimatorEditor({ id, user, onBack }) {
                 {live.jobs.length === 0 && <div className="text-sm italic px-2 py-6 text-center" style={{ color: '#999' }}>No jobs yet. Start from a template or a blank job. Only <b>approved</b> jobs count toward the total.</div>}
                 {live.jobs.map(job => (
                   <JobCard key={job.id} job={job} settings={{ ...est.settings, labor_rate_cents: est.labor_rate_cents ?? 20000, parts_markup_bp: est.parts_markup_bp ?? 4000 }} catalog={catalog} canEdit={canEdit} vehicle={vehicle} usual={common.find(c => c.name.toLowerCase() === String(job.name || '').replace(/\s*\(copy\)\s*$/i, '').trim().toLowerCase())}
-                    onPatch={f => patchJob(job.id, f)} onStatus={s => setJobStatus(job, s)} onDuplicate={() => dupJob(job.id)} onDelete={() => delJob(job.id)} onSaveTemplate={() => saveTpl(job.id)}
+                    onPatch={f => patchJob(job.id, f)} onStatus={s => setJobStatus(job, s)} onDuplicate={() => dupJob(job.id)} onDelete={() => delJob(job.id)} onSaveTemplate={() => saveTpl(job.id)} onThreeC={() => setThreeCJob(job)}
                     dragProps={{ draggable: armed === job.id, onHandleDown: () => setArmed(job.id), onDragStart: () => setDragId(job.id), onDragOver: e => { e.preventDefault() }, onDrop: () => drop(job.id), style: dragId === job.id ? { opacity: .4 } : undefined }} />
                 ))}
               </div>
@@ -321,6 +328,9 @@ export default function EstimatorEditor({ id, user, onBack }) {
 
       {authJob && <AuthorizeModal job={live.jobs.find(x => x.id === authJob.id) || authJob} user={user} onConfirm={confirmAuth} onCancel={() => setAuthJob(null)} />}
       {declineJob && <DeclineModal job={declineJob} onConfirm={confirmDecline} onCancel={() => setDeclineJob(null)} />}
+      {threeCJob && <ThreeCModal estimateId={id} job={threeCJob} onClose={() => setThreeCJob(null)} onApproved={d => { if (d?.estimate) setEst(d.estimate); setToast("✅ 3 C's approved · on the invoice and PDF") }} />}
+      {sendOpen && <SendModal est={est} totals={t} onClose={() => setSendOpen(false)} onSent={d => { setEst(d.estimate); setSendOpen(false); setToast('📤 Sent') }} />}
+      {pushOpen && <PushModal est={est} totals={t} onClose={() => setPushOpen(false)} onPushed={d => { setEst(d.estimate); setPushOpen(false); setToast(`🧾 ${d.number} created in Books`) }} />}
       {toast && <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[95] text-sm font-bold text-white px-4 py-2 rounded-full" style={{ backgroundColor: '#1a1a1a' }}>{toast}</div>}
     </div>
   )
@@ -335,6 +345,72 @@ function DeclineModal({ job, onConfirm, onCancel }) {
         <div className="font-bold" style={{ color: '#1a1a1a' }}>{job.name}</div>
         <input autoFocus value={reason} onChange={e => setReason(e.target.value)} placeholder="Reason (stays on the estimate at $0)" className="w-full px-3 py-2 text-sm" style={inp} onKeyDown={e => e.key === 'Enter' && onConfirm(reason || 'declined')} />
         <div className="flex gap-2"><SecondaryButton onClick={onCancel}>Cancel</SecondaryButton><PrimaryButton tone="orange" onClick={() => onConfirm(reason || 'declined')}>Decline</PrimaryButton></div>
+      </div>
+    </div>
+  )
+}
+
+
+// ── Send for approval: email and/or text with the signed link ──────────────
+function SendModal({ est, totals, onClose, onSent }) {
+  const c = est.customer_contact || {}
+  const [email, setEmail] = useState(c.email || '')
+  const [phone, setPhone] = useState(c.phone || '')
+  const [via, setVia] = useState({ email: !!c.email, sms: !!c.phone })
+  const [message, setMessage] = useState('')
+  const [link, setLink] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [result, setResult] = useState(null)
+  useEffect(() => { j(`/api/estimator/${est.id}/link`).then(d => setLink(d.url)).catch(() => {}) }, [est.id])
+  async function send() {
+    setBusy(true); setErr('')
+    try { const d = await post(`/api/estimator/${est.id}/send`, { email: via.email ? email.trim() : '', phone: via.sms ? phone.trim() : '', message }); setResult(d.results); if (d.ok) onSent(d) }
+    catch (e) { setErr(e.message + (e.data?.results ? ' · ' + JSON.stringify(e.data.results) : '')) } finally { setBusy(false) }
+  }
+  const nothing = !(via.email && email.trim()) && !(via.sms && phone.trim())
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden">
+        <div className="px-5 py-3" style={{ backgroundColor: '#fff5f0', borderBottom: '1px solid #f5c9b8' }}><Eyebrow>📤 Send {est.number} for approval</Eyebrow><div className="font-bold" style={{ color: '#1a1a1a' }}>{est.customer_name}</div><div className="text-xs" style={{ color: '#666' }}>They get a link to review, approve each job, and download the PDF. Approvals come back here and to #dispatch.</div></div>
+        <div className="px-5 py-4 space-y-3">
+          {err && <Notice tone="red">{err}</Notice>}
+          <label className="flex items-center gap-2"><input type="checkbox" checked={via.email} onChange={e => setVia(v => ({ ...v, email: e.target.checked }))} /><span className="text-sm font-semibold w-14">Email</span><input value={email} onChange={e => setEmail(e.target.value)} placeholder="name@shop.com" className="flex-1 px-3 py-2 text-sm" style={inp} /></label>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={via.sms} onChange={e => setVia(v => ({ ...v, sms: e.target.checked }))} /><span className="text-sm font-semibold w-14">Text</span><input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 425 555 0100" className="flex-1 px-3 py-2 text-sm" style={{ ...inp, fontFamily: 'IBM Plex Mono, monospace' }} /></label>
+          <div><Eyebrow>Note to the customer (optional)</Eyebrow><textarea value={message} onChange={e => setMessage(e.target.value)} rows={3} placeholder="Write it the way you'd say it." className="w-full px-3 py-2 text-sm" style={{ ...inp, resize: 'vertical' }} /></div>
+          {link && <div className="rounded-lg px-3 py-2 text-[11px] flex items-center gap-2" style={{ backgroundColor: '#f5f3f0' }}><span className="truncate flex-1" style={{ color: '#666', fontFamily: 'IBM Plex Mono, monospace' }}>{link}</span><button onClick={() => navigator.clipboard?.writeText(link)} className="font-bold" style={{ color: BLUE }}>Copy link</button></div>}
+          {result && <div className="text-xs space-y-0.5">{result.email && <div style={{ color: result.email.ok ? GREEN : '#b91c1c' }}>Email {result.email.ok ? '✓ sent' : '✗ ' + result.email.error} · {result.email.to}</div>}{result.sms && <div style={{ color: result.sms.ok ? GREEN : '#b91c1c' }}>Text {result.sms.ok ? '✓ sent' : '✗ ' + result.sms.error} · {result.sms.to}</div>}</div>}
+        </div>
+        <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}><SecondaryButton onClick={onClose}>Cancel</SecondaryButton><PrimaryButton tone="orange" onClick={send} disabled={busy || nothing}>{busy ? 'Sending…' : `📤 Send · ${fmtCents(totals.grand_total + totals.recommended_total)}`}</PrimaryButton></div>
+      </div>
+    </div>
+  )
+}
+
+// ── Push to Zoho Books (draft, not emailed) ─────────────────────────────────
+function PushModal({ est, totals, onClose, onPushed }) {
+  const [mode, setMode] = useState(est.zoho_invoice_id ? 'estimate' : 'invoice')
+  const [detail, setDetail] = useState(est.detail_level || '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [out, setOut] = useState(null)
+  async function push() {
+    setBusy(true); setErr('')
+    try { const d = await post(`/api/estimator/${est.id}/push`, { mode, detail: detail || null }); setOut(d); onPushed(d) }
+    catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden">
+        <div className="px-5 py-3" style={{ backgroundColor: '#f3e8ff', borderBottom: '1px solid #ddd6fe' }}><Eyebrow>🧾 Push {est.number} to Zoho Books</Eyebrow><div className="font-bold" style={{ color: '#1a1a1a' }}>{est.customer_name} · {fmtCents(totals.grand_total)}</div><div className="text-xs" style={{ color: '#666' }}>Creates a draft in Books, not emailed. Books computes the tax from the tax id. Only approved jobs go.</div></div>
+        <div className="px-5 py-4 space-y-3">
+          {err && <Notice tone="red">{err}</Notice>}
+          {!est.zoho_contact_id && <Notice tone="amber">No Zoho Books customer linked. Open the customer in the CRM and tap "Create in Books" first.</Notice>}
+          <Row left={<span className="font-semibold">Create as</span>} right={<div className="flex gap-1"><Pill size="sm" on={mode === 'invoice'} onClick={() => setMode('invoice')} disabled={!!est.zoho_invoice_id}>Invoice</Pill><Pill size="sm" tone="blue" on={mode === 'estimate'} onClick={() => setMode('estimate')} disabled={!!est.zoho_estimate_id}>Books estimate</Pill></div>} />
+          <Row left={<span className="font-semibold">Lines</span>} right={<div className="flex gap-1"><Pill size="sm" tone="plain" on={detail === ''} onClick={() => setDetail('')}>Default</Pill><Pill size="sm" on={detail === 'rolled_up'} onClick={() => setDetail('rolled_up')}>Rolled up</Pill><Pill size="sm" on={detail === 'itemized'} onClick={() => setDetail('itemized')}>Itemized</Pill></div>} sub="Rolled up = one line per job at the job's total. Itemized = every labor line and part." />
+          {out && <Notice tone="green"><b>{out.linked_existing ? 'Already in Books' : 'Created'}: {out.number}</b> · <a className="underline" href={out.url} target="_blank" rel="noreferrer">open in Books ↗</a>{(out.warnings || []).map((w, i) => <div key={i} style={{ color: '#92400e' }}>⚠ {w}</div>)}</Notice>}
+        </div>
+        <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}><SecondaryButton onClick={onClose}>{out ? 'Done' : 'Cancel'}</SecondaryButton>{!out && <PrimaryButton tone="blue" onClick={push} disabled={busy || !est.zoho_contact_id}>{busy ? 'Pushing…' : `🧾 Create ${mode === 'invoice' ? 'invoice' : 'estimate'} in Books`}</PrimaryButton>}</div>
       </div>
     </div>
   )

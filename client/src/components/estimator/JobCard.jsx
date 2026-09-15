@@ -50,7 +50,7 @@ const Sel = ({ value, onChange, options, labels = {}, width, disabled }) => (
   </select>
 )
 
-export default function JobCard({ job, settings, catalog = [], canEdit, onPatch, onStatus, onDuplicate, onDelete, onSaveTemplate, dragProps = {}, forceOpen = false, usual = null, vehicle = '' }) {
+export default function JobCard({ job, settings, catalog = [], canEdit, onPatch, onStatus, onDuplicate, onDelete, onSaveTemplate, onThreeC, dragProps = {}, forceOpen = false, usual = null, vehicle = '' }) {
   // Learned pricing nudge: this job is usually billed at X (median of past saves); flag a >15% drift.
   const drift = usual && usual.count >= 2 && usual.usual_cents > 0 && job.total_cents > 0 ? (job.total_cents - usual.usual_cents) / usual.usual_cents : 0
   const drifted = Math.abs(drift) > 0.15
@@ -149,6 +149,7 @@ export default function JobCard({ job, settings, catalog = [], canEdit, onPatch,
             <div className="flex flex-wrap gap-1.5 items-center pt-1">
               <button type="button" onClick={() => addLine()} className="text-xs font-bold rounded-lg px-2.5 py-1.5 text-white" style={{ backgroundColor: ORANGE }}>＋ Labor line</button>
               <button type="button" onClick={() => setAddingCat(a => !a)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#fff5f0', color: ORANGE, border: `1px solid #f5c9b8` }}>🎯 Calibration from Books</button>
+              <button type="button" onClick={onThreeC} className="text-xs font-bold rounded-lg px-2.5 py-1.5 text-white" style={{ backgroundColor: '#7c3aed' }}>{job.three_c_id ? '🤖 3 C\'s ✓' : '🤖 3 C\'s'}</button>
               <span className="flex-1" />
               <button type="button" onClick={onSaveTemplate} className="text-[11px] font-semibold px-2 py-1 rounded-lg" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Save as template</button>
               <button type="button" onClick={onDuplicate} className="text-[11px] font-semibold px-2 py-1 rounded-lg" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Duplicate</button>

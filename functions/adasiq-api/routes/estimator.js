@@ -11,6 +11,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { computeEstimate, readyToSend, authorizationComplete, DEFAULT_SETTINGS, JOB_STATUSES, JOB_CATEGORIES, newId } from '../services/estimator/calc.js'
 import { decodeVin, validateVin } from '../services/estimator/vin.js'
+import { mountMore } from './estimatorMore.js'
 
 const T = { est: 'EstEstimates', job: 'EstJobs', tpl: 'EstTemplates', retail: 'EstRetailCustomers' }
 const SETTINGS_KEY = 'estimator:settings'
@@ -32,7 +33,7 @@ async function loadSettings(req) {
   try {
     const rows = unwrap(await zcql(req, `SELECT config_value FROM AppConfig WHERE config_key = '${SETTINGS_KEY}' LIMIT 1`), 'AppConfig')
     const s = json(rows[0]?.config_value, {})
-    return { ...DEFAULT_SETTINGS, ...s, rates: { ...DEFAULT_SETTINGS.rates, ...(s.rates || {}) } }
+    return { ...DEFAULT_SETTINGS, company: { name: 'Absolute ADAS', tagline: 'Mobile ADAS Calibration & Diagnostics', address: 'Lake Stevens, WA', phone: '', email: '', web: 'absoluteadas.com' }, ...s, rates: { ...DEFAULT_SETTINGS.rates, ...(s.rates || {}) }, company: { name: 'Absolute ADAS', tagline: 'Mobile ADAS Calibration & Diagnostics', address: 'Lake Stevens, WA', phone: '', email: '', web: 'absoluteadas.com', ...(s.company || {}) } }
   } catch (e) { console.log('[estimator] settings read failed:', e.message); return { ...DEFAULT_SETTINGS } }
 }
 async function saveSettings(req, s) {
@@ -615,5 +616,9 @@ R.post('/:id/jobs/:jid/save-template', staffOnly, async (req, res) => {
     res.json({ ok: true, template: rowToTpl(row) })
   } catch (e) { fail(res, e, 'save template') }
 })
+
+// Shared internals for the send / push / 3C routes and the public approval router
+export const internals = { getEst, getJobs, recompute, loadSettings, tbl, T, zcql, unwrap, esc, estToRow, jobToRow, rowToJob, readyToSend, now, who, isOwner, staffOnly, fail, json }
+mountMore(R, internals)
 
 export default estimatorRouter

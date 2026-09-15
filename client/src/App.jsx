@@ -27,6 +27,7 @@ import KanbanBoard from './components/KanbanBoard'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import RepairEstimateScreen from './components/RepairEstimateScreen'
 import EstimatorBoard from './components/estimator/EstimatorBoard'  // repair estimator (2026-09-14)
+import EstimateApprovalScreen from './components/estimator/EstimateApprovalScreen'  // public: /app/estimate?e=&t=
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
@@ -71,6 +72,7 @@ function getTopLevelRoute() {
   if (path.endsWith('/pay') || path.includes('/app/pay')) return 'pay'
   if (path.endsWith('/portal') || path.includes('/app/portal')) return 'portal'
   if (path.endsWith('/quote') || path.includes('/app/quote')) return 'quote'
+  if (/\/estimate\/?$/.test(path)) return 'estimate'   // signed customer approval link
   if (path.endsWith('/nps') || path.includes('/app/nps')) return 'nps'
   return 'app'
 }
@@ -80,6 +82,7 @@ export default function App() {
   if (topRoute === 'pay') return <PayInvoiceScreen />
   if (topRoute === 'portal') return <PortalApp />
   if (topRoute === 'quote') return <QuoteApprovalScreen />
+  if (topRoute === 'estimate') return <EstimateApprovalScreen />
   if (topRoute === 'nps') return <NPSScreen />
   return <MainApp />
 }
