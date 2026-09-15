@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel } from './crmConstants.js'
-import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
+import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, DiscoverModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
 import Navbar from './Navbar'
 import RepairCustomers from './crm/RepairCustomers.jsx'  // repair customers, kept separate from shops (2026-09-14)
 import CRMImportModal from './CRMImportModal'
@@ -482,6 +482,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [staleOnly,     setStaleOnly]     = useState(false)
   const [gridOpen,      setGridOpen]      = useState(false)
   const [mondayOpen,    setMondayOpen]    = useState(false)
+  const [discoverOpen,  setDiscoverOpen]  = useState(false)
   const [nextPrompt,    setNextPrompt]    = useState(null)   // { shop, stage } waiting for a next action
   const [showOverdue,   setShowOverdue]   = useState(false)
   const [dragShop,      setDragShop]      = useState(null)
@@ -748,7 +749,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
         {/* Stats bar */}
         {!loading && !error && <StatsBar shops={shops} />}
         {!loading && !error && <SetupBanner shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onApplied={n => { setToast(`🗺 Zones and owners set on ${n} shops`); fetchShops() }} />}
-        {!loading && !error && <InPlayBar shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} />}
+        {!loading && !error && <InPlayBar shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} />}
         {!loading && !error && gridOpen && <TerritoryGrid shops={shops} onPick={(z, st) => { setRegionFilter(z || 'unzoned'); setStageFilter(st); setShowOverdue(false); setGridOpen(false) }} />}
 
         {/* Filter pills */}
@@ -1008,7 +1009,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
 
       {nextPrompt && <NextActionModal shop={nextPrompt.shop} stage={nextPrompt.stage} onCancel={() => setNextPrompt(null)} onConfirm={extra => { const p = nextPrompt; setNextPrompt(null); handleStageChange(p.shop, p.stage, extra) }} />}
 
-      {mondayOpen && <MondayModal isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onClose={() => setMondayOpen(false)} onOpenShop={id => { const sh = shops.find(x => x.id === id); if (sh) { setMondayOpen(false); setDetailShop(sh) } }} />}
+      {discoverOpen && <DiscoverModal onClose={() => setDiscoverOpen(false)} onAdded={(n, d) => { setToast(`🔎 Added ${n} shops as Targets${d ? ` · ${d} already there` : ''}`); fetchShops() }} />}
+        {mondayOpen && <MondayModal isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onClose={() => setMondayOpen(false)} onOpenShop={id => { const sh = shops.find(x => x.id === id); if (sh) { setMondayOpen(false); setDetailShop(sh) } }} />}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] px-4 py-2.5 rounded-2xl shadow-xl text-sm font-medium text-white"

@@ -25,12 +25,13 @@ export function staleDays(s) {
 export const inPlayCount = (shops, owner) => shops.filter(s => ownerOf(s) === owner && IN_PLAY_STAGES.includes(s.pipeline_stage)).length
 
 /** Owners' in-play counters + territory grid toggle + Monday list button. */
-export function InPlayBar({ shops, isOwner, gridOpen, onToggleGrid, onMonday }) {
+export function InPlayBar({ shops, isOwner, gridOpen, onToggleGrid, onMonday, onDiscover }) {
   return (
     <div className="flex items-center gap-2 flex-wrap mb-3">
       {TEAM_MEMBERS.map(o => { const n = inPlayCount(shops, o); return <span key={o} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: n > IN_PLAY_CAP ? '#fee2e2' : '#f0fdf4', color: n > IN_PLAY_CAP ? '#b91c1c' : '#166534', border: `1px solid ${n > IN_PLAY_CAP ? '#fecaca' : '#bbf7d0'}` }}>{o} · {n}/{IN_PLAY_CAP} in play</span> })}
       <button onClick={onToggleGrid} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: gridOpen ? '#1a1a1a' : 'white', color: gridOpen ? 'white' : '#555', border: '1px solid #e0dbd6' }}>🗺 Territory grid</button>
       {isOwner && <button onClick={onMonday} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: 'white', color: BLUE, border: '1px solid #bfdbfe' }}>📋 Monday list</button>}
+      {isOwner && <button onClick={onDiscover} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: 'white', color: ORANGE, border: '1px solid #f5c9b8' }}>🔎 Find every shop</button>}
     </div>
   )
 }
@@ -118,6 +119,89 @@ export function MondayModal({ isOwner, onClose, onOpenShop }) {
           </>}
         </div>
         {isOwner && <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}><SecondaryButton onClick={onClose}>Close</SecondaryButton><PrimaryButton tone="blue" disabled={busy} onClick={async () => { setBusy(true); try { await j('/api/pipeline/monday/send', { method: 'POST' }); alert('Sent: Mark → your alerts chat, Jayden → Cliq DM') } catch (e) { setErr(e.message) } finally { setBusy(false) } }}>{busy ? 'Sending…' : '📨 Send both lists to Cliq'}</PrimaryButton></div>}
+      </div>
+    </div>
+  )
+}
+
+
+/** Walk the zones city by city through Google Places; Mark reviews, then adds as Targets. */
+export function DiscoverModal({ onClose, onAdded }) {
+  const [zones, setZones] = useState(null)
+  const [picked, setPicked] = useState(new Set())
+  const [running, setRunning] = useState(false)
+  const [progress, setProgress] = useState({ done: 0, total: 0, city: '' })
+  const [cands, setCands] = useState([])
+  const [already, setAlready] = useState(0)
+  const [checked, setChecked] = useState(new Set())
+  const [err, setErr] = useState('')
+  const [log, setLog] = useState([])
+  const [adding, setAdding] = useState(false)
+  const stopRef = useState({ stop: false })[0]
+  useEffect(() => { j('/api/pipeline/zones').then(d => { setZones(d.zones); setPicked(new Set(d.zones.map(z => z.id))) }).catch(e => setErr(e.message)) }, [])
+  const cities = zones ? zones.filter(z => picked.has(z.id)).flatMap(z => z.cities.filter(c => !/^(mt|mt\.) /.test(c) && !/sedro woolley/.test(c)).map(c => ({ city: c.replace(/\b\w/g, m => m.toUpperCase()), zone: z.id }))) : []
+  async function run() {
+    setRunning(true); setErr(''); setCands([]); setChecked(new Set()); setAlready(0); stopRef.stop = false
+    const seen = new Set(); const all = []; let dup = 0
+    setProgress({ done: 0, total: cities.length, city: '' })
+    for (let i = 0; i < cities.length; i++) {
+      if (stopRef.stop) break
+      const c = cities[i]; setProgress({ done: i, total: cities.length, city: c.city })
+      try {
+        const d = await j(`/api/pipeline/discover?city=${encodeURIComponent(c.city)}`)
+        dup += d.already
+        let n = 0
+        for (const x of d.candidates) { if (seen.has(x.place_id)) continue; seen.add(x.place_id); all.push({ ...x, zone: x.zone || c.zone }); n++ }
+        setLog(l => [`${c.city}: ${d.found} found · ${n} new`, ...l].slice(0, 80)); setCands([...all]); setAlready(dup)
+      } catch (e) { setLog(l => [`${c.city}: ✗ ${e.message}`, ...l].slice(0, 80)) }
+    }
+    setProgress(p => ({ ...p, done: cities.length, city: '' })); setChecked(new Set(all.map(x => x.place_id))); setRunning(false)
+  }
+  async function add() {
+    const rows = cands.filter(c => checked.has(c.place_id)); if (!rows.length) return
+    if (!confirm(`Add ${rows.length} shops to the CRM as Targets? (Nothing in Zoho changes.)`)) return
+    setAdding(true); setErr(''); let added = 0, dupes = 0
+    try {
+      for (let i = 0; i < rows.length; i += 20) {
+        const batch = rows.slice(i, i + 20).map(c => ({ shop_name: c.shop_name, address: c.address, phone: c.phone, email: '', pipeline_stage: 'target', region: c.zone, assigned_to: (zones.find(z => z.id === c.zone) || {}).owner || '', referral_source: 'Google', notes: `Found by territory discovery ${new Date().toISOString().slice(0, 10)} · ${c.rating ? `${c.rating}★ (${c.reviews})` : 'no rating'}${c.website ? ` · ${c.website}` : ''}${c.google_maps_url ? ` · ${c.google_maps_url}` : ''}` }))
+        const r = await j('/api/shops/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(batch) })
+        added += (r.added || []).length || r.added_count || 0; dupes += (r.dupes || []).length || 0
+        setLog(l => [`added ${added} so far…`, ...l].slice(0, 80))
+      }
+      onAdded(added, dupes); onClose()
+    } catch (e) { setErr(e.message) } finally { setAdding(false) }
+  }
+  const byZone = {}; for (const c of cands) (byZone[c.zone || 'unzoned'] = byZone[c.zone || 'unzoned'] || []).push(c)
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,.55)' }} onMouseDown={e => { if (e.target === e.currentTarget && !running) onClose() }}>
+      <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" style={{ maxHeight: '92vh' }}>
+        <div className="px-5 py-3 flex items-start justify-between gap-2" style={{ borderBottom: '1px solid #ebebeb' }}>
+          <div><Eyebrow>🔎 Find every body shop · Google Places</Eyebrow><div className="text-sm" style={{ color: '#555' }}>Walks each zone's cities, drops calibration competitors and shops already in the CRM, then you pick what to add.</div></div>
+          <button onClick={onClose} disabled={running} className="text-2xl" style={{ color: '#888' }}>×</button>
+        </div>
+        <div className="px-5 py-3 space-y-3 overflow-y-auto">
+          {err && <Notice tone="red">{err}</Notice>}
+          {zones && !cands.length && !running && (
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-1.5">{zones.map(z => <Pill key={z.id} size="sm" on={picked.has(z.id)} onClick={() => setPicked(p => { const n = new Set(p); n.has(z.id) ? n.delete(z.id) : n.add(z.id); return n })}>{z.label} · {z.cities.length} cities</Pill>)}</div>
+              <div className="text-xs" style={{ color: '#888' }}>{cities.length} cities · about {Math.ceil(cities.length * 6 / 60)} min · roughly {cities.length * 5} Places requests (a few dollars of API)</div>
+              <PrimaryButton tone="orange" onClick={run} disabled={!cities.length}>🔎 Search {cities.length} cities</PrimaryButton>
+            </div>
+          )}
+          {(running || progress.total > 0) && <div className="rounded-lg p-2 text-xs" style={{ backgroundColor: '#f5f3f0' }}><div className="flex justify-between"><span>{running ? `Searching ${progress.city}…` : 'Done'}</span><span>{progress.done}/{progress.total} cities · {cands.length} new shops · {already} already in CRM</span></div><div className="h-1.5 rounded mt-1" style={{ backgroundColor: '#e8e4e0' }}><div className="h-1.5 rounded" style={{ width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%`, backgroundColor: ORANGE }} /></div>{running && <button onClick={() => { stopRef.stop = true }} className="mt-1 underline" style={{ color: '#888' }}>stop after this city</button>}</div>}
+          {cands.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-xs"><span><b>{checked.size}</b> of {cands.length} selected</span><span className="flex gap-2"><button className="underline" onClick={() => setChecked(new Set(cands.map(c => c.place_id)))}>all</button><button className="underline" onClick={() => setChecked(new Set())}>none</button><button className="underline" onClick={() => setChecked(new Set(cands.filter(c => c.reviews >= 5).map(c => c.place_id)))}>5+ reviews only</button></span></div>
+              {Object.entries(byZone).map(([z, list]) => (
+                <div key={z}><Eyebrow>{(zones.find(x => x.id === z) || {}).label || 'No zone'} · {list.length}</Eyebrow>
+                  {list.map(c => <label key={c.place_id} className="flex items-start gap-2 py-1 text-sm" style={{ borderTop: '1px solid #f1f5f9' }}><input type="checkbox" checked={checked.has(c.place_id)} onChange={() => setChecked(s => { const n = new Set(s); n.has(c.place_id) ? n.delete(c.place_id) : n.add(c.place_id); return n })} className="mt-1" /><span className="min-w-0"><span className="font-semibold" style={{ color: '#1a1a1a' }}>{c.shop_name}</span> <span className="text-xs" style={{ color: '#888' }}>{c.rating ? `${c.rating}★ (${c.reviews})` : 'no rating'}{c.phone ? ` · ${c.phone}` : ''}</span><div className="text-xs truncate" style={{ color: '#666' }}>{c.address}</div></span></label>)}
+                </div>
+              ))}
+            </div>
+          )}
+          {log.length > 0 && <div className="rounded-lg px-3 py-2 text-[11px]" style={{ backgroundColor: '#1a1a1a', color: '#d4d4d4', fontFamily: 'IBM Plex Mono, monospace', maxHeight: 120, overflowY: 'auto' }}>{log.slice(0, 30).map((l, i) => <div key={i}>{l}</div>)}</div>}
+        </div>
+        {cands.length > 0 && !running && <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}><SecondaryButton onClick={onClose}>Close</SecondaryButton><PrimaryButton tone="green" onClick={add} disabled={adding || !checked.size}>{adding ? 'Adding…' : `✅ Add ${checked.size} as Targets`}</PrimaryButton></div>}
       </div>
     </div>
   )
