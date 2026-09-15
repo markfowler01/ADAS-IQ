@@ -56,6 +56,19 @@ function rowToShop(row) {
   }
 }
 
+// Territory auto-zone (2026-09-15): a shop with no valid zone gets one from its
+// address, else its name; owner defaults to the zone owner. Never overrides a
+// zone or owner someone set on purpose.
+async function autoZone(shop) {
+  try {
+    const pz = await import('../services/pipeline.js')
+    const out = { ...shop }
+    if (!pz.ZONE_BY_ID[out.region]) { const z = pz.zoneForAddress(out.address) || pz.zoneForAddress(out.shop_name); if (z) out.region = z }
+    if (!pz.OWNERS.includes(out.assigned_to) && pz.ZONE_BY_ID[out.region]) out.assigned_to = pz.ZONE_BY_ID[out.region].owner
+    return out
+  } catch { return shop }
+}
+
 function shopToRow(shop) {
   return {
     shop_name:         shop.shop_name         || '',
@@ -513,7 +526,7 @@ router.post('/van-contact', async (req, res) => {
 // POST /api/shops
 router.post('/', async (req, res) => {
   try {
-    const shop = await insertShop(req, req.body)
+    const shop = await insertShop(req, await autoZone(req.body || {}))
     res.status(201).json(shop)
   } catch (err) {
     console.error('[shops POST]', err.message)
@@ -596,7 +609,7 @@ router.put('/:id', async (req, res) => {
   try {
     const table = getTable(req)
     const current = rowToShop(await table.getRow(String(req.params.id)))
-    const merged = { ...current, ...req.body, id: current.id, created_at: current.created_at }
+    const merged = await autoZone({ ...current, ...req.body, id: current.id, created_at: current.created_at })
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) merged.stage_changed_at = new Date().toISOString()
     const updated = await updateShop(req, req.params.id, merged)
     res.json(updated)
@@ -611,7 +624,7 @@ router.patch('/:id', async (req, res) => {
   try {
     const table = getTable(req)
     const current = rowToShop(await table.getRow(String(req.params.id)))
-    const merged = { ...current, ...req.body }
+    const merged = await autoZone({ ...current, ...req.body })
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) merged.stage_changed_at = new Date().toISOString()
     const updated = await updateShop(req, req.params.id, merged)
 
