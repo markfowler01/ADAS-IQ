@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import Navbar from './Navbar'
+import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const BRAND = '#CD4419'
 
@@ -718,7 +719,7 @@ function VanDetail({ location, setLocations, techs, assets, onBack }) {
             <F label="Make"><In value={vanForm.make} onChange={v => vf({ make: v })} placeholder="Ford" /></F>
             <F label="Model"><In value={vanForm.model} onChange={v => vf({ model: v })} placeholder="Transit" /></F>
             <F label="Color"><In value={vanForm.color} onChange={v => vf({ color: v })} /></F>
-            <F label="VIN" span2><In value={vanForm.vin} onChange={v => vf({ vin: v })} /></F>
+            <F label="VIN" span2><In value={vanForm.vin} onChange={v => vf({ vin: v })} /><VinDecodeButton vin={vanForm.vin} compact onDecoded={d => vf({ year: d.year || vanForm.year, make: d.make || vanForm.make, model: d.model || vanForm.model })} /></F>
             <F label="License plate"><In value={vanForm.plate} onChange={v => vf({ plate: v })} /></F>
             <F label="Registration exp"><In type="date" value={vanForm.reg_exp} onChange={v => vf({ reg_exp: v })} /></F>
             <F label="GPS serial / IMEI"><In value={vanForm.gps} onChange={v => vf({ gps: v })} /></F>
@@ -844,7 +845,7 @@ function VansTab({ locations, setLocations, techs, assets }) {
             <F label="Make"><In value={form.make} onChange={v => f({ make: v })} placeholder="Ford" /></F>
             <F label="Model"><In value={form.model} onChange={v => f({ model: v })} placeholder="Transit" /></F>
             <F label="Color"><In value={form.color} onChange={v => f({ color: v })} placeholder="White" /></F>
-            <F label="VIN" span2><In value={form.vin} onChange={v => f({ vin: v })} /></F>
+            <F label="VIN" span2><In value={form.vin} onChange={v => f({ vin: v })} /><VinDecodeButton vin={form.vin} compact onDecoded={d => f({ year: d.year || form.year, make: d.make || form.make, model: d.model || form.model })} /></F>
             <F label="License plate"><In value={form.plate} onChange={v => f({ plate: v })} /></F>
             <F label="Registration exp"><In type="date" value={form.reg_exp} onChange={v => f({ reg_exp: v })} /></F>
             <F label="GPS serial / IMEI"><In value={form.gps} onChange={v => f({ gps: v })} /></F>

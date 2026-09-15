@@ -1020,4 +1020,12 @@ router.post('/submit-job', requirePortalAuth, async (req, res) => {
   }
 })
 
+
+// VIN decode for the shop portal's booking form (Mark 2026-09-14: decoder on
+// every VIN box). Same NHTSA decoder the estimator uses, behind portal auth.
+router.get('/vin/:vin', requirePortalAuth, async (req, res) => {
+  try { const { decodeVin } = await import('../services/estimator/vin.js'); const d = await decodeVin(req, req.params.vin); res.status(d.ok ? 200 : 422).json(d) }
+  catch (e) { res.status(502).json({ ok: false, reason: `NHTSA unreachable: ${e.message}` }) }
+})
+
 export default router

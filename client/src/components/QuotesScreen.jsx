@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
+import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const STATUS = {
   draft:     { bg: '#e5e7eb', color: '#374151', label: 'Draft' },
@@ -295,9 +296,10 @@ function QuoteEditorModal({ quote, services, onClose, onSaved }) {
                 onChange={e => setForm(f => ({ ...f, vehicle: { ...f.vehicle, model: e.target.value } }))}
                 className="border rounded-lg px-2 py-2 text-sm" style={{ borderColor: '#e5e7eb' }} />
               <input placeholder="VIN" value={form.vehicle?.vin || ''}
-                onChange={e => setForm(f => ({ ...f, vehicle: { ...f.vehicle, vin: e.target.value } }))}
+                onChange={e => setForm(f => ({ ...f, vehicle: { ...f.vehicle, vin: e.target.value.toUpperCase() } }))}
                 className="border rounded-lg px-2 py-2 text-sm font-mono" style={{ borderColor: '#e5e7eb' }} />
             </div>
+            <VinDecodeButton vin={form.vehicle?.vin} onDecoded={d => setForm(f => ({ ...f, vehicle: { ...f.vehicle, year: d.year || f.vehicle?.year, make: d.make || f.vehicle?.make, model: d.model || f.vehicle?.model } }))} />
             <div className="grid grid-cols-2 gap-2 mt-2">
               <input placeholder="RO #" value={form.ro_number}
                 onChange={e => setForm(f => ({ ...f, ro_number: e.target.value }))}

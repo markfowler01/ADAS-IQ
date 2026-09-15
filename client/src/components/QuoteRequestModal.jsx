@@ -19,6 +19,7 @@
 
 import { useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -128,6 +129,7 @@ export default function QuoteRequestModal({ onClose, onSubmit }) {
                 style={{ border: '1px solid #e5e7eb', backgroundColor: '#fafaf9' }}
                 maxLength={17}
               />
+              <VinDecodeButton vin={vin} compact onDecoded={d => { if (d.year) setYear(d.year); if (d.make) setMake(d.make); if (d.model) setModel(d.model) }} />
             </div>
             <div>
               <label className="text-[11px] uppercase tracking-wider font-semibold" style={{ color: '#666' }}>

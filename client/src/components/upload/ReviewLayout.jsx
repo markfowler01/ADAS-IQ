@@ -11,6 +11,7 @@ import CustomerPicker from '../CustomerPicker'
 import SalespersonPicker from '../SalespersonPicker'
 import AddCalibration from './AddCalibration.jsx'
 import { Big3Badge, DrpBadge, Big3Picker, describeRules } from '../books/Big3Rules.jsx'
+import { VinCheck } from '../ui/VinDecode.jsx'
 
 // Which price list the insurer name will land on (informational — the
 // server decides for real in resolvePricingPool).
@@ -98,7 +99,7 @@ export default function ReviewLayout({
                   <span style={{ color: cashMode ? GREEN : '#1a1a1a' }}>{cashMode ? '💵 Cash' : (jobData.insurer || '—')}</span>
                 </Field>
                 <Field label="VIN" mono>
-                  <span className="inline-flex items-center gap-2">{jobData.vin || '—'}{jobData.vin && <button type="button" onClick={copyVin} className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: copied ? '#dcfce7' : '#f5f3f0', color: copied ? GREEN : '#555', border: '1px solid #e0dbd6' }}>{copied ? 'Copied ✓' : 'Copy'}</button>}</span>
+                  <span className="inline-flex items-center gap-2">{jobData.vin || '—'}{jobData.vin && <button type="button" onClick={copyVin} className="text-[10px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: copied ? '#dcfce7' : '#f5f3f0', color: copied ? GREEN : '#555', border: '1px solid #e0dbd6' }}>{copied ? 'Copied ✓' : 'Copy'}</button>}{jobData.vin && <VinCheck vin={jobData.vin} expect={{ year: jobData.year, make: jobData.make, model: jobData.model }} />}</span>
                 </Field>
               </div>
               {/* 💵 Swap to Cash — same rule, now a pill inside the panel */}

@@ -12,6 +12,7 @@ import CalibrationReviewModal from './CalibrationReviewModal.jsx'
 import { parseNoteItems, CustomerNoteBox, insurerPricingBadge } from './MobileJobCard.jsx'
 import { useShopQuotes, BillingModal } from './ShopQuotesColumn.jsx'
 import LoadingSplash from './LoadingSplash.jsx'
+import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -397,9 +398,10 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
                 className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
                 style={{ borderColor: '#ddd' }}
                 value={form.vin}
-                onChange={e => setField('vin', e.target.value)}
+                onChange={e => setField('vin', e.target.value.toUpperCase())}
                 placeholder="17-character VIN"
               />
+              <VinDecodeButton vin={form.vin} compact onDecoded={d => { if (d.year) setField('year', d.year); if (d.make) setField('make', d.make); if (d.model) setField('model', d.model) }} />
               <input
                 ref={vinCamRef}
                 type="file"

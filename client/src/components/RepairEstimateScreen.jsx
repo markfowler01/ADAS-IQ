@@ -3,6 +3,7 @@ import { API_BASE, apiFetch } from '../utils/api.js'
 import CustomerPicker from './CustomerPicker'
 import SalespersonPicker from './SalespersonPicker'
 import Navbar from './Navbar'
+import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const ORANGE       = '#CD4419'
 const ORANGE_LIGHT = '#fdf3ef'
@@ -528,7 +529,7 @@ export default function RepairEstimateScreen({ onBack, user, onLogout, currentSc
             <div><Label>MAKE</Label><Input value={make} onChange={setMake} placeholder="Toyota" /></div>
             <div><Label>MODEL</Label><Input value={model} onChange={setModel} placeholder="RAV4" /></div>
           </div>
-          <div><Label>VIN</Label><Input value={vin} onChange={setVin} placeholder="1HGBH41JXMN109186" /></div>
+          <div><Label>VIN</Label><Input value={vin} onChange={setVin} placeholder="1HGBH41JXMN109186" /><VinDecodeButton vin={vin} onDecoded={d => { if (d.year) setYear(d.year); if (d.make) setMake(d.make); if (d.model) setModel(d.model) }} /></div>
         </Section>
 
         {/* Parts */}

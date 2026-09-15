@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, portalFetch, getPortalToken } from '../utils/portal'
+import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -556,6 +557,7 @@ function SubmitJobModal({ shop, onClose, onSubmitted }) {
               placeholder="17-character VIN" maxLength="17"
               className="w-full border rounded-lg px-3 py-2 text-sm font-mono"
               style={{ borderColor: '#e5e7eb' }} />
+            <VinDecodeButton vin={form.vin} fetcher={portalFetch} url={v => `${API_BASE}/api/portal/vin/${encodeURIComponent(v)}`} onDecoded={d => setForm(f => ({ ...f, year: d.year || f.year, make: d.make || f.make, model: d.model || f.model }))} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
