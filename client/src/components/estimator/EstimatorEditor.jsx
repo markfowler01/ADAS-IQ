@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Eyebrow, Title, Panel, Row, TotalRow, Notice, Pill, Switch, Chip, Footer, PrimaryButton, SecondaryButton, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
 import { computeEstimate, readyToSend, fmtCents, fromCents, toCents } from '../../lib/estimatorCalc.js'
-import JobCard, { Money, STATUS_STYLE } from './JobCard.jsx'
+import JobCard, { Money, MarkupBox, STATUS_STYLE } from './JobCard.jsx'
 import AuthorizeModal from './AuthorizeModal.jsx'
 
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white', borderRadius: 8 }
@@ -178,6 +178,13 @@ export default function EstimatorEditor({ id, user, onBack }) {
             {canEdit && est.status === 'draft' && <button onClick={async () => { if (!confirm(`Delete ${est.number}?`)) return; await j(`/api/estimator/${id}`, { method: 'DELETE' }); onBack() }} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: '#b91c1c', backgroundColor: '#fef2f2' }}>Delete</button>}
           </div>
         </div>
+        {/* Mark 2026-09-14: "adjust the parts markup with a box at the top and also the labor" — defaults $200/hr and 2.0× */}
+        <div className="flex items-center gap-3 flex-wrap rounded-xl px-3 py-2 mb-3" style={{ backgroundColor: 'white', border: '1.5px solid #e8e4e0' }}>
+          <Eyebrow>⚙️ Rates for this estimate</Eyebrow>
+          <label className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#1a1a1a' }}>Labor <Money cents={est.labor_rate_cents ?? 20000} onChange={v => patchEst({ labor_rate_cents: v && v > 0 ? v : 20000 })} width={86} bold disabled={!canEdit} /><span className="text-xs font-normal" style={{ color: '#888' }}>/ hr</span></label>
+          <label className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#1a1a1a' }}>Parts markup <MarkupBox bp={est.parts_markup_bp ?? 10000} estMarkup={-1} onChange={bp => patchEst({ parts_markup_bp: bp == null ? 10000 : bp })} width={64} disabled={!canEdit} /><span className="text-xs font-normal" style={{ color: '#888' }}>× cost</span></label>
+          <span className="text-[11px]" style={{ color: '#888' }}>Every line and part follows these unless you type its own number.</span>
+        </div>
         {err && <Notice tone="red" className="mb-3">{err} <button className="underline ml-2" onClick={() => setErr('')}>dismiss</button></Notice>}
         {t.over_110 && <Notice tone="red" className="mb-3"><b>Exceeds authorized amount, reauthorization required.</b> Approved work is {fmtCents(t.pre_tax_total)} against {fmtCents(t.authorized_total)} authorized (110% line is {fmtCents(Math.round(t.authorized_total * 1.1))}). Get a new authorization before the job grows further.</Notice>}
 
@@ -186,7 +193,7 @@ export default function EstimatorEditor({ id, user, onBack }) {
           <div className="space-y-3 min-w-0">
             <Panel tone="blue" title="👤 Customer" right={est.customer_type === 'wholesale' ? 'Wholesale · resale' : 'Retail · taxable'}>
               <div className="p-3 space-y-2">
-                {est.customer_name ? (
+                {est.customer_name && (
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="font-bold text-sm" style={{ color: '#1a1a1a' }}>{est.customer_name}</div>
@@ -196,7 +203,11 @@ export default function EstimatorEditor({ id, user, onBack }) {
                     </div>
                     {canEdit && <button onClick={() => patchEst({ customer_name: '', customer_id: '', zoho_contact_id: '', customer_contact: {} })} className="text-xs font-semibold" style={{ color: '#888' }}>change</button>}
                   </div>
-                ) : (
+                )}
+                {est.customer_name && est.customer_kind === 'retail' && (retail.find(c => c.id === est.customer_id)?.vehicles || []).length > 0 && (
+                  <div className="flex gap-1 flex-wrap items-center"><Eyebrow>Their cars ·</Eyebrow>{retail.find(c => c.id === est.customer_id).vehicles.map((v, i) => <button key={i} disabled={!canEdit} onClick={() => patchEst({ vin: v.vin || est.vin, year: v.year, make: v.make, model: v.model, trim: v.trim || '', plate: v.plate || est.plate })} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: est.vin && est.vin === v.vin ? BLUE : 'white', color: est.vin && est.vin === v.vin ? 'white' : BLUE, border: '1px solid #bfdbfe' }}>🚗 {[v.year, v.make, v.model].filter(Boolean).join(' ') || v.vin}</button>)}</div>
+                )}
+                {est.customer_name ? null : (
                   <div>
                     <input autoFocus={!est.customer_name} value={custQ} disabled={!canEdit} onChange={e => setCustQ(e.target.value)} placeholder="Search CRM shops or retail people…" className="w-full px-3 py-2 text-sm" style={inp} />
                     {(shopHits.length > 0 || retailHits.length > 0) && (
@@ -295,7 +306,7 @@ export default function EstimatorEditor({ id, user, onBack }) {
                 )}
                 {live.jobs.length === 0 && <div className="text-sm italic px-2 py-6 text-center" style={{ color: '#999' }}>No jobs yet. Start from a template or a blank job. Only <b>approved</b> jobs count toward the total.</div>}
                 {live.jobs.map(job => (
-                  <JobCard key={job.id} job={job} settings={est.settings} catalog={catalog} canEdit={canEdit} vehicle={vehicle} usual={common.find(c => c.name.toLowerCase() === String(job.name || '').replace(/\s*\(copy\)\s*$/i, '').trim().toLowerCase())}
+                  <JobCard key={job.id} job={job} settings={{ ...est.settings, labor_rate_cents: est.labor_rate_cents ?? 20000, parts_markup_bp: est.parts_markup_bp ?? 10000 }} catalog={catalog} canEdit={canEdit} vehicle={vehicle} usual={common.find(c => c.name.toLowerCase() === String(job.name || '').replace(/\s*\(copy\)\s*$/i, '').trim().toLowerCase())}
                     onPatch={f => patchJob(job.id, f)} onStatus={s => setJobStatus(job, s)} onDuplicate={() => dupJob(job.id)} onDelete={() => delJob(job.id)} onSaveTemplate={() => saveTpl(job.id)}
                     dragProps={{ draggable: armed === job.id, onHandleDown: () => setArmed(job.id), onDragStart: () => setDragId(job.id), onDragOver: e => { e.preventDefault() }, onDrop: () => drop(job.id), style: dragId === job.id ? { opacity: .4 } : undefined }} />
                 ))}

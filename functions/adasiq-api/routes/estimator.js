@@ -56,6 +56,7 @@ function rowToEst(r) {
     tax_rate_bp: Math.round(Number(r.es_tax_rate_pct || 0) * 100), zoho_tax_id: r.es_zoho_tax_id || '', tax_enabled: bool(r.es_tax_enabled), tax_note: r.es_tax_note || '',
     supplies_enabled: bool(r.es_supplies_enabled), supplies_pct_bp: Math.round(Number(r.es_supplies_pct ?? 7) * 100), supplies_cap_cents: r.es_supplies_cap_cents == null ? 5000 : int(r.es_supplies_cap_cents),
     discount_type: r.es_discount_type || 'none', discount_value: int(r.es_discount_value), detail_level: r.es_detail_level || '',
+    labor_rate_cents: r.es_labor_rate_cents == null ? null : int(r.es_labor_rate_cents), parts_markup_bp: r.es_parts_markup_bp == null ? null : int(r.es_parts_markup_bp),
     concern: r.es_concern || '', notes: r.es_notes || '', terms: r.es_terms || '', valid_until: r.es_valid_until || '',
     totals: json(r.es_totals_json, null), grand_total_cents: int(r.es_grand_total_cents), flags: (r.es_flags || '').split(',').filter(Boolean),
     zoho_invoice_id: r.es_zoho_invoice_id || '', zoho_invoice_number: r.es_zoho_invoice_number || '', zoho_estimate_id: r.es_zoho_estimate_id || '', zoho_estimate_number: r.es_zoho_estimate_number || '',
@@ -76,6 +77,7 @@ function estToRow(e) {
     tax_rate_bp: v => ({ es_tax_rate_pct: int(v) / 100 }), zoho_tax_id: v => ({ es_zoho_tax_id: str(v, 40) }), tax_enabled: v => ({ es_tax_enabled: !!v }), tax_note: v => ({ es_tax_note: str(v) }),
     supplies_enabled: v => ({ es_supplies_enabled: !!v }), supplies_pct_bp: v => ({ es_supplies_pct: int(v) / 100 }), supplies_cap_cents: v => ({ es_supplies_cap_cents: int(v) }),
     discount_type: v => ({ es_discount_type: str(v, 10) }), discount_value: v => ({ es_discount_value: int(v) }), detail_level: v => ({ es_detail_level: str(v, 20) }),
+    labor_rate_cents: v => ({ es_labor_rate_cents: v == null ? null : int(v) }), parts_markup_bp: v => ({ es_parts_markup_bp: v == null ? null : int(v) }),
     concern: v => ({ es_concern: str(v, 9000) }), notes: v => ({ es_notes: str(v, 9000) }), terms: v => ({ es_terms: str(v, 9000) }), valid_until: v => ({ es_valid_until: str(v, 20) }),
     totals: v => ({ es_totals_json: JSON.stringify(v || {}).slice(0, 9000) }), grand_total_cents: v => ({ es_grand_total_cents: int(v) }), flags: v => ({ es_flags: str((v || []).join(','), 255) }),
     zoho_invoice_id: v => ({ es_zoho_invoice_id: str(v, 40) }), zoho_invoice_number: v => ({ es_zoho_invoice_number: str(v, 40) }), zoho_estimate_id: v => ({ es_zoho_estimate_id: str(v, 40) }), zoho_estimate_number: v => ({ es_zoho_estimate_number: str(v, 40) }),
@@ -118,7 +120,7 @@ function cleanLines(lines) {
     taxable: l.taxable !== false, notes: str(l.notes, 500),
     parts: (l.parts || []).map(p => ({
       id: p.id || newId(), pn: str(p.pn, 60), desc: str(p.desc, 200), source: str(p.source, 20) || 'oem', qty: Number(p.qty) > 0 ? Number(p.qty) : 1,
-      cost_cents: int(p.cost_cents), markup_bp: int(p.markup_bp), price_cents: p.price_cents == null || p.price_cents === '' ? null : int(p.price_cents), taxable: p.taxable !== false,
+      cost_cents: int(p.cost_cents), markup_bp: p.markup_bp == null || p.markup_bp === '' ? null : int(p.markup_bp), price_cents: p.price_cents == null || p.price_cents === '' ? null : int(p.price_cents), taxable: p.taxable !== false,
     })),
   }))
 }
@@ -223,21 +225,125 @@ R.get('/shops', async (req, res) => {
     })).filter(s => s.name) })
   } catch (e) { fail(res, e, 'shops') }
 })
+// ── Repair customers (Mark 2026-09-14: "build my repair customers in the
+// CRM also but keep them separate") — their own table, their own CRM tab.
+// Never mixed into CRMShops, so the shop pipeline / marketing / dispatch
+// code never sees them.
+const rowToRetail = r => ({
+  id: String(r.ROWID), name: r.er_name || '', phone: r.er_phone || '', email: r.er_email || '', address: r.er_address || '', city: r.er_city || '', zip: r.er_zip || '',
+  zoho_contact_id: r.er_zoho_contact_id || '', notes: r.er_notes || '', vehicles: json(r.er_vehicles_json, []), source: r.er_source || '', tags: String(r.er_tags || '').split(',').filter(Boolean),
+  last_contact: r.er_last_contact || '', created_at: r.er_created_at || r.CREATEDTIME || '', updated_at: r.er_updated_at || '',
+})
+function retailToRow(c) {
+  const m = {
+    name: v => ({ er_name: str(v, 200) }), phone: v => ({ er_phone: str(v, 30) }), email: v => ({ er_email: str(v, 200) }), address: v => ({ er_address: str(v, 200) }), city: v => ({ er_city: str(v, 80) }), zip: v => ({ er_zip: str(v, 12) }),
+    zoho_contact_id: v => ({ er_zoho_contact_id: str(v, 40) }), notes: v => ({ er_notes: str(v, 9000) }), vehicles: v => ({ er_vehicles_json: JSON.stringify((Array.isArray(v) ? v : []).slice(0, 12).map(x => ({ vin: str(x.vin, 20).toUpperCase(), year: str(x.year, 10), make: str(x.make, 60), model: str(x.model, 80), trim: str(x.trim, 80), plate: str(x.plate, 20) }))) }),
+    source: v => ({ er_source: str(v, 60) }), tags: v => ({ er_tags: str((Array.isArray(v) ? v : String(v || '').split(',')).map(t => t.trim()).filter(Boolean).join(','), 255) }),
+    last_contact: v => ({ er_last_contact: str(v, 40) }), updated_at: v => ({ er_updated_at: str(v, 40) }), created_at: v => ({ er_created_at: str(v, 40) }),
+  }
+  const row = {}
+  for (const [k, fn] of Object.entries(m)) if (c[k] !== undefined) Object.assign(row, fn(c[k]))
+  return row
+}
+async function getRetail(req, id) { const r = await tbl(req, T.retail).getRow(String(id)); return r ? rowToRetail(r) : null }
+/** Estimates per retail customer: count, open/won cents, last activity, list. */
+async function retailStats(req) {
+  const rows = unwrap(await zcql(req, `SELECT ROWID, es_number, es_customer_id, es_status, es_grand_total_cents, es_created_at, es_year, es_make, es_model, es_vin FROM ${T.est} WHERE es_customer_kind = 'retail' ORDER BY CREATEDTIME DESC LIMIT 300`), T.est)
+  const by = {}
+  for (const r of rows) {
+    const k = String(r.es_customer_id || ''); if (!k) continue
+    const g = by[k] || (by[k] = { count: 0, open_cents: 0, won_cents: 0, last_at: '', estimates: [] })
+    const cents = int(r.es_grand_total_cents); const st = r.es_status || 'draft'
+    g.count += 1; if (st === 'draft' || st === 'sent') g.open_cents += cents; if (st === 'approved' || st === 'invoiced') g.won_cents += cents
+    if (!g.last_at) g.last_at = r.es_created_at || r.CREATEDTIME || ''
+    g.estimates.push({ id: String(r.ROWID), number: r.es_number || '', status: st, grand_total_cents: cents, created_at: r.es_created_at || r.CREATEDTIME || '', vehicle: [r.es_year, r.es_make, r.es_model].filter(Boolean).join(' '), vin: r.es_vin || '' })
+  }
+  return by
+}
+/** Learning: a vehicle seen on an estimate is remembered on the person (by VIN, else year+make+model). */
+async function rememberVehicle(req, customerId, v) {
+  try {
+    const c = await getRetail(req, customerId); if (!c) return
+    const vin = str(v.vin, 20).toUpperCase(); const ymm = [v.year, v.make, v.model].filter(Boolean).join(' ').toLowerCase()
+    if (!vin && !ymm) return
+    const same = x => (vin && String(x.vin || '').toUpperCase() === vin) || (!vin && [x.year, x.make, x.model].filter(Boolean).join(' ').toLowerCase() === ymm)
+    const cur = c.vehicles.find(same)
+    const merged = { vin: vin || cur?.vin || '', year: v.year || cur?.year || '', make: v.make || cur?.make || '', model: v.model || cur?.model || '', trim: v.trim || cur?.trim || '', plate: v.plate || cur?.plate || '' }
+    const vehicles = [merged, ...c.vehicles.filter(x => !same(x))].slice(0, 12)
+    await tbl(req, T.retail).updateRow({ ROWID: c.id, ...retailToRow({ vehicles, last_contact: now(), updated_at: now() }) })
+  } catch (e) { console.log('[estimator] rememberVehicle failed:', e.message) }
+}
 R.get('/retail-customers', async (req, res) => {
   try {
     const q = str(req.query.q || '', 80).toLowerCase()
-    const rows = unwrap(await zcql(req, `SELECT * FROM ${T.retail} ORDER BY CREATEDTIME DESC LIMIT 300`), T.retail)
-    const list = rows.map(r => ({ id: String(r.ROWID), name: r.er_name || '', phone: r.er_phone || '', email: r.er_email || '', address: r.er_address || '', city: r.er_city || '', zip: r.er_zip || '', zoho_contact_id: r.er_zoho_contact_id || '' }))
-    res.json({ ok: true, customers: q ? list.filter(c => `${c.name} ${c.phone} ${c.email}`.toLowerCase().includes(q)) : list })
+    const [rows, stats] = await Promise.all([zcql(req, `SELECT * FROM ${T.retail} ORDER BY CREATEDTIME DESC LIMIT 300`), retailStats(req).catch(() => ({}))])
+    let list = unwrap(rows, T.retail).map(rowToRetail).map(c => { const s = stats[c.id] || {}; return { ...c, estimates_count: s.count || 0, open_cents: s.open_cents || 0, won_cents: s.won_cents || 0, last_estimate_at: s.last_at || '' } })
+    if (q) list = list.filter(c => `${c.name} ${c.phone} ${c.email} ${c.vehicles.map(v => `${v.vin} ${v.year} ${v.make} ${v.model} ${v.plate}`).join(' ')}`.toLowerCase().includes(q))
+    res.json({ ok: true, customers: list })
   } catch (e) { fail(res, e, 'retail list') }
+})
+R.get('/retail-customers/:id', async (req, res) => {
+  try {
+    const c = await getRetail(req, req.params.id); if (!c) return res.status(404).json({ error: 'Customer not found' })
+    const stats = (await retailStats(req).catch(() => ({})))[c.id] || { count: 0, open_cents: 0, won_cents: 0, estimates: [] }
+    res.json({ ok: true, customer: { ...c, estimates_count: stats.count, open_cents: stats.open_cents, won_cents: stats.won_cents, estimates: stats.estimates } })
+  } catch (e) { fail(res, e, 'retail get') }
 })
 R.post('/retail-customers', staffOnly, async (req, res) => {
   try {
     const b = req.body || {}
     if (!str(b.name).trim()) return res.status(400).json({ error: 'Name is required' })
-    const row = await tbl(req, T.retail).insertRow({ er_name: str(b.name, 200), er_phone: str(b.phone, 30), er_email: str(b.email, 200), er_address: str(b.address, 200), er_city: str(b.city, 80), er_zip: str(b.zip, 12), er_notes: str(b.notes, 2000), er_created_at: now() })
-    res.json({ ok: true, customer: { id: String(row.ROWID), name: b.name, phone: b.phone || '', email: b.email || '', address: b.address || '', city: b.city || '', zip: b.zip || '', zoho_contact_id: '' } })
+    const row = await tbl(req, T.retail).insertRow(retailToRow({ name: b.name, phone: b.phone || '', email: b.email || '', address: b.address || '', city: b.city || '', zip: b.zip || '', notes: b.notes || '', vehicles: b.vehicles || [], source: b.source || (who(req) ? `app · ${who(req)}` : 'app'), tags: b.tags || [], last_contact: now(), created_at: now(), updated_at: now() }))
+    res.json({ ok: true, customer: { ...rowToRetail(row), estimates_count: 0, open_cents: 0, won_cents: 0 } })
   } catch (e) { fail(res, e, 'retail create') }
+})
+R.put('/retail-customers/:id', staffOnly, async (req, res) => {
+  try {
+    const c = await getRetail(req, req.params.id); if (!c) return res.status(404).json({ error: 'Customer not found' })
+    const b = { ...(req.body || {}) }; for (const k of ['id', 'created_at', 'estimates', 'estimates_count', 'open_cents', 'won_cents']) delete b[k]
+    if (b.name !== undefined && !str(b.name).trim()) return res.status(400).json({ error: 'Name is required' })
+    await tbl(req, T.retail).updateRow({ ROWID: c.id, ...retailToRow({ ...b, updated_at: now() }) })
+    // keep the name/contact on open estimates in step
+    if (b.name || b.phone || b.email || b.address) {
+      const st = (await retailStats(req).catch(() => ({})))[c.id]
+      const nc = { ...c, ...b }
+      for (const e of st?.estimates || []) if (e.status === 'draft' || e.status === 'sent') await tbl(req, T.est).updateRow({ ROWID: e.id, ...estToRow({ customer_name: nc.name, customer_contact: { phone: nc.phone, email: nc.email, address: nc.address, city: nc.city, zip: nc.zip } }) }).catch(() => {})
+    }
+    res.json({ ok: true, customer: await getRetail(req, c.id) })
+  } catch (e) { fail(res, e, 'retail update') }
+})
+R.delete('/retail-customers/:id', staffOnly, async (req, res) => {
+  try {
+    const c = await getRetail(req, req.params.id); if (!c) return res.status(404).json({ error: 'Customer not found' })
+    const st = (await retailStats(req).catch(() => ({})))[c.id]
+    if (st?.count && !isOwner(req)) return res.status(409).json({ error: `${st.count} estimate${st.count === 1 ? '' : 's'} on file — only Mark can delete a customer with history.` })
+    await tbl(req, T.retail).deleteRow(c.id)
+    res.json({ ok: true })
+  } catch (e) { fail(res, e, 'retail delete') }
+})
+// Zoho Books: link by exact name or create an INDIVIDUAL customer (shops are business customers; these are people).
+R.post('/retail-customers/:id/books-customer', staffOnly, async (req, res) => {
+  try {
+    const c = await getRetail(req, req.params.id); if (!c) return res.status(404).json({ error: 'Customer not found' })
+    if (c.zoho_contact_id && !req.body?.relink) return res.json({ ok: true, existing: true, contact_id: c.zoho_contact_id })
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const B = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const name = c.name.trim(); const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const found = await axios.get(`${B}/contacts`, { headers: H, params: { ...P, contact_name_contains: name.slice(0, 40), contact_type: 'customer' }, timeout: 15000, validateStatus: s => s < 500 })
+    const hit = (found.data?.contacts || []).find(x => norm(x.contact_name) === norm(name))
+    const link = async id => { await tbl(req, T.retail).updateRow({ ROWID: c.id, er_zoho_contact_id: String(id), er_updated_at: now() }); const st = (await retailStats(req).catch(() => ({})))[c.id]; for (const e of st?.estimates || []) await tbl(req, T.est).updateRow({ ROWID: e.id, es_zoho_contact_id: String(id) }).catch(() => {}) }
+    if (hit) { await link(hit.contact_id); return res.json({ ok: true, linked: true, contact_id: hit.contact_id, contact_name: hit.contact_name }) }
+    const [first, ...rest] = name.split(/\s+/); const last = rest.join(' ')
+    const billing_address = c.address ? { address: c.address, city: c.city || '', state: 'WA', zip: c.zip || '', country: 'U.S.A' } : undefined
+    const body = { contact_name: name, contact_type: 'customer', customer_sub_type: 'individual', first_name: first, last_name: last, ...(c.email ? { email: c.email } : {}), ...(c.phone ? { phone: c.phone } : {}), ...(billing_address ? { billing_address, shipping_address: billing_address } : {}), contact_persons: [{ first_name: first, last_name: last, ...(c.email ? { email: c.email } : {}), ...(c.phone ? { phone: c.phone } : {}), is_primary_contact: true }], payment_terms: 0, payment_terms_label: 'Due on Receipt', notes: 'Repair customer · created from the Absolute ADAS app estimator' }
+    const r = await axios.post(`${B}/contacts`, body, { headers: H, params: P, timeout: 20000, validateStatus: s => s < 500 })
+    if (r.data?.code !== 0) return res.status(502).json({ error: `Books said: ${r.data?.message || r.status}` })
+    await link(r.data.contact.contact_id)
+    console.log(`[estimator] Books individual customer created: ${name} (${r.data.contact.contact_id}) by ${who(req)}`)
+    res.json({ ok: true, created: true, contact_id: r.data.contact.contact_id, contact_name: r.data.contact.contact_name })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
 // Templates (whole jobs with lines)
@@ -351,11 +457,14 @@ R.post('/', staffOnly, async (req, res) => {
       tax_enabled: customer_type === 'retail', tax_rate_bp: int(taxRow?.rate_bp), zoho_tax_id: taxRow?.tax_id || '', tax_note: '',
       supplies_enabled: customer_type === 'retail', supplies_pct_bp: settings.supplies_pct_bp, supplies_cap_cents: settings.supplies_cap_cents,
       discount_type: discountPct > 0 ? 'pct' : 'none', discount_value: discountPct > 0 ? Math.round(discountPct * 100) : 0, detail_level: '',
+      labor_rate_cents: int(settings.labor_rate_cents) || 20000, parts_markup_bp: settings.parts_markup_bp == null ? 10000 : int(settings.parts_markup_bp),
       concern: b.concern || '', notes: '', terms: '', valid_until: '', totals: {}, grand_total_cents: 0, flags: [],
       created_by: who(req), created_at: now(), updated_at: now(), job_id: b.job_id || '',
     }
+    if (kind === 'retail' && e.customer_id) { const rc = await getRetail(req, e.customer_id).catch(() => null); if (rc) { e.zoho_contact_id = e.zoho_contact_id || rc.zoho_contact_id; e.customer_name = e.customer_name || rc.name; if (!Object.keys(e.customer_contact || {}).length) e.customer_contact = { phone: rc.phone, email: rc.email, address: rc.address, city: rc.city, zip: rc.zip }; if (!e.service_zip && rc.zip) e.service_zip = rc.zip } }
     const row = await tbl(req, T.est).insertRow(estToRow(e))
     const id = String(row.ROWID)
+    if (kind === 'retail' && e.customer_id && (e.vin || e.make)) rememberVehicle(req, e.customer_id, e).catch(() => {})
     const full = await recompute(req, id, { est: { ...e, id }, jobs: [] })
     res.json({ ok: true, estimate: full })
   } catch (e) { fail(res, e, 'create') }
@@ -381,6 +490,8 @@ R.put('/:id', staffOnly, async (req, res) => {
     if (b.customer_type === 'wholesale' && cur.customer_type !== 'wholesale' && b.tax_enabled === undefined) b.tax_enabled = false
     if (b.customer_type === 'retail' && cur.customer_type !== 'retail' && b.tax_enabled === undefined) b.tax_enabled = true
     await tbl(req, T.est).updateRow({ ROWID: String(cur.id), ...estToRow({ ...b, updated_at: now() }) })
+    const nx = { ...cur, ...b }
+    if (nx.customer_kind === 'retail' && nx.customer_id && ['vin', 'year', 'make', 'model', 'trim', 'plate', 'customer_id'].some(k => b[k] !== undefined) && (nx.vin || nx.make)) await rememberVehicle(req, nx.customer_id, nx)
     res.json({ ok: true, estimate: await recompute(req, cur.id) })
   } catch (e) { fail(res, e, 'update') }
 })

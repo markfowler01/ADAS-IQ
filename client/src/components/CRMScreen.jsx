@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { STAGES, REGIONS } from './crmConstants.js'
 import Navbar from './Navbar'
+import RepairCustomers from './crm/RepairCustomers.jsx'  // repair customers, kept separate from shops (2026-09-14)
 import CRMImportModal from './CRMImportModal'
 import GooglePlacesModal from './GooglePlacesModal'
 import CRMBroadcastModal from './CRMBroadcastModal'
@@ -448,6 +449,17 @@ function StatsBar({ shops }) {
 
 // ─── Main CRM Screen ──────────────────────────────────────────────────────────
 export default function CRMScreen({ user, onLogout, currentScreen, onNavigate }) {
+  // Mark 2026-09-14: repair customers live in the CRM too, but SEPARATE from
+  // body shops — own table, own tab, never in the pipeline / marketing lists.
+  const [crmMode, setCrmModeState] = useState(() => { try { return localStorage.getItem('adas_crm_mode') || 'shops' } catch { return 'shops' } })
+  const setCrmMode = m => { setCrmModeState(m); try { localStorage.setItem('adas_crm_mode', m) } catch {} }
+  const modeToggle = (
+    <div className="inline-flex rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
+      {[['shops', '🏪 Body shops'], ['repair', '🙂 Repair customers']].map(([m, l]) => (
+        <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: crmMode === m ? ORANGE : 'transparent', color: crmMode === m ? 'white' : '#666' }}>{l}</button>
+      ))}
+    </div>
+  )
   const [shops,         setShops]         = useState([])
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
@@ -580,6 +592,13 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   // Kanban only shows non-lost stages; Lost appears in mobile list + filter pill
   const kanbanStages = STAGES.filter(s => s.id !== 'lost')
 
+  if (crmMode === 'repair') return (
+    <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      <RepairCustomers user={user} onNavigate={onNavigate} modeToggle={modeToggle} />
+    </div>
+  )
+
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'white' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
@@ -588,7 +607,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
 
         {/* Header */}
         <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-          <h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>Sales Pipeline</h1>
+          <div className="flex items-center gap-3 flex-wrap"><h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>Sales Pipeline</h1>{modeToggle}</div>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Search */}
             <div className="relative">

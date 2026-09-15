@@ -3,11 +3,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { computeEstimate, computeJob, partTotal, lineLabor, readyToSend, authorizationComplete, toCents, fromCents } from '../services/estimator/calc.js'
 
-const S = { rates: { mechanical: 15000, diagnostic: 17500, calibration: 20000, programming: 20000, r_and_i: 15000 }, supplies_pct_bp: 700, supplies_cap_cents: 5000, supplies_taxable: true }
+const S = { rates: { mechanical: 15000, diagnostic: 17500, calibration: 20000, programming: 20000, r_and_i: 15000 }, labor_rate_cents: null, parts_markup_bp: 4000, supplies_pct_bp: 700, supplies_cap_cents: 5000, supplies_taxable: true }
 const line = (o = {}) => ({ id: 'l', desc: 'x', rate_key: 'mechanical', hours: 1, rate_override_cents: null, flat_cents: null, taxable: true, parts: [], ...o })
 const part = (o = {}) => ({ id: 'p', pn: '', desc: 'p', source: 'oem', qty: 1, cost_cents: 10000, markup_bp: 4000, price_cents: null, taxable: true, ...o })
 const job = (o = {}) => ({ id: 'j', name: 'Job', status: 'approved', lines: [line()], ...o })
-const est = (o = {}) => ({ tax_enabled: false, tax_rate_bp: 1030, supplies_enabled: false, supplies_pct_bp: 700, supplies_cap_cents: 5000, discount_type: 'none', discount_value: 0, jobs: [job()], ...o })
+const est = (o = {}) => ({ labor_rate_cents: null, parts_markup_bp: 4000, tax_enabled: false, tax_rate_bp: 1030, supplies_enabled: false, supplies_pct_bp: 700, supplies_cap_cents: 5000, discount_type: 'none', discount_value: 0, jobs: [job()], ...o })
 
 test('part total = qty × round(cost × (1+markup))', () => {
   assert.equal(partTotal(part()), 14000)
@@ -109,4 +109,17 @@ test('oral authorization needs all five', () => {
 
 test('cents helpers', () => {
   assert.equal(toCents('$1,234.56'), 123456); assert.equal(toCents('12.345'), 1235); assert.equal(fromCents(123456), '1234.56')
+})
+
+test("estimate-level boxes: labor $200/hr and parts 2.0× drive everything not overridden (Mark's defaults)", () => {
+  const e = est({ labor_rate_cents: 20000, parts_markup_bp: 10000, jobs: [job({ lines: [
+    line({ hours: 1, parts: [part({ cost_cents: 10000, markup_bp: null })] }),           // 200 + 200
+    line({ hours: 1, rate_override_cents: 9900, parts: [part({ cost_cents: 10000, markup_bp: 2500 })] }), // 99 + 125
+  ] })] })
+  const r = computeEstimate(e, S)
+  assert.equal(r.jobs[0].lines[0].labor_cents, 20000); assert.equal(r.jobs[0].lines[0].parts_cents, 20000)
+  assert.equal(r.jobs[0].lines[1].labor_cents, 9900); assert.equal(r.jobs[0].lines[1].parts_cents, 12500)
+  assert.equal(r.totals.subtotal, 62400)
+  // no estimate box → per-type table
+  assert.equal(computeEstimate(est({ jobs: [job({ lines: [line({ hours: 1, rate_key: 'diagnostic' })] })] }), S).totals.subtotal, 17500)
 })

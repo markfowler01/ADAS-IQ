@@ -25,10 +25,11 @@ export const PART_SOURCES = ['oem', 'aftermarket', 'recycled', 'reconditioned', 
 export const AUTH_METHODS = ['oral', 'written', 'email', 'text', 'portal']
 export const DEFAULT_SETTINGS = {
   rates: { ...DEFAULT_RATES },
+  labor_rate_cents: 20000,       // Mark 2026-09-14: default labor $200/hr (one box at the top of the estimate)
+  parts_markup_bp: 10000,        // Mark 2026-09-14: default parts markup 2.0× cost (= +100%)
   supplies_pct_bp: 700,          // 7.00%
   supplies_cap_cents: 5000,      // $50
   supplies_taxable: true,        // WA taxes shop supplies with the repair
-  default_markup_bp: 4000,       // 40% parts markup
   detail_level: 'rolled_up',
   tax_by_zip: {},                // zip -> { rate_bp, tax_id, city }
   category_items: {},            // job category -> Books item_id
@@ -40,32 +41,43 @@ const int = v => { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n
 const rnd = v => Math.sign(v) * Math.round(Math.abs(v))
 const bp = (cents, basisPoints) => rnd(cents * int(basisPoints) / 10000)
 
-export function effectiveRate(line, rates = DEFAULT_RATES) {
+export function effectiveRate(line, rates = DEFAULT_RATES, estimateRate = null) {
   if (line.rate_override_cents != null && line.rate_override_cents !== '') return int(line.rate_override_cents)
+  if (estimateRate != null && estimateRate !== '' && int(estimateRate) > 0) return int(estimateRate)
   return int((rates || DEFAULT_RATES)[line.rate_key] ?? DEFAULT_RATES[line.rate_key] ?? 0)
+}
+/** Part markup: the part's own markup if set, else the estimate's box, else the settings default. */
+export function effectiveMarkupBp(part, defaultMarkupBp = null) {
+  if (part.markup_bp != null && part.markup_bp !== '') return int(part.markup_bp)
+  if (defaultMarkupBp != null && defaultMarkupBp !== '') return int(defaultMarkupBp)
+  return DEFAULT_SETTINGS.parts_markup_bp
 }
 
 /** 1. part price = override or cost × (1 + markup); part total = qty × price. */
-export function partPrice(part) {
+export function partPrice(part, defaultMarkupBp = null) {
   if (part.price_cents != null && part.price_cents !== '') return int(part.price_cents)
-  return rnd(int(part.cost_cents) * (10000 + int(part.markup_bp)) / 10000)
+  return rnd(int(part.cost_cents) * (10000 + effectiveMarkupBp(part, defaultMarkupBp)) / 10000)
 }
-export function partTotal(part) {
+export function partTotal(part, defaultMarkupBp = null) {
   const qty = Number(part.qty)
-  return rnd((Number.isFinite(qty) && qty > 0 ? qty : 1) * partPrice(part))
+  return rnd((Number.isFinite(qty) && qty > 0 ? qty : 1) * partPrice(part, defaultMarkupBp))
 }
 
 /** 2. line labor = flat price if set, else hours × rate (hours to one place). */
-export function lineLabor(line, rates) {
+// ctx = { rates, labor_rate_cents, parts_markup_bp } (estimate-level boxes win over the per-type table)
+const ctxOf = c => (c && typeof c === 'object' && !Array.isArray(c) && ('rates' in c || 'labor_rate_cents' in c || 'parts_markup_bp' in c)) ? c : { rates: c }
+export function lineLabor(line, ctx) {
+  const c = ctxOf(ctx)
   if (line.flat_cents != null && line.flat_cents !== '') return int(line.flat_cents)
   const hours = Math.round((Number(line.hours) || 0) * 10) / 10
-  return rnd(hours * effectiveRate(line, rates))
+  return rnd(hours * effectiveRate(line, c.rates, c.labor_rate_cents))
 }
-export function lineParts(line) { return (line.parts || []).reduce((s, p) => s + partTotal(p), 0) }
+export function lineParts(line, ctx) { const c = ctxOf(ctx); return (line.parts || []).reduce((s, p) => s + partTotal(p, c.parts_markup_bp), 0) }
 
-export function computeLine(line, rates) {
-  const labor = lineLabor(line, rates)
-  const parts = (line.parts || []).map(p => ({ ...p, total_cents: partTotal(p), price_each_cents: partPrice(p) }))
+export function computeLine(line, ctx) {
+  const c = ctxOf(ctx)
+  const labor = lineLabor(line, c)
+  const parts = (line.parts || []).map(p => ({ ...p, total_cents: partTotal(p, c.parts_markup_bp), price_each_cents: partPrice(p, c.parts_markup_bp), markup_bp_effective: effectiveMarkupBp(p, c.parts_markup_bp) }))
   const partsCents = parts.reduce((s, p) => s + p.total_cents, 0)
   const taxableLabor = line.taxable === false ? 0 : labor
   const taxableParts = parts.reduce((s, p) => s + (p.taxable === false ? 0 : p.total_cents), 0)
@@ -73,8 +85,8 @@ export function computeLine(line, rates) {
 }
 
 /** 3. job totals. */
-export function computeJob(job, rates) {
-  const lines = (job.lines || []).map(l => computeLine(l, rates))
+export function computeJob(job, ctx) {
+  const lines = (job.lines || []).map(l => computeLine(l, ctx))
   const labor = lines.reduce((s, l) => s + l.labor_cents, 0)
   const parts = lines.reduce((s, l) => s + l.parts_cents, 0)
   const taxable = lines.reduce((s, l) => s + l.taxable_cents, 0)
@@ -88,7 +100,9 @@ export function computeJob(job, rates) {
  */
 export function computeEstimate(est, settings = DEFAULT_SETTINGS) {
   const rates = { ...DEFAULT_RATES, ...(settings?.rates || {}) }
-  const jobs = (est.jobs || []).map(j => computeJob(j, rates))
+  // null boxes mean "no estimate-level rate" → per-type table / settings default (the server fills the boxes at creation)
+  const ctx = { rates, labor_rate_cents: est.labor_rate_cents ?? null, parts_markup_bp: est.parts_markup_bp ?? settings?.parts_markup_bp ?? null }
+  const jobs = (est.jobs || []).map(j => computeJob(j, ctx))
   const approved = jobs.filter(j => j.status === 'approved')
 
   const labor_subtotal = approved.reduce((s, j) => s + j.labor_cents, 0)
@@ -180,8 +194,9 @@ export const fmtCents = c => `$${(int(c) / 100).toLocaleString('en-US', { minimu
 export const toCents = dollars => rnd((Number(String(dollars ?? '').replace(/[^0-9.\-]/g, '')) || 0) * 100)
 export const fromCents = c => (int(c) / 100).toFixed(2)
 export const newId = () => Math.random().toString(36).slice(2, 10)
-export function blankPart(defaults = DEFAULT_SETTINGS) {
-  return { id: newId(), pn: '', desc: '', source: 'oem', qty: 1, cost_cents: 0, markup_bp: defaults.default_markup_bp ?? 4000, price_cents: null, taxable: true }
+export function blankPart() {
+  // markup_bp null = "use the estimate's parts markup box" (Mark's 2.0× default)
+  return { id: newId(), pn: '', desc: '', source: 'oem', qty: 1, cost_cents: 0, markup_bp: null, price_cents: null, taxable: true }
 }
 export function blankLine(rate_key = 'mechanical') {
   return { id: newId(), desc: '', rate_key, hours: 0, rate_override_cents: null, flat_cents: null, taxable: true, notes: '', parts: [] }
