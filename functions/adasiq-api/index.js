@@ -18,6 +18,7 @@ import extractVinImageRouter from './routes/extract-vin-image.js'
 import tsbRouter, { tsbPublicRouter } from './routes/tsb.js'
 import cloningRouter from './routes/cloning.js'
 import zohoMirrorRouter from './routes/zohoMirror.js'
+import arRouter, { arCronRouter } from './routes/ar.js'   // Absolute ADAS Books (AR shadow mirror + drift), 2026-09-15
 import recruitRouter, { publicRouter as recruitPublicRouter } from './routes/recruit.js'
 import { publicRouter as bookingPublicRouter } from './routes/booking.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
@@ -223,6 +224,8 @@ app.use('/api/extract-vin-image', requireAuth, extractLimiter, extractVinImageRo
 app.use('/api/tsb', requireAuth, tsbRouter)
 app.use('/api/cloning', requireAuth, cloningRouter)
 app.use('/api/zoho-mirror', requireAuth, requireStaff, zohoMirrorRouter)
+app.use('/api/ar', requireAuth, requireStaff, arRouter)
+app.use('/api/cron/ar', arCronRouter)
 app.use('/api/recruit', requireAuth, requireStaff, recruitRouter)
 // Public website intake form (absoluteadas.com/careers) — no auth, honeypot inside.
 app.use('/api/public/recruit', recruitPublicRouter)

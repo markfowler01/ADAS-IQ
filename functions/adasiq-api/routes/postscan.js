@@ -352,6 +352,7 @@ router.post('/run', async (req, res) => {
   try {
     const { maybeNightlyMirror } = await import('../services/zohoMirror.js')
     const zm = await maybeNightlyMirror(req)
+    try { const { maybeNightlyAr } = await import('../services/ar.js'); const ar = await maybeNightlyAr(req); if (ar.fired) console.log('[ar] nightly:', JSON.stringify(ar).slice(0, 400)) } catch (e) { console.log('[ar] nightly failed:', e.message) }
     if (zm.fired) console.log('[postscan] zoho mirror:', JSON.stringify({ invoices: zm.invoices, payments: zm.payments }))
   } catch (e) {
     console.warn('[postscan] zoho-mirror piggyback failed (non-fatal):', e.message)
