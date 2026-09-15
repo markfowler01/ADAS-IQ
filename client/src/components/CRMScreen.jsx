@@ -371,9 +371,15 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [stageFilter,   setStageFilter]   = useState('')
   const [big3Missing,   setBig3Missing]   = useState([])     // active shops with no Big 3 rule
   const [big3Only,      setBig3Only]      = useState(false)
+  const [big3Tick, setBig3Tick] = useState(0)
+  useEffect(() => {
+    const bump = () => { setBig3Tick(t => t + 1); fetchShops() }   // a Big 3 rule was just saved in the panel
+    window.addEventListener('adas:big3-saved', bump)
+    return () => window.removeEventListener('adas:big3-saved', bump)
+  }, [])
   useEffect(() => {
     apiFetch(`${API_BASE}/api/shops/big3-map`).then(r => r.json()).then(d => { if (d.ok) setBig3Missing(d.missing || []) }).catch(() => {})
-  }, [shops.length])
+  }, [shops.length, big3Tick])
   const [regionFilter,  setRegionFilter]  = useState('')
   const [ownerFilter,   setOwnerFilter]   = useState('')
   const [staleOnly,     setStaleOnly]     = useState(false)

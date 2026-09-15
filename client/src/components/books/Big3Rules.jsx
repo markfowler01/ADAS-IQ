@@ -189,6 +189,7 @@ export default function Big3Rules({ shop }) {
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       invalidateBig3Map()
+      try { window.dispatchEvent(new CustomEvent('adas:big3-saved', { detail: { shop_id: shop.id, changed: !!d.changed } })) } catch {}
       setDirty(false)
       if (d.changed) {
         setMsg('✓ Saved — applies to every invoice for this shop · #dispatch + Mark pinged')
