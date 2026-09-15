@@ -242,7 +242,12 @@ function cascadeTargets(req) {
     kat:    normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''),
   }
   const deskOn = String(cfg.DESK_PHONE_ON || '').toLowerCase() === 'true'
-  const order = parseCascadeOrder(cfg)
+  // Mark 2026-09-15: the 844 (toll-free) line rings ONLY Mark — no desk, no
+  // cascade. Phone Setup → "844 ring order" can widen it again. The local
+  // 425 line keeps the normal cascade.
+  const lineType = classifyTwilioNumber(req.body?.To || req.query?.to, cfg)
+  const tollfreeOnly = lineType === 'tollfree'
+  const order = tollfreeOnly ? parseCascadeOrder({ ...cfg, CASCADE_ORDER: cfg.CASCADE_ORDER_TOLLFREE || 'mark' }) : parseCascadeOrder(cfg)
   const targets = []
   for (const key of order) {
     if (key === 'desk') {
@@ -255,7 +260,7 @@ function cascadeTargets(req) {
   }
   // Legacy receptionist mode: desk NOT in the configured order but On
   // Duty → it rings FIRST (the 2026-08-12 behavior, unchanged).
-  if (deskOn && !order.includes('desk')) {
+  if (deskOn && !order.includes('desk') && !tollfreeOnly) {
     targets.unshift({ key: 'desk', client: 'aa-desk', afterUrl: '/webhooks/twilio/voice/after-desk' })
   }
   return targets
@@ -277,7 +282,7 @@ function nextCascadeTwiML(req, order) {
   // indicator moves to a whisper — a short announcement only the
   // answering tech hears before the call bridges.
   const callerNumber = normalizePhoneUS(req.body.From) || String(req.body.From || '')
-  const lineType = classifyTwilioNumber(req.body.To, cfg)
+  const lineType = classifyTwilioNumber(req.body.To || req.query?.to, cfg)
   const whisperUrl = `${baseUrl(req)}/webhooks/twilio/voice/whisper?line=${encodeURIComponent(lineType)}`
   // Find the first configured target at or after the requested step.
   for (let i = order; i < targets.length; i++) {
@@ -290,7 +295,8 @@ function nextCascadeTwiML(req, order) {
       // recordingStatusCallback fires when the file is finalized.
       // Desk (browser) legs ring a bit longer than cells — no telco
       // pickup delay, but Kat needs time to reach the Answer button.
-      const timeout = targets[i].client ? 15 : CASCADE_RING_TIMEOUT_SEC
+      // 844 → Mark only, so give the leg a real ring (≈5 rings) instead of the 12s hunt step.
+      const timeout = targets[i].client ? 15 : (lineType === 'tollfree' ? (Number(cfg.TOLLFREE_RING_TIMEOUT_SEC) || 30) : (Number(cfg.RING_TIMEOUT_SEC) || CASCADE_RING_TIMEOUT_SEC))
       return `
 <Response>
   <Dial timeout="${timeout}"
@@ -437,6 +443,17 @@ function cascadeContinueHandler(personKey) {
   }
 }
 
+// Preview the cascade for a line without placing a call (x-cron-secret).
+router.get('/preview', async (req, res) => {
+  const secret = String(process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'bad secret' })
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    req.phoneCfg = await resolvePhoneConfig(req); req.body = { To: String(req.query.to || ''), From: '+14255550100' }
+    const targets = cascadeTargets(req).map(t => ({ key: t.key, has_number: !!(t.number || t.client) }))
+    res.json({ line: classifyTwilioNumber(req.body.To, req.phoneCfg), targets, twiml: nextCascadeTwiML(req, 0).replace(/\+1\d{7}(\d{3})/g, '+1•••••••$1') })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.post('/after-desk',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('desk'),   'after-desk'))
 router.post('/after-jayden', requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('jayden'), 'after-jayden'))
 router.post('/after-mark',   requireTwilioSignature, safeVoiceHandler(cascadeContinueHandler('mark'),   'after-mark'))
