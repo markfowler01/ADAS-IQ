@@ -61,13 +61,15 @@ export default function ArTab({ user }) {
 
       {/* The drift number */}
       <Panel tone={driftTone} title={last ? `${last.drift_cents === 0 && last.mismatched === 0 ? '🟢' : last.drift_cents < 10000 ? '🟡' : '🔴'} Drift ${$(last.drift_cents)}` : '⚪ No reconcile yet'} right={last ? `last run ${when(last.at)} · ${last.by}` : ''}>
-        <div className="p-3 grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="p-3 grid grid-cols-2 sm:grid-cols-5 gap-3">
           <Stat label="Books says (AR)" value={$(totals.books)} />
           <Stat label="App says (AR)" value={$(totals.app)} color={totals.app === totals.books ? GREEN : AMBER} />
+          <Stat label="Our own math (total − paid)" value={$(accounts.reduce((x, a) => x + a.ledger_balance_cents, 0))} sub={last ? `${last.accounts_with_ledger_drift || 0} account${(last.accounts_with_ledger_drift || 0) === 1 ? '' : 's'} differ · ledger drift ${$(last.ledger_drift_cents || 0)}` : ''} color={last && last.ledger_drift_cents ? AMBER : GREEN} />
           <Stat label="Accounts that differ" value={last ? `${last.accounts_with_drift} of ${last.counts?.accounts ?? accounts.length}` : '—'} />
           <Stat label="Invoice mismatches · unapplied" value={last ? `${last.mismatched} · ${last.unmatched}` : '—'} sub={last ? `allocation coverage ${last.coverage_pct}%` : ''} />
         </div>
         {last?.top?.length > 0 && <div className="px-3 pb-2 text-xs" style={{ color: '#555' }}><b>Biggest differences:</b> {last.top.slice(0, 5).map(d => <span key={d.contact_id} className="mr-3">{d.account} <span style={{ color: d.diff_cents > 0 ? AMBER : RED }}>{d.diff_cents > 0 ? '+' : ''}{$(d.diff_cents)}</span></span>)}</div>}
+        {last?.ledger_top?.length > 0 && <div className="px-3 pb-2 text-xs" style={{ color: '#555' }}><b>Our math disagrees with Books on:</b> {last.ledger_top.slice(0, 5).map(d => <span key={d.contact_id} className="mr-3">{d.account} <span style={{ color: AMBER }}>{d.diff_cents > 0 ? '+' : ''}{$(d.diff_cents)}</span>{d.credits_cents ? <span style={{ color: '#888' }}> (has credits {$(d.credits_cents)})</span> : null}</span>)}</div>}
         {last?.mismatches?.length > 0 && <div className="px-3 pb-2 text-xs" style={{ color: '#555' }}><b>Invoices where payments don't add up:</b> {last.mismatches.slice(0, 5).map(m => <span key={m.invoice} className="mr-3">{m.invoice} (Books {$(m.books_balance_cents)} vs ledger {$(m.ledger_balance_cents)})</span>)}</div>}
         <div className="px-3 pb-3 flex flex-wrap gap-2">
           <button disabled={!!busy || !imported} onClick={doReconcile} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: ORANGE, opacity: busy || !imported ? .5 : 1 }}>{busy === 'reconcile' ? 'Reconciling…' : '↻ Reconcile now'}</button>

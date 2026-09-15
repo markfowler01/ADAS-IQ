@@ -181,10 +181,13 @@ export async function reconcile(req, by = 'system') {
       if (coverage > 0 && ledgerBal !== bal && !credits[String(i.customer_id)]) { mismatched++; if (mismatches.length < 25) mismatches.push({ invoice: i.invoice_number, customer: i.customer_name, books_balance_cents: bal, ledger_balance_cents: ledgerBal, total_cents: total }) }
     }
     const lastPay = {}; for (const p of payments) if (!lastPay[p.customer_id] || p.date > lastPay[p.customer_id]) lastPay[p.customer_id] = p.date
-    let drift = 0; const diffs = []; const upd = []; const ledgerRows = []
+    let drift = 0, ledgerDrift = 0; const diffs = [], ledgerDiffs = []; const upd = []; const ledgerRows = []
     for (const acc of accounts) {
       const c = byCust[acc.contact_id] || { app: 0, ledger: 0, open: 0, aging: { current: 0, d30: 0, d60: 0, d90: 0, d90plus: 0 }, invoices: 0 }
       const d = Math.abs(c.app - acc.books_outstanding_cents); drift += d
+      // Independent number: total − payments applied (our own math) vs what Books says is owed
+      const ld = Math.abs(c.ledger - acc.books_outstanding_cents); ledgerDrift += ld
+      if (ld > 0 && ledgerDiffs.length < 25) ledgerDiffs.push({ account: acc.name, contact_id: acc.contact_id, books_cents: acc.books_outstanding_cents, ledger_cents: c.ledger, diff_cents: c.ledger - acc.books_outstanding_cents, credits_cents: credits[acc.contact_id] || 0 })
       if (d > 0 && diffs.length < 25) diffs.push({ account: acc.name, contact_id: acc.contact_id, books_cents: acc.books_outstanding_cents, app_cents: c.app, ledger_cents: c.ledger, diff_cents: c.app - acc.books_outstanding_cents })
       if (acc.app_balance_cents !== c.app && acc.synced_at) ledgerRows.push({ lg_kind: 'balance_change', lg_ref_id: acc.contact_id, lg_ref_number: '', lg_account_id: acc.contact_id, lg_amount_cents: c.app - acc.app_balance_cents, lg_memo: `app balance ${acc.app_balance_cents} → ${c.app} (Books ${acc.books_outstanding_cents})`.slice(0, 255), lg_before_json: JSON.stringify({ app: acc.app_balance_cents, books: acc.books_outstanding_cents }), lg_after_json: JSON.stringify({ app: c.app, ledger: c.ledger, books: acc.books_outstanding_cents }), lg_at: now(), lg_by: by })
       upd.push({ ROWID: acc.id, ac_app_balance_cents: c.app, ac_ledger_balance_cents: c.ledger, ac_drift_cents: c.app - acc.books_outstanding_cents, ac_aging_json: JSON.stringify(c.aging), ac_last_payment: String(lastPay[acc.contact_id] || '').slice(0, 20), ac_open_count: c.open })
@@ -195,8 +198,9 @@ export async function reconcile(req, by = 'system') {
     if (ledgerRows.length) { const tl = a.datastore().table(T.lg); for (const b of chunk(ledgerRows, 100)) await tl.insertRows(b) }
     diffs.sort((x, y) => Math.abs(y.diff_cents) - Math.abs(x.diff_cents))
     const counts = { accounts: accounts.length, invoices: invoices.length, live_invoices: invoices.filter(live).length, payments: payments.length, allocations: allocs.length, credit_notes: cns.length, coverage: Math.round(coverage * 100), orphan_customers: orphans.length }
-    const summary = { ok: true, at: now(), by, drift_cents: drift, accounts_with_drift: diffs.length, mismatched, unmatched, coverage_pct: counts.coverage, counts, top: diffs.slice(0, 10), mismatches: mismatches.slice(0, 10), orphans: orphans.slice(0, 10) }
-    await logRun(req, 'reconcile', started, true, counts, { drift_cents: drift, mismatched, unmatched, top: { diffs: diffs.slice(0, 15), mismatches: mismatches.slice(0, 15), orphans: orphans.slice(0, 10) } }, by)
+    ledgerDiffs.sort((x, y) => Math.abs(y.diff_cents) - Math.abs(x.diff_cents))
+    const summary = { ok: true, at: now(), by, drift_cents: drift, accounts_with_drift: diffs.length, ledger_drift_cents: ledgerDrift, accounts_with_ledger_drift: ledgerDiffs.length, mismatched, unmatched, coverage_pct: counts.coverage, counts, top: diffs.slice(0, 10), ledger_top: ledgerDiffs.slice(0, 10), mismatches: mismatches.slice(0, 10), orphans: orphans.slice(0, 10) }
+    await logRun(req, 'reconcile', started, true, counts, { drift_cents: drift, mismatched, unmatched, top: { diffs: diffs.slice(0, 15), ledger: ledgerDiffs.slice(0, 15), mismatches: mismatches.slice(0, 15), orphans: orphans.slice(0, 10) } }, by)
     await cfgSet(a, 'ar_last_reconcile', summary)
     return summary
   } catch (e) { await logRun(req, 'reconcile', started, false, {}, { error: e.message }, by); throw e }
@@ -226,6 +230,7 @@ export async function postDrift(req, s, label = 'manual') {
     const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js')
     const emoji = s.drift_cents === 0 && s.mismatched === 0 ? '🟢' : s.drift_cents < 10000 ? '🟡' : '🔴'
     const top = (s.top || []).slice(0, 3).map(d => `${d.account} ${d.diff_cents > 0 ? '+' : ''}${$(d.diff_cents)}`).join(' · ')
-    await postToCliqChannel(DISPATCH_CHANNEL, `${emoji} *Absolute ADAS Books · drift ${$(s.drift_cents)}* (${label}) · ${s.accounts_with_drift} of ${s.counts.accounts} accounts differ from Zoho · ${s.mismatched} invoice mismatches · ${s.unmatched} unapplied payments · allocation coverage ${s.coverage_pct}%${top ? `\n${top}` : ''}`)
+    const ltop = (s.ledger_top || []).slice(0, 3).map(d => `${d.account} ${d.diff_cents > 0 ? '+' : ''}${$(d.diff_cents)}`).join(' · ')
+    await postToCliqChannel(DISPATCH_CHANNEL, `${emoji} *Absolute ADAS Books · mirror drift ${$(s.drift_cents)} · independent ledger drift ${$(s.ledger_drift_cents || 0)}* (${label}) · ${s.accounts_with_drift} of ${s.counts.accounts} accounts differ from Zoho · ${s.accounts_with_ledger_drift || 0} differ on our own math · ${s.mismatched} invoice mismatches · ${s.unmatched} unapplied payments · allocation coverage ${s.coverage_pct}%${top ? `\n${top}` : ''}${ltop ? `\nledger: ${ltop}` : ''}`)
   } catch (e) { console.log('[ar] drift post failed:', e.message) }
 }
