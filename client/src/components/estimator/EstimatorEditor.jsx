@@ -178,11 +178,11 @@ export default function EstimatorEditor({ id, user, onBack }) {
             {canEdit && est.status === 'draft' && <button onClick={async () => { if (!confirm(`Delete ${est.number}?`)) return; await j(`/api/estimator/${id}`, { method: 'DELETE' }); onBack() }} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: '#b91c1c', backgroundColor: '#fef2f2' }}>Delete</button>}
           </div>
         </div>
-        {/* Mark 2026-09-14: "adjust the parts markup with a box at the top and also the labor" — defaults $200/hr and 2.0× */}
+        {/* Mark 2026-09-14: "adjust the parts markup with a box at the top and also the labor" — defaults $200/hr and 40% on parts */}
         <div className="flex items-center gap-3 flex-wrap rounded-xl px-3 py-2 mb-3" style={{ backgroundColor: 'white', border: '1.5px solid #e8e4e0' }}>
           <Eyebrow>⚙️ Rates for this estimate</Eyebrow>
           <label className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#1a1a1a' }}>Labor <Money cents={est.labor_rate_cents ?? 20000} onChange={v => patchEst({ labor_rate_cents: v && v > 0 ? v : 20000 })} width={86} bold disabled={!canEdit} /><span className="text-xs font-normal" style={{ color: '#888' }}>/ hr</span></label>
-          <label className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#1a1a1a' }}>Parts markup <MarkupBox bp={est.parts_markup_bp ?? 10000} estMarkup={-1} onChange={bp => patchEst({ parts_markup_bp: bp == null ? 10000 : bp })} width={64} disabled={!canEdit} /><span className="text-xs font-normal" style={{ color: '#888' }}>× cost</span></label>
+          <label className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: '#1a1a1a' }}>Parts markup <MarkupBox bp={est.parts_markup_bp ?? 4000} estMarkup={-1} onChange={bp => patchEst({ parts_markup_bp: bp == null ? 4000 : bp })} width={64} disabled={!canEdit} /><span className="text-xs font-normal" style={{ color: '#888' }}>% on cost</span></label>
           <span className="text-[11px]" style={{ color: '#888' }}>Every line and part follows these unless you type its own number.</span>
         </div>
         {err && <Notice tone="red" className="mb-3">{err} <button className="underline ml-2" onClick={() => setErr('')}>dismiss</button></Notice>}
@@ -306,7 +306,7 @@ export default function EstimatorEditor({ id, user, onBack }) {
                 )}
                 {live.jobs.length === 0 && <div className="text-sm italic px-2 py-6 text-center" style={{ color: '#999' }}>No jobs yet. Start from a template or a blank job. Only <b>approved</b> jobs count toward the total.</div>}
                 {live.jobs.map(job => (
-                  <JobCard key={job.id} job={job} settings={{ ...est.settings, labor_rate_cents: est.labor_rate_cents ?? 20000, parts_markup_bp: est.parts_markup_bp ?? 10000 }} catalog={catalog} canEdit={canEdit} vehicle={vehicle} usual={common.find(c => c.name.toLowerCase() === String(job.name || '').replace(/\s*\(copy\)\s*$/i, '').trim().toLowerCase())}
+                  <JobCard key={job.id} job={job} settings={{ ...est.settings, labor_rate_cents: est.labor_rate_cents ?? 20000, parts_markup_bp: est.parts_markup_bp ?? 4000 }} catalog={catalog} canEdit={canEdit} vehicle={vehicle} usual={common.find(c => c.name.toLowerCase() === String(job.name || '').replace(/\s*\(copy\)\s*$/i, '').trim().toLowerCase())}
                     onPatch={f => patchJob(job.id, f)} onStatus={s => setJobStatus(job, s)} onDuplicate={() => dupJob(job.id)} onDelete={() => delJob(job.id)} onSaveTemplate={() => saveTpl(job.id)}
                     dragProps={{ draggable: armed === job.id, onHandleDown: () => setArmed(job.id), onDragStart: () => setDragId(job.id), onDragOver: e => { e.preventDefault() }, onDrop: () => drop(job.id), style: dragId === job.id ? { opacity: .4 } : undefined }} />
                 ))}

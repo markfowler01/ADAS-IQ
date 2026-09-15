@@ -26,7 +26,7 @@ export const AUTH_METHODS = ['oral', 'written', 'email', 'text', 'portal']
 export const DEFAULT_SETTINGS = {
   rates: { ...DEFAULT_RATES },
   labor_rate_cents: 20000,       // Mark 2026-09-14: default labor $200/hr (one box at the top of the estimate)
-  parts_markup_bp: 10000,        // Mark 2026-09-14: default parts markup 2.0× cost (= +100%)
+  parts_markup_bp: 4000,         // Mark 2026-09-14: default parts markup 40% on cost (shown as a percent)
   supplies_pct_bp: 700,          // 7.00%
   supplies_cap_cents: 5000,      // $50
   supplies_taxable: true,        // WA taxes shop supplies with the repair
@@ -195,7 +195,7 @@ export const toCents = dollars => rnd((Number(String(dollars ?? '').replace(/[^0
 export const fromCents = c => (int(c) / 100).toFixed(2)
 export const newId = () => Math.random().toString(36).slice(2, 10)
 export function blankPart() {
-  // markup_bp null = "use the estimate's parts markup box" (Mark's 2.0× default)
+  // markup_bp null = "use the estimate's parts markup box" (Mark's 40% default)
   return { id: newId(), pn: '', desc: '', source: 'oem', qty: 1, cost_cents: 0, markup_bp: null, price_cents: null, taxable: true }
 }
 export function blankLine(rate_key = 'mechanical') {

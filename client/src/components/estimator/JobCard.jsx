@@ -35,13 +35,14 @@ function Num({ value, onChange, step = 0.1, width = 64, disabled }) {
   useEffect(() => { setV(String(value ?? '')) }, [value])
   return <input value={v} disabled={disabled} onChange={e => setV(e.target.value)} onBlur={() => { const n = Number(v); if (Number.isFinite(n) && n !== Number(value)) onChange(n) }} onKeyDown={e => e.key === 'Enter' && e.target.blur()} inputMode="decimal" step={step} className="px-2 py-1 text-sm text-right tabular-nums" style={{ ...inp, width }} />
 }
-/** Parts markup as a multiplier (2.0 = double the cost). Empty/equal to the estimate box = follows the box. */
-export function MarkupBox({ bp, estMarkup = 10000, onChange, disabled, width = 56 }) {
+/** Parts markup as a percent on cost (40 = +40%). Blank / equal to the estimate box = follows the box. */
+export function MarkupBox({ bp, estMarkup = 4000, onChange, disabled, width = 56 }) {
   const eff = bp == null ? estMarkup : bp
-  const [txt, setTxt] = useState((1 + eff / 10000).toFixed(2))
-  useEffect(() => { setTxt((1 + (bp == null ? estMarkup : bp) / 10000).toFixed(2)) }, [bp, estMarkup])
-  const commit = () => { const m = Number(txt); if (!Number.isFinite(m) || m <= 0) { setTxt((1 + eff / 10000).toFixed(2)); return } const nb = Math.round((m - 1) * 10000); onChange(nb === estMarkup ? null : nb) }
-  return <input value={txt} disabled={disabled} onChange={e => setTxt(e.target.value)} onBlur={commit} onKeyDown={e => e.key === 'Enter' && e.target.blur()} inputMode="decimal" title="Markup multiplier on cost (2.0 = ×2). Blank follows the estimate's box." className="px-2 py-1 text-sm text-right tabular-nums" style={{ ...inp, width, color: bp == null ? '#999' : '#1a1a1a', fontStyle: bp == null ? 'italic' : 'normal' }} />
+  const fmtPct = b => String(Math.round(b) / 100).replace(/\.0+$/, '')
+  const [txt, setTxt] = useState(fmtPct(eff))
+  useEffect(() => { setTxt(fmtPct(bp == null ? estMarkup : bp)) }, [bp, estMarkup])
+  const commit = () => { const pct = Number(String(txt).replace('%', '')); if (!Number.isFinite(pct) || pct < 0) { setTxt(fmtPct(eff)); return } const nb = Math.round(pct * 100); onChange(nb === estMarkup ? null : nb) }
+  return <input value={txt} disabled={disabled} onChange={e => setTxt(e.target.value)} onBlur={commit} onKeyDown={e => e.key === 'Enter' && e.target.blur()} inputMode="decimal" title="Markup on cost, in percent (40 = cost + 40%). Blank follows the estimate's box." className="px-2 py-1 text-sm text-right tabular-nums" style={{ ...inp, width, color: bp == null ? '#999' : '#1a1a1a', fontStyle: bp == null ? 'italic' : 'normal' }} />
 }
 const Sel = ({ value, onChange, options, labels = {}, width, disabled }) => (
   <select value={value} disabled={disabled} onChange={e => onChange(e.target.value)} className="px-1.5 py-1 text-xs font-semibold" style={{ ...inp, width, color: '#444' }}>
@@ -60,7 +61,7 @@ export default function JobCard({ job, settings, catalog = [], canEdit, onPatch,
   const st = STATUS_STYLE[job.status] || STATUS_STYLE.recommended
   const rates = settings?.rates || {}
   const estRate = settings?.labor_rate_cents ?? null           // the box at the top of the estimate
-  const estMarkup = settings?.parts_markup_bp ?? 10000         // 2.0× by default
+  const estMarkup = settings?.parts_markup_bp ?? 4000          // 40% on cost by default
   const mult = bp => (1 + (bp ?? estMarkup) / 10000)
   const lines = job.lines || []
   const setLines = next => onPatch({ lines: next })
@@ -131,9 +132,9 @@ export default function JobCard({ job, settings, catalog = [], canEdit, onPatch,
                   <Num value={p.qty} onChange={v => patchPart(l.id, p.id, { qty: v })} step={1} width={48} disabled={!canEdit} />
                   <span className="text-[10px]" style={{ color: '#999' }}>×</span>
                   <Money cents={p.cost_cents} onChange={v => patchPart(l.id, p.id, { cost_cents: v ?? 0 })} width={78} disabled={!canEdit} />
-                  <span className="text-[10px]" style={{ color: '#999' }}>cost ×</span>
+                  <span className="text-[10px]" style={{ color: '#999' }}>cost +</span>
                   <MarkupBox bp={p.markup_bp} estMarkup={estMarkup} onChange={bp => patchPart(l.id, p.id, { markup_bp: bp })} disabled={!canEdit} />
-                  <span className="text-[10px]" style={{ color: '#999' }}>=</span>
+                  <span className="text-[10px]" style={{ color: '#999' }}>% =</span>
                   <Money cents={p.price_cents ?? p.price_each_cents} onChange={v => patchPart(l.id, p.id, { price_cents: v })} width={78} disabled={!canEdit} muted={p.price_cents == null} />
                   <label className="flex items-center gap-1 text-[10px]" style={{ color: '#888' }}><input type="checkbox" checked={p.taxable !== false} disabled={!canEdit} onChange={e => patchPart(l.id, p.id, { taxable: e.target.checked })} />tax</label>
                   <span className="font-semibold tabular-nums text-sm w-[76px] text-right" style={{ color: '#444' }}>{fmtCents(p.total_cents)}</span>

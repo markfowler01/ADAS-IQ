@@ -457,7 +457,7 @@ R.post('/', staffOnly, async (req, res) => {
       tax_enabled: customer_type === 'retail', tax_rate_bp: int(taxRow?.rate_bp), zoho_tax_id: taxRow?.tax_id || '', tax_note: '',
       supplies_enabled: customer_type === 'retail', supplies_pct_bp: settings.supplies_pct_bp, supplies_cap_cents: settings.supplies_cap_cents,
       discount_type: discountPct > 0 ? 'pct' : 'none', discount_value: discountPct > 0 ? Math.round(discountPct * 100) : 0, detail_level: '',
-      labor_rate_cents: int(settings.labor_rate_cents) || 20000, parts_markup_bp: settings.parts_markup_bp == null ? 10000 : int(settings.parts_markup_bp),
+      labor_rate_cents: int(settings.labor_rate_cents) || 20000, parts_markup_bp: settings.parts_markup_bp == null ? 4000 : int(settings.parts_markup_bp),
       concern: b.concern || '', notes: '', terms: '', valid_until: '', totals: {}, grand_total_cents: 0, flags: [],
       created_by: who(req), created_at: now(), updated_at: now(), job_id: b.job_id || '',
     }
