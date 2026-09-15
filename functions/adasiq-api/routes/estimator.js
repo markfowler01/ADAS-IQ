@@ -476,8 +476,9 @@ R.post('/retail-customers/import-books', staffOnly, async (req, res) => {
       const notes = String(inv.notes || '')
       const milesM = notes.match(/(?:odometer|mileage|miles)[^0-9]{0,12}([0-9][0-9,]{3,7})/i) || String(cf(inv, 'cf_odometer', 'odometer', 'mileage')).match(/([0-9][0-9,]{3,7})/)
       const vehicle = { year: cf(inv, 'cf_year', 'year'), make: cf(inv, 'cf_make', 'make'), model: cf(inv, 'cf_model', 'model'), vin: cf(inv, 'cf_vin', 'vin').toUpperCase().replace(/[^A-Z0-9]/g, ''), plate: cf(inv, 'cf_plate', 'plate', 'license plate') }
-      const lines = (inv.line_items || []).map(x => ({ id: newId(), desc: [x.name, x.description].filter(Boolean).join(' — ').slice(0, 300), rate_key: 'mechanical', hours: 0, rate_override_cents: null, flat_cents: Math.round(Number(x.item_total ?? (Number(x.rate) * Number(x.quantity || 1))) * 100), item_id: x.item_id ? String(x.item_id) : undefined, taxable: Number(x.tax_percentage) > 0 || !!x.tax_id, notes: '', parts: [] }))
       const subtotal = Math.round(Number(inv.sub_total || 0) * 100), tax = Math.round(Number(inv.tax_total || 0) * 100), discount = Math.round(Number(inv.discount_total ?? inv.discount ?? 0) * 100)
+      const GENERIC = /^(mechanical|diagnostic|labor|parts?|sublet|service|calibration)$/i
+      const lines = (inv.line_items || []).map(x => ({ id: newId(), desc: (GENERIC.test(String(x.name || '').trim()) && x.description ? `${x.description} (${x.name})` : [x.name, x.description].filter(Boolean).join(' — ')).slice(0, 300), rate_key: 'mechanical', hours: 0, rate_override_cents: null, flat_cents: Math.round(Number(x.item_total ?? (Number(x.rate) * Number(x.quantity || 1))) * 100), item_id: x.item_id ? String(x.item_id) : undefined, taxable: tax > 0 && (Number(x.tax_percentage) > 0 || !!x.tax_id || !(inv.line_items || []).some(y => Number(y.tax_percentage) > 0 || y.tax_id)), notes: '', parts: [] }))
       const invDate = String(inv.date || li.date || '').slice(0, 10)
       const e = {
         number: await nextNumber(req), status: 'invoiced', customer_kind: 'retail', customer_id: customer.id, customer_name: customer.name, customer_type: 'retail',

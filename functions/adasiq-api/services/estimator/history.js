@@ -37,6 +37,8 @@ export async function vehicleHistory(req, I, { customer_id = '', vin = '' } = {}
     const v = vehicles[key] || (vehicles[key] = { key, vin: e.vin || '', year: e.year || '', make: e.make || '', model: e.model || '', trim: e.trim || '', plate: e.plate || '', last_mileage: null, last_service: '', visits: 0, lifetime_cents: 0, entries: [] })
     const jobs = (jobsByEst[e.id] || [])
     const r = computeEstimate({ ...e, jobs }, settings)
+    // Imported Books invoices keep the Books total as the number of record (tax/rounding lived in Books)
+    if (e.created_by === 'Zoho Books import' && e.grand_total_cents) r.totals.grand_total = e.grand_total_cents
     const date = (e.approved_at || e.sent_at || e.created_at || '').slice(0, 10)
     const mileage = parseMiles(e.mileage)
     const done = ['approved', 'invoiced'].includes(e.status)
