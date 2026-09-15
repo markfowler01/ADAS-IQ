@@ -214,6 +214,12 @@ export async function sendMorningKickoff(req, { force = false } = {}) {
   if (!opener) return { date: dateStr, weekday, skipped: 'weekend', results: [] }
 
   if (!force) {
+    // Not before 08:00 PT — and do NOT claim the day, so the real 8:00 trigger still sends.
+    const { h, m } = hourMinutePT()
+    if (h * 60 + m < KICKOFF_WINDOW_START_H * 60 + KICKOFF_WINDOW_START_M) {
+      console.log('[kickoff-gate] before 08:00 PT — not sending, not claiming')
+      return { date: dateStr, weekday, skipped: `before ${String(KICKOFF_WINDOW_START_H).padStart(2, '0')}:${String(KICKOFF_WINDOW_START_M).padStart(2, '0')} PT`, results: [] }
+    }
     let claim
     try { claim = await claimKickoffDay(req, dateStr) }
     catch (e) {
@@ -300,10 +306,14 @@ const CATALYST_API = 'https://api.catalyst.zoho.com'
 // exclusive on the high side. Currently 07:00 ≤ t < 08:00 (per Mark
 // 2026-07-07 — widened from 07:30 so any postscan cron minute in the
 // 7am hour will catch it).
-const KICKOFF_WINDOW_START_H = 7
+// Mark 2026-09-15: "8am on the dot" — today's went out at 6:53 because a
+// late brief run fanned the team text out with it. The window now opens at
+// 08:00 and EVERY caller (cron route, brief piggyback, hourly piggyback)
+// is held to it inside the sender; only ?force=1 can send earlier.
+const KICKOFF_WINDOW_START_H = 8
 const KICKOFF_WINDOW_START_M = 0
-const KICKOFF_WINDOW_END_H   = 8
-const KICKOFF_WINDOW_END_M   = 0
+const KICKOFF_WINDOW_END_H   = 9
+const KICKOFF_WINDOW_END_M   = 30
 
 function catalystHeaders(req) {
   const token = req.headers['x-zc-admin-cred-token'] || req.headers['x-zc-user-cred-token'] || ''

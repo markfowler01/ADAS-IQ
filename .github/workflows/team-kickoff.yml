@@ -1,0 +1,25 @@
+name: Team kickoff text (backup trigger)
+
+# Mark 2026-09-15: the team good-morning text goes out at 8:00 AM Pacific on
+# the dot. The primary trigger is launchd on Mark's Mac at 8:00 sharp. This is
+# the backup for a Mac that is asleep: GitHub fires crons late (often 30-60
+# min), so it is scheduled just before 8 and the app itself refuses to send
+# before 08:00 PT and never sends twice in a day.
+on:
+  schedule:
+    - cron: '58 14 * * 1-5'   # 7:58 AM PDT
+    - cron: '58 15 * * 1-5'   # 7:58 AM PST
+  workflow_dispatch:
+jobs:
+  kickoff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire the kickoff (app gate decides)
+        run: |
+          # Wait until 08:00 PT if GitHub happened to start us early
+          while [ "$(TZ=America/Los_Angeles date +%H%M)" -lt "0800" ]; do sleep 20; done
+          code=$(curl -sS -o /tmp/k.json -w '%{http_code}' --max-time 90 -X POST \
+            -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" \
+            https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/cron/daily-greeting)
+          echo "http=$code"; head -c 400 /tmp/k.json; echo
+          [ "$code" = "200" ] || exit 1
