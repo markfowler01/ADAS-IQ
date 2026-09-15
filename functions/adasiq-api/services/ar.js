@@ -156,6 +156,7 @@ export async function syncAllocations(req, { limit = 60, by = 'system' } = {}) {
 }
 
 // ── Reconcile: the drift number ──────────────────────────────────────────
+const $ = c => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 export async function reconcile(req, by = 'system') {
   const started = now(); const a = app(req); const today = todayPT()
   try {
@@ -190,6 +191,20 @@ export async function reconcile(req, by = 'system') {
       // invoice-level check only where we hold allocation detail (or nothing was ever applied)
       if (coverage > 0 && ledgerBal !== bal && !creditDetailMissing[String(i.customer_id)]) { mismatched++; if (mismatches.length < 25) mismatches.push({ invoice: i.invoice_number, customer: i.customer_name, books_balance_cents: bal, ledger_balance_cents: ledgerBal, total_cents: total, paid_cents: applied, credited_cents: credited, hint: bal === 0 && ledgerBal > 0 ? 'paid in Books with no payment or credit behind it — write-off?' : bal > ledgerBal ? 'Books shows more owed than our math' : 'payment applied that Books does not count' }) }
     }
+    // Write-offs: Books keeps them on the invoice (write_off_amount). Check the invoices our
+    // math can't explain, cache the answer, and treat a write-off as settled.
+    const woCache = await cfgGet(a, 'ar_writeoffs', {})
+    let token = null; const writeOffs = []; let woTotal = 0
+    for (const m of mismatches.filter(x => x.books_balance_cents === 0 && x.ledger_balance_cents > 0)) {
+      const inv = invoices.find(i => i.invoice_number === m.invoice && i.customer_name === m.customer); if (!inv) continue
+      let wo = woCache[String(inv.invoice_id)]
+      if (wo == null) {
+        try { token = token || await getAccessToken(); const d = await axios.get(`${API}/invoices/${inv.invoice_id}`, { headers: H(token), params: org(), timeout: 20000, validateStatus: st => st < 500 }); const iv = d.data?.invoice || {}; wo = cents(iv.write_off_amount) || 0; woCache[String(inv.invoice_id)] = wo; await sleep(300) } catch (e) { console.log('[ar] write-off check failed:', inv.invoice_number, e.message); continue }
+      }
+      if (wo > 0) { m.write_off_cents = wo; m.hint = `written off in Books (${$(wo)})`; writeOffs.push({ invoice: m.invoice, customer: m.customer, cents: wo }); woTotal += wo; const c = byCust[inv.customer_id]; if (c) c.ledger = Math.max(0, c.ledger - wo) }
+    }
+    await cfgSet(a, 'ar_writeoffs', woCache).catch(() => {})
+    const stillMismatched = mismatches.filter(m => !m.write_off_cents)
     const lastPay = {}; for (const p of payments) if (!lastPay[p.customer_id] || p.date > lastPay[p.customer_id]) lastPay[p.customer_id] = p.date
     let drift = 0, ledgerDrift = 0; const diffs = [], ledgerDiffs = []; const upd = []; const ledgerRows = []
     for (const acc of accounts) {
@@ -209,8 +224,8 @@ export async function reconcile(req, by = 'system') {
     diffs.sort((x, y) => Math.abs(y.diff_cents) - Math.abs(x.diff_cents))
     const counts = { accounts: accounts.length, invoices: invoices.length, live_invoices: invoices.filter(live).length, payments: payments.length, allocations: allocs.length, credit_notes: cns.length, coverage: Math.round(coverage * 100), orphan_customers: orphans.length }
     ledgerDiffs.sort((x, y) => Math.abs(y.diff_cents) - Math.abs(x.diff_cents))
-    const summary = { ok: true, at: now(), by, drift_cents: drift, accounts_with_drift: diffs.length, ledger_drift_cents: ledgerDrift, accounts_with_ledger_drift: ledgerDiffs.length, mismatched, unmatched, coverage_pct: counts.coverage, counts, top: diffs.slice(0, 10), ledger_top: ledgerDiffs.slice(0, 10), mismatches: mismatches.slice(0, 10), orphans: orphans.slice(0, 10) }
-    await logRun(req, 'reconcile', started, true, counts, { drift_cents: drift, mismatched, unmatched, top: { diffs: diffs.slice(0, 15), ledger: ledgerDiffs.slice(0, 15), mismatches: mismatches.slice(0, 15), orphans: orphans.slice(0, 10) } }, by)
+    const summary = { ok: true, at: now(), by, drift_cents: drift, accounts_with_drift: diffs.length, ledger_drift_cents: ledgerDrift, accounts_with_ledger_drift: ledgerDiffs.length, mismatched: stillMismatched.length, write_offs: writeOffs, write_off_cents: woTotal, unmatched, coverage_pct: counts.coverage, counts, top: diffs.slice(0, 10), ledger_top: ledgerDiffs.slice(0, 10), mismatches: stillMismatched.slice(0, 10), orphans: orphans.slice(0, 10) }
+    await logRun(req, 'reconcile', started, true, counts, { drift_cents: drift, mismatched: stillMismatched.length, unmatched, top: { diffs: diffs.slice(0, 15), ledger: ledgerDiffs.slice(0, 15), mismatches: mismatches.slice(0, 15), orphans: orphans.slice(0, 10) } }, by)
     await cfgSet(a, 'ar_last_reconcile', summary)
     return summary
   } catch (e) { await logRun(req, 'reconcile', started, false, {}, { error: e.message }, by); throw e }
@@ -234,13 +249,12 @@ export async function maybeNightlyAr(req) {
   try { out.reconcile = await reconcile(req, 'nightly'); await postDrift(req, out.reconcile, 'nightly') } catch (e) { out.reconcile = { error: e.message } }
   return out
 }
-const $ = c => (c / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 export async function postDrift(req, s, label = 'manual') {
   try {
     const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js')
     const emoji = s.drift_cents === 0 && s.mismatched === 0 ? '🟢' : s.drift_cents < 10000 ? '🟡' : '🔴'
     const top = (s.top || []).slice(0, 3).map(d => `${d.account} ${d.diff_cents > 0 ? '+' : ''}${$(d.diff_cents)}`).join(' · ')
     const ltop = (s.ledger_top || []).slice(0, 3).map(d => `${d.account} ${d.diff_cents > 0 ? '+' : ''}${$(d.diff_cents)}`).join(' · ')
-    await postToCliqChannel(DISPATCH_CHANNEL, `${emoji} *Absolute ADAS Books · mirror drift ${$(s.drift_cents)} · independent ledger drift ${$(s.ledger_drift_cents || 0)}* (${label}) · ${s.accounts_with_drift} of ${s.counts.accounts} accounts differ from Zoho · ${s.accounts_with_ledger_drift || 0} differ on our own math · ${s.mismatched} invoice mismatches · ${s.unmatched} unapplied payments · allocation coverage ${s.coverage_pct}%${top ? `\n${top}` : ''}${ltop ? `\nledger: ${ltop}` : ''}`)
+    await postToCliqChannel(DISPATCH_CHANNEL, `${emoji} *Absolute ADAS Books · mirror drift ${$(s.drift_cents)} · independent ledger drift ${$(s.ledger_drift_cents || 0)}* (${label}) · ${s.accounts_with_drift} of ${s.counts.accounts} accounts differ from Zoho · ${s.accounts_with_ledger_drift || 0} differ on our own math · ${s.mismatched} invoice mismatches · ${(s.write_offs || []).length} written off in Books (${$(s.write_off_cents || 0)}) · ${s.unmatched} unapplied payments · allocation coverage ${s.coverage_pct}%${top ? `\n${top}` : ''}${ltop ? `\nledger: ${ltop}` : ''}`)
   } catch (e) { console.log('[ar] drift post failed:', e.message) }
 }
