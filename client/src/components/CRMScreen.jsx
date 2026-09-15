@@ -160,228 +160,124 @@ function QuickAddModal({ defaultStage, onClose, onSave }) {
 
 // ─── Shop Card ────────────────────────────────────────────────────────────────
 function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
+  // Mark 2026-09-15: "clearly read the shop's name, a call button and a directions
+  // button right here, and any other info we have on them right in the card."
   const stage    = STAGES.find(s => s.id === shop.pipeline_stage) || STAGES[0]
   const stageIdx = STAGES.findIndex(s => s.id === shop.pipeline_stage)
-  // Next stage: Active is terminal (no move button). active2 → active. Others skip 'lost' and 'denied'.
-  const nextStage = (shop.pipeline_stage === 'active')
-    ? null
-    : STAGES.slice(stageIdx + 1).find(s => s.id !== 'lost' && s.id !== 'denied') || null
+  const nextStage = (shop.pipeline_stage === 'active') ? null : STAGES.slice(stageIdx + 1).find(s => s.id !== 'lost' && s.id !== 'denied') || null
   const people   = Array.isArray(shop.people) ? shop.people : []
   const overdue  = isOverdue(shop)
   const dueToday = isDueToday(shop)
-  const lastAct  = Array.isArray(shop.activities) && shop.activities.length > 0
-    ? shop.activities.slice().sort((a, b) => new Date(b.date) - new Date(a.date))[0]
-    : null
+  const lastAct  = Array.isArray(shop.activities) && shop.activities.length > 0 ? shop.activities.slice().sort((a, b) => new Date(b.date || b.at) - new Date(a.date || a.at))[0] : null
+  const stop = e => e.stopPropagation()
 
   function formatFollowup(d) {
     if (!d) return null
     try {
-      const date  = new Date(d + 'T00:00:00')
-      const today = new Date(new Date().toDateString())
-      const diff  = Math.round((date - today) / 86400000)
-      if (diff < 0)  return { label: `${Math.abs(diff)}d overdue`, urgent: true }
+      const date = new Date(d + 'T00:00:00'); const today = new Date(new Date().toDateString()); const diff = Math.round((date - today) / 86400000)
+      if (diff < 0) return { label: `${Math.abs(diff)}d overdue`, urgent: true }
       if (diff === 0) return { label: 'Due today', urgent: true }
       if (diff === 1) return { label: 'Tomorrow', urgent: false }
-      if (diff < 7)  return { label: `In ${diff} days`, urgent: false }
+      if (diff < 7) return { label: `In ${diff} days`, urgent: false }
       return { label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), urgent: false }
     } catch { return null }
   }
-
   const followupInfo = formatFollowup(shop.next_followup)
 
+  // What we know, pulled apart from the notes: rating, website, maps link, and the human notes
+  const notes = String(shop.notes || '')
+  const rating = (notes.match(/(\d(?:\.\d)?)★\s*\((\d+)\)/) || [])
+  const website = (notes.match(/https?:\/\/(?!maps\.|www\.google\.)[^\s·]+/i) || [])[0] || ''
+  const mapsUrl = (notes.match(/https?:\/\/(?:maps\.google\.com|www\.google\.com\/maps|maps\.app\.goo\.gl)[^\s·]*/i) || [])[0] || ''
+  const humanNotes = notes.split('\n').map(l => l.trim()).filter(l => l && !/^Found by territory discovery/.test(l)).slice(0, 2)
+  const directions = mapsUrl || (shop.address ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(shop.address)}` : '')
+  const phone = shop.phone || people.find(p => p.phone)?.phone || ''
+  const primary = people[0]
+  const drps = Array.isArray(shop.drps) ? shop.drps : []
+  const sd = staleDays(shop)
+  const lastTouchTxt = lastAct ? `${lastAct.type || 'touch'} ${String(lastAct.date || lastAct.at || '').slice(0, 10)}${lastAct.note ? ` — ${lastAct.note}` : ''}` : (shop.last_contact ? `contact ${String(shop.last_contact).slice(0, 10)}` : '')
+  const Btn = ({ href, bg, fg, children, title }) => (
+    <a href={href} target={href.startsWith('http') ? '_blank' : undefined} rel="noreferrer" onClick={stop} title={title}
+      className="flex-1 min-w-[72px] flex items-center justify-center gap-1 rounded-lg py-2 text-xs font-bold" style={{ backgroundColor: bg, color: fg }}>{children}</a>
+  )
+
   return (
-    <div
-      draggable onDragStart={e => onDragStart(e, shop)}
-      onClick={() => onOpen(shop)}
+    <div draggable onDragStart={e => onDragStart(e, shop)} onClick={() => onOpen(shop)}
       className="bg-white rounded-xl shadow-sm cursor-pointer select-none transition-shadow hover:shadow-md active:opacity-75"
       style={{ border: `1px solid ${overdue ? '#fca5a5' : '#ebebeb'}` }}>
 
-      {/* Orange header */}
-      <div className="px-3 py-2 rounded-t-xl flex items-center justify-between gap-2"
-        style={{ backgroundColor: ORANGE }}>
-        <p className="text-xs font-bold uppercase tracking-wide text-white truncate">{shop.shop_name}</p>
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {shop.region && (
-            <span className="text-xs px-1.5 rounded-full"
-              style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.9)', fontSize: '10px' }}>
-              📍 {zoneLabel(shop.region)}
-            </span>
-          )}
-          {(() => { const sd = staleDays(shop); return sd > 0 && shop.pipeline_stage !== 'target' ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>⏰ {sd}d past the clock</span> : null })()}
-          {shop.fit_score != null && shop.fit_score !== '' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>fit {shop.fit_score}</span>}
-          {shop.next_action && IN_PLAY_STAGES.includes(shop.pipeline_stage) && <span className="text-[10px] px-1.5 py-0.5 rounded-full truncate" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', maxWidth: 180 }}>→ {shop.next_action}</span>}
-          {shop.assigned_to && (
-            <span className="text-xs px-1.5 rounded-full font-semibold"
-              style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white', fontSize: '10px' }}>
-              👤 {shop.assigned_to}
-            </span>
-          )}
-          {(overdue || dueToday) && (
-            <span className="text-xs font-bold">{overdue ? '⚠️' : '📅'}</span>
-          )}
+      {/* Header: the whole name, then the chips on their own line */}
+      <div className="px-3 py-2 rounded-t-xl" style={{ backgroundColor: ORANGE }}>
+        <p className="text-sm font-bold text-white leading-snug" style={{ wordBreak: 'break-word' }}>{shop.shop_name}</p>
+        <div className="flex items-center gap-1 flex-wrap mt-1">
+          {shop.region && <span className="text-[10px] px-1.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.95)' }}>📍 {zoneLabel(shop.region)}</span>}
+          {shop.assigned_to && <span className="text-[10px] px-1.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>👤 {shop.assigned_to}</span>}
+          {rating[1] && <span className="text-[10px] px-1.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>★ {rating[1]} ({rating[2]})</span>}
+          {shop.fit_score != null && shop.fit_score !== '' && <span className="text-[10px] px-1.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>fit {shop.fit_score}</span>}
+          {sd > 0 && shop.pipeline_stage !== 'target' && <span className="text-[10px] font-bold px-1.5 rounded-full" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>⏰ {sd}d past the clock</span>}
+          {(overdue || dueToday) && <span className="text-xs font-bold text-white">{overdue ? '⚠️' : '📅'}</span>}
         </div>
       </div>
 
       <div className="p-3">
+        {shop.address && <p className="text-xs mb-2 leading-snug" style={{ color: '#666' }}>{shop.address.replace(/, USA$/, '')}</p>}
 
-        {/* Primary contact */}
-        {people.length > 0 && (() => {
-          const primary = people[0]
-          const firstName = (primary.name || '').split(' ')[0] || primary.name
-          return (
-            <div className="flex items-center justify-between gap-2 mb-2 px-2 py-1.5 rounded-lg"
-              style={{ backgroundColor: '#f5f3f0' }}>
-              <div className="flex items-center gap-1.5 min-w-0">
-                <div className="w-5 h-5 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
-                  style={{ backgroundColor: ORANGE, fontSize: '9px' }}>
-                  {firstName?.charAt(0)?.toUpperCase() || '?'}
-                </div>
-                <div className="min-w-0">
-                  <span className="text-xs font-semibold" style={{ color: '#1a1a1a' }}>{firstName}</span>
-                  {primary.title && <span className="text-xs ml-1" style={{ color: '#999' }}>· {primary.title}</span>}
-                </div>
-              </div>
-              {(primary.phone || primary.email) && (
-                <div className="flex gap-1 flex-shrink-0">
-                  {primary.phone && <>
-                    <a href={`tel:${primary.phone}`} onClick={e => e.stopPropagation()}
-                      className="w-6 h-6 rounded-lg flex items-center justify-center"
-                      style={{ backgroundColor: '#e8f5e9', color: '#15803d' }}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.6 19.79 19.79 0 0 1 1.58 5.1 2 2 0 0 1 3.54 3h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 10.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
-                      </svg>
-                    </a>
-                    <a href={`sms:${primary.phone}`} onClick={e => e.stopPropagation()}
-                      className="w-6 h-6 rounded-lg flex items-center justify-center"
-                      style={{ backgroundColor: '#e8f0fe', color: '#1d4ed8' }}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                      </svg>
-                    </a>
-                  </>}
-                  {primary.email && (
-                    <a href={`mailto:${primary.email}`} onClick={e => e.stopPropagation()}
-                      className="w-6 h-6 rounded-lg flex items-center justify-center"
-                      style={{ backgroundColor: '#ede9fe', color: '#7c3aed' }}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
-                      </svg>
-                    </a>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })()}
+        {/* Action row: call · text · directions · website */}
+        <div className="flex gap-1.5 mb-2 flex-wrap">
+          {phone && <Btn href={`tel:${phone}`} bg="#dcfce7" fg="#15803d" title={phone}>📞 Call</Btn>}
+          {phone && <Btn href={`sms:${phone}`} bg="#e8f0fe" fg="#1d4ed8" title={phone}>💬 Text</Btn>}
+          {directions && <Btn href={directions} bg="#fff7ed" fg="#c2410c" title="Open in Google Maps">🧭 Directions</Btn>}
+          {website && <Btn href={website} bg="#f3e8ff" fg="#7c3aed" title={website}>🌐 Site</Btn>}
+          {!phone && !directions && <span className="text-xs" style={{ color: '#bbb' }}>No phone or address yet</span>}
+        </div>
+        {phone && <p className="text-xs mb-1.5 font-medium" style={{ color: '#15803d' }}>{phone}</p>}
 
-        {shop.address && <p className="text-xs mb-1.5 truncate" style={{ color: '#888' }}>{shop.address}</p>}
-
-        {shop.phone && (
-          <a href={`tel:${shop.phone}`} onClick={e => e.stopPropagation()}
-            className="flex items-center gap-1 text-xs font-medium mb-1.5"
-            style={{ color: '#15803d' }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.6 19.79 19.79 0 0 1 1.58 5.1 2 2 0 0 1 3.54 3h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 10.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
-            </svg>
-            {shop.phone}
-          </a>
-        )}
-
-        {/* Key details from notes — up to 3 lines */}
-        {shop.notes && (() => {
-          const lines = shop.notes.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 3)
-          return lines.length > 0 ? (
-            <div className="mb-1.5 space-y-0.5">
-              {lines.map((line, i) => (
-                <p key={i} className="text-xs truncate" style={{ color: '#666' }}>· {line}</p>
-              ))}
-            </div>
-          ) : null
-        })()}
-
-        {people.length > 1 && (
-          <p className="text-xs mb-1.5" style={{ color: '#bbb' }}>+{people.length - 1} more contact{people.length - 1 !== 1 ? 's' : ''}</p>
-        )}
-
-        {lastAct && (
-          <p className="text-xs mb-1.5 truncate" style={{ color: '#aaa', fontStyle: 'italic' }}>
-            Last: {lastAct.type} {lastAct.note ? `— ${lastAct.note}` : ''}
-          </p>
-        )}
-
-        {/* Denied badge + reasons + competitor */}
-        {shop.pipeline_stage === 'denied' && (() => {
-          const reasons = Array.isArray(shop.denied_reasons) ? shop.denied_reasons
-            : shop.denied_reason ? [shop.denied_reason] : []
-          return (
-            <div className="flex flex-wrap items-center gap-1.5 mt-1 mb-1">
-              {reasons.map(r => (
-                <span key={r} className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca' }}>
-                  {r}
-                </span>
-              ))}
-              {reasons.length === 0 && (
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>
-                  🚫 Denied
-                </span>
-              )}
-              {shop.denied_to && (
-                <span className="text-xs px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: '#f9f8f7', color: '#888', border: '1px solid #e0dbd6' }}>
-                  Uses {shop.denied_to}
-                </span>
-              )}
-            </div>
-          )
-        })()}
-
-        <div className="flex items-center justify-between flex-wrap gap-1 mt-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            {followupInfo && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                style={followupInfo.urgent
-                  ? { backgroundColor: '#fee2e2', color: '#dc2626' }
-                  : { backgroundColor: '#f5f3f0', color: '#888' }}>
-                📅 {followupInfo.label}
-              </span>
-            )}
-            {shop.estimated_monthly && (
-              <span className="text-xs font-semibold" style={{ color: '#15803d' }}>
-                ~${shop.estimated_monthly}/mo
-              </span>
-            )}
+        {/* People we know there */}
+        {people.slice(0, 2).map((p, i) => (
+          <div key={i} className="flex items-center justify-between gap-2 mb-1 px-2 py-1 rounded-lg" style={{ backgroundColor: '#f5f3f0' }}>
+            <span className="text-xs min-w-0 truncate"><b style={{ color: '#1a1a1a' }}>{p.name || 'Contact'}</b>{p.title ? <span style={{ color: '#888' }}> · {p.title}</span> : null}{p.phone ? <span style={{ color: '#888' }}> · {p.phone}</span> : null}</span>
+            <span className="flex gap-1 flex-shrink-0">
+              {p.phone && <a href={`tel:${p.phone}`} onClick={stop} className="text-[11px] font-bold px-1.5 rounded" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>📞</a>}
+              {p.email && <a href={`mailto:${p.email}`} onClick={stop} className="text-[11px] font-bold px-1.5 rounded" style={{ backgroundColor: '#ede9fe', color: '#7c3aed' }}>✉️</a>}
+            </span>
           </div>
+        ))}
+        {people.length > 2 && <p className="text-xs mb-1" style={{ color: '#bbb' }}>+{people.length - 2} more contact{people.length - 2 !== 1 ? 's' : ''}</p>}
+
+        {/* Facts */}
+        <div className="flex flex-wrap gap-1 mb-1.5">
+          {shop.estimated_monthly && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>~${shop.estimated_monthly}/mo</span>}
+          {shop.volume_potential && <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>volume {shop.volume_potential}</span>}
+          {drps.slice(0, 4).map(d => <span key={d} className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>DRP {d}</span>)}
+          {shop.referral_source && <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>via {shop.referral_source}</span>}
+          {calCount > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#fff7ed', color: '#c2410c' }}>🔧 {calCount} cal{calCount !== 1 ? 's' : ''}</span>}
+          {shop.kinetic_in_bed && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f3e8ff', color: '#7c3aed' }}>🛻 Kinetic in Bed</span>}
+          {shop.pipeline_stage === 'active' && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>✅ Active customer</span>}
         </div>
 
-        {/* Active Customer badge + cal count + kinetic */}
-        {(shop.pipeline_stage === 'active' || shop.pipeline_stage === 'active2' || shop.kinetic_in_bed || calCount > 0) && (
-          <div className="flex flex-wrap items-center gap-1.5 mt-2">
-            {shop.pipeline_stage === 'active' && (
-              <span className="text-xs font-bold px-2.5 py-0.5 rounded-full"
-                style={{ backgroundColor: '#dcfce7', color: '#15803d', border: '1px solid #86efac' }}>
-                ✅ Active Customer
-              </span>
-            )}
-            {calCount > 0 && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: '#fff7ed', color: '#c2410c', border: '1px solid #fed7aa' }}>
-                🔧 {calCount} cal{calCount !== 1 ? 's' : ''}
-              </span>
-            )}
-            {shop.kinetic_in_bed && (
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: '#f3e8ff', color: '#7c3aed', border: '1px solid #d8b4fe' }}>
-                🛻 Kinetic in Bed
-              </span>
-            )}
+        {/* Where things stand */}
+        {(shop.next_action || followupInfo) && (
+          <div className="text-xs mb-1.5 px-2 py-1.5 rounded-lg" style={{ backgroundColor: followupInfo?.urgent ? '#fee2e2' : '#eff6ff', color: followupInfo?.urgent ? '#b91c1c' : '#1d4ed8' }}>
+            {followupInfo && <b>📅 {followupInfo.label}</b>}{followupInfo && shop.next_action ? ' · ' : ''}{shop.next_action ? `→ ${shop.next_action}` : ''}
           </div>
         )}
+        {lastTouchTxt && <p className="text-xs mb-1.5" style={{ color: '#999', fontStyle: 'italic' }}>Last: {lastTouchTxt}</p>}
+        {humanNotes.map((line, i) => <p key={i} className="text-xs mb-0.5" style={{ color: '#666' }}>· {line}</p>)}
+
+        {shop.pipeline_stage === 'denied' && (() => {
+          const reasons = Array.isArray(shop.denied_reasons) ? shop.denied_reasons : shop.denied_reason ? [shop.denied_reason] : []
+          return (
+            <div className="flex flex-wrap items-center gap-1.5 mt-1 mb-1">
+              {reasons.map(r => <span key={r} className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca' }}>{r}</span>)}
+              {reasons.length === 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>🚫 Do not pursue</span>}
+              {shop.denied_to && <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f9f8f7', color: '#888', border: '1px solid #e0dbd6' }}>Uses {shop.denied_to}</span>}
+            </div>
+          )
+        })()}
 
         {nextStage && (
           <button onClick={e => { e.stopPropagation(); onStageChange(shop, nextStage.id) }}
-            className="w-full mt-3 flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-semibold"
+            className="w-full mt-2 flex items-center justify-center gap-1.5 rounded-xl py-2 text-xs font-semibold"
             style={{ backgroundColor: nextStage.bg, color: nextStage.color, border: `1px solid ${nextStage.color}22` }}>
             Move to {nextStage.label} {nextStage.emoji}
           </button>
