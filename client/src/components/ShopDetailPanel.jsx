@@ -747,7 +747,7 @@ function JobsTab({ shopName }) {
 
 // ─── Main Panel ───────────────────────────────────────────────────────────────
 export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user = null }) {
-  const canTextAsMark = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const canTextAsMark = String(user?.email || '').toLowerCase().startsWith('mark@') // his personal cell — Mark only, even though Kat is an owner
   const [tab,          setTab]          = useState('info')
   const [form,         setForm]         = useState({
     ...shop,

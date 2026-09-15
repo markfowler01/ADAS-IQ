@@ -1,6 +1,9 @@
 import { API_BASE } from '../App.jsx'
 
 export default function LoginScreen({ authError, authErrMsg }) {
+  // Set by apiFetch when a request came back 401 on an expired sign-in.
+  let note = ''
+  try { note = sessionStorage.getItem('adasiq_signin_note') || ''; if (note) sessionStorage.removeItem('adasiq_signin_note') } catch {}
   function handleLogin() {
     window.location.href = `${API_BASE}/auth/zoho`
   }
@@ -31,6 +34,9 @@ export default function LoginScreen({ authError, authErrMsg }) {
           <p className="text-gray-500 text-sm">Sign in with your Zoho account to continue</p>
         </div>
 
+        {note && !authError && !authErrMsg && (
+          <div className="w-full rounded-xl px-4 py-3 text-sm text-center" style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>{note}</div>
+        )}
         {(authError || authErrMsg) && (
           <div className="w-full bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm text-center">
             {authErrMsg || 'Login failed — please try again'}

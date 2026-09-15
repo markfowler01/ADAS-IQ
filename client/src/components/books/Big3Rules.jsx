@@ -189,9 +189,16 @@ export default function Big3Rules({ shop }) {
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       invalidateBig3Map()
-      setDirty(false); setMsg(d.changed ? '✓ Saved — applies to every invoice for this shop' : '✓ No change')
-      setMeta({ set_by: 'you', set_at: new Date().toISOString() })
-    } catch (e) { setMsg(`Couldn't save: ${e.message}`) } finally { setSaving(false) }
+      setDirty(false)
+      if (d.changed) {
+        setMsg('✓ Saved — applies to every invoice for this shop · #dispatch + Mark pinged')
+        setMeta({ set_by: d.set_by || 'you', set_at: new Date().toISOString() })
+      } else {
+        setMsg(`✓ Already set exactly like this${meta.set_by ? ` by ${meta.set_by}` : ''} — nothing changed, so no ping went out`)
+      }
+      // Read it back from the row so what you see is what's stored.
+      apiFetch(`${API_BASE}/api/shops/${shop.id}/big3`).then(r => r.json()).then(x => { if (x.ok) { setRules(x.rules); setMeta({ set_by: x.set_by, set_at: x.set_at }) } }).catch(() => {})
+    } catch (e) { setMsg(`✗ Not saved: ${e.message} — try again, and tell Mark if it keeps happening`) } finally { setSaving(false) }
   }
   return (
     <div className="rounded-xl p-4 mb-4" style={{ border: `1.5px solid ${complete ? '#bbf7d0' : '#fde68a'}`, backgroundColor: complete ? '#f0fdf4' : '#fffbeb' }}>

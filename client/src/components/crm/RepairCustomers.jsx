@@ -127,7 +127,7 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
   const [vin, setVin] = useState('')
   const [manual, setManual] = useState(null)
   const [textTo, setTextTo] = useState(null)
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isMark = String(user?.email || '').toLowerCase().startsWith('mark@') // 💬 as Mark = his personal cell
   const load = () => Promise.all([j(`/api/estimator/retail-customers/${id}`).then(d => setC(d.customer)), j(`/api/estimator/retail-customers/${id}/history`).then(setHist).catch(() => setHist({ vehicles: [] }))]).catch(e => setErr(e.message))
   useEffect(() => { load() }, [id])
   const patch = async f => { setC(x => ({ ...x, ...f })); try { const d = await j(`/api/estimator/retail-customers/${id}`, body('PUT', f)); setC(x => ({ ...x, ...d.customer })) } catch (e) { setErr(e.message) } }
@@ -171,7 +171,7 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
                 <button onClick={() => newEstimate()} disabled={busy === 'est'} className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: ORANGE }}>{busy === 'est' ? 'Creating…' : '📝 New estimate'}</button>
                 {c.zoho_contact_id && <button onClick={async () => { setBusy('imp'); setErr(''); try { let r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); let n = r.imported.length; while (r.remaining > 0) { r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); n += r.imported.length } await load(); alert(n ? `${n} new invoice${n === 1 ? '' : 's'} imported` : 'Already up to date with Books') } catch (e) { setErr(e.message) } finally { setBusy('') } }} disabled={busy === 'imp'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #bfdbfe` }}>{busy === 'imp' ? '…' : '⬇ Pull Books history'}</button>}
                 {!c.zoho_contact_id && <button onClick={books} disabled={busy === 'books'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #bfdbfe` }}>{busy === 'books' ? '…' : '🧾 Create in Books'}</button>}
-                {isOwner && c.phone && <button onClick={() => setTextTo({ phone: c.phone, name: c.name })} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: '#555', border: '1.5px solid #e0dbd6' }}>💬 as Mark</button>}
+                {isMark && c.phone && <button onClick={() => setTextTo({ phone: c.phone, name: c.name })} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: '#555', border: '1.5px solid #e0dbd6' }}>💬 as Mark</button>}
               </div>
             )}
             <Panel tone="blue" title="Person">

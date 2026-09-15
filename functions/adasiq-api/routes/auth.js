@@ -19,12 +19,16 @@ if (!LOGIN_CLIENT_ID || !LOGIN_CLIENT_SECRET) {
 
 // Role map — keyed by lowercase email (Mark 2026-08-30 permissions):
 //   owner       — Mark: everything incl. payroll, approvals, settings
-//   dispatcher  — Kat: full operations incl. all invoicing/quoting
+//                 Kat too (Mark 2026-09-15: "I want Kat to have permission
+//                 for everything"). The only things still keyed to Mark's
+//                 own email: 💬 Text as Mark (his personal cell), PTO /
+//                 time-card approvals.
+//   dispatcher  — full operations incl. all invoicing/quoting
 //   technician  — field view: jobs, time clock, photos, navigation
 // Unrecognised logins get dispatcher (staff) — owners are explicit.
 const USER_ROLES = {
   'mark@absoluteadas.com':      { role: 'owner' },
-  'k.belmonte@absoluteadas.com': { role: 'dispatcher' },
+  'k.belmonte@absoluteadas.com': { role: 'owner' },
   'jayden@absoluteadas.com':    { role: 'technician', techName: 'Jaden' },
 }
 function applyRole(email) {
@@ -36,7 +40,10 @@ function applyRole(email) {
 function makeToken(user) {
   const payload = Buffer.from(JSON.stringify({
     user,
-    exp: Date.now() + 8 * 60 * 60 * 1000, // 8 hours
+    // 30 days (was 8h — Kat's early login expired mid-afternoon and every
+    // save then failed quietly, 2026-09-15). The client now signs you out
+    // on a 401 instead of pretending the page still works.
+    exp: Date.now() + 30 * 24 * 60 * 60 * 1000,
   })).toString('base64url')
   const sig = crypto.createHmac('sha256', SECRET).update(payload).digest('base64url')
   return `${payload}.${sig}`

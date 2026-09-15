@@ -174,6 +174,13 @@ function requireOwner(req, res, next) {
   if (userIsOwner(req.user)) return next()
   res.status(403).json({ error: 'Owner only.' })
 }
+// Mark himself, not just the owner role (Kat is an owner too since
+// 2026-09-15) — for things tied to his own person, like texts that go
+// out from his personal cell.
+function requireMark(req, res, next) {
+  if (String(req.user?.email || '').toLowerCase().startsWith('mark@')) return next()
+  res.status(403).json({ error: 'Only Mark can do this.' })
+}
 
 function requireAuth(req, res, next) {
   if (process.env.SKIP_AUTH === 'true') return next()
@@ -322,7 +329,7 @@ app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/sales-stops', requireAuth, salesStopsRouter)
 // 💬 Text as Mark — outbox (owner) + Mac bridge (cron secret). The Mac sends, never Catalyst.
-app.use('/api/personal-texts', requireAuth, requireOwner, personalTextsOwnerRouter)
+app.use('/api/personal-texts', requireAuth, requireMark, personalTextsOwnerRouter)
 app.use('/api/cron/personal-texts', personalTextsBridgeRouter)
 app.use('/api/jobs', requireAuth, requireStaff, billItRouter)   // 💸 Bill it — Kat / dispatch / Mark only
 app.use('/api/tech-todos', requireAuth, techTodosRouter)

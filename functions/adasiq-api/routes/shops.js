@@ -410,9 +410,10 @@ router.put('/:id/big3', async (req, res) => {
     const b3 = await import('../services/big3.js')
     const rules = b3.normalizeRules(req.body?.rules || req.body)
     if (!rules) return res.status(400).json({ error: 'rules required: cal_id / pcsi / post_scan = bill | included | shop' })
-    const r = await b3.saveBig3(req, shop.shop_name, rules, req.user?.name || req.user?.email || '')
-    res.json({ ok: true, ...r, rules })
-  } catch (e) { res.status(500).json({ error: e.message }) }
+    const r = await b3.saveBig3(req, shop.shop_name, rules, req.user?.name || req.user?.email || '', { shop })
+    if (!r?.changed) console.log(`[big3] ${shop.shop_name}: unchanged re-save by ${req.user?.name || req.user?.email || '?'} — no ping`)
+    res.json({ ok: true, ...r, rules, set_by: req.user?.name || req.user?.email || '' })
+  } catch (e) { console.error('[shops big3 PUT]', req.params.id, e.message); res.status(500).json({ error: e.message }) }
 })
 
 router.get('/', async (req, res) => {

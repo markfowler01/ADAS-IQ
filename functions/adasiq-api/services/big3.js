@@ -82,7 +82,12 @@ export async function readBig3(req, shopName) {
 export async function saveBig3(req, shopName, rules, by = '', extra = {}) {
   const clean = normalizeRules(rules)
   if (!clean || !shopName) return null
-  let shop = await findShopByName(req, shopName)
+  // extra.shop = the exact CRM row the user has open. The CRM has several
+  // shops sharing a name (Maaco ×8, Northwest Auto Body ×3 …) and a
+  // by-name lookup lands on the lowest ROWID — so a save from the CRM
+  // panel could write to a different row than the one on screen and then
+  // read back as "not saved" (2026-09-15).
+  let shop = extra.shop || await findShopByName(req, shopName)
   const prevBR = shop ? parseBR(shop) : {}
   const before = shop ? normalizeRules(prevBR.big3) : null
   // Optional cost-invoice discount + customer type ride along (Mark's list, 2026-09-10).
