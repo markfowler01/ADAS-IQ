@@ -78,7 +78,7 @@ export default function ArTab({ user }) {
           <button disabled={!!busy || !imported} onClick={syncCn} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{busy === 'cn' ? '…' : 'Pull credit notes'}</button>
           <button disabled={!!busy || !imported} onClick={syncAlloc} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{busy === 'alloc' ? '…' : 'Pull payment allocations'}</button>
           <button onClick={showRuns} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ color: BLUE }}>{runsOpen ? 'hide runs' : 'run history'}</button>
-          <span className="text-[11px] self-center" style={{ color: '#888' }}>Nightly after 8pm PT: accounts, credit notes, allocations, reconcile, then the drift posts to #dispatch.</span>
+          <span className="text-[11px] self-center" style={{ color: '#888' }}>Nightly after 8pm PT: accounts, credit notes, allocations, reconcile, then the drift posts to Mark's alerts chat.</span>
         </div>
         {runsOpen && <div className="px-3 pb-3 text-[11px] space-y-0.5" style={{ color: '#555' }}>{runs.map(r => <div key={r.id}>{when(r.started)} · <b>{r.kind}</b> · {r.ok ? '✓' : '✗ ' + r.error} · {r.kind === 'reconcile' ? `drift ${$(r.drift_cents)} · ${r.mismatched} mismatched` : JSON.stringify(r.counts).slice(0, 120)} · {r.by}</div>)}{!runs.length && <div>No runs yet.</div>}</div>}
       </Panel>

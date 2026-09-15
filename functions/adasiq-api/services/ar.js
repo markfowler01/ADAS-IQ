@@ -251,10 +251,11 @@ export async function maybeNightlyAr(req) {
 }
 export async function postDrift(req, s, label = 'manual') {
   try {
-    const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js')
+    // Mark 2026-09-15: "have all the alerts go to Mark's alerts chat only" — never #dispatch
+    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
     const emoji = s.drift_cents === 0 && s.mismatched === 0 ? '🟢' : s.drift_cents < 10000 ? '🟡' : '🔴'
     const top = (s.top || []).slice(0, 3).map(d => `${d.account} ${d.diff_cents > 0 ? '+' : ''}${$(d.diff_cents)}`).join(' · ')
     const ltop = (s.ledger_top || []).slice(0, 3).map(d => `${d.account} ${d.diff_cents > 0 ? '+' : ''}${$(d.diff_cents)}`).join(' · ')
-    await postToCliqChannel(DISPATCH_CHANNEL, `${emoji} *Absolute ADAS Books · mirror drift ${$(s.drift_cents)} · independent ledger drift ${$(s.ledger_drift_cents || 0)}* (${label}) · ${s.accounts_with_drift} of ${s.counts.accounts} accounts differ from Zoho · ${s.accounts_with_ledger_drift || 0} differ on our own math · ${s.mismatched} invoice mismatches · ${(s.write_offs || []).length} written off in Books (${$(s.write_off_cents || 0)}) · ${s.unmatched} unapplied payments · allocation coverage ${s.coverage_pct}%${top ? `\n${top}` : ''}${ltop ? `\nledger: ${ltop}` : ''}`)
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `${emoji} *Absolute ADAS Books · mirror drift ${$(s.drift_cents)} · independent ledger drift ${$(s.ledger_drift_cents || 0)}* (${label}) · ${s.accounts_with_drift} of ${s.counts.accounts} accounts differ from Zoho · ${s.accounts_with_ledger_drift || 0} differ on our own math · ${s.mismatched} invoice mismatches · ${(s.write_offs || []).length} written off in Books (${$(s.write_off_cents || 0)}) · ${s.unmatched} unapplied payments · allocation coverage ${s.coverage_pct}%${top ? `\n${top}` : ''}${ltop ? `\nledger: ${ltop}` : ''}`)
   } catch (e) { console.log('[ar] drift post failed:', e.message) }
 }
