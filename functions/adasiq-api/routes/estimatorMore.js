@@ -23,7 +23,8 @@ export function verifyEstimateToken(token, id) {
 }
 export function approvalUrl(req, id) {
   const base = process.env.WEB_BASE_URL || `${req.protocol}://${req.get('host')}/app`
-  return `${base}/estimate?e=${encodeURIComponent(id)}&t=${encodeURIComponent(makeEstimateToken(id))}`
+  // Catalyst static hosting only serves real files (no SPA rewrites), so the link targets /app/?estimate=…
+  return `${base}/?estimate=${encodeURIComponent(id)}&t=${encodeURIComponent(makeEstimateToken(id))}`
 }
 
 const rowToTC = r => ({ id: String(r.ROWID), job_id: r.ec_job_id || '', estimate_id: r.ec_estimate_id || '', trigger_event: r.ec_trigger_event || '', systems: String(r.ec_systems || '').split('|').filter(Boolean), outcome: r.ec_outcome || '', audience: r.ec_audience || '', inputs: safe(r.ec_inputs_json, {}), generated: safe(r.ec_generated_json, null), approved: safe(r.ec_approved_json, null), approved_at: r.ec_approved_at || '', approved_by: r.ec_approved_by || '', model_used: r.ec_model_used || '', created_at: r.ec_created_at || r.CREATEDTIME || '' })

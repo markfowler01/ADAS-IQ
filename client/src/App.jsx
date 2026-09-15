@@ -72,7 +72,8 @@ function getTopLevelRoute() {
   if (path.endsWith('/pay') || path.includes('/app/pay')) return 'pay'
   if (path.endsWith('/portal') || path.includes('/app/portal')) return 'portal'
   if (path.endsWith('/quote') || path.includes('/app/quote')) return 'quote'
-  if (/\/estimate\/?$/.test(path)) return 'estimate'   // signed customer approval link
+  // Catalyst static hosting only serves real files, so the customer approval link is /app/?estimate=<id>&t=<token>
+  if (/\/estimate\/?$/.test(path) || /[?&]estimate=/.test(window.location.search || '')) return 'estimate'
   if (path.endsWith('/nps') || path.includes('/app/nps')) return 'nps'
   return 'app'
 }

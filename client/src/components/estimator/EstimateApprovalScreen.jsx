@@ -11,7 +11,7 @@ const ST = { approved: { l: 'Approved', c: GREEN, bg: '#dcfce7' }, declined: { l
 
 export default function EstimateApprovalScreen() {
   const params = new URLSearchParams(window.location.search)
-  const id = params.get('e') || '', t = params.get('t') || ''
+  const id = params.get('estimate') || params.get('e') || '', t = params.get('t') || ''
   const [est, setEst] = useState(null)
   const [err, setErr] = useState('')
   const [name, setName] = useState(() => { try { return localStorage.getItem('adas_est_name') || '' } catch { return '' } })
