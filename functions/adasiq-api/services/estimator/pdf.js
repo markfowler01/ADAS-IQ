@@ -14,7 +14,7 @@ const SRC = { oem: 'OEM', aftermarket: 'Aftermarket', recycled: 'Used / recycled
 const STATUS = { approved: ['APPROVED', GREEN], recommended: ['RECOMMENDED · not included', '#1d4ed8'], declined: ['DECLINED · not included', RED], deferred: ['DEFERRED · not included', LIGHT] }
 const W = 612, H = 792, M = 40, CW = W - 2 * M
 
-export function buildEstimatePdf({ est, jobs, totals, kind = 'estimate', company = {}, threeC = {} }) {
+export function buildEstimatePdf({ est, jobs, totals, kind = 'estimate', company = {}, threeC = {}, warranty = null }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'LETTER', margin: M, info: { Title: `${kind === 'invoice' ? 'Invoice' : 'Estimate'} ${est.number}`, Author: 'Absolute ADAS' } })
     const chunks = []
@@ -123,6 +123,7 @@ export function buildEstimatePdf({ est, jobs, totals, kind = 'estimate', company
     }
     if (est.notes) { ensure(30); label('Notes', M, doc.y, CW); doc.font('Helvetica').fontSize(8).fillColor(DARK).text(est.notes, M, doc.y + 9, { width: CW }); doc.y += 6 }
     if (est.terms) { ensure(30); label('Terms', M, doc.y, CW); doc.font('Helvetica').fontSize(8).fillColor(DARK).text(est.terms, M, doc.y + 9, { width: CW }); doc.y += 6 }
+    if (warranty && (warranty.months || warranty.miles) && jobs.some(j => j.status === 'approved')) { ensure(24); doc.font('Helvetica-Bold').fontSize(8).fillColor(GREEN).text(`🛡 Guaranteed for ${[warranty.months && `${warranty.months} months`, warranty.miles && `${warranty.miles.toLocaleString('en-US')} miles`].filter(Boolean).join(' or ')} from the service date and the odometer shown above (${est.mileage || 'odometer not recorded'}).`.replace('🛡 ', ''), M, doc.y + 4, { width: CW }); doc.y += 4 }
     ensure(30)
     doc.font('Helvetica').fontSize(7).fillColor(LIGHT).text(kind === 'invoice'
       ? 'Parts are listed with source (OEM, aftermarket, used, reconditioned, sublet), price per part, total parts, total labor, and total charge, per RCW 46.71.'

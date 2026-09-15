@@ -115,6 +115,7 @@ export default function EstimateApprovalScreen() {
               {tt.recommended_total + tt.deferred_total > 0 && <div className="text-[11px]" style={{ color: '#888' }}>Not yet approved: {fmt(tt.recommended_total + tt.deferred_total)}</div>}
             </div>
           </div>
+          {est.warranty && (est.warranty.months || est.warranty.miles) && <div className="rounded-xl px-3 py-2 text-sm font-semibold text-center" style={{ backgroundColor: '#f0fdf4', color: GREEN, border: '1.5px solid #bbf7d0' }}>🛡 Our work is guaranteed for {[est.warranty.months && `${est.warranty.months} months`, est.warranty.miles && `${Number(est.warranty.miles).toLocaleString()} miles`].filter(Boolean).join(' or ')}{est.mileage ? ` from ${est.mileage} mi` : ''}.</div>}
           <a href={`${base}/pdf?t=${encodeURIComponent(t)}`} target="_blank" rel="noreferrer" className="block text-center text-sm font-bold" style={{ color: BLUE }}>📄 Download the itemized estimate (PDF)</a>
           <div className="text-[11px] text-center" style={{ color: '#888' }}>{co.name || 'Absolute ADAS'} · {co.address || 'Lake Stevens, WA'}{co.phone ? ` · ${co.phone}` : ''} · {co.web || 'absoluteadas.com'}<br />Written estimate under RCW 46.71. Charges will not exceed 110% of the authorized amount, exclusive of sales tax, without additional authorization.</div>
         </div>

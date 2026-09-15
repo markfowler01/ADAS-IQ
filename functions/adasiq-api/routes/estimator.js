@@ -238,7 +238,7 @@ const rowToRetail = r => ({
 function retailToRow(c) {
   const m = {
     name: v => ({ er_name: str(v, 200) }), phone: v => ({ er_phone: str(v, 30) }), email: v => ({ er_email: str(v, 200) }), address: v => ({ er_address: str(v, 200) }), city: v => ({ er_city: str(v, 80) }), zip: v => ({ er_zip: str(v, 12) }),
-    zoho_contact_id: v => ({ er_zoho_contact_id: str(v, 40) }), notes: v => ({ er_notes: str(v, 9000) }), vehicles: v => ({ er_vehicles_json: JSON.stringify((Array.isArray(v) ? v : []).slice(0, 12).map(x => ({ vin: str(x.vin, 20).toUpperCase(), year: str(x.year, 10), make: str(x.make, 60), model: str(x.model, 80), trim: str(x.trim, 80), plate: str(x.plate, 20) }))) }),
+    zoho_contact_id: v => ({ er_zoho_contact_id: str(v, 40) }), notes: v => ({ er_notes: str(v, 9000) }), vehicles: v => ({ er_vehicles_json: JSON.stringify((Array.isArray(v) ? v : []).slice(0, 12).map(x => ({ vin: str(x.vin, 20).toUpperCase(), year: str(x.year, 10), make: str(x.make, 60), model: str(x.model, 80), trim: str(x.trim, 80), plate: str(x.plate, 20), last_mileage: x.last_mileage == null || x.last_mileage === '' ? null : int(x.last_mileage), last_service: str(x.last_service, 20) }))) }),
     source: v => ({ er_source: str(v, 60) }), tags: v => ({ er_tags: str((Array.isArray(v) ? v : String(v || '').split(',')).map(t => t.trim()).filter(Boolean).join(','), 255) }),
     last_contact: v => ({ er_last_contact: str(v, 40) }), updated_at: v => ({ er_updated_at: str(v, 40) }), created_at: v => ({ er_created_at: str(v, 40) }),
   }
@@ -269,7 +269,9 @@ async function rememberVehicle(req, customerId, v) {
     if (!vin && !ymm) return
     const same = x => (vin && String(x.vin || '').toUpperCase() === vin) || (!vin && [x.year, x.make, x.model].filter(Boolean).join(' ').toLowerCase() === ymm)
     const cur = c.vehicles.find(same)
-    const merged = { vin: vin || cur?.vin || '', year: v.year || cur?.year || '', make: v.make || cur?.make || '', model: v.model || cur?.model || '', trim: v.trim || cur?.trim || '', plate: v.plate || cur?.plate || '' }
+    const miles = parseInt(String(v.mileage || '').replace(/[^0-9]/g, ''), 10)
+    const merged = { vin: vin || cur?.vin || '', year: v.year || cur?.year || '', make: v.make || cur?.make || '', model: v.model || cur?.model || '', trim: v.trim || cur?.trim || '', plate: v.plate || cur?.plate || '',
+      last_mileage: Number.isFinite(miles) ? Math.max(miles, Number(cur?.last_mileage) || 0) : (cur?.last_mileage ?? null), last_service: [v.last_service, cur?.last_service].filter(Boolean).sort().pop() || '' }
     const vehicles = [merged, ...c.vehicles.filter(x => !same(x))].slice(0, 12)
     await tbl(req, T.retail).updateRow({ ROWID: c.id, ...retailToRow({ vehicles, last_contact: now(), updated_at: now() }) })
   } catch (e) { console.log('[estimator] rememberVehicle failed:', e.message) }
@@ -429,6 +431,10 @@ R.post('/rick/describe', staffOnly, async (req, res) => {
   } catch (e) { fail(res, e, 'rick describe') }
 })
 
+// Service history + warranty (Mark 2026-09-15)
+R.get('/retail-customers/:id/history', async (req, res) => { try { const { vehicleHistory } = await import('../services/estimator/history.js'); res.json({ ok: true, ...(await vehicleHistory(req, internals, { customer_id: String(req.params.id) })) }) } catch (e) { fail(res, e, 'history') } })
+R.get('/vehicle-history', async (req, res) => { try { const { vehicleHistory } = await import('../services/estimator/history.js'); const vin = String(req.query.vin || '').trim(); const cid = String(req.query.customer_id || '').trim(); if (!vin && !cid) return res.json({ ok: true, vehicles: [] }); res.json({ ok: true, ...(await vehicleHistory(req, internals, vin.length >= 8 ? { vin } : { customer_id: cid })) }) } catch (e) { fail(res, e, 'vehicle history') } })
+
 // Estimates
 R.get('/', async (req, res) => {
   try {
@@ -523,6 +529,7 @@ R.post('/:id/status', staffOnly, async (req, res) => {
     if (status === 'approved') {
       if (!jobs.some(j => j.status === 'approved')) return res.status(422).json({ error: 'Approve at least one job first.' })
       patch.approved_at = now()
+      if (cur.customer_kind === 'retail' && cur.customer_id) rememberVehicle(req, cur.customer_id, { ...cur, last_service: now().slice(0, 10) }).catch(() => {})
     }
     if (status === 'invoiced') return res.status(409).json({ error: 'Invoiced is set by the Books push (next phase).' })
     await tbl(req, T.est).updateRow({ ROWID: String(cur.id), ...estToRow({ ...patch, updated_at: now() }) })
@@ -618,7 +625,7 @@ R.post('/:id/jobs/:jid/save-template', staffOnly, async (req, res) => {
 })
 
 // Shared internals for the send / push / 3C routes and the public approval router
-export const internals = { getEst, getJobs, recompute, loadSettings, tbl, T, zcql, unwrap, esc, estToRow, jobToRow, rowToJob, readyToSend, now, who, isOwner, staffOnly, fail, json }
+export const internals = { getEst, getJobs, recompute, loadSettings, tbl, T, zcql, unwrap, esc, estToRow, jobToRow, rowToJob, rowToEst, readyToSend, now, who, isOwner, staffOnly, fail, json }
 mountMore(R, internals)
 
 export default estimatorRouter

@@ -14,7 +14,7 @@ export function publicRouter(I) {
     id: f.est.id, number: f.est.number, status: f.est.status, customer_name: f.est.customer_name, customer_contact: { name: f.est.customer_contact?.name || '' },
     vehicle: [f.est.year, f.est.make, f.est.model, f.est.trim].filter(Boolean).join(' '), vin: f.est.vin, plate: f.est.plate, mileage: f.est.mileage, ro_number: f.est.ro_number, insurer: f.est.insurer, concern: f.est.concern,
     created_at: f.est.created_at, valid_until: f.est.valid_until, sent_at: f.est.sent_at, tax_enabled: f.est.tax_enabled, supplies_enabled: f.est.supplies_enabled, discount_type: f.est.discount_type, discount_value: f.est.discount_value,
-    totals: f.totals, company: f.settings.company || {},
+    totals: f.totals, company: f.settings.company || {}, warranty: { months: Number(f.settings.warranty_months ?? 12) || 0, miles: Number(f.settings.warranty_miles ?? 12000) || 0 },
     jobs: f.jobs.map(j => ({ id: j.id, name: j.name, invoice_description: j.invoice_description, category: j.category, status: j.status, total_cents: j.total_cents, labor_cents: j.labor_cents, parts_cents: j.parts_cents, decline_reason: j.decline_reason, authorized_by_name: j.authorized_by_name, authorized_at: j.authorized_at, authorized_method: j.authorized_method,
       lines: (j.lines || []).map(l => ({ desc: l.desc, hours: l.hours, labor_cents: l.labor_cents, flat: l.flat_cents != null, parts: (l.parts || []).map(p => ({ pn: p.pn, desc: p.desc, source: p.source, qty: p.qty, price_each_cents: p.price_each_cents, total_cents: p.total_cents })) })) })),
   })

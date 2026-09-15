@@ -51,7 +51,8 @@ export async function renderPdf(req, I, id, kind) {
   const f = await loadFull(req, I, id); if (!f) return null
   const threeC = await approvedThreeC(req, I, id)
   const company = f.settings.company || {}
-  return buildEstimatePdf({ est: f.est, jobs: f.jobs, totals: f.totals, kind, company, threeC })
+  const warranty = { months: Number(f.settings.warranty_months ?? 12) || 0, miles: Number(f.settings.warranty_miles ?? 12000) || 0 }
+  return buildEstimatePdf({ est: f.est, jobs: f.jobs, totals: f.totals, kind, company, threeC, warranty })
 }
 
 export function mountMore(R, I) {

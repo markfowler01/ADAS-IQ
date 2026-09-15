@@ -34,6 +34,8 @@ export const DEFAULT_SETTINGS = {
   tax_by_zip: {},                // zip -> { rate_bp, tax_id, city }
   category_items: {},            // job category -> Books item_id
   resale_exemption_id: '',
+  warranty_months: 12,           // Mark 2026-09-15: work guaranteed 12 months / 12,000 miles
+  warranty_miles: 12000,
 }
 
 const int = v => { const n = Number(v); return Number.isFinite(n) ? Math.trunc(n) : 0 }

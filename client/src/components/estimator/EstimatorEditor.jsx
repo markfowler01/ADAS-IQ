@@ -58,6 +58,8 @@ export default function EstimatorEditor({ id, user, onBack }) {
   const [tplOpen, setTplOpen] = useState(false)
   const [vinBusy, setVinBusy] = useState(false)
   const [vinInfo, setVinInfo] = useState(null)
+  const [hist, setHist] = useState(null)
+  const [histOpen, setHistOpen] = useState(false)
   const [dragId, setDragId] = useState(null)
   const [armed, setArmed] = useState(null)
   const [toast, setToast] = useState('')
@@ -79,6 +81,9 @@ export default function EstimatorEditor({ id, user, onBack }) {
     j('/api/estimator/retail-customers').then(d => setRetail(d.customers || [])).catch(() => {})
   }, [])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(''), 2200); return () => clearTimeout(t) }, [toast])
+  // Service history for this car (by VIN) or this retail customer — what we did before, and what's still under warranty
+  const histKey = est ? (String(est.vin || '').length === 17 ? `vin=${est.vin}` : est.customer_kind === 'retail' && est.customer_id ? `customer_id=${est.customer_id}` : '') : ''
+  useEffect(() => { if (!histKey) { setHist(null); return } let dead = false; j(`/api/estimator/vehicle-history?${histKey}`).then(d => { if (!dead) setHist(d) }).catch(() => {}); return () => { dead = true } }, [histKey])
   useEffect(() => { const up = () => setArmed(null); window.addEventListener('mouseup', up); return () => window.removeEventListener('mouseup', up) }, [])
 
   // ── Autosave (debounced; header + per-job) ──────────────────────────────
@@ -252,6 +257,20 @@ export default function EstimatorEditor({ id, user, onBack }) {
               </div>
             </Panel>
 
+            {hist && hist.vehicles.length > 0 && (() => {
+              const cars = hist.vehicles.filter(v => !est.vin || v.vin === est.vin || String(est.vin || '').length !== 17)
+              const prior = cars.flatMap(v => v.entries.filter(en => en.estimate_id !== est.id))
+              const active = cars.flatMap(v => v.entries.filter(en => en.estimate_id !== est.id).flatMap(en => en.jobs.filter(jb => jb.warranty?.active).map(jb => ({ ...jb, date: en.date, car: [v.year, v.make, v.model].filter(Boolean).join(' ') }))))
+              if (!prior.length) return null
+              return (
+                <Panel tone="orange" title={`🔧 We've seen this ${cars.length === 1 ? 'car' : 'customer'} before · ${prior.length} visit${prior.length === 1 ? '' : 's'}`} right={cars[0]?.last_mileage != null ? `last odometer ${cars[0].last_mileage.toLocaleString()} mi` : ''}>
+                  {active.length > 0 && <div className="px-3 py-2 text-xs" style={{ backgroundColor: '#f0fdf4', color: '#166534' }}><b>🛡 Still under warranty:</b> {active.map(a => `${a.invoice_description || a.name} (${a.date}${a.warranty.until_miles != null ? `, good to ${a.warranty.until_miles.toLocaleString()} mi` : ''})`).join(' · ')} — don't charge for a redo.</div>}
+                  {est.mileage && cars[0]?.last_mileage != null && (parseInt(String(est.mileage).replace(/[^0-9]/g, ''), 10) || 0) < cars[0].last_mileage && <Notice tone="amber" className="m-2">Odometer {est.mileage} is lower than the last reading on this car ({cars[0].last_mileage.toLocaleString()} mi). Double-check it.</Notice>}
+                  <button onClick={() => setHistOpen(o => !o)} className="px-3 py-1.5 text-xs font-bold" style={{ color: BLUE }}>{histOpen ? 'hide history' : 'show history'}</button>
+                  {histOpen && prior.slice(0, 12).map(en => <Row key={en.estimate_id} left={<span className="text-xs"><b>{en.date}</b> · {en.number}{en.mileage != null ? ` · ${en.mileage.toLocaleString()} mi` : ''}<div style={{ color: '#666' }}>{en.jobs.filter(jb => jb.status === 'approved').map(jb => jb.invoice_description || jb.name).join(' · ') || 'nothing approved'}</div></span>} right={<span className="text-xs">{fmtCents(en.total_cents)}</span>} />)}
+                </Panel>
+              )
+            })()}
             <Panel tone="plain" title="📋 Job info">
               <div className="p-3 grid grid-cols-2 gap-2">
                 <F label="RO #" value={est.ro_number} onChange={v => patchEst({ ro_number: v })} disabled={!canEdit} mono />

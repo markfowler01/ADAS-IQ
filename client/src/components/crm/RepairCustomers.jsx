@@ -119,13 +119,15 @@ function NewCustomer({ onClose, onCreated }) {
 
 function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }) {
   const [c, setC] = useState(null)
+  const [hist, setHist] = useState(null)
+  const [openVeh, setOpenVeh] = useState({})
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState('')
   const [vin, setVin] = useState('')
   const [manual, setManual] = useState(null)
   const [textTo, setTextTo] = useState(null)
   const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
-  const load = () => j(`/api/estimator/retail-customers/${id}`).then(d => setC(d.customer)).catch(e => setErr(e.message))
+  const load = () => Promise.all([j(`/api/estimator/retail-customers/${id}`).then(d => setC(d.customer)), j(`/api/estimator/retail-customers/${id}/history`).then(setHist).catch(() => setHist({ vehicles: [] }))]).catch(e => setErr(e.message))
   useEffect(() => { load() }, [id])
   const patch = async f => { setC(x => ({ ...x, ...f })); try { const d = await j(`/api/estimator/retail-customers/${id}`, body('PUT', f)); setC(x => ({ ...x, ...d.customer })) } catch (e) { setErr(e.message) } }
 
@@ -184,7 +186,7 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
             </Panel>
             <Panel tone="plain" title={`🚗 Vehicles · ${(c.vehicles || []).length}`} right="learned from estimates">
               {(c.vehicles || []).map((v, i) => (
-                <Row key={i} left={<div><div className="font-semibold">{vName(v)}{v.trim ? ` ${v.trim}` : ''}</div><div className="text-[11px]" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>{v.vin || 'no VIN'}{v.plate ? ` · ${v.plate}` : ''}</div></div>}
+                <Row key={i} left={<div><div className="font-semibold">{vName(v)}{v.trim ? ` ${v.trim}` : ''}</div><div className="text-[11px]" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>{v.vin || 'no VIN'}{v.plate ? ` · ${v.plate}` : ''}</div><div className="text-[11px]" style={{ color: '#666' }}>{v.last_mileage != null ? `${Number(v.last_mileage).toLocaleString()} mi` : 'no odometer yet'}{v.last_service ? ` · last service ${v.last_service}` : ''}{(() => { const hv = (hist?.vehicles || []).find(x => (v.vin && x.vin === v.vin) || (!v.vin && x.make?.toLowerCase() === (v.make || '').toLowerCase() && x.model?.toLowerCase() === (v.model || '').toLowerCase() && String(x.year) === String(v.year))); return hv?.under_warranty ? <span className="ml-1 font-bold" style={{ color: GREEN }}>· 🛡 {hv.under_warranty} job{hv.under_warranty === 1 ? '' : 's'} under warranty</span> : null })()}</div></div>}
                   right={canEdit ? <div className="flex gap-1"><button onClick={() => newEstimate(v)} className="text-[11px] font-bold px-2 py-1 rounded-lg text-white" style={{ backgroundColor: ORANGE }}>Estimate</button><button onClick={() => patch({ vehicles: c.vehicles.filter((_, k) => k !== i) })} className="text-xs px-1" style={{ color: '#bbb' }}>✕</button></div> : null} />
               ))}
               {canEdit && (
@@ -194,6 +196,31 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
                     : <button onClick={() => setManual({})} className="text-xs font-bold" style={{ color: BLUE }}>＋ add without a VIN</button>}
                 </div>
               )}
+            </Panel>
+            <Panel tone="orange" title={`🔧 Service history · ${(hist?.vehicles || []).reduce((s, v) => s + v.visits, 0)} visit${(hist?.vehicles || []).reduce((s, v) => s + v.visits, 0) === 1 ? '' : 's'}`} right={hist?.warranty ? `guaranteed ${hist.warranty.months} mo / ${Number(hist.warranty.miles).toLocaleString()} mi` : ''}>
+              {!hist && <div className="px-3 py-3 text-xs" style={{ color: '#999' }}>Loading…</div>}
+              {hist && !hist.vehicles.length && <div className="px-3 py-3 text-xs italic" style={{ color: '#999' }}>No work recorded yet. Approved and invoiced estimates show up here per car, with the odometer at each visit.</div>}
+              {(hist?.vehicles || []).map(v => (
+                <div key={v.key} style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <button onClick={() => setOpenVeh(o => ({ ...o, [v.key]: !o[v.key] }))} className="w-full text-left px-3 py-2 flex items-center justify-between gap-2">
+                    <span><span className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>🚗 {[v.year, v.make, v.model].filter(Boolean).join(' ')}</span><span className="text-[11px] ml-2" style={{ color: '#888' }}>{v.visits} visit{v.visits === 1 ? '' : 's'}{v.last_mileage != null ? ` · ${v.last_mileage.toLocaleString()} mi` : ''}{v.last_service ? ` · last ${v.last_service}` : ''}</span></span>
+                    <span className="text-xs font-bold tabular-nums" style={{ color: GREEN }}>{fmtCents(v.lifetime_cents)} {openVeh[v.key] ? '▾' : '▸'}</span>
+                  </button>
+                  {openVeh[v.key] && v.entries.map(en => (
+                    <div key={en.estimate_id} className="px-3 pb-2">
+                      <button onClick={() => onOpenEstimate(en.estimate_id)} className="w-full text-left rounded-lg p-2" style={{ backgroundColor: '#fffdfb', border: '1px solid #f1ede9' }}>
+                        <div className="flex items-center justify-between gap-2 text-xs"><span><b>{en.date || '—'}</b> · <span style={{ fontFamily: 'IBM Plex Mono, monospace' }}>{en.number}</span>{en.invoice_number ? ` · inv ${en.invoice_number}` : ''} · <span style={{ color: en.status === 'invoiced' ? '#7c3aed' : en.status === 'approved' ? GREEN : '#888' }}>{en.status}</span>{en.mileage != null ? ` · ${en.mileage.toLocaleString()} mi` : ' · no odometer'}</span><span className="font-bold tabular-nums">{fmtCents(en.total_cents)}</span></div>
+                        {en.jobs.map(jb => (
+                          <div key={jb.id} className="mt-1 text-xs" style={{ color: jb.status === 'approved' ? '#1a1a1a' : '#999' }}>
+                            <div className="flex items-center justify-between gap-2"><span>{jb.status === 'approved' ? '✓' : '·'} {jb.invoice_description || jb.name}{jb.lines.some(l => l.parts.length) ? <span style={{ color: '#888' }}> · parts: {jb.lines.flatMap(l => l.parts).map(p => `${p.pn ? p.pn + ' ' : ''}${p.desc}`).join(', ')}</span> : null}</span><span className="tabular-nums">{fmtCents(jb.total_cents)}</span></div>
+                            {jb.warranty && <div className="text-[10px] font-bold" style={{ color: jb.warranty.active ? GREEN : '#999' }}>🛡 {jb.warranty.active ? `Under warranty until ${jb.warranty.until_date}${jb.warranty.until_miles != null ? ` or ${jb.warranty.until_miles.toLocaleString()} mi` : ''}${jb.warranty.miles_left != null ? ` (${jb.warranty.miles_left.toLocaleString()} mi left)` : ''}` : `Warranty expired (${jb.warranty.expired_by === 'miles' ? 'mileage' : 'time'}) · was until ${jb.warranty.until_date}${jb.warranty.until_miles != null ? ` / ${jb.warranty.until_miles.toLocaleString()} mi` : ''}`}</div>}
+                          </div>
+                        ))}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))}
             </Panel>
             <Panel tone="green" title={`📝 Estimates · ${c.estimates_count || 0}`} right={c.won_cents ? `approved ${fmtCents(c.won_cents)}` : ''}>
               {(c.estimates || []).map(e => (
