@@ -120,24 +120,28 @@ async function idbAll() {
 // Shrink before upload: long edge ≤ 2000 px, JPEG 0.86. A 12 MP phone
 // shot (4–6 MB) becomes ~400 KB; the odometer and VIN reads still work
 // at that size. Anything that can't be decoded goes up as-is.
-async function shrink(file) {
+async function shrink(file, slot = null) {
   try {
-    if (!/^image\//.test(file.type || '') || file.size < 700 * 1024) return file
+    if (!/^image\//.test(file.type || '') || file.size < 350 * 1024) return file
     let bmp
     try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }) } catch { bmp = await createImageBitmap(file) }
-    const MAX = 2000, s = Math.min(1, MAX / Math.max(bmp.width, bmp.height))
+    // Odometer + VIN need pixels for the AI read; corners/setup don't (Mark 2026-09-16: "10 times faster" on bad signal).
+    const MAX = /^odo_|^vin$/.test(slot || '') ? 1800 : 1400, s = Math.min(1, MAX / Math.max(bmp.width, bmp.height))
     const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * s)); c.height = Math.max(1, Math.round(bmp.height * s))
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close?.()
-    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.86))
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', /^odo_|^vin$/.test(slot || '') ? 0.84 : 0.76))
     if (!blob || blob.size >= file.size) return file
     return new File([blob], String(file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: file.lastModified || Date.now() })
   } catch { return file }
 }
 
-let pumping = false
+// Two uploads at a time (bad signal is latency-bound, not bandwidth-bound).
+let workers = 0
+const MAX_WORKERS = 2
 async function pump() {
-  if (pumping) return
-  pumping = true
+  if (workers >= MAX_WORKERS) return
+  workers++
+  if (workers < MAX_WORKERS && queue.filter(q => q.status === 'queued').length > 1) pump()
   try {
     while (true) {
       const item = queue.find(q => q.status === 'queued')
@@ -165,7 +169,7 @@ async function pump() {
         } else { item.status = 'failed'; item.error = e.message; notify() }
       }
     }
-  } finally { pumping = false }
+  } finally { workers-- }
 }
 /** Put every paused/failed photo back in line and push. Called on sign-in, on 'online', when the app comes back to the front, and by the Retry button. */
 export function resumePhotoQueue() {
@@ -195,7 +199,7 @@ export function enqueuePhoto({ jobId, slot, file, miles = null }) {
   queue.push(item); notify()
   // Save the original to the phone first (nothing is ever lost), then swap in the shrunk copy.
   idbPut(item).then(async () => {
-    const small = await shrink(file)
+    const small = await shrink(file, slot)
     if (small !== file) { item.file = small; await idbPut(item) }
     item.status = 'queued'; notify(); pump()
   })
@@ -356,6 +360,13 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   const pending = items.filter(i => i.status === 'queued' || i.status === 'uploading' || i.status === 'preparing').length
   const needsSlot = items.filter(i => i.status === 'needs_slot')
   const failed = items.filter(i => i.status === 'failed' || i.status === 'paused')
+  // Bad-signal path: photos on this phone (queued/uploading/paused) count toward the gate; the card carries a 'still uploading' flag until they land.
+  const onPhone = items.filter(i => ['preparing', 'queued', 'uploading', 'paused', 'failed'].includes(i.status))
+  const rollOnPhone = onPhone.filter(i => !i.slot).length
+  const uncovered = prog.missing.filter(k => !onPhone.some(i => i.slot === k))
+  const milesBlocked = prog.problems.includes('miles') && !prog.missing.includes('odo_before') && !prog.missing.includes('odo_after')
+  const coveredByPhone = !prog.complete && uncovered.length <= rollOnPhone && !milesBlocked
+  const pendingPayload = coveredByPhone ? { slots: prog.missing, roll: rollOnPhone } : null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
@@ -528,11 +539,12 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         {mode === 'gate' && (
           <div className="flex flex-col gap-2">
-            <button type="button" disabled={!prog.complete || !tiresDone || pending > 0} onClick={() => onComplete && onComplete(job)}
+            <button type="button" disabled={!(prog.complete || coveredByPhone) || !tiresDone} onClick={() => onComplete && onComplete(job, undefined, pendingPayload)}
               className="w-full rounded-xl py-3 text-sm font-bold text-white"
-              style={{ backgroundColor: '#7e22ce', opacity: prog.complete && tiresDone && pending === 0 ? 1 : .45 }}>
-              {prog.complete && !tiresDone ? '🛞 Set the tire pressures first' : '🟢 Continue → Ready to Invoice'}
+              style={{ backgroundColor: '#7e22ce', opacity: (prog.complete || coveredByPhone) && tiresDone ? 1 : .45 }}>
+              {(prog.complete || coveredByPhone) && !tiresDone ? '🛞 Set the tire pressures first' : coveredByPhone ? `🟢 Continue → Ready to Invoice (${onPhone.length} photo${onPhone.length === 1 ? '' : 's'} still uploading — fine)` : '🟢 Continue → Ready to Invoice'}
             </button>
+            {coveredByPhone && <div className="text-[11px] text-center" style={{ color: '#666' }}>Photos are saved on this phone and upload on their own. Kat sees "still uploading" on the card until they land.</div>}
             {isOwner && !(prog.complete && tiresDone) && (
               overrideOpen ? (
                 <div className="rounded-xl p-2" style={{ border: '1px dashed #ddd' }}>

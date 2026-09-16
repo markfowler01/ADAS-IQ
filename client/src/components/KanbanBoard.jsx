@@ -1491,6 +1491,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // is complete it hands off to the calibration review as before.
   const [photoGateJob, setPhotoGateJob] = useState(null)
   const [photoOverride, setPhotoOverride] = useState('')   // Mark-only reason, rides on the PATCH
+  const [photosPending, setPhotosPending] = useState(null)   // bad-signal: photos queued on the phone, rides on the PATCH
   const [search, setSearch] = useState('')
   const [regionFilter, setRegionFilter] = useState('')
   const [techFilter, setTechFilter] = useState('')
@@ -1691,7 +1692,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
   // Opens the calibration review modal — actual status change happens after confirmation
   function handleMoveToReadyInvoice(job) {
-    setPhotoOverride('')
+    setPhotoOverride(''); setPhotosPending(null)
     if (!photoProgress(job).complete) { setPhotoGateJob(job); return }
     setCalReviewJob(job)
   }
@@ -1768,6 +1769,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           status: 'ready_invoice',
           ...extras,
           ...(photoOverride ? { photo_override: photoOverride } : {}),
+          ...(photosPending ? { photos_pending: photosPending } : {}),
         }),
       })
       if (!res.ok) {
@@ -2411,7 +2413,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           user={user}
           onClose={() => setPhotoGateJob(null)}
           onJobUpdated={j => setJobs(prev => prev.map(x => x.id === j.id ? { ...x, ...j } : x))}
-          onComplete={(j, override) => { setPhotoGateJob(null); setPhotoOverride(override || ''); setCalReviewJob({ ...photoGateJob, ...j }) }}
+          onComplete={(j, override, pending) => { setPhotoGateJob(null); setPhotoOverride(override || ''); setPhotosPending(pending || null); setCalReviewJob({ ...photoGateJob, ...j }) }}
         />
       )}
 

@@ -353,6 +353,7 @@ router.post('/run', async (req, res) => {
     const { maybeNightlyMirror } = await import('../services/zohoMirror.js')
     const zm = await maybeNightlyMirror(req)
     try { const { maybeMondayPipeline } = await import('../services/pipeline.js'); const mp = await maybeMondayPipeline(req); if (mp.fired) console.log('[pipeline] monday lists:', JSON.stringify(mp).slice(0, 300)) } catch (e) { console.log('[pipeline] monday failed:', e.message) }
+    try { const { maybeStalePendingPhotos } = await import('./jobs.js'); const sp = await maybeStalePendingPhotos(req); if (sp.nudged) console.log('[photos] stale pending nudges:', sp.nudged) } catch (e) { console.log('[photos] stale pending check failed:', e.message) }
     try { const { maybePeopleNudges } = await import('./people.js'); const pn = await maybePeopleNudges(req); if (pn.fired && pn.sent) console.log('[people] nudges sent:', pn.sent) } catch (e) { console.log('[people] nudges failed:', e.message) }
     try { const { maybeNightlyAr } = await import('../services/ar.js'); const ar = await maybeNightlyAr(req); if (ar.fired) console.log('[ar] nightly:', JSON.stringify(ar).slice(0, 400)) } catch (e) { console.log('[ar] nightly failed:', e.message) }
     if (zm.fired) console.log('[postscan] zoho mirror:', JSON.stringify({ invoices: zm.invoices, payments: zm.payments }))

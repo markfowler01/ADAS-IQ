@@ -161,6 +161,42 @@ router.post('/create-item', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Mark 2026-09-16: "all the Rivian items… I want the first three letters of
+// each item RIV and then a space and then a dash and then a space and then
+// the name". Owner/secret. ?dry=1 previews. Idempotent (skips ones done).
+const RIVIAN_ITEM_NAMES = [
+  'Pre ADAS-Calibration Vehicle Inspection', 'RiDE Set-Up', 'Driver Assistance Calibration Setup', 'Corner Radar Variant Coding',
+  'Sensor, Radar, Front (Calibrate)', 'Sensor, Radar, Rear (Calibrate)', 'Sensor, Radar, Front, Center (Calibrate)',
+  'Camera, Driver Assistance, Front (Calibrate)', 'Camera, Long Range, Front (Calibrate)', 'Camera, Wide Angle, Front (Calibrate)',
+  'Camera, Forward Facing, Mirror (Calibrate)', 'Camera, Lane Change, Mirror (Calibrate)', 'Surround View System (Calibrate)', 'Post Calibration Test Drive',
+]
+router.post('/rename-rivian', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
+    const dry = String(req.query.dry || '') === '1'
+    const { getAccessToken, getItemCatalogForAudit } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const { allItems } = await getItemCatalogForAudit()
+    const want = new Map(RIVIAN_ITEM_NAMES.map(n => [n.toLowerCase(), n]))
+    const plan = [], skipped = [], missing = []
+    for (const it of allItems) {
+      const n = String(it.name || '').trim()
+      if (/^RIV\s*-\s*/i.test(n)) { skipped.push(n); continue }
+      if (want.has(n.toLowerCase())) plan.push({ item_id: it.item_id, from: n, to: `RIV - ${n}` })
+    }
+    for (const n of RIVIAN_ITEM_NAMES) if (!plan.some(p => p.from.toLowerCase() === n.toLowerCase()) && !skipped.some(s => s.toLowerCase() === `riv - ${n}`.toLowerCase())) missing.push(n)
+    const done = []
+    if (!dry) {
+      for (const p of plan) {
+        const r = await axios.put(`https://www.zohoapis.com/books/v3/items/${p.item_id}`, { name: p.to }, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000, validateStatus: s => s < 500 })
+        done.push({ ...p, ok: r.data?.code === 0, message: r.data?.message })
+        console.log(`[books item] rename "${p.from}" → "${p.to}": ${r.data?.code === 0 ? 'ok' : r.data?.message}`)
+      }
+    }
+    res.json({ ok: true, dry, planned: plan, renamed: done, already: skipped, not_found: missing })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 // Owner/secret diagnostic: search Books for a name across contacts,
 // estimates, invoices, items. Read-only. (Mark 2026-09-09: LM duplicates.)
 router.get('/books-search', async (req, res) => {

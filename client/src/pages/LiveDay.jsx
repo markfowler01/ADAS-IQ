@@ -1010,6 +1010,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       if (note) body.extra_services = note
       if (extraItems?.length) body.extra_items = JSON.stringify(extraItems.map(i => ({ item_id: i.item_id, name: i.name, rate: i.rate, quantity: i.quantity })))
       if (job._photoOverride) body.photo_override = job._photoOverride
+      if (job._photosPending) body.photos_pending = job._photosPending
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -1345,7 +1346,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           mode="gate"
           user={user}
           onClose={() => setPhotoGateJob(null)}
-          onComplete={(j, override) => { setPhotoGateJob(null); setReadyInvoiceJob({ ...j, _photoOverride: override || '' }) }}
+          onComplete={(j, override, pending) => { setPhotoGateJob(null); setReadyInvoiceJob({ ...j, _photoOverride: override || '', _photosPending: pending || null }) }}
         />
       )}
 

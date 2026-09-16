@@ -147,19 +147,19 @@ router.post('/rewrite-justification', async (req, res) => {
 // report shows them; the justification is Rivian's own description.
 const RIVIAN_BASE_ITEMS = [
   {
-    calibration_name: 'Pre ADAS-Calibration Vehicle Inspection',
+    calibration_name: 'RIV - Pre ADAS-Calibration Vehicle Inspection',
     cal_type: 'Rivian base', trigger: '0.5 hr · every Rivian', line_references: '',
     justification: 'Rivian required pre-calibration inspection: tire pressure check, firmware check and update launch as required, estimate review, and required calibration repair planning. Published Rivian labor time 0.5 hr.',
     enabled: true, base_item: true,
   },
   {
-    calibration_name: 'RiDE Set-Up',
+    calibration_name: 'RIV - RiDE Set-Up',
     cal_type: 'Rivian base', trigger: '0.3 hr · every Rivian', line_references: '',
     justification: 'One-time RiDE (Rivian Diagnostic Environment) set-up: connection and initial software setup prior to performing the calibration process. Published Rivian labor time 0.3 hr.',
     enabled: true, base_item: true,
   },
   {
-    calibration_name: 'Driver Assistance Calibration Setup',
+    calibration_name: 'RIV - Driver Assistance Calibration Setup',
     cal_type: 'Rivian base', trigger: '1.0 hr · every Rivian', line_references: '',
     justification: 'Rivian Driver Assistance calibration setup: setup of the approved target placement system and the alignment checks with the vehicle during the initial calibration process, plus time to store the equipment after use. Published Rivian labor time 1.0 hr.',
     enabled: true, base_item: true,

@@ -562,14 +562,17 @@ router.put('/:id', async (req, res) => {
       const prog = photoProgress(merged)
       const isOwner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
       const override = String(req.body.photo_override || '').trim()
-      if (!prog.complete && !(isOwner && override)) {
+      const pendingOk = !prog.complete && pendingCovers(prog, req.body.photos_pending)
+      if (!prog.complete && !(isOwner && override) && !pendingOk) {
         const missing = describeMissing(prog)
         photoGateNudge(req, merged, missing).catch(() => {})
         return res.status(409).json({ error: `Photos first — still need: ${missing.join(', ')}.`, photo_gate: true, missing: prog.missing, problems: prog.problems, progress: prog })
       }
+      if (pendingOk) { markPending(merged, prog, req); req.body.photo_slots = merged.photo_slots }
       if (tireGate(req, res, merged)) return
       relayCustomerPay(req, req.body, cur)
       delete req.body.photo_override
+      delete req.body.photos_pending
     }
 
     const updated = await updateJob(req, req.params.id, req.body)
@@ -683,7 +686,8 @@ router.patch('/:id', async (req, res) => {
         const prog = photoProgress(merged)
         const isOwner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
         const override = String(req.body.photo_override || '').trim()
-        if (!prog.complete && !(isOwner && override)) {
+        const pendingOk = !prog.complete && pendingCovers(prog, req.body.photos_pending)
+        if (!prog.complete && !(isOwner && override) && !pendingOk) {
           const missing = describeMissing(prog)
           photoGateNudge(req, merged, missing).catch(() => {})
           return res.status(409).json({
@@ -691,7 +695,8 @@ router.patch('/:id', async (req, res) => {
             photo_gate: true, missing: prog.missing, problems: prog.problems, progress: prog,
           })
         }
-        if (!prog.complete && override) {
+        if (pendingOk) markPending(merged, prog, req)
+        else if (!prog.complete && override) {
           merged.notes = `${merged.notes ? merged.notes + '\n' : ''}📸 Photo gate overridden by Mark: ${override} (missing: ${describeMissing(prog).join(', ')})`
           postToCliqChannel(DISPATCH_CHANNEL, `📸 *Photo gate overridden* · ${merged.shop_name || 'Job'} · ${override}\nMissing: ${describeMissing(prog).join(', ')}`).catch(() => {})
         }
@@ -699,6 +704,7 @@ router.patch('/:id', async (req, res) => {
       if (tireGate(req, res, merged)) return
       relayCustomerPay(req, merged, currentJob)
       delete merged.photo_override
+      delete merged.photos_pending
     }
 
     const updated = await updateJob(req, req.params.id, merged)
@@ -1351,6 +1357,51 @@ async function resolveJobFolder(req, job, wdToken) {
   return null
 }
 
+// Bad-signal Ready to Invoice (Mark 2026-09-16: "let me click Ready to
+// Invoice but still upload on the backend"): the phone keeps the photos and
+// uploads on its own, so the gate accepts photos that are CAPTURED AND
+// QUEUED on the tech's phone. The card carries photo_slots._pending until
+// the last one lands; #dispatch hears both ends; an hourly check nags
+// Mark if a card sits pending for more than 2 hours.
+function pendingCovers(prog, pending) {
+  if (!pending || typeof pending !== 'object') return false
+  const slots = Array.isArray(pending.slots) ? pending.slots.map(String) : []
+  const roll = Number(pending.roll) || 0
+  const uncovered = prog.missing.filter(k => !slots.includes(k))
+  if (uncovered.length > roll) return false
+  // miles can only be judged once both odometer shots are in; anything else unresolved blocks
+  return prog.problems.every(p => p === 'miles' ? (prog.missing.includes('odo_before') || prog.missing.includes('odo_after')) : true)
+}
+function markPending(merged, prog, req) {
+  const { parseSlots } = { parseSlots: raw => { try { const o = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {}); if (!Array.isArray(o.setup)) o.setup = o.setup ? [o.setup] : []; return o } catch { return { setup: [] } } } }
+  const slots = parseSlots(merged.photo_slots)
+  slots._pending = { slots: prog.missing, at: new Date().toISOString(), by: req.user?.techName || req.user?.name || req.user?.email || 'tech' }
+  merged.photo_slots = JSON.stringify(slots)
+  const who = slots._pending.by
+  postToCliqChannel(DISPATCH_CHANNEL, `📸 *${merged.shop_name || 'Job'}${merged.vehicle ? ' · ' + merged.vehicle : ''} → Ready to Invoice with photos still uploading* from ${who}'s phone (bad signal): ${prog.missing.join(', ')}. They attach on their own — hold the invoice until the card shows the full set.`).catch(() => {})
+  return merged
+}
+export async function maybeStalePendingPhotos(req) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID, shop_name, vehicle, photo_slots FROM ${JOBS_TABLE_NAME} WHERE status = 'ready_invoice' LIMIT 300`)
+  let n = 0
+  for (const r of rows || []) {
+    const j = r[JOBS_TABLE_NAME] || r
+    let slots = null; try { slots = JSON.parse(j.photo_slots || '{}') } catch { continue }
+    const p = slots?._pending; if (!p?.at) continue
+    if (Date.now() - new Date(p.at).getTime() < 2 * 3600000) continue
+    const key = `photos_pending_nudge:${j.ROWID}`.slice(0, 64)
+    const seen = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`)
+    if (seen?.[0]) continue
+    await app.datastore().table('AppConfig').insertRow({ config_key: key, config_value: new Date().toISOString() })
+    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+    const line = `⚠️ *Photos never arrived* · ${j.shop_name || 'Job'}${j.vehicle ? ' · ' + j.vehicle : ''} — Ready to Invoice since ${String(p.at).slice(11, 16)}Z with ${(p.slots || []).join(', ')} still uploading from ${p.by}'s phone. Have them open the app on signal (the upload tray retries) or reshoot.`
+    await Promise.allSettled([postToCliqChannelById(MARK_ALERT_CHANNEL_ID, line), postToCliqChannel(DISPATCH_CHANNEL, line)])
+    n++
+  }
+  return { checked: (rows || []).length, nudged: n }
+}
+
 // One #dispatch line per job per day when a tech hits the photo gate,
 // so Kat knows why a job is stalled without the tech having to explain.
 async function photoGateNudge(req, job, missing) {
@@ -1433,7 +1484,13 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     if (!job.folder_url) patch.folder_url = `https://workdrive.zoho.com/folder/${folderId}`
     if (slotKey === 'odo_before' && miles != null) patch.odo_before = String(miles)
     if (slotKey === 'odo_after' && miles != null) patch.odo_after = String(miles)
-    const updated = await updateJob(req, job.id, { ...job, ...patch })
+    let updated = await updateJob(req, job.id, { ...job, ...patch })
+    // Was the card moved to Ready to Invoice on a bad signal? Once the set is whole, clear the flag and tell #dispatch.
+    if (slots._pending && photoProgress(updated).complete) {
+      const by = slots._pending.by; delete slots._pending
+      updated = await updateJob(req, job.id, { ...updated, photo_slots: JSON.stringify(slots) })
+      postToCliqChannel(DISPATCH_CHANNEL, `✅ *All photos in* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — the set from ${by}'s phone finished uploading. Good to invoice.`).catch(() => {})
+    }
     console.log(`[photo-slot] job ${job.id} ← ${name}${miles != null ? ` (${miles} mi)` : ''}${ai ? ` [ai ${ai.slot} ${ai.confidence}]` : ''}`)
     res.json({ ok: true, slot: slotKey, miles, vin: vinInfo, name, fileId, job: updated, progress: photoProgress(updated) })
   } catch (err) {
