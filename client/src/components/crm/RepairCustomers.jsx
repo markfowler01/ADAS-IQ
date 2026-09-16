@@ -4,6 +4,7 @@
 // Books customer type (individual). Everything the estimator learns about
 // them (vehicles, last contact) shows up here.
 import { useEffect, useMemo, useState } from 'react'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Eyebrow, Title, Panel, Row, Notice, Chip, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
 import { fmtCents } from '../../lib/estimatorCalc.js'
@@ -127,7 +128,7 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
   const [vin, setVin] = useState('')
   const [manual, setManual] = useState(null)
   const [textTo, setTextTo] = useState(null)
-  const isMark = String(user?.email || '').toLowerCase().startsWith('mark@') // 💬 as Mark = his personal cell
+  const isMark = isMarkUser(user) // 💬 as Mark = his personal cell
   const load = () => Promise.all([j(`/api/estimator/retail-customers/${id}`).then(d => setC(d.customer)), j(`/api/estimator/retail-customers/${id}/history`).then(setHist).catch(() => setHist({ vehicles: [] }))]).catch(e => setErr(e.message))
   useEffect(() => { load() }, [id])
   const patch = async f => { setC(x => ({ ...x, ...f })); try { const d = await j(`/api/estimator/retail-customers/${id}`, body('PUT', f)); setC(x => ({ ...x, ...d.customer })) } catch (e) { setErr(e.message) } }

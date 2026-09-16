@@ -1,4 +1,5 @@
 import express from 'express'
+const isMarkEmail = e => ['mark@absoluteadas.com', 'mf@absoluteadas.com', 'mfowler4456@gmail.com'].includes(String(e || '').trim().toLowerCase())
 import catalyst from 'zcatalyst-sdk-node'
 import { createNotification } from './notification-helper.js'
 
@@ -297,7 +298,7 @@ router.post('/requests/:id/approve', async (req, res) => {
     // All time-off approvals route to Mark (Mark 2026-08-15 / HR SOP:
     // "Approver: Mark, single level"). Kat gets visibility, not the button.
     const approverEmail = String(req.user?.email || '').toLowerCase()
-    if (approverEmail && !/^mark@/.test(approverEmail)) {
+    if (approverEmail && !isMarkEmail(approverEmail)) {
       return res.status(403).json({ error: 'Time-off approvals go to Mark only' })
     }
 
@@ -374,7 +375,7 @@ router.post('/requests/:id/deny', async (req, res) => {
     const { user_id: adminId, is_admin } = userFromReq(req)
     if (!is_admin) return res.status(403).json({ error: 'Admin only' })
     const approverEmail = String(req.user?.email || '').toLowerCase()
-    if (approverEmail && !/^mark@/.test(approverEmail)) {
+    if (approverEmail && !isMarkEmail(approverEmail)) {
       return res.status(403).json({ error: 'Time-off approvals go to Mark only' })
     }
 

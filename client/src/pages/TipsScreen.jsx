@@ -2,6 +2,7 @@
 // calibration, keys, cloning. Quick to add (voice-typed, AI cleanup),
 // instantly searchable. Phase 2 adds the ask-Claude box up top.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { isOwnerUser, isMarkUser } from './utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 
@@ -31,7 +32,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
   const [toast, setToast] = useState(null)
   const [view, setView] = useState('tips')  // tips | cloning
 
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
   const showToast = m => { setToast(m); setTimeout(() => setToast(null), 2600) }
 
   const load = useCallback(async () => {

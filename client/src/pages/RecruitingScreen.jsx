@@ -2,6 +2,7 @@
 // Recruit. Website form → candidate lands in New → drag/tap through the
 // stages → notes, rating, call/text/email from the card.
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { isOwnerUser, isMarkUser } from './utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 
@@ -28,7 +29,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
   const [overStage, setOverStage] = useState(null)
   const [toast, setToast] = useState(null)
   const say = m => { setToast(m); setTimeout(() => setToast(null), 2600) }
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
   // Mark 2026-09-15: vendors and tests land on the board from the public form with
   // no obvious way out. Clean-up mode: tick cards, delete them in one go (owner only).
   const [cleanup, setCleanup] = useState(false)

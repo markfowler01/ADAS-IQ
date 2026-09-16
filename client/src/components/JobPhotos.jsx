@@ -7,6 +7,7 @@
 //
 // Mirrors services/jobPhotos.js (slots, progress, gate date).
 import { Fragment, useEffect, useRef, useState } from 'react'
+import { isOwnerUser, isMarkUser } from './utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 
 const ORANGE = '#CD4419'
@@ -257,7 +258,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   const rollRef = useRef(null)
   const items = useQueue(job.id)
   const prog = photoProgress(job)
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
 
   // Fold finished uploads back into the job so the checklist ticks live.
   useEffect(() => {

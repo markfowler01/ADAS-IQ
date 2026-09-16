@@ -4,6 +4,7 @@
 // for long enough. Also runs the one-time full import (previewed, then
 // confirmed by Mark) and the manual syncs.
 import { useEffect, useMemo, useState } from 'react'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Eyebrow, Title, Panel, Row, Notice, Chip, Pill, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
 
@@ -26,7 +27,7 @@ export default function ArTab({ user }) {
   const [preview, setPreview] = useState(null)
   const [runsOpen, setRunsOpen] = useState(false)
   const [runs, setRuns] = useState([])
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
   const say = m => setLog(l => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 40))
 
   const load = () => Promise.all([j('/api/ar/status'), j('/api/ar/accounts')]).then(([s, a]) => { setStatus(s); setAccounts(a.accounts || []) }).catch(e => setErr(e.message))

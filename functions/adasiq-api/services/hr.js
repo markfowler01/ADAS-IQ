@@ -14,6 +14,12 @@
 
 import catalyst from 'zcatalyst-sdk-node'
 
+// Mark's sign-in can arrive as any of these (Zoho hands the app whichever
+// address is primary on his profile — 2026-09-16 it was NOT mark@, so he
+// had no owner menu). One list, used by every "is this Mark" check.
+export const MARK_EMAILS = ['mark@absoluteadas.com', 'mf@absoluteadas.com', 'mfowler4456@gmail.com']
+export function isMarkEmail(email) { return MARK_EMAILS.includes(String(email || '').trim().toLowerCase()) }
+
 // ── The 5 paid holidays (handbook list — NOT the social-post list) ──────
 function nthWeekdayOfMonth(year, month, weekday, n) {
   if (n > 0) {
@@ -61,6 +67,8 @@ const IDENTITY_ALIASES = {
   'mark@absoluteadas.com':      ['mark@absoluteadas.com', 'Mark Fowler'],
   'mark fowler':                ['mark@absoluteadas.com', 'Mark Fowler'],
   'mark':                       ['mark@absoluteadas.com', 'Mark Fowler'],
+  'mf@absoluteadas.com':        ['mark@absoluteadas.com', 'Mark Fowler'],
+  'mfowler4456@gmail.com':      ['mark@absoluteadas.com', 'Mark Fowler'],
   'jayden@absoluteadas.com':    ['jayden@absoluteadas.com', 'Jayden Goshorn'],
   'jayden goshorn':             ['jayden@absoluteadas.com', 'Jayden Goshorn'],
   'jayden':                     ['jayden@absoluteadas.com', 'Jayden Goshorn'],

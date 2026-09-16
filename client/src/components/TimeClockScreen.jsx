@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { isMarkUser } from '../utils/identity.js'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
 
@@ -32,7 +33,7 @@ export default function TimeClockScreen({ user, onLogout, currentScreen, onNavig
   const [pendingEdits, setPendingEdits] = useState([])
   const [fixing, setFixing] = useState(null)      // entry being edited
   const [fixBusy, setFixBusy] = useState(false)
-  const isMark = String(user?.email || '').toLowerCase().startsWith('mark@')
+  const isMark = isMarkUser(user)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [notes, setNotes] = useState('')

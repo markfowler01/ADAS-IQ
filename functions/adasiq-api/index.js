@@ -162,8 +162,10 @@ app.use('/auth/demo', demoRouter)
 // Auth middleware — X-Auth-Token header (primary) or session cookie (fallback)
 // Role gates (Mark 2026-08-30). 'admin' tokens from before the role
 // split behave as dispatcher; owner is mark@ or explicit role.
+const MARK_EMAILS = ['mark@absoluteadas.com', 'mf@absoluteadas.com', 'mfowler4456@gmail.com']
+const isMarkEmail = e => MARK_EMAILS.includes(String(e || '').trim().toLowerCase())
 function userIsOwner(u) {
-  return String(u?.email || '').toLowerCase().startsWith('mark@') || u?.role === 'owner'
+  return isMarkEmail(u?.email) || u?.role === 'owner'
 }
 function userIsTech(u) { return u?.role === 'technician' }
 function requireStaff(req, res, next) {
@@ -178,7 +180,7 @@ function requireOwner(req, res, next) {
 // 2026-09-15) — for things tied to his own person, like texts that go
 // out from his personal cell.
 function requireMark(req, res, next) {
-  if (String(req.user?.email || '').toLowerCase().startsWith('mark@')) return next()
+  if (isMarkEmail(req.user?.email)) return next()
   res.status(403).json({ error: 'Only Mark can do this.' })
 }
 

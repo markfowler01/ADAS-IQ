@@ -1,5 +1,5 @@
 import express from 'express'
-import { canonicalIdentity } from '../services/hr.js'
+import { canonicalIdentity, isMarkEmail } from '../services/hr.js'
 import catalyst from 'zcatalyst-sdk-node'
 
 const router = express.Router()
@@ -289,7 +289,7 @@ function isAdmin(req) {
 // Payroll-grade mutations are OWNER only (Mark 2026-08-30: "if they
 // need to edit the time card i will need to approve it").
 function isOwner(req) {
-  return String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
+  return isMarkEmail(req.user?.email) || req.user?.role === 'owner'
 }
 
 function newId(prefix = 'te') {
@@ -357,7 +357,7 @@ async function payrollLockCheck(req, entry) {
   }).format(new Date(entry.clock_in))
   if (d > lock) return null
   const email = String(req.user?.email || '').toLowerCase()
-  if (email.startsWith('mark@') && (req.body?.unlock === true || req.query?.unlock === '1')) {
+  if (isMarkEmail(email) && (req.body?.unlock === true || req.query?.unlock === '1')) {
     return { audit: `[payroll-locked entry (period through ${lock}) modified by ${email} ${new Date().toISOString()}]` }
   }
   return { locked: lock }
@@ -405,7 +405,7 @@ router.post('/clock-in', async (req, res) => {
     // EVERYONE (except Mark himself), SMS for technicians. Bounded —
     // the punch never waits on notifications.
     try {
-      if (!String(req.user?.email || '').toLowerCase().startsWith('mark@')) {
+      if (!isMarkEmail(req.user?.email)) {
         const cliqWork = (async () => {
           const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
           const loc = entry.clock_in_location
@@ -483,7 +483,7 @@ router.post('/clock-out', async (req, res) => {
     await writePerson(req, userId, entries)
     // Clock-out alert to Mark (2026-09-16) — everyone but Mark, bounded, awaited.
     try {
-      if (!String(req.user?.email || '').toLowerCase().startsWith('mark@') && !/demo/i.test(String(req.user?.email || ''))) {
+      if (!isMarkEmail(req.user?.email) && !/demo/i.test(String(req.user?.email || ''))) {
         const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
         const t = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date())
         const loc = entry.clock_out_location
@@ -780,7 +780,7 @@ router.get('/pending-edits', async (req, res) => {
 router.post('/entries/:id/edit-decision', async (req, res) => {
   try {
     const email = String(req.user?.email || '').toLowerCase()
-    if (!email.startsWith('mark@')) return res.status(403).json({ error: 'Only Mark approves time card edits' })
+    if (!isMarkEmail(email)) return res.status(403).json({ error: 'Only Mark approves time card edits' })
     const approve = !!req.body?.approve
     const entries = await readEntries(req)
     const entry = entries.find(e => e.id === req.params.id)
@@ -909,7 +909,7 @@ router.post('/entries/manual', async (req, res) => {
     const [userId, userName] = canonicalIdentity(String(req.body?.user_id || ''), String(req.body?.user_name || ''))
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(hours > 0 && hours <= 16) || !userId || userId === 'unknown') return res.status(400).json({ error: 'Need a person, a date and hours between 0 and 16.' })
     const lock = await getPayrollLockDate(req).catch(() => '')
-    const isMark = String(req.user?.email || '').toLowerCase().startsWith('mark@')
+    const isMark = isMarkEmail(req.user?.email)
     if (lock && date <= lock && !isMark) return res.status(409).json({ error: `That period is locked (reported through ${lock}) — only Mark can add to it.` })
     const startHour = Number(req.body?.start_hour) || 9
     const clockIn = ptInstant(date, startHour)

@@ -9,6 +9,7 @@
 // mirrors it live, and on send the Books estimate is updated to match
 // before either document is emailed — so both always agree.
 import { useEffect, useState } from 'react'
+import { isOwnerUser, isMarkUser } from './utils/identity.js'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { Big3Picker, describeRules, normalizeMode } from './books/Big3Rules.jsx'
 
@@ -63,7 +64,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   const [rules, setRules] = useState(null)
   const [rulesTouched, setRulesTouched] = useState(false)
   const [remember, setRemember] = useState(true)
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
 
   useEffect(() => {
     let dead = false

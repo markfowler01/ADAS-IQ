@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { isOwnerUser, isMarkUser } from './utils/identity.js'
 import TextAsMarkModal from './TextAsMarkModal.jsx'
 import Big3Rules, { DrpRules, BooksLink } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -747,7 +748,7 @@ function JobsTab({ shopName }) {
 
 // ─── Main Panel ───────────────────────────────────────────────────────────────
 export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user = null }) {
-  const canTextAsMark = String(user?.email || '').toLowerCase().startsWith('mark@') // his personal cell — Mark only, even though Kat is an owner
+  const canTextAsMark = isMarkUser(user) // his personal cell — Mark only, even though Kat is an owner
   const [tab,          setTab]          = useState('info')
   const [form,         setForm]         = useState({
     ...shop,

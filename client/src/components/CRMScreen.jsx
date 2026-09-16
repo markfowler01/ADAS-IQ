@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { isOwnerUser, isMarkUser } from './utils/identity.js'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel } from './crmConstants.js'
 import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, DiscoverModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
@@ -653,8 +654,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
 
         {/* Stats bar */}
         {!loading && !error && <StatsBar shops={shops} />}
-        {!loading && !error && <SetupBanner shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onApplied={n => { setToast(`🗺 Zones and owners set on ${n} shops`); fetchShops() }} />}
-        {!loading && !error && <InPlayBar shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} onPickStage={st => { setStageFilter(stageFilter === st ? '' : st); setRegionFilter(''); setOwnerFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} />}
+        {!loading && !error && <SetupBanner shops={shops} isOwner={isOwnerUser(user)} onApplied={n => { setToast(`🗺 Zones and owners set on ${n} shops`); fetchShops() }} />}
+        {!loading && !error && <InPlayBar shops={shops} isOwner={isOwnerUser(user)} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} onPickStage={st => { setStageFilter(stageFilter === st ? '' : st); setRegionFilter(''); setOwnerFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} />}
         {!loading && !error && filtered.length === 0 && shops.length > 0 && (
           <div className="rounded-xl px-3 py-2 mb-3 text-sm flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
             <span>No shops match {[regionFilter && (regionFilter === 'unzoned' ? 'No zone' : zoneLabel(regionFilter)), ownerFilter, stageFilter && (STAGES.find(x => x.id === stageFilter)?.label), showOverdue && 'Overdue', staleOnly && 'Gone quiet', compFilter && `uses ${compFilter}`, big3Only && 'No Big 3 rule', search.trim() && `"${search.trim()}"`].filter(Boolean).join(' + ') || 'these filters'}.</span>
@@ -924,7 +925,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
       {nextPrompt && <NextActionModal shop={nextPrompt.shop} stage={nextPrompt.stage} onCancel={() => setNextPrompt(null)} onConfirm={extra => { const p = nextPrompt; setNextPrompt(null); handleStageChange(p.shop, p.stage, extra) }} />}
 
       {discoverOpen && <DiscoverModal onClose={() => setDiscoverOpen(false)} onAdded={(n, d) => { setToast(`🔎 Added ${n} shops as Targets${d ? ` · ${d} already there` : ''}`); fetchShops() }} />}
-        {mondayOpen && <MondayModal isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onClose={() => setMondayOpen(false)} onOpenShop={id => { const sh = shops.find(x => x.id === id); if (sh) { setMondayOpen(false); setDetailShop(sh) } }} />}
+        {mondayOpen && <MondayModal isOwner={isOwnerUser(user)} onClose={() => setMondayOpen(false)} onOpenShop={id => { const sh = shops.find(x => x.id === id); if (sh) { setMondayOpen(false); setDetailShop(sh) } }} />}
 
       {toast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] px-4 py-2.5 rounded-2xl shadow-xl text-sm font-medium text-white"

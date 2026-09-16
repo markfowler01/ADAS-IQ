@@ -3,6 +3,7 @@
 // collected, and the month's invoice/payment lists. Nothing here writes
 // to Zoho; the sync button pulls, never pushes.
 import { useState, useEffect, useCallback } from 'react'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 
 const ORANGE = '#CD4419'
@@ -11,7 +12,7 @@ const BUCKETS = ['current', '1-30', '31-60', '61-90', '90+']
 const bucketColor = b => b === 'current' ? '#15803d' : b === '1-30' ? '#a16207' : b === '31-60' ? '#c2410c' : '#dc2626'
 
 export default function ZohoMirrorTab({ user }) {
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
   const [summary, setSummary] = useState(null)
   const [err, setErr] = useState(null)
   const [month, setMonth] = useState(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit' }).format(new Date()))

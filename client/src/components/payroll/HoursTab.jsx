@@ -4,6 +4,7 @@
 // as red chips, day-by-day underneath, Copy for Zoho Payroll, CSV, and a
 // button that drops the same report in Mark's Cliq. Owner only (Mark + Kat).
 import { useEffect, useState } from 'react'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, COLORS, Card, Button } from '../books/shared'
 
 const h = n => `${Number(n || 0).toFixed(2)}h`
@@ -23,7 +24,7 @@ const fmtDay = d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { week
 const fmtTime = iso => new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' })
 
 export default function HoursTab({ user }) {
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
   const day = new Date().getDate()
   const payday = day <= 5 || (day >= 16 && day <= 20)          // just past a period close → you're paying the last one
   const [which, setWhich] = useState(payday ? 'previous' : 'current')

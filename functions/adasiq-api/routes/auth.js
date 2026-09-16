@@ -18,7 +18,7 @@ async function pingMark(text) {
 }
 function skipAlerts(user) {
   const e = String(user?.email || '').toLowerCase()
-  return !e || e.startsWith('mark@') || /demo/.test(e)
+  return !e || ['mark@absoluteadas.com', 'mf@absoluteadas.com', 'mfowler4456@gmail.com'].includes(e) || /demo/.test(e)
 }
 const ptNow = () => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date())
 const ptDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -63,6 +63,8 @@ if (!LOGIN_CLIENT_ID || !LOGIN_CLIENT_SECRET) {
 // Unrecognised logins get dispatcher (staff) — owners are explicit.
 const USER_ROLES = {
   'mark@absoluteadas.com':      { role: 'owner' },
+  'mf@absoluteadas.com':        { role: 'owner' },   // Mark's mailbox — what Zoho login actually sends (2026-09-16)
+  'mfowler4456@gmail.com':      { role: 'owner' },   // Mark's personal Zoho identity, just in case
   'k.belmonte@absoluteadas.com': { role: 'owner' },
   'jayden@absoluteadas.com':    { role: 'technician', techName: 'Jaden' },
 }

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { isOwnerUser, isMarkUser } from './utils/identity.js'
 import FeedbackModal from './FeedbackModal'
 
 const ORANGE = '#CD4419'
@@ -72,7 +73,7 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
   // Roles (Mark 2026-08-30): owner = Mark (everything), dispatcher = Kat
   // (all operations incl. invoicing), technician = field essentials.
   // Legacy 'admin' tokens behave as dispatcher until next login.
-  const isOwner = String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'
+  const isOwner = isOwnerUser(user)
   const canSee = l => (l.ownerOnly ? isOwner : l.adminOnly ? isAdmin : true)
   const visiblePrimary = PRIMARY_LINKS.filter(canSee)
   const visibleAll = [...visiblePrimary, ...MORE_LINKS]
