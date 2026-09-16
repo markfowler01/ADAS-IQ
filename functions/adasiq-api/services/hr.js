@@ -69,6 +69,31 @@ const IDENTITY_ALIASES = {
   'kat belmonte':               ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
   'kath':                       ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
   'kat':                        ['k.belmonte@absoluteadas.com', 'Kat Belmonte'],
+  // Joyce (bookkeeper, contractor) has no app login — her hours are keyed
+  // in by Mark/Kat on the Payroll → Hours tab (Mark 2026-09-16: "Joyce I
+  // need to know her hours").
+  'joyce@absoluteadas.com':     ['joyce@absoluteadas.com', 'Joyce Cruz'],
+  'joyce cruz':                 ['joyce@absoluteadas.com', 'Joyce Cruz'],
+  'joyce':                      ['joyce@absoluteadas.com', 'Joyce Cruz'],
+}
+// Everyone who gets a line on the pay-period hours page, even at 0h.
+export const PAYROLL_ROSTER = [
+  { user_id: 'mark@absoluteadas.com',       user_name: 'Mark Fowler' },
+  { user_id: 'k.belmonte@absoluteadas.com', user_name: 'Kat Belmonte' },
+  { user_id: 'jayden@absoluteadas.com',     user_name: 'Jayden Goshorn' },
+  { user_id: 'joyce@absoluteadas.com',      user_name: 'Joyce Cruz' },
+]
+// Semi-monthly pay periods (Mark 2026-09-16): 1st–15th and 16th–end of
+// month. shift = 0 → the period containing ref, -1 → the one before.
+export function semiMonthlyPeriod(refISO, shift = 0) {
+  let [y, m, d] = String(refISO).split('-').map(Number)
+  let idx = (y * 12 + (m - 1)) * 2 + (d >= 16 ? 1 : 0) + shift
+  y = Math.floor(idx / 24); const rem = idx % 24; m = Math.floor(rem / 2) + 1; const half = rem % 2
+  const last = daysInMonth(y, m)
+  const mm = String(m).padStart(2, '0')
+  const start = `${y}-${mm}-${half ? '16' : '01'}`, end = `${y}-${mm}-${half ? String(last) : '15'}`
+  const mon = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })
+  return { start, end, label: `${mon} ${half ? 16 : 1}–${half ? last : 15}`, half: half ? 'end' : 'mid', ym: `${y}-${mm}` }
 }
 export function canonicalIdentity(rawId, rawName) {
   for (const raw of [rawId, rawName]) {
@@ -249,24 +274,38 @@ export async function buildHoursReport(req, startISO, endISO) {
   // The report marks counted entries reported:true, so nothing is ever
   // paid twice.
   const countedIds = []
+  for (const p of PAYROLL_ROSTER) { const b = bucket(firstName(p.user_name)); b.user_id = p.user_id; b.full_name = p.user_name }
   for (const e of entries) {
     if (!e.clock_in) continue
     const b = bucket(firstName(e.user_name || e.user_id))
+    b.user_id = b.user_id || e.user_id; b.full_name = b.full_name || e.user_name
     const d = ptDateOf(e.clock_in)
     const mins = entryWorkedMinutes(e)
     b.day_min[d] = (b.day_min[d] || 0) + mins
     const finished = !!e.clock_out
     const inWindow = d >= startISO && d <= endISO
     const lateAdj = finished && !e.reported && d < startISO
+    // Flags for the Hours page (2026-09-16): still on the clock, an edit
+    // waiting on Mark, a day over 12h, keyed-in (manual) hours.
+    b.flags = b.flags || { open: 0, pending_edits: 0, long_days: [], manual_min: 0 }
+    if (!finished && d <= endISO) b.flags.open += 1
+    if (e.pending_edit && inWindow) b.flags.pending_edits += 1
     if (finished && (inWindow || lateAdj)) {
       b.worked_min += mins
       b.entries += 1
       if (lateAdj) b.late_min = (b.late_min || 0) + mins
+      if (e.manual) b.flags.manual_min += mins
       b.counted_dates = b.counted_dates || new Set()
       b.counted_dates.add(d)
+      b.days = b.days || {}
+      b.days[d] = b.days[d] || { date: d, minutes: 0, shifts: [] }
+      b.days[d].minutes += mins
+      b.days[d].shifts.push({ id: e.id, in: e.clock_in, out: e.clock_out, minutes: mins, manual: !!e.manual, note: e.notes || e.manual_note || '', pending_edit: !!e.pending_edit })
       countedIds.push(e.id)
     }
   }
+  for (const b of Object.values(per)) for (const [d, m] of Object.entries(b.day_min)) if (d >= startISO && d <= endISO && m > 720) (b.flags = b.flags || { open: 0, pending_edits: 0, long_days: [], manual_min: 0 }).long_days.push(d)
+  const peopleOut = []
   for (const r of requests) {
     if (String(r.status) !== 'approved') continue
     if (!(String(r.start_date) <= endISO && String(r.end_date) >= startISO)) continue
@@ -321,6 +360,7 @@ export async function buildHoursReport(req, startISO, endISO) {
     lines.push(`  >> PAY THIS PERIOD: ${payable}h at regular rate${ot ? ` + ${ot}h at 1.5x` : ''}`)
     if (bal) lines.push(`  (sick balance after: ${bal.sick_balance_hours}h)`)
     lines.push('')
+    peopleOut.push({ key: b.name.toLowerCase(), name: b.full_name || b.name, user_id: b.user_id || '', type: 'employee', worked, regular, ot, sick: b.sick_hours, vacation: b.vacation_hours, holiday: holidayHours, unpaid: b.unpaid_hours, payable, shifts: b.entries, late: r2((b.late_min || 0) / 60), days: Object.values(b.days || {}).sort((a, z) => a.date.localeCompare(z.date)), flags: b.flags || { open: 0, pending_edits: 0, long_days: [], manual_min: 0 }, sick_balance: bal?.sick_balance_hours ?? null })
     csvRows.push([
       b.name, 'Employee', regular, ot, b.sick_hours, b.vacation_hours,
       holidayHours, b.unpaid_hours, payable, b.entries,
@@ -340,6 +380,7 @@ export async function buildHoursReport(req, startISO, endISO) {
       if (b.unpaid_hours) lines.push(`  Time off logged: ${b.unpaid_hours}h — informational`)
       lines.push(`  >> PAY THIS PERIOD: ${worked}h at contract rate`)
       lines.push('')
+      peopleOut.push({ key: b.name.toLowerCase(), name: b.full_name || b.name, user_id: b.user_id || '', type: 'contractor', worked, regular: worked, ot: 0, sick: 0, vacation: 0, holiday: 0, unpaid: b.unpaid_hours || 0, payable: worked, shifts: b.entries, late: r2((b.late_min || 0) / 60), days: Object.values(b.days || {}).sort((a, z) => a.date.localeCompare(z.date)), flags: b.flags || { open: 0, pending_edits: 0, long_days: [], manual_min: 0 }, sick_balance: null })
       csvRows.push([b.name, 'Contractor', worked, 0, 0, 0, 0, b.unpaid_hours || 0, worked, b.entries])
     }
   }
@@ -349,7 +390,7 @@ export async function buildHoursReport(req, startISO, endISO) {
   }
   lines.push(`Generated ${new Date().toISOString()} · source: Absolute ADAS app time clock (durable)`)
   const csv = csvRows.map(r => r.map(v => /[",]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n')
-  return { text: lines.join('\n'), csv, employees: Object.keys(per).length, holidays: holidays.length, balances, counted_entry_ids: countedIds }
+  return { text: lines.join('\n'), csv, employees: Object.keys(per).length, holidays: holidays.length, balances, counted_entry_ids: countedIds, people: peopleOut, period: { start: startISO, end: endISO }, holiday_list: holidays }
 }
 
 // ── Auto-punch for forgotten days (Mark 2026-08-27) ─────────────────────
@@ -367,7 +408,7 @@ const AUTO_PUNCH_ROSTER = [
   { user_id: 'k.belmonte@absoluteadas.com', user_name: 'Kat Belmonte' },
 ]
 
-function ptInstant(dateISO, hour) {
+export function ptInstant(dateISO, hour) {
   for (const off of ['-07:00', '-08:00']) {
     const d = new Date(`${dateISO}T${String(hour).padStart(2, '0')}:00:00${off}`)
     const back = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(d))
@@ -467,25 +508,23 @@ export async function maybeAutoPunch(req) {
 // report used to restart at the 1st and double-count the first half —
 // fixed 2026-08-27). Sending the report LOCKS the period.
 export async function maybeFireHoursReport(req) {
+  // Mark 2026-09-16: pay periods are the 1st–15th and the 16th–end of
+  // month, and he wants the totals in Cliq at 7am on payday morning —
+  // the 16th (covering 1–15) and the 1st (covering 16–end). Due-WINDOW:
+  // a missed morning still sends on the next hourly run, never never.
   const today = todayPT()
-  const [y, m, d] = today.split('-').map(Number)
-  const secondToLast = daysInMonth(y, m) - 1
-  // Due-WINDOW, not due-day: if the report day itself is missed (outage),
-  // the report still goes out the next evening instead of never.
-  const half = d >= secondToLast ? 'end' : d >= 14 ? 'mid' : null
-  if (!half) return { fired: false, reason: `not due (mid from the 14th, end from the ${secondToLast}th)` }
-  if (ptHourNow() < 19) return { fired: false, reason: 'waiting for the 7pm PT run' }
+  const period = semiMonthlyPeriod(today, -1)   // the period that just closed
+  const half = period.half
+  if (ptHourNow() < 7) return { fired: false, reason: 'waiting for the 7am PT run' }
   const isMid = half === 'mid'
 
   const app = catalyst.initialize(req)
-  const stampKey = `hours_report_sent:${today.slice(0, 7)}:${half}`
+  const stampKey = `hours_report_sent:${period.ym}:${half}`
   const r0 = await getConfigRowByKey(app, stampKey)
-  if (r0?.config_value) return { fired: false, reason: `${half} report already sent this month` }
+  if (r0?.config_value) return { fired: false, reason: `${period.label} report already sent` }
 
-  const lock = await getPayrollLockDate(req).catch(() => '')
-  let start = `${today.slice(0, 8)}01`
-  if (lock && lock < today) start = addDaysISO(lock, 1)
-  const end = today
+  const start = period.start
+  const end = period.end
   const report = await buildHoursReport(req, start, end)
 
   let emailed = false
@@ -539,8 +578,8 @@ export async function maybeFireHoursReport(req) {
   try {
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `🕒 *Hours report (${isMid ? 'mid-month' : 'month-end'})*${emailed ? ' — emailed to mark@ with CSV for Joyce' : ' — ⚠️ email failed, full copy here'}\n` +
-      `Period ${start} → ${end} is now LOCKED — time clock edits to it need your unlock.\n\n` +
+      `🕒 *Payday hours · ${period.label}*${emailed ? ' — emailed to mark@ with CSV for Joyce' : ' — ⚠️ email failed, full copy here'}\n` +
+      `Period ${start} → ${end} is now LOCKED — time clock edits to it need your unlock. Full page: Payroll → Hours in the app.\n\n` +
       '```\n' + report.text.slice(0, 3000) + '\n```')
     cliqd = true
   } catch (e) { console.warn('[hours-report] cliq failed:', e.message) }

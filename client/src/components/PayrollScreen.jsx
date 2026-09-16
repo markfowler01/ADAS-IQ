@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
+import HoursTab from './payroll/HoursTab.jsx'
 import {
   API_BASE, apiFetch, COLORS, PageHeader, SectionLabel,
   Card, Button, StatCard, EmptyState, Tabs, EmptyState as Empty,
@@ -15,7 +16,7 @@ const TYPE_LABEL = {
 }
 
 export default function PayrollScreen({ user, onLogout, currentScreen, onNavigate }) {
-  const [tab, setTab] = useState('current')
+  const [tab, setTab] = useState('hours')   // Mark 2026-09-16: payday hours first
   const [settings, setSettings] = useState(null)
   const [payRun, setPayRun] = useState(null)
   const [runs, setRuns] = useState([])
@@ -105,6 +106,7 @@ export default function PayrollScreen({ user, onLogout, currentScreen, onNavigat
   }
 
   const tabs = [
+    { id: 'hours', label: '⏱ Hours' },
     { id: 'current', label: 'Current Run' },
     { id: 'employees', label: 'Employees' },
     { id: 'history', label: `History`, count: runs.length || null },
@@ -120,6 +122,7 @@ export default function PayrollScreen({ user, onLogout, currentScreen, onNavigat
 
         <Tabs tabs={tabs} active={tab} onChange={setTab} className="mb-6" />
 
+        {tab === 'hours' && <HoursTab user={user} />}
         {tab === 'current' && (
           <CurrentRun payRun={payRun} loading={loading} periodEnd={periodEnd}
             setPeriodEnd={setPeriodEnd}

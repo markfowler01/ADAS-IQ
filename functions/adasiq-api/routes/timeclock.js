@@ -843,5 +843,73 @@ router.post('/acknowledge-autopunch', async (req, res) => {
   }
 })
 
+
+// ── Pay-period hours (Mark 2026-09-16: "every payday I need to login and
+//    see how many hours people have worked… one click"). Owner only =
+//    Mark + Kat. Read-only apart from /entries/manual (keyed-in hours for
+//    someone who doesn't clock in, e.g. Joyce) and /period-hours/send.
+async function periodFromQuery(req) {
+  const { semiMonthlyPeriod } = await import('../services/hr.js')
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const q = req.query || {}
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(q.start || '')) && /^\d{4}-\d{2}-\d{2}$/.test(String(q.end || ''))) {
+    return { start: String(q.start), end: String(q.end), label: `${q.start} → ${q.end}`, custom: true }
+  }
+  return semiMonthlyPeriod(today, q.which === 'previous' ? -1 : 0)
+}
+router.get('/period-hours', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark and Kat can see payroll hours.' })
+    const { buildHoursReport, getPayrollLockDate, semiMonthlyPeriod } = await import('../services/hr.js')
+    const period = await periodFromQuery(req)
+    const [report, lock] = await Promise.all([buildHoursReport(req, period.start, period.end), getPayrollLockDate(req).catch(() => '')])
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    res.json({ ok: true, period, people: report.people, text: report.text, csv: report.csv, holidays: report.holiday_list, locked_through: lock || '', today,
+      periods: { current: semiMonthlyPeriod(today, 0), previous: semiMonthlyPeriod(today, -1) } })
+  } catch (e) { console.error('[timeclock period-hours]', e.message); res.status(500).json({ error: e.message }) }
+})
+router.post('/period-hours/send', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark and Kat can send payroll hours.' })
+    const { buildHoursReport } = await import('../services/hr.js')
+    const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+    const period = await periodFromQuery(req)
+    const report = await buildHoursReport(req, period.start, period.end)
+    const who = req.user?.name || req.user?.email || 'app'
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🕒 *Payday hours · ${period.label}* (sent by ${who} from Payroll → Hours)\n\n` + '```\n' + report.text.slice(0, 3000) + '\n```')
+    console.log(`[timeclock] period-hours ${period.start}→${period.end} sent to Cliq by ${who}`)
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// Keyed-in hours: one shift on a date for someone (Joyce has no login).
+router.post('/entries/manual', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark and Kat can key in hours.' })
+    const { ptInstant, getPayrollLockDate } = await import('../services/hr.js')
+    const date = String(req.body?.date || '')
+    const hours = Number(req.body?.hours)
+    const [userId, userName] = canonicalIdentity(String(req.body?.user_id || ''), String(req.body?.user_name || ''))
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !(hours > 0 && hours <= 16) || !userId || userId === 'unknown') return res.status(400).json({ error: 'Need a person, a date and hours between 0 and 16.' })
+    const lock = await getPayrollLockDate(req).catch(() => '')
+    const isMark = String(req.user?.email || '').toLowerCase().startsWith('mark@')
+    if (lock && date <= lock && !isMark) return res.status(409).json({ error: `That period is locked (reported through ${lock}) — only Mark can add to it.` })
+    const startHour = Number(req.body?.start_hour) || 9
+    const clockIn = ptInstant(date, startHour)
+    const clockOut = new Date(new Date(clockIn).getTime() + Math.round(hours * 60) * 60000).toISOString()
+    const entries = await readPerson(req, userId)
+    const entry = {
+      id: newId(), user_id: userId, user_name: userName, clock_in: clockIn, clock_out: clockOut, breaks: [],
+      clock_in_location: null, clock_out_location: null, total_minutes: Math.round(hours * 60), regular_minutes: Math.round(hours * 60), overtime_minutes: 0,
+      notes: String(req.body?.note || '').slice(0, 200), job_ids: [], approved: true, approved_by: req.user?.name || req.user?.email || '', approved_at: new Date().toISOString(),
+      created_at: new Date().toISOString(), manual: true, manual_by: req.user?.name || req.user?.email || '', manual_note: String(req.body?.note || '').slice(0, 200),
+    }
+    entries.push(entry)
+    splitOvertime(entries)
+    await writePerson(req, userId, entries)
+    console.log(`[timeclock] manual hours: ${userName} ${date} ${hours}h by ${entry.manual_by}`)
+    res.json({ ok: true, entry })
+  } catch (e) { console.error('[timeclock entries/manual]', e.message); res.status(500).json({ error: e.message }) }
+})
+
 export { readEntries as readEntriesPublic, writeEntries as writeEntriesPublic }
 export default router
