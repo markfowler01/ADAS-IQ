@@ -7,7 +7,7 @@
 //
 // Mirrors services/jobPhotos.js (slots, progress, gate date).
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { isOwnerUser, isMarkUser } from './utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 
 const ORANGE = '#CD4419'

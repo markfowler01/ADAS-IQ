@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { isOwnerUser, isMarkUser } from './utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import TextAsMarkModal from './TextAsMarkModal.jsx'
 import Big3Rules, { DrpRules, BooksLink } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'

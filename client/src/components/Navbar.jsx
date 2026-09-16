@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { isOwnerUser, isMarkUser } from './utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import FeedbackModal from './FeedbackModal'
 
 const ORANGE = '#CD4419'

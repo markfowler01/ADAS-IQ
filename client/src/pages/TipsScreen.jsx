@@ -2,7 +2,7 @@
 // calibration, keys, cloning. Quick to add (voice-typed, AI cleanup),
 // instantly searchable. Phase 2 adds the ask-Claude box up top.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { isOwnerUser, isMarkUser } from './utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 

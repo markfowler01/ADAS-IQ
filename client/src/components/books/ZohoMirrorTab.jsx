@@ -3,7 +3,7 @@
 // collected, and the month's invoice/payment lists. Nothing here writes
 // to Zoho; the sync button pulls, never pushes.
 import { useState, useEffect, useCallback } from 'react'
-import { isOwnerUser, isMarkUser } from '../utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../../utils/identity.js'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 
 const ORANGE = '#CD4419'

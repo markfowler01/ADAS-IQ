@@ -2,7 +2,7 @@
 // Recruit. Website form → candidate lands in New → drag/tap through the
 // stages → notes, rating, call/text/email from the card.
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { isOwnerUser, isMarkUser } from './utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 

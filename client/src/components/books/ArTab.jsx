@@ -4,7 +4,7 @@
 // for long enough. Also runs the one-time full import (previewed, then
 // confirmed by Mark) and the manual syncs.
 import { useEffect, useMemo, useState } from 'react'
-import { isOwnerUser, isMarkUser } from '../utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../../utils/identity.js'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Eyebrow, Title, Panel, Row, Notice, Chip, Pill, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
 

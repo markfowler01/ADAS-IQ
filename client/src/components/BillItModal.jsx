@@ -9,7 +9,7 @@
 // mirrors it live, and on send the Books estimate is updated to match
 // before either document is emailed — so both always agree.
 import { useEffect, useState } from 'react'
-import { isOwnerUser, isMarkUser } from './utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { Big3Picker, describeRules, normalizeMode } from './books/Big3Rules.jsx'
 

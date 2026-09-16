@@ -4,7 +4,7 @@
 // as red chips, day-by-day underneath, Copy for Zoho Payroll, CSV, and a
 // button that drops the same report in Mark's Cliq. Owner only (Mark + Kat).
 import { useEffect, useState } from 'react'
-import { isOwnerUser, isMarkUser } from '../utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../../utils/identity.js'
 import { API_BASE, apiFetch, COLORS, Card, Button } from '../books/shared'
 
 const h = n => `${Number(n || 0).toFixed(2)}h`
