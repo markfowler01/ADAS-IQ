@@ -1,6 +1,41 @@
 import express from 'express'
 import axios from 'axios'
 import crypto from 'crypto'
+import catalyst from 'zcatalyst-sdk-node'
+
+// Sign-in + first-open-of-the-day alerts to Mark (2026-09-16: "I am not
+// getting Cliq notifications when people login"). Real sign-ins are rare
+// now that tokens last 30 days, so the first app open of each PT day
+// pings too (deduped per person per day in Cache, 24h). Never for Mark,
+// never for demo, never blocks the response for more than 6s.
+const _openedToday = new Set()
+async function pingMark(text) {
+  const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+  await Promise.race([
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('cliq ping timed out (6s)')), 6000)),
+  ])
+}
+function skipAlerts(user) {
+  const e = String(user?.email || '').toLowerCase()
+  return !e || e.startsWith('mark@') || /demo/.test(e)
+}
+const ptNow = () => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date())
+const ptDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+async function firstOpenPing(req, user) {
+  if (skipAlerts(user)) return
+  const key = `first_open:${ptDay()}:${String(user.email).toLowerCase()}`
+  if (_openedToday.has(key)) return
+  _openedToday.add(key)
+  try {
+    const seg = catalyst.initialize(req).cache().segment()
+    let seen = null
+    try { seen = await seg.getValue(key) } catch { seen = null }
+    if (seen) return
+    try { await seg.put(key, new Date().toISOString(), 24) } catch { try { await seg.update(key, new Date().toISOString()) } catch {} }
+    await pingMark(`👋 *${user.name || user.email} opened the app* at ${ptNow()} (first time today)`)
+  } catch (e) { console.warn('[auth] first-open ping failed:', e.message) }
+}
 
 const router = express.Router()
 
@@ -132,6 +167,10 @@ router.post('/exchange', async (req, res) => {
     req.session.user = user
 
     const token = makeToken(user)
+    if (!skipAlerts(user)) {
+      try { await pingMark(`🔓 *${user.name || user.email} signed in* at ${ptNow()} (${user.role})`) } catch (e) { console.warn('[auth] sign-in ping failed:', e.message) }
+      try { _openedToday.add(`first_open:${ptDay()}:${String(user.email).toLowerCase()}`) } catch {}
+    }
     res.json({ ok: true, user, token })
   } catch (err) {
     console.error('[auth] Exchange error:', err.response?.data || err.message)
@@ -140,16 +179,16 @@ router.post('/exchange', async (req, res) => {
 })
 
 // GET /auth/me — check token first (includes role), fall back to session cookie
-router.get('/me', (req, res) => {
+router.get('/me', async (req, res) => {
   if (process.env.SKIP_AUTH === 'true') {
     return res.json({ name: 'Test User', email: 'test@absoluteadas.com', picture: null, role: 'admin' })
   }
   const headerToken = req.headers['x-auth-token']
   if (headerToken) {
     const user = verifyToken(headerToken)
-    if (user) return res.json(user)
+    if (user) { await firstOpenPing(req, user); return res.json(user) }
   }
-  if (req.session?.user) return res.json(req.session.user)
+  if (req.session?.user) { await firstOpenPing(req, req.session.user); return res.json(req.session.user) }
   res.status(401).json({ error: 'Not authenticated' })
 })
 

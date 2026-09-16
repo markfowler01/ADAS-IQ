@@ -416,7 +416,12 @@ router.post('/clock-in', async (req, res) => {
               ? `\n📍 https://maps.google.com/?q=${loc.lat},${loc.lng}`
               : '\n📍 no location shared'))
         })()
-        await Promise.race([cliqWork, new Promise(r => setTimeout(r, 2000))]).catch(() => {})
+        // 8s, not 2s (Mark 2026-09-16: "I am not getting Cliq notifications
+        // when people clock in"): the Cliq token refresh alone can take
+        // longer than 2s on a cold instance, and Catalyst drops whatever
+        // is still running once the response goes out.
+        await Promise.race([cliqWork, new Promise((_, rej) => setTimeout(() => rej(new Error('cliq ping timed out (8s)')), 8000))])
+          .catch(e => console.warn('[timeclock] clock-in cliq ping failed:', e.message))
       }
       if (req.user?.role === 'technician') {
         const alert = (async () => {
@@ -476,6 +481,18 @@ router.post('/clock-out', async (req, res) => {
     splitOvertime(entries)
 
     await writePerson(req, userId, entries)
+    // Clock-out alert to Mark (2026-09-16) — everyone but Mark, bounded, awaited.
+    try {
+      if (!String(req.user?.email || '').toLowerCase().startsWith('mark@') && !/demo/i.test(String(req.user?.email || ''))) {
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        const t = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' }).format(new Date())
+        const loc = entry.clock_out_location
+        await Promise.race([
+          postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⏹ *${getUserName(req)} clocked out* at ${t} · ${(entry.total_minutes / 60).toFixed(2)}h this shift` + (loc?.lat && loc?.lng ? `\n📍 https://maps.google.com/?q=${loc.lat},${loc.lng}` : '')),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('cliq ping timed out (8s)')), 8000)),
+        ])
+      }
+    } catch (e) { console.warn('[timeclock] clock-out cliq ping failed:', e.message) }
     res.json(entry)
   } catch (e) {
     console.error('[timeclock] clock-out failed:', e)
