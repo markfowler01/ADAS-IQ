@@ -1403,7 +1403,12 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     }
 
     const wdToken = await getAccessToken()
-    const folderId = await resolveJobFolder(req, job, wdToken)
+    // The folder id is remembered inside photo_slots after the first shot
+    // (2026-09-15): folder_url is usually the external share link, which
+    // can't be turned back into an id, so every photo was re-searching
+    // WorkDrive (and the Search API is broken → slow listing fallback).
+    let folderId = slots._folder_id || null
+    if (!folderId) { folderId = await resolveJobFolder(req, job, wdToken); if (folderId) slots._folder_id = folderId }
     if (!folderId) return res.status(404).json({ error: 'No WorkDrive folder for this job yet.' })
     const idx = slotDef.multi ? (slots.setup || []).length : 0
     const name = fileNameFor(slotKey, job, idx, req.file.mimetype)

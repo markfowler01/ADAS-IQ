@@ -7,7 +7,7 @@
 //
 // Mirrors services/jobPhotos.js (slots, progress, gate date).
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { API_BASE, apiFetch } from '../utils/api.js'
+import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 
 const ORANGE = '#CD4419'
 const GREEN = '#15803d'
@@ -83,9 +83,56 @@ export function PhotoBadge({ job, onClick, size = 'sm' }) {
 
 // ── Upload queue with retries (module-level so it survives the sheet
 //    closing). Each item: { id, jobId, slot, file, tries, status, error }
+//
+// Mark 2026-09-15: a tech shot all eight, the uploads errored (his 8-hour
+// sign-in had expired mid-job) and he had to shoot them all again. Never
+// again: every photo is written to the phone's own storage (IndexedDB)
+// the moment it's taken, uploads resume on their own after a reload,
+// a re-sign-in, or the app being killed, a signed-out upload waits
+// instead of failing, and photos are shrunk before they go up so bad
+// shop signal has far less to push.
 const queue = []
 const listeners = new Set()
 const notify = () => listeners.forEach(fn => fn([...queue]))
+const LIVE = ['preparing', 'queued', 'uploading', 'needs_slot', 'failed', 'paused']
+
+// IndexedDB — the photo file itself is stored, not just a pointer.
+const DB_NAME = 'adasiq-photo-queue', STORE = 'queue'
+function idb() {
+  return new Promise((res, rej) => {
+    try {
+      const r = indexedDB.open(DB_NAME, 1)
+      r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE, { keyPath: 'id' }) }
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error)
+    } catch (e) { rej(e) }
+  })
+}
+async function idbWrite(fn) {
+  try { const db = await idb(); await new Promise((res, rej) => { const tx = db.transaction(STORE, 'readwrite'); fn(tx.objectStore(STORE)); tx.oncomplete = res; tx.onerror = () => rej(tx.error) }); db.close() } catch { /* no storage — uploads still run from memory */ }
+}
+const idbPut = item => idbWrite(st => st.put({ id: item.id, jobId: item.jobId, slot: item.slot, miles: item.miles, blob: item.file, name: item.file.name || 'photo.jpg', type: item.file.type || 'image/jpeg', at: item.at }))
+const idbDel = id => idbWrite(st => st.delete(id))
+async function idbAll() {
+  try { const db = await idb(); const rows = await new Promise((res, rej) => { const q = db.transaction(STORE, 'readonly').objectStore(STORE).getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => rej(q.error) }); db.close(); return rows } catch { return [] }
+}
+
+// Shrink before upload: long edge ≤ 2000 px, JPEG 0.86. A 12 MP phone
+// shot (4–6 MB) becomes ~400 KB; the odometer and VIN reads still work
+// at that size. Anything that can't be decoded goes up as-is.
+async function shrink(file) {
+  try {
+    if (!/^image\//.test(file.type || '') || file.size < 700 * 1024) return file
+    let bmp
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }) } catch { bmp = await createImageBitmap(file) }
+    const MAX = 2000, s = Math.min(1, MAX / Math.max(bmp.width, bmp.height))
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * s)); c.height = Math.max(1, Math.round(bmp.height * s))
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close?.()
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.86))
+    if (!blob || blob.size >= file.size) return file
+    return new File([blob], String(file.name || 'photo').replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg', lastModified: file.lastModified || Date.now() })
+  } catch { return file }
+}
+
 let pumping = false
 async function pump() {
   if (pumping) return
@@ -94,6 +141,8 @@ async function pump() {
     while (true) {
       const item = queue.find(q => q.status === 'queued')
       if (!item) break
+      if (!getToken()) { item.status = 'paused'; item.error = 'Waiting for sign-in — these upload on their own once you are back in.'; notify(); break }
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) { item.status = 'paused'; item.error = 'No signal — will upload as soon as the phone is back online.'; notify(); break }
       item.status = 'uploading'; notify()
       try {
         const fd = new FormData()
@@ -102,23 +151,88 @@ async function pump() {
         if (item.miles != null) fd.append('miles', String(item.miles))
         const r = await apiFetch(`${API_BASE}/api/jobs/${item.jobId}/photo-slot`, { method: 'POST', body: fd })
         const d = await r.json().catch(() => ({}))
+        if (r.status === 401) { item.status = 'paused'; item.error = 'Signed out — sign back in and these upload on their own.'; notify(); break }
         if (r.status === 422) { item.status = 'needs_slot'; item.error = d.error; item.suggested = d.suggested; notify(); continue }
         if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
         item.status = 'done'; item.result = d; item.error = null; notify()
+        idbDel(item.id)
       } catch (e) {
         item.tries = (item.tries || 0) + 1
-        if (item.tries < 4) {
+        if (item.tries < 5) {
           item.status = 'queued'; item.error = e.message; notify()
-          await new Promise(r => setTimeout(r, [2000, 5000, 10000][item.tries - 1] || 10000))
+          await new Promise(r => setTimeout(r, [2000, 5000, 10000, 20000][item.tries - 1] || 20000))
         } else { item.status = 'failed'; item.error = e.message; notify() }
       }
     }
   } finally { pumping = false }
 }
+/** Put every paused/failed photo back in line and push. Called on sign-in, on 'online', when the app comes back to the front, and by the Retry button. */
+export function resumePhotoQueue() {
+  let any = false
+  for (const q of queue) if (q.status === 'paused' || q.status === 'failed') { q.status = 'queued'; q.tries = 0; q.error = null; any = true }
+  if (any) notify()
+  pump()
+}
+let restored = false
+/** Reload whatever was still waiting on this phone (after a reload, re-sign-in, or the app being killed) and carry on. */
+export async function restorePhotoQueue() {
+  if (restored) return; restored = true
+  const rows = await idbAll()
+  for (const r of rows) {
+    if (queue.some(q => q.id === r.id)) continue
+    let file; try { file = new File([r.blob], r.name || 'photo.jpg', { type: r.type || 'image/jpeg' }) } catch { continue }
+    queue.push({ id: r.id, jobId: r.jobId, slot: r.slot || null, miles: r.miles ?? null, file, tries: 0, status: 'queued', preview: URL.createObjectURL(file), at: r.at, restored: true })
+  }
+  if (rows.length) { notify(); pump() }
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => resumePhotoQueue())
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resumePhotoQueue() })
+}
 export function enqueuePhoto({ jobId, slot, file, miles = null }) {
-  const item = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, jobId, slot, file, miles, tries: 0, status: 'queued', preview: URL.createObjectURL(file) }
-  queue.push(item); notify(); pump()
+  const item = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, jobId, slot, file, miles, tries: 0, status: 'preparing', preview: URL.createObjectURL(file), at: new Date().toISOString() }
+  queue.push(item); notify()
+  // Save the original to the phone first (nothing is ever lost), then swap in the shrunk copy.
+  idbPut(item).then(async () => {
+    const small = await shrink(file)
+    if (small !== file) { item.file = small; await idbPut(item) }
+    item.status = 'queued'; notify(); pump()
+  })
   return item
+}
+export function useUploadSummary() {
+  const [s, setS] = useState(() => summarize(queue))
+  useEffect(() => { const fn = all => setS(summarize(all)); listeners.add(fn); fn([...queue]); return () => listeners.delete(fn) }, [])
+  return s
+}
+function summarize(all) {
+  const live = all.filter(q => LIVE.includes(q.status))
+  return {
+    total: live.length,
+    busy: live.filter(q => ['preparing', 'queued', 'uploading'].includes(q.status)).length,
+    paused: live.filter(q => q.status === 'paused').length,
+    failed: live.filter(q => q.status === 'failed').length,
+    needsSlot: live.filter(q => q.status === 'needs_slot').length,
+    note: live.find(q => q.status === 'paused' || q.status === 'failed')?.error || '',
+  }
+}
+/** Floating pill, app-wide: shows while photos are still going up and
+ *  offers one-tap Retry when something got stuck. Also restores the
+ *  queue from the phone on first mount (i.e. once the user is signed in). */
+export function UploadTray() {
+  const s = useUploadSummary()
+  useEffect(() => { restorePhotoQueue() }, [])
+  if (!s.total) return null
+  const stuck = s.paused + s.failed
+  return (
+    <div className="fixed left-3 bottom-3 z-[60] rounded-full shadow-lg text-xs font-bold flex items-center gap-2 px-3 py-2"
+      style={stuck ? { backgroundColor: '#fef2f2', color: RED, border: '1px solid #fecaca' } : { backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
+      {stuck
+        ? <><span>⚠️ {stuck} photo{stuck > 1 ? 's' : ''} waiting · {s.note}</span><button type="button" onClick={resumePhotoQueue} className="rounded-full px-2 py-0.5" style={{ backgroundColor: 'white', border: '1px solid #fecaca' }}>Retry</button></>
+        : <span>📤 Uploading {s.busy} photo{s.busy > 1 ? 's' : ''}… saved on this phone, keep working</span>}
+      {s.needsSlot > 0 && <span>· {s.needsSlot} need a slot</span>}
+    </div>
+  )
 }
 function useQueue(jobId) {
   const [items, setItems] = useState(() => queue.filter(q => q.jobId === jobId))
@@ -238,9 +352,9 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   }
 
   const cur = SLOTS.find(s => s.key === current) || SLOTS.find(s => s.key === 'setup')
-  const pending = items.filter(i => i.status === 'queued' || i.status === 'uploading').length
+  const pending = items.filter(i => i.status === 'queued' || i.status === 'uploading' || i.status === 'preparing').length
   const needsSlot = items.filter(i => i.status === 'needs_slot')
-  const failed = items.filter(i => i.status === 'failed')
+  const failed = items.filter(i => i.status === 'failed' || i.status === 'paused')
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
@@ -287,7 +401,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         {pending > 0 && (
           <div className="text-xs font-semibold mb-2 px-3 py-2 rounded-lg" style={{ backgroundColor: '#fffbeb', color: '#92400e' }}>
-            ⏫ Uploading {pending} photo{pending > 1 ? 's' : ''}… keep shooting, this runs in the background.
+            ⏫ Uploading {pending} photo{pending > 1 ? 's' : ''}… keep shooting. Every shot is saved on this phone first, so nothing is lost if the signal drops or you get signed out.
           </div>
         )}
         {needsSlot.map(item => (
@@ -308,8 +422,8 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
         {failed.map(item => (
           <div key={item.id} className="rounded-xl p-2 mb-2 flex items-center gap-2 text-xs" style={{ backgroundColor: '#fef2f2', color: RED }}>
             <img src={item.preview} alt="" className="w-10 h-10 rounded-lg object-cover" />
-            <span className="flex-1">Upload failed: {item.error}</span>
-            <button type="button" onClick={() => { item.tries = 0; item.status = 'queued'; notify(); pump() }}
+            <span className="flex-1">{item.status === 'paused' ? item.error : `Upload failed: ${item.error} — the photo is safe on this phone.`}</span>
+            <button type="button" onClick={resumePhotoQueue}
               className="font-bold rounded-full px-2 py-1" style={{ backgroundColor: 'white', border: '1px solid #fecaca' }}>Retry</button>
           </div>
         ))}
@@ -318,7 +432,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
         <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #ebe7e3' }}>
           {SLOTS.map(s => {
             const filled = s.multi ? prog.setupCount > 0 : !!prog.slots[s.key]?.fileId
-            const local = items.find(i => i.slot === s.key && (i.status === 'done' || i.status === 'uploading' || i.status === 'queued'))
+            const local = items.find(i => i.slot === s.key && ['done', 'uploading', 'queued', 'preparing', 'paused'].includes(i.status))
             const isCur = current === s.key
             return (
               <Fragment key={s.key}>

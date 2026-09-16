@@ -36,6 +36,7 @@ import RecruitingScreen from './pages/RecruitingScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
 import SoftphonePanel from './components/SoftphonePanel'
+import { UploadTray } from './components/JobPhotos'
 import MorningClockIn from './components/MorningClockIn'
 import HRPolicyScreen from './pages/HRPolicyScreen'
 import BooksScreen from './components/BooksScreen'
@@ -280,6 +281,8 @@ function MainApp() {
           toggle + dialer) live on the SMS page: all phone + text in one
           place (Mark 2026-08-12). Techs don't get it. */}
       {user?.role !== 'technician' && !isDemo && <SoftphonePanel showControls={screen === 'sms'} />}
+      {/* Photo uploads still in flight / stuck — restores the queue from the phone on sign-in (2026-09-15) */}
+      <UploadTray />
       {/* Morning clock-in prompt — everyone, once per day (not demo) */}
       {!isDemo && <MorningClockIn user={user} />}
       {/* Session expiry warning banner */}
