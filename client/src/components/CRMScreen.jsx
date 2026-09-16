@@ -654,7 +654,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
         {/* Stats bar */}
         {!loading && !error && <StatsBar shops={shops} />}
         {!loading && !error && <SetupBanner shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} onApplied={n => { setToast(`🗺 Zones and owners set on ${n} shops`); fetchShops() }} />}
-        {!loading && !error && <InPlayBar shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} />}
+        {!loading && !error && <InPlayBar shops={shops} isOwner={String(user?.email || '').toLowerCase().startsWith('mark@') || user?.role === 'owner'} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} onPickStage={st => { setStageFilter(stageFilter === st ? '' : st); setRegionFilter(''); setOwnerFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} />}
         {!loading && !error && filtered.length === 0 && shops.length > 0 && (
           <div className="rounded-xl px-3 py-2 mb-3 text-sm flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
             <span>No shops match {[regionFilter && (regionFilter === 'unzoned' ? 'No zone' : zoneLabel(regionFilter)), ownerFilter, stageFilter && (STAGES.find(x => x.id === stageFilter)?.label), showOverdue && 'Overdue', staleOnly && 'Gone quiet', compFilter && `uses ${compFilter}`, big3Only && 'No Big 3 rule', search.trim() && `"${search.trim()}"`].filter(Boolean).join(' + ') || 'these filters'}.</span>
@@ -701,11 +701,11 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
           })}
 
           {/* Zone + owner filters (2026-09-15) */}
-          {ZONES.map(z => { const n = shops.filter(sh => zoneOf(sh) === z.id).length; return (
+          {ZONES.map(z => { const inZone = shops.filter(sh => zoneOf(sh) === z.id); const n = inZone.length; const cust = inZone.filter(sh => sh.pipeline_stage === 'active').length; return (
             <button key={z.id} onClick={() => { setRegionFilter(regionFilter === z.id ? '' : z.id); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }}
               className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
               style={regionFilter === z.id ? { backgroundColor: '#e0e7ff', color: '#3730a3', border: '1px solid #a5b4fc' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
-              📍 {z.label} ({n})
+              📍 {z.label} · <span style={{ color: '#15803d' }}>✅ {cust}</span> / {n}
             </button>) })}
           {shops.some(sh => !zoneOf(sh)) && <button onClick={() => { setRegionFilter(regionFilter === 'unzoned' ? '' : 'unzoned'); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={regionFilter === 'unzoned' ? { backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#f5f3f0', color: '#888' }}>📍 No zone ({shops.filter(sh => !zoneOf(sh)).length})</button>}
           {TEAM_MEMBERS.map(o => (

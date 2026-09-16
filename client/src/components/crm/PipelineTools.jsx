@@ -25,9 +25,30 @@ export function staleDays(s) {
 export const inPlayCount = (shops, owner) => shops.filter(s => ownerOf(s) === owner && IN_PLAY_STAGES.includes(s.pipeline_stage)).length
 
 /** Owners' in-play counters + territory grid toggle + Monday list button. */
-export function InPlayBar({ shops, isOwner, gridOpen, onToggleGrid, onMonday, onDiscover }) {
+export const customerCounts = shops => ({
+  customers: shops.filter(s => s.pipeline_stage === 'active').length,
+  backup: shops.filter(s => s.pipeline_stage === 'active2').length,
+  total: shops.length,
+})
+/** "✅ 23 customers · 🔄 4 backup · of 441 shops" — Mark 2026-09-15: "a counter of how many shops we do business with at the top". */
+export function CustomerCounter({ shops, onPick }) {
+  const c = customerCounts(shops)
+  const pct = c.total ? Math.round((c.customers / c.total) * 100) : 0
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <button onClick={() => onPick && onPick('active')} className="text-sm font-extrabold px-3 py-1.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d', border: '1.5px solid #86efac' }} title="Shops in Current customer — tap to show them">
+        ✅ {c.customers} <span className="font-semibold" style={{ opacity: .8 }}>customers of {c.total} shops · {pct}%</span>
+      </button>
+      {c.backup > 0 && <button onClick={() => onPick && onPick('active2')} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' }} title="Own ADAS guy · we are backup">🔄 {c.backup} backup</button>}
+    </div>
+  )
+}
+
+export function InPlayBar({ shops, isOwner, gridOpen, onToggleGrid, onMonday, onDiscover, onPickStage }) {
   return (
     <div className="flex items-center gap-2 flex-wrap mb-3">
+      <CustomerCounter shops={shops} onPick={onPickStage} />
+      <span style={{ color: '#ddd' }}>|</span>
       {TEAM_MEMBERS.map(o => { const n = inPlayCount(shops, o); return <span key={o} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: n > IN_PLAY_CAP ? '#fee2e2' : '#f0fdf4', color: n > IN_PLAY_CAP ? '#b91c1c' : '#166534', border: `1px solid ${n > IN_PLAY_CAP ? '#fecaca' : '#bbf7d0'}` }}>{o} · {n}/{IN_PLAY_CAP} in play</span> })}
       <button onClick={onToggleGrid} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: gridOpen ? '#1a1a1a' : 'white', color: gridOpen ? 'white' : '#555', border: '1px solid #e0dbd6' }}>🗺 Territory grid</button>
       {isOwner && <button onClick={onMonday} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: 'white', color: BLUE, border: '1px solid #bfdbfe' }}>📋 Monday list</button>}
@@ -47,7 +68,7 @@ export function TerritoryGrid({ shops, onPick }) {
         <thead><tr style={{ backgroundColor: '#f8f6f4' }}><th className="text-left px-3 py-2">Zone</th>{cols.map(c => <th key={c.id} className="px-2 py-2 text-center" style={{ color: c.color }}>{c.emoji} {c.label}</th>)}<th className="px-2 py-2 text-center">Stale</th></tr></thead>
         <tbody>{rows.map(z => { const mine = live.filter(s => zoneOf(s) === z.id); const stale = mine.filter(s => (staleDays(s) || 0) > 0 && s.pipeline_stage !== 'target').length; return (
           <tr key={z.id || 'none'} style={{ borderTop: '1px solid #f1f5f9' }}>
-            <td className="px-3 py-2"><b>{z.label}</b>{z.owner ? <span style={{ color: '#888' }}> · {z.owner} · {z.day}</span> : null}<span style={{ color: '#bbb' }}> · {mine.length}</span></td>
+            <td className="px-3 py-2"><b>{z.label}</b>{z.owner ? <span style={{ color: '#888' }}> · {z.owner} · {z.day}</span> : null}<span className="font-bold" style={{ color: '#15803d' }}> · ✅ {mine.filter(s => s.pipeline_stage === 'active').length}</span><span style={{ color: '#bbb' }}> of {mine.length}</span></td>
             {cols.map(c => { const n = mine.filter(s => s.pipeline_stage === c.id).length; return <td key={c.id} className="text-center px-2 py-1">{n ? <button onClick={() => onPick(z.id, c.id)} className="font-bold rounded-lg px-2 py-0.5" style={{ backgroundColor: c.bg, color: c.color }}>{n}</button> : <span style={{ color: '#ddd' }}>·</span>}</td> })}
             <td className="text-center px-2 py-1">{stale ? <span className="font-bold" style={{ color: '#b45309' }}>⏰ {stale}</span> : <span style={{ color: '#ddd' }}>·</span>}</td>
           </tr>) })}</tbody>
