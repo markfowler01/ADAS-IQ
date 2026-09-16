@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch, ORANGE } from './books/shared'
-import { DirectoryTab, OrgChartTab, ProfileDrawer, MemberEditModal } from './team/Directory.jsx'
+import { DirectoryTab, OrgChartTab, MemberEditModal } from './team/Directory.jsx'
+import ProfileDrawer from './team/Profile.jsx'
+import CalendarTab from './team/Calendar.jsx'
+import CompanyTab from './team/Company.jsx'
 import { isOwnerUser } from '../utils/identity.js'
 
 const ROLES = ['owner', 'admin', 'manager', 'technician', 'office', 'contractor']
@@ -61,6 +64,8 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
   const tabs = [
     { id: 'directory', label: `Directory (${members.filter(m => m.active !== false).length})` },
     { id: 'org', label: 'Org chart' },
+    { id: 'calendar', label: 'Calendar' },
+    { id: 'company', label: 'Company' },
     { id: 'announcements', label: `Announcements (${announcements.length})` },
   ]
 
@@ -98,6 +103,10 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
           <DirectoryTab members={members} user={user} onOpen={setProfile} onAdd={() => setEditing(false)} />
         ) : tab === 'org' ? (
           <OrgChartTab members={members} user={user} onOpen={m => setProfile(members.find(x => x.id === m.id) || m)} />
+        ) : tab === 'calendar' ? (
+          <CalendarTab />
+        ) : tab === 'company' ? (
+          <CompanyTab />
         ) : (
           <AnnouncementsTab announcements={announcements} isAdmin={isAdmin}
             currentUserId={user?.email}
@@ -106,7 +115,7 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
 
         {profile && (
           <ProfileDrawer m={members.find(x => x.id === profile.id) || profile} members={members} user={user}
-            onClose={() => setProfile(null)} onEdit={m => { setProfile(null); setEditing(m) }} />
+            onClose={() => setProfile(null)} onEdit={m => { setProfile(null); setEditing(m) }} onChanged={load} />
         )}
         {editing !== null && (
           <MemberEditModal member={editing || null} members={members} user={user} onClose={() => setEditing(null)}

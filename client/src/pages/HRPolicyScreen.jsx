@@ -2,7 +2,14 @@
 // can see it (Mark's HR SOP, 2026-08-15). Static by design: policy
 // changes are deliberate edits, not data.
 
+import { useEffect, useState } from 'react'
 import Navbar from '../components/Navbar.jsx'
+import { API_BASE, apiFetch } from '../utils/api.js'
+import { isOwnerUser } from '../utils/identity.js'
+
+// Version = hash of the text, so an edited policy asks everyone again.
+const hash = s => { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return (h >>> 0).toString(36) }
+const pid = t => t.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 
 const ORANGE = '#CD4419'
 
@@ -46,6 +53,14 @@ Request all time off through the Time Off page in this app. Requests route to Ma
 ]
 
 export default function HRPolicyScreen({ user, onLogout, currentScreen, onNavigate }) {
+  const [acks, setAcks] = useState({ mine: {}, all: null })
+  const [busy, setBusy] = useState('')
+  const load = () => apiFetch(`${API_BASE}/api/people/policy/acks`).then(r => r.json()).then(d => { if (d.ok) setAcks(d) }).catch(() => {})
+  useEffect(() => { load() }, [])
+  async function ack(policy_id, version) {
+    setBusy(policy_id)
+    try { const r = await apiFetch(`${API_BASE}/api/people/policy/ack`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ policy_id, version }) }); const d = await r.json(); if (!r.ok) throw new Error(d.error || 'failed'); await load() } catch (e) { alert(e.message) } finally { setBusy('') }
+  }
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
@@ -55,12 +70,32 @@ export default function HRPolicyScreen({ user, onLogout, currentScreen, onNaviga
         <p className="text-xs mb-5" style={{ color: '#888' }}>
           Washington State requires this notice of your paid sick leave rights. Questions → Mark.
         </p>
-        {SECTIONS.map(s => (
-          <div key={s.title} className="rounded-2xl bg-white p-5 mb-4" style={{ border: '1px solid #ebebeb' }}>
-            <h2 className="text-sm font-bold mb-2" style={{ color: ORANGE }}>{s.title}</h2>
-            <div className="text-sm whitespace-pre-wrap" style={{ color: '#333', lineHeight: 1.65 }}>{s.body}</div>
+        {SECTIONS.map(s => {
+          const id = pid(s.title), ver = hash(s.body), a = acks.mine?.[id]
+          const current = a && a.version === ver
+          return (
+            <div key={s.title} className="rounded-2xl bg-white p-5 mb-4" style={{ border: `1px solid ${current ? '#bbf7d0' : '#ebebeb'}` }}>
+              <h2 className="text-sm font-bold mb-2" style={{ color: ORANGE }}>{s.title}</h2>
+              <div className="text-sm whitespace-pre-wrap" style={{ color: '#333', lineHeight: 1.65 }}>{s.body}</div>
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                {current
+                  ? <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>✅ You acknowledged this on {String(a.at).slice(0, 10)}</span>
+                  : <button onClick={() => ack(id, ver)} disabled={busy === id} className="text-sm font-bold rounded-xl px-4 py-2 text-white" style={{ backgroundColor: ORANGE, opacity: busy === id ? .6 : 1 }}>{busy === id ? 'Saving…' : a ? '✍️ Policy changed — acknowledge the new version' : "✍️ I've read this and understand it"}</button>}
+              </div>
+            </div>
+          )
+        })}
+        {isOwnerUser(user) && acks.all && (
+          <div className="rounded-2xl bg-white p-5 mb-4" style={{ border: '1px solid #ebebeb' }}>
+            <h2 className="text-sm font-bold mb-2" style={{ color: '#1a1a1a' }}>Who has acknowledged (owners only)</h2>
+            {Object.entries(acks.all).map(([uid, row]) => (
+              <div key={uid} className="flex items-center justify-between gap-2 py-1.5 text-sm" style={{ borderTop: '1px solid #f3f3f3' }}>
+                <span className="font-semibold">{row.name}</span>
+                <span className="text-xs">{SECTIONS.map(s => { const id = pid(s.title), a = row.acks?.[id]; const ok = a && a.version === hash(s.body); return <span key={id} className="ml-2 font-bold" style={{ color: ok ? '#15803d' : '#b45309' }}>{ok ? '✅' : '⏳'} {s.title}</span> })}</span>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
     </div>
   )

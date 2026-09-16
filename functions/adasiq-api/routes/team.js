@@ -119,6 +119,13 @@ export async function findMemberByIdentity(req, email, name) {
     || members.find(m => n && m.name.toLowerCase() === n)
     || null
 }
+export async function saveMemberPublic(req, m) { return saveMember(req, m) }
+export async function createMemberPublic(req, b) {
+  const members = await readTeamMembers(req)
+  const m = { ...BLANK(), ...b, id: newId(), user_id: String(b.user_id || b.email || '').toLowerCase(), email: String(b.email || '').toLowerCase(), avatar_color: b.avatar_color || COLORS[members.length % COLORS.length], created_at: new Date().toISOString() }
+  await saveMember(req, m)
+  return m
+}
 async function saveMember(req, m) {
   const table = tmTable(req)
   m.updated_at = new Date().toISOString()
@@ -173,7 +180,7 @@ router.put('/members/:id', async (req, res) => {
     const self = isSelf(req, m), owner = isOwner(req)
     if (!owner && !self) return res.status(403).json({ error: 'You can only edit your own card.' })
     const allowedForSelf = ['phone', 'personal_phone', 'preferred_name', 'emergency_contact', 'avatar_color', 'photo_url', 'birthday']
-    const allowedForOwner = [...allowedForSelf, 'user_id', 'name', 'email', 'title', 'department', 'access', 'employment', 'reports_to', 'hire_date', 'region', 'van', 'active', 'certifications', 'equipment', ...PAY_FIELDS]
+    const allowedForOwner = [...allowedForSelf, 'user_id', 'name', 'email', 'title', 'department', 'access', 'employment', 'reports_to', 'hire_date', 'region', 'van', 'active', 'certifications', 'equipment', 'documents', 'license_expiry', ...PAY_FIELDS]
     const allowed = owner ? allowedForOwner : allowedForSelf
     for (const f of allowed) if (req.body[f] !== undefined) m[f] = req.body[f]
     if (m.user_id) m.user_id = String(m.user_id).toLowerCase()

@@ -254,7 +254,8 @@ export function MemberEditModal({ member, members, user, onClose, onSaved }) {
           {owner && <S label="App access" k="access" opts={[['owner', 'Owner (everything)'], ['dispatcher', 'Dispatch / office'], ['technician', 'Technician'], ['none', 'No login']]} />}
           {owner && <I label="Hire date" k="hire_date" type="date" />}
           {owner && <I label="Home base" k="region" placeholder="e.g. Everett" />}
-          {owner && <I label="Van" k="van" placeholder="e.g. Van 2 · ProMaster" full />}
+          {owner && <I label="Van" k="van" placeholder="e.g. Van 2 · ProMaster" />}
+          {owner && <I label="Driver's license expires" k="license_expiry" type="date" />}
           <div className="col-span-2 text-[11px] font-bold" style={{ color: '#888' }}>Emergency contact</div>
           <label className="text-[11px] font-bold" style={{ color: '#888' }}>Name<input value={f.emergency_contact?.name || ''} onChange={e => set('emergency_contact', { ...f.emergency_contact, name: e.target.value })} className="w-full text-sm rounded-lg px-2.5 py-2 mt-0.5 font-normal" style={inp} /></label>
           <label className="text-[11px] font-bold" style={{ color: '#888' }}>Phone<input value={f.emergency_contact?.phone || ''} onChange={e => set('emergency_contact', { ...f.emergency_contact, phone: e.target.value })} className="w-full text-sm rounded-lg px-2.5 py-2 mt-0.5 font-normal" style={inp} /></label>

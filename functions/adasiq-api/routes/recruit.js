@@ -374,7 +374,10 @@ router.patch('/:id', async (req, res) => {
       if (b[k] !== undefined) upd[col] = clip(b[k], n)
     }
     const row = await app.datastore().table(TABLE).updateRow(upd)
-    res.json({ ok: true, candidate: rowToCandidate(row) })
+    const cand = rowToCandidate(row)
+    // Hired → Directory entry + onboarding checklist (company tools, 2026-09-16)
+    if (b.stage === 'hired') { try { const { onCandidateHired } = await import('./people.js'); const r = await onCandidateHired(req, cand); if (r.created) console.log(`[recruit] ${cand.name} hired → directory ${r.member.id}`) } catch (e) { console.warn('[recruit] hired hook failed:', e.message) } }
+    res.json({ ok: true, candidate: cand })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 

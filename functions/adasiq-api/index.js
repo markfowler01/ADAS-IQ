@@ -30,6 +30,7 @@ import techStatsRouter from './routes/techStats.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
 import salesStopsRouter from './routes/salesStops.js'
 import { ownerRouter as personalTextsOwnerRouter, bridgeRouter as personalTextsBridgeRouter } from './routes/personalTexts.js'
+import peopleRouter from './routes/people.js'
 import billItRouter from './routes/billIt.js'
 import { smsWebhookRouter, smsAuthRouter } from './routes/sms.js'
 import { voiceWebhookRouter, voicemailsAuthRouter, callsAuthRouter } from './routes/voice.js'
@@ -332,6 +333,7 @@ app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/sales-stops', requireAuth, salesStopsRouter)
 // 💬 Text as Mark — outbox (owner) + Mac bridge (cron secret). The Mac sends, never Catalyst.
 app.use('/api/personal-texts', requireAuth, requireMark, personalTextsOwnerRouter)
+app.use('/api/people', requireAuth, peopleRouter)   // Directory tools: profiles, log, policy acks, onboarding, calendar, company page (2026-09-16)
 app.use('/api/cron/personal-texts', personalTextsBridgeRouter)
 app.use('/api/jobs', requireAuth, requireStaff, billItRouter)   // 💸 Bill it — Kat / dispatch / Mark only
 app.use('/api/tech-todos', requireAuth, techTodosRouter)
