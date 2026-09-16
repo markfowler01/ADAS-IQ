@@ -4,6 +4,7 @@
 // support.
 
 import { useState, useRef, useEffect } from 'react'
+import { familyFor } from '../lib/insurerFamilies.js'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { TakePhotosControl } from './JobPhotos'
 import { Big3Badge, DrpBadge } from './books/Big3Rules.jsx'
@@ -70,12 +71,10 @@ export function isTeslaJob(job) {
 // to help us remember"). US General + Integon are National General
 // companies, which Allstate owns — they bill on the AS- price list.
 export function insurerPricingBadge(job) {
-  const ins = String(job?.insurer || '').toLowerCase()
-  if (!ins) return null
-  if (/state\s*farm/.test(ins)) return { label: '🏦 STATE FARM PRICING', bg: '#b91c1c' }
-  if (/allstate|u\.?s\.?\s*general|integon|national\s*general/.test(ins)) return { label: '🏦 ALLSTATE PRICING', bg: '#1d4ed8' }
-  if (/american\s*family|amfam/.test(ins)) return { label: '🏦 AM FAM PRICING', bg: '#0e7490' }
-  return null
+  // One table (lib/insurerFamilies.js) — Liberty Mutual / Ohio Security etc. bill on Allstate's list (Mark 2026-09-16).
+  const f = familyFor(job?.insurer)
+  if (!f || !f.pill || f.pool === 'CP') return null
+  return { label: `🏦 ${f.pill}`, bg: f.color || '#555' }
 }
 
 // Shop-name normalizer for customer card notes — must mirror

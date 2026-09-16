@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { poolFor, familyFor } from './insurerFamilies.js'
 import { createJobFolder, uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from './workdrive.js'
 import { generateADASIQPdf } from './pdf.js'
 
@@ -246,6 +247,10 @@ export async function getItemCatalogForAudit() {
  * Others     → null  (use standard/unprefixed items only)
  */
 function getInsurerPrefix(insurer) {
+  // One table for everyone (2026-09-16): services/insurerFamilies.js. The
+  // rules below are the original hard-coded list, kept as the fallback.
+  const fromTable = poolFor(insurer)
+  if (fromTable !== null || familyFor(insurer)) return fromTable
   if (!insurer) return null
   const ins = insurer.toLowerCase()
   if (ins.includes('state farm')) return 'SF'

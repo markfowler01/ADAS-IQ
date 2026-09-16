@@ -32,6 +32,7 @@ import salesStopsRouter from './routes/salesStops.js'
 import { ownerRouter as personalTextsOwnerRouter, bridgeRouter as personalTextsBridgeRouter } from './routes/personalTexts.js'
 import peopleRouter from './routes/people.js'
 import onboardPublicRouter from './routes/onboardPublic.js'
+import insurersRouter from './routes/insurers.js'
 import billItRouter from './routes/billIt.js'
 import { smsWebhookRouter, smsAuthRouter } from './routes/sms.js'
 import { voiceWebhookRouter, voicemailsAuthRouter, callsAuthRouter } from './routes/voice.js'
@@ -229,6 +230,9 @@ app.get('/debug/cache', requireAuth, async (req, res) => {
 })
 
 // Protected API routes (rate limiters applied to AI-heavy endpoints)
+// Insurer families → price list (2026-09-16): refresh the in-memory table every 5 min so every pricing path sees Mark's edits.
+app.use('/api', async (req, res, next) => { try { const { loadFamilies } = await import('./services/insurerFamilies.js'); await loadFamilies(req) } catch {} next() })
+app.use('/api/insurers', requireAuth, insurersRouter)
 app.use('/api/extract', requireAuth, extractLimiter, extractRouter)
 app.use('/api/clean-descriptions', requireAuth, extractLimiter, cleanDescriptionsRouter)
 app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)

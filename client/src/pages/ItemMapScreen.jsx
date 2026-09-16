@@ -6,6 +6,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
+import InsurerFamiliesPanel from '../components/InsurerFamiliesPanel.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -149,6 +150,7 @@ export default function ItemMapScreen({ user, onLogout, currentScreen, onNavigat
           What each Kinetic report sensor bills as. Invoices use this table first — no more guessing.
           {' '}{mappedCount}/{rows.length} mapped.
         </p>
+        <InsurerFamiliesPanel />
 
         {loading ? (
           <div className="text-sm p-6" style={{ color: '#888' }}>Loading…</div>

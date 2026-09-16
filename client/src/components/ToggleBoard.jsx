@@ -10,6 +10,7 @@ import Navbar from './Navbar'
 import LoadingSplash from './LoadingSplash.jsx'
 import { Big3Picker, describeRules as describeBig3 } from './books/Big3Rules.jsx'
 import ReviewLayout from './upload/ReviewLayout.jsx'
+import { familyFor as insurerFamilyFor } from '../lib/insurerFamilies.js'
 
 function todayPT() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -56,6 +57,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // or says cash. Kat taps it to flip either way.
   const [cashMode, setCashMode] = useState(() => isCashInsurerOrBlank(jobData?.insurer))
   const [poolOverride, setPoolOverride] = useState(() => (isCashInsurerOrBlank(jobData?.insurer) ? 'CP' : null))    // review-modal schedule pick
+  const [learned, setLearned] = useState(null)   // unknown insurer → which list (saved to the insurer-family table)
   // 🧾 Big 3 rule (Mark 2026-09-10): null = use the shop's saved rule;
   // an object = Kat's edit in the modal (remembered on create by default).
   const [big3Rules, setBig3Rules] = useState(null)
@@ -568,6 +570,17 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 
         {/* Job card */}
         <JobCard job={{ ...jobData, insurer: cashMode ? '💵 Cash' : jobData.insurer }} />
+        {!cashMode && jobData?.insurer && !insurerFamilyFor(jobData.insurer) && !learned && (
+          <div className="rounded-xl px-3 py-2 mb-3 text-xs" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
+            <b>New insurer: {jobData.insurer}.</b> Which price list do they use? The app remembers for next time.
+            <div className="flex gap-1.5 flex-wrap mt-1.5">
+              {[['STD', 'Standard'], ['AS', 'Allstate'], ['SF', 'State Farm'], ['AMFAM', 'Am Fam']].map(([p, l]) => (
+                <button key={p} type="button" onClick={async () => { try { await apiFetch(`${API_BASE}/api/insurers/learn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ insurer: jobData.insurer, pool: p }) }); setLearned(p); if (p !== 'STD') setPoolOverride(p) } catch (e) { alert(e.message) } }}
+                  className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: 'white', color: '#92400e', border: '1px solid #fcd34d' }}>{l}</button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* 💵 Swap to Cash — one tap either way */}
         <button type="button" onClick={toggleCash} disabled={submitting || creatingJob}
