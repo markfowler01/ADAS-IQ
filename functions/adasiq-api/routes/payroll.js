@@ -58,8 +58,9 @@ async function writeExpenses(req, expenses) {
 }
 
 async function readTeam(req) {
-  const segment = getSegment(req)
-  return (await cacheGet(segment, 'team_members', [])) || []
+  // Directory is the one person record (2026-09-16) — durable TeamMembers table.
+  const { readTeamMembers } = await import('./team.js')
+  return readTeamMembers(req)
 }
 
 function isAdmin(req) { return req.user?.role !== 'technician' }

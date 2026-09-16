@@ -31,7 +31,7 @@ const MORE_GROUPS = [
     { id: 'hr-policy', label: 'HR Policy' },
     { id: 'mileage',   label: 'Mileage' },
     { id: 'payroll',   label: 'Payroll', ownerOnly: true },
-    { id: 'team',      label: 'Team' },
+    { id: 'team',      label: 'Directory & Org' },
     { id: 'recruit',   label: 'Recruiting', adminOnly: true },
   ]},
   { label: 'Intelligence', links: [

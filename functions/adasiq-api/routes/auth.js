@@ -177,14 +177,23 @@ router.post('/exchange', async (req, res) => {
         if (id && id.includes('@')) mapped = id
       } catch { /* leave empty */ }
     }
+    // Directory first (Mark 2026-09-16: the Directory is the one person
+    // record), hard-coded USER_ROLES as the fallback.
+    let dirRole = null, dirName = ''
+    try {
+      const { findMemberByIdentity } = await import('./team.js')
+      const m = await findMemberByIdentity(req, mapped, name)
+      if (m && m.active !== false && m.role && m.role !== 'none') { dirRole = { role: m.role, techName: m.role === 'technician' ? (m.preferred_name || m.name.split(' ')[0]) : undefined }; dirName = m.name; if (!mapped && m.user_id) mapped = m.user_id }
+      else if (m && (m.role === 'none' || m.active === false)) return res.status(403).json({ error: `${m.name} doesn't have app access. Ask Mark.` })
+    } catch (e) { console.warn('[auth] directory lookup failed:', e.message) }
     const user = {
-      name,
+      name: dirName || name,
       email: mapped,
       picture: profile.picture || null,
       zuid: profile.sub || profile.ZUID || null,
-      ...applyRole(mapped),
+      ...(dirRole || applyRole(mapped)),
     }
-    console.log(`[auth] signed in: ${name} <${mapped || 'NO EMAIL'}>${!email && mapped ? ' (by name)' : ''} role=${user.role} · sub=${profile.sub || '?'} · profile keys: ${Object.keys(profile).join(',')}`)
+    console.log(`[auth] signed in: ${user.name} <${mapped || 'NO EMAIL'}>${!email && mapped ? ' (by name)' : ''} role=${user.role}${dirRole ? ' (directory)' : ' (fallback list)'} · sub=${profile.sub || '?'} · profile keys: ${Object.keys(profile).join(',')}`)
 
     req.session.user = user
 

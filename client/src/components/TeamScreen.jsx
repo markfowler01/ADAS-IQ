@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch, ORANGE } from './books/shared'
+import { DirectoryTab, OrgChartTab, ProfileDrawer, MemberEditModal } from './team/Directory.jsx'
+import { isOwnerUser } from '../utils/identity.js'
 
 const ROLES = ['owner', 'admin', 'manager', 'technician', 'office', 'contractor']
 const ROLE_COLORS = {
@@ -15,7 +17,8 @@ const ROLE_COLORS = {
 const AVATAR_COLORS = ['#CD4419', '#2563eb', '#16a34a', '#7c3aed', '#b45309', '#0e7490', '#db2777', '#0891b2']
 
 export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }) {
-  const [tab, setTab] = useState('members')
+  const [tab, setTab] = useState('directory')
+  const [profile, setProfile] = useState(null)
   const [members, setMembers] = useState([])
   const [announcements, setAnnouncements] = useState([])
   const [loading, setLoading] = useState(true)
@@ -56,7 +59,8 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
   }
 
   const tabs = [
-    { id: 'members', label: `Team (${members.length})` },
+    { id: 'directory', label: `Directory (${members.filter(m => m.active !== false).length})` },
+    { id: 'org', label: 'Org chart' },
     { id: 'announcements', label: `Announcements (${announcements.length})` },
   ]
 
@@ -64,18 +68,13 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
     <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 gap-3 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold" style={{ color: '#1a1a1a' }}>Team</h1>
-            <p className="text-sm text-gray-500 mt-0.5">Manage team members and announcements</p>
+            <h1 className="text-2xl font-bold" style={{ color: '#1a1a1a' }}>Directory</h1>
+            <p className="text-sm text-gray-500 mt-0.5">Who's who at Absolute ADAS — tap a card to call, text, or see the profile</p>
           </div>
-          {isAdmin && (
-            <button
-              onClick={() => tab === 'members' ? setEditing(false) : setEditingAnn(false)}
-              className="text-sm px-4 py-2 rounded-lg font-semibold text-white"
-              style={{ backgroundColor: ORANGE }}>
-              {tab === 'members' ? '+ Add Member' : '+ New Announcement'}
-            </button>
+          {isAdmin && tab === 'announcements' && (
+            <button onClick={() => setEditingAnn(false)} className="text-sm px-4 py-2 rounded-lg font-semibold text-white" style={{ backgroundColor: ORANGE }}>+ New Announcement</button>
           )}
         </div>
 
@@ -95,17 +94,22 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
 
         {loading ? (
           <div className="py-16 text-center text-gray-400 text-sm">Loading…</div>
-        ) : tab === 'members' ? (
-          <MembersTab members={members} isAdmin={isAdmin}
-            onEdit={setEditing} onDelete={deleteMember} currentUserId={user?.email} />
+        ) : tab === 'directory' ? (
+          <DirectoryTab members={members} user={user} onOpen={setProfile} onAdd={() => setEditing(false)} />
+        ) : tab === 'org' ? (
+          <OrgChartTab members={members} user={user} onOpen={m => setProfile(members.find(x => x.id === m.id) || m)} />
         ) : (
           <AnnouncementsTab announcements={announcements} isAdmin={isAdmin}
             currentUserId={user?.email}
             onEdit={setEditingAnn} onDelete={deleteAnnouncement} onReload={load} />
         )}
 
+        {profile && (
+          <ProfileDrawer m={members.find(x => x.id === profile.id) || profile} members={members} user={user}
+            onClose={() => setProfile(null)} onEdit={m => { setProfile(null); setEditing(m) }} />
+        )}
         {editing !== null && (
-          <MemberFormModal member={editing || null} onClose={() => setEditing(null)}
+          <MemberEditModal member={editing || null} members={members} user={user} onClose={() => setEditing(null)}
             onSaved={() => { setEditing(null); load() }} />
         )}
         {editingAnn !== null && (
