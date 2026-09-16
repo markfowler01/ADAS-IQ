@@ -638,6 +638,7 @@ export async function createDraftQuote({
     }
     for (const b of b3.BIG3) {
       if (!b.base) continue                             // snapshot handled above
+      if (rulesEff[b.key] === 'off') { b3Remove.add(b.base); b3Remove.add(b.paid); continue }   // left off entirely (insurer rule)
       if (rulesEff[b.key] !== 'charge') continue      // Included = the base "(included)" item as-is
       if (b3Overrides[b.base]) continue                // explicit modal pick wins
       const paid = itemByName.get(b.paid.toLowerCase())
@@ -1292,6 +1293,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
       lines.push(line); big3Applied[b.key] = { mode, line: line.name }
       continue
     }
+    if (mode === 'off') { big3Applied[b.key] = { mode: 'off', line: null, why: 'rule' }; continue }   // e.g. Cal ID off on insurer jobs
     if (b.key === 'post_scan' && snapshotOn) { big3Applied[b.key] = { mode: 'off', line: null, why: 'snapshot instead' }; continue }
     const baseItem = itemByNamePrev.get(b.base.toLowerCase())
     let line

@@ -7,11 +7,16 @@
 import catalyst from 'zcatalyst-sdk-node'
 
 export const POOLS = { STD: 'Standard pricing', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'Am Fam pricing', CP: 'Cash / customer pay' }
+// Mark 2026-09-16: on State Farm, Allstate, Liberty Mutual and GEICO jobs
+// (and their sister companies) the invoice carries Cal ID OFF, Snapshot
+// OFF, PCSI included, Post-Scan included — regardless of the shop's rule.
+export const INSURER_BIG3 = { cal_id: 'off', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
 export const DEFAULT_FAMILIES = [
-  { id: 'state_farm', parent: 'State Farm', pool: 'SF', pill: 'STATE FARM PRICING', color: '#b91c1c', aliases: ['state farm'] },
-  { id: 'allstate', parent: 'Allstate', pool: 'AS', pill: 'ALLSTATE PRICING', color: '#1d4ed8', aliases: ['allstate', 'us general', 'u.s. general', 'integon', 'national general'] },
+  { id: 'state_farm', parent: 'State Farm', pool: 'SF', pill: 'STATE FARM PRICING', color: '#b91c1c', aliases: ['state farm'], big3: INSURER_BIG3 },
+  { id: 'allstate', parent: 'Allstate', pool: 'AS', pill: 'ALLSTATE PRICING', color: '#1d4ed8', aliases: ['allstate', 'us general', 'u.s. general', 'integon', 'national general', 'esurance', 'encompass'], big3: INSURER_BIG3 },
   // Liberty Mutual family bills on Allstate's schedule (Mark 2026-09-16, confirmed for Ohio Security).
-  { id: 'liberty', parent: 'Liberty Mutual', pool: 'AS', pill: 'LIBERTY MUTUAL · ALLSTATE PRICING', color: '#f59e0b', aliases: ['liberty mutual', 'ohio security', 'safeco', 'ohio casualty', 'peerless', 'west american', 'liberty mutual fire', 'lm general', 'lm insurance'] },
+  { id: 'liberty', parent: 'Liberty Mutual', pool: 'AS', pill: 'LIBERTY MUTUAL · ALLSTATE PRICING', color: '#f59e0b', aliases: ['liberty mutual', 'ohio security', 'safeco', 'ohio casualty', 'peerless', 'west american', 'liberty mutual fire', 'lm general', 'lm insurance'], big3: INSURER_BIG3 },
+  { id: 'geico', parent: 'GEICO', pool: 'STD', pill: 'GEICO', color: '#0369a1', aliases: ['geico', 'government employees insurance', 'geico general', 'geico indemnity', 'geico casualty', 'geico advantage', 'geico choice', 'geico secure'], big3: INSURER_BIG3 },
   { id: 'amfam', parent: 'American Family', pool: 'AMFAM', pill: 'AM FAM PRICING', color: '#0e7490', aliases: ['american family', 'amfam'] },
   { id: 'cash', parent: 'Customer pay', pool: 'CP', pill: 'CASH', color: '#15803d', aliases: ['cash', 'customer pay', 'self pay'] },
 ]
@@ -21,6 +26,7 @@ const clean = list => (Array.isArray(list) ? list : []).map((f, i) => ({
   parent: String(f.parent || '').slice(0, 80), pool: POOLS[String(f.pool || '').toUpperCase()] ? String(f.pool).toUpperCase() : 'STD',
   pill: String(f.pill || '').slice(0, 60), color: /^#[0-9a-f]{6}$/i.test(f.color || '') ? f.color : '#555555',
   aliases: (Array.isArray(f.aliases) ? f.aliases : String(f.aliases || '').split(',')).map(a => String(a).trim().toLowerCase()).filter(Boolean).slice(0, 40),
+  big3: f.big3 && typeof f.big3 === 'object' ? Object.fromEntries(Object.entries(f.big3).filter(([k, v]) => ['cal_id', 'pcsi', 'post_scan', 'snapshot'].includes(k) && ['charge', 'included', 'off'].includes(v))) : null,
 })).filter(f => f.parent && f.aliases.length)
 
 export function familiesNow() { return _active }

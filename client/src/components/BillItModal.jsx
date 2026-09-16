@@ -82,7 +82,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
         for (const key of BIG3_ORDER) {
           const hit = ls.filter(l => l.big3_key === key)
           if (hit.length) eff[key] = hit.some(l => Number(l.rate) > 0) ? 'charge' : 'included'
-          else if (key === 'post_scan' || key === 'snapshot') eff[key] = 'off'
+          else if (key === 'post_scan' || key === 'snapshot' || key === 'cal_id') eff[key] = 'off'
         }
         if (eff.snapshot === 'charge') eff.post_scan = d.big3.rules.post_scan
         setRules(eff)
@@ -121,7 +121,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!dry && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
     setBusy(true); setErr('')
     try {
-      const learnNew = !!(rules && p.big3 && !p.big3.has_rule)   // first invoice for this shop → remember what we did
+      const learnNew = !!(rules && p.big3 && !p.big3.has_rule && !p.big3.insurer_rule)   // first invoice for this shop → remember what we did (never from an insurer-forced invoice)
       const body = { emails: list, discount_pct: pct, big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
@@ -179,11 +179,12 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               <div className="rounded-xl p-3" style={{ backgroundColor: p.big3.has_rule ? '#f0fdf4' : '#fffbeb', border: `1.5px solid ${p.big3.has_rule ? '#bbf7d0' : '#fde68a'}` }}>
                 <div className="flex items-center justify-between mb-2 gap-2">
                   <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🧾 Big 4 for {p.shop_name}</span>
-                  <span className="text-xs" style={{ color: '#888' }}>{p.big3.has_rule ? `shop rule · ${p.big3.set_by || 'saved'}` : 'no shop rule yet — default shown'}</span>
+                  <span className="text-xs" style={{ color: '#888' }}>{p.big3.insurer_rule ? `🏦 ${p.big3.insurer_rule} rule — Cal ID off · Snapshot off · PCSI + Post-Scan included` : p.big3.has_rule ? `shop rule · ${p.big3.set_by || 'saved'}` : 'no shop rule yet — default shown'}</span>
                 </div>
                 <Big3Picker rules={rules} onChange={changeRules} />
                 {(() => {
                   // Nudge (Mark 2026-09-11): "if we normally do not charge for post scans and all of a sudden we do, I want to be notified".
+                  if (p.big3?.insurer_rule) return <div className="text-xs mt-2" style={{ color: '#92400e' }}>🏦 Insurer rule applied ({p.big3.insurer_rule}). Not saved as {p.shop_name}'s rule.</div>
                   if (!p.big3?.has_rule) return <div className="text-xs mt-2" style={{ color: '#92400e' }}>🧠 First invoice for {p.shop_name} — whatever you send will be remembered as this shop's rule.</div>
                   const saved = p.big3.rules || {}
                   const labels = { cal_id: 'Cal ID report', pcsi: 'PCSI', post_scan: 'Post-Scan', snapshot: 'Calibration Snapshot' }

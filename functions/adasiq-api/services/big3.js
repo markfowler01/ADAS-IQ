@@ -9,6 +9,7 @@
 //           shop      → shop handles it, line is left off entirely
 import { getAllShops, insertShop, updateShop } from '../routes/shops.js'
 import { postToCliqChannel, postToCliqChannelById, DISPATCH_CHANNEL, MARK_ALERT_CHANNEL_ID } from './cliq.js'
+import { familyFor } from './insurerFamilies.js'
 
 // Mark 2026-09-10 (v2): ALL THREE go on EVERY invoice — "so people get
 // used to seeing it and eventually we can start charging them". Per shop
@@ -21,7 +22,8 @@ import { postToCliqChannel, postToCliqChannelById, DISPATCH_CHANNEL, MARK_ALERT_
 // used when the shop does its own post-scan but lets us do a snapshot.
 // Snapshot = charge ⇒ Post-Scan is left off the invoice entirely.
 export const BIG3 = [
-  { key: 'cal_id',    base: 'Calibration Identification Report (included)',        paid: 'Calibration Identification Report',        label: 'Cal ID report' },
+  // cal_id can be OFF (left off the invoice) — insurer rules use it (2026-09-16).
+  { key: 'cal_id',    base: 'Calibration Identification Report (included)',        paid: 'Calibration Identification Report',        label: 'Cal ID report', modes: ['charge', 'included', 'off'] },
   { key: 'pcsi',      base: 'Post Collision Safety Inspection 1 (included)', paid: 'Post Collision Safety Inspection 1',        label: 'Post Collision Safety Inspection' },
   { key: 'post_scan', base: 'Post-Scan (included)',                          paid: 'Post-Scan', paidFallback: 'Post-Calibration Scan', label: 'Post-Scan' },
   { key: 'snapshot',  base: null,                                            paid: 'Calibration Snapshot', label: 'Calibration Snapshot', modes: ['charge', 'off'] },
@@ -46,11 +48,17 @@ export function normalizeRules(r) {
   return Object.keys(out).length ? out : null
 }
 export function withDefaults(rules) { return { ...DEFAULT_RULES, ...(normalizeRules(rules) || {}) } }
+/** The shop's rule, overridden by the insurer family's Big 3 rule when the job's insurer has one (Mark 2026-09-16). */
+export function effectiveBig3(shopRules, insurer) {
+  const fam = familyFor(insurer)
+  if (fam?.big3 && Object.keys(fam.big3).length) return { rules: withDefaults({ ...(normalizeRules(shopRules) || {}), ...fam.big3 }), insurer_rule: fam.parent }
+  return { rules: withDefaults(shopRules), insurer_rule: null }
+}
 export function describeRules(rules) {
   if (!rules) return 'no rule yet'
   const charge = BIG3.filter(b => rules[b.key] === 'charge' && !(b.key === 'post_scan' && rules.snapshot === 'charge')).map(b => b.label)
   const inc = BIG3.filter(b => rules[b.key] === 'included' && !(b.key === 'post_scan' && rules.snapshot === 'charge')).map(b => b.label)
-  const off = rules.snapshot === 'charge' ? ['Post-Scan (snapshot instead)'] : []
+  const off = [...(rules.snapshot === 'charge' ? ['Post-Scan (snapshot instead)'] : []), ...BIG3.filter(b => b.key !== 'snapshot' && rules[b.key] === 'off').map(b => b.label)]
   return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null, off.length ? `Off: ${off.join(', ')}` : null].filter(Boolean).join(' · ') || 'no rule yet'
 }
 

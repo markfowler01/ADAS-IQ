@@ -961,14 +961,14 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             <div className="flex items-center justify-between mb-1.5">
               <div className="text-[11px] font-bold" style={{ color: '#1a1a1a' }}>🧾 Big 3 for {shopName || big3.shop_name || 'this shop'}</div>
               <div className="text-[10px]" style={{ color: '#888' }}>
-                {big3.source === 'shop' ? `shop rule${big3.set_by ? ` · ${big3.set_by}` : ''}${big3.set_at ? ` ${String(big3.set_at).slice(5, 10)}` : ''}` : big3.source === 'modal' ? 'edited here' : 'default — confirm once, it\'s remembered'}
+                {big3.source === 'insurer' ? `🏦 ${big3.insurer_rule} rule — Cal ID off · Snapshot off · PCSI + Post-Scan included` : big3.source === 'shop' ? `shop rule${big3.set_by ? ` · ${big3.set_by}` : ''}${big3.set_at ? ` ${String(big3.set_at).slice(5, 10)}` : ''}` : big3.source === 'modal' ? 'edited here' : 'default — confirm once, it\'s remembered'}
               </div>
             </div>
             <Big3Picker rules={big3.rules} onChange={onBig3} disabled={busy} compact />
-            <label className="flex items-center gap-2 mt-2 text-[11px]" style={{ color: '#555' }}>
+            {big3.source !== 'insurer' && <label className="flex items-center gap-2 mt-2 text-[11px]" style={{ color: '#555' }}>
               <input type="checkbox" checked={!!big3Save} onChange={e => onBig3Save(e.target.checked)} />
               Remember for {shopName || big3.shop_name || 'this shop'} (every invoice from now on)
-            </label>
+            </label>}
           </div>
         )}
         <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #eee' }}>

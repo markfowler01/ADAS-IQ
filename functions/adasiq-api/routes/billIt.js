@@ -75,7 +75,8 @@ async function buildPreview(req, job) {
     ...extraLines,
   ]
   const insurerCf = (est.custom_fields || []).find(c => c.label === 'Insurer')?.value || job.insurer || ''
-  const big3Block = { rules: big3.withDefaults(rule.rules), set_by: rule.set_by || '', set_at: rule.set_at || '', has_rule: !!rule.rules, items: big3Items(big3, catalog, byName, insurerCf) }
+  const effB3 = big3.effectiveBig3(rule.rules, insurerCf)
+  const big3Block = { rules: effB3.rules, insurer_rule: effB3.insurer_rule, set_by: rule.set_by || '', set_at: rule.set_at || '', has_rule: !!rule.rules || !!effB3.insurer_rule, items: big3Items(big3, catalog, byName, insurerCf) }
   const discounted = lines.map(li => {
     const amount = r2(li.rate * li.quantity)
     const part = isPart(li)
@@ -216,7 +217,7 @@ router.post('/:id/bill', async (req, res) => {
     // Remember the discount too (Mark 2026-09-11: "if I set their discount to
     // 25% I want it to remember this") — whenever it differs from the file.
     const learnPct = !dry && (!p.has_discount || Number(p.discount_pct) !== pct)
-    const saveRules = req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
+    const saveRules = !p.big3?.insurer_rule && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
     if (!dry && (saveRules || learnPct)) {
       try {
         const b3 = await import('../services/big3.js')

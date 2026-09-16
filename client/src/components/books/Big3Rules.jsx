@@ -8,7 +8,7 @@ import { API_BASE, apiFetch } from '../../utils/api.js'
 
 const ORANGE = '#CD4419'
 export const BIG3 = [
-  { key: 'cal_id',    label: 'Cal ID report' },
+  { key: 'cal_id',    label: 'Cal ID report', modes: ['charge', 'included', 'off'] },
   { key: 'pcsi',      label: 'Post Collision Safety Inspection' },
   { key: 'post_scan', label: 'Post-Scan' },
   // Big FOUR (Mark 2026-09-10): Snapshot replaces Post-Scan when charged —
@@ -29,7 +29,8 @@ export function describeRules(rules) {
   const snap = normalizeMode(rules.snapshot) === 'charge'
   const charge = BIG3.filter(b => normalizeMode(rules[b.key]) === 'charge' && !(b.key === 'post_scan' && snap)).map(b => b.label)
   const inc = BIG3.filter(b => normalizeMode(rules[b.key]) === 'included' && !(b.key === 'post_scan' && snap)).map(b => b.label)
-  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null, snap ? 'Post-Scan off (snapshot instead)' : null].filter(Boolean).join(' · ') || 'no rule yet'
+  const offs = BIG3.filter(b => b.key !== 'snapshot' && normalizeMode(rules[b.key]) === 'off').map(b => b.label)
+  return [charge.length ? `Charge: ${charge.join(', ')}` : null, inc.length ? `Included: ${inc.join(', ')}` : null, offs.length ? `Off: ${offs.join(', ')}` : null, snap ? 'Post-Scan off (snapshot instead)' : null].filter(Boolean).join(' · ') || 'no rule yet'
 }
 
 // The three rows of chips. rules = { cal_id, pcsi, post_scan } (any may be unset).
