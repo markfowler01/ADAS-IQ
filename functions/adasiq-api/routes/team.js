@@ -92,7 +92,7 @@ function rowToMember(row) {
   const extra = { ...parseJ(r.tm_json, {}), ...parseJ(r.tm_docs_json, {}), ...parseJ(r.tm_progress_json, {}) }
   const m = { ...BLANK(), ...extra, id: r.tm_id, user_id: r.tm_user_id || extra.user_id || '', name: r.tm_name || extra.name || '', email: r.tm_email || extra.email || '', access: r.tm_access || extra.access || 'technician', active: r.tm_active !== false && r.tm_active !== 'false', _rowid: String(r.ROWID) }
   m.role = roleOf(m)
-  if (!m.track) m.track = m.department === 'Field' ? 'tech' : 'ops'   // technician | apprentice | ops (billing & dispatch)
+  if (!m.track) m.track = ['Field', 'Leadership'].includes(m.department) ? 'tech' : 'ops'   // technician | apprentice | ops (billing & dispatch)
   return m
 }
 function memberToRow(m) {
