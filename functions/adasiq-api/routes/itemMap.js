@@ -144,12 +144,14 @@ router.post('/convert-probe', async (req, res) => {
 router.post('/create-item', async (req, res) => {
   try {
     if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Only Mark can add Zoho Books items.' })
-    const { name, rate, description } = req.body || {}
+    const { name, rate, description, sku } = req.body || {}
     if (!name || !Number.isFinite(Number(rate))) return res.status(400).json({ error: 'name and rate required' })
-    const { getAccessToken } = await import('../services/zoho.js')
+    const { getAccessToken, getItemCatalogForAudit } = await import('../services/zoho.js')
     const token = await getAccessToken()
+    // Idempotent: an item with this exact name already in Books is returned, not duplicated (2026-09-16).
+    try { const { allItems } = await getItemCatalogForAudit(); const dup = allItems.find(i => String(i.name).trim().toLowerCase() === String(name).trim().toLowerCase()); if (dup) return res.json({ ok: true, existed: true, item: { item_id: dup.item_id, name: dup.name, rate: dup.rate } }) } catch { /* create anyway */ }
     const r = await axios.post('https://www.zohoapis.com/books/v3/items', {
-      name: String(name).slice(0, 100), rate: Number(rate), description: String(description || '').slice(0, 2000), product_type: 'service',
+      name: String(name).slice(0, 100), rate: Number(rate), description: String(description || '').slice(0, 2000), product_type: 'service', ...(sku ? { sku: String(sku).slice(0, 40) } : {}),
     }, {
       headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID },
       timeout: 15000, validateStatus: s => s < 500,
