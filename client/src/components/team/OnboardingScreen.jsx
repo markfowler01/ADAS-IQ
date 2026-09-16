@@ -19,7 +19,8 @@ async function shrink(file, max = 1800) {
     return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' })
   } catch { return file }
 }
-const STEPS = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Direct deposit'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
+const STEPS_W2 = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Direct deposit'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
+const STEPS_CONTRACTOR = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
 const Btn = ({ children, onClick, disabled, tone = 'green', full = true }) => <button type="button" onClick={onClick} disabled={disabled} className={`${full ? 'w-full' : ''} rounded-2xl py-3.5 px-4 text-base font-extrabold text-white`} style={{ backgroundColor: tone === 'orange' ? ORANGE : tone === 'blue' ? BLUE : GREEN, opacity: disabled ? .5 : 1 }}>{children}</button>
 const ytEmbed = u => { const m = String(u || '').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{6,})/); return m ? `https://www.youtube.com/embed/${m[1]}` : null }
@@ -35,7 +36,8 @@ export default function OnboardingScreen() {
   if (!d) return <Shell><div className="text-sm py-10 text-center" style={{ color: '#888' }}>Loading your onboarding…</div></Shell>
   const m = d.member
   const has = kind => d.documents.some(x => x.kind === kind)
-  const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: has('dl_front') && has('ssn'), deposit: !!d.direct_deposit, sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
+  const contractor = m.employment === 'contractor'
+  const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
   const pct = Math.round((['about', 'photo', 'docs', 'deposit', 'sign', 'training'].filter(k => done[k]).length / 6) * 100)
   const flash = t => { setMsg(t); setTimeout(() => setMsg(''), 3500) }
   return (
@@ -49,13 +51,13 @@ export default function OnboardingScreen() {
         <div className="h-2 rounded-full mt-3" style={{ backgroundColor: '#f1ede9' }}><div className="h-2 rounded-full" style={{ width: `${pct}%`, backgroundColor: pct === 100 ? GREEN : ORANGE, transition: 'width .3s' }} /></div>
       </div>
       <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth: 'none' }}>
-        {STEPS.map(([k, label]) => <button key={k} onClick={() => setStep(k)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0" style={step === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: done[k] && k !== 'ask' ? GREEN : '#555', border: `1px solid ${done[k] && k !== 'ask' ? '#86efac' : '#e0dbd6'}` }}>{done[k] && k !== 'ask' ? '✓ ' : ''}{label}</button>)}
+        {(contractor ? STEPS_CONTRACTOR : STEPS_W2).map(([k, label]) => <button key={k} onClick={() => setStep(k)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0" style={step === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: done[k] && k !== 'ask' ? GREEN : '#555', border: `1px solid ${done[k] && k !== 'ask' ? '#86efac' : '#e0dbd6'}` }}>{done[k] && k !== 'ask' ? '✓ ' : ''}{label}</button>)}
       </div>
       {msg && <div className="text-sm font-semibold mb-2 px-3 py-2 rounded-lg" style={{ backgroundColor: msg.startsWith('✓') ? '#dcfce7' : '#fef2f2', color: msg.startsWith('✓') ? GREEN : RED }}>{msg}</div>}
       {step === 'about' && <About m={m} onSaved={() => { load(); flash('✓ Saved'); setStep('photo') }} />}
       {step === 'photo' && <Photo m={m} onDone={() => { load(); flash('✓ Photo saved to your folder'); setStep('docs') }} />}
-      {step === 'docs' && <Docs d={d} has={has} onDone={() => { load(); flash('✓ Uploaded to your folder') }} onNext={() => setStep('deposit')} />}
-      {step === 'deposit' && <Deposit d={d} m={m} onDone={() => { load(); flash('✓ Direct deposit on file'); setStep('sign') }} />}
+      {step === 'docs' && <Docs d={d} has={has} contractor={contractor} onDone={() => { load(); flash('✓ Uploaded to your folder') }} onNext={() => setStep('deposit')} />}
+      {step === 'deposit' && (contractor ? <Payout d={d} m={m} onDone={() => { load(); flash('✓ Payout details on file'); setStep('sign') }} /> : <Deposit d={d} m={m} onDone={() => { load(); flash('✓ Direct deposit on file'); setStep('sign') }} />)}
       {step === 'sign' && <Sign d={d} m={m} onDone={() => { load(); flash('✓ Signed and filed'); setStep('training') }} />}
       {step === 'training' && <Training d={d} onDone={load} />}
       {step === 'ask' && <Ask m={m} />}
@@ -109,7 +111,16 @@ function Photo({ m, onDone }) {
     </Card>
   )
 }
-function Docs({ d, has, onDone, onNext }) {
+function Docs({ d, has, contractor, onDone, onNext }) {
+  if (contractor) return (
+    <Card title="ID & documents" sub="Photograph each one flat, all four corners in, no glare. They go straight into your personnel folder, clearly labeled.">
+      <Upload kind="passport" label="Government ID or passport" hint="Photo page. Needed for the contract." has={has('passport')} onDone={onDone} capture="environment" />
+      <Upload kind="dl_front" label="Driver's license (if you have one)" has={has('dl_front')} onDone={onDone} capture="environment" />
+      <Upload kind="cert" label="Certifications / diplomas" hint="Add as many as you have." has={has('cert')} onDone={onDone} accept="image/*,.pdf" tone="blue" />
+      <Upload kind="other" label="Anything else Mark asked for" has={false} onDone={onDone} accept="image/*,.pdf" tone="blue" />
+      <div className="mt-3"><Btn onClick={onNext} disabled={!(has('passport') || has('dl_front'))}>{has('passport') || has('dl_front') ? 'Continue →' : 'A government ID is needed'}</Btn></div>
+    </Card>
+  )
   return (
     <Card title="ID & documents" sub="Photograph each one flat, all four corners in, no glare. They go straight into your personnel folder, clearly labeled.">
       <Upload kind="dl_front" label="Driver's license — front" has={has('dl_front')} onDone={onDone} capture="environment" />
@@ -141,6 +152,25 @@ function Deposit({ d, m, onDone }) {
       <div className="rounded-lg p-3 mb-3 text-xs" style={{ backgroundColor: '#f8f6f4', color: '#555' }}>I authorize Absolute ADAS to deposit my pay to this account and to reverse a deposit made in error. This stays in effect until I change or cancel it in writing.</div>
       <L label={`Sign by typing your full name: ${m.name}`}><I v={f.signature} set={v => setF(x => ({ ...x, signature: v }))} placeholder={m.name} /></L>
       <Btn onClick={save} disabled={!ok || busy}>{busy ? 'Filing…' : '✍️ Sign and file direct deposit'}</Btn>
+    </Card>
+  )
+}
+function Payout({ d, m, onDone }) {
+  const [f, setF] = useState({ email: '', email2: '', currency: 'USD', bank: '', account_ref: '', signature: '' })
+  const [busy, setBusy] = useState(false)
+  if (d.payout) return <Card title="Payout — on file ✅" sub={`Wise · ${d.payout.email} · ${d.payout.currency} · signed ${String(d.payout.at).slice(0, 10)}`}><div className="text-xs" style={{ color: '#666' }}>Need to change it? Tell Mark — a new authorization replaces this one.</div></Card>
+  async function save() { setBusy(true); try { await call('/payout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) }); onDone() } catch (e) { alert(e.message) } finally { setBusy(false) } }
+  const ok = /@/.test(f.email) && f.email.trim().toLowerCase() === f.email2.trim().toLowerCase() && f.signature.trim().toLowerCase() === m.name.toLowerCase()
+  return (
+    <Card title="How you get paid (Wise)" sub="Contract payments go out through Wise. Enter the email on your Wise account — twice, so it's right.">
+      <L label="Wise account email"><I v={f.email} set={v => setF(x => ({ ...x, email: v }))} type="email" /></L>
+      <L label="Wise account email again"><I v={f.email2} set={v => setF(x => ({ ...x, email2: v }))} type="email" /></L>
+      {f.email2 && f.email.trim().toLowerCase() !== f.email2.trim().toLowerCase() && <div className="text-xs font-bold mb-2" style={{ color: RED }}>The two emails don't match.</div>}
+      <div className="grid grid-cols-2 gap-2"><L label="Currency"><select value={f.currency} onChange={e => setF(x => ({ ...x, currency: e.target.value }))} className="w-full text-sm rounded-lg px-3 py-2.5" style={inp}>{['USD', 'PHP', 'EUR', 'GBP', 'CAD', 'MXN', 'INR'].map(c => <option key={c}>{c}</option>)}</select></L><L label="Local bank (optional)"><I v={f.bank} set={v => setF(x => ({ ...x, bank: v }))} placeholder="e.g. BDO, BPI" /></L></div>
+      <L label="Account reference (optional, last digits only)"><I v={f.account_ref} set={v => setF(x => ({ ...x, account_ref: v }))} placeholder="…1234" /></L>
+      <div className="rounded-lg p-3 mb-3 text-xs" style={{ backgroundColor: '#f8f6f4', color: '#555' }}>I confirm these payout details are mine and authorize Absolute ADAS to send contract payments to this account.</div>
+      <L label={`Sign by typing your full name: ${m.name}`}><I v={f.signature} set={v => setF(x => ({ ...x, signature: v }))} placeholder={m.name} /></L>
+      <Btn onClick={save} disabled={!ok || busy}>{busy ? 'Filing…' : '✍️ Sign and file payout details'}</Btn>
     </Card>
   )
 }
@@ -199,6 +229,13 @@ function Training({ d, onDone }) {
         )
       })}
       {passedCount === mods.length && mods.length > 0 && <div className="rounded-xl p-3 text-center font-extrabold" style={{ backgroundColor: '#dcfce7', color: GREEN }}>🎉 Training complete. GET SOME!!!</div>}
+      {d.ladder && (
+        <div className="mt-4">
+          <div className="font-extrabold text-base" style={{ color: '#1a1a1a' }}>Your skills ladder · {d.ladder.pct}%</div>
+          <div className="text-xs mb-2" style={{ color: '#666' }}>Each rung is signed off by the tech you rode with. All rungs done = promotion.</div>
+          {d.ladder.rungs.map(r => <div key={r.key} className="flex items-center justify-between gap-2 py-1.5 text-sm" style={{ borderBottom: '1px solid #f3f3f3' }}><span style={{ color: r.complete ? GREEN : '#1a1a1a' }}>{r.complete ? '✅ ' : ''}{r.label}</span><b className="tabular-nums" style={{ color: r.complete ? GREEN : ORANGE }}>{Math.min(r.done, r.need)}/{r.need}</b></div>)}
+        </div>
+      )}
     </Card>
   )
 }

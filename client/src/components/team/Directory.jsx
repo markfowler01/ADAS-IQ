@@ -70,7 +70,7 @@ export function DirectoryTab({ members, user, onOpen, onAdd }) {
                 <div className="flex-1 min-w-0">
                   <div className="font-extrabold text-base leading-tight" style={{ color: '#1a1a1a' }}>{m.preferred_name ? `${m.preferred_name} ${m.name.split(' ').slice(1).join(' ')}` : m.name}{me && <span className="text-xs font-normal ml-1" style={{ color: '#999' }}>(you)</span>}</div>
                   <div className="text-sm font-semibold" style={{ color: DEPT_COLORS[m.department] || '#555' }}>{m.title || '—'}</div>
-                  <div className="text-xs mt-0.5" style={{ color: '#888' }}>{m.department}{m.employment ? ` · ${EMPLOYMENT[m.employment] || m.employment}` : ''}{m.region ? ` · 📍 ${m.region}` : ''}{m.active === false ? ' · inactive' : ''}</div>
+                  <div className="text-xs mt-0.5" style={{ color: '#888' }}>{m.department}{m.employment ? ` · ${EMPLOYMENT[m.employment] || m.employment}` : ''}{m.track === 'apprentice' ? ' · 🪜 apprentice' : ''}{m.region ? ` · 📍 ${m.region}` : ''}{m.active === false ? ' · inactive' : ''}</div>
                 </div>
               </div>
               <div className="mt-3"><ContactButtons m={m} /></div>
@@ -215,7 +215,7 @@ export function ProfileDrawer({ m, members, user, onClose, onEdit }) {
 // ── Edit / add ─────────────────────────────────────────────────────────
 export function MemberEditModal({ member, members, user, onClose, onSaved }) {
   const owner = isOwnerUser(user)
-  const [f, setF] = useState(() => member ? { ...member, emergency_contact: member.emergency_contact || { name: '', phone: '', relationship: '' } } : { name: '', preferred_name: '', email: '', user_id: '', phone: '', personal_phone: '', title: '', department: 'Field', access: 'technician', employment: 'w2', reports_to: 'mark@absoluteadas.com', hire_date: '', birthday: '', region: '', van: '', avatar_color: '#2563eb', emergency_contact: { name: '', phone: '', relationship: '' }, hourly_rate: 0, payroll_type: 'w2_zoho', salary_annual: 0, notes: '', active: true })
+  const [f, setF] = useState(() => member ? { ...member, emergency_contact: member.emergency_contact || { name: '', phone: '', relationship: '' } } : { name: '', preferred_name: '', email: '', user_id: '', phone: '', personal_phone: '', title: '', department: 'Field', track: 'tech', access: 'technician', employment: 'w2', reports_to: 'mark@absoluteadas.com', hire_date: '', birthday: '', region: '', van: '', avatar_color: '#2563eb', emergency_contact: { name: '', phone: '', relationship: '' }, hourly_rate: 0, payroll_type: 'w2_zoho', salary_annual: 0, notes: '', active: true })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setF(x => ({ ...x, [k]: v }))
   const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
@@ -251,6 +251,7 @@ export function MemberEditModal({ member, members, user, onClose, onSaved }) {
           {owner && <S label="Department" k="department" opts={Object.keys(DEPT_COLORS)} />}
           {owner && <S label="Reports to" k="reports_to" opts={[['', '—'], ...members.filter(m => m.user_id !== f.user_id).map(m => [m.user_id, m.name])]} />}
           {owner && <S label="Employment" k="employment" opts={[['w2', 'W-2 employee'], ['contractor', 'Contractor'], ['owner', 'Owner']]} />}
+          {owner && <S label="Onboarding track" k="track" opts={[['tech', 'Technician'], ['apprentice', 'Apprentice technician'], ['ops', 'Billing & dispatch']]} />}
           {owner && <S label="App access" k="access" opts={[['owner', 'Owner (everything)'], ['dispatcher', 'Dispatch / office'], ['technician', 'Technician'], ['none', 'No login']]} />}
           {owner && <I label="Hire date" k="hire_date" type="date" />}
           {owner && <I label="Home base" k="region" placeholder="e.g. Everett" />}

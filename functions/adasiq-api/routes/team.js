@@ -83,6 +83,7 @@ function rowToMember(row) {
   try { extra = r.tm_json ? JSON.parse(r.tm_json) : {} } catch { extra = {} }
   const m = { ...BLANK(), ...extra, id: r.tm_id, user_id: r.tm_user_id || extra.user_id || '', name: r.tm_name || extra.name || '', email: r.tm_email || extra.email || '', access: r.tm_access || extra.access || 'technician', active: r.tm_active !== false && r.tm_active !== 'false', _rowid: String(r.ROWID) }
   m.role = roleOf(m)
+  if (!m.track) m.track = m.department === 'Field' ? 'tech' : 'ops'   // technician | apprentice | ops (billing & dispatch)
   return m
 }
 function memberToRow(m) {
@@ -180,7 +181,7 @@ router.put('/members/:id', async (req, res) => {
     const self = isSelf(req, m), owner = isOwner(req)
     if (!owner && !self) return res.status(403).json({ error: 'You can only edit your own card.' })
     const allowedForSelf = ['phone', 'personal_phone', 'preferred_name', 'emergency_contact', 'avatar_color', 'photo_url', 'birthday']
-    const allowedForOwner = [...allowedForSelf, 'user_id', 'name', 'email', 'title', 'department', 'access', 'employment', 'reports_to', 'hire_date', 'region', 'van', 'active', 'certifications', 'equipment', 'documents', 'license_expiry', ...PAY_FIELDS]
+    const allowedForOwner = [...allowedForSelf, 'user_id', 'name', 'email', 'title', 'department', 'access', 'employment', 'reports_to', 'hire_date', 'region', 'van', 'active', 'certifications', 'equipment', 'documents', 'license_expiry', 'track', 'personal_email', 'address', 'shirt_size', ...PAY_FIELDS]
     const allowed = owner ? allowedForOwner : allowedForSelf
     for (const f of allowed) if (req.body[f] !== undefined) m[f] = req.body[f]
     if (m.user_id) m.user_id = String(m.user_id).toLowerCase()

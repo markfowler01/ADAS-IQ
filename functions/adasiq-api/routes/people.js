@@ -127,6 +127,7 @@ router.get('/profile/:id', async (req, res) => {
       out.acks = await policyAcksFor(req, m.user_id)
     }
     out.checklist_templates = { onboarding: ONBOARDING, offboarding: OFFBOARDING }
+    if ((m.track || '') === 'apprentice' || m.ladder) { out.ladder = ladderProgress(m, await readLadder(req)); out.can_sign_off = canSignOff(req) && !isSelf(req, m) }
     res.json({ ok: true, ...out })
   } catch (e) { console.error('[people profile]', e.message); res.status(500).json({ error: e.message }) }
 })
@@ -343,13 +344,74 @@ router.put('/course', async (req, res) => {
   try {
     if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
     const b = req.body || {}
-    const modules = (Array.isArray(b.modules) ? b.modules : []).map((m, i) => ({ id: String(m.id || `m${i + 1}`).replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || `m${i + 1}`, title: String(m.title || '').slice(0, 120), minutes: Number(m.minutes) || 5, video_url: String(m.video_url || '').slice(0, 500), reading: String(m.reading || '').slice(0, 6000),
+    const modules = (Array.isArray(b.modules) ? b.modules : []).map((m, i) => ({ id: String(m.id || `m${i + 1}`).replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || `m${i + 1}`, tracks: (Array.isArray(m.tracks) && m.tracks.length ? m.tracks : ['core']).filter(t => ['core', 'tech', 'apprentice', 'ops'].includes(t)), title: String(m.title || '').slice(0, 120), minutes: Number(m.minutes) || 5, video_url: String(m.video_url || '').slice(0, 500), reading: String(m.reading || '').slice(0, 6000),
       quiz: (Array.isArray(m.quiz) ? m.quiz : []).map((q, k) => ({ id: String(q.id || `q${k + 1}`).slice(0, 20), q: String(q.q || '').slice(0, 300), options: (Array.isArray(q.options) ? q.options : []).map(o => String(o).slice(0, 200)).filter(Boolean).slice(0, 6), correct: Number(q.correct) || 0 })).filter(q => q.q && q.options.length >= 2) })).filter(m => m.title)
     const course = { version: (Number(b.version) || 1) + 1, pass_pct: Math.min(100, Math.max(50, Number(b.pass_pct) || 80)), modules, updated_at: new Date().toISOString(), updated_by: req.user?.name || '' }
     await cfgWrite(req, 'onboarding_course', course)
     res.json({ ok: true, course })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// ── Apprentice skills ladder (Mark 2026-09-16) ───────────────────────
+export const DEFAULT_LADDER = [
+  { key: 'photo_set',    label: 'Full photo set + safety inspection, no misses', need: 5 },
+  { key: 'front_camera', label: 'Front camera — static calibration', need: 5 },
+  { key: 'front_radar',  label: 'Front radar calibration', need: 5 },
+  { key: 'blind_spot',   label: 'Blind spot / rear radar', need: 5 },
+  { key: 'dynamic',      label: 'Dynamic (drive) calibration', need: 5 },
+  { key: 'surround',     label: '360 / surround camera', need: 3 },
+  { key: 'diagnostics',  label: 'Pre/post scan + clearing codes', need: 5 },
+  { key: 'solo_day',     label: 'Full day solo with remote support', need: 2 },
+]
+export async function readLadder(req) { const l = await cfgJson(req, 'apprentice_ladder', null); return Array.isArray(l) && l.length ? l : DEFAULT_LADDER }
+export function ladderProgress(m, ladder) { const so = m.ladder || {}; const rungs = ladder.map(r => ({ ...r, done: (so[r.key] || []).length, complete: (so[r.key] || []).length >= r.need, signoffs: so[r.key] || [] })); return { rungs, complete: rungs.every(r => r.complete), pct: Math.round((rungs.reduce((s, r) => s + Math.min(r.done, r.need), 0) / Math.max(1, rungs.reduce((s, r) => s + r.need, 0))) * 100) } }
+const canSignOff = req => isOwner(req) || req.user?.role === 'technician' || req.user?.role === 'dispatcher'
+router.get('/ladder', async (req, res) => { try { res.json({ ok: true, ladder: await readLadder(req), editable: isOwner(req) }) } catch (e) { res.status(500).json({ error: e.message }) } })
+router.put('/ladder', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const ladder = (Array.isArray(req.body?.ladder) ? req.body.ladder : []).map((r, i) => ({ key: String(r.key || `r${i + 1}`).replace(/[^a-z0-9_]/gi, '').slice(0, 30) || `r${i + 1}`, label: String(r.label || '').slice(0, 120), need: Math.max(1, Math.min(50, Number(r.need) || 1)) })).filter(r => r.label)
+    await cfgWrite(req, 'apprentice_ladder', ladder); res.json({ ok: true, ladder })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/ladder/:id/signoff', async (req, res) => {
+  try {
+    if (!canSignOff(req)) return res.status(403).json({ error: 'A technician, Kat or Mark signs rungs off.' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    if (isSelf(req, m)) return res.status(403).json({ error: "You can't sign off your own rung — the tech you rode with does it." })
+    const ladder = await readLadder(req); const rung = ladder.find(r => r.key === req.body?.key)
+    if (!rung) return res.status(404).json({ error: 'No such rung' })
+    m.ladder = m.ladder || {}; m.ladder[rung.key] = [...(m.ladder[rung.key] || []), { at: new Date().toISOString(), by: req.user?.name || req.user?.email || '', note: String(req.body?.note || '').slice(0, 200), job: String(req.body?.job || '').slice(0, 60) }]
+    const prog = ladderProgress(m, ladder)
+    await saveMember(req, m)
+    if (prog.complete && !m.ladder_complete_pinged) {
+      m.ladder_complete_pinged = new Date().toISOString(); await saveMember(req, m)
+      try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🎓 *${m.name} finished the apprentice ladder* — every rung signed off. Promote from Directory → ${m.name} → "Promote to technician".`) } catch {}
+    }
+    res.json({ ok: true, progress: prog })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/ladder/:id/undo', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m?.ladder?.[req.body?.key]?.length) return res.status(404).json({ error: 'Nothing to undo' })
+    m.ladder[req.body.key].pop(); await saveMember(req, m); res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/promote/:id', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    m.track = 'tech'; m.title = 'ADAS Calibration Technician'; m.promoted_at = todayPT()
+    if (m.access === 'none') m.access = 'technician'
+    await saveMember(req, m)
+    try { const { postToCliqChannel, postToCliqChannelById, DISPATCH_CHANNEL, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); const line = `🎉 *${m.name} is now an ADAS Calibration Technician!* Ladder complete, promoted by ${req.user?.name || 'Mark'}. GET SOME!!!`; await Promise.allSettled([postToCliqChannel(DISPATCH_CHANNEL, line), postToCliqChannelById(MARK_ALERT_CHANNEL_ID, line)]) } catch {}
+    res.json({ ok: true, member: m })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/handbook', async (req, res) => { try { const { SECTIONS, handbookHash } = await import('../services/handbook.js'); res.json({ ok: true, sections: SECTIONS, version: handbookHash() }) } catch (e) { res.status(500).json({ error: e.message }) } })
 
 // ── Onboarding link: owner sends it; the person can open their own ──
@@ -438,7 +500,9 @@ export async function onCandidateHired(req, cand) {
   const exists = members.find(m => (email && (m.user_id === email || m.email === email)) || m.name.toLowerCase() === String(cand.name || '').toLowerCase())
   if (exists) return { created: false, member: exists }
   const { createMemberPublic } = await import('./team.js')
-  const m = await createMemberPublic(req, { name: cand.name, email, user_id: email, phone: cand.phone || '', title: cand.role || 'ADAS Calibration Technician', department: 'Field', access: 'none', employment: 'w2', reports_to: 'mark@absoluteadas.com', region: cand.city || '', hire_date: todayPT(), notes: `From Recruiting${cand.source ? ` (${cand.source})` : ''}. Set App access to Technician once ready.` })
+  const roleText = String(cand.role || '').toLowerCase()
+  const track = /apprentice|trainee|junior/.test(roleText) ? 'apprentice' : /billing|dispatch|office|admin|assistant|book|account|ops/.test(roleText) ? 'ops' : 'tech'
+  const m = await createMemberPublic(req, { name: cand.name, email, user_id: email, phone: cand.phone || '', title: cand.role || (track === 'apprentice' ? 'Apprentice ADAS Technician' : track === 'ops' ? 'Billing & Dispatch' : 'ADAS Calibration Technician'), department: track === 'ops' ? 'Operations' : 'Field', track, access: 'none', employment: 'w2', reports_to: 'mark@absoluteadas.com', region: cand.city || '', hire_date: todayPT(), notes: `From Recruiting${cand.source ? ` (${cand.source})` : ''}. Set App access once ready.` })
   startChecklist(m, 'onboarding', req.user?.name || 'Recruiting')
   await saveMember(req, m)
   try { await ensurePersonFolder(req, m) } catch (e) { console.warn('[people] folder on hire failed:', e.message) }

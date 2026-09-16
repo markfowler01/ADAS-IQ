@@ -65,7 +65,7 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
           <div className="flex-1 min-w-0">
             <div className="font-extrabold text-xl leading-tight" style={{ color: '#1a1a1a' }}>{m.name}</div>
             <div className="text-sm font-semibold" style={{ color: '#555' }}>{m.title}</div>
-            <div className="text-xs" style={{ color: '#888' }}>{m.department} · {m.employment === 'w2' ? 'W-2 employee' : m.employment === 'contractor' ? 'Contractor' : 'Owner'}{m.active === false ? ' · inactive' : ''}</div>
+            <div className="text-xs" style={{ color: '#888' }}>{m.department} · {m.employment === 'w2' ? 'W-2 employee' : m.employment === 'contractor' ? 'Contractor' : 'Owner'}{m.track === 'apprentice' ? ' · 🪜 apprentice' : ''}{m.active === false ? ' · inactive' : ''}</div>
             <div className="flex gap-1.5 flex-wrap mt-2">
               {m.phone && <a href={tel(m.phone)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#dcfce7', color: GREEN }}>📞 Call</a>}
               {m.phone && <a href={sms(m.phone)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#dbeafe', color: BLUE }}>💬 Text</a>}
@@ -135,6 +135,24 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
             {(m.documents || []).map((d, i) => <div key={i} className="flex items-center justify-between gap-2 py-1 text-sm" style={{ borderBottom: '1px solid #f3f3f3' }}><a href={d.url} target="_blank" rel="noreferrer" className="font-semibold" style={{ color: BLUE }}>📎 {d.name}</a><span className="text-xs" style={{ color: '#888' }}>{d.added}{d.by ? ` · ${d.by.split(' ')[0]}` : ''}</span>{owner && <Small tone="red" onClick={() => patch({ documents: m.documents.filter((_, k) => k !== i) })}>remove</Small>}</div>)}
             {owner && p?.acks && <div className="text-xs mt-1" style={{ color: '#555' }}>HR policy acknowledged: {Object.keys(p.acks).length ? Object.entries(p.acks).map(([k, a]) => `${k} (${String(a.at).slice(0, 10)})`).join(', ') : <span style={{ color: '#b45309' }}>not yet</span>}</div>}
             {adding === 'document' && <AddBox><F k="name" ph="Document name" w="w-40" /><F k="url" ph="https://workdrive.zoho.com/…" w="flex-1 min-w-[200px]" /></AddBox>}
+          </Section>
+        )}
+
+        {p?.ladder && (
+          <Section title={`Skills ladder · ${p.ladder.pct}%${p.ladder.complete ? ' · complete' : ''}`} right={owner && p.ladder.complete && m.track === 'apprentice' && <Small tone="orange" onClick={() => { if (confirm(`Promote ${m.name} to ADAS Calibration Technician?`)) j(`/api/people/promote/${m.id}`, { method: 'POST' }).then(() => { load(); onChanged && onChanged() }).catch(e => alert(e.message)) }}>🎓 Promote to technician</Small>}>
+            <div className="h-2 rounded-full mb-2" style={{ backgroundColor: '#f1ede9' }}><div className="h-2 rounded-full" style={{ width: `${p.ladder.pct}%`, backgroundColor: p.ladder.complete ? GREEN : '#7c3aed' }} /></div>
+            {p.ladder.rungs.map(r => (
+              <div key={r.key} className="py-1.5" style={{ borderBottom: '1px solid #f3f3f3' }}>
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span style={{ color: r.complete ? GREEN : '#1a1a1a' }}>{r.complete ? '✅ ' : ''}{r.label}</span>
+                  <span className="flex items-center gap-2"><b className="tabular-nums" style={{ color: r.complete ? GREEN : '#7c3aed' }}>{r.done}/{r.need}</b>
+                    {p.can_sign_off && <Small tone="orange" onClick={() => { const note = window.prompt(`Sign off "${r.label}" for ${m.name.split(' ')[0]} — which car / RO? (optional)`, ''); if (note === null) return; j(`/api/people/ladder/${m.id}/signoff`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: r.key, note }) }).then(load).catch(e => alert(e.message)) }}>＋ sign off</Small>}
+                    {owner && r.done > 0 && <Small tone="red" onClick={() => j(`/api/people/ladder/${m.id}/undo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: r.key }) }).then(load)}>undo</Small>}</span>
+                </div>
+                {r.signoffs.length > 0 && <div className="text-[11px] mt-0.5" style={{ color: '#888' }}>{r.signoffs.map((s, i) => `${String(s.at).slice(0, 10)} ${s.by.split(' ')[0]}${s.note ? ` · ${s.note}` : ''}`).join(' · ')}</div>}
+              </div>
+            ))}
+            <div className="text-[11px] mt-1" style={{ color: '#888' }}>The tech who supervised signs the rung off. Apprentices can't sign their own.</div>
           </Section>
         )}
 

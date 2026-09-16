@@ -12,7 +12,7 @@ import multer from 'multer'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
 import { readTeamMembers, saveMemberPublic as saveMember } from './team.js'
-import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson } from './people.js'
+import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson, readLadder, ladderProgress } from './people.js'
 
 const router = express.Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
@@ -41,7 +41,7 @@ const KINDS = {
   ssn:          { n: '03', label: 'Social Security card', tick: 'ids' },
   passport:     { n: '04', label: 'Passport / other ID' },
   voided_check: { n: '05', label: 'Voided check' },
-  deposit:      { n: '06', label: 'Direct deposit authorization (signed)', tick: 'direct_deposit' },
+  deposit:      { n: '06', label: 'Payout authorization (signed)', tick: 'direct_deposit' },
   cert:         { n: '07', label: 'Certification' },
   handbook:     { n: '08', label: 'Signed handbook acknowledgment', tick: 'handbook' },
   contract:     { n: '09', label: 'Signed contract / offer letter', tick: 'contract' },
@@ -92,12 +92,14 @@ router.get('/:id', async (req, res) => {
     const progress = m.training || {}
     const company = await cfgReadJson(req, 'company_page', null)
     res.json({ ok: true,
-      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '' },
+      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '' },
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
       signed: m.signatures || {},
       checklist: m.checklist || null,
-      course: { pass_pct: course.pass_pct, modules: course.modules.map(mod => ({ id: mod.id, title: mod.title, minutes: mod.minutes, video_url: mod.video_url, reading: mod.reading, quiz: (mod.quiz || []).map(q => ({ id: q.id, q: q.q, options: q.options })), progress: progress[mod.id] || null })) },
+      payout: m.payout ? { method: m.payout.method, email: m.payout.email, currency: m.payout.currency, at: m.payout.at } : null,
+      ladder: m.track === 'apprentice' ? ladderProgress(m, await readLadder(req)) : null,
+      course: { pass_pct: course.pass_pct, track: m.track || 'tech', modules: course.modules.filter(mod => (mod.tracks || ['core']).includes('core') || (mod.tracks || []).includes(m.track || 'tech')).map(mod => ({ id: mod.id, title: mod.title, minutes: mod.minutes, video_url: mod.video_url, reading: mod.reading, quiz: (mod.quiz || []).map(q => ({ id: q.id, q: q.q, options: q.options })), progress: progress[mod.id] || null })) },
       company: company ? { mission: company.mission, who_to_call: company.who_to_call } : null, kinds: KINDS })
   } catch (e) { console.error('[onboard get]', e.message); res.status(500).json({ error: e.message }) }
 })
@@ -162,6 +164,33 @@ router.post('/:id/direct-deposit', async (req, res) => {
   } catch (e) { console.error('[onboard deposit]', e.message); res.status(500).json({ error: e.message }) }
 })
 
+// ── Contractor payout (Wise) — instead of a US bank; signed PDF, app keeps method + email
+router.post('/:id/payout', async (req, res) => {
+  try {
+    const g = await guard(req, res); if (!g) return
+    const { m } = g; const b = req.body || {}
+    const email = String(b.email || '').trim().toLowerCase().slice(0, 120), email2 = String(b.email2 || '').trim().toLowerCase(), currency = String(b.currency || 'USD').toUpperCase().slice(0, 3), typed = String(b.signature || '').trim()
+    const bank = String(b.bank || '').trim().slice(0, 120), acct = String(b.account_ref || '').trim().slice(0, 60)
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Enter the email your Wise account uses.' })
+    if (email !== email2) return res.status(400).json({ error: 'The two emails do not match.' })
+    if (typed.toLowerCase().replace(/\s+/g, ' ') !== m.name.toLowerCase().replace(/\s+/g, ' ')) return res.status(400).json({ error: `Sign by typing your full name exactly: ${m.name}` })
+    const when = new Date().toISOString(), from = ip(req)
+    const buf = await pdfBuffer(doc => {
+      doc.fontSize(18).text('Absolute ADAS — Contractor Payout Authorization').moveDown(0.5)
+      doc.fontSize(12).text(`Contractor: ${m.name}`).text(`Role: ${m.title || ''}`).text(`Location: ${m.region || ''}`).moveDown(1)
+      doc.text(`Payout method: Wise`).text(`Wise account email: ${email}`).text(`Currency: ${currency}`)
+      if (bank) doc.text(`Local bank (for reference): ${bank}`); if (acct) doc.text(`Account reference: ${acct}`)
+      doc.moveDown(1).fontSize(11).text('I confirm the payout details above are mine and authorize Absolute ADAS to send contract payments to this account. I will give written notice to change them.').moveDown(1.5)
+      doc.fontSize(12).text(`Signed: ${typed}`).text(`Date: ${when.slice(0, 10)} (${when})`).text(`Signed from IP ${from || 'n/a'} via the Absolute ADAS onboarding link`)
+    })
+    const d = await putFile(req, m, 'deposit', '', buf, 'application/pdf', '.pdf')
+    m.payout = { method: 'wise', email, currency, at: when }; m.wise_email = email; m.wise_currency = currency
+    await saveMember(req, m)
+    console.log(`[onboard] ${m.name} Wise payout on file (${currency})`)
+    res.json({ ok: true, payout: m.payout, document: { kind: 'deposit', name: d.name, added: d.added } })
+  } catch (e) { console.error('[onboard payout]', e.message); res.status(500).json({ error: e.message }) }
+})
+
 // ── Sign the handbook (and a contract/offer the owner dropped in the folder) ──
 router.post('/:id/sign', async (req, res) => {
   try {
@@ -210,7 +239,8 @@ router.post('/:id/course/:mid', async (req, res) => {
     const passed = score >= (course.pass_pct || 80)
     const prev = (m.training || {})[mod.id] || { attempts: 0 }
     m.training = { ...(m.training || {}), [mod.id]: { score, passed: passed || !!prev.passed, at: new Date().toISOString(), attempts: (prev.attempts || 0) + 1, best: Math.max(score, prev.best || 0) } }
-    if (course.modules.every(x => m.training[x.id]?.passed)) tickChecklist(m, 'training', m.name)
+    const mine = course.modules.filter(x => (x.tracks || ['core']).includes('core') || (x.tracks || []).includes(m.track || 'tech'))
+    if (mine.every(x => m.training[x.id]?.passed)) tickChecklist(m, 'training', m.name)
     await saveMember(req, m)
     res.json({ ok: true, score, passed, correct: (mod.quiz || []).map(q => ({ id: q.id, correct: q.correct })), progress: m.training[mod.id] })
   } catch (e) { res.status(500).json({ error: e.message }) }
