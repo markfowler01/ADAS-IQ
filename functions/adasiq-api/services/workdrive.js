@@ -123,6 +123,15 @@ export async function createShareLink(folderId, folderName, accessToken) {
  * @param {string} accessToken  valid Zoho OAuth access token with WorkDrive scopes
  * @returns {{ folderId: string, folderUrl: string, shareLink: string }}
  */
+/** Create a plain folder under any parent (no share link) — personnel folders live under the People root (2026-09-16). */
+export async function createFolderUnder(parentId, folderName, accessToken) {
+  const r = await axios.post(`${WORKDRIVE_API}/files`, { data: { attributes: { name: folderName, parent_id: parentId }, type: 'files' } },
+    { headers: { Authorization: `Zoho-oauthtoken ${accessToken}`, 'Content-Type': 'application/vnd.api+json' }, timeout: 15000 })
+  const id = r.data?.data?.id
+  if (!id) throw new Error('WorkDrive folder creation failed — no folder ID returned.')
+  return { folderId: id, folderUrl: `https://workdrive.zoho.com/folder/${id}` }
+}
+
 export async function createJobFolder(folderName, accessToken) {
   // 1. Create the folder
   const createRes = await axios.post(

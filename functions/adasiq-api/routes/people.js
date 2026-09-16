@@ -12,9 +12,24 @@
 // Everyone sees the company; only Mark + Kat see pay, notes, others' logs.
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import multer from 'multer'
 import { readTeamMembers, findMemberByIdentity, saveMemberPublic as saveMember } from './team.js'
 
 const router = express.Router()
+// Personnel files root in WorkDrive: Absolute ADAS Command Center → HR → Team (Mark, 2026-09-16). One subfolder per person.
+const PEOPLE_FOLDER_ID = 'mniqhb081c583db4e4b54ae1a007f31f84c1b'
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
+export async function ensurePersonFolder(req, m) {
+  if (m.workdrive_folder_id) return m
+  const { getAccessToken } = await import('../services/zoho.js')
+  const { createFolderUnder } = await import('../services/workdrive.js')
+  const token = await getAccessToken()
+  const f = await createFolderUnder(PEOPLE_FOLDER_ID, m.name, token)
+  m.workdrive_folder_id = f.folderId; m.workdrive_folder_url = f.folderUrl
+  await saveMember(req, m)
+  console.log(`[people] WorkDrive folder for ${m.name}: ${f.folderId}`)
+  return m
+}
 const MARK_EMAILS = ['mark@absoluteadas.com', 'mf@absoluteadas.com', 'mfowler4456@gmail.com']
 const isOwner = req => MARK_EMAILS.includes(String(req.user?.email || '').toLowerCase()) || req.user?.role === 'owner'
 const todayPT = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -101,6 +116,39 @@ router.get('/profile/:id', async (req, res) => {
     out.checklist_templates = { onboarding: ONBOARDING, offboarding: OFFBOARDING }
     res.json({ ok: true, ...out })
   } catch (e) { console.error('[people profile]', e.message); res.status(500).json({ error: e.message }) }
+})
+
+// ── Personnel folder + uploads ───────────────────────────────────────
+router.post('/folder/:id', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    await ensurePersonFolder(req, m)
+    res.json({ ok: true, folder_id: m.workdrive_folder_id, folder_url: m.workdrive_folder_url })
+  } catch (e) { console.error('[people folder]', e.message); res.status(500).json({ error: e.message }) }
+})
+// Owner or the person themselves: photo/PDF from the phone → their folder → listed under Documents.
+router.post('/folder/:id/upload', upload.single('file'), async (req, res) => {
+  try {
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    if (!isOwner(req) && !isSelf(req, m)) return res.status(403).json({ error: 'You can only upload to your own file.' })
+    if (!req.file) return res.status(400).json({ error: 'No file' })
+    await ensurePersonFolder(req, m)
+    const { getAccessToken } = await import('../services/zoho.js')
+    const { uploadFileToFolder } = await import('../services/workdrive.js')
+    const label = String(req.body?.name || '').trim() || (req.file.originalname || 'document')
+    const ext = (req.file.originalname || '').match(/\.[a-z0-9]+$/i)?.[0] || (req.file.mimetype === 'application/pdf' ? '.pdf' : /jpe?g/.test(req.file.mimetype) ? '.jpg' : /png/.test(req.file.mimetype) ? '.png' : '')
+    const filename = `${label.replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 80)}${label.toLowerCase().endsWith(ext.toLowerCase()) ? '' : ext}`
+    const up = await uploadFileToFolder(m.workdrive_folder_id, filename, req.file.buffer, await getAccessToken(), req.file.mimetype)
+    const fileId = String(up?.fileId || up?.id || up || '')
+    const doc = { name: label, url: fileId ? `https://workdrive.zoho.com/file/${fileId}` : m.workdrive_folder_url, file_id: fileId, added: todayPT(), by: req.user?.name || req.user?.email || '' }
+    m.documents = [...(Array.isArray(m.documents) ? m.documents : []), doc]
+    await saveMember(req, m)
+    console.log(`[people] ${doc.by} uploaded "${filename}" for ${m.name}`)
+    res.json({ ok: true, document: doc, documents: m.documents })
+  } catch (e) { console.error('[people upload]', e.message); res.status(500).json({ error: e.message }) }
 })
 
 // ── Log (1:1 · review · training · note) ─────────────────────────────
@@ -311,6 +359,7 @@ export async function onCandidateHired(req, cand) {
   const m = await createMemberPublic(req, { name: cand.name, email, user_id: email, phone: cand.phone || '', title: cand.role || 'ADAS Calibration Technician', department: 'Field', access: 'none', employment: 'w2', reports_to: 'mark@absoluteadas.com', region: cand.city || '', hire_date: todayPT(), notes: `From Recruiting${cand.source ? ` (${cand.source})` : ''}. Set App access to Technician once ready.` })
   startChecklist(m, 'onboarding', req.user?.name || 'Recruiting')
   await saveMember(req, m)
+  try { await ensurePersonFolder(req, m) } catch (e) { console.warn('[people] folder on hire failed:', e.message) }
   try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🎉 *${m.name} marked Hired* — added to the Directory (no login yet) and onboarding checklist started. Directory → ${m.name} → Onboarding.`) } catch {}
   return { created: true, member: m }
 }
