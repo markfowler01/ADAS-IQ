@@ -142,6 +142,17 @@ router.post('/folder/:id', async (req, res) => {
     res.json({ ok: true, folder_id: m.workdrive_folder_id, folder_url: m.workdrive_folder_url })
   } catch (e) { console.error('[people folder]', e.message); res.status(500).json({ error: e.message }) }
 })
+// One-shot / safety net: a folder for every active person (owner, or the cron secret).
+router.post('/folders/ensure-all', async (req, res) => {
+  try {
+    const secret = String(process.env.BILLING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+    if (!isOwner(req) && String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(403).json({ error: 'Owner only.' })
+    const members = (await readTeamMembers(req)).filter(m => m.active !== false)
+    const out = []
+    for (const m of members) { try { const had = !!m.workdrive_folder_id; await ensurePersonFolder(req, m); out.push({ name: m.name, folder_id: m.workdrive_folder_id, created: !had }) } catch (e) { out.push({ name: m.name, error: e.message }) } }
+    res.json({ ok: true, folders: out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // Owner or the person themselves: photo/PDF from the phone → their folder → listed under Documents.
 router.post('/folder/:id/upload', upload.single('file'), async (req, res) => {
   try {
