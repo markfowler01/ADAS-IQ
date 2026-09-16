@@ -166,13 +166,25 @@ router.post('/exchange', async (req, res) => {
     const name = profile.name || profile.display_name || profile.Display_Name
       || [profile.first_name || profile.First_Name, profile.last_name || profile.Last_Name].filter(Boolean).join(' ')
       || email || 'Team Member'
+    // Zoho only grants the profile scope here, so there is NO email in the
+    // response (2026-09-16: keys were sub,name,first_name,last_name,picture).
+    // Map the person by name to their known address so roles apply.
+    let mapped = email
+    if (!mapped) {
+      try {
+        const { canonicalIdentity } = await import('../services/hr.js')
+        const [id] = canonicalIdentity('', name)
+        if (id && id.includes('@')) mapped = id
+      } catch { /* leave empty */ }
+    }
     const user = {
       name,
-      email,
+      email: mapped,
       picture: profile.picture || null,
-      ...applyRole(email),
+      zuid: profile.sub || profile.ZUID || null,
+      ...applyRole(mapped),
     }
-    console.log(`[auth] signed in: ${name} <${email || 'NO EMAIL'}> role=${user.role} · profile keys: ${Object.keys(profile).join(',')}`)
+    console.log(`[auth] signed in: ${name} <${mapped || 'NO EMAIL'}>${!email && mapped ? ' (by name)' : ''} role=${user.role} · sub=${profile.sub || '?'} · profile keys: ${Object.keys(profile).join(',')}`)
 
     req.session.user = user
 
