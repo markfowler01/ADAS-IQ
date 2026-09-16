@@ -13,6 +13,7 @@ const PRIMARY_LINKS = [
   { id: 'crm',     label: 'CRM', adminOnly: true },
   { id: 'sms',     label: 'Phone', adminOnly: true },
   { id: 'books',   label: 'Books', adminOnly: true },
+  { id: 'payroll', label: 'Payroll', ownerOnly: true },   // Mark 2026-09-16: one click to the Hours tab (Mark + Kat)
 ]
 
 // Secondary nav — grouped by category in a spacious dropdown
