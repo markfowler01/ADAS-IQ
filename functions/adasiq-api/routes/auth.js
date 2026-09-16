@@ -158,13 +158,21 @@ router.post('/exchange', async (req, res) => {
       timeout: 10000,
     })
 
-    const profile = userRes.data
+    const profile = userRes.data || {}
+    // Zoho's userinfo can answer with capitalised keys (Email, Display_Name,
+    // First_Name…) or OIDC-style lowercase ones. Read both (2026-09-16:
+    // Mark had no owner menu because the email came back empty here).
+    const email = String(profile.email || profile.Email || profile.email_id || profile.primary_email || '').trim().toLowerCase()
+    const name = profile.name || profile.display_name || profile.Display_Name
+      || [profile.first_name || profile.First_Name, profile.last_name || profile.Last_Name].filter(Boolean).join(' ')
+      || email || 'Team Member'
     const user = {
-      name:    profile.name || profile.display_name || profile.email || 'Team Member',
-      email:   profile.email || '',
+      name,
+      email,
       picture: profile.picture || null,
-      ...applyRole(profile.email),
+      ...applyRole(email),
     }
+    console.log(`[auth] signed in: ${name} <${email || 'NO EMAIL'}> role=${user.role} · profile keys: ${Object.keys(profile).join(',')}`)
 
     req.session.user = user
 
