@@ -99,7 +99,7 @@ router.get('/:id', async (req, res) => {
       checklist: m.checklist || null,
       payout: m.payout ? { method: m.payout.method, email: m.payout.email, currency: m.payout.currency, at: m.payout.at } : null,
       ladder: m.track === 'apprentice' ? ladderProgress(m, await readLadder(req)) : null,
-      course: { pass_pct: course.pass_pct, track: m.track || 'tech', modules: course.modules.filter(mod => (mod.tracks || ['core']).includes('core') || (mod.tracks || []).includes(m.track || 'tech')).map(mod => ({ id: mod.id, title: mod.title, minutes: mod.minutes, video_url: mod.video_url, reading: mod.reading, quiz: (mod.quiz || []).map(q => ({ id: q.id, q: q.q, options: q.options })), progress: progress[mod.id] || null })) },
+      course: { pass_pct: course.pass_pct, track: m.track || 'tech', modules: course.modules.filter(mod => (mod.tracks || ['core']).includes('core') || (mod.tracks || []).includes(m.track || 'tech')).map(mod => ({ id: mod.id, title: mod.title, tracks: mod.tracks || ['core'], minutes: mod.minutes, video_url: mod.video_url, reading: mod.reading, quiz: (mod.quiz || []).map(q => ({ id: q.id, q: q.q, options: q.options })), progress: progress[mod.id] || null })) },
       company: company ? { mission: company.mission, who_to_call: company.who_to_call } : null, kinds: KINDS })
   } catch (e) { console.error('[onboard get]', e.message); res.status(500).json({ error: e.message }) }
 })
