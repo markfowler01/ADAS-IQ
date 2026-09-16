@@ -77,10 +77,19 @@ const roleOf = m => (m.access === 'owner' ? 'owner' : m.access === 'technician' 
 const PAY_FIELDS = ['hourly_rate', 'payroll_type', 'salary_annual', 'period_bonus', 'filing_status', 'wise_email', 'wise_currency', 'zoho_payroll_employee_id', 'notes']
 
 function tmTable(req) { return catalyst.initialize(req, { type: 'advancedio' }).datastore().table(TM_TABLE) }
+// Storage is split across three 10,000-char text columns so a fully
+// onboarded apprentice (documents, 35 ladder sign-offs, training results,
+// checklist) never gets truncated (found in review 2026-09-16):
+//   tm_json          — the card itself (contact, job, pay)
+//   tm_docs_json     — documents, certifications, equipment, signatures, direct_deposit/payout
+//   tm_progress_json — checklist, training, ladder
+// A save that would overflow any column throws instead of cutting JSON.
+const DOC_KEYS = ['documents', 'certifications', 'equipment', 'signatures', 'direct_deposit', 'payout']
+const PROG_KEYS = ['checklist', 'training', 'ladder']
+const parseJ = (s, fb) => { if (!s) return fb; try { return JSON.parse(s) } catch { return fb } }
 function rowToMember(row) {
   const r = row?.[TM_TABLE] || row
-  let extra = {}
-  try { extra = r.tm_json ? JSON.parse(r.tm_json) : {} } catch { extra = {} }
+  const extra = { ...parseJ(r.tm_json, {}), ...parseJ(r.tm_docs_json, {}), ...parseJ(r.tm_progress_json, {}) }
   const m = { ...BLANK(), ...extra, id: r.tm_id, user_id: r.tm_user_id || extra.user_id || '', name: r.tm_name || extra.name || '', email: r.tm_email || extra.email || '', access: r.tm_access || extra.access || 'technician', active: r.tm_active !== false && r.tm_active !== 'false', _rowid: String(r.ROWID) }
   m.role = roleOf(m)
   if (!m.track) m.track = m.department === 'Field' ? 'tech' : 'ops'   // technician | apprentice | ops (billing & dispatch)
@@ -88,7 +97,10 @@ function rowToMember(row) {
 }
 function memberToRow(m) {
   const { _rowid, role, ...rest } = m
-  return { tm_id: m.id, tm_user_id: String(m.user_id || '').toLowerCase(), tm_name: m.name || '', tm_email: String(m.email || '').toLowerCase(), tm_access: m.access || 'technician', tm_active: m.active !== false, tm_json: JSON.stringify(rest).slice(0, 10000) }
+  const docs = {}, prog = {}, card = {}
+  for (const [k, v] of Object.entries(rest)) { if (DOC_KEYS.includes(k)) docs[k] = v; else if (PROG_KEYS.includes(k)) prog[k] = v; else card[k] = v }
+  const fit = (obj, col) => { const s = JSON.stringify(obj); if (s.length > 10000) throw new Error(`${m.name}: ${col} is full (${s.length} chars) — trim old entries before saving`); return s }
+  return { tm_id: m.id, tm_user_id: String(m.user_id || '').toLowerCase(), tm_name: m.name || '', tm_email: String(m.email || '').toLowerCase(), tm_access: m.access || 'technician', tm_active: m.active !== false, tm_json: fit(card, 'card'), tm_docs_json: fit(docs, 'documents'), tm_progress_json: fit(prog, 'progress') }
 }
 let _migrated = false
 export async function readTeamMembers(req) {
