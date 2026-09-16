@@ -577,8 +577,14 @@ export async function maybeFireHoursReport(req) {
   let cliqd = false
   try {
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
+    let reviewLine = ''
+    try {
+      const { readAttestations } = await import('../routes/timeclock.js')
+      const att = await readAttestations(req, start, PAYROLL_ROSTER.map(p => p.user_id))
+      reviewLine = 'Time cards reviewed: ' + PAYROLL_ROSTER.filter(p => p.user_id !== 'joyce@absoluteadas.com').map(p => `${firstName(p.user_name)} ${att[p.user_id] ? '✅' : '⏳ not yet'}`).join(' · ') + '\n'
+    } catch { /* non-fatal */ }
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `🕒 *Payday hours · ${period.label}*${emailed ? ' — emailed to mark@ with CSV for Joyce' : ' — ⚠️ email failed, full copy here'}\n` +
+      `🕒 *Payday hours · ${period.label}*${emailed ? ' — emailed to mark@ with CSV for Joyce' : ' — ⚠️ email failed, full copy here'}\n` + reviewLine +
       `Period ${start} → ${end} is now LOCKED — time clock edits to it need your unlock. Full page: Payroll → Hours in the app.\n\n` +
       '```\n' + report.text.slice(0, 3000) + '\n```')
     cliqd = true

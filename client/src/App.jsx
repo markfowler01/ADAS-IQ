@@ -37,6 +37,7 @@ import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
 import SoftphonePanel from './components/SoftphonePanel'
 import { UploadTray } from './components/JobPhotos'
+import TimeClockReview from './components/TimeClockReview'
 import MorningClockIn from './components/MorningClockIn'
 import HRPolicyScreen from './pages/HRPolicyScreen'
 import BooksScreen from './components/BooksScreen'
@@ -285,6 +286,8 @@ function MainApp() {
       <UploadTray />
       {/* Morning clock-in prompt — everyone, once per day (not demo) */}
       {!isDemo && <MorningClockIn user={user} />}
+      {/* Time card review + approve at login on the 15th / last day (Mark 2026-09-16) */}
+      {!isDemo && <TimeClockReview user={user} />}
       {/* Session expiry warning banner */}
       {sessionWarning && (
         <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3 text-sm font-medium"

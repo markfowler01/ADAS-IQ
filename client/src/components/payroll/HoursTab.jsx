@@ -56,6 +56,9 @@ export default function HoursTab({ user }) {
     if (f.long_days?.length) out.push({ t: `⚠️ ${f.long_days.length} day${f.long_days.length > 1 ? 's' : ''} over 12h`, tone: 'amber' })
     if (f.manual_min) out.push({ t: `⌨️ ${h(f.manual_min / 60)} keyed in`, tone: 'blue' })
     if (p.late) out.push({ t: `late adj. ${h(p.late)}`, tone: 'amber' })
+    const rv = data?.reviews?.[p.user_id]
+    if (rv) out.push({ t: `✅ approved by ${p.name.split(' ')[0]} ${new Date(rv.at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`, tone: 'green' })
+    else if (p.user_id !== 'joyce@absoluteadas.com' && (data?.today || '') >= (period?.end || '')) out.push({ t: '⏳ not reviewed yet', tone: 'amber' })
     return out
   }
   async function copyForZoho() {
@@ -131,7 +134,7 @@ export default function HoursTab({ user }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-base" style={{ color: COLORS.text }}>{p.name}</span>
                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={p.type === 'employee' ? { backgroundColor: COLORS.infoSoft, color: COLORS.info } : { backgroundColor: COLORS.successSoft, color: COLORS.success }}>{p.type === 'employee' ? 'W-2' : 'Contract'}</span>
-                    {flags.map(f => <span key={f.t} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={f.tone === 'red' ? { backgroundColor: COLORS.dangerSoft, color: COLORS.danger } : f.tone === 'blue' ? { backgroundColor: COLORS.infoSoft, color: COLORS.info } : { backgroundColor: COLORS.warningSoft, color: COLORS.warning }}>{f.t}</span>)}
+                    {flags.map(f => <span key={f.t} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={f.tone === 'red' ? { backgroundColor: COLORS.dangerSoft, color: COLORS.danger } : f.tone === 'blue' ? { backgroundColor: COLORS.infoSoft, color: COLORS.info } : f.tone === 'green' ? { backgroundColor: COLORS.successSoft, color: COLORS.success } : { backgroundColor: COLORS.warningSoft, color: COLORS.warning }}>{f.t}</span>)}
                   </div>
                   <div className="text-xs mt-0.5" style={{ color: COLORS.textMuted }}>
                     {none ? 'No clock-ins this period' : p.type === 'employee'

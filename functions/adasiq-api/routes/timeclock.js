@@ -864,7 +864,8 @@ router.get('/period-hours', async (req, res) => {
     const period = await periodFromQuery(req)
     const [report, lock] = await Promise.all([buildHoursReport(req, period.start, period.end), getPayrollLockDate(req).catch(() => '')])
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
-    res.json({ ok: true, period, people: report.people, text: report.text, csv: report.csv, holidays: report.holiday_list, locked_through: lock || '', today,
+    const reviews = await readAttestations(req, period.start, report.people.map(p => p.user_id).filter(Boolean))
+    res.json({ ok: true, period, people: report.people, reviews, text: report.text, csv: report.csv, holidays: report.holiday_list, locked_through: lock || '', today,
       periods: { current: semiMonthlyPeriod(today, 0), previous: semiMonthlyPeriod(today, -1) } })
   } catch (e) { console.error('[timeclock period-hours]', e.message); res.status(500).json({ error: e.message }) }
 })
@@ -909,6 +910,81 @@ router.post('/entries/manual', async (req, res) => {
     console.log(`[timeclock] manual hours: ${userName} ${date} ${hours}h by ${entry.manual_by}`)
     res.json({ ok: true, entry })
   } catch (e) { console.error('[timeclock entries/manual]', e.message); res.status(500).json({ error: e.message }) }
+})
+
+
+// ── Time card review + approval by the employee (Mark 2026-09-16: "on
+//    the 15th and the last day of the month when everybody goes to login
+//    I want you to pull up a time clock review and have everybody review
+//    and approve their time clocks"). Attestation lives in AppConfig
+//    `tc_attest:<emailKey>:<period start>`; a period is "due" from its
+//    last day until 4 days after, so a missed login still gets asked.
+const attestKey = (uid, start) => `tc_attest:${emailKey(uid)}:${start}`
+function ptToday() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }
+async function reviewPeriodFor(today) {
+  const { semiMonthlyPeriod, addDaysISO } = await import('../services/hr.js')
+  // The period that is closing today (last day) or just closed (≤ 4 days ago)
+  for (const shift of [0, -1]) {
+    const p = semiMonthlyPeriod(today, shift)
+    if (today >= p.end && today <= addDaysISO(p.end, 4)) return { ...p, due: true }
+  }
+  return { ...semiMonthlyPeriod(today, 0), due: false }
+}
+export async function readAttestations(req, start, userIds) {
+  const out = {}
+  await Promise.all(userIds.map(async uid => {
+    const r = await tcRead(req, attestKey(uid, start)).catch(() => null)
+    if (r?.value) { try { out[uid] = JSON.parse(r.value) } catch {} }
+  }))
+  return out
+}
+router.get('/period-review', async (req, res) => {
+  try {
+    const userId = getUserId(req)
+    const today = ptToday()
+    const period = await reviewPeriodFor(today)
+    const { entryWorkedMinutes } = await import('../services/hr.js')
+    const mine = (await readPerson(req, userId)).filter(e => { const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(e.clock_in)); return d >= period.start && d <= period.end })
+    const days = {}
+    for (const e of mine) {
+      const d = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(e.clock_in))
+      const m = e.clock_out ? entryWorkedMinutes(e) : 0
+      days[d] = days[d] || { date: d, minutes: 0, shifts: [] }
+      days[d].minutes += m
+      days[d].shifts.push({ id: e.id, in: e.clock_in, out: e.clock_out, minutes: m, auto: !!(e.auto_punch || e.auto_punched || e.auto_closed), manual: !!e.manual, pending_edit: e.pending_edit || null, approved: !!e.approved })
+    }
+    const total = Object.values(days).reduce((s, d) => s + d.minutes, 0)
+    const att = (await readAttestations(req, period.start, [userId]))[userId] || null
+    // The pay side (Mark 2026-09-16: "include the holiday pay, that kind of
+    // stuff — this stuff is really important to people"): same numbers the
+    // payday report uses, for this person only.
+    let pay = null
+    try {
+      const { buildHoursReport } = await import('../services/hr.js')
+      const rep = await buildHoursReport(req, period.start, period.end)
+      const me = rep.people.find(p => p.user_id === userId)
+      if (me) pay = { type: me.type, worked: me.worked, regular: me.regular, ot: me.ot, sick: me.sick, vacation: me.vacation, holiday: me.holiday, unpaid: me.unpaid, payable: me.payable, sick_balance: me.sick_balance, holidays: (rep.holiday_list || []).map(x => x.name), late: me.late }
+    } catch (e) { console.warn('[period-review] pay summary failed:', e.message) }
+    res.json({ ok: true, today, period, due: period.due, attested: att, total_minutes: total, pay, days: Object.values(days).sort((a, z) => a.date.localeCompare(z.date)), open: mine.filter(e => !e.clock_out).length })
+  } catch (e) { console.error('[timeclock period-review]', e.message); res.status(500).json({ error: e.message }) }
+})
+router.post('/period-review/attest', async (req, res) => {
+  try {
+    const userId = getUserId(req), userName = getUserName(req)
+    const start = String(req.body?.start || ''), end = String(req.body?.end || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return res.status(400).json({ error: 'period start/end required' })
+    const total = Number(req.body?.total_minutes) || 0
+    const rec = { user_id: userId, user_name: userName, start, end, at: new Date().toISOString(), total_minutes: total, note: String(req.body?.note || '').slice(0, 300), ok: true }
+    await tcWrite(req, attestKey(userId, start), JSON.stringify(rec))
+    console.log(`[timeclock] ${userName} approved their time card ${start}→${end}: ${(total / 60).toFixed(2)}h`)
+    if (!/demo/i.test(String(req.user?.email || ''))) {
+      try {
+        const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ *${userName} reviewed + approved their time card* · ${start} → ${end} · ${(total / 60).toFixed(2)}h${rec.note ? `\nNote: ${rec.note}` : ''}`)
+      } catch (e) { console.warn('[timeclock] attest ping failed:', e.message) }
+    }
+    res.json({ ok: true, attested: rec })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 export { readEntries as readEntriesPublic, writeEntries as writeEntriesPublic }
