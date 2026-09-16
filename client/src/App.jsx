@@ -27,7 +27,8 @@ import KanbanBoard from './components/KanbanBoard'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import RepairEstimateScreen from './components/RepairEstimateScreen'
 import EstimatorBoard from './components/estimator/EstimatorBoard'  // repair estimator (2026-09-14)
-import EstimateApprovalScreen from './components/estimator/EstimateApprovalScreen'  // public: /app/estimate?e=&t=
+import EstimateApprovalScreen from './components/estimator/EstimateApprovalScreen'
+import OnboardingScreen from './components/team/OnboardingScreen'  // public: /app/?onboard=<id>&t=  // public: /app/estimate?e=&t=
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
@@ -76,6 +77,7 @@ function getTopLevelRoute() {
   if (path.endsWith('/quote') || path.includes('/app/quote')) return 'quote'
   // Catalyst static hosting only serves real files, so the customer approval link is /app/?estimate=<id>&t=<token>
   if (/\/estimate\/?$/.test(path) || /[?&]estimate=/.test(window.location.search || '')) return 'estimate'
+  if (/[?&]onboard=/.test(window.location.search || '')) return 'onboard'
   if (path.endsWith('/nps') || path.includes('/app/nps')) return 'nps'
   return 'app'
 }
@@ -86,6 +88,7 @@ export default function App() {
   if (topRoute === 'portal') return <PortalApp />
   if (topRoute === 'quote') return <QuoteApprovalScreen />
   if (topRoute === 'estimate') return <EstimateApprovalScreen />
+  if (topRoute === 'onboard') return <OnboardingScreen />
   if (topRoute === 'nps') return <NPSScreen />
   return <MainApp />
 }

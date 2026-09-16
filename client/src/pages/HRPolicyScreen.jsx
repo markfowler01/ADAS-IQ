@@ -53,6 +53,8 @@ Request all time off through the Time Off page in this app. Requests route to Ma
 ]
 
 export default function HRPolicyScreen({ user, onLogout, currentScreen, onNavigate }) {
+  const [sections, setSections] = useState(SECTIONS)
+  useEffect(() => { apiFetch(`${API_BASE}/api/people/handbook`).then(r => r.json()).then(d => { if (d.ok && Array.isArray(d.sections) && d.sections.length) setSections(d.sections) }).catch(() => {}) }, [])
   const [acks, setAcks] = useState({ mine: {}, all: null })
   const [busy, setBusy] = useState('')
   const load = () => apiFetch(`${API_BASE}/api/people/policy/acks`).then(r => r.json()).then(d => { if (d.ok) setAcks(d) }).catch(() => {})
@@ -70,7 +72,7 @@ export default function HRPolicyScreen({ user, onLogout, currentScreen, onNaviga
         <p className="text-xs mb-5" style={{ color: '#888' }}>
           Washington State requires this notice of your paid sick leave rights. Questions → Mark.
         </p>
-        {SECTIONS.map(s => {
+        {sections.map(s => {
           const id = pid(s.title), ver = hash(s.body), a = acks.mine?.[id]
           const current = a && a.version === ver
           return (
@@ -91,7 +93,7 @@ export default function HRPolicyScreen({ user, onLogout, currentScreen, onNaviga
             {Object.entries(acks.all).map(([uid, row]) => (
               <div key={uid} className="flex items-center justify-between gap-2 py-1.5 text-sm" style={{ borderTop: '1px solid #f3f3f3' }}>
                 <span className="font-semibold">{row.name}</span>
-                <span className="text-xs">{SECTIONS.map(s => { const id = pid(s.title), a = row.acks?.[id]; const ok = a && a.version === hash(s.body); return <span key={id} className="ml-2 font-bold" style={{ color: ok ? '#15803d' : '#b45309' }}>{ok ? '✅' : '⏳'} {s.title}</span> })}</span>
+                <span className="text-xs">{sections.map(s => { const id = pid(s.title), a = row.acks?.[id]; const ok = a && a.version === hash(s.body); return <span key={id} className="ml-2 font-bold" style={{ color: ok ? '#15803d' : '#b45309' }}>{ok ? '✅' : '⏳'} {s.title}</span> })}</span>
               </div>
             ))}
           </div>

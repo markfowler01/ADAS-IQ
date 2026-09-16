@@ -139,6 +139,17 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
         )}
 
         {canSee && (
+          <Section title="Onboarding link" right={owner && <Small tone="orange" onClick={async () => { const ph = m.personal_phone || m.phone || window.prompt('Their cell number for the text (leave blank to email only):', '') ; if (ph === null) return; setBusy(true); try { const r = await j(`/api/people/onboarding/${m.id}/invite`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ personal_phone: ph || undefined }) }); alert(`Link ready.\nText: ${r.sms ? (r.sms.ok ? 'sent to ' + r.sms.to : 'failed — ' + r.sms.error) : 'no phone'}\nEmail: ${r.email ? (r.email.ok ? 'sent to ' + r.email.to : 'failed — ' + r.email.error) : 'no email'}\n\n${r.link}`); await load() } catch (e) { alert(e.message) } finally { setBusy(false) } }}>📨 {m.onboarding_invited_at ? 'Resend' : 'Send'} link</Small>}>
+            <div className="flex gap-1.5 flex-wrap text-[11px] font-bold">
+              {[['photo', '📷 photo', !!m.photo_url], ['ids', '🪪 ID + SSN', (m.documents || []).some(x => x.kind === 'dl_front') && (m.documents || []).some(x => x.kind === 'ssn')], ['deposit', '🏦 direct deposit', !!m.direct_deposit], ['handbook', '✍️ handbook', !!m.signatures?.handbook], ['contract', '📄 contract', !!m.signatures?.contract], ['training', '🎓 training', !!(p?.member?.training && Object.values(p.member.training).length && Object.values(p.member.training).every(t => t.passed))]].map(([k, l, ok]) => <span key={k} className="px-2 py-0.5 rounded-full" style={ok ? { backgroundColor: '#dcfce7', color: GREEN } : { backgroundColor: '#f5f3f0', color: '#999' }}>{ok ? '✓ ' : ''}{l}</span>)}
+            </div>
+            {m.direct_deposit && owner && <div className="text-xs mt-1.5" style={{ color: '#555' }}>Direct deposit: {m.direct_deposit.bank} · {m.direct_deposit.type} ending {m.direct_deposit.last4} · signed {String(m.direct_deposit.at).slice(0, 10)} (PDF in their folder)</div>}
+            {m.onboarding_invited_at && <div className="text-[11px] mt-1" style={{ color: '#888' }}>Link sent {String(m.onboarding_invited_at).slice(0, 10)}</div>}
+            {me && <div className="mt-2"><Small tone="orange" onClick={async () => { try { const r = await j('/api/people/onboarding/my-link'); window.open(r.link, '_blank') } catch (e) { alert(e.message) } }}>▶ Open my onboarding</Small></div>}
+          </Section>
+        )}
+
+        {canSee && (
           <Section title={cl ? `${cl.kind === 'offboarding' ? 'Offboarding' : 'Onboarding'} · ${cl.items.filter(i => i.done).length}/${cl.items.length}${cl.completed_at ? ' · done' : ''}` : 'Onboarding'} right={owner && (!cl || cl.completed_at) && <div className="flex gap-1"><Small tone="orange" onClick={() => j(`/api/people/checklist/${m.id}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'onboarding' }) }).then(load)}>▶ start onboarding</Small><Small tone="red" onClick={() => { if (confirm(`Start offboarding ${m.name}? Finishing the list turns off their login.`)) j(`/api/people/checklist/${m.id}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'offboarding' }) }).then(() => { load(); onChanged && onChanged() }) }}>offboard</Small></div>}>
             {!cl && <div className="text-xs" style={{ color: '#999' }}>No checklist running.</div>}
             {cl && cl.items.map(it => (

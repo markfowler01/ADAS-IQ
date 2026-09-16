@@ -409,6 +409,12 @@ export async function uploadFileToFolder(folderId, filename, buffer, accessToken
 
 // Move a WorkDrive file to Trash (status 51). Used when a tech deletes a
 // wrong job photo (Mark 2026-09-10). Best effort — callers never fail on it.
+/** Download a file's bytes (profile photos are served through the app). */
+export async function downloadFile(fileId, accessToken) {
+  const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }, responseType: 'arraybuffer', timeout: 20000 })
+  return { buffer: Buffer.from(r.data), contentType: r.headers['content-type'] || 'application/octet-stream' }
+}
+
 export async function trashFile(fileId, accessToken) {
   const axios = (await import('axios')).default
   const r = await axios.patch(`https://www.zohoapis.com/workdrive/api/v1/files/${fileId}`,

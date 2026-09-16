@@ -5,6 +5,7 @@ import { DirectoryTab, OrgChartTab, MemberEditModal } from './team/Directory.jsx
 import ProfileDrawer from './team/Profile.jsx'
 import CalendarTab from './team/Calendar.jsx'
 import CompanyTab from './team/Company.jsx'
+import TrainingTab from './team/Training.jsx'
 import { isOwnerUser } from '../utils/identity.js'
 
 const ROLES = ['owner', 'admin', 'manager', 'technician', 'office', 'contractor']
@@ -66,6 +67,7 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
     { id: 'org', label: 'Org chart' },
     { id: 'calendar', label: 'Calendar' },
     { id: 'company', label: 'Company' },
+    { id: 'training', label: 'Training' },
     { id: 'announcements', label: `Announcements (${announcements.length})` },
   ]
 
@@ -107,6 +109,8 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
           <CalendarTab />
         ) : tab === 'company' ? (
           <CompanyTab />
+        ) : tab === 'training' ? (
+          <TrainingTab />
         ) : (
           <AnnouncementsTab announcements={announcements} isAdmin={isAdmin}
             currentUserId={user?.email}

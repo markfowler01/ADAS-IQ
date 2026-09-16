@@ -51,6 +51,8 @@ async function cfgWrite(req, key, value) {
   if (cur) await table.updateRow({ ROWID: cur.rowid, config_key: key, config_value: v })
   else await table.insertRow({ config_key: key, config_value: v })
 }
+export async function cfgWriteJson(req, key, value) { return cfgWrite(req, key, value) }
+export async function cfgReadJson(req, key, fallback) { return cfgJson(req, key, fallback) }
 async function cfgJson(req, key, fallback) { const r = await cfgRead(req, key).catch(() => null); if (!r?.value) return fallback; try { return JSON.parse(r.value) } catch { return fallback } }
 
 async function memberFor(req, id) {
@@ -61,18 +63,29 @@ function isSelf(req, m) { const e = String(req.user?.email || '').toLowerCase();
 function stripPay(m) { const { hourly_rate, payroll_type, salary_annual, period_bonus, filing_status, wise_email, wise_currency, zoho_payroll_employee_id, notes, ...rest } = m; return rest }
 
 // ── Checklists ────────────────────────────────────────────────────────
+// Items marked (auto) tick themselves as the new hire works through the onboarding link.
 const ONBOARDING = [
-  { key: 'login',     label: 'App login + access level set (Directory → App access)' },
-  { key: 'cliq',      label: 'Added to Cliq (#dispatch, #aajobs)' },
-  { key: 'timeclock', label: 'Walked through the time clock (clock in/out, breaks, photo set)' },
-  { key: 'payroll',   label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise' },
-  { key: 'w4',        label: 'W-4 / I-9 / direct deposit on file (W-2) — or contract signed (contractor)' },
-  { key: 'handbook',  label: 'HR policy acknowledged in the app' },
-  { key: 'emergency', label: 'Emergency contact + photo on the Directory card' },
-  { key: 'gear',      label: 'Van / tools / phone issued and listed under Equipment' },
-  { key: 'rideaong',  label: 'First-week ride-along with Mark' },
-  { key: 'checkin30', label: '30-day check-in on the calendar' },
+  { key: 'invite',         label: 'Onboarding link sent (text + email)' },
+  { key: 'photo',          label: 'Profile photo uploaded (auto)' },
+  { key: 'emergency',      label: 'Personal info + emergency contact filled in (auto)' },
+  { key: 'ids',            label: "Driver's license + Social Security card photographed (auto)" },
+  { key: 'direct_deposit', label: 'Direct deposit authorization signed (auto)' },
+  { key: 'handbook',       label: 'Handbook & policies signed (auto)' },
+  { key: 'contract',       label: 'Contract / offer letter signed (auto — owner drops the PDF in their folder first)' },
+  { key: 'training',       label: 'Training course passed — all modules (auto)' },
+  { key: 'login',          label: 'App login + access level set (Directory → App access)' },
+  { key: 'cliq',           label: 'Added to Cliq (#dispatch, #aajobs)' },
+  { key: 'payroll',        label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise (use the signed deposit PDF)' },
+  { key: 'gear',           label: 'Van / tools / phone issued and listed under Equipment' },
+  { key: 'rideaong',       label: 'First-week ride-along with Mark' },
+  { key: 'checkin30',      label: '30-day check-in on the calendar' },
 ]
+export function tickChecklist(m, key, by) {
+  if (!m.checklist || m.checklist.kind !== 'onboarding') return
+  const it = m.checklist.items.find(x => x.key === key)
+  if (it && !it.done) { it.done = true; it.at = new Date().toISOString(); it.by = by || 'auto' }
+  if (m.checklist.items.every(x => x.done)) m.checklist.completed_at = m.checklist.completed_at || new Date().toISOString()
+}
 const OFFBOARDING = [
   { key: 'access',    label: 'App access set to "No login"' },
   { key: 'cliq',      label: 'Removed from Cliq channels' },
@@ -319,6 +332,75 @@ router.put('/company', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ── Course (Directory → Training) + handbook ─────────────────────────
+export async function readCourse(req) {
+  const { DEFAULT_COURSE } = await import('../services/onboardingCourse.js')
+  const c = await cfgJson(req, 'onboarding_course', null)
+  return c && Array.isArray(c.modules) && c.modules.length ? c : DEFAULT_COURSE
+}
+router.get('/course', async (req, res) => { try { const c = await readCourse(req); const owner = isOwner(req); const me = await findMemberByIdentity(req, req.user?.email, req.user?.name); res.json({ ok: true, editable: owner, course: owner ? c : { ...c, modules: c.modules.map(m => ({ ...m, quiz: (m.quiz || []).map(q => ({ id: q.id, q: q.q, options: q.options })) })) }, my_progress: me?.training || {}, my_id: me?.id || null }) } catch (e) { res.status(500).json({ error: e.message }) } })
+router.put('/course', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const b = req.body || {}
+    const modules = (Array.isArray(b.modules) ? b.modules : []).map((m, i) => ({ id: String(m.id || `m${i + 1}`).replace(/[^a-z0-9_-]/gi, '').slice(0, 40) || `m${i + 1}`, title: String(m.title || '').slice(0, 120), minutes: Number(m.minutes) || 5, video_url: String(m.video_url || '').slice(0, 500), reading: String(m.reading || '').slice(0, 6000),
+      quiz: (Array.isArray(m.quiz) ? m.quiz : []).map((q, k) => ({ id: String(q.id || `q${k + 1}`).slice(0, 20), q: String(q.q || '').slice(0, 300), options: (Array.isArray(q.options) ? q.options : []).map(o => String(o).slice(0, 200)).filter(Boolean).slice(0, 6), correct: Number(q.correct) || 0 })).filter(q => q.q && q.options.length >= 2) })).filter(m => m.title)
+    const course = { version: (Number(b.version) || 1) + 1, pass_pct: Math.min(100, Math.max(50, Number(b.pass_pct) || 80)), modules, updated_at: new Date().toISOString(), updated_by: req.user?.name || '' }
+    await cfgWrite(req, 'onboarding_course', course)
+    res.json({ ok: true, course })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/handbook', async (req, res) => { try { const { SECTIONS, handbookHash } = await import('../services/handbook.js'); res.json({ ok: true, sections: SECTIONS, version: handbookHash() }) } catch (e) { res.status(500).json({ error: e.message }) } })
+
+// ── Onboarding link: owner sends it; the person can open their own ──
+export async function onboardingLink(req, m) {
+  const { makeOnboardToken } = await import('./onboardPublic.js')
+  const base = process.env.WEB_BASE_URL || `${req.protocol}://${req.get('host')}/app`
+  return `${base}/?onboard=${encodeURIComponent(m.id)}&t=${encodeURIComponent(makeOnboardToken(m.id))}`
+}
+export async function sendOnboardingInvite(req, m, by) {
+  const link = await onboardingLink(req, m)
+  const to = { sms: m.personal_phone || m.phone || '', email: m.personal_email || m.email || '' }
+  const out = { link, sms: null, email: null }
+  const first = m.preferred_name || firstName(m.name)
+  if (to.sms) {
+    try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ to: to.sms, body: `Hi ${first}, welcome to Absolute ADAS! Here's your onboarding link — takes about 20 minutes on your phone (photo, ID, direct deposit, a short training). ${link}  — Mark` }); out.sms = r?.ok ? { ok: true, to: to.sms } : { ok: false, error: r?.error || 'failed' } } catch (e) { out.sms = { ok: false, error: e.message } }
+  }
+  if (to.email) {
+    try {
+      const { getMailAccessToken, getMailAccountId, sendMail } = await import('../services/mail.js')
+      const token = await getMailAccessToken(); const accountId = await getMailAccountId(token)
+      const html = `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;color:#1a1a1a"><div style="background:#CD4419;color:white;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:700">Absolute ADAS · Welcome aboard</div><div style="border:1px solid #e8e4e0;border-top:none;padding:18px;border-radius:0 0 10px 10px"><p>Hi ${first},</p><p>Welcome to Absolute ADAS. Your onboarding is done on your phone and takes about 20 minutes: a profile photo, a photo of your driver's license and Social Security card, direct deposit, the handbook, and a short training with a few questions.</p><p style="text-align:center;margin:20px 0"><a href="${link}" style="background:#15803d;color:white;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700">Start my onboarding</a></p><p style="color:#666;font-size:12px">The link is good for 45 days and is just for you. Questions — call Mark.</p><p>GET SOME!!!<br>— Mark</p></div></div>`
+      await sendMail(token, accountId, { to: to.email, subject: 'Welcome to Absolute ADAS — your onboarding link', body: html }); out.email = { ok: true, to: to.email }
+    } catch (e) { out.email = { ok: false, error: e.message } }
+  }
+  if (!m.checklist) startChecklist(m, 'onboarding', by || 'app')
+  tickChecklist(m, 'invite', by || 'app')
+  m.onboarding_invited_at = new Date().toISOString()
+  await saveMember(req, m)
+  console.log(`[people] onboarding invite for ${m.name}: sms ${out.sms?.ok ? 'ok' : out.sms?.error || 'none'} · email ${out.email?.ok ? 'ok' : out.email?.error || 'none'}`)
+  return out
+}
+router.post('/onboarding/:id/invite', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    if (req.body?.personal_phone) m.personal_phone = String(req.body.personal_phone).slice(0, 40)
+    if (req.body?.personal_email) m.personal_email = String(req.body.personal_email).slice(0, 120)
+    try { await ensurePersonFolder(req, m) } catch (e) { console.warn('[people] folder before invite failed:', e.message) }
+    const out = await sendOnboardingInvite(req, m, req.user?.name)
+    res.json({ ok: true, ...out })
+  } catch (e) { console.error('[people invite]', e.message); res.status(500).json({ error: e.message }) }
+})
+router.get('/onboarding/my-link', async (req, res) => {
+  try {
+    const me = await findMemberByIdentity(req, req.user?.email, req.user?.name)
+    if (!me) return res.status(404).json({ error: 'You are not in the Directory yet.' })
+    res.json({ ok: true, link: await onboardingLink(req, me) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // ── Daily nudges to Mark (7am PT, once a day) — birthdays, anniversaries,
 //    expiries ≤ 30 days, onboarding still open, policy acks missing (Mondays)
 export async function maybePeopleNudges(req) {
@@ -360,6 +442,7 @@ export async function onCandidateHired(req, cand) {
   startChecklist(m, 'onboarding', req.user?.name || 'Recruiting')
   await saveMember(req, m)
   try { await ensurePersonFolder(req, m) } catch (e) { console.warn('[people] folder on hire failed:', e.message) }
+  try { if (m.phone || m.email) await sendOnboardingInvite(req, m, 'Recruiting') } catch (e) { console.warn('[people] invite on hire failed:', e.message) }
   try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🎉 *${m.name} marked Hired* — added to the Directory (no login yet) and onboarding checklist started. Directory → ${m.name} → Onboarding.`) } catch {}
   return { created: true, member: m }
 }
