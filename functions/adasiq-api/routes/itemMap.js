@@ -199,6 +199,28 @@ router.post('/rename-rivian', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Owner/secret: update name / rate / description on existing Books items (batch, ≤60).
+router.post('/update-items', async (req, res) => {
+  try {
+    if (!ownerOrSecret(req)) return res.status(403).json({ error: 'Owner only.' })
+    const list = (Array.isArray(req.body?.items) ? req.body.items : []).slice(0, 60)
+    const { getAccessToken } = await import('../services/zoho.js')
+    const token = await getAccessToken()
+    const out = []
+    for (const it of list) {
+      if (!it?.item_id) continue
+      const body = {}
+      if (it.name != null) body.name = String(it.name).slice(0, 100)
+      if (it.description != null) body.description = String(it.description).slice(0, 2000)
+      if (Number.isFinite(Number(it.rate))) body.rate = Number(it.rate)
+      const r = await axios.put(`https://www.zohoapis.com/books/v3/items/${it.item_id}`, body, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000, validateStatus: s => s < 500 })
+      out.push({ item_id: it.item_id, ok: r.data?.code === 0, name: r.data?.item?.name, message: r.data?.message })
+    }
+    console.log(`[books item] updated ${out.filter(x => x.ok).length}/${out.length}`)
+    res.json({ ok: true, results: out })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 // Owner/secret diagnostic: search Books for a name across contacts,
 // estimates, invoices, items. Read-only. (Mark 2026-09-09: LM duplicates.)
 router.get('/books-search', async (req, res) => {
