@@ -61,7 +61,7 @@ export default function ItemMapScreen({ user, onLogout, currentScreen, onNavigat
     } catch (e) { showToast(e.message) }
   }
 
-  const POOL_LABELS = { STD: 'Standard', CP: '💵 Cash', SF: 'State Farm', AS: 'Allstate', AMFAM: 'AmFam' }
+  const POOL_LABELS = { STD: 'Standard', CP: '💵 Cash', SF: 'State Farm', AS: 'Allstate', AMFAM: 'AmFam', GEICO: 'GEICO' }
 
   async function save(kineticName, itemId) {
     const item = data.books_items.find(i => String(i.item_id) === String(itemId))

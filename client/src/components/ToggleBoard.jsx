@@ -574,7 +574,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           <div className="rounded-xl px-3 py-2 mb-3 text-xs" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
             <b>New insurer: {jobData.insurer}.</b> Which price list do they use? The app remembers for next time.
             <div className="flex gap-1.5 flex-wrap mt-1.5">
-              {[['STD', 'Standard'], ['AS', 'Allstate'], ['SF', 'State Farm'], ['AMFAM', 'Am Fam']].map(([p, l]) => (
+              {[['STD', 'Standard'], ['AS', 'Allstate'], ['SF', 'State Farm'], ['AMFAM', 'Am Fam'], ['GEICO', 'GEICO']].map(([p, l]) => (
                 <button key={p} type="button" onClick={async () => { try { await apiFetch(`${API_BASE}/api/insurers/learn`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ insurer: jobData.insurer, pool: p }) }); setLearned(p); if (p !== 'STD') setPoolOverride(p) } catch (e) { alert(e.message) } }}
                   className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: 'white', color: '#92400e', border: '1px solid #fcd34d' }}>{l}</button>
               ))}
@@ -943,6 +943,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             { id: 'SF',    label: 'State Farm' },
             { id: 'AS',    label: 'Allstate' },
             { id: 'AMFAM', label: 'AmFam' },
+            { id: 'GEICO', label: 'GEICO' },
           ].map(pl => (
             <button key={pl.label} disabled={busy} onClick={() => onPool(pl.id)}
               className="text-[10px] font-bold px-2 py-1 rounded-lg"

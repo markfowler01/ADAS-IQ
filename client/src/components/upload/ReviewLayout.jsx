@@ -45,8 +45,8 @@ export default function ReviewLayout({
   const required = calibrations.filter(c => c.enabled && !isService(c))
   const notRequired = calibrations.filter(c => !c.enabled && !isService(c))
   const services = calibrations.filter(isService)
-  const POOLS = [[null, 'Auto'], ['STD', 'Standard'], ['CP', '💵 Cash'], ['SF', 'State Farm'], ['AS', 'Allstate'], ['AMFAM', 'AmFam']]
-  const poolName = { STD: 'Standard pricing', CP: '💵 Cash · CP schedule · $700 max', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'AmFam pricing' }
+  const POOLS = [[null, 'Auto'], ['STD', 'Standard'], ['CP', '💵 Cash'], ['SF', 'State Farm'], ['AS', 'Allstate'], ['AMFAM', 'AmFam'], ['GEICO', 'GEICO']]
+  const poolName = { STD: 'Standard pricing', CP: '💵 Cash · CP schedule · $700 max', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'AmFam pricing', GEICO: 'GEICO pricing' }
   const pool = poolOverride ? { label: poolName[poolOverride] || poolOverride, tone: poolOverride === 'CP' ? 'green' : 'blue' } : poolLabel(jobData.insurer, cashMode)
   const shopName = selectedCustomer?.name || jobData.shop || ''
   const canCreate = !!selectedCustomer && selected.length > 0 && !busy && !previewBusy

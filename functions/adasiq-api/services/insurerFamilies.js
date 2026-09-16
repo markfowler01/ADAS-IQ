@@ -6,7 +6,7 @@
 // pools: STD (standard list) · SF · AS · AMFAM · CP
 import catalyst from 'zcatalyst-sdk-node'
 
-export const POOLS = { STD: 'Standard pricing', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'Am Fam pricing', CP: 'Cash / customer pay' }
+export const POOLS = { STD: 'Standard pricing', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'Am Fam pricing', GEICO: 'GEICO pricing', CP: 'Cash / customer pay' }
 // Mark 2026-09-16: on State Farm, Allstate, Liberty Mutual and GEICO jobs
 // (and their sister companies) the invoice carries Cal ID OFF, Snapshot
 // OFF, PCSI included, Post-Scan included — regardless of the shop's rule.
@@ -16,7 +16,7 @@ export const DEFAULT_FAMILIES = [
   { id: 'allstate', parent: 'Allstate', pool: 'AS', pill: 'ALLSTATE PRICING', color: '#1d4ed8', aliases: ['allstate', 'us general', 'u.s. general', 'integon', 'national general', 'esurance', 'encompass'], big3: INSURER_BIG3 },
   // Liberty Mutual family bills on Allstate's schedule (Mark 2026-09-16, confirmed for Ohio Security).
   { id: 'liberty', parent: 'Liberty Mutual', pool: 'AS', pill: 'LIBERTY MUTUAL · ALLSTATE PRICING', color: '#f59e0b', aliases: ['liberty mutual', 'ohio security', 'safeco', 'ohio casualty', 'peerless', 'west american', 'liberty mutual fire', 'lm general', 'lm insurance'], big3: INSURER_BIG3 },
-  { id: 'geico', parent: 'GEICO', pool: 'STD', pill: 'GEICO', color: '#0369a1', aliases: ['geico', 'government employees insurance', 'geico general', 'geico indemnity', 'geico casualty', 'geico advantage', 'geico choice', 'geico secure'], big3: INSURER_BIG3 },
+  { id: 'geico', parent: 'GEICO', pool: 'GEICO', pill: 'GEICO PRICING', color: '#0369a1', aliases: ['geico', 'government employees insurance', 'geico general', 'geico indemnity', 'geico casualty', 'geico advantage', 'geico choice', 'geico secure'], big3: INSURER_BIG3 },
   { id: 'amfam', parent: 'American Family', pool: 'AMFAM', pill: 'AM FAM PRICING', color: '#0e7490', aliases: ['american family', 'amfam'] },
   { id: 'cash', parent: 'Customer pay', pool: 'CP', pill: 'CASH', color: '#15803d', aliases: ['cash', 'customer pay', 'self pay'] },
 ]

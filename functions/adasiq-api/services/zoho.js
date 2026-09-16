@@ -272,7 +272,7 @@ function getInsurerPrefix(insurer) {
 // whatever insurer the shop's estimate says, so the pool is picked at
 // review time). 'STD' forces standard pricing.
 export function resolvePricingPool(insurer, poolOverride) {
-  const VALID = ['STD', 'CP', 'SF', 'AS', 'AMFAM']
+  const VALID = ['STD', 'CP', 'SF', 'AS', 'AMFAM', 'GEICO']
   if (poolOverride && VALID.includes(String(poolOverride).toUpperCase())) {
     const po = String(poolOverride).toUpperCase()
     return po === 'STD' ? null : po
@@ -287,7 +287,7 @@ export function resolvePricingPool(insurer, poolOverride) {
  * - null              → exclude ALL prefixed items (regular pricing only)
  * Falls back to standard items if no prefixed items exist for that insurer.
  */
-const PREFIXED = /^(SF|SFP|AS|CP|AMFAM)\s*[-\s]/i
+const PREFIXED = /^(SF|SFP|AS|CP|AMFAM|GEICO)\s*[-\s]/i
 
 function filterItemsByInsurer(allItems, insurerPrefix) {
 
@@ -309,6 +309,14 @@ function filterItemsByInsurer(allItems, insurerPrefix) {
     const amItems = allItems.filter(i => /^AMFAM\s*[-\s]/i.test(i.name))
     if (amItems.length > 0) return amItems
     return allItems.filter(i => !PREFIXED.test(i.name))
+  }
+
+  // GEICO (Mark 2026-09-16: "GEICO has her own pricing schedule"). The
+  // GEICO- items come FIRST; anything not on GEICO's list yet falls to the
+  // standard item rather than "needs price" until the schedule is loaded.
+  if (insurerPrefix === 'GEICO') {
+    const ge = allItems.filter(i => /^GEICO\s*[-\s]/i.test(i.name))
+    return [...ge, ...allItems.filter(i => !PREFIXED.test(i.name))]
   }
 
   // Default: standard pricing — exclude ALL insurer-prefixed items
