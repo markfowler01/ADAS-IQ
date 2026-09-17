@@ -73,12 +73,13 @@ const ONBOARDING = [
   { key: 'handbook',       label: 'Handbook & policies signed (auto)' },
   { key: 'contract',       label: 'Contract / offer letter signed (auto — owner drops the PDF in their folder first)' },
   { key: 'training',       label: 'Training course passed — all modules (auto)' },
-  { key: 'login',          label: 'App login + access level set (Directory → App access)' },
-  { key: 'cliq',           label: 'Added to Cliq (#dispatch, #aajobs)' },
-  { key: 'payroll',        label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise (use the signed deposit PDF)' },
-  { key: 'gear',           label: 'Van / tools / phone issued and listed under Equipment' },
-  { key: 'rideaong',       label: 'First-week ride-along with Mark' },
-  { key: 'checkin30',      label: '30-day check-in on the calendar' },
+  { key: 'i9',             label: 'Form I-9 completed in Zoho Payroll within 3 business days of the start date (W-2 only) — Mark', w2_only: true },
+  { key: 'login',          label: 'App login + access level set (Directory → App access) — Mark or Kat' },
+  { key: 'cliq',           label: 'Added to Cliq (#dispatch, #aajobs) — Kat' },
+  { key: 'payroll',        label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise, from the signed payout PDF — Mark' },
+  { key: 'gear',           label: 'Van / tools / phone issued and listed under Equipment — Mark' },
+  { key: 'rideaong',       label: 'First-week ride-along — Mark or Jayden' },
+  { key: 'checkin30',      label: '30-day check-in on the calendar — Mark' },
 ]
 export function tickChecklist(m, key, by) {
   if (!m.checklist || m.checklist.kind !== 'onboarding') return
@@ -87,13 +88,13 @@ export function tickChecklist(m, key, by) {
   if (m.checklist.items.every(x => x.done)) m.checklist.completed_at = m.checklist.completed_at || new Date().toISOString()
 }
 const OFFBOARDING = [
-  { key: 'access',    label: 'App access set to "No login"' },
-  { key: 'cliq',      label: 'Removed from Cliq channels' },
-  { key: 'gear',      label: 'Van, tools, phone, keys returned (check Equipment list)' },
-  { key: 'hours',     label: 'Final hours report sent to payroll' },
-  { key: 'payroll',   label: 'Removed from Zoho Payroll / Wise' },
-  { key: 'workdrive', label: 'WorkDrive + email access removed' },
-  { key: 'exit',      label: 'Exit conversation logged (1:1s)' },
+  { key: 'access',    label: 'App access set to "No login" — Mark or Kat (Directory → Edit → App access)' },
+  { key: 'cliq',      label: 'Removed from Cliq channels — Kat' },
+  { key: 'gear',      label: 'Van, tools, phone, keys returned — Mark (check the Equipment list on the profile)' },
+  { key: 'hours',     label: 'Final hours report sent to payroll — Mark (Payroll → Hours → Copy)' },
+  { key: 'payroll',   label: 'Removed from Zoho Payroll / Wise — Mark' },
+  { key: 'workdrive', label: 'WorkDrive + Zoho email access removed — Mark (Zoho admin)' },
+  { key: 'exit',      label: 'Exit conversation logged under 1:1s — Mark' },
 ]
 
 // ── Profile ───────────────────────────────────────────────────────────
@@ -235,9 +236,19 @@ router.post('/policy/ack', async (req, res) => {
 
 // ── Onboarding / offboarding ─────────────────────────────────────────
 export function startChecklist(m, kind, by) {
-  const tpl = kind === 'offboarding' ? OFFBOARDING : ONBOARDING
-  m.checklist = { kind, started_at: new Date().toISOString(), started_by: by, items: tpl.map(t => ({ ...t, done: false, at: '', by: '' })) }
+  const tpl = (kind === 'offboarding' ? OFFBOARDING : ONBOARDING).filter(t => !t.w2_only || m.employment !== 'contractor')
+  m.checklist = { kind, started_at: new Date().toISOString(), started_by: by, items: tpl.map(({ w2_only, ...t }) => ({ ...t, done: false, at: '', by: '' })) }
   return m
+}
+export function addBusinessDays(iso, n) { let d = new Date(iso + 'T12:00:00Z'); let left = n; while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) left-- } return d.toISOString().slice(0, 10) }
+export function i9Deadline(m) { return m.employment !== 'contractor' && m.hire_date ? addBusinessDays(m.hire_date, 3) : null }
+/** Onboarding completion 0–100 from the record (mirrors the portal's progress bar). */
+export function onboardingPct(m) {
+  const docs = Array.isArray(m.documents) ? m.documents : []
+  const has = k => docs.some(d => d.kind === k)
+  const contractor = m.employment === 'contractor'
+  const steps = [!!(m.emergency_contact?.name && m.personal_phone), !!m.photo_url, contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), !!(m.direct_deposit || m.payout), !!m.signatures?.handbook, !!(m.training && Object.values(m.training).length && Object.values(m.training).every(t => t.passed))]
+  return Math.round((steps.filter(Boolean).length / steps.length) * 100)
 }
 router.post('/checklist/:id/start', async (req, res) => {
   try {
@@ -284,6 +295,8 @@ router.get('/calendar', async (req, res) => {
       for (const c of Array.isArray(m.certifications) ? m.certifications : []) if (c?.expires) ev.push({ date: c.expires, type: 'expiry', title: `📄 ${who}: ${c.name} expires`, user_id: m.user_id })
       if (m.license_expiry) ev.push({ date: m.license_expiry, type: 'expiry', title: `🪪 ${who}: driver's license expires`, user_id: m.user_id })
       if (m.checklist && !m.checklist.completed_at && m.checklist.kind === 'onboarding' && m.checklist.started_at) ev.push({ date: addDays(m.checklist.started_at.slice(0, 10), 30), type: 'checkin', title: `🗓 ${who} — 30-day check-in`, user_id: m.user_id })
+      const i9 = i9Deadline(m); const i9Item = m.checklist?.items?.find(x => x.key === 'i9')
+      if (i9 && i9Item && !i9Item.done && owner) ev.push({ date: i9, type: 'checkin', title: `🪪 ${who} — Form I-9 due (3 business days from start)`, user_id: m.user_id })
     }
     // paydays + review days
     for (let d = from; d <= to; d = addDays(d, 1)) {
@@ -493,6 +506,25 @@ export async function maybePeopleNudges(req) {
     for (const c of Array.isArray(m.certifications) ? m.certifications : []) if (c?.expires && c.expires >= today && c.expires <= addDays(today, 30)) lines.push(`📄 ${who}: ${c.name} expires ${c.expires}`)
     if (m.license_expiry && m.license_expiry >= today && m.license_expiry <= addDays(today, 30)) lines.push(`🪪 ${who}: driver's license expires ${m.license_expiry}`)
     if (m.checklist && !m.checklist.completed_at) { const open = m.checklist.items.filter(i => !i.done).length; if (open && m.checklist.started_at.slice(0, 10) <= addDays(today, -7)) lines.push(`📋 ${who}: ${m.checklist.kind} still has ${open} open item(s) after a week`) }
+    const i9 = i9Deadline(m); const i9Item = m.checklist?.items?.find(x => x.key === 'i9')
+    if (i9 && i9Item && !i9Item.done && m.checklist?.kind === 'onboarding') { if (i9 === today) lines.push(`🪪 ${who}: Form I-9 is due TODAY (Zoho Payroll) — tick it on the checklist when done`); else if (i9 < today) lines.push(`🚨 ${who}: Form I-9 is OVERDUE (was due ${i9}) — complete it in Zoho Payroll now`); else if (i9 === addDays(today, 1)) lines.push(`🪪 ${who}: Form I-9 due tomorrow`) }
+    // Nudge the hire themselves on day 2 and day 5 after the invite if they haven't finished (Mark 2026-09-17).
+    if (m.onboarding_invited_at && m.checklist?.kind === 'onboarding' && !m.checklist.completed_at) {
+      const pct = onboardingPct(m); const sent = m.onboarding_invited_at.slice(0, 10)
+      for (const [day, key] of [[2, 'd2'], [5, 'd5']]) {
+        if (pct < 100 && today >= addDays(sent, day) && !(m.onboarding_nudged || {})[key]) {
+          try {
+            const link = await onboardingLink(req, m); const first = m.preferred_name || firstName(m.name)
+            const msg = pct === 0 ? `Hi ${first}, it's Mark at Absolute ADAS — your onboarding link is waiting. About 20 minutes on your phone: ${link}` : `Hi ${first}, Mark here — you're ${pct}% through onboarding. A few minutes finishes it: ${link}`
+            let ok = false
+            if (m.personal_phone || m.phone) { try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ to: m.personal_phone || m.phone, body: msg }); ok = !!r?.ok } catch {} }
+            if (m.personal_email || m.email) { try { const { getMailAccessToken, getMailAccountId, sendMail } = await import('../services/mail.js'); const t = await getMailAccessToken(); await sendMail(t, await getMailAccountId(t), { to: m.personal_email || m.email, subject: pct === 0 ? 'Your Absolute ADAS onboarding link' : `You're ${pct}% through onboarding`, body: `<p>${msg.replace(link, `<a href="${link}">${link}</a>`)}</p><p>GET SOME!!!<br>— Mark</p>` }); ok = true } catch {} }
+            m.onboarding_nudged = { ...(m.onboarding_nudged || {}), [key]: new Date().toISOString() }; await saveMember(req, m)
+            lines.push(`📨 ${who}: day-${day} onboarding reminder ${ok ? 'sent' : 'attempted'} (${pct}% done)`)
+          } catch (e) { console.warn('[people] hire nudge failed:', e.message) }
+        }
+      }
+    }
   }
   if (new Date(today + 'T12:00:00Z').getUTCDay() === 1) {
     for (const m of members) if (m.access !== 'none') { const acks = await policyAcksFor(req, m.user_id); if (!Object.keys(acks).length) lines.push(`📝 ${m.preferred_name || firstName(m.name)} hasn't acknowledged the HR policy yet`) }

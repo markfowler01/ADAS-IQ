@@ -93,7 +93,7 @@ function Upload({ kind, label, hint, has, onDone, accept = 'image/*', capture, t
   async function onFile(e) {
     const f0 = e.target.files?.[0]; e.target.value = ''; if (!f0) return
     setBusy(true)
-    try { const f = await shrink(f0, kind === 'photo' ? 1000 : 2000); const fd = new FormData(); fd.append('file', f, f.name); fd.append('kind', kind); const lbl = kind === 'cert' || kind === 'other' ? window.prompt('What is this?', '') : ''; if (lbl === null) return; if (lbl) fd.append('label', lbl); await call('/upload', { method: 'POST', body: fd }); onDone() } catch (err) { alert(err.message) } finally { setBusy(false) }
+    try { const f = await shrink(f0, kind === 'photo' ? 1000 : 2000); const fd = new FormData(); fd.append('file', f, f.name); fd.append('kind', kind); if (kind === 'cert') { const lbl = window.prompt('Certification name (e.g. I-CAR ADAS, Autel ADAS Level 2):', ''); if (lbl === null) return; fd.append('label', lbl || 'Certification'); const iss = window.prompt('Issued by (optional):', '') || ''; if (iss) fd.append('issuer', iss); const exp = window.prompt('Expiration date, YYYY-MM-DD (leave blank if it doesn\'t expire):', '') || ''; if (/^\d{4}-\d{2}-\d{2}$/.test(exp)) fd.append('expires', exp) } else if (kind === 'other') { const lbl = window.prompt('What is this?', ''); if (lbl === null) return; if (lbl) fd.append('label', lbl) } await call('/upload', { method: 'POST', body: fd }); onDone() } catch (err) { alert(err.message) } finally { setBusy(false) }
   }
   return (
     <div className="flex items-center gap-3 py-2" style={{ borderBottom: '1px solid #f3f3f3' }}>
@@ -181,19 +181,17 @@ function Sign({ d, m, onDone }) {
   async function sign(doc) { setBusy(doc); try { await call('/sign', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ doc, signature: sig }) }); onDone() } catch (e) { alert(e.message) } finally { setBusy('') } }
   const ok = sig.trim().toLowerCase() === m.name.toLowerCase()
   return (
-    <Card title="Read and sign" sub="The handbook is short. Read it, then sign by typing your full name. A signed PDF goes in your folder.">
-      <details className="mb-3" open={!d.signed?.handbook}><summary className="text-sm font-bold cursor-pointer" style={{ color: ORANGE }}>📖 Absolute ADAS handbook & policies</summary>
+    <Card title="Read and sign" sub="Two things to read, one signature. A signed PDF goes in your folder.">
+      <details className="mb-3" open={!d.signed?.handbook}><summary className="text-sm font-bold cursor-pointer" style={{ color: ORANGE }}>📖 Absolute ADAS HR policies (holidays, sick leave, time off)</summary>
         <div className="mt-2 space-y-3">{(hb || []).map(s => <div key={s.title}><div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{s.title}</div><div className="text-xs whitespace-pre-wrap" style={{ color: '#444', lineHeight: 1.6 }}>{s.body}</div></div>)}{!hb && <div className="text-xs" style={{ color: '#888' }}>Loading…</div>}</div>
       </details>
-      {d.signed?.handbook ? <div className="text-sm font-bold mb-3" style={{ color: GREEN }}>✅ Handbook signed {String(d.signed.handbook.at).slice(0, 10)}</div> : (
-        <><L label={`Sign by typing your full name: ${m.name}`}><I v={sig} set={setSig} placeholder={m.name} /></L><Btn onClick={() => sign('handbook')} disabled={!ok || !!busy}>{busy === 'handbook' ? 'Filing…' : '✍️ I have read the handbook — sign'}</Btn></>)}
-      <div className="mt-4 pt-3" style={{ borderTop: '1px solid #f3f3f3' }}>
+      <div className="mb-3">
         <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>📕 Technician Training Handbook, Volume 1</div>
-        <div className="text-xs mb-2" style={{ color: '#666' }}>{m.track === 'ops' ? 'Optional for billing & dispatch, but worth the read — it is what the techs work from.' : 'Read it start to finish. It is the how-to for everything you will do on a car.'}</div>
-        <a href={d.tech_handbook_url || '/app/technician-handbook-v1.pdf'} target="_blank" rel="noreferrer" className="block text-center rounded-xl py-3 mb-2 text-sm font-bold text-white" style={{ backgroundColor: BLUE }}>📖 Open the handbook (PDF)</a>
-        {d.signed?.tech_handbook ? <div className="text-sm font-bold" style={{ color: GREEN }}>✅ Technician handbook signed {String(d.signed.tech_handbook.at).slice(0, 10)}</div> : (
-          <>{!ok && <L label={`Type your full name: ${m.name}`}><I v={sig} set={setSig} /></L>}<Btn onClick={() => sign('tech_handbook')} disabled={!ok || !!busy}>{busy === 'tech_handbook' ? 'Filing…' : '✍️ I have read the Technician Handbook — sign'}</Btn></>)}
+        <div className="text-xs mb-2" style={{ color: '#666' }}>{m.track === 'ops' ? 'Read it even in billing — it is what the techs work from.' : 'Read it start to finish. It is the how-to for everything you will do on a car.'}</div>
+        <a href={d.tech_handbook_url || '/app/technician-handbook-v1.pdf'} target="_blank" rel="noreferrer" className="block text-center rounded-xl py-3 text-sm font-bold text-white" style={{ backgroundColor: BLUE }}>📖 Open the handbook (PDF)</a>
       </div>
+      {d.signed?.handbook ? <div className="text-sm font-bold mb-3" style={{ color: GREEN }}>✅ Policies + handbook signed {String(d.signed.handbook.at).slice(0, 10)}</div> : (
+        <><L label={`Sign by typing your full name: ${m.name}`}><I v={sig} set={setSig} placeholder={m.name} /></L><Btn onClick={() => sign('handbook')} disabled={!ok || !!busy}>{busy === 'handbook' ? 'Filing…' : '✍️ I have read the policies and the handbook — sign'}</Btn></>)}
       {d.signed?.contract ? <div className="text-sm font-bold mt-3" style={{ color: GREEN }}>✅ Contract / offer signed {String(d.signed.contract.at).slice(0, 10)}</div> : (
         <div className="mt-4 pt-3" style={{ borderTop: '1px solid #f3f3f3' }}><div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>Contract / offer letter</div><div className="text-xs mb-2" style={{ color: '#666' }}>{hasContract ? 'Mark put your contract in your folder. Sign to confirm you received and agree to it.' : 'Mark hasn\'t added a contract to your folder yet — nothing to sign here for now.'}</div>{hasContract && <>{!ok && <L label={`Type your full name: ${m.name}`}><I v={sig} set={setSig} /></L>}<Btn tone="blue" onClick={() => sign('contract')} disabled={!ok || !!busy}>{busy === 'contract' ? 'Filing…' : '✍️ Sign contract acknowledgment'}</Btn></>}</div>)}
     </Card>

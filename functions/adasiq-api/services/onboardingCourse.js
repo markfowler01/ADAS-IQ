@@ -538,4 +538,60 @@ When in doubt, call Mark. Never release a vehicle with an uncompleted required c
       { id: 'q4', q: 'A job can\'t be completed. Fault codes…', options: ['Get cleared', 'Stay — do NOT clear them', 'Get reset twice', 'Don\'t matter'], correct: 1 },
       { id: 'q5', q: 'Releasing a car with a required calibration incomplete requires…', options: ['Nothing', 'Written shop acknowledgment', 'A phone call', 'A discount'], correct: 1 },
     ] },
+
+  { id: 'ops_books_where', tracks: ['ops'], title: 'Zoho Books basics: where things live', minutes: 6, video_url: '',
+    script: `- (Kat records this one.) Open Books. Sales → Quotes, Invoices, Customers, Payments — what each one is for us.
+- Quotes = the insurance invoice we send at list. Invoices = the cost invoice the shop pays. Customers = every shop, exact names matter.
+- Items = the price lists: standard, SFP, AS, AMFAM, GEICO, CP, RIV, MOD. Never edit a rate.
+- The custom fields on a quote: RO#, VIN, year/make/model, insurer, scan report link.`,
+    reading: `Zoho Books is the money system; the app drives it. In Books, the Sales menu has the four things we use every day. Quotes (Books calls them Estimates): one per job — this is the insurance invoice, at list price, that the shop forwards to the insurer. Invoices: the cost invoice the shop actually pays, made from the quote with the shop's discount. Customers: every shop we bill, one record each, exact name spelling — the app links by exact name and a typo makes a duplicate. Payments: what came in and which invoice it paid.
+
+Items are the price lists. Standard items have no prefix. "SFP - " is State Farm, "AS - " Allstate, "AMFAM - " American Family, "GEICO - " GEICO, "CP - " customer pay, "RIV - " Rivian procedures, "Module Programming and Reflash - " per make. The app picks from the right list for the job's insurer. Never change an item's rate — Mark only.
+
+Every quote carries custom fields the app fills: RO number, VIN, year, make, model, insurer, and the scan report link. If one is blank on a quote you're sending, the report or the card was missing it — fix the source, not just the quote.`,
+    quiz: [
+      { id: 'q1', q: 'In Books, the insurance invoice we send the shop is a…', options: ['Sales order', 'Quote (Estimate) at list price', 'Invoice', 'Bill'], correct: 1 },
+      { id: 'q2', q: 'The cost invoice the shop pays is…', options: ['The same quote', 'A Books Invoice made from the quote with the discount', 'A payment', 'A credit note'], correct: 1 },
+      { id: 'q3', q: 'Why does the customer name have to match exactly?', options: ['Books requires it', 'The app links by exact name — a typo makes a duplicate customer', 'For the insurer', 'It doesn\'t'], correct: 1 },
+      { id: 'q4', q: '"AS - " items are…', options: ['Autel scans', 'Allstate pricing', 'After-sales', 'Automatic'], correct: 1 },
+      { id: 'q5', q: 'A quote is missing the VIN. You…', options: ['Type it into the quote only', 'Fix the source (report/card) so it flows through', 'Send it anyway', 'Delete the quote'], correct: 1 },
+    ] },
+  { id: 'ops_books_send', tracks: ['ops'], title: 'Zoho Books basics: sending, converting, and templates', minutes: 6, video_url: '',
+    script: `- (Kat records.) Bill it does this for you, but you need to know it by hand for the odd one.
+- Send a quote: the "Quote" template, to the shop's billing email, the PDF attached. Status goes Sent.
+- Convert quote → invoice: keep every line, apply the discount per line (parts and the Cal ID report don't get it), the "Absolute List invoice" template for the insurance copy.
+- Status is our tracker: Draft = job created, Sent = insurance invoice out, Invoiced = cost invoice out.`,
+    reading: `Bill it does all of this from the card. Know it by hand for the exception.
+
+Sending a quote: open it, Send, pick the "Quote" template (not the invoice template — a quote sent on the invoice template confuses the insurer), to the shop's billing email, PDF attached. Status becomes Sent.
+
+Converting to the cost invoice: Convert to Invoice on the quote. Keep every line. Apply the shop's discount line by line: labor and calibrations get it, Parts do not, the Calibration Identification Report does not, PCSI and Post-Scan do except the State Farm post-scan item. Add the RO number and the scan report link in the header fields. Email it to the same billing address. The quote's status becomes Invoiced.
+
+The quote status is our tracker, so don't fight it: Draft means the job exists, Sent means the insurance invoice went out, Invoiced means the cost invoice went out. Voided means the job died.
+
+Something went out wrong? Don't delete. Void the invoice, fix the quote, convert again — the trail stays clean for Joyce.`,
+    quiz: [
+      { id: 'q1', q: 'Which template goes on a quote email?', options: ['Absolute List invoice', 'Quote', 'Default', 'Any'], correct: 1 },
+      { id: 'q2', q: 'Which line does NOT get the shop discount?', options: ['A calibration', 'Labor', 'Parts and the Calibration Identification Report', 'PCSI'], correct: 2 },
+      { id: 'q3', q: 'Quote status "Sent" means…', options: ['The job was created', 'The insurance invoice was emailed', 'The shop paid', 'The cost invoice went out'], correct: 1 },
+      { id: 'q4', q: 'An invoice went out wrong. You…', options: ['Delete it', 'Void it, fix the quote, convert again', 'Edit it silently', 'Ignore it'], correct: 1 },
+      { id: 'q5', q: 'Who handles the normal case of sending both documents?', options: ['You, by hand every time', 'Bill it, from the card', 'The tech', 'Joyce'], correct: 1 },
+    ] },
+  { id: 'ops_books_customers', tracks: ['ops'], title: 'Zoho Books basics: customers, statements, and payments', minutes: 5, video_url: '',
+    script: `- (Kat records.) Finding a customer: search by shop name, watch for near-duplicates.
+- New shop: ALWAYS from the CRM New Customer form, never typed into Books by hand.
+- Statements go out monthly from the app's Accounts tab; payments are recorded in Books and mirrored into the app nightly.
+- What to do when a shop says "I already paid that."`,
+    reading: `Find a customer by searching the shop's name in Books → Customers. Watch for near-duplicates ("L-M Body Shop" vs "L-M Body Shop Inc") — pick the one with invoice history. We once ended up with 489 duplicate L-M customers from an automatic sync, so: a new shop is ALWAYS created from the CRM's ➕ New Customer form, which links to the existing Books customer by exact name or creates one correctly. Never type a new customer into Books by hand.
+
+Payments: when a check or ACH arrives, record it in Books against the invoice it pays. The app mirrors Books every night, so the Accounts tab in the app and the customer's balance in Books agree by morning; if they don't, the nightly drift note tells Mark.
+
+Monthly statements go out from the app's Accounts tab, not from Books, so the same numbers go to every shop the same way. A shop says "I already paid that": pull their Books customer, check Payments and any credit notes, then answer with the invoice number and the date. Anything about writing an invoice off goes to Mark.`,
+    quiz: [
+      { id: 'q1', q: 'A new shop needs a Books customer. You…', options: ['Type it into Books', 'Use the CRM New Customer form', 'Ask Joyce', 'Let the sync do it'], correct: 1 },
+      { id: 'q2', q: 'Two customers look the same in Books. Pick…', options: ['The newest', 'The one with invoice history', 'Either', 'Both'], correct: 1 },
+      { id: 'q3', q: 'A check arrives. You…', options: ['Note it in the CRM', 'Record the payment in Books against the invoice', 'Email Mark', 'Wait for month end'], correct: 1 },
+      { id: 'q4', q: 'Monthly statements go out from…', options: ['Books', 'The app\'s Accounts tab', 'Email by hand', 'Joyce\'s spreadsheet'], correct: 1 },
+      { id: 'q5', q: 'Writing off an invoice is…', options: ['Your call', 'Mark\'s call', 'Automatic after 90 days', 'Joyce\'s call'], correct: 1 },
+    ] },
 ] }

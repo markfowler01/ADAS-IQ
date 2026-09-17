@@ -43,7 +43,7 @@ const KINDS = {
   voided_check: { n: '05', label: 'Voided check' },
   deposit:      { n: '06', label: 'Payout authorization (signed)', tick: 'direct_deposit' },
   cert:         { n: '07', label: 'Certification' },
-  handbook:     { n: '08', label: 'Signed HR policy acknowledgment', tick: 'handbook' },
+  handbook:     { n: '08', label: 'Signed handbook & policy acknowledgment', tick: 'handbook' },
   tech_handbook: { n: '08', label: 'Signed Technician Training Handbook acknowledgment' },
   contract:     { n: '09', label: 'Signed contract / offer letter', tick: 'contract' },
   other:        { n: '10', label: 'Document' },
@@ -129,6 +129,7 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
     const kind = KINDS[req.body?.kind] ? req.body.kind : 'other'
     const doc = await putFile(req, m, kind, req.body?.label || '', req.file.buffer, req.file.mimetype, extOf(req.file))
     if (kind === 'photo') { m.photo_file_id = doc.file_id; m.photo_url = photoUrlFor(m.id); tickChecklist(m, 'photo', m.name) }
+    if (kind === 'cert') { const name = String(req.body?.label || '').trim().slice(0, 120) || 'Certification'; const expires = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.expires || '')) ? String(req.body.expires) : ''; m.certifications = [...(Array.isArray(m.certifications) ? m.certifications : []), { name, issuer: String(req.body?.issuer || '').slice(0, 80), expires, file_id: doc.file_id, added: todayPT() }] }
     await saveMember(req, m)
     console.log(`[onboard] ${m.name} uploaded ${doc.name}`)
     res.json({ ok: true, document: { kind, name: doc.name, added: doc.added }, photo_url: m.photo_url || '' })
@@ -206,7 +207,7 @@ router.post('/:id/sign', async (req, res) => {
       doc.fontSize(18).text(what === 'contract' ? 'Absolute ADAS — Contract / Offer Acknowledgment' : what === 'tech_handbook' ? 'Absolute ADAS — Technician Training Handbook Acknowledgment' : 'Absolute ADAS — Handbook & Policy Acknowledgment').moveDown(0.5)
       doc.fontSize(12).text(`Name: ${m.name}`).text(`Title: ${m.title || ''}`).moveDown(1)
       if (what === 'handbook') {
-        doc.fontSize(11).text(`I have read and understand the Absolute ADAS policies below (version ${handbookHash()}).`).moveDown(0.5)
+        doc.fontSize(11).text(`I have read and understand the Absolute ADAS policies below (version ${handbookHash()}) AND the Absolute ADAS Technician Training Handbook, Volume 1 (June 2025) — company overview, representing Absolute ADAS and dress code, ADAS fundamentals, calibration requirements and rules, make and model gotchas, EV and high-voltage precautions, the on-site workflow and photo documentation, the van equipment checklist, and the failure and escalation protocol. I understand that a cleared code does not mean calibrated, that I never release a vehicle with an uncompleted required calibration without written shop acknowledgment, and that I call Mark when in doubt.`).moveDown(0.5)
         for (const s of SECTIONS) { doc.fontSize(12).text(s.title, { underline: true }).moveDown(0.2); doc.fontSize(9).text(s.body).moveDown(0.8) }
       } else if (what === 'tech_handbook') {
         doc.fontSize(11).text('I have received and read the Absolute ADAS Technician Training Handbook, Volume 1 (June 2025): company overview, representing Absolute ADAS and dress code, introduction to ADAS, when and how to calibrate, body shop terminology, common ADAS failures, the ADAS workflow and photo documentation, ADAS components, calibration rules, make and model gotchas, EV and hybrid high-voltage precautions, part codes, OEM tools, the van equipment checklist, invoice and job closeout, and the failure and escalation protocol. I understand that a cleared code does not mean calibrated, that I never release a vehicle with an uncompleted required calibration without written shop acknowledgment, and that I call Mark when in doubt.').moveDown(0.5)
@@ -217,6 +218,7 @@ router.post('/:id/sign', async (req, res) => {
     })
     const d = await putFile(req, m, what, '', buf, 'application/pdf', '.pdf')
     m.signatures = { ...(m.signatures || {}), [what]: { at: when, file_id: d.file_id, version: what === 'handbook' ? handbookHash() : what === 'tech_handbook' ? 'V1-2025-06' : '' } }
+    if (what === 'handbook') m.signatures.tech_handbook = m.signatures.tech_handbook || { at: when, file_id: d.file_id, version: 'V1-2025-06', via: 'combined' }
     if (what === 'handbook') {
       const acks = await cfgReadJson(req, `policy_ack:${emailKey(m.user_id)}`, {})
       for (const s of SECTIONS) acks[policyId(s.title)] = { version: policyVersion(s.body), at: when, name: m.name, via: 'onboarding' }
