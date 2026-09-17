@@ -43,7 +43,8 @@ const KINDS = {
   voided_check: { n: '05', label: 'Voided check' },
   deposit:      { n: '06', label: 'Payout authorization (signed)', tick: 'direct_deposit' },
   cert:         { n: '07', label: 'Certification' },
-  handbook:     { n: '08', label: 'Signed handbook acknowledgment', tick: 'handbook' },
+  handbook:     { n: '08', label: 'Signed HR policy acknowledgment', tick: 'handbook' },
+  tech_handbook: { n: '08', label: 'Signed Technician Training Handbook acknowledgment' },
   contract:     { n: '09', label: 'Signed contract / offer letter', tick: 'contract' },
   other:        { n: '10', label: 'Document' },
 }
@@ -96,6 +97,7 @@ router.get('/:id', async (req, res) => {
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
       signed: m.signatures || {},
+      tech_handbook_url: '/app/technician-handbook-v1.pdf',
       checklist: m.checklist || null,
       payout: m.payout ? { method: m.payout.method, email: m.payout.email, currency: m.payout.currency, at: m.payout.at } : null,
       ladder: m.track === 'apprentice' ? ladderProgress(m, await readLadder(req)) : null,
@@ -195,24 +197,26 @@ router.post('/:id/payout', async (req, res) => {
 router.post('/:id/sign', async (req, res) => {
   try {
     const g = await guard(req, res); if (!g) return
-    const { m } = g; const what = req.body?.doc === 'contract' ? 'contract' : 'handbook'
+    const { m } = g; const what = req.body?.doc === 'contract' ? 'contract' : req.body?.doc === 'tech_handbook' ? 'tech_handbook' : 'handbook'
     const typed = String(req.body?.signature || '').trim()
     if (typed.toLowerCase().replace(/\s+/g, ' ') !== m.name.toLowerCase().replace(/\s+/g, ' ')) return res.status(400).json({ error: `Sign by typing your full name exactly: ${m.name}` })
     const { SECTIONS, handbookHash, policyId, policyVersion } = await import('../services/handbook.js')
     const when = new Date().toISOString(), from = ip(req)
     const buf = await pdfBuffer(doc => {
-      doc.fontSize(18).text(what === 'contract' ? 'Absolute ADAS — Contract / Offer Acknowledgment' : 'Absolute ADAS — Handbook & Policy Acknowledgment').moveDown(0.5)
+      doc.fontSize(18).text(what === 'contract' ? 'Absolute ADAS — Contract / Offer Acknowledgment' : what === 'tech_handbook' ? 'Absolute ADAS — Technician Training Handbook Acknowledgment' : 'Absolute ADAS — Handbook & Policy Acknowledgment').moveDown(0.5)
       doc.fontSize(12).text(`Name: ${m.name}`).text(`Title: ${m.title || ''}`).moveDown(1)
       if (what === 'handbook') {
         doc.fontSize(11).text(`I have read and understand the Absolute ADAS policies below (version ${handbookHash()}).`).moveDown(0.5)
         for (const s of SECTIONS) { doc.fontSize(12).text(s.title, { underline: true }).moveDown(0.2); doc.fontSize(9).text(s.body).moveDown(0.8) }
+      } else if (what === 'tech_handbook') {
+        doc.fontSize(11).text('I have received and read the Absolute ADAS Technician Training Handbook, Volume 1 (June 2025): company overview, representing Absolute ADAS and dress code, introduction to ADAS, when and how to calibrate, body shop terminology, common ADAS failures, the ADAS workflow and photo documentation, ADAS components, calibration rules, make and model gotchas, EV and hybrid high-voltage precautions, part codes, OEM tools, the van equipment checklist, invoice and job closeout, and the failure and escalation protocol. I understand that a cleared code does not mean calibrated, that I never release a vehicle with an uncompleted required calibration without written shop acknowledgment, and that I call Mark when in doubt.').moveDown(0.5)
       } else {
         doc.fontSize(11).text('I have received, read and agree to the contract / offer letter placed in my personnel folder by Absolute ADAS.').moveDown(0.5)
       }
       doc.moveDown(1).fontSize(12).text(`Signed: ${typed}`).text(`Date: ${when.slice(0, 10)} (${when})`).text(`Signed from IP ${from || 'n/a'} via the Absolute ADAS onboarding link`)
     })
     const d = await putFile(req, m, what, '', buf, 'application/pdf', '.pdf')
-    m.signatures = { ...(m.signatures || {}), [what]: { at: when, file_id: d.file_id, version: what === 'handbook' ? handbookHash() : '' } }
+    m.signatures = { ...(m.signatures || {}), [what]: { at: when, file_id: d.file_id, version: what === 'handbook' ? handbookHash() : what === 'tech_handbook' ? 'V1-2025-06' : '' } }
     if (what === 'handbook') {
       const acks = await cfgReadJson(req, `policy_ack:${emailKey(m.user_id)}`, {})
       for (const s of SECTIONS) acks[policyId(s.title)] = { version: policyVersion(s.body), at: when, name: m.name, via: 'onboarding' }

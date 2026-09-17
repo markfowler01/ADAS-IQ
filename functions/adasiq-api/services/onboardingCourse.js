@@ -345,4 +345,197 @@ Repair customers — people whose cars we service directly — are kept separate
       { id: 'q4', q: 'Where are a shop\'s discount, DRPs, and Big 3 rule?', options: ['Books', 'The shop\'s Billing tab in the CRM', 'A spreadsheet', 'The invoice'], correct: 1 },
       { id: 'q5', q: 'Repair customers (people, not shops) are…', options: ['Mixed in with shops', 'Kept separate — toggle at the top of the CRM', 'Not tracked', 'In Books only'], correct: 1 },
     ] },
+
+  // ── From the Absolute ADAS Technician Training Handbook, Volume 1 (June 2025) ──
+  { id: 'hb_represent', tracks: ['core'], title: 'Representing Absolute ADAS: dress code and conduct', minutes: 5, video_url: '',
+    script: `- Walk in like you own the place, but friendly. First ten seconds set the whole visit.
+- The uniform: company shirt or hoodie with the logo, every call. Closed-toe slip-resistant shoes. Safety glasses on the floor.
+- Rings, bracelets, necklaces off. Long hair tied back. Nothing loose that catches on a bumper.
+- Clean uniform, clean van, tools organized before you get out.
+- Exceptions come from me in advance, not on the day.`,
+    reading: `Your presence at a body shop is the brand. Arrive prepared — tools organized, equipment charged — and friendly. Trust starts the moment you walk in.
+
+Dress code, every service call: a company-issued shirt, hoodie, polo, or hat with the Absolute ADAS logo. Closed-toe, slip-resistant shoes. PPE when the work calls for it: safety glasses, gloves, hearing and respiratory protection. Clean uniform and clean personal hygiene. Rings, bracelets, and necklaces off while working; long hair secured. No loose or baggy clothing.
+
+Any exception needs management approval in advance. Not complying can lead to discipline up to termination. The full text is in the Technician Handbook, section 2.`,
+    quiz: [
+      { id: 'q1', q: 'What do you wear on every service call?', options: ['Whatever is clean', 'A company-issued shirt, hoodie, polo, or hat with the logo', 'A shop-provided uniform', 'Business casual'], correct: 1 },
+      { id: 'q2', q: 'Footwear on the shop floor is…', options: ['Sneakers', 'Closed-toe, slip-resistant shoes', 'Boots only', 'Anything closed'], correct: 1 },
+      { id: 'q3', q: 'Rings and necklaces while working…', options: ['Are fine', 'Come off', 'Only rings come off', 'Depends on the shop'], correct: 1 },
+      { id: 'q4', q: 'An exception to the dress code needs…', options: ['Nothing', 'Advance management approval', 'Kat\'s OK on the day', 'A note in Cliq'], correct: 1 },
+      { id: 'q5', q: 'When do you organize your tools?', options: ['At the car', 'Before you get out of the van', 'After the calibration', 'Never'], correct: 1 },
+    ] },
+
+  { id: 'hb_intro', tracks: ['core'], title: 'Introduction to ADAS: systems, acronyms, VINs', minutes: 8, video_url: '',
+    script: `- What ADAS is in one sentence and the six sensor types: cameras, radar, LiDAR, infrared, ultrasonic, laser radar.
+- Run the acronyms on a real car: ACC, AEB, FCW up front; LKA, LDW, LCA on the windshield; BSD, RCTA at the rear; SVC, APA around.
+- VIN on the door sill: positions 1–3 maker, 10 model year, 12–17 the serial.
+- Read a VIN over the phone in phonetics. Show why: B vs D, I vs 1, O vs 0.`,
+    reading: `ADAS — Advanced Driver Assistance Systems — is any system that helps drive or operate the vehicle. It took off around 2010–2013. The sensing hardware: cameras, radars, LiDAR, infrared sensors, ultrasonic sensors, and laser radar.
+
+The acronyms you'll see every day: ACC adaptive cruise control · AEB autonomous emergency braking · FCW forward collision warning · LKA lane keep assist · LDW lane departure warning · LCA lane change / centering assist · BSD blind spot detection · RCTA rear cross traffic alert · CTA cross traffic alert · APA advanced parking assist · SVC surround view camera · RVC rear view camera · AFLS adaptive front lighting · TSR traffic sign recognition · TJA traffic jam assist · DFW driver fatigue warning · HUD heads-up display · NV night vision · ICC intelligent cruise control.
+
+The VIN: 17 characters. Positions 1–3 are the manufacturer and country. 4–8 describe the model, body, engine, and restraints. 9 is the check digit. 10 is the model year. 11 is the assembly plant. 12–17 is the production sequence.
+
+Read VINs and part numbers in the NATO phonetic alphabet — Alpha, Bravo, Charlie, Delta… Zulu — so nobody confuses I with 1, O with 0, or B with D.`,
+    quiz: [
+      { id: 'q1', q: 'Which VIN position is the model year?', options: ['1', '9', '10', '17'], correct: 2 },
+      { id: 'q2', q: 'ACC stands for…', options: ['Automatic Camera Calibration', 'Adaptive Cruise Control', 'Active Collision Control', 'Advanced Cabin Camera'], correct: 1 },
+      { id: 'q3', q: 'Why read a VIN in phonetics?', options: ['It sounds professional', 'To avoid confusing I/1, O/0, B/D', 'It is required by law', 'Kat prefers it'], correct: 1 },
+      { id: 'q4', q: 'Which of these is NOT an ADAS sensing technology?', options: ['Radar', 'LiDAR', 'Ultrasonic', 'Hydraulic'], correct: 3 },
+      { id: 'q5', q: 'BSD / RCTA sensors are usually found…', options: ['Behind the windshield', 'In the rear bumper or rear quarter panels', 'In the mirrors', 'Under the hood'], correct: 1 },
+    ] },
+
+  { id: 'hb_when', tracks: ['core'], title: 'When and how to calibrate: static, dynamic, prerequisites, metric', minutes: 8, video_url: '',
+    script: `- 35–45% of body shop repairs need a calibration. Damage plus the estimate tells you which. OEM job aids confirm.
+- Dynamic: scan tool puts it in learn mode, you drive. Static: targets around the car in a controlled space.
+- The prerequisite list, out loud. Level floor. Lighting. Space. Fully reassembled. Alignment. Fuel. Tires. Cargo empty. Indoors.
+- Metric: 3030 mm = 303 cm = 3.03 m. Do two conversions live.`,
+    reading: `Today 35–45% of vehicles repaired in a body shop need one or more ADAS calibrations. A trained tech can spot most of them from the damage and the repair estimate. Always confirm with the OEM job aid.
+
+Two kinds. Dynamic: the scan tool puts the vehicle in a learning state and you drive it on public roads — no target. Static: the vehicle sits in a controlled space with targets placed around it and recalibrates without moving.
+
+Before ANY calibration, all of these are confirmed: a completely level surface; proper lighting with no harsh shadows or glare on the targets; a clutter-free space that meets the OEM spec; vehicle fully reassembled and road-ready; prerequisites done — alignment, fuel level, tire pressure; a full tank where the OEM requires it (Audi/VW, Nissan/Infiniti, Honda/Acura); cargo area empty; away from weather, darkness, and interference.
+
+OEM instructions are metric. 1 m = 100 cm = 1,000 mm. "Place the radar target at 3030 mm from the front bumper centerline" is 303 cm, or 3.03 m. Practice until it's automatic: 2500 mm is 2.5 m; 3.75 m is 375 cm; 875 mm is 87.5 cm; 320 cm is 3,200 mm.`,
+    quiz: [
+      { id: 'q1', q: 'Which calibration needs no physical target?', options: ['Static', 'Dynamic', 'Both need targets', 'Neither'], correct: 1 },
+      { id: 'q2', q: 'Which makes require a full tank before calibration?', options: ['Ford, GM, Toyota', 'Audi/VW, Nissan/Infiniti, Honda/Acura', 'All makes', 'Only EVs'], correct: 1 },
+      { id: 'q3', q: '3030 mm is…', options: ['30.3 m', '3.03 m', '0.303 m', '303 m'], correct: 1 },
+      { id: 'q4', q: 'Roughly what share of body shop repairs need a calibration?', options: ['5–10%', '35–45%', '80–90%', 'All of them'], correct: 1 },
+      { id: 'q5', q: 'The cargo area before a static calibration should be…', options: ['Loaded to simulate weight', 'Empty', 'Half full', 'It does not matter'], correct: 1 },
+    ] },
+
+  { id: 'hb_terms', tracks: ['core'], title: 'Body shop terminology', minutes: 5, video_url: '',
+    script: `- The words the estimator uses and what they mean to us: estimate, supplement, sublet, tear-down, total loss.
+- Pre-scan and post-scan: at drop-off and after all repairs.
+- Customer pay vs deductible — why it matters on our card.
+- OEM vs aftermarket parts and why a camera bracket that's aftermarket is a red flag.`,
+    reading: `Talk the shop's language. Estimate: the damage assessment and repair cost. Supplement: repairs or parts found after the initial estimate; a supplemental claim is the claim for them. Labor hours: what's billed for a tech's time. Parts: OEM (made by the vehicle maker) or aftermarket (made by someone else). Refinish and blend: painting and matching. Panel replacement, dent repair (PDR or traditional), frame repair. Alignment: suspension and steering set right — a prerequisite for most calibrations. Tear-down: disassembly to find hidden damage. Total loss: repair cost exceeds the car's value. Sublet: work sent to a specialist — that's us. Estimating software: the programs that price the repair. Deductible: what the customer pays before insurance. Customer pay: the owner pays, not an insurer. Pre-scan: the scan at drop-off that records faults before repairs. Post-scan: the scan after all repairs are done.`,
+    quiz: [
+      { id: 'q1', q: 'A "supplement" is…', options: ['A vitamin', 'Repairs or parts found after the initial estimate', 'The final invoice', 'A discount'], correct: 1 },
+      { id: 'q2', q: 'We are, in the shop\'s language, a…', options: ['Vendor of parts', 'Sublet', 'Refinish shop', 'Estimator'], correct: 1 },
+      { id: 'q3', q: 'A pre-scan happens…', options: ['After repairs', 'At drop-off, before repairs begin', 'During the calibration', 'At delivery'], correct: 1 },
+      { id: 'q4', q: 'OEM means…', options: ['Original Equipment Manufacturer', 'Other Equipment Maker', 'Optional Extra Module', 'Out of Estimate'], correct: 0 },
+      { id: 'q5', q: 'Total loss means…', options: ['The car was stolen', 'Repair cost exceeds the vehicle\'s value', 'All sensors failed', 'The claim was denied'], correct: 1 },
+    ] },
+
+  { id: 'hb_failures', tracks: ['tech', 'apprentice'], title: 'Common ADAS failures: the field diagnostic checklist', minutes: 6, video_url: '',
+    script: `- Faults on the scan are usually physical damage, not "needs calibration".
+- Connectors first: unplugged, or plugged but not clipped. Show one.
+- Ask where the hit was. Look at modules, wiring, brackets there.
+- Fuses. No comms to a module, or a module was replaced — check the fuse.
+- Ask the estimator for the accident photos.`,
+    reading: `When you arrive and the scan shows ADAS faults, physical damage is more often the cause than an uncalibrated system. Work the checklist in order:
+
+1. Check connectors. Look for disconnected harness connectors around every ADAS component and bumper. Connectors are often left unplugged, or plugged in but not fully clipped.
+2. Identify the impact zone. Ask the estimator where the hit was. Look for damaged modules, damaged wiring, and damaged brackets or mounting points.
+3. Check fuses. No communication with a module, or a module that was replaced — check its fuses. Impact can blow fuses that aren't obvious.
+4. Request accident photos. The estimator has them. They show where the force went and where hidden damage will be.
+
+A cleared code does not mean calibrated.`,
+    quiz: [
+      { id: 'q1', q: 'ADAS faults on arrival are most often caused by…', options: ['A bad scan tool', 'Physical damage', 'Low fuel', 'The weather'], correct: 1 },
+      { id: 'q2', q: 'First thing you check?', options: ['Fuses', 'Connectors', 'Tire pressure', 'Software version'], correct: 1 },
+      { id: 'q3', q: 'A module shows no communication after replacement. Check…', options: ['The paint', 'The fuses', 'The mirrors', 'The tires'], correct: 1 },
+      { id: 'q4', q: 'Who has the accident photos?', options: ['The insurer only', 'The estimator', 'The customer', 'Nobody'], correct: 1 },
+      { id: 'q5', q: 'A cleared code means…', options: ['Calibrated', 'Nothing about calibration — the code is just cleared', 'The car is safe', 'Done'], correct: 1 },
+    ] },
+
+  { id: 'hb_workflow', tracks: ['tech', 'apprentice'], title: 'The on-site workflow, step by step', minutes: 8, video_url: '',
+    script: `- The eight steps on a real car: arrive and confirm the RO, verify space and level, confirm prerequisites, set up (tires, TPMS, VCI, tablet), pre-scan with AUTO VID, ADAS Calibrate and fault scan, execute, follow up and test drive.
+- The screenshots the report needs: Autel measurement pages, target setup with the car in frame, dynamic driving instructions, the success screen.
+- Verify every ADAS component before you leave.`,
+    reading: `1. Arrive and identify the vehicle. Confirm the repair order number.
+2. Verify space and level. Refer to Autel and OEM specs.
+3. Confirm prerequisites: alignment and fuel. If they're not met, tell the shop before you set up, not after.
+4. Set up the vehicle: tire pressures to factory spec, reset TPMS if required, VCI on the OBD2 port, tablet powered and connected.
+5. Pre-scan: run AUTO VID on the scanner and enter the RO number.
+6. Navigate to ADAS Calibrate: car icon → Change Vehicle → History → select vehicle → ADAS Calibrate → run a fault scan on all ADAS modules.
+7. Execute the calibration. Confirm the type with the AI tools or OEM job aid. Read every instruction fully before proceeding.
+8. Follow up and verify, including the test drive. Verify ALL ADAS components before leaving.
+
+Documentation on every job, on top of the app's photo set: all four corners before touching anything (close-ups of pre-existing damage); the instrument cluster with every light and the fuel gauge in frame; the VIN tag; Autel measurement screenshots (long-press the camera button on any page with measurements); the static target setup with the vehicle in the background; the dynamic driving instructions screenshot before you start; and the calibration success screen.`,
+    quiz: [
+      { id: 'q1', q: 'Prerequisites are not met. You…', options: ['Calibrate anyway', 'Tell the shop before setting up', 'Leave', 'Note it after'], correct: 1 },
+      { id: 'q2', q: 'How do you screenshot a measurement page on the Autel?', options: ['Power + volume', 'Long-press the camera button in the ADAS function', 'Take a phone photo', 'It emails itself'], correct: 1 },
+      { id: 'q3', q: 'The static target setup photo must include…', options: ['Only the target', 'The target with the vehicle visible behind it', 'The tablet', 'The shop sign'], correct: 1 },
+      { id: 'q4', q: 'Before starting a dynamic calibration you screenshot…', options: ['The odometer', 'The Autel driving instructions', 'The weather', 'The RO'], correct: 1 },
+      { id: 'q5', q: 'Last step before leaving?', options: ['Clear codes', 'Verify all ADAS components, test drive included', 'Invoice', 'Wash the car'], correct: 1 },
+    ] },
+
+  { id: 'hb_rules', tracks: ['tech', 'apprentice'], title: 'Calibration rules and make-by-make gotchas', minutes: 10, video_url: '',
+    script: `- The rule above all rules: alignment before any calibration when the OEM calls for it.
+- Bumpers off: BSM on Honda/Acura and Kia/Hyundai; any rear panel work on any make; front ACC on Kia/Hyundai and off-center Nissan/Infiniti.
+- Radar out of a bumper = static AND dynamic.
+- Then the gotchas by brand — pick three you've personally been burned by.`,
+    reading: `Non-negotiable: any vehicle that needs an alignment gets it BEFORE any ADAS calibration. Full fuel: Audi/VW, Nissan/Infiniti, Honda/Acura. Bumpers off for blind spot calibration: Honda/Acura, Kia/Hyundai. Bumpers off after any rear body or quarter panel work, every make, to verify module angles. Front bumper off for ACC radar: Kia/Hyundai, and Nissan/Infiniti with an off-center module. Any radar removed from a bumper needs BOTH static and dynamic calibration.
+
+Gotchas by make. Subaru EyeSight: lighting-sensitive (500–1,000 lux, no fluorescent flicker), engine running, don't touch the wheel or brake. Toyota/Lexus: engine running for most camera and radar cals, the specific white TSS target only, steering wheel perfectly centered or PCS errors, some Lexus need a short drive after static. Honda/Acura: full tank (won't start below 3/4 on many), All Sensor Relearn after every windshield cal, RDX/MDX LKAS needs a truly level floor. Nissan/Infiniti: full tank, some Infiniti sit level 20 minutes first, R2R has a specific drive pattern, Frontier/Titan off-center radar means bumper off. Audi/VW: full tank checked by the tool, half a degree of tilt fails it, temperature range matters. Kia/Hyundai/Genesis: front bumper off for SCC radar, GSCAN fully updated, Genesis often static plus dynamic. Ford/Lincoln: F-Series BLIS may need the rear bumper off, Co-Pilot 360 follows FDRS distances exactly, FDRS needs live internet. GM: engine running and HVAC off for front cameras, Super Cruise is camera plus radar plus LiDAR, Techline Connect won't finish without the test drive. BMW/MINI: ISTA online first, 3- and 5-Series cameras need the right light level, steering angle cal after suspension work. Mercedes: Xentry only, Distronic needs static plus a road test, all four tires at exact spec.`,
+    quiz: [
+      { id: 'q1', q: 'A radar was removed from the bumper. It needs…', options: ['Static only', 'Dynamic only', 'Both static and dynamic', 'Nothing if codes are clear'], correct: 2 },
+      { id: 'q2', q: 'Honda windshield calibration must be followed by…', options: ['A car wash', 'All Sensor Relearn', 'A code clear', 'An alignment'], correct: 1 },
+      { id: 'q3', q: 'Subaru EyeSight during calibration: the engine is…', options: ['Off', 'Running', 'Ignition only', 'Either'], correct: 1 },
+      { id: 'q4', q: 'Which tool is the only accepted one for Mercedes ADAS?', options: ['Autel', 'Xentry', 'ISTA', 'GSCAN'], correct: 1 },
+      { id: 'q5', q: 'Rear quarter panel work on any make means…', options: ['Nothing special', 'Bumper off to verify module angles', 'Skip the BSM cal', 'Dynamic only'], correct: 1 },
+    ] },
+
+  { id: 'hb_ev', tracks: ['tech', 'apprentice'], title: 'EV and hybrid precautions: high voltage', minutes: 6, video_url: '',
+    script: `- Orange cables. Show them. Never cut, disconnect, or touch.
+- How you know it's HV: orange conduit, HV labels, EV/Hybrid badge, the blue/green Ready light on a Toyota hybrid.
+- Never pull a 12V on a hybrid or EV without the OEM HV disable procedure.
+- Swollen battery, burning smell, fluid: step back, call me.
+- Tesla into Service Mode before any tool or lift.`,
+    reading: `High-voltage systems can kill. Identify before you touch. EVs (Tesla, Rivian, Leaf, Bolt) and hybrids (Prius, RAV4 Hybrid, Accord Hybrid, F-150 Lightning) all carry an HV battery. Signs: orange cables or conduit, HV warning labels on the battery, hood, and dash, EV or Hybrid badging, and on Toyota/Lexus hybrids a blue/green Ready light — the HV system is live even with no engine noise.
+
+Rules: never disconnect the 12V on a hybrid or EV without the OEM HV disable procedure. Never service, move, or cut orange cables — up to 800V DC. A damaged HV battery (swelling, burning smell, fluid) means step back and call Mark immediately. Tesla goes into Service Mode on the touchscreen before any tool or lift. Toyota/Lexus hybrids: confirm Ready is OFF before working under the hood. HV-rated insulated gloves near orange cables; conductive tools away from HV terminals.
+
+Calibration notes: Tesla uses its own procedures, not standard Autel functions. Toyota/Lexus hybrids often calibrate in READY mode. Bolt/Volt: confirm the HV system isn't in fault first. Ford hybrids may start and stop the engine mid-calibration — normal. Hyundai/Kia EVs use the same GSCAN procedures as gas models, vehicle in READY.`,
+    quiz: [
+      { id: 'q1', q: 'Orange cables mean…', options: ['Fuel lines', 'High voltage — never touch, cut, or disconnect', 'Coolant', 'Airbag wiring'], correct: 1 },
+      { id: 'q2', q: 'Before connecting a tool to a Tesla…', options: ['Nothing special', 'Put it in Service Mode on the touchscreen', 'Disconnect the 12V', 'Lift it'], correct: 1 },
+      { id: 'q3', q: 'A Toyota hybrid with no engine noise and the Ready light on is…', options: ['Off', 'Live — the HV system is on', 'Safe to work on', 'In neutral'], correct: 1 },
+      { id: 'q4', q: 'You smell burning near the HV battery. You…', options: ['Open it', 'Keep working', 'Step back and call Mark immediately', 'Spray water'], correct: 2 },
+      { id: 'q5', q: 'Disconnecting the 12V on a hybrid…', options: ['Is always fine', 'Needs the OEM HV disable procedure first', 'Is required before calibration', 'Resets the ADAS'], correct: 1 },
+    ] },
+
+  { id: 'hb_tools', tracks: ['tech', 'apprentice'], title: 'OEM tools, VCIs, and the morning van check', minutes: 6, video_url: '',
+    script: `- Wrong tool or wrong VCI = no communication. Run the table: ISTA for BMW, WiTech for Chrysler, FDRS for Ford, Techline for GM, HDS for Honda, GSCAN for Hyundai/Kia, Xentry for Mercedes, Consult for Nissan, SSM4 for Subaru, Techstream for Toyota.
+- Open the van. The checklist, item by item. Tablet over 80%. Targets all present and clean. Laptop logged in for today's makes. Hotspot.
+- You don't leave for the first job until it's all confirmed.`,
+    reading: `Each OEM needs its own diagnostic software and a matched VCI. BMW: ISTA (online) with ICOM or Cardaq. Chrysler/Dodge/Jeep/Fiat: WiTech with Micropod or Cardaq. Ford: FJDS/FDRS with VCM 2/3 or Cardaq. GM: Techline Connect with Cardaq or GM MDI. Honda/Acura: HDS on a laptop with Cardaq. Hyundai/Kia/Genesis: GSCAN tablet with its own dongle. Land Rover: JLR on a laptop. Mazda: IDS/MDRS with Mazda VCM or Cardaq. Mercedes: Xentry. Nissan/Infiniti: Consult 3/4/R2R. Subaru: SSM4. Toyota/Lexus: Techstream/GTS with Cardaq.
+
+Every morning before the first job, confirm the van: Autel MA600 tablet charged above 80%; Autel VCI paired; Cardaq charged; the OEM dongles for today's makes (check the night before); laptop charged and logged into ISTA / WiTech / HDS / FDRS / Xentry as needed; OBD2 extension cables; chargers; hotspot or phone data. Full Autel target set, clean and unmarked; stands with all legs and pins; line laser; 5 m metric tape; plumb bob or magnetic level; chalk or floor tape. Digital tire gauge; inflator; microfiber; work light; 25 ft extension cord; basic hand tools. Phone charged; first aid kit; PPE kit including HV-rated gloves; van clean. Do not leave until it's all confirmed.`,
+    quiz: [
+      { id: 'q1', q: 'Diagnostic tool for BMW?', options: ['GSCAN', 'ISTA', 'Xentry', 'Techstream'], correct: 1 },
+      { id: 'q2', q: 'Tablet charge before leaving in the morning?', options: ['Any', 'Above 50%', 'Above 80%', 'Full only'], correct: 2 },
+      { id: 'q3', q: 'Hyundai/Kia/Genesis use…', options: ['HDS', 'GSCAN with its own dongle', 'FDRS', 'SSM4'], correct: 1 },
+      { id: 'q4', q: 'When do you check which OEM dongles you need?', options: ['At the shop', 'The night before', 'Never', 'When it fails'], correct: 1 },
+      { id: 'q5', q: 'Minimum metric tape length in the van?', options: ['2 m', '3 m', '5 m', '10 m'], correct: 2 },
+    ] },
+
+  { id: 'hb_escalation', tracks: ['tech', 'apprentice'], title: 'When a calibration won\'t complete: failure and escalation', minutes: 7, video_url: '',
+    script: `- Everyone hits one that won't finish. Pros work a list; amateurs guess.
+- The seven steps: re-read from the top, verify every prerequisite, full fault scan on all modules, re-seat every connection and re-measure the target, power-cycle tool and car (2 minutes off), check for updates, then call me or Kat after two clean attempts.
+- Stop immediately for: damaged module or bracket, active airbag faults, suspected HV fault, "module not found", a shop pushing you to skip steps, or you're not sure it completed.
+- Never release a car with a required calibration incomplete without written shop acknowledgment.`,
+    reading: `Work these in order before escalating:
+1. Re-read ALL the OEM instructions from the beginning. Skipped or misread steps are the number one cause.
+2. Verify EVERY prerequisite — fuel, tires, alignment, engine running or off, HVAC on or off.
+3. Run a full fault scan across all modules. A steering angle or ABS fault can block an ADAS calibration.
+4. Check all physical connections: re-seat the VCI, inspect the OBD2 port, clean the target and re-measure placement.
+5. Restart the tool and the vehicle: power-cycle the scan tool, vehicle off for 2 minutes, try again.
+6. Check for software or firmware updates on the tool.
+7. After two clean attempts through all of that, call Mark or Kat. Don't keep guessing.
+
+Stop and escalate immediately for: a damaged ADAS module or mounting bracket; active airbag or SRS faults; a suspected high-voltage fault; a module reported "not found" on a car that has it; a shop pressuring you to skip prerequisites or sign off incomplete work; or genuine doubt that the calibration completed.
+
+When in doubt, call Mark. Never release a vehicle with an uncompleted required calibration without written shop acknowledgment. If a job can't be completed: document exactly what was attempted and why, note what the shop must do before rebooking, tell the estimator and record their name, do NOT clear ADAS fault codes, and photograph the dash with the remaining lights.`,
+    quiz: [
+      { id: 'q1', q: 'Most common cause of a failed calibration?', options: ['Bad tool', 'A skipped or misread instruction', 'Weather', 'Old car'], correct: 1 },
+      { id: 'q2', q: 'How long is the vehicle off during a power cycle?', options: ['10 seconds', '2 minutes', '20 minutes', 'Overnight'], correct: 1 },
+      { id: 'q3', q: 'When do you call Mark or Kat?', options: ['Right away', 'After two clean attempts through the checklist', 'Never', 'After the shop complains'], correct: 1 },
+      { id: 'q4', q: 'A job can\'t be completed. Fault codes…', options: ['Get cleared', 'Stay — do NOT clear them', 'Get reset twice', 'Don\'t matter'], correct: 1 },
+      { id: 'q5', q: 'Releasing a car with a required calibration incomplete requires…', options: ['Nothing', 'Written shop acknowledgment', 'A phone call', 'A discount'], correct: 1 },
+    ] },
 ] }

@@ -187,6 +187,13 @@ function Sign({ d, m, onDone }) {
       </details>
       {d.signed?.handbook ? <div className="text-sm font-bold mb-3" style={{ color: GREEN }}>✅ Handbook signed {String(d.signed.handbook.at).slice(0, 10)}</div> : (
         <><L label={`Sign by typing your full name: ${m.name}`}><I v={sig} set={setSig} placeholder={m.name} /></L><Btn onClick={() => sign('handbook')} disabled={!ok || !!busy}>{busy === 'handbook' ? 'Filing…' : '✍️ I have read the handbook — sign'}</Btn></>)}
+      <div className="mt-4 pt-3" style={{ borderTop: '1px solid #f3f3f3' }}>
+        <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>📕 Technician Training Handbook, Volume 1</div>
+        <div className="text-xs mb-2" style={{ color: '#666' }}>{m.track === 'ops' ? 'Optional for billing & dispatch, but worth the read — it is what the techs work from.' : 'Read it start to finish. It is the how-to for everything you will do on a car.'}</div>
+        <a href={d.tech_handbook_url || '/app/technician-handbook-v1.pdf'} target="_blank" rel="noreferrer" className="block text-center rounded-xl py-3 mb-2 text-sm font-bold text-white" style={{ backgroundColor: BLUE }}>📖 Open the handbook (PDF)</a>
+        {d.signed?.tech_handbook ? <div className="text-sm font-bold" style={{ color: GREEN }}>✅ Technician handbook signed {String(d.signed.tech_handbook.at).slice(0, 10)}</div> : (
+          <>{!ok && <L label={`Type your full name: ${m.name}`}><I v={sig} set={setSig} /></L>}<Btn onClick={() => sign('tech_handbook')} disabled={!ok || !!busy}>{busy === 'tech_handbook' ? 'Filing…' : '✍️ I have read the Technician Handbook — sign'}</Btn></>)}
+      </div>
       {d.signed?.contract ? <div className="text-sm font-bold mt-3" style={{ color: GREEN }}>✅ Contract / offer signed {String(d.signed.contract.at).slice(0, 10)}</div> : (
         <div className="mt-4 pt-3" style={{ borderTop: '1px solid #f3f3f3' }}><div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>Contract / offer letter</div><div className="text-xs mb-2" style={{ color: '#666' }}>{hasContract ? 'Mark put your contract in your folder. Sign to confirm you received and agree to it.' : 'Mark hasn\'t added a contract to your folder yet — nothing to sign here for now.'}</div>{hasContract && <>{!ok && <L label={`Type your full name: ${m.name}`}><I v={sig} set={setSig} /></L>}<Btn tone="blue" onClick={() => sign('contract')} disabled={!ok || !!busy}>{busy === 'contract' ? 'Filing…' : '✍️ Sign contract acknowledgment'}</Btn></>}</div>)}
     </Card>
