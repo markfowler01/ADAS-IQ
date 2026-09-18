@@ -1693,7 +1693,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // Opens the calibration review modal — actual status change happens after confirmation
   function handleMoveToReadyInvoice(job) {
     setPhotoOverride(''); setPhotosPending(null)
-    if (!photoProgress(job).complete) { setPhotoGateJob(job); return }
+    // Photos never hold up billing (Mark 2026-09-17) — the card carries the
+    // debt and the 6pm owed list chases it.
     setCalReviewJob(job)
   }
 

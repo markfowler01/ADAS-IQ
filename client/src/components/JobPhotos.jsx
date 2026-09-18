@@ -69,6 +69,7 @@ export function photosRelevant(job) {
 // ── Badge: "📸 5/8" red until complete, green when done ────────────────
 export function PhotoBadge({ job, onClick, size = 'sm' }) {
   const p = photoProgress(job)
+  const owed = !p.complete && !!parseSlots(job?.photo_slots)?._pending   // invoiced with shots outstanding (2026-09-17)
   const done = p.complete
   const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
   return (
@@ -77,7 +78,7 @@ export function PhotoBadge({ job, onClick, size = 'sm' }) {
       style={done
         ? { backgroundColor: '#dcfce7', color: GREEN, border: '1px solid #86efac' }
         : { backgroundColor: '#fef2f2', color: RED, border: '1px solid #fecaca' }}>
-      📸 {p.filled}/{p.total}{done ? ' ✓' : ''}{!done && p.miles.delta != null && !p.miles.ok ? ` · ${p.miles.delta} mi` : ''}
+      📸 {p.filled}/{p.total}{done ? ' ✓' : owed ? ' owed' : ''}{!done && p.miles.delta != null && !p.miles.ok ? ` · ${p.miles.delta} mi` : ''}
     </button>
   )
 }
@@ -539,12 +540,21 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         {mode === 'gate' && (
           <div className="flex flex-col gap-2">
-            <button type="button" disabled={!(prog.complete || coveredByPhone) || !tiresDone} onClick={() => onComplete && onComplete(job, undefined, pendingPayload)}
+            <button type="button" disabled={!tiresDone} onClick={() => onComplete && onComplete(job, undefined, pendingPayload)}
               className="w-full rounded-xl py-3 text-sm font-bold text-white"
-              style={{ backgroundColor: '#7e22ce', opacity: (prog.complete || coveredByPhone) && tiresDone ? 1 : .45 }}>
-              {(prog.complete || coveredByPhone) && !tiresDone ? '🛞 Set the tire pressures first' : coveredByPhone ? `🟢 Continue → Ready to Invoice (${onPhone.length} photo${onPhone.length === 1 ? '' : 's'} still uploading — fine)` : '🟢 Continue → Ready to Invoice'}
+              style={{ backgroundColor: '#7e22ce', opacity: tiresDone ? 1 : .45 }}>
+              {!tiresDone ? '🛞 Set the tire pressures first'
+                : prog.complete ? '🟢 Continue → Ready to Invoice'
+                : coveredByPhone ? `🟢 Continue → Ready to Invoice (${onPhone.length} photo${onPhone.length === 1 ? '' : 's'} still uploading — fine)`
+                : `🟢 Continue → Ready to Invoice (${prog.missing.length} photo${prog.missing.length === 1 ? '' : 's'} still owed)`}
             </button>
-            {coveredByPhone && <div className="text-[11px] text-center" style={{ color: '#666' }}>Photos are saved on this phone and upload on their own. Kat sees "still uploading" on the card until they land.</div>}
+            {!prog.complete && (
+              <div className="text-[11px] text-center" style={{ color: '#666' }}>
+                {coveredByPhone
+                  ? 'Photos are saved on this phone and upload on their own. Kat can invoice now; the card clears itself when they land.'
+                  : 'Kat can invoice now. The missing shots stay on the card and on the 6pm owed list until you add them — take them when you can.'}
+              </div>
+            )}
             {isOwner && !(prog.complete && tiresDone) && (
               overrideOpen ? (
                 <div className="rounded-xl p-2" style={{ border: '1px dashed #ddd' }}>
