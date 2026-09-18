@@ -5805,6 +5805,92 @@ captureCalcRouter.get('/debug/leads-page', requireCronSecretFlex, async (req, re
   }
 })
 
+// ─── Daily Absolute ADAS ad (LinkedIn + FB + IG, 3 PM PT) ──────────────
+// v1 endpoint: dry-draft returns a fresh Claude-drafted ad WITHOUT saving,
+// scheduling, or posting. Used to preview the copy shape before wiring the
+// full daily pipeline.
+//
+//   GET /api/capture-calc/daily-ad/dry-draft?secret=X&avoid=key1,key2
+captureCalcRouter.get('/daily-ad/dry-draft', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { draftDailyAd } = await import('../services/absoluteAdDrafter.js')
+    const avoid = String(req.query.avoid || '').split(',').map(s => s.trim()).filter(Boolean)
+    const draft = await draftDailyAd({ avoidPatterns: avoid })
+    res.json({ ok: true, draft })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Preview endpoint — drafts a fresh ad, picks the next real van photo on
+// its own rotation (independent of the pillar's), composites the card,
+// returns the PNG bytes directly. Nothing is saved or scheduled — pure
+// visual preview. Hit repeatedly to see rotation cycle through photos.
+//
+//   GET /api/capture-calc/daily-ad/preview-image?secret=X
+//   Optional: &headline=CUSTOM+HEADLINE  (override the drafter — testing layout)
+captureCalcRouter.get('/daily-ad/preview-image', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { draftDailyAd } = await import('../services/absoluteAdDrafter.js')
+    const { pickNextVanPhotoDatastore } = await import('../services/vanPhotoLibrary.js')
+    const { composeAdCardImage } = await import('../services/absoluteAdCardImage.js')
+
+    const customHeadline = req.query.headline ? String(req.query.headline).trim() : null
+    let imageHeadline, draft = null
+    if (customHeadline) {
+      imageHeadline = customHeadline
+    } else {
+      draft = await draftDailyAd({ avoidPatterns: [] })
+      imageHeadline = draft.image_headline
+    }
+
+    const chosen = await pickNextVanPhotoDatastore(req, 'daily_ad_photo_rotation')
+    if (!chosen) {
+      return res.status(404).json({ ok: false, error: 'No photos in the WorkDrive folder. Drop some real van shots in and retry.' })
+    }
+
+    const png = await composeAdCardImage({ photoBuffer: chosen.buffer, imageHeadline })
+    res.set('Content-Type', 'image/png')
+    res.set('X-Photo-Name', chosen.name)
+    res.set('X-Photo-Rotation-Count', String(chosen.rotation_count))
+    res.set('X-Photo-Total', String(chosen.total_photos))
+    res.set('X-Image-Headline', imageHeadline.slice(0, 200))
+    if (draft) res.set('X-Pattern-Key', draft.pattern_key)
+    res.send(png)
+  } catch (e) {
+    console.error('[daily-ad preview-image]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// JSON-shaped preview companion — same drafter output as dry-draft but ALSO
+// tells you which photo would be used next (so you can see rotation state
+// without downloading the PNG).
+captureCalcRouter.get('/daily-ad/preview-json', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { draftDailyAd } = await import('../services/absoluteAdDrafter.js')
+    const { listVanPhotos } = await import('../services/vanPhotoLibrary.js')
+    const { getVal } = await import('../services/vanDatastore.js')
+
+    const draft = await draftDailyAd({ avoidPatterns: [] })
+    const photos = await listVanPhotos().catch(() => [])
+    const rotation = (await getVal(req, 'daily_ad_photo_rotation').catch(() => null)) || {}
+    const sorted = [...photos].sort((a, b) => (rotation[a.id] || 0) - (rotation[b.id] || 0))
+    res.json({
+      ok: true,
+      draft,
+      next_photo: sorted[0] || null,
+      total_photos: photos.length,
+      rotation_state: sorted.map(p => ({
+        id: p.id, name: p.name,
+        last_used: rotation[p.id] ? new Date(rotation[p.id]).toISOString() : 'never',
+      })),
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // Same pattern as /leads-page but for the Contacts module (the ~1,200 people
 // Mark has actually worked with — real emails, real relationships). This is
 // the source for the From the Van warm-list build.

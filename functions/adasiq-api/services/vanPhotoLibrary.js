@@ -68,6 +68,60 @@ export async function downloadVanPhoto(fileId) {
 }
 
 /**
+ * Pick the next photo on rotation using a DURABLE Datastore-backed rotation
+ * (does not evaporate at 48h like the Cache-backed pickNextVanPhoto). Rotation
+ * state key is caller-provided so multiple surfaces (van pillar, daily ad, etc)
+ * can each have their own independent rotation without stepping on each other.
+ *
+ * Sort order:
+ *   1. Photos never used (unknown fileId → epoch 0) sort FIRST — new drops
+ *      picked up immediately.
+ *   2. Then least-recently-used (oldest lastUsed timestamp).
+ *   3. Ties broken by fileId (stable).
+ *
+ * Prunes rotation entries whose fileId no longer exists in the folder
+ * (Mark deleted the photo).
+ *
+ * @param {Object} req — Express req, passed through to Datastore helpers
+ * @param {string} stateKey — VanKV key holding the rotation map, e.g. 'daily_ad_photo_rotation'
+ * @returns {Promise<{id, name, buffer, mimeType, rotation_count} | null>} null if folder empty
+ */
+export async function pickNextVanPhotoDatastore(req, stateKey) {
+  if (!stateKey) throw new Error('pickNextVanPhotoDatastore: stateKey required')
+  const { getVal, setVal } = await import('./vanDatastore.js')
+
+  const photos = await listVanPhotos()
+  if (!photos.length) return null
+
+  const rotation = (await getVal(req, stateKey).catch(() => null)) || {}
+
+  photos.sort((a, b) => {
+    const at = rotation[a.id] || 0
+    const bt = rotation[b.id] || 0
+    if (at !== bt) return at - bt
+    return String(a.id).localeCompare(String(b.id))
+  })
+  const chosen = photos[0]
+
+  const { buffer, mimeType } = await downloadVanPhoto(chosen.id)
+
+  rotation[chosen.id] = Date.now()
+  const liveIds = new Set(photos.map(p => p.id))
+  for (const id of Object.keys(rotation)) {
+    if (!liveIds.has(id)) delete rotation[id]
+  }
+  await setVal(req, stateKey, rotation).catch(e => console.warn(`[vanPhotoLibrary rotation write ${stateKey}]`, e.message))
+
+  return {
+    ...chosen,
+    buffer,
+    mimeType,
+    rotation_count: Object.keys(rotation).length,
+    total_photos: photos.length,
+  }
+}
+
+/**
  * Pick the next photo on rotation (least-recently-used).
  * Rotation state lives in cache key `van_photo_rotation` — a map of
  * fileId → lastUsedEpochMs. Unknown (new) photos sort first.

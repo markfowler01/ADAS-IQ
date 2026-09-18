@@ -4,8 +4,8 @@
 // state still lives in ToggleBoard; this only lays it out.
 // Density pass (Mark: "this is more the look I'm going for" → the Bill it
 // screenshot): small type, 40px rows, two columns on desktop.
-import { useState } from 'react'
-import { Panel, Row, Eyebrow, Title, Field, Notice, Pill, Switch, Chip, Footer, PrimaryButton, fmt, ORANGE, GREEN } from '../ui/ReviewKit.jsx'
+import { useEffect, useRef, useState } from 'react'
+import { Panel, Row, Eyebrow, Title, Field, Notice, Pill, Switch, Footer, PrimaryButton, fmt, ORANGE, GREEN } from '../ui/ReviewKit.jsx'
 import CalibrationLine from './CalibrationLine.jsx'
 import CustomerPicker from '../CustomerPicker'
 import SalespersonPicker from '../SalespersonPicker'
@@ -22,7 +22,74 @@ export function poolLabel(insurer, cashMode) {
   if (/state farm/.test(s)) return { label: 'State Farm pricing', tone: 'blue' }
   if (/allstate/.test(s)) return { label: 'Allstate pricing', tone: 'blue' }
   if (/american family|amfam/.test(s)) return { label: 'AmFam pricing', tone: 'blue' }
-  return { label: 'Standard pricing', tone: 'gray' }
+  return { label: 'Retail \u00b7 standard pricing', tone: 'gray' }
+}
+
+// One list of price schedules, used by the header pill and the Pricing
+// panel (Mark 2026-09-18: "I need to be able to switch this to cash,
+// retail, State Farm and all the others right from here"). Liberty Mutual
+// bills on Allstate's schedule, so it shares the AS row. "Retail" is the
+// standard, un-prefixed Books price — there is no separate retail list.
+export const POOL_OPTIONS = [
+  { id: null,    label: 'Auto',            long: 'Auto — follow the insurer',        note: 'Whatever the report says' },
+  { id: 'CP',    label: '\ud83d\udcb5 Cash',        long: '\ud83d\udcb5 Cash / customer pay',           note: 'CP schedule + cap' },
+  { id: 'STD',   label: 'Retail',          long: 'Retail — standard pricing',        note: 'Our list price, no insurer discount' },
+  { id: 'SF',    label: 'State Farm',      long: 'State Farm pricing',               note: 'SF schedule' },
+  { id: 'AS',    label: 'Allstate',        long: 'Allstate pricing',                 note: 'Allstate, Liberty Mutual, Safeco, Ohio Security, Esurance' },
+  { id: 'AMFAM', label: 'AmFam',           long: 'Am Fam pricing',                   note: 'American Family' },
+  { id: 'GEICO', label: 'GEICO',           long: 'GEICO pricing',                    note: 'GEICO + sister companies' },
+]
+
+// The header pill IS the switcher — tap it, pick the schedule.
+function PoolPill({ pool, poolOverride, onPool, disabled }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const away = e => { if (box.current && !box.current.contains(e.target)) setOpen(false) }
+    const esc = e => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', away); document.addEventListener('keydown', esc)
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
+  }, [open])
+  const tone = pool.tone === 'green' ? { bg: '#f0fdf4', fg: '#166534', br: '#86efac' }
+    : pool.tone === 'blue' ? { bg: '#eff6ff', fg: '#1d4ed8', br: '#bfdbfe' }
+    : { bg: '#f5f3f0', fg: '#555', br: '#e0dbd6' }
+  return (
+    <div className="relative" ref={box}>
+      <button type="button" onClick={() => setOpen(o => !o)} disabled={disabled}
+        title="Switch the price schedule"
+        className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold"
+        style={{ backgroundColor: tone.bg, color: tone.fg, border: `1.5px solid ${tone.br}`, opacity: disabled ? 0.6 : 1 }}>
+        {pool.label}
+        {poolOverride && <span className="text-[10px] font-semibold" style={{ opacity: 0.7 }}>· set by hand</span>}
+        <span style={{ fontSize: 9 }}>▼</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 z-30 mt-1 rounded-xl overflow-hidden"
+          style={{ backgroundColor: 'white', border: '1.5px solid #e0dbd6', boxShadow: '0 8px 24px rgba(0,0,0,.12)', minWidth: 268 }}>
+          <div className="px-3 py-2 text-[10px] uppercase tracking-wider font-bold"
+            style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace', borderBottom: '1px solid #f1ede9' }}>Price schedule</div>
+          {POOL_OPTIONS.map(o => {
+            const on = (poolOverride ?? null) === o.id
+            return (
+              <button key={String(o.id)} type="button" onClick={() => { onPool(o.id); setOpen(false) }}
+                className="w-full text-left px-3 py-2 flex items-start gap-2"
+                style={{ backgroundColor: on ? '#f0fdf4' : 'white', borderTop: '1px solid #f8f6f4' }}>
+                <span className="text-xs font-bold w-3 flex-shrink-0" style={{ color: GREEN }}>{on ? '\u2713' : ''}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-bold" style={{ color: on ? '#166534' : '#1a1a1a' }}>{o.long}</span>
+                  <span className="block text-[11px] truncate" style={{ color: '#888' }}>{o.note}</span>
+                </span>
+              </button>
+            )
+          })}
+          <div className="px-3 py-2 text-[11px]" style={{ color: '#888', borderTop: '1px solid #f1ede9', backgroundColor: '#fafaf8' }}>
+            Lines re-price as soon as you pick.
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function ReviewLayout({
@@ -45,8 +112,8 @@ export default function ReviewLayout({
   const required = calibrations.filter(c => c.enabled && !isService(c))
   const notRequired = calibrations.filter(c => !c.enabled && !isService(c))
   const services = calibrations.filter(isService)
-  const POOLS = [[null, 'Auto'], ['STD', 'Standard'], ['CP', '💵 Cash'], ['SF', 'State Farm'], ['AS', 'Allstate'], ['AMFAM', 'AmFam'], ['GEICO', 'GEICO']]
-  const poolName = { STD: 'Standard pricing', CP: '💵 Cash · CP schedule · $700 max', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'AmFam pricing', GEICO: 'GEICO pricing' }
+  const POOLS = POOL_OPTIONS.map(o => [o.id, o.label])
+  const poolName = { STD: 'Retail · standard pricing', CP: '💵 Cash · CP schedule · $700 max', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'AmFam pricing', GEICO: 'GEICO pricing' }
   const pool = poolOverride ? { label: poolName[poolOverride] || poolOverride, tone: poolOverride === 'CP' ? 'green' : 'blue' } : poolLabel(jobData.insurer, cashMode)
   const shopName = selectedCustomer?.name || jobData.shop || ''
   const canCreate = !!selectedCustomer && selected.length > 0 && !busy && !previewBusy
@@ -67,7 +134,7 @@ export default function ReviewLayout({
             <Title sub={shopName ? shopName : 'Pick the Zoho customer below'}>{vehicle || 'Vehicle'}</Title>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <Chip tone={pool.tone === 'gray' ? 'gray' : pool.tone}>{pool.label}</Chip>
+            <PoolPill pool={pool} poolOverride={poolOverride} onPool={onPool} disabled={busy} />
             {/* Where the card lands on the Jobs board (Mark 2026-09-14) */}
             <div className="flex items-center gap-1 rounded-full p-0.5" style={{ backgroundColor: 'white', border: '1.5px solid #e0dbd6' }}>
               {[['need_dispatch', '📋 Ready to dispatch'], ['jaden', '👤 Jayden'], ['mark', '👤 Mark']].map(([id, label]) => (
