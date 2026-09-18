@@ -820,6 +820,8 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [quoteRequestOpen, setQuoteRequestOpen] = useState(false)
   const [readyInvoiceJob,  setReadyInvoiceJob]  = useState(null)
   const [photoGateJob,     setPhotoGateJob]     = useState(null)   // 📸 photos-first before Ready to Invoice
+  const [photosOwed,       setPhotosOwed]       = useState([])    // 📸 shots still owed on invoiced jobs
+  const [owedJob,          setOwedJob]          = useState(null)  // the owed card open in the sheet
   const [salesStopOpen,    setSalesStopOpen]    = useState(false)  // 🚐 sales stop sheet
   const [salesStopTick,    setSalesStopTick]    = useState(0)      // bumps the scoreboard after a stop
   const refreshTimerRef = useRef(null)
@@ -861,6 +863,18 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   }, [])
   useEffect(() => { loadTodos() }, [loadTodos])
 
+  // 📸 Still to do: jobs that went to Ready to Invoice before the photo
+  // set was complete (Mark 2026-09-17 — the invoice never waits on a cell
+  // tower). They stay here until the shots land; the card clears itself.
+  const loadOwed = useCallback(async () => {
+    try {
+      const r = await apiFetch(`${API_BASE}/api/jobs/photos-owed`)
+      const j = await r.json()
+      if (r.ok) setPhotosOwed(Array.isArray(j.owed) ? j.owed : [])
+    } catch { /* non-critical */ }
+  }, [])
+  useEffect(() => { loadOwed() }, [loadOwed])
+
   async function saveTodos(techName, items) {
     const key = String(techName || '').toLowerCase()
     setTechTodos(prev => ({ ...prev, [key]: items }))  // optimistic
@@ -881,9 +895,9 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
   // Auto-refresh every 60s while this view is open
   useEffect(() => {
-    refreshTimerRef.current = setInterval(load, 60000)
+    refreshTimerRef.current = setInterval(() => { load(); loadOwed() }, 60000)
     return () => clearInterval(refreshTimerRef.current)
-  }, [load])
+  }, [load, loadOwed])
 
   function showToast(m) {
     setToast(m)
@@ -1227,6 +1241,46 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
         {/* 🚐 Sales stops scoreboard (Mark 2026-09-09) */}
         <SalesStopScoreboard user={user} onOpen={() => setSalesStopOpen(true)} refreshKey={salesStopTick} />
 
+        {/* 📸 Still to do — photos owed (Mark 2026-09-18: "I need the
+            still-need-to-do in the live view to upload pics"). The job is
+            already invoiced; these are the shots that never made it up.
+            Tap a row to open the same camera sheet and finish it. */}
+        {photosOwed.length > 0 && (
+          <div className="rounded-2xl p-4" style={{ backgroundColor: '#faf5ff', border: '2px solid #7e22ce' }}>
+            <div className="text-xs uppercase tracking-wider font-bold mb-2"
+              style={{ color: '#7e22ce', fontFamily: 'IBM Plex Mono, monospace' }}>
+              📸 Still to do — photos owed ({photosOwed.length})
+            </div>
+            <ul className="space-y-2">
+              {photosOwed.map(o => {
+                const age = o.hours >= 24 ? `${Math.floor(o.hours / 24)}d` : `${o.hours}h`
+                const mine = String(o.technician || '').toLowerCase() === String(user?.techName || user?.name || '').toLowerCase()
+                return (
+                  <li key={o.id}>
+                    <button onClick={() => o.job && setOwedJob(o.job)}
+                      className="w-full text-left flex items-center justify-between gap-2 rounded-lg p-2"
+                      style={{ backgroundColor: 'white', border: `1px solid ${mine ? '#7e22ce' : '#e9d5ff'}` }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-bold text-sm truncate" style={{ color: '#581c87' }}>
+                          {o.shop_name || 'Job'}{o.vehicle ? ` · ${o.vehicle}` : ''}
+                        </div>
+                        <div className="text-xs truncate" style={{ color: '#7e22ce' }}>
+                          {(o.labels || []).join(', ') || 'photos'} · {o.technician || o.by || 'tech'} · {age}
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold rounded-lg px-3 py-2 text-white flex-shrink-0"
+                        style={{ backgroundColor: '#7e22ce' }}>📷 Add →</span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+            <div className="text-[11px] mt-2" style={{ color: '#7e22ce' }}>
+              These cars are already invoiced. Add the shots when you have signal — each one drops off this list on its own.
+            </div>
+          </div>
+        )}
+
         {/* Needs-Dispatch alert — moved to TOP + red styled 2026-07-09
             per Mark: "jobs that need to be dispatched, I want them at
             the top and red." Hidden entirely when empty so it doesn't
@@ -1338,6 +1392,15 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
       {salesStopOpen && (
         <SalesStopSheet user={user} onClose={() => setSalesStopOpen(false)} onLogged={() => setSalesStopTick(t => t + 1)} />
+      )}
+
+      {owedJob && (
+        <JobPhotosSheet
+          job={owedJob}
+          user={user}
+          onJobUpdated={j => setOwedJob(j)}
+          onClose={() => { setOwedJob(null); loadOwed() }}
+        />
       )}
 
       {photoGateJob && (

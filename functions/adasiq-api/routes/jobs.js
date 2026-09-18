@@ -1353,9 +1353,9 @@ async function markPending(merged, prog, req) {
   const missingLabels = describeMissing(prog)
   slots._pending = { slots: prog.missing, at: new Date().toISOString(), by: who, labels: missingLabels }
   merged.photo_slots = JSON.stringify(slots)
-  postToCliqChannel(DISPATCH_CHANNEL,
+  await postToCliqChannel(DISPATCH_CHANNEL,
     `📸 *${merged.shop_name || 'Job'}${merged.vehicle ? ' · ' + merged.vehicle : ''} → Ready to Invoice · photos still owed* (${who})\n` +
-    `Missing: ${missingLabels.join(', ')}. Bill it now — the shots upload on their own and the card clears itself. They stay on the 6pm owed list until they land.`).catch(() => {})
+    `Missing: ${missingLabels.join(', ')}. Bill it now — the shots upload on their own and the card clears itself. They stay on 📸 Still to do in Live Day and the 6pm owed list until they land.`).catch(e => console.log('[photos-owed] cliq failed:', e.message))
   // Rolling log for the weekly per-tech count.
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
@@ -1377,7 +1377,7 @@ async function markPending(merged, prog, req) {
 export async function photosOwedList(req) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
   const rows = await app.zcql().executeZCQLQuery(
-    `SELECT ROWID, shop_name, vehicle, technician, status, invoice_number, photo_slots FROM ${JOBS_TABLE_NAME} WHERE status = 'ready_invoice' OR status = 'complete' ORDER BY ROWID DESC LIMIT 300`)
+    `SELECT ROWID, shop_name, vehicle, year, make, model, vin, technician, status, invoice_number, photo_slots, tires_set, odo_before, odo_after FROM ${JOBS_TABLE_NAME} WHERE status = 'ready_invoice' OR status = 'complete' ORDER BY ROWID DESC LIMIT 300`)
   const out = []
   for (const r of rows || []) {
     const j = r[JOBS_TABLE_NAME] || r
@@ -1387,7 +1387,12 @@ export async function photosOwedList(req) {
     out.push({ id: String(j.ROWID), shop_name: j.shop_name || '', vehicle: j.vehicle || '', technician: j.technician || p.by || '',
       status: j.status, invoice_number: j.invoice_number || '', owed_since: p.at, by: p.by || '',
       missing: p.slots || [], labels: p.labels || p.slots || [],
-      hours: Math.max(0, Math.round((Date.now() - new Date(p.at).getTime()) / 3600000)) })
+      hours: Math.max(0, Math.round((Date.now() - new Date(p.at).getTime()) / 3600000)),
+      // Everything the photo sheet needs so Live Day can open it straight
+      // from this list — there is no GET /api/jobs/:id (Mark 2026-09-18).
+      job: { id: String(j.ROWID), shop_name: j.shop_name || '', vehicle: j.vehicle || '', year: j.year || '', make: j.make || '',
+        model: j.model || '', vin: j.vin || '', technician: j.technician || '', photo_slots: j.photo_slots || '',
+        tires_set: j.tires_set || '', odo_before: j.odo_before || '', odo_after: j.odo_after || '' } })
   }
   return out.sort((a, b) => String(a.owed_since).localeCompare(String(b.owed_since)))
 }
@@ -1503,10 +1508,14 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     if (slotKey === 'odo_after' && miles != null) patch.odo_after = String(miles)
     let updated = await updateJob(req, job.id, { ...job, ...patch })
     // Was the card moved to Ready to Invoice on a bad signal? Once the set is whole, clear the flag and tell #dispatch.
-    if (slots._pending && photoProgress(updated).complete) {
+    // The debt is the SHOTS, not the test drive: clear it as soon as all
+    // eight slots are filled, or a short test drive would keep the card on
+    // the owed list forever (Mark 2026-09-18).
+    if (slots._pending && photoProgress(updated).missing.length === 0) {
       const by = slots._pending.by; delete slots._pending
       updated = await updateJob(req, job.id, { ...updated, photo_slots: JSON.stringify(slots) })
-      postToCliqChannel(DISPATCH_CHANNEL, `✅ *All photos in* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — the set from ${by}'s phone finished uploading. Good to invoice.`).catch(() => {})
+      // Awaited: Catalyst freezes the function once the response goes out.
+      await postToCliqChannel(DISPATCH_CHANNEL, `✅ *All photos in* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — the set from ${by}'s phone finished uploading. Good to invoice.`).catch(e => console.log('[photo-slot] cliq failed:', e.message))
     }
     console.log(`[photo-slot] job ${job.id} ← ${name}${miles != null ? ` (${miles} mi)` : ''}${ai ? ` [ai ${ai.slot} ${ai.confidence}]` : ''}`)
     res.json({ ok: true, slot: slotKey, miles, vin: vinInfo, name, fileId, job: updated, progress: photoProgress(updated) })

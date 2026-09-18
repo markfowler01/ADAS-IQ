@@ -1,0 +1,68 @@
+name: Ada — morning brief
+
+# Mark's 4:40 AM brief used to run from launchd on his Mac. On 2026-09-15 it
+# did not run: the laptop was asleep at 4:40 and launchd never fired the job
+# (runs = 0). A brief that depends on a laptop being awake is not a brief.
+#
+# Every step here is an HTTP call to Catalyst, so nothing needs his machine.
+# The one local step the old script had — pushing vault context — had already
+# been failing since 09-13 with "Operation not permitted" (Full Disk Access),
+# so nothing working is lost by dropping it.
+#
+# TIMEZONE: Actions cron is UTC only. 4:40 AM Pacific is 11:40 UTC in summer
+# and 12:40 UTC in winter, so both fire and the second one checks whether the
+# brief already went out and stops. DST handles itself.
+
+on:
+  schedule:
+    - cron: '40 11 * * *'   # 4:40 AM PDT
+    - cron: '40 12 * * *'   # 4:40 AM PST
+  workflow_dispatch:         # so Mark can run it by hand from the Actions tab
+
+concurrency:
+  group: ada-morning
+  cancel-in-progress: false
+
+env:
+  BASE: https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api
+
+jobs:
+  morning:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip if today's brief already went out
+        id: guard
+        run: |
+          sent=$(curl -sS --max-time 30 -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" \
+            "$BASE/api/briefing/sent-today" | python3 -c "import sys,json;print(json.load(sys.stdin).get('sent'))" 2>/dev/null || echo "unknown")
+          echo "already_sent=$sent"
+          echo "already_sent=$sent" >> "$GITHUB_OUTPUT"
+
+      # Opus proposes the Big 3. The slow step — generous timeout.
+      - name: Plan the day
+        if: steps.guard.outputs.already_sent != 'True'
+        run: |
+          code=$(curl -sS -o /tmp/plan.json -w '%{http_code}' --max-time 240 \
+            -X POST -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" "$BASE/api/briefing/plan")
+          echo "plan http=$code"
+          # A missing plan is survivable: the brief still sends, without a Big 3.
+          [ "$code" = "200" ] || echo "::warning::planner returned $code — brief will send without a Big 3"
+
+      - name: Record Ada's voice memo
+        if: steps.guard.outputs.already_sent != 'True'
+        run: |
+          code=$(curl -sS -o /tmp/audio.json -w '%{http_code}' --max-time 120 \
+            -X POST -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" "$BASE/api/briefing/render-audio")
+          echo "audio http=$code"
+          [ "$code" = "200" ] || echo "::warning::audio returned $code — brief sends without the memo"
+
+      - name: Send the brief
+        if: steps.guard.outputs.already_sent != 'True'
+        run: |
+          code=$(curl -sS -o /tmp/brief.json -w '%{http_code}' --max-time 180 \
+            -X POST -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" "$BASE/api/cron/daily-briefing")
+          echo "brief http=$code"
+          head -c 400 /tmp/brief.json; echo
+          # This one does need to be loud. If the brief did not send, the whole
+          # job was pointless and Mark should see a red X in the Actions tab.
+          if [ "$code" != "200" ]; then echo "::error::brief did not send (http $code)"; exit 1; fi

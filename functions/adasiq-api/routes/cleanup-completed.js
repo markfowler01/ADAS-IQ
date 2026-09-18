@@ -7,6 +7,7 @@
  * Safety rules (all three must be true to delete):
  *   1. status === 'complete'
  *   2. invoiced === true
+ *   4. no photos still owed (photo_slots._pending)
  *   3. created_at is more than 24 hours ago
  *
  * Protected by X-Cron-Secret header (CLEANUP_CRON_SECRET env var).
@@ -37,8 +38,18 @@ function isOldEnough(row) {
   return new Date(row.created_at).getTime() < Date.now() - ONE_DAY_MS
 }
 
+// 4. The job isn't still owing photos (Mark 2026-09-17: the invoice goes
+//    out on the tech's word, the shots follow). Deleting the card would
+//    take the debt and the WorkDrive link with it.
+function owesPhotos(row) {
+  try {
+    const slots = typeof row.photo_slots === 'string' ? JSON.parse(row.photo_slots || '{}') : (row.photo_slots || {})
+    return !!slots?._pending?.at
+  } catch { return false }
+}
+
 function isCandidateForDeletion(row) {
-  return row.status === 'complete' && isInvoiced(row) && isOldEnough(row)
+  return row.status === 'complete' && isInvoiced(row) && isOldEnough(row) && !owesPhotos(row)
 }
 
 function checkAuth(req, res) {
