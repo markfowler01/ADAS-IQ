@@ -28,9 +28,22 @@ export default function CalibrationLine({ cal, onToggle, price, onField, vehicle
     finally { setAiBusy(false) }
   }
 
+  // The insurer's list doesn't carry this op, so it billed our standard
+  // rate (Mark 2026-09-18: picked State Farm, the price didn't move and
+  // nothing said why). POOL_NAMES keeps the flag readable.
+  const POOL_NAMES = { SF: 'State Farm', AS: 'Allstate', AMFAM: 'AmFam', GEICO: 'GEICO', CP: 'cash' }
+  const fellBack = price && !price.needs_price && price.pool_fallback
   const priceEl = price
-    ? <span className="text-xs font-bold px-2 py-0.5 rounded tabular-nums" style={price.needs_price ? { backgroundColor: '#fef2f2', color: '#b91c1c' } : { backgroundColor: enabled ? '#dcfce7' : '#f5f3f0', color: enabled ? '#15803d' : '#999' }}>
-        {price.needs_price ? 'no price' : `$${Number(price.rate).toFixed(0)}`}
+    ? <span className="flex flex-col items-end flex-shrink-0">
+        <span className="text-xs font-bold px-2 py-0.5 rounded tabular-nums" style={price.needs_price ? { backgroundColor: '#fef2f2', color: '#b91c1c' } : { backgroundColor: enabled ? '#dcfce7' : '#f5f3f0', color: enabled ? '#15803d' : '#999' }}>
+          {price.needs_price ? 'no price' : `$${Number(price.rate).toFixed(0)}`}
+        </span>
+        {fellBack && (
+          <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#b45309' }}
+            title={`No ${POOL_NAMES[price.pool_fallback] || price.pool_fallback} item matched this calibration, so our standard rate is billing. Pick the right one on the price review at Create job.`}>
+            ⚠ no {POOL_NAMES[price.pool_fallback] || price.pool_fallback} price
+          </span>
+        )}
       </span>
     : null
 

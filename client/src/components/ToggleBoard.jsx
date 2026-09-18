@@ -179,7 +179,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           if (['calibration identification report', 'post collision safety inspection 1 (l-m)', 'post-scan (l-m)'].includes(key)) {
             fixedTotal += li.amount || 0
           } else {
-            priceMap[key] = { rate: li.rate, needs_price: !!li.needs_price }
+            priceMap[key] = { rate: li.rate, needs_price: !!li.needs_price, pool_fallback: li.pool_fallback || null }
           }
         }
         priceMap._fixed_total = fixedTotal

@@ -3723,7 +3723,40 @@ captureCalcRouter.all('/from-the-van/nurture/run', heartbeatAttempt('capture_van
       })
     } catch (e) { console.warn('[van piggyback]', e.message, e.stack) }
 
-    res.json({ ok: true, dry, processed: out.length, sent: sentCount, capReached, cap: MAX_SENDS_PER_FIRE, results: out, piggyback })
+    // Daily Absolute ADAS ad piggyback — draft window 5:30-7:30 AM PT,
+    // publish window 14:30-16:00 PT. All checks non-fatal.
+    const dailyAdActions = { draft: null, publish: null }
+    try {
+      const nowPt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }))
+      const hourPt = nowPt.getHours()
+      const minPt = nowPt.getMinutes()
+      const inDraftWindow = (hourPt === 5 && minPt >= 30) || hourPt === 6 || (hourPt === 7 && minPt <= 30)
+      const inPublishWindow = (hourPt === 14 && minPt >= 30) || hourPt === 15 || (hourPt === 16 && minPt === 0)
+
+      // DRAFT window — hit our own draft endpoint idempotently
+      if (inDraftWindow && !dry) {
+        try {
+          const axios = (await import('axios')).default
+          const secret = process.env.BREW_CRON_SECRET || ''
+          const url = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/daily-ad/draft-today?secret=${encodeURIComponent(secret)}`
+          const r = await axios.post(url, {}, { timeout: 120000, validateStatus: () => true })
+          dailyAdActions.draft = { ok: r.data?.ok, skipped: r.data?.skipped, id: r.data?.pending?.id, http: r.status }
+        } catch (e) { dailyAdActions.draft = { ok: false, error: e.message } }
+      }
+
+      // PUBLISH window — hit our own publish endpoint idempotently
+      if (inPublishWindow && !dry) {
+        try {
+          const axios = (await import('axios')).default
+          const secret = process.env.BREW_CRON_SECRET || ''
+          const url = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/daily-ad/publish-today?secret=${encodeURIComponent(secret)}`
+          const r = await axios.post(url, {}, { timeout: 180000, validateStatus: () => true })
+          dailyAdActions.publish = { ok: r.data?.ok, skipped: r.data?.skipped, http: r.status }
+        } catch (e) { dailyAdActions.publish = { ok: false, error: e.message } }
+      }
+    } catch (e) { console.warn('[daily-ad piggyback]', e.message) }
+
+    res.json({ ok: true, dry, processed: out.length, sent: sentCount, capReached, cap: MAX_SENDS_PER_FIRE, results: out, piggyback, daily_ad: dailyAdActions })
   } catch (e) {
     console.error('[van nurture]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message, partial: out })
@@ -5861,6 +5894,194 @@ captureCalcRouter.get('/daily-ad/preview-image', requireCronSecretFlex, async (r
     console.error('[daily-ad preview-image]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message })
   }
+})
+
+// ─── Daily ad pipeline: draft-today / publish-today / kill / pending ────
+//
+// Piggybacked on the daily nurture cron:
+//   - between 5:30 AM and 7:30 AM PT: draft if none pending for today
+//   - between 2:30 PM and 4:00 PM PT: publish if pending + not killed + not published
+//
+// Storage in VanKV:
+//   - daily_ad_pending_YYYY-MM-DD : { id, drafted_at, image_headline,
+//                                     post_body_markdown, pattern_key,
+//                                     image_url, photo_name, status,
+//                                     killed?, published_at?,
+//                                     li_post_id?, fb_post_id?, ig_post_id? }
+//   - daily_ad_recent_patterns    : [ { date, pattern_key } ] (last 14)
+
+const DAILY_AD_KEY = (dateStr) => `daily_ad_pending_${dateStr}`
+const DAILY_AD_RECENT_PATTERNS_KEY = 'daily_ad_recent_patterns'
+
+function todayPtDateStr() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })  // YYYY-MM-DD
+}
+
+// One-off draft. Idempotent per date — if pending exists, returns it.
+captureCalcRouter.post('/daily-ad/draft-today', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { draftDailyAd } = await import('../services/absoluteAdDrafter.js')
+    const { pickNextVanPhotoDatastore } = await import('../services/vanPhotoLibrary.js')
+    const { composeAdCardImage } = await import('../services/absoluteAdCardImage.js')
+    const { getVal, setVal } = await import('../services/vanDatastore.js')
+    const { commitBinaryFile } = await import('../services/brewArchive.js')
+
+    const dateStr = todayPtDateStr()
+    const existing = await getVal(req, DAILY_AD_KEY(dateStr)).catch(() => null)
+    if (existing) {
+      return res.json({ ok: true, skipped: true, reason: 'pending draft already exists for today', pending: existing })
+    }
+
+    // Load pattern dedup log
+    const recentLog = (await getVal(req, DAILY_AD_RECENT_PATTERNS_KEY).catch(() => null)) || []
+    const avoidPatterns = recentLog.slice(0, 14).map(x => x.pattern_key).filter(Boolean)
+
+    const draft = await draftDailyAd({ avoidPatterns })
+    const chosen = await pickNextVanPhotoDatastore(req, 'daily_ad_photo_rotation')
+    if (!chosen) throw new Error('No photos in the WorkDrive folder — drop some van shots in and retry')
+
+    const cardPng = await composeAdCardImage({ photoBuffer: chosen.buffer, imageHeadline: draft.image_headline })
+
+    // Upload to GitHub for a public raw URL usable by Cliq DM + FB/IG Graph API
+    const imgPath = `absolute-ad/${dateStr}-${draft.pattern_key}.png`
+    const imgCommit = await commitBinaryFile({
+      path: imgPath, buffer: cardPng,
+      message: `Absolute ADAS daily ad ${dateStr}: ${draft.image_headline}`,
+    })
+    if (!imgCommit.ok) throw new Error(`GitHub commit failed: ${imgCommit.error}`)
+
+    const id = crypto.randomBytes(9).toString('base64url')
+    const pending = {
+      id,
+      date: dateStr,
+      drafted_at: new Date().toISOString(),
+      pattern_key: draft.pattern_key,
+      image_headline: draft.image_headline,
+      hook: draft.hook,
+      post_body_markdown: draft.post_body_markdown,
+      notes: draft.notes,
+      image_url: imgCommit.rawUrl,
+      photo_name: chosen.name,
+      status: 'pending',
+    }
+    await setVal(req, DAILY_AD_KEY(dateStr), pending)
+
+    // Cliq DM with image + kill URL (HMAC-signed via signVanAction, action='ad-kill')
+    const killUrl = `${VAN_APPROVE_BASE}/daily-ad/kill?id=${id}&s=${signVanAction(id, 'ad-kill')}&date=${dateStr}`
+    const cliqMsg = [
+      `📣 ABSOLUTE ADAS DAILY AD — drafted for ${dateStr}`,
+      `Publishes to LinkedIn + Facebook + Instagram at 3:00 PM PT today.`,
+      `Silence = ships. Tap Kill to cancel.`,
+      ``,
+      `HEADLINE: ${draft.image_headline}`,
+      `PATTERN:  ${draft.pattern_key}`,
+      ``,
+      `--- POST BODY ---`,
+      draft.post_body_markdown,
+      `--- END ---`,
+      ``,
+      draft.notes ? `📝 Notes: ${draft.notes}` : '',
+      ``,
+      `🖼️ Card image: ${imgCommit.rawUrl}`,
+      `❌ Kill (cancels the 3 PM send): ${killUrl}`,
+    ].filter(Boolean).join('\n').slice(0, 4000)
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(e => console.warn('[daily-ad cliq]', e.message))
+
+    res.json({ ok: true, pending, kill_url: killUrl, image_url: imgCommit.rawUrl })
+  } catch (e) {
+    console.error('[daily-ad draft-today]', e.message, e.stack)
+    res.status(500).json({
+      ok: false,
+      error: e.message,
+      response_status: e.response?.status,
+      response_data: e.response?.data ? JSON.stringify(e.response.data).slice(0, 800) : null,
+      stack_first_line: (e.stack || '').split('\n')[1] || null,
+    })
+  }
+})
+
+// One-off publish. Idempotent — if already published or killed, no-op.
+captureCalcRouter.post('/daily-ad/publish-today', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { getVal, setVal } = await import('../services/vanDatastore.js')
+    const dateStr = req.body?.date ? String(req.body.date) : todayPtDateStr()
+    const p = await getVal(req, DAILY_AD_KEY(dateStr))
+    if (!p) return res.status(404).json({ ok: false, error: `no pending draft for ${dateStr}` })
+    if (p.killed) return res.json({ ok: true, skipped: true, reason: 'killed', pending: p })
+    if (p.status === 'published') return res.json({ ok: true, skipped: true, reason: 'already published', pending: p })
+
+    // Fan to LI (text-only for v1) + FB + IG (with image) in parallel
+    const { postToLinkedIn } = await import('../services/brewLinkedIn.js')
+    const { postToFacebookPage, postToInstagram } = await import('../services/metaPosting.js')
+
+    const [li, fb, ig] = await Promise.all([
+      postToLinkedIn({ text: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
+      postToFacebookPage({ imageUrl: p.image_url, caption: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
+      postToInstagram({ imageUrl: p.image_url, caption: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
+    ])
+
+    const patched = {
+      ...p,
+      status: 'published',
+      published_at: new Date().toISOString(),
+      li_result: li,
+      fb_result: fb,
+      ig_result: ig,
+    }
+    await setVal(req, DAILY_AD_KEY(dateStr), patched)
+
+    // Append to recent-patterns log for future dedup
+    const recent = (await getVal(req, DAILY_AD_RECENT_PATTERNS_KEY).catch(() => null)) || []
+    const nextLog = [{ date: dateStr, pattern_key: p.pattern_key }, ...recent.filter(x => x.date !== dateStr)].slice(0, 14)
+    await setVal(req, DAILY_AD_RECENT_PATTERNS_KEY, nextLog).catch(() => {})
+
+    // Cliq confirm
+    const anyFail = !li.ok || !fb.ok || !ig.ok
+    const cliqMsg = [
+      anyFail ? `⚠️ ABSOLUTE ADAS DAILY AD — partial publish ${dateStr}` : `✅ ABSOLUTE ADAS DAILY AD — published ${dateStr}`,
+      `Headline: ${p.image_headline}`,
+      `LinkedIn:  ${li.ok ? 'ok' : 'fail: ' + (li.error || 'unknown')}${li.id ? ' (' + li.id + ')' : ''}`,
+      `Facebook:  ${fb.ok ? 'ok' : 'fail: ' + (fb.error || 'unknown')}${fb.id ? ' (' + fb.id + ')' : ''}`,
+      `Instagram: ${ig.ok ? 'ok' : 'fail: ' + (ig.error || 'unknown')}${ig.id ? ' (' + ig.id + ')' : ''}`,
+    ].join('\n')
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(() => {})
+
+    res.json({ ok: true, published: true, pending: patched })
+  } catch (e) {
+    console.error('[daily-ad publish-today]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Kill link — HMAC-signed. GET renders confirmation, POST commits the kill.
+captureCalcRouter.get('/daily-ad/kill', async (req, res) => {
+  const id = String(req.query.id || '')
+  const sig = String(req.query.s || '')
+  const dateStr = String(req.query.date || todayPtDateStr())
+  if (!verifyVanAction(id, 'ad-kill', sig)) return res.status(401).type('html').send('<h1>Link invalid or expired</h1>')
+  const { getVal, setVal } = await import('../services/vanDatastore.js')
+  const p = await getVal(req, DAILY_AD_KEY(dateStr))
+  if (!p || p.id !== id) return res.status(404).type('html').send('<h1>Draft not found</h1><p>Already killed, published, or replaced.</p>')
+  const patched = { ...p, killed: true, killed_at: new Date().toISOString() }
+  await setVal(req, DAILY_AD_KEY(dateStr), patched)
+  postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🛑 Absolute ADAS daily ad KILLED for ${dateStr}. Nothing will publish at 3 PM.`).catch(() => {})
+  res.type('html').send(`<!doctype html><html><body style="font-family:-apple-system,Helvetica;padding:40px;background:#0d0d0d;color:#fff"><h1 style="color:#CD4419">Killed.</h1><p>The Absolute ADAS ad for <strong>${dateStr}</strong> will not publish at 3 PM PT.</p><p style="color:#999;font-size:14px;">Headline was: ${p.image_headline}</p></body></html>`)
+})
+
+// Admin — read today's pending
+captureCalcRouter.get('/daily-ad/pending-today', requireCronSecretFlex, async (req, res) => {
+  const { getVal } = await import('../services/vanDatastore.js')
+  const dateStr = req.query.date ? String(req.query.date) : todayPtDateStr()
+  const p = await getVal(req, DAILY_AD_KEY(dateStr))
+  res.json({ ok: true, date: dateStr, pending: p })
+})
+
+// Admin — clear today's pending (needed if the draft went sideways)
+captureCalcRouter.post('/daily-ad/clear-pending-today', requireCronSecretFlex, async (req, res) => {
+  const { deleteVal } = await import('../services/vanDatastore.js')
+  const dateStr = req.body?.date ? String(req.body.date) : todayPtDateStr()
+  await deleteVal(req, DAILY_AD_KEY(dateStr))
+  res.json({ ok: true, cleared: true, date: dateStr })
 })
 
 // JSON-shaped preview companion — same drafter output as dry-draft but ALSO

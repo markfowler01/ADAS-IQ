@@ -26,10 +26,68 @@ function getShopInitials(shopName) {
 let cachedToken = null
 let tokenExpiresAt = 0
 
+// Datastore-backed Zoho token cache — shared across ALL Catalyst function
+// invocations, not just this process. Solves the "Access Denied — too many
+// requests" rate limit that hits when many containers spin up and each
+// separately refreshes.
+//
+// Key stored under VanKV table (same store Van weekly uses): { access_token,
+// expires_at_ms, refreshed_at_iso }. Lazy import of vanDatastore avoids a
+// hard dep from zoho.js on Van code.
+const DATASTORE_TOKEN_KEY = 'zoho_access_token'
+
+async function readTokenFromDatastore() {
+  try {
+    const catalyst = (await import('zcatalyst-sdk-node')).default
+    // Minimal req-less initialize — Datastore reads work without an HTTP request
+    const app = catalyst.initialize({}, { type: 'advancedio' })
+    const table = app.datastore().table('VanKV')
+    const q = `SELECT value_json FROM VanKV WHERE key_name = '${DATASTORE_TOKEN_KEY}'`
+    const rows = await app.zcql().executeZCQLQuery(q)
+    const row = Array.isArray(rows) && rows[0]?.VanKV
+    if (!row?.value_json) return null
+    const parsed = JSON.parse(row.value_json)
+    return parsed
+  } catch (e) {
+    console.warn('[zoho token datastore read]', e.message)
+    return null
+  }
+}
+
+async function writeTokenToDatastore(tokenObj) {
+  try {
+    const catalyst = (await import('zcatalyst-sdk-node')).default
+    const app = catalyst.initialize({}, { type: 'advancedio' })
+    const table = app.datastore().table('VanKV')
+    const value_json = JSON.stringify(tokenObj)
+    // Upsert: try update by SELECT-then-update, fall back to insert
+    const q = `SELECT ROWID FROM VanKV WHERE key_name = '${DATASTORE_TOKEN_KEY}'`
+    const rows = await app.zcql().executeZCQLQuery(q)
+    const existing = Array.isArray(rows) && rows[0]?.VanKV?.ROWID
+    if (existing) {
+      await table.updateRow({ ROWID: existing, key_name: DATASTORE_TOKEN_KEY, value_json })
+    } else {
+      await table.insertRow({ key_name: DATASTORE_TOKEN_KEY, value_json })
+    }
+  } catch (e) {
+    console.warn('[zoho token datastore write]', e.message)
+  }
+}
+
 export async function getAccessToken() {
   const now = Date.now()
+  // 1. Fast path — in-memory cache still valid
   if (cachedToken && now < tokenExpiresAt - 60_000) return cachedToken
 
+  // 2. Warm path — Datastore-cached token from a prior invocation
+  const persisted = await readTokenFromDatastore()
+  if (persisted?.access_token && persisted?.expires_at_ms && now < persisted.expires_at_ms - 60_000) {
+    cachedToken = persisted.access_token
+    tokenExpiresAt = persisted.expires_at_ms
+    return cachedToken
+  }
+
+  // 3. Cold path — refresh from Zoho (rate-limited if we hit it too often)
   const params = new URLSearchParams({
     grant_type: 'refresh_token',
     client_id: process.env.ZOHO_CLIENT_ID,
@@ -48,6 +106,14 @@ export async function getAccessToken() {
 
   cachedToken = res.data.access_token
   tokenExpiresAt = now + (res.data.expires_in || 3600) * 1000
+
+  // Write to Datastore so future invocations skip the refresh
+  await writeTokenToDatastore({
+    access_token: cachedToken,
+    expires_at_ms: tokenExpiresAt,
+    refreshed_at_iso: new Date().toISOString(),
+  })
+
   return cachedToken
 }
 
@@ -1274,6 +1340,10 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
         name: m.matchedName || name, requested: name, rate, quantity,
         amount: Math.round(rate * quantity * 100) / 100,
         needs_price: false, included,
+        // No item on this insurer's list → we billed the standard rate.
+        // Surfaced so the review screen can say so (Mark 2026-09-18:
+        // picked State Farm, price didn't move, no reason given).
+        pool_fallback: m.fallback === 'standard' ? (insurerPrefix || null) : null,
         paid_option: included ? findPaidAlternative(name) : null,
         // Paid fixed line (Cal ID $15) can be comped to $0 (Mark
         // 2026-08-29: "also have the Cal ID included and paid")

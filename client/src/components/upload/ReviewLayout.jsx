@@ -118,6 +118,11 @@ export default function ReviewLayout({
   const shopName = selectedCustomer?.name || jobData.shop || ''
   const canCreate = !!selectedCustomer && selected.length > 0 && !busy && !previewBusy
   const priceOf = c => rowPrices ? rowPrices[String(c.calibration_name || '').toLowerCase()] : null
+  // Lines the chosen insurer's list doesn't carry — they bill our standard
+  // rate, which is why picking a schedule can leave the total unchanged.
+  const POOL_NAMES = { SF: 'State Farm', AS: 'Allstate', AMFAM: 'AmFam', GEICO: 'GEICO', CP: 'cash' }
+  const fellBack = calibrations.filter(c => c.enabled).map(priceOf).filter(p => p && !p.needs_price && p.pool_fallback)
+  const fellBackPool = fellBack[0]?.pool_fallback || null
   const veh = { year: jobData.year, make: jobData.make, model: jobData.model }
 
   async function copyVin() {
@@ -212,6 +217,11 @@ export default function ReviewLayout({
                   ))}
                 </div>
                 <div className="text-[11px] mt-1" style={{ color: '#888' }}>Auto follows the insurer ({pool.label}). Lines re-price when you change it.</div>
+                {fellBack.length > 0 && (
+                  <div className="rounded-lg px-2.5 py-2 mt-1.5 text-[11px]" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
+                    <b>⚠ {fellBack.length} line{fellBack.length === 1 ? '' : 's'} didn't match a {POOL_NAMES[fellBackPool] || fellBackPool} item</b> — {fellBack.length === 1 ? 'it is' : 'they are'} billing our standard rate, which is why the total didn't move. {fellBackPool === 'SF' || fellBackPool === 'AS' ? `${POOL_NAMES[fellBackPool]} prices by tier (3A / 3B / 3C, Level 1 / 2), not by calibration name — tap Create job and pick the tier on the price review. The app remembers it for ${jobData.make || 'this make'} after that.` : `Add the ${POOL_NAMES[fellBackPool] || fellBackPool} item in Zoho Books, or pick it on the price review at Create job.`}
+                  </div>
+                )}
               </div>
               {cashMode && (
                 <div className="rounded-lg px-2.5 py-2" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac' }}>
