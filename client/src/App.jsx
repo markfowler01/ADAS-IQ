@@ -36,6 +36,7 @@ import TipsScreen from './pages/TipsScreen'
 import RecruitingScreen from './pages/RecruitingScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
+import WorkDriveCleanup from './pages/WorkDriveCleanup'
 import SoftphonePanel from './components/SoftphonePanel'
 import { UploadTray } from './components/JobPhotos'
 import TimeClockReview from './components/TimeClockReview'
@@ -352,6 +353,9 @@ function MainApp() {
       )}
       {screen === 'schedule' && (
         <SchedulePage user={user} onLogout={handleLogout} {...navProps} />
+      )}
+      {screen === 'wd-cleanup' && (
+        <WorkDriveCleanup user={user} onLogout={handleLogout} {...navProps} />
       )}
       {screen === 'item-map' && (
         <ItemMapScreen user={user} onLogout={handleLogout} {...navProps} />

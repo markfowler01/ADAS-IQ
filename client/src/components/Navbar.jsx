@@ -47,6 +47,7 @@ const MORE_GROUPS = [
     { id: 'tips',      label: 'TSB Tips' },
     { id: 'rules',     label: 'Calibration Rules' },
     { id: 'item-map',  label: 'Item Mapping', adminOnly: true },
+    { id: 'wd-cleanup', label: 'WorkDrive Cleanup', ownerOnly: true },
     { id: 'messages',  label: 'Messages' },
   ]},
   { label: 'Admin', links: [

@@ -448,6 +448,26 @@ router.get('/', async (req, res) => {
 })
 
 // POST /api/jobs
+// Which Waiting-for-Kat request is this report for? Exactly one confident
+// hit or null — a wrong merge is worse than a duplicate card.
+async function findOpenRequestFor(req, body) {
+  const all = (await getAllJobs(req)).filter(j => (j.status || '') === 'job_requested')
+  if (!all.length) return null
+  const digits = s => { const d = (String(s || '').match(/\d{4,}/) || [''])[0]; return /^(19[89]\d|20[0-3]\d)$/.test(d) ? '' : d }   // a model year is not an RO
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const vin = String(body.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const ro = digits(body.invoice_number) || digits(body.quote_number) || digits(body.ro_number) || digits((body.notes || '').match(/RO#?\s*([\w-]+)/i)?.[1])
+  const shop = norm(body.shop_name)
+  const veh = norm(body.vehicle || [body.year, body.make, body.model].filter(Boolean).join(' '))
+  const one = (list, via) => (list.length === 1 ? { ...list[0], _via: via } : null)
+  const reqRO = j => digits(j.quote_number) || digits(j.invoice_number) || digits((j.notes || '').match(/RO#?\s*([\w-]+)/i)?.[1])
+  if (ro) { const hit = one(all.filter(j => reqRO(j) === ro), 'RO#'); if (hit) return hit }
+  if (vin.length === 17) { const hit = one(all.filter(j => String(j.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === vin), 'VIN'); if (hit) return hit }
+  if (vin.length >= 4 && shop) { const l4 = vin.slice(-4); const hit = one(all.filter(j => norm(j.shop_name) === shop && String(j.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '').endsWith(l4)), 'last-4 VIN + shop'); if (hit) return hit }
+  if (shop && veh) { const hit = one(all.filter(j => norm(j.shop_name) === shop && norm(j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')) === veh), 'shop + vehicle'); if (hit) return hit }
+  return null
+}
+
 router.post('/', async (req, res) => {
   try {
     // Auto-dispatch on create (Mark 2026-07-24): a technician on the
@@ -476,7 +496,29 @@ router.post('/', async (req, res) => {
         }).format(new Date())
       }
     }
-    const newJob = await insertJob(req, body)
+    // Safety net (Mark 2026-09-21): a job built from a Kinetic report
+    // while a tech's request for the same car is still Waiting for Kat
+    // converts THAT card instead of adding a second one — so photos,
+    // tires, odometer reads and the WorkDrive folder the tech already
+    // put on the request ride along, whichever button Kat pressed.
+    let newJob = null
+    if (!body.via_request) {
+      try {
+        const match = await findOpenRequestFor(req, body)
+        if (match) {
+          const carry = {}
+          for (const k of ['photo_slots', 'tires_set', 'odo_before', 'odo_after', 'pcsi_checks']) if (match[k] && !body[k]) carry[k] = match[k]
+          if (match.folder_url && !body.folder_url) carry.folder_url = match.folder_url
+          if (match.technician && !body.technician) carry.technician = match.technician
+          const merged = { ...match, ...carry, ...body, id: match.id, via_request: false, request_type: '' }
+          newJob = await updateJob(req, match.id, merged)
+          let shots = 0; try { const sl = JSON.parse(newJob.photo_slots || '{}'); shots = ['lf', 'rf', 'lr', 'rr', 'vin', 'odo_before', 'odo_after'].filter(k => sl[k]?.fileId).length + (sl.setup || []).length } catch { /* none */ }
+          console.log(`[jobs POST] converted request ${match.id} (${match.shop_name} · ${match.vehicle}) via ${match._via} — ${shots} photo(s) carried`)
+          await postToCliqChannel(DISPATCH_CHANNEL, `🔗 *${newJob.shop_name || 'Job'}${newJob.vehicle ? ' · ' + newJob.vehicle : ''}* — built from the report onto ${match.technician || 'the tech'}'s request${shots ? ` · ${shots} photo${shots === 1 ? '' : 's'} already in the folder` : ''}. One card, one folder.`).catch(() => {})
+        }
+      } catch (e) { console.warn('[jobs POST] request match failed (creating fresh):', e.message) }
+    }
+    if (!newJob) newJob = await insertJob(req, body)
 
     // Request from the Live Day "Request a Job" or "Request a Quote" form
     // → post to #aajobs. request_type: 'quote' | 'job' distinguishes them

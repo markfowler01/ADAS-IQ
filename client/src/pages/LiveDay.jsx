@@ -8,7 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from '../components/ReadyChecks.jsx'
 import SalesStopSheet, { SalesStopScoreboard } from '../components/SalesStopSheet'
-import { JobPhotosSheet, TakePhotosControl, photoProgress, gateApplies } from '../components/JobPhotos'
+import { JobPhotosSheet, TakePhotosControl, PhotoBadge, photoProgress, gateApplies } from '../components/JobPhotos'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
 import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstimateTotals } from '../components/MobileJobCard.jsx'
@@ -822,6 +822,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [photoGateJob,     setPhotoGateJob]     = useState(null)   // 📸 photos-first before Ready to Invoice
   const [photosOwed,       setPhotosOwed]       = useState([])    // 📸 shots still owed on invoiced jobs
   const [owedJob,          setOwedJob]          = useState(null)  // the owed card open in the sheet
+  const [requestPhotoJob,  setRequestPhotoJob]  = useState(null)  // 📷 on a Waiting-for-Kat request
   const [salesStopOpen,    setSalesStopOpen]    = useState(false)  // 🚐 sales stop sheet
   const [salesStopTick,    setSalesStopTick]    = useState(0)      // bumps the scoreboard after a stop
   const refreshTimerRef = useRef(null)
@@ -1347,18 +1348,26 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             )}
             <ul className="space-y-2">
               {data.waiting_for_kat.map(j => (
-                <li key={j.id} className="rounded-lg p-2"
+                <li key={j.id} className="rounded-lg p-2 flex items-center gap-2"
                   style={{ backgroundColor: '#ffffff', border: '1px solid #fde68a' }}>
-                  <div className="font-bold text-sm truncate" style={{ color: '#78350f' }}>
-                    {j.shop_name || 'No shop'}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm truncate" style={{ color: '#78350f' }}>
+                      {j.shop_name || 'No shop'}
+                    </div>
+                    <div className="text-xs truncate" style={{ color: '#92400e' }}>
+                      {j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'}
+                      {j.technician && ` · 👤 ${j.technician}`}
+                    </div>
+                    {/* Photos don't wait for Kat (Mark 2026-09-21): shoot now, the card she builds inherits them. */}
+                    <div className="mt-1"><PhotoBadge job={j} onClick={() => setRequestPhotoJob(j)} /></div>
                   </div>
-                  <div className="text-xs truncate" style={{ color: '#92400e' }}>
-                    {j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'}
-                    {j.technician && ` · 👤 ${j.technician}`}
-                  </div>
+                  <button onClick={() => setRequestPhotoJob(j)}
+                    className="text-xs font-bold rounded-lg px-3 py-2 text-white flex-shrink-0"
+                    style={{ backgroundColor: '#7e22ce' }}>📷 Photos</button>
                 </li>
               ))}
             </ul>
+            <div className="text-[11px] mt-2" style={{ color: '#92400e' }}>Shoot the photos now — they go in the car's folder and ride onto the job when Kat builds it.</div>
           </div>
         )}
 
@@ -1392,6 +1401,15 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
       {salesStopOpen && (
         <SalesStopSheet user={user} onClose={() => setSalesStopOpen(false)} onLogged={() => setSalesStopTick(t => t + 1)} />
+      )}
+
+      {requestPhotoJob && (
+        <JobPhotosSheet
+          job={requestPhotoJob}
+          user={user}
+          onJobUpdated={jj => setRequestPhotoJob(jj)}
+          onClose={() => { setRequestPhotoJob(null); load() }}
+        />
       )}
 
       {owedJob && (

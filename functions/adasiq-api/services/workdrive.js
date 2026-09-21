@@ -423,3 +423,39 @@ export async function trashFile(fileId, accessToken) {
   if (r.status >= 400) throw new Error(`WorkDrive trash ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`)
   return true
 }
+
+// ── Folder housekeeping (Mark 2026-09-21: "a tool that searches for
+//    WorkDrive folders for the same vehicle and combines them") ─────────
+const H = t => ({ Authorization: `Zoho-oauthtoken ${t}`, Accept: 'application/vnd.api+json' })
+export const JOB_PARENT_FOLDER_ID = PARENT_FOLDER_ID
+
+/** Every child of a folder — paginated, so it sees past WorkDrive's 50-item page. */
+export async function listChildren(folderId, accessToken, { folders = null, max = 2000 } = {}) {
+  const out = []
+  for (let offset = 0; offset < max; offset += 50) {
+    const r = await axios.get(`${WORKDRIVE_API}/files/${folderId}/files`, { headers: H(accessToken), params: { 'page[limit]': 50, 'page[offset]': offset }, timeout: 20000 })
+    const batch = r.data?.data || []
+    for (const it of batch) {
+      const a = it.attributes || {}
+      const isFolder = a.is_folder === true || a.type === 'folder'
+      if (folders === true && !isFolder) continue
+      if (folders === false && isFolder) continue
+      out.push({ id: it.id, name: a.name || '', is_folder: isFolder, created: a.created_time_in_millisecond || a.created_time || null, modified: a.modified_time_in_millisecond || null, size: Number(a.storage_info?.size_in_bytes || a.size_in_bytes || 0), files_count: a.storage_info?.files_count ?? null, folders_count: a.storage_info?.folders_count ?? null, ext: a.extn || '' })
+    }
+    if (batch.length < 50) break
+  }
+  return out
+}
+
+export async function moveFile(fileId, newParentId, accessToken) {
+  const r = await axios.patch(`${WORKDRIVE_API}/files/${fileId}`, { data: { attributes: { parent_id: newParentId }, type: 'files' } },
+    { headers: { ...H(accessToken), 'Content-Type': 'application/vnd.api+json' }, timeout: 20000, validateStatus: s => s < 500 })
+  if (r.status >= 400) throw new Error(`move ${r.status}: ${JSON.stringify(r.data?.errors?.[0] || r.data).slice(0, 200)}`)
+  return true
+}
+export async function renameFile(fileId, name, accessToken) {
+  const r = await axios.patch(`${WORKDRIVE_API}/files/${fileId}`, { data: { attributes: { name }, type: 'files' } },
+    { headers: { ...H(accessToken), 'Content-Type': 'application/vnd.api+json' }, timeout: 20000, validateStatus: s => s < 500 })
+  if (r.status >= 400) throw new Error(`rename ${r.status}: ${JSON.stringify(r.data?.errors?.[0] || r.data).slice(0, 200)}`)
+  return true
+}
