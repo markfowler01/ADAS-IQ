@@ -174,14 +174,20 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         if (!r.ok || dead) return
         const priceMap = {}
         let fixedTotal = 0
+        const stepTwo = {}   // two-step calibrations: the dynamic step rides on its parent row
         for (const li of d.lines || []) {
           const key = String(li.requested || li.name).toLowerCase()
+          if (li.tier_rule?.two_step_for) {
+            stepTwo[String(li.tier_rule.two_step_for).toLowerCase()] = { name: li.name, rate: li.rate }
+            continue
+          }
           if (['calibration identification report', 'post collision safety inspection 1 (l-m)', 'post-scan (l-m)'].includes(key)) {
             fixedTotal += li.amount || 0
           } else {
-            priceMap[key] = { rate: li.rate, needs_price: !!li.needs_price, pool_fallback: li.pool_fallback || null }
+            priceMap[key] = { rate: li.rate, needs_price: !!li.needs_price, pool_fallback: li.pool_fallback || null, tier_rule: li.tier_rule || null }
           }
         }
+        for (const [k, v] of Object.entries(stepTwo)) if (priceMap[k]) priceMap[k].step2 = v
         priceMap._fixed_total = fixedTotal
         setRowPrices(priceMap)
         if (d.big3) setBig3Info(d.big3)
@@ -196,7 +202,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const liveTotal = rowPrices
     ? Math.round((selected.reduce((sum, c) => {
         const pr = rowPrices[String(c.calibration_name || '').toLowerCase()]
-        return sum + (pr && !pr.needs_price ? pr.rate * (c.quantity || 1) : 0)
+        // Two-step calibrations bill both steps (Mark 2026-09-21).
+        return sum + (pr && !pr.needs_price ? (pr.rate + (pr.step2?.rate || 0)) * (c.quantity || 1) : 0)
       }, 0) + (rowPrices._fixed_total || 0)) * 100) / 100
     : null
   const liveTotalCapped = (cashMode && liveTotal != null && cashCap > 0 && liveTotal > cashCap) ? cashCap : liveTotal

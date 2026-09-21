@@ -6010,12 +6010,12 @@ captureCalcRouter.post('/daily-ad/publish-today', requireCronSecretFlex, async (
     if (p.killed) return res.json({ ok: true, skipped: true, reason: 'killed', pending: p })
     if (p.status === 'published') return res.json({ ok: true, skipped: true, reason: 'already published', pending: p })
 
-    // Fan to LI (text-only for v1) + FB + IG (with image) in parallel
-    const { postToLinkedIn } = await import('../services/brewLinkedIn.js')
+    // Fan to LI + FB + IG in parallel — all three with the card image
+    const { postImageToLinkedIn } = await import('../services/brewLinkedIn.js')
     const { postToFacebookPage, postToInstagram } = await import('../services/metaPosting.js')
 
     const [li, fb, ig] = await Promise.all([
-      postToLinkedIn({ text: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
+      postImageToLinkedIn({ imageUrl: p.image_url, text: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
       postToFacebookPage({ imageUrl: p.image_url, caption: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
       postToInstagram({ imageUrl: p.image_url, caption: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
     ])
@@ -6049,6 +6049,46 @@ captureCalcRouter.post('/daily-ad/publish-today', requireCronSecretFlex, async (
     res.json({ ok: true, published: true, pending: patched })
   } catch (e) {
     console.error('[daily-ad publish-today]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// LinkedIn config diagnostic — reports which env vars are set (booleans only,
+// never the actual token values). Helps diagnose whether refresh is possible.
+captureCalcRouter.get('/debug/li-config', requireCronSecretFlex, (req, res) => {
+  res.json({
+    LINKEDIN_ACCESS_TOKEN_set: Boolean(process.env.LINKEDIN_ACCESS_TOKEN),
+    LINKEDIN_ACCESS_TOKEN_len: (process.env.LINKEDIN_ACCESS_TOKEN || '').length,
+    LINKEDIN_REFRESH_TOKEN_set: Boolean(process.env.LINKEDIN_REFRESH_TOKEN),
+    LINKEDIN_REFRESH_TOKEN_len: (process.env.LINKEDIN_REFRESH_TOKEN || '').length,
+    LINKEDIN_CLIENT_ID_set: Boolean(process.env.LINKEDIN_CLIENT_ID),
+    LINKEDIN_CLIENT_SECRET_set: Boolean(process.env.LINKEDIN_CLIENT_SECRET),
+    LINKEDIN_USER_URN_set: Boolean(process.env.LINKEDIN_USER_URN),
+    can_refresh: Boolean(process.env.LINKEDIN_REFRESH_TOKEN && process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET),
+  })
+})
+
+// Retry LinkedIn only — for when the initial fan-out published to FB+IG
+// but LI failed (usually an expired token). Idempotent: won't re-post if
+// li_result already ok. Does NOT touch FB/IG.
+captureCalcRouter.post('/daily-ad/retry-linkedin', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { getVal, setVal } = await import('../services/vanDatastore.js')
+    const dateStr = req.body?.date ? String(req.body.date) : todayPtDateStr()
+    const p = await getVal(req, DAILY_AD_KEY(dateStr))
+    if (!p) return res.status(404).json({ ok: false, error: `no pending for ${dateStr}` })
+    if (p.li_result?.ok) return res.json({ ok: true, skipped: true, reason: 'LI already published', li_result: p.li_result })
+
+    const { postImageToLinkedIn } = await import('../services/brewLinkedIn.js')
+    const li = await postImageToLinkedIn({ imageUrl: p.image_url, text: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message }))
+
+    await setVal(req, DAILY_AD_KEY(dateStr), { ...p, li_result: li, li_retry_at: new Date().toISOString() })
+    if (li.ok) {
+      postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Absolute ADAS daily ad — LinkedIn retry succeeded (${li.id})`).catch(() => {})
+    }
+    res.json({ ok: li.ok, li_result: li })
+  } catch (e) {
+    console.error('[daily-ad retry-linkedin]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message })
   }
 })

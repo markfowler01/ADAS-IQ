@@ -33,11 +33,30 @@ export default function CalibrationLine({ cal, onToggle, price, onField, vehicle
   // nothing said why). POOL_NAMES keeps the flag readable.
   const POOL_NAMES = { SF: 'State Farm', AS: 'Allstate', AMFAM: 'AmFam', GEICO: 'GEICO', CP: 'cash' }
   const fellBack = price && !price.needs_price && price.pool_fallback
+  // Which tier rule priced this line (Mark 2026-09-21) — SF/AS/GEICO
+  // bill by static-vs-dynamic + manufacturer, so say which one landed.
+  const tier = price && price.tier_rule
+  const BAND = { a: '3A', b: '3B', c: '3C', dynamic: 'Dynamic' }
+  const tierChip = tier
+    ? `${POOL_NAMES[tier.pool] || tier.pool} ${tier.kind === 'dynamic' ? 'Level 2 Dynamic' : BAND[tier.band] || tier.band}`
+    : null
   const priceEl = price
     ? <span className="flex flex-col items-end flex-shrink-0">
         <span className="text-xs font-bold px-2 py-0.5 rounded tabular-nums" style={price.needs_price ? { backgroundColor: '#fef2f2', color: '#b91c1c' } : { backgroundColor: enabled ? '#dcfce7' : '#f5f3f0', color: enabled ? '#15803d' : '#999' }}>
           {price.needs_price ? 'no price' : `$${Number(price.rate).toFixed(0)}`}
         </span>
+        {tierChip && (
+          <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#0e7490' }}
+            title={`${tierChip} — priced off the ${POOL_NAMES[tier.pool] || tier.pool} tier schedule for a ${tier.kind} calibration${tier.make ? ` on a ${tier.make}` : ''}.`}>
+            {tierChip}
+          </span>
+        )}
+        {price?.step2 && (
+          <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#7e22ce' }}
+            title={`Two-step calibration — ${price.step2.name} bills as the second step.`}>
+            + ${Number(price.step2.rate).toFixed(0)} step 2
+          </span>
+        )}
         {fellBack && (
           <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#b45309' }}
             title={`No ${POOL_NAMES[price.pool_fallback] || price.pool_fallback} item matched this calibration, so our standard rate is billing. Pick the right one on the price review at Create job.`}>

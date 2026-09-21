@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { poolFor, familyFor } from './insurerFamilies.js'
+import * as tiers from './insurerTiers.js'
 import { createJobFolder, uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from './workdrive.js'
 import { generateADASIQPdf } from './pdf.js'
 
@@ -623,7 +624,7 @@ export async function createDraftQuote({
   // remembers Kat's picks, not just SF/AS.
   const poolKey = insurerPrefix || 'STD'
   const itemByName = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
-  function resolveOverrideOrTier(calName) {
+  function resolveOverrideOrTier(calName, calType = null) {
     // 1. explicit pick from the review modal this run
     const manual = lineOverrides && lineOverrides[calName]
     if (manual) {
@@ -638,15 +639,29 @@ export async function createDraftQuote({
         if (it) return { it, source: 'learned tier' }
       }
     }
+    // 3. the insurer's own tier schedule — SF / Allstate / GEICO price by
+    //    static-vs-dynamic + manufacturer (Mark 2026-09-21).
+    const t = tiers.tierFor(insurerPrefix, make, calType)
+    const tierItem = t && tiers.findTierItem(allItems, t.itemName)
+    if (tierItem) {
+      const also = t.alsoItemName ? tiers.findTierItem(allItems, t.alsoItemName) : null
+      return { it: tierItem, source: `${insurerPrefix} tier ${t.band}`, also }
+    }
     return null
   }
 
-  function buildLineItem(name, description, quantity = 1) {
-    const direct = resolveOverrideOrTier(name)
+  function buildLineItem(name, description, quantity = 1, calType = null) {
+    const direct = resolveOverrideOrTier(name, calType)
     if (direct) {
       console.log(`[zoho] ✓ "${name}" → "${direct.it.name}" (${direct.source}, rate $${direct.it.rate})`)
       if (!direct.it.rate) zeroPriceItems.push(direct.it.name)
-      return { item_id: direct.it.item_id, description: description || '', quantity }
+      const li = { item_id: direct.it.item_id, description: description || '', quantity }
+      // Two-step calibration (Subaru static): the dynamic step bills too.
+      if (direct.also) {
+        console.log(`[zoho] ✓ "${name}" is a two-step — adding "${direct.also.name}"`)
+        li._alsoLine = { item_id: direct.also.item_id, description: `Step 2 of ${name}`, quantity }
+      }
+      return li
     }
     const match = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
     if (match) {
@@ -760,13 +775,16 @@ export async function createDraftQuote({
       description = parts.join('\n')
     }
     const quantity = (edit?.quantity != null ? Number(edit.quantity) : null) || cal.quantity || 1
-    const li = buildLineItem(cal.calibration_name, description, quantity)
+    const li = buildLineItem(cal.calibration_name, description, quantity, cal.cal_type)
     if (li && edit?.rate != null && Number.isFinite(Number(edit.rate))) {
       li.rate = Number(edit.rate)   // explicit rate beats the catalog rate
       console.log(`[zoho] custom rate in review: "${cal.calibration_name}" → $${li.rate}`)
     }
     return li
   }).filter(Boolean)
+    // Two-step calibrations carry their second step on _alsoLine — unfold
+    // it into its own invoice line (Mark 2026-09-21: Subaru statics).
+    .flatMap(li => { if (!li._alsoLine) return [li]; const { _alsoLine, ...base } = li; return [base, _alsoLine] })
 
   // Lines ADDED on the review screen — resolved to catalog items when
   // the name matches, ad-hoc otherwise. Rate passed explicitly = what
@@ -1316,7 +1334,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
   }
 
   const lines = []
-  const push = (name, quantity, isFixed) => {
+  const push = (name, quantity, isFixed, cal = null) => {
     if (!name) return
     // learned tier beats the matcher (same order as creation)
     if (!isFixed && tierKeyFn && make) {
@@ -1329,6 +1347,33 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
           amount: Math.round(rate * quantity * 100) / 100,
           needs_price: false, included: false, learned_tier: true, swappable: true,
         })
+        return
+      }
+    }
+    // Tier schedules (Mark 2026-09-21): SF / Allstate / GEICO price by
+    // static-vs-dynamic + manufacturer, not by calibration name.
+    if (!isFixed) {
+      const t = tiers.tierFor(insurerPrefix, make, cal?.cal_type)
+      const it = t && tiers.findTierItem(allItems, t.itemName)
+      if (it) {
+        const rate = Number(it.rate) || 0
+        lines.push({
+          name: it.name, requested: name, rate, quantity,
+          amount: Math.round(rate * quantity * 100) / 100,
+          needs_price: false, included: false, swappable: true,
+          tier_rule: { pool: insurerPrefix, band: t.band, kind: t.kind, make: make || '' },
+        })
+        // Subaru statics are a two-step — the dynamic line rides along.
+        const also = t.alsoItemName && tiers.findTierItem(allItems, t.alsoItemName)
+        if (also) {
+          const r2 = Number(also.rate) || 0
+          lines.push({
+            name: also.name, requested: `${name} (step 2)`, rate: r2, quantity,
+            amount: Math.round(r2 * quantity * 100) / 100,
+            needs_price: false, included: false, swappable: true,
+            tier_rule: { pool: insurerPrefix, band: 'dynamic', kind: 'dynamic', make: make || '', two_step_for: name },
+          })
+        }
         return
       }
     }
@@ -1387,7 +1432,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
     }
     lines.push(line); big3Applied[b.key] = { mode, line: line.name }
   }
-  for (const c of calibrations || []) push(c.calibration_name || c.name, Number(c.quantity) || 1, false)
+  for (const c of calibrations || []) push(c.calibration_name || c.name, Number(c.quantity) || 1, false, c)
   // The insurer's tier catalog (SF - 3a, AS - 3C Complex, ...) for the
   // review modal's swap picker. Only pool items — a handful, not the
   // whole catalog.

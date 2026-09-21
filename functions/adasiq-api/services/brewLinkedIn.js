@@ -62,9 +62,19 @@ async function refreshAccessToken() {
 
 export async function getAccessToken() {
   const e = envBundle()
+  // Prefer a live refreshed token when refresh creds are available. The
+  // env-var access token is only trustworthy on first setup — after ~60d
+  // it silently expires (LinkedIn returns 401 EXPIRED_ACCESS_TOKEN with
+  // no way to check locally). Falling through to refresh keeps posting
+  // working without manual re-auth every 2 months.
+  const canRefresh = Boolean(e.refreshToken && e.clientId && e.clientSecret)
+  if (canRefresh) {
+    if (cachedToken && Date.now() < cachedTokenExpiresAt) return cachedToken
+    return refreshAccessToken()
+  }
+  // No refresh creds — fall back to the env-var access token as-is.
   if (e.accessToken) return e.accessToken
-  if (cachedToken && Date.now() < cachedTokenExpiresAt) return cachedToken
-  return refreshAccessToken()
+  throw new Error('LinkedIn not configured — need LINKEDIN_ACCESS_TOKEN, or LINKEDIN_REFRESH_TOKEN + CLIENT_ID + CLIENT_SECRET')
 }
 
 /**
