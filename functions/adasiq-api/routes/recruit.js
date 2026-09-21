@@ -391,8 +391,22 @@ async function readOffer(req, id) { const { cfgReadJson } = await import('./peop
 async function writeOffer(req, id, o) { const { cfgWriteJson } = await import('./people.js'); return cfgWriteJson(req, offerKey(id), o) }
 
 router.get('/sign-status', async (req, res) => {
-  try { const { isConfigured, signTokenSource } = await import('../services/zohoSign.js'); const p = await isConfigured(); res.json({ ok: true, configured: p.ok, why: p.why, token: signTokenSource() }) }
+  try { const sign = await import('../services/zohoSign.js'); await sign.loadStoredToken(req); const p = await sign.isConfigured(); res.json({ ok: true, configured: p.ok, why: p.why, token: sign.signTokenSource() }) }
   catch (e) { res.json({ ok: true, configured: false, why: e.message }) }
+})
+// Owner pastes the Sign refresh token here (the console's env block is full).
+// Stored in AppConfig; never echoed back beyond the last 4.
+router.put('/sign-token', async (req, res) => {
+  try {
+    if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
+    const v = String(req.body?.token || '').trim()
+    if (v && !/^1000\.[0-9a-f]{32}\.[0-9a-f]{32}$/i.test(v)) return res.status(400).json({ error: 'That does not look like a Zoho refresh token (1000.xxxx.xxxx).' })
+    const sign = await import('../services/zohoSign.js')
+    const r = await sign.saveStoredToken(req, v)
+    const p = v ? await sign.isConfigured() : { ok: false, why: 'cleared' }
+    console.log(`[sign] token ${v ? 'saved …' + r.last4 : 'cleared'} by ${req.user?.name} → ${p.ok ? 'connected' : p.why}`)
+    res.json({ ok: true, last4: r.last4, configured: p.ok, why: p.why })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/:id/offer', async (req, res) => {
   try { res.json({ ok: true, offer: await readOffer(req, req.params.id) }) } catch (e) { res.status(500).json({ error: e.message }) }
@@ -421,6 +435,7 @@ router.post('/:id/offer/send', async (req, res) => {
     if (!(o.pay_rate > 0)) return res.status(400).json({ error: 'Pay is required.' })
     if (!o.start_date) return res.status(400).json({ error: 'Start date is required.' })
     const sign = await import('../services/zohoSign.js')
+    await sign.loadStoredToken(req)
     const probe = await sign.isConfigured()
     if (!probe.ok) return res.status(503).json({ error: `Zoho Sign isn't connected yet (${probe.why}). Mint a token with the ZohoSign scopes and set ZOHO_SIGN_REFRESH_TOKEN.` })
     const prev = await readOffer(req, cand.id)
@@ -444,6 +459,7 @@ router.post('/:id/offer/withdraw', async (req, res) => {
     const o = await readOffer(req, req.params.id)
     if (!o?.request_id) return res.status(404).json({ error: 'No offer out' })
     const sign = await import('../services/zohoSign.js')
+    await sign.loadStoredToken(req)
     try { await sign.recallRequest(o.request_id, String(req.body?.reason || 'Withdrawn by Absolute ADAS').slice(0, 200)) } catch (e) { console.log('[offer] recall failed:', e.message) }
     await writeOffer(req, req.params.id, { ...o, status: 'withdrawn', withdrawn_at: new Date().toISOString() })
     res.json({ ok: true })
@@ -455,6 +471,7 @@ export async function pollOffers(req) {
   const app = catalyst.initialize(req)
   const rows = await app.zcql().executeZCQLQuery("SELECT ROWID, config_key, config_value FROM AppConfig WHERE config_key LIKE 'offer:%' LIMIT 300").catch(() => [])
   const sign = await import('../services/zohoSign.js')
+  await sign.loadStoredToken(req)
   let checked = 0, completed = 0
   for (const r of rows || []) {
     const row = r.AppConfig || r

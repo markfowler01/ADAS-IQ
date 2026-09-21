@@ -351,7 +351,12 @@ function OfferPanel({ c, onPatched }) {
   const [f, setF] = useState({ employment: /billing|dispatch|office|admin|book|account|ops|contract/i.test(c.role || '') ? 'contractor' : 'w2', title: c.role || 'ADAS Calibration Technician', pay_type: 'hourly', pay_rate: '', start_date: '', region: c.city || '', bonus: '', schedule: '', duties: '' })
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
+  const [tok, setTok] = useState('')
   const input = { border: '1px solid #e0dbd6', backgroundColor: 'white' }
+  async function saveToken() {
+    setBusy('token'); setErr('')
+    try { const r = await apiFetch(`${API_BASE}/api/recruit/sign-token`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: tok.trim() }) }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setTok(''); if (!d.configured) setErr(`Saved …${d.last4}, but Sign still says: ${d.why}`); await load() } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
   const load = () => Promise.all([
     apiFetch(`${API_BASE}/api/recruit/sign-status`).then(r => r.json()).catch(() => ({ configured: false, why: 'unreachable' })),
     apiFetch(`${API_BASE}/api/recruit/${c.id}/offer`).then(r => r.json()).catch(() => ({ offer: null })),
@@ -380,7 +385,17 @@ function OfferPanel({ c, onPatched }) {
           {!open && <button onClick={() => setOpen(true)} disabled={sign && !sign.configured} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#0e7490', opacity: sign && !sign.configured ? .5 : 1 }}>{status === 'inprogress' ? 'Re-send' : status === 'completed' ? 'Send another' : 'Send offer'}</button>}
         </div>
       </div>
-      {sign && !sign.configured && <div className="text-xs mt-2 px-2.5 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>Zoho Sign isn't connected yet — {sign.why}. Mint a Zoho token with the ZohoSign scopes and set <code>ZOHO_SIGN_REFRESH_TOKEN</code> on the function. Everything else is built and waiting.</div>}
+      {sign && !sign.configured && (
+        <div className="text-xs mt-2 px-2.5 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
+          <div className="font-bold mb-1">Zoho Sign isn't connected — {sign.why}.</div>
+          <div style={{ color: '#7f1d1d' }}>Paste the Sign refresh token (from the Zoho API console, scopes ZohoSign.documents.ALL + ZohoSign.templates.ALL). It's stored in the app, shown back as the last 4 only.</div>
+          <div className="flex gap-2 mt-2">
+            <input value={tok} onChange={e => setTok(e.target.value)} placeholder="1000.xxxx.xxxx" type="password" autoComplete="off" className="flex-1 rounded-lg px-3 py-2 text-sm" style={input} />
+            <button onClick={saveToken} disabled={busy === 'token' || !tok.trim()} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0e7490', opacity: !tok.trim() ? .5 : 1 }}>{busy === 'token' ? 'Testing…' : 'Save + test'}</button>
+          </div>
+        </div>
+      )}
+      {sign?.configured && <div className="text-[11px] mt-1" style={{ color: '#0e7490' }}>✓ Connected to Zoho Sign ({sign.token === 'app' ? 'token stored in the app' : sign.token === 'env' ? 'env var' : sign.token}).</div>}
       {offer && STATUS[status] && <div className="text-xs mt-2 px-2.5 py-2 rounded-lg font-semibold" style={{ backgroundColor: STATUS[status][2], color: STATUS[status][1] }}>{STATUS[status][0]} · {offer.title} · {offer.employment === 'contractor' ? 'contractor' : 'W-2'} · ${Number(offer.pay_rate).toLocaleString()} {offer.pay_type === 'salary' ? '/yr' : offer.pay_type === 'per_job' ? '/job' : '/hr'} · starts {offer.start_date} · sent {String(offer.sent_at || '').slice(0, 10)}{offer.signed_at ? ` · signed ${String(offer.signed_at).slice(0, 10)}` : ''}</div>}
       {open && (
         <div className="mt-3">

@@ -15,10 +15,39 @@ import axios from 'axios'
 const SIGN = 'https://sign.zoho.com/api/v1'
 let cached = { token: null, exp: 0, from: '' }
 
-export function signTokenSource() { return process.env.ZOHO_SIGN_REFRESH_TOKEN ? 'sign' : (process.env.ZOHO_REFRESH_TOKEN ? 'main' : 'none') }
+// The Catalyst console refused a new env var ("exceeded its maximum
+// length" — the function's combined env block is full, 2026-09-21), so the
+// Sign refresh token can also live in AppConfig `zoho_sign_refresh_token`,
+// pasted by an owner on the Offer panel. Env var wins when present.
+import catalyst from 'zcatalyst-sdk-node'
+const CFG_KEY = 'zoho_sign_refresh_token'
+let stored = { value: null, at: 0 }
+export async function loadStoredToken(req, force = false) {
+  if (!req) return stored.value
+  if (!force && Date.now() - stored.at < 10 * 60000) return stored.value
+  try {
+    const rows = await catalyst.initialize(req).zcql().executeZCQLQuery(`SELECT config_value FROM AppConfig WHERE config_key = '${CFG_KEY}' LIMIT 1`)
+    stored = { value: (rows?.[0]?.AppConfig?.config_value || rows?.[0]?.config_value || '').trim() || null, at: Date.now() }
+  } catch (e) { console.warn('[sign] stored token read failed:', e.message) }
+  return stored.value
+}
+export async function saveStoredToken(req, value) {
+  const v = String(value || '').trim()
+  const app = catalyst.initialize(req)
+  const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${CFG_KEY}' LIMIT 1`).catch(() => [])
+  const r = rows?.[0]?.AppConfig || rows?.[0]
+  const table = app.datastore().table('AppConfig')
+  if (r?.ROWID) await table.updateRow({ ROWID: String(r.ROWID), config_key: CFG_KEY, config_value: v })
+  else await table.insertRow({ config_key: CFG_KEY, config_value: v })
+  stored = { value: v || null, at: Date.now() }
+  cached = { token: null, exp: 0, from: '' }
+  probe = { at: 0, ok: false, why: '' }
+  return { last4: v.slice(-4) }
+}
+export function signTokenSource() { return process.env.ZOHO_SIGN_REFRESH_TOKEN ? 'env' : stored.value ? 'app' : (process.env.ZOHO_REFRESH_TOKEN ? 'main' : 'none') }
 
 async function token() {
-  const refresh = process.env.ZOHO_SIGN_REFRESH_TOKEN || process.env.ZOHO_REFRESH_TOKEN
+  const refresh = process.env.ZOHO_SIGN_REFRESH_TOKEN || stored.value || process.env.ZOHO_REFRESH_TOKEN
   if (!refresh) throw new Error('No Zoho refresh token for Sign')
   if (cached.token && Date.now() < cached.exp - 60000 && cached.from === refresh.slice(-8)) return cached.token
   const params = new URLSearchParams({ grant_type: 'refresh_token', client_id: process.env.ZOHO_CLIENT_ID, client_secret: process.env.ZOHO_CLIENT_SECRET, refresh_token: refresh })
