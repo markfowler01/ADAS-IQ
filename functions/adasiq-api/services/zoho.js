@@ -626,6 +626,7 @@ export async function createDraftQuote({
   const itemByName = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
   // Tier plan for the whole car, built from the lines that survive the
   // review screen's removals so the "main" line is one we actually bill.
+  if (req) await tiers.loadBandOverrides(req).catch(() => {})
   const tierPlan = tiers.planTiers({
     pool: insurerPrefix, make, items: allItems,
     calibrations: (calibrations || []).filter(c => !(lineEdits && lineEdits[c.calibration_name]?.remove)),
@@ -830,15 +831,50 @@ export async function createDraftQuote({
     console.warn('[zoho] Unmatched items (added to notes):', unmatchedItems)
   }
 
-  // Learn Kat's picks: insurer + make + calibration → tier item, so the
-  // next scrub of this make prices itself.
+  // Learn Kat's picks (Mark 2026-09-21: "whatever Kat changes can you
+  // learn from her on this"). Two different lessons from one swap:
+  //   · she moved a MAKE to another band  → remember the make, so every
+  //     calibration on it prices right, not just this one
+  //   · anything else                     → the per-calibration tier map
+  // Deliberately NOT learned: a pick that matches what the plan already
+  // chose (no correction happened), and any "Additional (same RO)" item —
+  // that rate is positional, and pinning it to a calibration name would
+  // bill the discount on a car where it's the only calibration.
   if (req && make && lineOverrides && Object.keys(lineOverrides).length) {
     try {
-      const { saveTierMappings } = await import('./tierMap.js')
-      await saveTierMappings(req, Object.entries(lineOverrides).map(([calName, itemName]) => ({
-        insurerPrefix: poolKey, make, calName, itemName,
-      })))
-    } catch (e) { console.warn('[zoho] tier-map save failed (non-fatal):', e.message) }
+      const perCal = []
+      const bandsLearned = []
+      for (const [calName, itemName] of Object.entries(lineOverrides)) {
+        const planned = tierPlan.get(String(calName).toLowerCase())
+        if (planned && tiers.findTierItem(allItems, itemName)?.item_id === planned.item?.item_id) continue  // no change
+        if (tiers.isAdditionalItem(insurerPrefix, itemName)) {
+          console.log(`[zoho] not learning "${itemName}" for "${calName}" — additional rates are positional`)
+          continue
+        }
+        const picked = tiers.bandOfItem(insurerPrefix, itemName)
+        if (picked && !picked.additional && picked.band !== 'dynamic' && picked.band !== tiers.bandForMake(make)) {
+          const who = req?.user?.name || req?.user?.email || salespersonName || 'the review screen'
+          const r = await tiers.saveBandOverride(req, make, picked.band, who).catch(() => ({ saved: false }))
+          if (r?.saved) bandsLearned.push(`${make} → ${picked.band.toUpperCase()}`)
+          continue
+        }
+        perCal.push({ insurerPrefix: poolKey, make, calName, itemName })
+      }
+      if (perCal.length) {
+        const { saveTierMappings } = await import('./tierMap.js')
+        await saveTierMappings(req, perCal)
+      }
+      if (bandsLearned.length) {
+        // A whole make changing band moves money on every future job, so
+        // it gets announced the way a Big 3 rule change does.
+        const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js')
+        const who = req?.user?.name || req?.user?.email || salespersonName || 'the review screen'
+        await postToCliqChannel(DISPATCH_CHANNEL,
+          `🎯 *Tier band learned* — ${bandsLearned.join(', ')} (${who})\n` +
+          `Every ${make} on State Farm, Allstate and GEICO now prices on that band. Tell Claude if that's wrong.`
+        ).catch(e => console.log('[zoho] band cliq failed:', e.message))
+      }
+    } catch (e) { console.warn('[zoho] tier learning failed (non-fatal):', e.message) }
   }
 
   // If nothing matched at all, warn but still try — Zoho will respond with its own error
@@ -1336,6 +1372,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
     return pick ? { name: pick.name, rate: Number(pick.rate) || 0 } : null
   }
 
+  if (req) await tiers.loadBandOverrides(req).catch(() => {})
   const tierPlan = tiers.planTiers({ pool: insurerPrefix, make, calibrations, items: allItems })
   const lines = []
   const push = (name, quantity, isFixed, cal = null) => {

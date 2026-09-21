@@ -15,6 +15,8 @@
 // if an item is renamed in Books, fix it HERE (the resolver matches on
 // normalized name, so punctuation and case drift are already tolerated).
 
+import catalyst from 'zcatalyst-sdk-node'
+
 const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
 // Band b = Mercedes + Subaru · band c = Audi, Porsche, VW · everyone else = a
@@ -74,6 +76,8 @@ export const isTierPool = pool => !!TIERS[String(pool || '').toUpperCase()]
 export function bandForMake(make) {
   const m = norm(make)
   if (!m) return 'a'
+  // Anything Kat corrected on the price review wins over the built-in list.
+  for (const [k, v] of Object.entries(_bands)) if (k && m.includes(k) && ['a', 'b', 'c'].includes(v)) return v
   if (BAND_C_MAKES.some(x => m.includes(x))) return 'c'
   if (BAND_B_MAKES.some(x => m.includes(x))) return 'b'
   return 'a'
@@ -172,3 +176,61 @@ export function planTiers({ pool, make, calibrations, items }) {
   })
   return plan
 }
+
+// ── Learning from Kat ──────────────────────────────────────────────────
+// Mark 2026-09-21: "whatever Kat changes can you learn from her on this."
+// A swap on the price review teaches two different things:
+//   · a one-off item for this calibration → the tier map (tierMap.js)
+//   · a WHOLE MAKE that sits in the wrong band → here, so every other
+//     calibration on that make prices right too.
+// Band overrides live in AppConfig `insurer_tier_bands`: { "genesis": "b" }.
+const BANDS_KEY = 'insurer_tier_bands'
+let _bands = {}, _bandsAt = 0
+
+export function bandOverrides() { return _bands }
+
+export async function loadBandOverrides(req, force = false) {
+  if (!force && Date.now() - _bandsAt < 5 * 60000) return _bands
+  try {
+    const app = catalyst.initialize(req)
+    const rows = await app.zcql().executeZCQLQuery(
+      `SELECT config_value FROM AppConfig WHERE config_key = '${BANDS_KEY}' LIMIT 1`)
+    const v = rows?.[0]?.AppConfig?.config_value || rows?.[0]?.config_value
+    const parsed = v ? JSON.parse(v) : {}
+    if (parsed && typeof parsed === 'object') _bands = parsed
+  } catch (e) { console.warn('[tiers] band overrides unavailable:', e.message) }
+  _bandsAt = Date.now()
+  return _bands
+}
+
+export async function saveBandOverride(req, make, band, by) {
+  const m = norm(make)
+  if (!m || !['a', 'b', 'c'].includes(band)) return { saved: false }
+  await loadBandOverrides(req, true)
+  if (_bands[m] === band) return { saved: false }
+  _bands = { ..._bands, [m]: band }
+  const app = catalyst.initialize(req)
+  const table = app.datastore().table('AppConfig')
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT ROWID FROM AppConfig WHERE config_key = '${BANDS_KEY}' LIMIT 1`).catch(() => [])
+  const r = rows?.[0]?.AppConfig || rows?.[0]
+  const str = JSON.stringify(_bands)
+  if (r?.ROWID) await table.updateRow({ ROWID: String(r.ROWID), config_key: BANDS_KEY, config_value: str })
+  else await table.insertRow({ config_key: BANDS_KEY, config_value: str })
+  _bandsAt = Date.now()
+  console.log(`[tiers] learned band: ${m} → ${band} (by ${by || '?'})`)
+  return { saved: true, make: m, band }
+}
+
+/** Which band (and whether it's the additional rate) an item name belongs to. */
+export function bandOfItem(pool, itemName) {
+  const t = TIERS[String(pool || '').toUpperCase()]
+  if (!t || !itemName) return null
+  const want = norm(itemName)
+  for (const [band, n] of Object.entries(t.static)) if (norm(n) === want) return { band, additional: false }
+  if (norm(t.dynamic) === want) return { band: 'dynamic', additional: false }
+  for (const [band, n] of Object.entries(t.additional || {})) if (norm(n) === want) return { band, additional: true }
+  return null
+}
+
+export const isAdditionalItem = (pool, itemName) => !!bandOfItem(pool, itemName)?.additional
