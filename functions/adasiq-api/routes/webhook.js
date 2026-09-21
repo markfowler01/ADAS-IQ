@@ -1,6 +1,6 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
-import { readJobsPublic, updateJobPublic, deleteJobPublic, performSyncQuotes } from './jobs.js'
+import { readJobsPublic, updateJobPublic, deleteJobPublic, performSyncQuotes, photosStillOwed } from './jobs.js'
 import { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, TECHNICIANS_CHANNEL, DISPATCH_CHANNEL, AA_JOBS_CHANNEL } from '../services/cliq.js'
 import { listInvoicesForDateRange, getAccessToken } from '../services/zoho.js'
 import axios from 'axios'
@@ -126,6 +126,34 @@ async function tombstoneEstimate(req, estId) {
   } catch (e) { console.log('[invoice] tombstone failed (non-fatal):', e.message) }
 }
 
+// The invoice is out, but the photos aren't in (Mark 2026-09-21: "if the
+// technician forgets to upload and it already gets invoiced I want to
+// send that to available for uploading"). Deleting the card here would
+// take the photo debt and the WorkDrive link with it, so a card that
+// still owes shots is PARKED in Completed instead — it keeps showing on
+// 📸 Still to do in Live Day until the set lands, and the cleanup cron
+// already skips it. Returns true when it parked instead of deleting.
+async function removeOrPark(req, job, why) {
+  if (!photosStillOwed(job)) {
+    await deleteJobPublic(req, job.id)
+      .then(() => console.log(`[invoice] ${why} — removed job ${job.id} from board`))
+      .catch(e => console.log('[invoice] board cleanup failed (non-fatal):', e.message))
+    return false
+  }
+  try {
+    await updateJobPublic(req, job.id, { ...job, status: 'complete', invoiced: true })
+    console.log(`[invoice] ${why} — job ${job.id} KEPT: photos still owed`)
+    const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+    await postToCliqChannel(DISPATCH_CHANNEL,
+      `📸 *Invoiced, photos still owed* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''}\n` +
+      `The card stays on 📸 Still to do in Live Day so the shots can still go up. It clears itself when the set is complete.`
+    ).catch(e => console.log('[invoice] owed cliq failed:', e.message))
+  } catch (e) {
+    console.log('[invoice] park failed, leaving the card alone (non-fatal):', e.message)
+  }
+  return true
+}
+
 export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
   const invoiceNumber   = invoice.invoice_number || invoice.number || ''
   const referenceNumber = (invoice.reference_number || invoice.reference || '').toString()
@@ -193,6 +221,8 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
     }
   }
 
+
+
   if (alreadyAlerted) {
     // Alerts already went out — just make sure the board is clean.
     // Mark 2026-09-08 ("why does this keep popping up"): this branch ran
@@ -203,9 +233,7 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
     // remove a card here, and the estimate is tombstoned so it stays gone.
     if (matchedJob && matchVia !== 'name') {
       await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
-      await deleteJobPublic(req, matchedJob.id)
-        .then(() => console.log(`[invoice] Removed already-alerted job ${matchedJob.id} from board (matched by ${matchVia})`))
-        .catch(e => console.log('[invoice] board cleanup failed (non-fatal):', e.message))
+      await removeOrPark(req, matchedJob, `already-alerted (matched by ${matchVia})`)
     } else if (matchedJob) {
       console.log(`[invoice] already-alerted #${invoiceNumber}: name-only match on job ${matchedJob.id} — leaving the card alone`)
     }
@@ -319,9 +347,7 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
   // Invoice is out the door — remove the card from the board. Tombstone
   // its estimate first so the hourly quote sync can't bring it back.
   await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
-  await deleteJobPublic(req, matchedJob.id)
-    .then(() => console.log(`[invoice] Removed invoiced job ${matchedJob.id} from board`))
-    .catch(e => console.log('[invoice] board cleanup failed (non-fatal):', e.message))
+  await removeOrPark(req, matchedJob, `invoice #${invoiceNumber} sent`)
 
   return { action: 'alerted', invoice_number: invoiceNumber, job_id: matchedJob.id, cliq: results }
 }

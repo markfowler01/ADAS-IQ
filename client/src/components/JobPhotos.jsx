@@ -261,6 +261,10 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   const [overrideText, setOverrideText] = useState('')
   const camRef = useRef(null)
   const rollRef = useRef(null)
+  const pickRef = useRef(null)
+  // Mark 2026-09-21: the tech has often already taken the shot, so every
+  // slot asks first — camera, or the photos already on the phone.
+  const [chooseFor, setChooseFor] = useState(null)
   const items = useQueue(job.id)
   const prog = photoProgress(job)
   const isOwner = isOwnerUser(user)
@@ -281,6 +285,24 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   }, [job.odo_before, job.odo_after])
 
   function shoot(slotKey) { setCurrent(slotKey); setTimeout(() => camRef.current?.click(), 0) }
+  function choose(slotKey) { setCurrent(slotKey); setChooseFor(slotKey) }
+  function pickFor(slotKey) { setCurrent(slotKey); setChooseFor(null); setTimeout(() => pickRef.current?.click(), 0) }
+  // Photos chosen from the phone for ONE slot. A multi slot (setup) takes
+  // them all; a single slot takes the first and lets the sorter place the
+  // rest rather than dropping them on the floor.
+  function onPickFiles(e) {
+    const files = Array.from(e.target.files || []); e.target.value = ''
+    if (!files.length) return
+    const slotKey = current
+    const multi = SLOTS.find(x => x.key === slotKey)?.multi
+    if (multi) { files.forEach(f => enqueuePhoto({ jobId: job.id, slot: slotKey, file: f })) }
+    else {
+      enqueuePhoto({ jobId: job.id, slot: slotKey, file: files[0] })
+      files.slice(1).forEach(f => enqueuePhoto({ jobId: job.id, slot: null, file: f }))
+      const missing = prog.missing.filter(k => k !== slotKey)
+      setCurrent(missing[0] || 'setup')
+    }
+  }
   // × on a filled slot (Mark 2026-09-10): clears it on the card and trashes
   // the WorkDrive file. Setup photos delete one at a time by fileId.
   const [removing, setRemoving] = useState(null)
@@ -376,6 +398,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
         {/* hidden inputs: camera + roll */}
         <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={onCamFile} />
         <input ref={rollRef} type="file" accept="image/*" multiple hidden onChange={onRollFiles} />
+        <input ref={pickRef} type="file" accept="image/*" multiple hidden onChange={onPickFiles} />
 
         <div className="flex items-start justify-between gap-2 mb-2">
           <div>
@@ -391,10 +414,10 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         {/* THE big button — what to shoot next */}
         {!prog.complete || current === 'setup' ? (
-          <button type="button" onClick={() => shoot(current)}
+          <button type="button" onClick={() => choose(current)}
             className="w-full rounded-2xl py-5 px-4 text-left text-white mb-3"
             style={{ backgroundColor: ORANGE, boxShadow: '0 6px 18px rgba(205,68,25,.3)' }}>
-            <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap to shoot · {cur.n} of {SLOTS.length}</div>
+            <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap · {cur.n} of {SLOTS.length}</div>
             <div className="text-2xl font-extrabold leading-tight mt-0.5">{cur.label}</div>
             <div className="text-sm mt-1" style={{ opacity: .9 }}>{cur.hint}</div>
           </button>
@@ -506,7 +529,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                     </div>
                   )}
                 </div>
-                <button type="button" onClick={() => shoot(s.key)}
+                <button type="button" onClick={() => choose(s.key)}
                   className="text-xs font-bold rounded-full px-2.5 py-1.5"
                   style={filled ? { backgroundColor: 'white', color: '#888', border: '1px solid #ddd' } : { backgroundColor: ORANGE, color: 'white' }}>
                   {filled ? (s.multi ? '+ more' : 'redo') : '📸'}
@@ -577,6 +600,36 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           <button type="button" onClick={onClose} className="w-full rounded-xl py-2.5 text-sm font-bold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Done</button>
         )}
       </div>
+
+      {/* Camera or the roll? (Mark 2026-09-21: "often the technician has
+          already taken a picture and wants to upload that picture") */}
+      {chooseFor && (() => {
+        const slot = SLOTS.find(x => x.key === chooseFor)
+        return (
+          <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+            onClick={e => { e.stopPropagation(); setChooseFor(null) }}>
+            <div className="bg-white w-full sm:max-w-xs rounded-t-2xl sm:rounded-2xl p-4" onClick={e => e.stopPropagation()}>
+              <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
+                {slot ? `${slot.n} of ${SLOTS.length}` : 'Photo'}
+              </div>
+              <div className="font-extrabold text-lg mb-3" style={{ color: '#1a1a1a' }}>{slot?.label || 'Add a photo'}</div>
+              <button type="button" onClick={() => { setChooseFor(null); setTimeout(() => camRef.current?.click(), 0) }}
+                className="w-full rounded-xl py-3.5 text-base font-bold text-white mb-2"
+                style={{ backgroundColor: ORANGE }}>📷 Take a picture</button>
+              <button type="button" onClick={() => pickFor(chooseFor)}
+                className="w-full rounded-xl py-3.5 text-base font-bold mb-2"
+                style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>🖼 Upload a picture</button>
+              <div className="text-[11px] text-center mb-2" style={{ color: '#888' }}>
+                {slot?.multi
+                  ? 'Pick as many as you like — they all land here.'
+                  : 'Already shot it? Pick it from your phone. Extras you pick get sorted into the right slots.'}
+              </div>
+              <button type="button" onClick={() => setChooseFor(null)}
+                className="w-full rounded-xl py-2 text-sm font-bold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

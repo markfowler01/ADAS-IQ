@@ -1373,6 +1373,11 @@ async function markPending(merged, prog, req) {
   return merged
 }
 
+/** Does this card still owe photos? Guards the invoice-time card delete. */
+export function photosStillOwed(job) {
+  try { return !!parsePhotoSlots(job?.photo_slots)?._pending?.at } catch { return false }
+}
+
 /** Every job still owing photos, newest first. Drives the 6pm list and the in-app view. */
 export async function photosOwedList(req) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
