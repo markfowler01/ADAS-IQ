@@ -33,6 +33,12 @@ export const TIERS = {
       c: 'SFP - 3C Static Calibrations - (Audi, Porsche, Volkswagen)',
     },
     dynamic: 'SFP - Level 2 - Dynamic Calibrations',
+    additional: {
+      a: 'SFP - Additional Static Calibration(s) - Level 3A',
+      b: 'SFP - Additional Static Calibration(s) - Level 3B',
+      c: 'SFP - Additional static Calibration(s) - Level 3C',
+      dynamic: 'SFP - Additional Static Calibration(s) - Level 2 - dynamic',
+    },
   },
   AS: {
     label: 'Allstate',
@@ -42,6 +48,9 @@ export const TIERS = {
       c: 'AS - Calibration - Level 3c (Static)***',
     },
     dynamic: 'AS - Calibration - Level 2 (Dynamic)',
+    // Allstate publishes no "additional" rates — every calibration on the
+    // car bills the full tier.
+    additional: null,
   },
   GEICO: {
     label: 'GEICO',
@@ -51,6 +60,12 @@ export const TIERS = {
       c: 'GEICO - Level 5 (Static) Audi, VW and Porsche',
     },
     dynamic: 'GEICO - Level 2 (Dynamic)',
+    additional: {
+      a: 'GEICO - Level 3 Additional (same RO)',
+      b: 'GEICO - Level 4 Additional (same RO)',
+      c: 'GEICO - Level 5 Additional (same RO)',
+      dynamic: 'GEICO - Level 2 Additional (same RO)',
+    },
   },
 }
 
@@ -100,4 +115,60 @@ export function findTierItem(allItems, itemName) {
   return (allItems || []).find(i => norm(i.name) === want)
       || (allItems || []).find(i => norm(i.name).startsWith(want.slice(0, 24)))
       || null
+}
+
+/**
+ * Plan a whole car at once (Mark 2026-09-21: "the main static calibration
+ * is the full price and then the additional is the Level 2 on a Subaru,
+ * and so on"). The dearest calibration bills its full tier; every other
+ * one on the same RO drops to that pool's Additional rate. The second
+ * step of a two-step is never the main line, so it always bills as an
+ * additional.
+ *
+ * calibrations: [{ calibration_name, cal_type }]
+ * items: the Books catalog (for rates and to confirm the item exists)
+ * → Map keyed by lowercased calibration name →
+ *     { item, band, kind, additional, also, two_step }
+ */
+export function planTiers({ pool, make, calibrations, items }) {
+  const plan = new Map()
+  const P = String(pool || '').toUpperCase()
+  const t = TIERS[P]
+  if (!t) return plan
+  const rateOf = it => Number(it?.rate) || 0
+  const addItem = band => (t.additional ? findTierItem(items, t.additional[band]) : null)
+
+  // 1. Base tier for every calibration the report typed.
+  const entries = []
+  for (const c of calibrations || []) {
+    const name = c?.calibration_name || c?.name
+    if (!name) continue
+    const r = tierFor(P, make, c?.cal_type)
+    if (!r) continue
+    const full = findTierItem(items, r.itemName)
+    if (!full) continue
+    entries.push({ name, r, full })
+  }
+  if (!entries.length) return plan
+
+  // 2. The dearest line is the main one; ties keep report order.
+  let mainAt = 0
+  for (let i = 1; i < entries.length; i++) if (rateOf(entries[i].full) > rateOf(entries[mainAt].full)) mainAt = i
+
+  // 3. Everything else bills the additional rate when the pool has one.
+  entries.forEach((e, i) => {
+    const isAdd = i !== mainAt
+    const alt = isAdd ? addItem(e.r.kind === 'dynamic' ? 'dynamic' : e.r.band) : null
+    const also = e.r.alsoItemName
+      ? (addItem('dynamic') || findTierItem(items, e.r.alsoItemName))   // step 2 is always an additional
+      : null
+    plan.set(String(e.name).toLowerCase(), {
+      item: alt || e.full,
+      band: e.r.band, kind: e.r.kind,
+      additional: isAdd && !!alt,
+      two_step: !!also,
+      also,
+    })
+  })
+  return plan
 }

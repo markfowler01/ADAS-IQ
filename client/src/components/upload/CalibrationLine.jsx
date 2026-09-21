@@ -38,7 +38,7 @@ export default function CalibrationLine({ cal, onToggle, price, onField, vehicle
   const tier = price && price.tier_rule
   const BAND = { a: '3A', b: '3B', c: '3C', dynamic: 'Dynamic' }
   const tierChip = tier
-    ? `${POOL_NAMES[tier.pool] || tier.pool} ${tier.kind === 'dynamic' ? 'Level 2 Dynamic' : BAND[tier.band] || tier.band}`
+    ? `${POOL_NAMES[tier.pool] || tier.pool} ${tier.kind === 'dynamic' ? 'Level 2 Dynamic' : BAND[tier.band] || tier.band}${tier.additional ? ' · additional' : ''}`
     : null
   const priceEl = price
     ? <span className="flex flex-col items-end flex-shrink-0">
@@ -53,7 +53,7 @@ export default function CalibrationLine({ cal, onToggle, price, onField, vehicle
         )}
         {price?.step2 && (
           <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#7e22ce' }}
-            title={`Two-step calibration — ${price.step2.name} bills as the second step.`}>
+            title={`Two-step calibration — ${price.step2.name} bills as the second step, at the additional rate.`}>
             + ${Number(price.step2.rate).toFixed(0)} step 2
           </span>
         )}

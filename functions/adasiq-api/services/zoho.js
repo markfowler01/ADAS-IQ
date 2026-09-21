@@ -624,7 +624,13 @@ export async function createDraftQuote({
   // remembers Kat's picks, not just SF/AS.
   const poolKey = insurerPrefix || 'STD'
   const itemByName = new Map(allItems.map(it => [String(it.name).toLowerCase().trim(), it]))
-  function resolveOverrideOrTier(calName, calType = null) {
+  // Tier plan for the whole car, built from the lines that survive the
+  // review screen's removals so the "main" line is one we actually bill.
+  const tierPlan = tiers.planTiers({
+    pool: insurerPrefix, make, items: allItems,
+    calibrations: (calibrations || []).filter(c => !(lineEdits && lineEdits[c.calibration_name]?.remove)),
+  })
+  function resolveOverrideOrTier(calName) {
     // 1. explicit pick from the review modal this run
     const manual = lineOverrides && lineOverrides[calName]
     if (manual) {
@@ -640,18 +646,15 @@ export async function createDraftQuote({
       }
     }
     // 3. the insurer's own tier schedule — SF / Allstate / GEICO price by
-    //    static-vs-dynamic + manufacturer (Mark 2026-09-21).
-    const t = tiers.tierFor(insurerPrefix, make, calType)
-    const tierItem = t && tiers.findTierItem(allItems, t.itemName)
-    if (tierItem) {
-      const also = t.alsoItemName ? tiers.findTierItem(allItems, t.alsoItemName) : null
-      return { it: tierItem, source: `${insurerPrefix} tier ${t.band}`, also }
-    }
+    //    static-vs-dynamic + manufacturer, dearest line at the full rate
+    //    and the rest at Additional (Mark 2026-09-21).
+    const t = tierPlan.get(String(calName).toLowerCase())
+    if (t) return { it: t.item, source: `${insurerPrefix} tier ${t.band}${t.additional ? ' additional' : ''}`, also: t.also }
     return null
   }
 
-  function buildLineItem(name, description, quantity = 1, calType = null) {
-    const direct = resolveOverrideOrTier(name, calType)
+  function buildLineItem(name, description, quantity = 1) {
+    const direct = resolveOverrideOrTier(name)
     if (direct) {
       console.log(`[zoho] ✓ "${name}" → "${direct.it.name}" (${direct.source}, rate $${direct.it.rate})`)
       if (!direct.it.rate) zeroPriceItems.push(direct.it.name)
@@ -775,7 +778,7 @@ export async function createDraftQuote({
       description = parts.join('\n')
     }
     const quantity = (edit?.quantity != null ? Number(edit.quantity) : null) || cal.quantity || 1
-    const li = buildLineItem(cal.calibration_name, description, quantity, cal.cal_type)
+    const li = buildLineItem(cal.calibration_name, description, quantity)
     if (li && edit?.rate != null && Number.isFinite(Number(edit.rate))) {
       li.rate = Number(edit.rate)   // explicit rate beats the catalog rate
       console.log(`[zoho] custom rate in review: "${cal.calibration_name}" → $${li.rate}`)
@@ -1333,6 +1336,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
     return pick ? { name: pick.name, rate: Number(pick.rate) || 0 } : null
   }
 
+  const tierPlan = tiers.planTiers({ pool: insurerPrefix, make, calibrations, items: allItems })
   const lines = []
   const push = (name, quantity, isFixed, cal = null) => {
     if (!name) return
@@ -1351,27 +1355,28 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
       }
     }
     // Tier schedules (Mark 2026-09-21): SF / Allstate / GEICO price by
-    // static-vs-dynamic + manufacturer, not by calibration name.
+    // static-vs-dynamic + manufacturer, not by calibration name. The plan
+    // is per-car — dearest line at full rate, the rest at Additional.
     if (!isFixed) {
-      const t = tiers.tierFor(insurerPrefix, make, cal?.cal_type)
-      const it = t && tiers.findTierItem(allItems, t.itemName)
-      if (it) {
-        const rate = Number(it.rate) || 0
+      const t = tierPlan.get(String(name).toLowerCase())
+      if (t) {
+        const rate = Number(t.item.rate) || 0
         lines.push({
-          name: it.name, requested: name, rate, quantity,
+          name: t.item.name, requested: name, rate, quantity,
           amount: Math.round(rate * quantity * 100) / 100,
           needs_price: false, included: false, swappable: true,
-          tier_rule: { pool: insurerPrefix, band: t.band, kind: t.kind, make: make || '' },
+          tier_rule: { pool: insurerPrefix, band: t.band, kind: t.kind, make: make || '', additional: !!t.additional },
         })
-        // Subaru statics are a two-step — the dynamic line rides along.
-        const also = t.alsoItemName && tiers.findTierItem(allItems, t.alsoItemName)
-        if (also) {
-          const r2 = Number(also.rate) || 0
+        // Subaru statics are a two-step — the dynamic step rides along at
+        // the additional rate ("the main static is the full price and then
+        // the additional is the Level 2 on a Subaru").
+        if (t.also) {
+          const r2 = Number(t.also.rate) || 0
           lines.push({
-            name: also.name, requested: `${name} (step 2)`, rate: r2, quantity,
+            name: t.also.name, requested: `${name} (step 2)`, rate: r2, quantity,
             amount: Math.round(r2 * quantity * 100) / 100,
             needs_price: false, included: false, swappable: true,
-            tier_rule: { pool: insurerPrefix, band: 'dynamic', kind: 'dynamic', make: make || '', two_step_for: name },
+            tier_rule: { pool: insurerPrefix, band: 'dynamic', kind: 'dynamic', make: make || '', additional: true, two_step_for: name },
           })
         }
         return
