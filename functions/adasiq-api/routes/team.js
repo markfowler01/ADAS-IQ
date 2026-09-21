@@ -102,6 +102,24 @@ function memberToRow(m) {
   const fit = (obj, col) => { const s = JSON.stringify(obj); if (s.length > 10000) throw new Error(`${m.name}: ${col} is full (${s.length} chars) — trim old entries before saving`); return s }
   return { tm_id: m.id, tm_user_id: String(m.user_id || '').toLowerCase(), tm_name: m.name || '', tm_email: String(m.email || '').toLowerCase(), tm_access: m.access || 'technician', tm_active: m.active !== false, tm_json: fit(card, 'card'), tm_docs_json: fit(docs, 'documents'), tm_progress_json: fit(prog, 'progress') }
 }
+// Sign-in gate cache (2026-09-21 review): index.js asks on every request
+// whether this identity is still allowed in. Cached 5 min, dropped the
+// moment a person record is saved so "No login" bites right away.
+let _gate = { at: 0, byKey: new Map() }
+export function invalidateGate() { _gate.at = 0 }
+export async function gateForUser(req, user) {
+  if (Date.now() - _gate.at > 5 * 60000) {
+    const members = await readTeamMembers(req)
+    const byKey = new Map()
+    for (const m of members) for (const k of [m.user_id, m.email, m.name]) { const kk = String(k || '').trim().toLowerCase(); if (kk) byKey.set(kk, m) }
+    _gate = { at: Date.now(), byKey }
+    try { const { syncRosterFromDirectory } = await import('../services/hr.js'); await syncRosterFromDirectory(req, true) } catch { /* payroll tables keep their last state */ }
+  }
+  const m = _gate.byKey.get(String(user?.email || '').toLowerCase()) || _gate.byKey.get(String(user?.name || '').toLowerCase())
+  if (!m) return null
+  return (m.active === false || m.access === 'none') ? m : null
+}
+
 let _migrated = false
 export async function readTeamMembers(req) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
@@ -132,8 +150,10 @@ export async function findMemberByIdentity(req, email, name) {
     || members.find(m => n && m.name.toLowerCase() === n)
     || null
 }
-export async function saveMemberPublic(req, m) { return saveMember(req, m) }
+export async function saveMemberPublic(req, m) {
+  invalidateGate(); return saveMember(req, m) }
 export async function createMemberPublic(req, b) {
+  invalidateGate()
   const members = await readTeamMembers(req)
   const m = { ...BLANK(), ...b, id: newId(), user_id: String(b.user_id || b.email || '').toLowerCase(), email: String(b.email || '').toLowerCase(), avatar_color: b.avatar_color || COLORS[members.length % COLORS.length], created_at: new Date().toISOString() }
   await saveMember(req, m)

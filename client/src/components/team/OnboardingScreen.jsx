@@ -19,8 +19,10 @@ async function shrink(file, max = 1800) {
     return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' })
   } catch { return file }
 }
-const STEPS_W2 = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Direct deposit'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
+const STEPS_W2 = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['w4', '4 · W-4'], ['deposit', '5 · Direct deposit'], ['sign', '6 · Sign'], ['training', '7 · Training'], ['ask', '8 · Ask']]
 const STEPS_CONTRACTOR = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
+// Existing staff catching up (Mark 2026-09-21): just the bits their file is missing.
+const STEPS_CATCHUP = [['about', '1 · About you'], ['photo', '2 · Photo'], ['sign', '3 · Sign'], ['ask', '4 · Ask']]
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
 const Btn = ({ children, onClick, disabled, tone = 'green', full = true }) => <button type="button" onClick={onClick} disabled={disabled} className={`${full ? 'w-full' : ''} rounded-2xl py-3.5 px-4 text-base font-extrabold text-white`} style={{ backgroundColor: tone === 'orange' ? ORANGE : tone === 'blue' ? BLUE : GREEN, opacity: disabled ? .5 : 1 }}>{children}</button>
 const ytEmbed = u => { const m = String(u || '').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{6,})/); return m ? `https://www.youtube.com/embed/${m[1]}` : null }
@@ -37,8 +39,12 @@ export default function OnboardingScreen() {
   const m = d.member
   const has = kind => d.documents.some(x => x.kind === kind)
   const contractor = m.employment === 'contractor'
-  const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
-  const pct = Math.round((['about', 'photo', 'docs', 'deposit', 'sign', 'training'].filter(k => done[k]).length / 6) * 100)
+  const catchup = d.mode === 'catchup'
+  const isTech = (m.track || 'tech') !== 'ops'
+  const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), w4: has('w4'), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
+  const steps = catchup ? STEPS_CATCHUP : contractor ? STEPS_CONTRACTOR : STEPS_W2
+  const counted = steps.map(([k]) => k).filter(k => k !== 'ask')
+  const pct = Math.round((counted.filter(k => done[k]).length / counted.length) * 100)
   const flash = t => { setMsg(t); setTimeout(() => setMsg(''), 3500) }
   return (
     <Shell>
@@ -51,12 +57,13 @@ export default function OnboardingScreen() {
         <div className="h-2 rounded-full mt-3" style={{ backgroundColor: '#f1ede9' }}><div className="h-2 rounded-full" style={{ width: `${pct}%`, backgroundColor: pct === 100 ? GREEN : ORANGE, transition: 'width .3s' }} /></div>
       </div>
       <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth: 'none' }}>
-        {(contractor ? STEPS_CONTRACTOR : STEPS_W2).map(([k, label]) => <button key={k} onClick={() => setStep(k)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0" style={step === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: done[k] && k !== 'ask' ? GREEN : '#555', border: `1px solid ${done[k] && k !== 'ask' ? '#86efac' : '#e0dbd6'}` }}>{done[k] && k !== 'ask' ? '✓ ' : ''}{label}</button>)}
+        {steps.map(([k, label]) => <button key={k} onClick={() => setStep(k)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0" style={step === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: done[k] && k !== 'ask' ? GREEN : '#555', border: `1px solid ${done[k] && k !== 'ask' ? '#86efac' : '#e0dbd6'}` }}>{done[k] && k !== 'ask' ? '✓ ' : ''}{label}</button>)}
       </div>
       {msg && <div className="text-sm font-semibold mb-2 px-3 py-2 rounded-lg" style={{ backgroundColor: msg.startsWith('✓') ? '#dcfce7' : '#fef2f2', color: msg.startsWith('✓') ? GREEN : RED }}>{msg}</div>}
-      {step === 'about' && <About m={m} onSaved={() => { load(); flash('✓ Saved'); setStep('photo') }} />}
-      {step === 'photo' && <Photo m={m} onDone={() => { load(); flash('✓ Photo saved to your folder'); setStep('docs') }} />}
-      {step === 'docs' && <Docs d={d} has={has} contractor={contractor} onDone={() => { load(); flash('✓ Uploaded to your folder') }} onNext={() => setStep('deposit')} />}
+      {step === 'about' && <About m={m} isTech={isTech && !catchup} onSaved={() => { load(); flash('✓ Saved'); setStep('photo') }} />}
+      {step === 'photo' && <Photo m={m} onDone={() => { load(); flash('✓ Photo saved to your folder'); setStep(catchup ? 'sign' : 'docs') }} />}
+      {step === 'docs' && <Docs d={d} has={has} contractor={contractor} isTech={isTech} onDone={() => { load(); flash('✓ Uploaded to your folder') }} onNext={() => setStep(contractor ? 'deposit' : 'w4')} />}
+      {step === 'w4' && <W4 has={has} onDone={() => { load(); flash('✓ W-4 filed in your folder') }} onNext={() => setStep('deposit')} />}
       {step === 'deposit' && (contractor ? <Payout d={d} m={m} onDone={() => { load(); flash('✓ Payout details on file'); setStep('sign') }} /> : <Deposit d={d} m={m} onDone={() => { load(); flash('✓ Direct deposit on file'); setStep('sign') }} />)}
       {step === 'sign' && <Sign d={d} m={m} onDone={() => { load(); flash('✓ Signed and filed'); setStep('training') }} />}
       {step === 'training' && <Training d={d} onDone={load} />}
@@ -70,8 +77,8 @@ function Card({ title, sub, children }) { return <div className="rounded-2xl p-4
 const L = ({ label, children }) => <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>{label}<div className="mt-0.5 font-normal">{children}</div></label>
 const I = ({ v, set, ...p }) => <input value={v || ''} onChange={e => set(e.target.value)} className="w-full text-sm rounded-lg px-3 py-2.5" style={inp} {...p} />
 
-function About({ m, onSaved }) {
-  const [f, setF] = useState({ preferred_name: m.preferred_name, personal_phone: m.personal_phone, personal_email: m.personal_email, address: m.address, birthday: m.birthday, shirt_size: m.shirt_size, ec: { ...m.emergency_contact } })
+function About({ m, onSaved, isTech = false }) {
+  const [f, setF] = useState({ preferred_name: m.preferred_name, personal_phone: m.personal_phone, personal_email: m.personal_email, address: m.address, birthday: m.birthday, shirt_size: m.shirt_size, license_expiry: m.license_expiry || '', license_number: '', ec: { ...m.emergency_contact } })
   const [busy, setBusy] = useState(false)
   async function save() { setBusy(true); try { await call('/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, emergency_contact: f.ec }) }); onSaved() } catch (e) { alert(e.message) } finally { setBusy(false) } }
   return (
@@ -81,6 +88,11 @@ function About({ m, onSaved }) {
       <L label="Personal email"><I v={f.personal_email} set={v => setF(x => ({ ...x, personal_email: v }))} type="email" /></L>
       <L label="Home address"><I v={f.address} set={v => setF(x => ({ ...x, address: v }))} placeholder="Street, City, WA ZIP" /></L>
       <div className="grid grid-cols-2 gap-2"><L label="Birthday (MM-DD)"><I v={f.birthday} set={v => setF(x => ({ ...x, birthday: v }))} placeholder="07-04" /></L><L label="Shirt size"><I v={f.shirt_size} set={v => setF(x => ({ ...x, shirt_size: v }))} placeholder="L" /></L></div>
+      {isTech && <>
+        <div className="text-xs font-bold mt-2 mb-1" style={{ color: '#1a1a1a' }}>Driver's license</div>
+        <div className="text-[11px] mb-1" style={{ color: '#888' }}>You'll drive customers' cars on test drives, so we track the expiry. We keep only the last 4 of the number.</div>
+        <div className="grid grid-cols-2 gap-2"><L label="Expires"><I v={f.license_expiry} set={v => setF(x => ({ ...x, license_expiry: v }))} type="date" /></L><L label="License number"><I v={f.license_number} set={v => setF(x => ({ ...x, license_number: v }))} placeholder="as printed" /></L></div>
+      </>}
       <div className="text-xs font-bold mt-2 mb-1" style={{ color: '#1a1a1a' }}>Emergency contact</div>
       <L label="Name"><I v={f.ec.name} set={v => setF(x => ({ ...x, ec: { ...x.ec, name: v } }))} /></L>
       <div className="grid grid-cols-2 gap-2"><L label="Phone"><I v={f.ec.phone} set={v => setF(x => ({ ...x, ec: { ...x.ec, phone: v } }))} type="tel" /></L><L label="Relationship"><I v={f.ec.relationship} set={v => setF(x => ({ ...x, ec: { ...x.ec, relationship: v } }))} placeholder="spouse, parent…" /></L></div>
@@ -90,17 +102,52 @@ function About({ m, onSaved }) {
 }
 function Upload({ kind, label, hint, has, onDone, accept = 'image/*', capture, tone = 'orange' }) {
   const ref = useRef(null); const [busy, setBusy] = useState(false)
-  async function onFile(e) {
-    const f0 = e.target.files?.[0]; e.target.value = ''; if (!f0) return
+  // Certs and "other" need a name first — a small inline form, not a
+  // browser prompt (those look broken on iPhone).
+  const [pending, setPending] = useState(null)   // the picked file waiting on details
+  const [meta, setMeta] = useState({ label: '', issuer: '', expires: '' })
+  async function send(f0, m = {}) {
     setBusy(true)
-    try { const f = await shrink(f0, kind === 'photo' ? 1000 : 2000); const fd = new FormData(); fd.append('file', f, f.name); fd.append('kind', kind); if (kind === 'cert') { const lbl = window.prompt('Certification name (e.g. I-CAR ADAS, Autel ADAS Level 2):', ''); if (lbl === null) return; fd.append('label', lbl || 'Certification'); const iss = window.prompt('Issued by (optional):', '') || ''; if (iss) fd.append('issuer', iss); const exp = window.prompt('Expiration date, YYYY-MM-DD (leave blank if it doesn\'t expire):', '') || ''; if (/^\d{4}-\d{2}-\d{2}$/.test(exp)) fd.append('expires', exp) } else if (kind === 'other') { const lbl = window.prompt('What is this?', ''); if (lbl === null) return; if (lbl) fd.append('label', lbl) } await call('/upload', { method: 'POST', body: fd }); onDone() } catch (err) { alert(err.message) } finally { setBusy(false) }
+    try { const f = await shrink(f0, kind === 'photo' ? 1000 : 2000); const fd = new FormData(); fd.append('file', f, f.name); fd.append('kind', kind); if (m.label) fd.append('label', m.label); if (m.issuer) fd.append('issuer', m.issuer); if (/^\d{4}-\d{2}-\d{2}$/.test(m.expires || '')) fd.append('expires', m.expires); await call('/upload', { method: 'POST', body: fd }); setPending(null); setMeta({ label: '', issuer: '', expires: '' }); onDone() } catch (err) { alert(err.message) } finally { setBusy(false) }
+  }
+  function onFile(e) {
+    const f0 = e.target.files?.[0]; e.target.value = ''; if (!f0) return
+    if (kind === 'cert' || kind === 'other') setPending(f0); else send(f0)
   }
   return (
-    <div className="flex items-center gap-3 py-2" style={{ borderBottom: '1px solid #f3f3f3' }}>
-      <div className="flex-1"><div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{has ? '✅ ' : ''}{label}</div>{hint && <div className="text-[11px]" style={{ color: '#888' }}>{hint}</div>}</div>
-      <input ref={ref} type="file" accept={accept} capture={capture} hidden onChange={onFile} />
-      <button type="button" onClick={() => ref.current?.click()} disabled={busy} className="text-xs font-bold rounded-xl px-3 py-2 text-white flex-shrink-0" style={{ backgroundColor: has ? '#555' : tone === 'orange' ? ORANGE : BLUE, opacity: busy ? .6 : 1 }}>{busy ? '⏫ …' : has ? 'Redo' : '📷 Snap'}</button>
+    <div className="py-2" style={{ borderBottom: '1px solid #f3f3f3' }}>
+      <div className="flex items-center gap-3">
+        <div className="flex-1"><div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{has ? '✅ ' : ''}{label}</div>{hint && <div className="text-[11px]" style={{ color: '#888' }}>{hint}</div>}</div>
+        <input ref={ref} type="file" accept={accept} capture={capture} hidden onChange={onFile} />
+        <button type="button" onClick={() => ref.current?.click()} disabled={busy} className="text-xs font-bold rounded-xl px-3 py-2 text-white flex-shrink-0" style={{ backgroundColor: has ? '#555' : tone === 'orange' ? ORANGE : BLUE, opacity: busy ? .6 : 1 }}>{busy ? '⏫ …' : has ? (kind === 'cert' || kind === 'other' ? '＋ Add' : 'Redo') : '📷 Snap'}</button>
+      </div>
+      {pending && (
+        <div className="rounded-xl p-3 mt-2" style={{ backgroundColor: '#fff5f0', border: `1px solid ${ORANGE}` }}>
+          <div className="text-xs font-bold mb-2" style={{ color: '#1a1a1a' }}>{kind === 'cert' ? 'What certification is this?' : 'What is this?'} <span className="font-normal" style={{ color: '#888' }}>· {pending.name}</span></div>
+          <I v={meta.label} set={v => setMeta(x => ({ ...x, label: v }))} placeholder={kind === 'cert' ? 'e.g. I-CAR ADAS, Autel ADAS Level 2' : 'e.g. Forklift card, diploma'} />
+          {kind === 'cert' && <div className="grid grid-cols-2 gap-2 mt-2"><I v={meta.issuer} set={v => setMeta(x => ({ ...x, issuer: v }))} placeholder="Issued by (optional)" /><I v={meta.expires} set={v => setMeta(x => ({ ...x, expires: v }))} type="date" /></div>}
+          <div className="flex gap-2 mt-2">
+            <button type="button" onClick={() => send(pending, meta)} disabled={busy || !meta.label.trim()} className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: GREEN, opacity: busy || !meta.label.trim() ? .5 : 1 }}>{busy ? 'Uploading…' : 'Upload'}</button>
+            <button type="button" onClick={() => setPending(null)} className="rounded-xl px-4 py-2.5 text-sm font-bold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+// F: W-4 for W-2 hires. The IRS form is filled on the phone (or printed),
+// then photographed or saved as PDF into the folder as "11 Form W-4".
+function W4({ has, onDone, onNext }) {
+  return (
+    <Card title="Form W-4" sub="Tells payroll how much federal tax to hold back. About 5 minutes.">
+      <ol className="text-sm mb-3 space-y-1.5" style={{ color: '#374151' }}>
+        <li>1. Open the IRS form: <a href="https://www.irs.gov/pub/irs-pdf/fw4.pdf" target="_blank" rel="noreferrer" className="font-bold underline" style={{ color: BLUE }}>irs.gov/pub/irs-pdf/fw4.pdf</a>. It fills in on your phone.</li>
+        <li>2. Most people only do Step 1 (name, address, Social Security number, filing status) and Step 5 (sign and date). Steps 2–4 are optional.</li>
+        <li>3. Save it as a PDF, or print and photograph every page, then add it here.</li>
+      </ol>
+      <Upload kind="w4" label="Form W-4 (signed)" hint="PDF or photos of each page." has={has('w4')} onDone={onDone} accept="image/*,.pdf" />
+      <div className="mt-3"><Btn onClick={onNext} disabled={!has('w4')}>{has('w4') ? 'Continue →' : 'Add the W-4 to continue'}</Btn></div>
+    </Card>
   )
 }
 function Photo({ m, onDone }) {
@@ -111,11 +158,13 @@ function Photo({ m, onDone }) {
     </Card>
   )
 }
-function Docs({ d, has, contractor, onDone, onNext }) {
+function Docs({ d, has, contractor, isTech = true, onDone, onNext }) {
+  const mvr = isTech ? <Upload kind="mvr" label="Driving record (MVR)" hint="You drive customers' cars. Order yours at dol.wa.gov (about $13) and add the PDF or a photo — or Mark can pull it." has={has('mvr')} onDone={onDone} accept="image/*,.pdf" tone="blue" /> : null
   if (contractor) return (
     <Card title="ID & documents" sub="Photograph each one flat, all four corners in, no glare. They go straight into your personnel folder, clearly labeled.">
       <Upload kind="passport" label="Government ID or passport" hint="Photo page. Needed for the contract." has={has('passport')} onDone={onDone} capture="environment" />
       <Upload kind="dl_front" label="Driver's license (if you have one)" has={has('dl_front')} onDone={onDone} capture="environment" />
+      {mvr}
       <Upload kind="cert" label="Certifications / diplomas" hint="Add as many as you have." has={has('cert')} onDone={onDone} accept="image/*,.pdf" tone="blue" />
       <Upload kind="other" label="Anything else Mark asked for" has={false} onDone={onDone} accept="image/*,.pdf" tone="blue" />
       <div className="mt-3"><Btn onClick={onNext} disabled={!(has('passport') || has('dl_front'))}>{has('passport') || has('dl_front') ? 'Continue →' : 'A government ID is needed'}</Btn></div>
@@ -128,6 +177,7 @@ function Docs({ d, has, contractor, onDone, onNext }) {
       <Upload kind="ssn" label="Social Security card" hint="Needed for payroll and the I-9. Never stored in the app itself." has={has('ssn')} onDone={onDone} capture="environment" />
       <Upload kind="passport" label="Passport or other ID (optional)" has={has('passport')} onDone={onDone} capture="environment" />
       <Upload kind="voided_check" label="Voided check (optional)" hint="Or do direct deposit on the next step." has={has('voided_check')} onDone={onDone} capture="environment" />
+      {mvr}
       <Upload kind="cert" label="Certifications (I-CAR, Autel, OEM…)" hint="Add as many as you have." has={has('cert')} onDone={onDone} accept="image/*,.pdf" tone="blue" />
       <Upload kind="other" label="Anything else Mark asked for" has={false} onDone={onDone} accept="image/*,.pdf" tone="blue" />
       <div className="mt-3"><Btn onClick={onNext} disabled={!(has('dl_front') && has('ssn'))}>{has('dl_front') && has('ssn') ? 'Continue →' : 'License front + Social Security card needed'}</Btn></div>

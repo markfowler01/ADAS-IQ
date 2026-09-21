@@ -42,10 +42,13 @@ function ContactButtons({ m, size = 'sm' }) {
 }
 
 // ── Directory ──────────────────────────────────────────────────────────
-export function DirectoryTab({ members, user, onOpen, onAdd }) {
+const STATUS_CHIP = { in: { label: '🟢 On the clock', bg: '#dcfce7', color: '#15803d' }, off: { label: '🌴 Off today', bg: '#e0f2fe', color: '#0369a1' } }
+export function DirectoryTab({ members, user, onOpen, onAdd, status = {} }) {
   const [q, setQ] = useState('')
   const [dept, setDept] = useState('')
+  const [emergency, setEmergency] = useState(null)   // owner-only card: every emergency contact + van, one tap
   const owner = isOwnerUser(user)
+  async function openEmergency() { try { setEmergency(await j('/api/people/emergency')) } catch (e) { alert(e.message) } }
   const depts = useMemo(() => [...new Set(members.map(m => m.department).filter(Boolean))], [members])
   const shown = members.filter(m => m.active !== false || owner).filter(m => !dept || m.department === dept).filter(m => {
     const n = q.trim().toLowerCase(); if (!n) return true
@@ -57,8 +60,26 @@ export function DirectoryTab({ members, user, onOpen, onAdd }) {
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search people, titles, departments…" className="flex-1 min-w-[200px] text-sm rounded-xl px-3 py-2" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', outline: 'none' }} />
         {depts.map(d => <button key={d} onClick={() => setDept(dept === d ? '' : d)} className="text-xs font-bold rounded-full px-3 py-1.5" style={dept === d ? { backgroundColor: DEPT_COLORS[d] || '#555', color: 'white' } : { backgroundColor: 'white', color: DEPT_COLORS[d] || '#555', border: `1px solid ${DEPT_COLORS[d] || '#ddd'}` }}>{d}</button>)}
+        {owner && <button onClick={openEmergency} className="text-xs font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1px solid #fecaca' }}>🚨 Emergency card</button>}
         {owner && <button onClick={onAdd} className="text-xs font-bold rounded-full px-3 py-1.5 text-white" style={{ backgroundColor: ORANGE }}>＋ Add person</button>}
       </div>
+      {emergency && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,.5)' }} onClick={() => setEmergency(null)}>
+          <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl p-4 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2"><div className="font-extrabold text-lg" style={{ color: '#b91c1c' }}>🚨 Emergency card</div><button onClick={() => setEmergency(null)} className="text-2xl leading-none px-1" style={{ color: '#888' }}>×</button></div>
+            <div className="text-xs mb-3" style={{ color: '#666' }}>Owners only. Who to call for each person, their van, and their license status. Fix gaps on their card.</div>
+            {(emergency.people || []).map(p => (
+              <div key={p.id} className="rounded-xl p-3 mb-2" style={{ border: '1px solid #e8e4e0' }}>
+                <div className="flex items-center justify-between gap-2"><div className="font-bold text-sm" style={{ color: '#1a1a1a' }}>{p.name}{p.van ? ` · 🚐 ${p.van}` : ''}{p.region ? ` · 📍 ${p.region}` : ''}</div>{p.phone && <a href={tel(p.phone)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#dcfce7', color: GREEN }}>📞 {p.phone}</a>}</div>
+                {p.emergency_contact?.name
+                  ? <div className="flex items-center justify-between gap-2 mt-1.5 text-sm"><span style={{ color: '#374151' }}><b>{p.emergency_contact.name}</b>{p.emergency_contact.relationship ? ` (${p.emergency_contact.relationship})` : ''}</span>{p.emergency_contact.phone && <a href={tel(p.emergency_contact.phone)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>🚨 {p.emergency_contact.phone}</a>}</div>
+                  : <div className="text-xs mt-1.5 font-semibold" style={{ color: '#b91c1c' }}>No emergency contact on file — send them the catch-up link.</div>}
+                {p.license_expiry && <div className="text-[11px] mt-1" style={{ color: p.license_expiry < new Date().toISOString().slice(0, 10) ? '#b91c1c' : '#888' }}>🪪 License {p.license_expiry < new Date().toISOString().slice(0, 10) ? 'EXPIRED' : 'expires'} {p.license_expiry}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {soon.length > 0 && <div className="text-xs font-semibold mb-3 px-3 py-2 rounded-lg" style={{ backgroundColor: '#fff7ed', color: '#c2410c' }}>🎂 {soon.map(x => `${x.m.preferred_name || x.m.name.split(' ')[0]} ${x.d === 0 ? 'today!' : x.d === 1 ? 'tomorrow' : `in ${x.d} days`}`).join(' · ')}</div>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {shown.map(m => {
@@ -71,6 +92,7 @@ export function DirectoryTab({ members, user, onOpen, onAdd }) {
                   <div className="font-extrabold text-base leading-tight" style={{ color: '#1a1a1a' }}>{m.preferred_name ? `${m.preferred_name} ${m.name.split(' ').slice(1).join(' ')}` : m.name}{me && <span className="text-xs font-normal ml-1" style={{ color: '#999' }}>(you)</span>}</div>
                   <div className="text-sm font-semibold" style={{ color: DEPT_COLORS[m.department] || '#555' }}>{m.title || '—'}</div>
                   <div className="text-xs mt-0.5" style={{ color: '#888' }}>{m.department}{m.employment ? ` · ${EMPLOYMENT[m.employment] || m.employment}` : ''}{m.track === 'apprentice' ? ' · 🪜 apprentice' : ''}{m.region ? ` · 📍 ${m.region}` : ''}{m.active === false ? ' · inactive' : ''}</div>
+                  {status[m.id] && STATUS_CHIP[status[m.id].state] && <span className="inline-block text-[11px] font-bold rounded-full px-2 py-0.5 mt-1" style={{ backgroundColor: STATUS_CHIP[status[m.id].state].bg, color: STATUS_CHIP[status[m.id].state].color }}>{STATUS_CHIP[status[m.id].state].label}{status[m.id].on_break ? ' · on break' : ''}{status[m.id].state === 'in' && status[m.id].since ? ` since ${new Date(status[m.id].since).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}</span>}
                 </div>
               </div>
               <div className="mt-3"><ContactButtons m={m} /></div>

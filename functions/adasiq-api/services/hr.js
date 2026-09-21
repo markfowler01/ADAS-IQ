@@ -63,7 +63,7 @@ function firstName(s) {
 // use emails. Left alone, that split DOUBLE-PAYS (auto-punch can't see a
 // name-keyed real shift) and hides acknowledgments. Everything funnels
 // through here: user_id = email, user_name = the roster spelling.
-const IDENTITY_ALIASES = {
+let IDENTITY_ALIASES = {
   'mark@absoluteadas.com':      ['mark@absoluteadas.com', 'Mark Fowler'],
   'mark fowler':                ['mark@absoluteadas.com', 'Mark Fowler'],
   'mark':                       ['mark@absoluteadas.com', 'Mark Fowler'],
@@ -85,7 +85,7 @@ const IDENTITY_ALIASES = {
   'joyce':                      ['joyce@absoluteadas.com', 'Joyce Cruz'],
 }
 // Everyone who gets a line on the pay-period hours page, even at 0h.
-export const PAYROLL_ROSTER = [
+export let PAYROLL_ROSTER = [
   { user_id: 'mark@absoluteadas.com',       user_name: 'Mark Fowler' },
   { user_id: 'k.belmonte@absoluteadas.com', user_name: 'Kat Belmonte' },
   { user_id: 'jayden@absoluteadas.com',     user_name: 'Jayden Goshorn' },
@@ -103,6 +103,36 @@ export function semiMonthlyPeriod(refISO, shift = 0) {
   const mon = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })
   return { start, end, label: `${mon} ${half ? 16 : 1}–${half ? last : 15}`, half: half ? 'end' : 'mid', ym: `${y}-${mm}` }
 }
+// The Directory is the one person record (2026-09-21 review): a hire made
+// in Recruiting used to show in the Directory but never on the Hours page
+// or the payday report, because the three tables above were typed in by
+// hand. They're rebuilt from the Directory here — called before every
+// hours/sick computation and by the auth layer's 5-minute refresh. The
+// hard-coded seed stays as the cold-start default so nothing is ever empty.
+let _rosterSyncedAt = 0
+export async function syncRosterFromDirectory(req, force = false) {
+  if (!force && Date.now() - _rosterSyncedAt < 5 * 60000) return
+  try {
+    const { readTeamMembers } = await import('../routes/team.js')
+    const members = (await readTeamMembers(req)).filter(m => m.active !== false && m.user_id)
+    if (!members.length) return
+    const aliases = {}, contractors = new Set(), roster = []
+    for (const m of members) {
+      const pair = [m.user_id, m.name]
+      const keys = [m.user_id, m.email, m.name, m.preferred_name, firstName(m.name), m.preferred_name ? firstName(m.preferred_name) : '']
+      for (const k of keys) { const kk = String(k || '').trim().toLowerCase(); if (kk) aliases[kk] = pair }
+      if (m.employment === 'contractor') { contractors.add(firstName(m.name).toLowerCase()); if (m.preferred_name) contractors.add(firstName(m.preferred_name).toLowerCase()) }
+      roster.push({ user_id: m.user_id, user_name: m.name })
+    }
+    // Mark's other sign-in addresses always resolve to him.
+    for (const e of MARK_EMAILS) aliases[e] = ['mark@absoluteadas.com', aliases['mark@absoluteadas.com']?.[1] || 'Mark Fowler']
+    IDENTITY_ALIASES = { ...IDENTITY_ALIASES, ...aliases }
+    CONTRACTOR_KEYS = contractors.size ? contractors : CONTRACTOR_KEYS
+    PAYROLL_ROSTER = roster
+    _rosterSyncedAt = Date.now()
+  } catch (e) { console.warn('[hr] roster sync from Directory failed, keeping current tables:', e.message) }
+}
+
 export function canonicalIdentity(rawId, rawName) {
   for (const raw of [rawId, rawName]) {
     const k = String(raw || '').trim().toLowerCase()
@@ -115,6 +145,7 @@ export function canonicalIdentity(rawId, rawName) {
 // accrued = total worked hours / 40 (per WA RCW 49.46.210, incl. OT)
 // used    = sum of APPROVED sick requests (hours)
 export async function computeSickBalances(req) {
+  await syncRosterFromDirectory(req)
   const { readEntriesPublic } = await import('../routes/timeclock.js')
   const { getRequestsDurable, getBalancesDurable } = await import('../routes/pto.js')
   const [entries, requests, stored] = await Promise.all([
@@ -178,7 +209,7 @@ export const SICK_NEGATIVE_FLOOR = -40
 // Employees (W-2, Washington): sick accrual, weekly OT at 1.5x, paid
 // holidays, per-period balance notices. Contractors (Philippines):
 // hours tracked for contract pay — none of the WA machinery applies.
-const CONTRACTOR_KEYS = new Set(['kat', 'kath', 'joyce', 'k'])
+let CONTRACTOR_KEYS = new Set(['kat', 'kath', 'joyce', 'k'])
 export function isContractor(firstNameKey) {
   return CONTRACTOR_KEYS.has(String(firstNameKey || '').toLowerCase().trim())
 }
@@ -260,6 +291,7 @@ async function setPayrollLockDate(req, dateISO) {
 }
 
 export async function buildHoursReport(req, startISO, endISO) {
+  await syncRosterFromDirectory(req)
   const { readEntriesPublic } = await import('../routes/timeclock.js')
   const { getRequestsDurable } = await import('../routes/pto.js')
   const [entries, requests, balances] = await Promise.all([

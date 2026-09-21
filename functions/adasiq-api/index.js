@@ -188,18 +188,33 @@ function requireMark(req, res, next) {
   res.status(403).json({ error: 'Only Mark can do this.' })
 }
 
+// A valid token is not enough on its own (2026-09-21 review): tokens live
+// 30 days, so "No login" in the Directory has to bite on the NEXT request,
+// not next month. The Directory is cached 5 minutes per instance; someone
+// set inactive or to access "none" gets a 401 and the client signs out.
+// Unknown identities (demo, cron) pass through as before.
+async function directoryGate(req) {
+  try { const { gateForUser } = await import('./routes/team.js'); return await gateForUser(req, req.user) }
+  catch (e) { console.warn('[auth] directory gate unavailable (allowing):', e.message); return null }
+}
+
 function requireAuth(req, res, next) {
   if (process.env.SKIP_AUTH === 'true') return next()
   // Primary: HMAC-signed token via X-Auth-Token header
   const headerToken = req.headers['x-auth-token']
+  let user = null
   if (headerToken) {
-    const user = verifyToken(headerToken)
-    if (user) { req.user = user; return next() }
-    console.warn('[auth] X-Auth-Token present but invalid — falling back to session cookie')
+    user = verifyToken(headerToken)
+    if (!user) console.warn('[auth] X-Auth-Token present but invalid — falling back to session cookie')
   }
   // Fallback: session cookie
-  if (req.session?.user) { req.user = req.session.user; return next() }
-  res.status(401).json({ error: 'Not authenticated' })
+  if (!user && req.session?.user) user = req.session.user
+  if (!user) return res.status(401).json({ error: 'Not authenticated' })
+  req.user = user
+  directoryGate(req).then(blocked => {
+    if (blocked) { console.log(`[auth] ${user.email || user.name} blocked — Directory says ${blocked.active === false ? 'inactive' : 'no login'}`); return res.status(401).json({ error: 'Your access has been turned off. Talk to Mark.' }) }
+    next()
+  }).catch(() => next())
 }
 
 // Debug route (auth required)

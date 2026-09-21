@@ -381,6 +381,119 @@ router.patch('/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ── Offer letters through Zoho Sign (A, 2026-09-21) ───────────────────
+// Offer state lives in AppConfig `offer:<candidateId>` (the candidates
+// table has no JSON column). Send → Sign request; the hourly poll pulls
+// the signed PDF into the personnel folder as "09 Signed contract",
+// marks the candidate Hired, and the onboarding link goes out.
+const offerKey = id => `offer:${id}`
+async function readOffer(req, id) { const { cfgReadJson } = await import('./people.js'); return cfgReadJson(req, offerKey(id), null) }
+async function writeOffer(req, id, o) { const { cfgWriteJson } = await import('./people.js'); return cfgWriteJson(req, offerKey(id), o) }
+
+router.get('/sign-status', async (req, res) => {
+  try { const { isConfigured, signTokenSource } = await import('../services/zohoSign.js'); const p = await isConfigured(); res.json({ ok: true, configured: p.ok, why: p.why, token: signTokenSource() }) }
+  catch (e) { res.json({ ok: true, configured: false, why: e.message }) }
+})
+router.get('/:id/offer', async (req, res) => {
+  try { res.json({ ok: true, offer: await readOffer(req, req.params.id) }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// Preview the letter as a PDF before sending (owner reads it on the phone).
+router.post('/:id/offer/preview', async (req, res) => {
+  try {
+    if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
+    const cand = (await readAll(req)).find(c => c.id === String(req.params.id))
+    if (!cand) return res.status(404).json({ error: 'Candidate not found' })
+    const { buildOfferPdf } = await import('../services/offerLetter.js')
+    const { pdf } = await buildOfferPdf(cand, offerFromBody(req.body))
+    res.set('Content-Type', 'application/pdf'); res.set('Content-Disposition', `inline; filename="Offer - ${cand.name}.pdf"`); res.send(pdf)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+function offerFromBody(b = {}) {
+  return { employment: b.employment === 'contractor' ? 'contractor' : 'w2', title: clip(b.title, 100) || 'ADAS Calibration Technician', pay_type: ['hourly', 'salary', 'per_job'].includes(b.pay_type) ? b.pay_type : 'hourly', pay_rate: Number(b.pay_rate) || 0, start_date: /^\d{4}-\d{2}-\d{2}$/.test(String(b.start_date || '')) ? b.start_date : '', region: clip(b.region, 80), schedule: clip(b.schedule, 300), duties: clip(b.duties, 600), bonus: clip(b.bonus, 300), pto: clip(b.pto, 300), provides: clip(b.provides, 300) }
+}
+router.post('/:id/offer/send', async (req, res) => {
+  try {
+    if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
+    const cand = (await readAll(req)).find(c => c.id === String(req.params.id))
+    if (!cand) return res.status(404).json({ error: 'Candidate not found' })
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cand.email || '')) return res.status(400).json({ error: 'The candidate needs an email on their card — Zoho Sign sends there.' })
+    const o = offerFromBody(req.body)
+    if (!(o.pay_rate > 0)) return res.status(400).json({ error: 'Pay is required.' })
+    if (!o.start_date) return res.status(400).json({ error: 'Start date is required.' })
+    const sign = await import('../services/zohoSign.js')
+    const probe = await sign.isConfigured()
+    if (!probe.ok) return res.status(503).json({ error: `Zoho Sign isn't connected yet (${probe.why}). Mint a token with the ZohoSign scopes and set ZOHO_SIGN_REFRESH_TOKEN.` })
+    const prev = await readOffer(req, cand.id)
+    if (prev?.request_id && prev.status === 'inprogress') { try { await sign.recallRequest(prev.request_id, 'Replaced by a new offer') } catch (e) { console.log('[offer] recall failed (continuing):', e.message) } }
+    const { buildOfferPdf } = await import('../services/offerLetter.js')
+    const { pdf, sign: sig, date } = await buildOfferPdf(cand, o)
+    const subject = `${o.employment === 'contractor' ? 'Contractor agreement' : 'Offer letter'} — ${cand.name} — Absolute ADAS`
+    const r = await sign.sendForSignature({ pdf, filename: `${subject}.pdf`, recipientName: cand.name, recipientEmail: cand.email, subject, note: `Hi ${cand.name.split(' ')[0]} — here's your ${o.employment === 'contractor' ? 'agreement' : 'offer'} from Absolute ADAS. Sign on your phone and your onboarding link follows. — Mark`,
+      fields: [{ type: 'Signature', ...sig, name: 'Signature' }, { type: 'Date', ...date, name: 'Date signed' }] })
+    const offer = { ...o, request_id: r.request_id, action_id: r.action_id, document_id: r.document_id, status: 'inprogress', sent_at: new Date().toISOString(), sent_by: req.user?.name || '', candidate_name: cand.name, candidate_email: cand.email }
+    await writeOffer(req, cand.id, offer)
+    if (cand.stage !== 'offer') await catalyst.initialize(req).datastore().table(TABLE).updateRow({ ROWID: cand.id, cand_stage: 'offer', cand_updated_at: new Date().toISOString() })
+    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📝 *Offer sent to ${cand.name}* via Zoho Sign — ${o.title}, ${o.employment === 'contractor' ? 'contractor' : 'W-2'}, starts ${o.start_date}. I'll file the signed copy and send their onboarding link the moment it comes back.`) } catch {}
+    console.log(`[offer] sent to ${cand.name} <${cand.email}> request ${r.request_id}`)
+    res.json({ ok: true, offer })
+  } catch (e) { console.error('[offer send]', e.message); res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/offer/withdraw', async (req, res) => {
+  try {
+    if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
+    const o = await readOffer(req, req.params.id)
+    if (!o?.request_id) return res.status(404).json({ error: 'No offer out' })
+    const sign = await import('../services/zohoSign.js')
+    try { await sign.recallRequest(o.request_id, String(req.body?.reason || 'Withdrawn by Absolute ADAS').slice(0, 200)) } catch (e) { console.log('[offer] recall failed:', e.message) }
+    await writeOffer(req, req.params.id, { ...o, status: 'withdrawn', withdrawn_at: new Date().toISOString() })
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+/** Hourly: any offer still in progress → ask Sign; completed → file + hire. */
+export async function pollOffers(req) {
+  const app = catalyst.initialize(req)
+  const rows = await app.zcql().executeZCQLQuery("SELECT ROWID, config_key, config_value FROM AppConfig WHERE config_key LIKE 'offer:%' LIMIT 300").catch(() => [])
+  const sign = await import('../services/zohoSign.js')
+  let checked = 0, completed = 0
+  for (const r of rows || []) {
+    const row = r.AppConfig || r
+    let o = null; try { o = JSON.parse(row.config_value || 'null') } catch { continue }
+    if (!o?.request_id || o.status !== 'inprogress') continue
+    const candId = String(row.config_key).slice('offer:'.length)
+    checked++
+    let st
+    try { st = await sign.requestStatus(o.request_id) } catch (e) { console.log(`[offer] status check failed for ${o.candidate_name}:`, e.message); continue }
+    if (st.status === 'inprogress') continue
+    if (st.status !== 'completed') { await writeOffer(req, candId, { ...o, status: st.status, ended_at: new Date().toISOString() }); try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📝 Offer to *${o.candidate_name}* is now *${st.status}* in Zoho Sign.`) } catch {}; continue }
+    // Signed → file it, hire them, send the onboarding link.
+    try {
+      const pdf = await sign.downloadSignedPdf(o.request_id)
+      const cand = (await readAll(req)).find(c => c.id === candId)
+      const { onCandidateHired } = await import('./people.js')
+      const { readTeamMembers, saveMemberPublic } = await import('./team.js')
+      let member = (await readTeamMembers(req)).find(m => (cand?.email && (m.user_id === cand.email.toLowerCase() || m.email === cand.email.toLowerCase())) || m.name.toLowerCase() === String(o.candidate_name || '').toLowerCase())
+      if (!member && cand) member = (await onCandidateHired(req, { ...cand, role: o.title })).member
+      if (member) {
+        member.employment = o.employment; member.title = o.title || member.title; if (o.start_date) member.hire_date = o.start_date
+        if (o.pay_type === 'hourly' && o.pay_rate) member.hourly_rate = o.pay_rate
+        if (o.pay_type === 'salary' && o.pay_rate) member.salary_annual = o.pay_rate
+        member.payroll_type = o.employment === 'contractor' ? 'contractor_wise' : 'w2_zoho'
+        const { putFile } = await import('./onboardPublic.js')
+        const doc = await putFile(req, member, 'contract', '', pdf, 'application/pdf', '.pdf')
+        member.signatures = { ...(member.signatures || {}), contract: { at: st.signed_at || new Date().toISOString(), file_id: doc.file_id, version: 'zoho-sign', request_id: o.request_id } }
+        await saveMemberPublic(req, member)
+      }
+      if (cand && cand.stage !== 'hired') await app.datastore().table(TABLE).updateRow({ ROWID: candId, cand_stage: 'hired', cand_updated_at: new Date().toISOString() })
+      await writeOffer(req, candId, { ...o, status: 'completed', signed_at: st.signed_at || new Date().toISOString(), filed: !!member })
+      completed++
+      try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ *${o.candidate_name} signed the ${o.employment === 'contractor' ? 'agreement' : 'offer'}.* Filed as "09 Signed contract" in their folder, marked Hired${member?.onboarding_invited_at ? ', onboarding link sent' : ''}. Starts ${o.start_date}.`) } catch {}
+      console.log(`[offer] ${o.candidate_name} signed → filed + hired`)
+    } catch (e) { console.log(`[offer] completion handling failed for ${o.candidate_name}:`, e.message) }
+  }
+  return { checked, completed }
+}
+
 router.delete('/:id', async (req, res) => {
   try {
     if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark can delete candidates.' })

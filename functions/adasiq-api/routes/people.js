@@ -73,6 +73,8 @@ const ONBOARDING = [
   { key: 'handbook',       label: 'Handbook & policies signed (auto)' },
   { key: 'contract',       label: 'Contract / offer letter signed (auto — owner drops the PDF in their folder first)' },
   { key: 'training',       label: 'Training course passed — all modules (auto)' },
+  { key: 'w4',             label: 'Form W-4 uploaded (auto, W-2 only)', w2_only: true },
+  { key: 'mvr',            label: 'Driving record (MVR) on file — techs drive customers\' cars (auto when uploaded)', tech_only: true },
   { key: 'i9',             label: 'Form I-9 completed in Zoho Payroll within 3 business days of the start date (W-2 only) — Mark', w2_only: true },
   { key: 'login',          label: 'App login + access level set (Directory → App access) — Mark or Kat' },
   { key: 'cliq',           label: 'Added to Cliq (#dispatch, #aajobs) — Kat' },
@@ -179,6 +181,20 @@ router.post('/folder/:id/upload', upload.single('file'), async (req, res) => {
 
 // ── Log (1:1 · review · training · note) ─────────────────────────────
 const LOG_TYPES = ['1on1', 'review', 'training', 'note']
+// Log a check-in / review from the calendar in one tap: writes the entry AND
+// marks that check-in done so it leaves the calendar and the 7am nudge.
+router.post('/checkin/:id/done', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    const key = String(req.body?.key || '').slice(0, 12)
+    if (!/^(d30|d60|d90|y\d{4})$/.test(key)) return res.status(400).json({ error: 'bad key' })
+    m.checkins = { ...(m.checkins || {}), [key]: { at: new Date().toISOString(), by: req.user?.name || '' } }
+    await saveMember(req, m)
+    res.json({ ok: true, checkins: m.checkins })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.post('/log', async (req, res) => {
   try {
     const b = req.body || {}
@@ -236,8 +252,8 @@ router.post('/policy/ack', async (req, res) => {
 
 // ── Onboarding / offboarding ─────────────────────────────────────────
 export function startChecklist(m, kind, by) {
-  const tpl = (kind === 'offboarding' ? OFFBOARDING : ONBOARDING).filter(t => !t.w2_only || m.employment !== 'contractor')
-  m.checklist = { kind, started_at: new Date().toISOString(), started_by: by, items: tpl.map(({ w2_only, ...t }) => ({ ...t, done: false, at: '', by: '' })) }
+  const tpl = (kind === 'offboarding' ? OFFBOARDING : ONBOARDING).filter(t => (!t.w2_only || m.employment !== 'contractor') && (!t.tech_only || (m.track || 'tech') !== 'ops'))
+  m.checklist = { kind, started_at: new Date().toISOString(), started_by: by, items: tpl.map(({ w2_only, tech_only, ...t }) => ({ ...t, done: false, at: '', by: '' })) }
   return m
 }
 export function addBusinessDays(iso, n) { let d = new Date(iso + 'T12:00:00Z'); let left = n; while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) left-- } return d.toISOString().slice(0, 10) }
@@ -294,7 +310,17 @@ router.get('/calendar', async (req, res) => {
       }
       for (const c of Array.isArray(m.certifications) ? m.certifications : []) if (c?.expires) ev.push({ date: c.expires, type: 'expiry', title: `📄 ${who}: ${c.name} expires`, user_id: m.user_id })
       if (m.license_expiry) ev.push({ date: m.license_expiry, type: 'expiry', title: `🪪 ${who}: driver's license expires`, user_id: m.user_id })
-      if (m.checklist && !m.checklist.completed_at && m.checklist.kind === 'onboarding' && m.checklist.started_at) ev.push({ date: addDays(m.checklist.started_at.slice(0, 10), 30), type: 'checkin', title: `🗓 ${who} — 30-day check-in`, user_id: m.user_id })
+      // Check-ins on a clock (D, 2026-09-21): 30 / 60 / 90 days from the hire
+      // date, then an annual review on the anniversary. Owners only.
+      if (owner && m.hire_date && m.employment !== 'owner') {
+        for (const [n, label] of [[30, '30-day check-in'], [60, '60-day check-in'], [90, '90-day review']]) {
+          const d = addDays(m.hire_date, n); if ((m.checkins || {})[`d${n}`]) continue
+          ev.push({ date: d, type: 'checkin', title: `🗓 ${who} — ${label}`, user_id: m.user_id, member_id: m.id, checkin: `d${n}`, log_type: n === 90 ? 'review' : '1on1' })
+        }
+        for (let y = y0; y <= y1; y++) if (m.hire_date.slice(0, 4) < String(y) && !(m.checkins || {})[`y${y}`]) ev.push({ date: `${y}-${m.hire_date.slice(5)}`, type: 'checkin', title: `⭐ ${who} — annual review`, user_id: m.user_id, member_id: m.id, checkin: `y${y}`, log_type: 'review' })
+      }
+      // Driving record: re-check yearly (techs drive customers' cars).
+      if (owner && m.mvr_checked_at && (m.track || 'tech') !== 'ops') ev.push({ date: addDays(m.mvr_checked_at, 365), type: 'expiry', title: `🚗 ${who}: driving record re-check due`, user_id: m.user_id })
       const i9 = i9Deadline(m); const i9Item = m.checklist?.items?.find(x => x.key === 'i9')
       if (i9 && i9Item && !i9Item.done && owner) ev.push({ date: i9, type: 'checkin', title: `🪪 ${who} — Form I-9 due (3 business days from start)`, user_id: m.user_id })
     }
@@ -439,30 +465,40 @@ router.post('/promote/:id', async (req, res) => {
 router.get('/handbook', async (req, res) => { try { const { SECTIONS, handbookHash } = await import('../services/handbook.js'); res.json({ ok: true, sections: SECTIONS, version: handbookHash() }) } catch (e) { res.status(500).json({ error: e.message }) } })
 
 // ── Onboarding link: owner sends it; the person can open their own ──
-export async function onboardingLink(req, m) {
+export async function onboardingLink(req, m, mode = 'full') {
   const { makeOnboardToken } = await import('./onboardPublic.js')
   const base = process.env.WEB_BASE_URL || `${req.protocol}://${req.get('host')}/app`
-  return `${base}/?onboard=${encodeURIComponent(m.id)}&t=${encodeURIComponent(makeOnboardToken(m.id))}`
+  return `${base}/?onboard=${encodeURIComponent(m.id)}&t=${encodeURIComponent(makeOnboardToken(m, mode))}`
 }
-export async function sendOnboardingInvite(req, m, by) {
-  const link = await onboardingLink(req, m)
+/** Kill every link sent so far for this person; the next invite mints a fresh one. */
+export function revokeOnboardingLinks(m) { m.onboarding_token_v = (Number(m.onboarding_token_v) || 0) + 1; return m }
+export async function sendOnboardingInvite(req, m, by, mode = 'full') {
+  revokeOnboardingLinks(m)
+  const link = await onboardingLink(req, m, mode)
   const to = { sms: m.personal_phone || m.phone || '', email: m.personal_email || m.email || '' }
   const out = { link, sms: null, email: null }
   const first = m.preferred_name || firstName(m.name)
   if (to.sms) {
-    try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ to: to.sms, body: `Hi ${first}, welcome to Absolute ADAS! Here's your onboarding link — takes about 20 minutes on your phone (photo, ID, direct deposit, a short training). ${link}  — Mark` }); out.sms = r?.ok ? { ok: true, to: to.sms } : { ok: false, error: r?.error || 'failed' } } catch (e) { out.sms = { ok: false, error: e.message } }
+    try { const { sendTwilioSMS } = await import('../services/twilio.js'); const body = mode === 'catchup'
+      ? `Hi ${first}, Mark here — quick HR catch-up on your phone (about 5 minutes): a profile photo, your emergency contact, and signing the handbook. ${link}  — Mark`
+      : `Hi ${first}, welcome to Absolute ADAS! Here's your onboarding link — takes about 20 minutes on your phone (photo, ID, direct deposit, a short training). ${link}  — Mark`
+      const r = await sendTwilioSMS({ to: to.sms, body }); out.sms = r?.ok ? { ok: true, to: to.sms } : { ok: false, error: r?.error || 'failed' } } catch (e) { out.sms = { ok: false, error: e.message } }
   }
   if (to.email) {
     try {
       const { getMailAccessToken, getMailAccountId, sendMail } = await import('../services/mail.js')
       const token = await getMailAccessToken(); const accountId = await getMailAccountId(token)
-      const html = `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;color:#1a1a1a"><div style="background:#CD4419;color:white;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:700">Absolute ADAS · Welcome aboard</div><div style="border:1px solid #e8e4e0;border-top:none;padding:18px;border-radius:0 0 10px 10px"><p>Hi ${first},</p><p>Welcome to Absolute ADAS. Your onboarding is done on your phone and takes about 20 minutes: a profile photo, a photo of your driver's license and Social Security card, direct deposit, the handbook, and a short training with a few questions.</p><p style="text-align:center;margin:20px 0"><a href="${link}" style="background:#15803d;color:white;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700">Start my onboarding</a></p><p style="color:#666;font-size:12px">The link is good for 45 days and is just for you. Questions — call Mark.</p><p>GET SOME!!!<br>— Mark</p></div></div>`
-      await sendMail(token, accountId, { to: to.email, subject: 'Welcome to Absolute ADAS — your onboarding link', body: html }); out.email = { ok: true, to: to.email }
+      const html = mode === 'catchup'
+        ? `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;color:#1a1a1a"><div style="background:#CD4419;color:white;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:700">Absolute ADAS · HR catch-up</div><div style="border:1px solid #e8e4e0;border-top:none;padding:18px;border-radius:0 0 10px 10px"><p>Hi ${first},</p><p>Quick one, about 5 minutes on your phone: a profile photo for the Directory, your emergency contact, and a signature on the handbook so your file is complete.</p><p style="text-align:center;margin:20px 0"><a href="${link}" style="background:#15803d;color:white;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700">Finish my file</a></p><p>GET SOME!!!<br>— Mark</p></div></div>`
+        : `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;color:#1a1a1a"><div style="background:#CD4419;color:white;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:700">Absolute ADAS · Welcome aboard</div><div style="border:1px solid #e8e4e0;border-top:none;padding:18px;border-radius:0 0 10px 10px"><p>Hi ${first},</p><p>Welcome to Absolute ADAS. Your onboarding is done on your phone and takes about 20 minutes: a profile photo, a photo of your driver's license and Social Security card, direct deposit, the handbook, and a short training with a few questions.</p><p style="text-align:center;margin:20px 0"><a href="${link}" style="background:#15803d;color:white;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:700">Start my onboarding</a></p><p style="color:#666;font-size:12px">The link is good for 45 days and is just for you. Questions — call Mark.</p><p>GET SOME!!!<br>— Mark</p></div></div>`
+      await sendMail(token, accountId, { to: to.email, subject: mode === 'catchup' ? 'Quick HR catch-up — 5 minutes' : 'Welcome to Absolute ADAS — your onboarding link', body: html }); out.email = { ok: true, to: to.email }
     } catch (e) { out.email = { ok: false, error: e.message } }
   }
-  if (!m.checklist) startChecklist(m, 'onboarding', by || 'app')
-  tickChecklist(m, 'invite', by || 'app')
-  m.onboarding_invited_at = new Date().toISOString()
+  if (mode !== 'catchup') {
+    if (!m.checklist) startChecklist(m, 'onboarding', by || 'app')
+    tickChecklist(m, 'invite', by || 'app')
+    m.onboarding_invited_at = new Date().toISOString()
+  } else m.catchup_invited_at = new Date().toISOString()
   await saveMember(req, m)
   console.log(`[people] onboarding invite for ${m.name}: sms ${out.sms?.ok ? 'ok' : out.sms?.error || 'none'} · email ${out.email?.ok ? 'ok' : out.email?.error || 'none'}`)
   return out
@@ -475,9 +511,21 @@ router.post('/onboarding/:id/invite', async (req, res) => {
     if (req.body?.personal_phone) m.personal_phone = String(req.body.personal_phone).slice(0, 40)
     if (req.body?.personal_email) m.personal_email = String(req.body.personal_email).slice(0, 120)
     try { await ensurePersonFolder(req, m) } catch (e) { console.warn('[people] folder before invite failed:', e.message) }
-    const out = await sendOnboardingInvite(req, m, req.user?.name)
+    const out = await sendOnboardingInvite(req, m, req.user?.name, req.body?.mode === 'catchup' ? 'catchup' : 'full')
     res.json({ ok: true, ...out })
   } catch (e) { console.error('[people invite]', e.message); res.status(500).json({ error: e.message }) }
+})
+// Kill every link out there for this person (lost phone, forwarded text).
+router.post('/onboarding/:id/revoke', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    revokeOnboardingLinks(m); m.onboarding_revoked_at = new Date().toISOString()
+    await saveMember(req, m)
+    console.log(`[people] onboarding links revoked for ${m.name} by ${req.user?.name}`)
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/onboarding/my-link', async (req, res) => {
   try {
@@ -505,6 +553,15 @@ export async function maybePeopleNudges(req) {
     if (m.hire_date && m.hire_date.slice(5) === mmdd && m.hire_date < today) lines.push(`🏅 ${who} — ${Number(today.slice(0, 4)) - Number(m.hire_date.slice(0, 4))} year(s) with Absolute ADAS today`)
     for (const c of Array.isArray(m.certifications) ? m.certifications : []) if (c?.expires && c.expires >= today && c.expires <= addDays(today, 30)) lines.push(`📄 ${who}: ${c.name} expires ${c.expires}`)
     if (m.license_expiry && m.license_expiry >= today && m.license_expiry <= addDays(today, 30)) lines.push(`🪪 ${who}: driver's license expires ${m.license_expiry}`)
+    if (m.hire_date && m.employment !== 'owner') for (const [n, label, key] of [[30, '30-day check-in', 'd30'], [60, '60-day check-in', 'd60'], [90, '90-day review', 'd90']]) {
+      const d = addDays(m.hire_date, n); if ((m.checkins || {})[key]) continue
+      if (d === today) lines.push(`🗓 ${who}: ${label} is TODAY — Directory → ${who} → log it`); else if (d === addDays(today, 1)) lines.push(`🗓 ${who}: ${label} tomorrow`); else if (d < today && d >= addDays(today, -14)) lines.push(`🗓 ${who}: ${label} was ${d} — not logged yet`)
+    }
+    if (m.hire_date && m.hire_date.slice(5) === mmdd && m.hire_date < today && !(m.checkins || {})[`y${today.slice(0, 4)}`]) lines.push(`⭐ ${who}: annual review is due — log it under Reviews`)
+    if ((m.track || 'tech') !== 'ops' && m.employment !== 'owner') {
+      if (m.mvr_checked_at) { const due = addDays(m.mvr_checked_at, 365); if (due >= today && due <= addDays(today, 30)) lines.push(`🚗 ${who}: driving record re-check due ${due}`) }
+      else if (m.checklist?.kind === 'onboarding' && m.checklist.started_at.slice(0, 10) <= addDays(today, -7)) lines.push(`🚗 ${who}: no driving record on file yet (techs drive customers' cars)`)
+    }
     if (m.checklist && !m.checklist.completed_at) { const open = m.checklist.items.filter(i => !i.done).length; if (open && m.checklist.started_at.slice(0, 10) <= addDays(today, -7)) lines.push(`📋 ${who}: ${m.checklist.kind} still has ${open} open item(s) after a week`) }
     const i9 = i9Deadline(m); const i9Item = m.checklist?.items?.find(x => x.key === 'i9')
     if (i9 && i9Item && !i9Item.done && m.checklist?.kind === 'onboarding') { if (i9 === today) lines.push(`🪪 ${who}: Form I-9 is due TODAY (Zoho Payroll) — tick it on the checklist when done`); else if (i9 < today) lines.push(`🚨 ${who}: Form I-9 is OVERDUE (was due ${i9}) — complete it in Zoho Payroll now`); else if (i9 === addDays(today, 1)) lines.push(`🪪 ${who}: Form I-9 due tomorrow`) }
@@ -537,6 +594,64 @@ export async function maybePeopleNudges(req) {
 }
 
 // Recruiting → Hired: create the directory entry + start onboarding
+// G (2026-09-21): the moment onboarding hits 100%, the person hears it
+// from us — text + email with the first-day plan — and Mark gets a ping.
+// Once, ever (onboarding_completed_at).
+export async function maybeWelcome(req, m) {
+  if (m.onboarding_completed_at || onboardingPct(m) < 100) return { sent: false }
+  m.onboarding_completed_at = new Date().toISOString()
+  await saveMember(req, m)
+  const first = m.preferred_name || firstName(m.name)
+  const members = await readTeamMembers(req)
+  const boss = members.find(x => x.user_id === m.reports_to)
+  const start = m.hire_date ? new Date(m.hire_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : 'your start date'
+  const plan = (m.track || 'tech') === 'ops'
+    ? `Day one: Kat walks you through dispatch and Zoho Books, then you shadow a full day of invoicing.`
+    : `Day one: ride-along with ${boss?.name || 'Mark'}. Bring your license, wear the shirt, be at the van at 7:45.`
+  const sms = `${first}, you're all set — onboarding is 100% done. 🎉 ${plan} See you ${start}. Questions: call Mark. GET SOME!!! — Mark`
+  const out = { sms: null, email: null }
+  const to = { sms: m.personal_phone || m.phone || '', email: m.personal_email || m.email || '' }
+  if (to.sms) { try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ to: to.sms, body: sms }); out.sms = !!r?.ok } catch (e) { out.sms = false } }
+  if (to.email) {
+    try {
+      const { getMailAccessToken, getMailAccountId, sendMail } = await import('../services/mail.js')
+      const t = await getMailAccessToken()
+      await sendMail(t, await getMailAccountId(t), { to: to.email, subject: `Welcome aboard, ${first} — you're all set`, body: `<div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;color:#1a1a1a"><div style="background:#15803d;color:white;padding:14px 18px;border-radius:10px 10px 0 0;font-weight:700">Absolute ADAS · Welcome aboard</div><div style="border:1px solid #e8e4e0;border-top:none;padding:18px;border-radius:0 0 10px 10px"><p>Hi ${first},</p><p>Your onboarding is 100% done — photo, paperwork, handbook, training. Nice work.</p><p><b>${plan}</b></p><p>Start: ${start}.${boss ? ` You report to ${boss.name}${boss.phone ? ` (${boss.phone})` : ''}.` : ''}</p><p>Anything at all — call Mark.</p><p>GET SOME!!!<br>— Mark</p></div></div>` })
+      out.email = true
+    } catch (e) { out.email = false }
+  }
+  try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🎉 *${m.name} finished onboarding — 100%.* Welcome text ${out.sms ? 'sent' : 'not sent'}, email ${out.email ? 'sent' : 'not sent'}. Left for you: ${(m.checklist?.items || []).filter(i => !i.done).map(i => i.label.split(' — ')[0]).join(' · ') || 'nothing'}.`) } catch {}
+  console.log(`[people] welcome sent to ${m.name}: sms=${out.sms} email=${out.email}`)
+  return { sent: true, ...out }
+}
+
+// C (2026-09-21): live status for the Directory — who's on the clock,
+// who's off today — plus the owner-only emergency card.
+router.get('/status', async (req, res) => {
+  try {
+    const members = (await readTeamMembers(req)).filter(m => m.active !== false)
+    const today = todayPT()
+    const out = {}
+    try {
+      const { readEntriesPublic } = await import('./timeclock.js')
+      const entries = await readEntriesPublic(req)
+      for (const e of entries) if (e.clock_in && !e.clock_out) { const m = members.find(x => x.user_id === e.user_id || x.name.toLowerCase() === String(e.user_name || '').toLowerCase()); if (m) out[m.id] = { state: 'in', since: e.clock_in, on_break: !!e.break_start && !e.break_end } }
+    } catch { /* clock unavailable */ }
+    try {
+      const { getRequestsDurable } = await import('./pto.js')
+      for (const r of (await getRequestsDurable(req)) || []) if (String(r.status) === 'approved' && String(r.start_date) <= today && String(r.end_date) >= today) { const m = members.find(x => x.user_id === r.user_id); if (m && !out[m.id]) out[m.id] = { state: 'off', kind: r.type } }
+    } catch { /* pto unavailable */ }
+    res.json({ ok: true, today, status: out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/emergency', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const members = (await readTeamMembers(req)).filter(m => m.active !== false)
+    res.json({ ok: true, people: members.map(m => ({ id: m.id, name: m.name, phone: m.phone || m.personal_phone || '', personal_phone: m.personal_phone || '', van: m.van || '', region: m.region || '', emergency_contact: m.emergency_contact || null, license_expiry: m.license_expiry || '', blood_notes: m.medical_notes || '' })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export async function onCandidateHired(req, cand) {
   const members = await readTeamMembers(req)
   const email = String(cand.email || '').toLowerCase()

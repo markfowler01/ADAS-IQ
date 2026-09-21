@@ -262,6 +262,7 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           )}
         </div>
 
+        {isOwner && <OfferPanel c={c} onPatched={() => onPatch({}, '')} />}
         <p className="text-[11px] font-bold uppercase tracking-widest mb-1.5" style={{ color: '#888' }}>Stage</p>
         <div className="flex gap-1.5 flex-wrap mb-4">
           {stages.map(s => (
@@ -336,6 +337,73 @@ function AddModal({ onClose, onSaved }) {
         {err && <p className="text-xs mb-2" style={{ color: '#dc2626' }}>{err}</p>}
         <button onClick={save} disabled={saving} className="w-full py-3 rounded-xl font-bold text-white text-sm" style={{ backgroundColor: saving ? '#e5a58e' : ORANGE }}>{saving ? 'Saving…' : 'Add to New'}</button>
       </div>
+    </div>
+  )
+}
+
+// ── Offer letter through Zoho Sign (Mark 2026-09-17 / 09-21) ─────────
+// Fill the few blanks, preview the PDF, send. The hourly poll files the
+// signed copy, marks Hired, and sends the onboarding link.
+function OfferPanel({ c, onPatched }) {
+  const [sign, setSign] = useState(null)      // {configured, why}
+  const [offer, setOffer] = useState(undefined)
+  const [open, setOpen] = useState(false)
+  const [f, setF] = useState({ employment: /billing|dispatch|office|admin|book|account|ops|contract/i.test(c.role || '') ? 'contractor' : 'w2', title: c.role || 'ADAS Calibration Technician', pay_type: 'hourly', pay_rate: '', start_date: '', region: c.city || '', bonus: '', schedule: '', duties: '' })
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const input = { border: '1px solid #e0dbd6', backgroundColor: 'white' }
+  const load = () => Promise.all([
+    apiFetch(`${API_BASE}/api/recruit/sign-status`).then(r => r.json()).catch(() => ({ configured: false, why: 'unreachable' })),
+    apiFetch(`${API_BASE}/api/recruit/${c.id}/offer`).then(r => r.json()).catch(() => ({ offer: null })),
+  ]).then(([s, o]) => { setSign(s); setOffer(o.offer || null); if (o.offer) setF(x => ({ ...x, ...Object.fromEntries(Object.entries(o.offer).filter(([k]) => k in x)) })) })
+  useEffect(() => { load() }, [c.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  async function preview() {
+    setBusy('preview'); setErr('')
+    try { const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/offer/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) }); if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `HTTP ${r.status}`) } const b = await r.blob(); const u = URL.createObjectURL(b); window.open(u, '_blank') } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  async function send() {
+    setBusy('send'); setErr('')
+    try { const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/offer/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setOffer(d.offer); setOpen(false); onPatched && onPatched() } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  async function withdraw() {
+    setBusy('withdraw'); setErr('')
+    try { const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/offer/withdraw`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); await load() } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  const status = offer?.status
+  const STATUS = { inprogress: ['⏳ Waiting for signature', '#b45309', '#fffbeb'], completed: ['✅ Signed — filed + hired', '#15803d', '#dcfce7'], declined: ['❌ Declined', '#dc2626', '#fef2f2'], expired: ['⌛ Expired', '#6b7280', '#f5f3f0'], withdrawn: ['↩ Withdrawn', '#6b7280', '#f5f3f0'], recalled: ['↩ Recalled', '#6b7280', '#f5f3f0'] }
+  return (
+    <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1.5px solid #0e7490' }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#0e7490' }}>📝 Offer · Zoho Sign</div>
+        <div className="flex gap-1.5">
+          {status === 'inprogress' && <button onClick={withdraw} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#dc2626', border: '1px solid #fecaca' }}>{busy === 'withdraw' ? '…' : 'Withdraw'}</button>}
+          {!open && <button onClick={() => setOpen(true)} disabled={sign && !sign.configured} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#0e7490', opacity: sign && !sign.configured ? .5 : 1 }}>{status === 'inprogress' ? 'Re-send' : status === 'completed' ? 'Send another' : 'Send offer'}</button>}
+        </div>
+      </div>
+      {sign && !sign.configured && <div className="text-xs mt-2 px-2.5 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>Zoho Sign isn't connected yet — {sign.why}. Mint a Zoho token with the ZohoSign scopes and set <code>ZOHO_SIGN_REFRESH_TOKEN</code> on the function. Everything else is built and waiting.</div>}
+      {offer && STATUS[status] && <div className="text-xs mt-2 px-2.5 py-2 rounded-lg font-semibold" style={{ backgroundColor: STATUS[status][2], color: STATUS[status][1] }}>{STATUS[status][0]} · {offer.title} · {offer.employment === 'contractor' ? 'contractor' : 'W-2'} · ${Number(offer.pay_rate).toLocaleString()} {offer.pay_type === 'salary' ? '/yr' : offer.pay_type === 'per_job' ? '/job' : '/hr'} · starts {offer.start_date} · sent {String(offer.sent_at || '').slice(0, 10)}{offer.signed_at ? ` · signed ${String(offer.signed_at).slice(0, 10)}` : ''}</div>}
+      {open && (
+        <div className="mt-3">
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <select value={f.employment} onChange={e => setF({ ...f, employment: e.target.value })} className="rounded-lg px-3 py-2 text-sm" style={input}><option value="w2">W-2 employee — offer letter</option><option value="contractor">Contractor — agreement</option></select>
+            <input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} placeholder="Title" className="rounded-lg px-3 py-2 text-sm" style={input} />
+            <select value={f.pay_type} onChange={e => setF({ ...f, pay_type: e.target.value })} className="rounded-lg px-3 py-2 text-sm" style={input}><option value="hourly">Hourly</option><option value="salary">{f.employment === 'contractor' ? 'Per month' : 'Salary / year'}</option><option value="per_job">Per job</option></select>
+            <input value={f.pay_rate} onChange={e => setF({ ...f, pay_rate: e.target.value })} placeholder="Pay ($)" inputMode="decimal" className="rounded-lg px-3 py-2 text-sm" style={input} />
+            <input type="date" value={f.start_date} onChange={e => setF({ ...f, start_date: e.target.value })} className="rounded-lg px-3 py-2 text-sm" style={input} />
+            <input value={f.region} onChange={e => setF({ ...f, region: e.target.value })} placeholder="Home base (Tacoma, Seattle…)" className="rounded-lg px-3 py-2 text-sm" style={input} />
+          </div>
+          <input value={f.bonus} onChange={e => setF({ ...f, bonus: e.target.value })} placeholder="Bonus line (optional) — e.g. $500 after 90 days" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
+          <textarea value={f.duties} onChange={e => setF({ ...f, duties: e.target.value })} rows={2} placeholder="Duties (optional — leave blank for the standard tech / billing wording)" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
+          <div className="text-[11px] mb-2" style={{ color: '#555' }}>Sent to <b>{c.email || 'no email on the card — add one first'}</b>. They sign on their phone; the signed PDF lands in their personnel folder, they're marked Hired, and the onboarding link goes out on its own.</div>
+          {err && <div className="text-xs mb-2" style={{ color: '#dc2626' }}>{err}</div>}
+          <div className="flex gap-2">
+            <button onClick={preview} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: 'white', color: '#0e7490', border: '1px solid #0e7490' }}>{busy === 'preview' ? '…' : '👁 Preview PDF'}</button>
+            <button onClick={send} disabled={!!busy || !f.pay_rate || !f.start_date || !c.email} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0e7490', opacity: !f.pay_rate || !f.start_date || !c.email ? .5 : 1 }}>{busy === 'send' ? 'Sending…' : '📨 Send for signature'}</button>
+            <button onClick={() => setOpen(false)} className="text-xs font-semibold px-2" style={{ color: '#888' }}>cancel</button>
+          </div>
+        </div>
+      )}
+      {!open && err && <div className="text-xs mt-2" style={{ color: '#dc2626' }}>{err}</div>}
     </div>
   )
 }

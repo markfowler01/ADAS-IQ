@@ -12,23 +12,39 @@ import multer from 'multer'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
 import { readTeamMembers, saveMemberPublic as saveMember } from './team.js'
-import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson, readLadder, ladderProgress } from './people.js'
+import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson, readLadder, ladderProgress, maybeWelcome } from './people.js'
 
 const router = express.Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
-const secret = () => process.env.SESSION_SECRET || 'adasiq-portal-secret'
+// Fail closed (2026-09-21 review): with no SESSION_SECRET every link would
+// be forgeable, so the portal refuses to sign or verify anything instead.
+const secret = () => { const s = process.env.SESSION_SECRET; if (!s || s.length < 16) throw new Error('SESSION_SECRET is not set — onboarding links are disabled'); return s }
 const todayPT = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 const emailKey = uid => String(uid || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '_')
 
-export function makeOnboardToken(memberId) {
-  const body = Buffer.from(JSON.stringify({ type: 'onboarding', id: String(memberId), exp: Date.now() + 45 * 86400000 })).toString('base64url')
+// The token carries the person's link version (2026-09-21 review). A
+// resend or "Revoke link" bumps it on the record, so a forwarded or lost
+// link dies the moment a new one exists — no waiting out the 45 days.
+// mode: 'full' (new hire) | 'catchup' (existing staff: sign + photo + contact)
+export function makeOnboardToken(member, mode = 'full') {
+  const m = typeof member === 'object' ? member : { id: member }
+  const body = Buffer.from(JSON.stringify({ type: 'onboarding', id: String(m.id), v: Number(m.onboarding_token_v) || 0, mode, exp: Date.now() + 45 * 86400000 })).toString('base64url')
   return `${body}.${crypto.createHmac('sha256', secret()).update(body).digest('base64url')}`
 }
-export function verifyOnboardToken(token, memberId) {
-  if (!token) return false
-  const [body, sig] = String(token).split('.')
-  if (!body || !sig || sig !== crypto.createHmac('sha256', secret()).update(body).digest('base64url')) return false
-  try { const d = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); return d.type === 'onboarding' && d.exp > Date.now() && String(d.id) === String(memberId) } catch { return false }
+export function verifyOnboardToken(token, member) {
+  if (!token) return null
+  const m = typeof member === 'object' ? member : { id: member }
+  let body, sig
+  try { [body, sig] = String(token).split('.') } catch { return null }
+  let expect
+  try { expect = crypto.createHmac('sha256', secret()).update(body || '').digest('base64url') } catch { return null }
+  if (!body || !sig || sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null
+  try {
+    const d = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'))
+    if (d.type !== 'onboarding' || d.exp <= Date.now() || String(d.id) !== String(m.id)) return null
+    if ((Number(d.v) || 0) !== (Number(m.onboarding_token_v) || 0)) return null
+    return { mode: d.mode === 'catchup' ? 'catchup' : 'full' }
+  } catch { return null }
 }
 export const photoKey = memberId => crypto.createHmac('sha256', secret()).update(`photo:${memberId}`).digest('base64url').slice(0, 16)
 export const photoUrlFor = memberId => `/server/adasiq-api/api/public/onboard/photo/${memberId}?k=${photoKey(memberId)}`
@@ -47,6 +63,8 @@ const KINDS = {
   tech_handbook: { n: '08', label: 'Signed Technician Training Handbook acknowledgment' },
   contract:     { n: '09', label: 'Signed contract / offer letter', tick: 'contract' },
   other:        { n: '10', label: 'Document' },
+  w4:           { n: '11', label: 'Form W-4', tick: 'w4' },
+  mvr:          { n: '12', label: 'Driving record (MVR)', tick: 'mvr' },
 }
 const extOf = (f) => (f.originalname || '').match(/\.[a-z0-9]+$/i)?.[0]?.toLowerCase() || (f.mimetype === 'application/pdf' ? '.pdf' : /png/.test(f.mimetype) ? '.png' : /webp/.test(f.mimetype) ? '.webp' : '.jpg')
 const safe = s => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
@@ -54,13 +72,14 @@ export function fileNameFor(kind, m, label, ext) { const k = KINDS[kind] || KIND
 
 async function guard(req, res) {
   const t = req.query.t || req.body?.t
-  if (!verifyOnboardToken(t, req.params.id)) { res.status(401).json({ error: 'This onboarding link is not valid or has expired. Ask Mark for a new one.' }); return null }
   const members = await readTeamMembers(req)
   const m = members.find(x => x.id === req.params.id)
-  if (!m) { res.status(404).json({ error: 'Not found' }); return null }
-  return { m, members }
+  const tok = m ? verifyOnboardToken(t, m) : null
+  if (!m || !tok) { res.status(401).json({ error: 'This onboarding link is not valid any more. Ask Mark for a new one.' }); return null }
+  if (m.active === false) { res.status(401).json({ error: 'This onboarding link is closed.' }); return null }
+  return { m, members, mode: tok.mode }
 }
-async function putFile(req, m, kind, label, buffer, mimetype, ext) {
+export async function putFile(req, m, kind, label, buffer, mimetype, ext) {
   await ensurePersonFolder(req, m)
   const { getAccessToken } = await import('../services/zoho.js')
   const { uploadFileToFolder } = await import('../services/workdrive.js')
@@ -87,13 +106,13 @@ const ip = req => String(req.headers['x-forwarded-for'] || req.socket?.remoteAdd
 router.get('/:id', async (req, res) => {
   try {
     const g = await guard(req, res); if (!g) return
-    const { m, members } = g
+    const { m, members, mode } = g
     const boss = members.find(x => x.user_id === m.reports_to)
     const course = await readCourse(req)
     const progress = m.training || {}
     const company = await cfgReadJson(req, 'company_page', null)
-    res.json({ ok: true,
-      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '' },
+    res.json({ ok: true, mode,
+      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '' },
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
       signed: m.signatures || {},
@@ -112,6 +131,8 @@ router.post('/:id/profile', async (req, res) => {
     const g = await guard(req, res); if (!g) return
     const { m } = g; const b = req.body || {}
     for (const k of ['preferred_name', 'personal_phone', 'personal_email', 'address', 'birthday', 'shirt_size']) if (b[k] !== undefined) m[k] = String(b[k]).slice(0, 200)
+    if (b.license_expiry !== undefined) m.license_expiry = /^\d{4}-\d{2}-\d{2}$/.test(String(b.license_expiry)) ? String(b.license_expiry) : ''
+    if (b.license_number !== undefined) m.license_last4 = String(b.license_number).replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase()   // never the full number
     if (b.phone !== undefined && !m.phone) m.phone = String(b.phone).slice(0, 40)
     if (b.emergency_contact) m.emergency_contact = { name: String(b.emergency_contact.name || '').slice(0, 120), phone: String(b.emergency_contact.phone || '').slice(0, 40), relationship: String(b.emergency_contact.relationship || '').slice(0, 60) }
     if (m.emergency_contact?.name && m.emergency_contact?.phone) tickChecklist(m, 'emergency', m.name)
@@ -126,11 +147,14 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
     const g = await guard(req, res); if (!g) return
     const { m } = g
     if (!req.file) return res.status(400).json({ error: 'No file' })
+    if (!/^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/i.test(req.file.mimetype || '')) return res.status(400).json({ error: 'Photos (JPG, PNG, HEIC) or PDF only.' })
     const kind = KINDS[req.body?.kind] ? req.body.kind : 'other'
     const doc = await putFile(req, m, kind, req.body?.label || '', req.file.buffer, req.file.mimetype, extOf(req.file))
     if (kind === 'photo') { m.photo_file_id = doc.file_id; m.photo_url = photoUrlFor(m.id); tickChecklist(m, 'photo', m.name) }
+    if (kind === 'mvr') m.mvr_checked_at = todayPT()
     if (kind === 'cert') { const name = String(req.body?.label || '').trim().slice(0, 120) || 'Certification'; const expires = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.expires || '')) ? String(req.body.expires) : ''; m.certifications = [...(Array.isArray(m.certifications) ? m.certifications : []), { name, issuer: String(req.body?.issuer || '').slice(0, 80), expires, file_id: doc.file_id, added: todayPT() }] }
     await saveMember(req, m)
+    maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} uploaded ${doc.name}`)
     res.json({ ok: true, document: { kind, name: doc.name, added: doc.added }, photo_url: m.photo_url || '' })
   } catch (e) { console.error('[onboard upload]', e.message); res.status(500).json({ error: e.message }) }
@@ -162,6 +186,7 @@ router.post('/:id/direct-deposit', async (req, res) => {
     const doc = await putFile(req, m, 'deposit', '', buf, 'application/pdf', '.pdf')
     m.direct_deposit = { bank, last4: account.slice(-4), type, at: when }
     await saveMember(req, m)
+    maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} direct deposit on file (${bank} …${account.slice(-4)})`)
     res.json({ ok: true, direct_deposit: m.direct_deposit, document: { kind: 'deposit', name: doc.name, added: doc.added } })
   } catch (e) { console.error('[onboard deposit]', e.message); res.status(500).json({ error: e.message }) }
@@ -189,6 +214,7 @@ router.post('/:id/payout', async (req, res) => {
     const d = await putFile(req, m, 'deposit', '', buf, 'application/pdf', '.pdf')
     m.payout = { method: 'wise', email, currency, at: when }; m.wise_email = email; m.wise_currency = currency
     await saveMember(req, m)
+    maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} Wise payout on file (${currency})`)
     res.json({ ok: true, payout: m.payout, document: { kind: 'deposit', name: d.name, added: d.added } })
   } catch (e) { console.error('[onboard payout]', e.message); res.status(500).json({ error: e.message }) }
@@ -225,6 +251,7 @@ router.post('/:id/sign', async (req, res) => {
       await cfgWriteJson(req, `policy_ack:${emailKey(m.user_id)}`, acks)
     }
     await saveMember(req, m)
+    maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} signed ${what}`)
     res.json({ ok: true, signed: m.signatures })
   } catch (e) { console.error('[onboard sign]', e.message); res.status(500).json({ error: e.message }) }
@@ -248,6 +275,7 @@ router.post('/:id/course/:mid', async (req, res) => {
     const mine = course.modules.filter(x => (x.tracks || ['core']).includes('core') || (x.tracks || []).includes(m.track || 'tech'))
     if (mine.every(x => m.training[x.id]?.passed)) tickChecklist(m, 'training', m.name)
     await saveMember(req, m)
+    maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     res.json({ ok: true, score, passed, correct: (mod.quiz || []).map(q => ({ id: q.id, correct: q.correct })), progress: m.training[mod.id] })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })

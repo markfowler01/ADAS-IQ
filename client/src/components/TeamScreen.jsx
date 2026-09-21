@@ -24,6 +24,7 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
   const [tab, setTab] = useState('directory')
   const [profile, setProfile] = useState(null)
   const [members, setMembers] = useState([])
+  const [status, setStatus] = useState({})   // who's on the clock / off today
   const [announcements, setAnnouncements] = useState([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)  // null=closed, false=new, object=edit
@@ -40,6 +41,7 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
       ])
       setMembers(Array.isArray(m) ? m : [])
       setAnnouncements(Array.isArray(a) ? a : [])
+      apiFetch(`${API_BASE}/api/people/status`).then(r => r.json()).then(d => setStatus(d.status || {})).catch(() => {})
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }, [])
@@ -102,11 +104,11 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
         {loading ? (
           <div className="py-16 text-center text-gray-400 text-sm">Loading…</div>
         ) : tab === 'directory' ? (
-          <DirectoryTab members={members} user={user} onOpen={setProfile} onAdd={() => setEditing(false)} />
+          <DirectoryTab members={members} user={user} status={status} onOpen={setProfile} onAdd={() => setEditing(false)} />
         ) : tab === 'org' ? (
           <OrgChartTab members={members} user={user} onOpen={m => setProfile(members.find(x => x.id === m.id) || m)} />
         ) : tab === 'calendar' ? (
-          <CalendarTab />
+          <CalendarTab user={user} onOpen={id => { const m = members.find(x => x.id === id); if (m) setProfile(m) }} />
         ) : tab === 'company' ? (
           <CompanyTab />
         ) : tab === 'training' ? (
