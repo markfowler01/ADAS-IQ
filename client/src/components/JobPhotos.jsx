@@ -136,6 +136,41 @@ async function shrink(file, slot = null) {
   } catch { return file }
 }
 
+// A ~50 KB look for the sorter — enough for "which corner is this", not
+// meant for reading an odometer (the full photo does that server-side).
+async function thumb(file) {
+  try {
+    let bmp
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }) } catch { bmp = await createImageBitmap(file) }
+    const s = Math.min(1, 640 / Math.max(bmp.width, bmp.height))
+    const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * s)); c.height = Math.max(1, Math.round(bmp.height * s))
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close?.()
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.6))
+    return blob ? new File([blob], 'thumb.jpg', { type: 'image/jpeg' }) : null
+  } catch { return null }
+}
+
+// Sorter (Mark 2026-09-21: "let AI decide is super slow"): ask on the
+// thumbnail FIRST, then upload the real photo straight into the slot.
+// One big upload instead of upload → guess → maybe upload again. The
+// odometer answer maps to whichever odo slot is still open, counting
+// photos already in line for this job.
+async function sortOnPhone(item, filled) {
+  const t = await thumb(item.file)
+  if (!t) return null
+  const fd = new FormData(); fd.append('photo', t, 'thumb.jpg')
+  const r = await apiFetch(`${API_BASE}/api/jobs/photo-classify`, { method: 'POST', body: fd })
+  const d = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+  let slot = d.slot
+  if (slot === 'odometer') {
+    const claimed = k => filled?.[k]?.fileId || queue.some(q => q.jobId === item.jobId && q.slot === k && q.id !== item.id && LIVE.includes(q.status))
+    slot = !claimed('odo_before') ? 'odo_before' : !claimed('odo_after') ? 'odo_after' : 'odo_after'
+  }
+  const known = SLOTS.some(x => x.key === slot)
+  return { slot: known ? slot : null, confidence: Number(d.confidence) || 0, suggested: known ? slot : null }
+}
+
 // Two uploads at a time (bad signal is latency-bound, not bandwidth-bound).
 let workers = 0
 const MAX_WORKERS = 2
@@ -195,13 +230,22 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => resumePhotoQueue())
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resumePhotoQueue() })
 }
-export function enqueuePhoto({ jobId, slot, file, miles = null }) {
+export function enqueuePhoto({ jobId, slot, file, miles = null, filled = null }) {
   const item = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, jobId, slot, file, miles, tries: 0, status: 'preparing', preview: URL.createObjectURL(file), at: new Date().toISOString() }
   queue.push(item); notify()
   // Save the original to the phone first (nothing is ever lost), then swap in the shrunk copy.
   idbPut(item).then(async () => {
-    const small = await shrink(file, slot)
-    if (small !== file) { item.file = small; await idbPut(item) }
+    // No slot named → sort it here on the thumbnail before the big upload.
+    if (!item.slot) {
+      try {
+        const r = await sortOnPhone(item, filled)
+        if (r?.slot && r.confidence >= 0.5) { item.slot = r.slot }
+        else { item.status = 'needs_slot'; item.error = 'Could not tell which shot this is — pick the slot.'; item.suggested = r?.suggested || null; await idbPut(item); notify(); return }
+      } catch { /* sorter unreachable — the server takes a look on upload, as before */ }
+    }
+    const small = await shrink(file, item.slot)
+    if (small !== file) { item.file = small }
+    await idbPut(item)
     item.status = 'queued'; notify(); pump()
   })
   return item
@@ -298,7 +342,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
     if (multi) { files.forEach(f => enqueuePhoto({ jobId: job.id, slot: slotKey, file: f })) }
     else {
       enqueuePhoto({ jobId: job.id, slot: slotKey, file: files[0] })
-      files.slice(1).forEach(f => enqueuePhoto({ jobId: job.id, slot: null, file: f }))
+      files.slice(1).forEach(f => enqueuePhoto({ jobId: job.id, slot: null, file: f, filled: prog.slots }))
       const missing = prog.missing.filter(k => k !== slotKey)
       setCurrent(missing[0] || 'setup')
     }
@@ -332,10 +376,16 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   }
   function onRollFiles(e) {
     const files = Array.from(e.target.files || []); e.target.value = ''
-    files.forEach(f => enqueuePhoto({ jobId: job.id, slot: null, file: f }))
+    if (!files.length) return
+    // One photo, one slot still open → it's that slot. No AI needed.
+    const open = prog.missing.filter(k => k !== 'setup')
+    if (files.length === 1 && open.length === 1) { enqueuePhoto({ jobId: job.id, slot: open[0], file: files[0] }); return }
+    files.forEach(f => enqueuePhoto({ jobId: job.id, slot: null, file: f, filled: prog.slots }))
   }
   function resolveNeedsSlot(item, slotKey) {
-    item.slot = slotKey; item.status = 'queued'; item.error = null; notify(); pump()
+    // Sorted on the phone now, so the shrink for this slot hasn't run yet.
+    item.slot = slotKey; item.error = null; item.status = 'preparing'; notify()
+    shrink(item.file, slotKey).then(small => { if (small !== item.file) item.file = small; item.status = 'queued'; notify(); pump() })
   }
   // 🛞 Tire pressures live in the checklist (Mark 2026-09-11: "like the
   // pictures — one of those lines, not after Ready to Invoice"). Default
@@ -431,7 +481,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           <button type="button" onClick={() => rollRef.current?.click()}
             className="flex-1 rounded-xl py-2.5 text-sm font-bold"
             style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>
-            🖼 Pick from roll — any order, I'll sort them
+            🖼 Pick from roll — any order, sorted before they upload
           </button>
         </div>
 

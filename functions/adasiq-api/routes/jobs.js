@@ -1445,6 +1445,26 @@ router.get('/photos-owed', async (req, res) => {
 })
 
 
+// POST /api/jobs/photo-classify — "which shot is this?" on a small
+// thumbnail, BEFORE the real upload (Mark 2026-09-21: "let AI decide is
+// super slow"). The phone sends ~50 KB, learns the slot in ~2 s, and then
+// uploads the full photo straight into it — so on a one-bar signal the
+// slow part happens once, not once-then-again after a guess. No job
+// state touched; the phone maps "odometer" to before/after itself.
+router.post('/photo-classify', upload.single('photo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No photo.' })
+    const { classifyPhoto } = await import('../services/jobPhotos.js')
+    const t0 = Date.now()
+    const ai = await classifyPhoto(req.file.buffer, req.file.mimetype)
+    console.log(`[photo-classify] ${Math.round(req.file.size / 1024)} KB → ${ai.slot} ${ai.confidence} in ${Date.now() - t0}ms`)
+    res.json({ ok: true, ...ai })
+  } catch (e) {
+    console.log('[photo-classify] failed:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // POST /api/jobs/:id/photo-slot — one photo into one slot of the job's
 // photo set (Mark 2026-09-08). Multipart field "photo"; optional "slot"
 // (lf|rf|lr|rr|vin|odo_before|odo_after|setup). No slot → Claude sorts
@@ -1465,9 +1485,22 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     let miles = req.body?.miles != null && req.body.miles !== '' ? Number(req.body.miles) : null
     const known = new Set(SLOTS.map(s => s.key))
     const needsClassify = !known.has(slotKey) || (/^odo_/.test(slotKey) && miles == null) || slotKey === 'vin'
-    let ai = null
+    // The AI look (~2s) and the WorkDrive prep (token + folder) are
+    // independent — run them side by side (Mark 2026-09-21: "let AI
+    // decide is super slow").
+    const t0 = Date.now()
+    const aiP = needsClassify
+      ? classifyPhoto(req.file.buffer, req.file.mimetype).catch(e => { console.log('[photo-slot] classify failed:', e.message); return null })
+      : Promise.resolve(null)
+    const prepP = (async () => {
+      const wdToken = await getAccessToken()
+      let folderId = slots._folder_id || null
+      if (!folderId) { folderId = await resolveJobFolder(req, job, wdToken); if (folderId) slots._folder_id = folderId }
+      return { wdToken, folderId }
+    })()
+    const [ai, prep] = await Promise.all([aiP, prepP])
+    console.log(`[photo-slot] prep ${Date.now() - t0}ms${needsClassify ? ' (incl. AI)' : ''}`)
     if (needsClassify) {
-      try { ai = await classifyPhoto(req.file.buffer, req.file.mimetype) } catch (e) { console.log('[photo-slot] classify failed:', e.message) }
       if (!known.has(slotKey)) {
         if (ai?.slot === 'odometer') slotKey = slots.odo_before?.fileId ? 'odo_after' : 'odo_before'
         else if (ai && known.has(ai.slot) && ai.confidence >= 0.5) slotKey = ai.slot
@@ -1480,13 +1513,11 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
       return res.status(400).json({ error: `Setup photos are full (${MAX_SETUP_PHOTOS}).` })
     }
 
-    const wdToken = await getAccessToken()
     // The folder id is remembered inside photo_slots after the first shot
     // (2026-09-15): folder_url is usually the external share link, which
     // can't be turned back into an id, so every photo was re-searching
     // WorkDrive (and the Search API is broken → slow listing fallback).
-    let folderId = slots._folder_id || null
-    if (!folderId) { folderId = await resolveJobFolder(req, job, wdToken); if (folderId) slots._folder_id = folderId }
+    const { wdToken, folderId } = prep
     if (!folderId) return res.status(404).json({ error: 'No WorkDrive folder for this job yet.' })
     const idx = slotDef.multi ? (slots.setup || []).length : 0
     const name = fileNameFor(slotKey, job, idx, req.file.mimetype)
