@@ -45,6 +45,12 @@ async function buildPreview(req, job) {
   // Single-invoice mode (Mark 2026-09-22): the shop's customer type
   // decides. Repair shops, dealers and retail get ONE invoice straight
   // from the job's lines; so does any card with no Books estimate.
+  // Phase F: an estimator estimate tied to this card IS the document — no re-pricing here.
+  try {
+    const { estimateForJob } = await import('./estimator.js')
+    const est = await estimateForJob(req, job.id)
+    if (est && est.status !== 'declined' && est.status !== 'draft') return buildEstimatorPreview(req, job, est)
+  } catch (e) { console.log('[bill-it] estimate lookup failed (falling through):', e.message) }
   const big3mod = await import('../services/big3.js')
   const isRetailJob = job.customer?.kind === 'retail'
   const shopRow = isRetailJob ? null : await big3mod.findShopByName(req, job.shop_name).catch(() => null)
@@ -212,6 +218,45 @@ async function buildSinglePreview(req, job, shop, br) {
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default', _byId: byId, _byName: byName, _shop: shop || null,
   }
 }
+// Estimator-linked card: show the estimate, bill through the estimator's own push.
+async function buildEstimatorPreview(req, job, est) {
+  const token = await getAccessToken()
+  const big3 = await import('../services/big3.js')
+  const retailJob = job.customer?.kind === 'retail' || est.customer_kind === 'retail'
+  let customerId = job.customer?.zoho_contact_id || ''
+  if (!customerId && !retailJob) { const sh = await big3.findShopByName(req, job.shop_name).catch(() => null); customerId = sh?.zoho_contact_id || '' }
+  const emails = customerId ? await contactEmails(token, customerId).catch(() => []) : []
+  const warnings = []
+  if (est.status === 'invoiced') warnings.push(`Estimate ${est.number} is already invoiced in Books.`)
+  if (est.status === 'sent') warnings.push(`Estimate ${est.number} is out for approval — no invoice until they say yes (or approve it in the estimator if they did in person).`)
+  if (!emails.length) warnings.push('No email on the Books contact — type one below.')
+  if (job.invoiced || job.billed_via_app) warnings.push(`This card is already marked invoiced${job.billed_via_app ? ` (via app ${job.billed_via_app})` : ''}.`)
+  return {
+    ok: true, mode: 'estimator', job_id: job.id, shop_name: job.customer?.name || job.shop_name, estimate: est, estimate_number: est.number, customer_id: customerId, customer_type: retailJob ? 'retail' : '', emails,
+    lines: [], insurance_total: 0, cost_total: 0, grand_total: (est.grand_total_cents || 0) / 100, discount_pct: 0, has_discount: true, has_type: true,
+    can_bill: est.status === 'approved' && !job.billed_via_app, templates: { estimate: null, invoice: { name: 'estimator' } }, big3: { rules: null, items: {} }, warnings, rule: '', _byId: new Map(), _byName: new Map(),
+  }
+}
+async function billEstimator(req, res, job, p, dry) {
+  const emails = (Array.isArray(req.body?.emails) && req.body.emails.length ? req.body.emails : p.emails).map(e => String(e).trim().toLowerCase()).filter(e => /.+@.+\..+/.test(e))
+  if (!emails.length) return res.status(400).json({ error: 'No email to send to.' })
+  if (p.estimate.status !== 'approved') return res.status(409).json({ error: `Estimate ${p.estimate.number} is ${p.estimate.status} — it has to be approved first.` })
+  if (job.billed_via_app) return res.status(409).json({ error: `Already billed via the app (${job.billed_via_app}).` })
+  const by = req.user?.name || req.user?.email || 'staff'
+  let out = null
+  if (!dry) {
+    const { pushEstimateInvoice } = await import('./estimatorMore.js')
+    out = await pushEstimateInvoice(req, p.estimate.id, by)
+    const token = await getAccessToken()
+    const e2 = await emailInvoice(token, out.id, emails)
+    if (e2) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${out.number}: invoice created from estimate ${p.estimate.number} but email failed (${e2}) — send from Books by hand.`).catch(() => {})
+    const onSite = p.customer_type === 'retail' || String(req.body?.pay_mode || '') === 'on_site'
+    await updateJobPublic(req, job.id, { ...job, status: onSite ? 'ready_invoice' : 'complete', invoiced: true, invoice_number: out.number, invoice_status: 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,
+      notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: invoice ${out.number} from estimate ${p.estimate.number} ($${p.grand_total.toFixed(2)}) → ${emails.join(', ')}${onSite ? ' · collect on site' : ''}` })
+  }
+  await postToCliqChannel(DISPATCH_CHANNEL, `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}* — invoice ${out?.number || '(dry)'} from estimate ${p.estimate.number} $${p.grand_total.toFixed(2)} → ${emails.join(', ')} · by ${by}`).catch(() => {})
+  res.json({ ok: true, dry, mode: 'estimator', invoice: out ? { number: out.number, id: out.id } : null, emails, preview: pub(p) })
+}
 const pub = p => { const { _byId, _byName, _est, _shop, ...rest } = p; return rest }
 
 // Which Big 4 slot a line belongs to (by name — Books items vary by insurer pool).
@@ -267,6 +312,7 @@ router.post('/:id/bill', async (req, res) => {
     const job = (await readJobsPublic(req)).find(j => String(j.id) === String(req.params.id))
     if (!job) return res.status(404).json({ error: 'Job not found' })
     const p = await buildPreview(req, job)
+    if (p.mode === 'estimator') return billEstimator(req, res, job, p, dry)
     if (p.mode === 'single') return billSingle(req, res, job, p, dry)
     const emails = (Array.isArray(req.body?.emails) && req.body.emails.length ? req.body.emails : p.emails).map(e => String(e).trim().toLowerCase()).filter(e => /.+@.+\..+/.test(e))
     if (!emails.length) return res.status(400).json({ error: 'No email to send to.' })

@@ -8,6 +8,7 @@ import { familyFor } from '../lib/insurerFamilies.js'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { TakePhotosControl } from './JobPhotos'
 import CollectPanel from './CollectPanel.jsx'
+import EstimatePill from './EstimatePill.jsx'
 import { Big3Badge, DrpBadge, BillingPill } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
@@ -326,8 +327,8 @@ export default function MobileJobCard({
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /></p>}
-      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
+      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span

@@ -51,6 +51,28 @@ export function publicRouter(I) {
     if (live.length && live.every(j => j.status === 'approved') && full.status !== 'approved') Object.assign(estPatch, { status: 'approved', approved_at: now() })
     else if (!live.length && full.status !== 'declined') Object.assign(estPatch, { status: 'declined' })
     if (Object.keys(estPatch).length) await tbl(req, T.est).updateRow({ ROWID: String(f.est.id), ...estToRow({ ...estPatch, updated_at: now() }) })
+    // Phase F (Mark 2026-09-22): the signed yes creates or links the job card.
+    // Linked request → Needs Dispatch (Kat schedules it). No card yet → make one.
+    if (estPatch.status === 'approved') {
+      try {
+        const J = await import('./jobs.js')
+        const approvedTotal = (full.totals?.grand_total || 0) / 100
+        const cals = live.map(j => ({ calibration_name: j.name, enabled: true, cal_type: '', trigger: `Estimate ${f.est.number} approved by ${name}`, justification: j.invoice_description || '' }))
+        const noteLine = `📝 Estimate ${f.est.number} approved by ${name} · $${approvedTotal.toFixed(2)} · ${live.length} job${live.length === 1 ? '' : 's'}`
+        let card = f.est.job_id ? (await J.readJobsPublic(req)).find(x => String(x.id) === String(f.est.job_id)) : null
+        if (card) {
+          const patch = { ...card, calibrations: JSON.stringify(cals), notes: `${card.notes ? card.notes + '\n' : ''}${noteLine}` }
+          if (card.status === 'job_requested') { patch.status = card.technician ? (card.technician === 'Jayden' ? 'dispatched_jaden' : card.technician === 'Mark' ? 'dispatched_mark' : 'need_dispatch') : 'need_dispatch'; patch.request_type = '' }
+          await J.updateJobPublic(req, card.id, patch)
+        } else {
+          const customer = f.est.customer_kind === 'retail' ? { kind: 'retail', id: f.est.customer_id || '', name: f.est.customer_name, zoho_contact_id: f.est.zoho_contact_id || '' } : { kind: 'shop', id: '', name: f.est.customer_name, zoho_contact_id: f.est.zoho_contact_id || '' }
+          card = await J.insertJobPublic(req, { shop_name: f.est.customer_name, year: f.est.year || '', make: f.est.make || '', model: f.est.model || '', vehicle: [f.est.year, f.est.make, f.est.model].filter(Boolean).join(' '), vin: f.est.vin || '', insurer: f.est.insurer || '', quote_number: f.est.ro_number || '', status: 'need_dispatch', calibrations: JSON.stringify(cals), notes: noteLine, customer, created_at: now() })
+          await tbl(req, T.est).updateRow({ ROWID: String(f.est.id), ...estToRow({ job_id: String(card.id), updated_at: now() }) })
+        }
+        const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+        postToCliqChannel(DISPATCH_CHANNEL, `🗂 Job card ${f.est.job_id ? 'updated' : 'created'} from estimate ${f.est.number} → ${card.status === 'need_dispatch' ? 'Needs Dispatch' : card.status}. Bill it on that card uses the estimate.`).catch(() => {})
+      } catch (e) { console.warn('[estimator approve] job card hook failed:', e.message) }
+    }
     try {
       const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
       postToCliqChannel(DISPATCH_CHANNEL, `${status === 'approved' ? '✅' : '❌'} *Estimate ${f.est.number} · ${name} ${status} ${changed.length === 1 ? changed[0] : changed.length + ' jobs'}* · ${f.est.customer_name} · ${[f.est.year, f.est.make, f.est.model].filter(Boolean).join(' ')} · approved total now ${(full.totals.grand_total / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}${estPatch.status ? ` · estimate ${estPatch.status.toUpperCase()}` : ''}`).catch(() => {})

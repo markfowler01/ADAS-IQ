@@ -548,6 +548,62 @@ R.get('/retail-customers/:id/history', async (req, res) => { try { const { vehic
 R.get('/vehicle-history', async (req, res) => { try { const { vehicleHistory } = await import('../services/estimator/history.js'); const vin = String(req.query.vin || '').trim(); const cid = String(req.query.customer_id || '').trim(); if (!vin && !cid) return res.json({ ok: true, vehicles: [] }); res.json({ ok: true, ...(await vehicleHistory(req, internals, vin.length >= 8 ? { vin } : { customer_id: cid })) }) } catch (e) { fail(res, e, 'vehicle history') } })
 
 // Estimates
+// ── Estimator ↔ job cards (single-invoice billing Phase F, Mark 2026-09-22:
+//    "I want the estimator to work for retail customers, collision shops,
+//    dealers and auto repair shops") ──
+const estSummary = r => ({ id: String(r.ROWID), number: r.es_number, status: r.es_status || 'draft', customer_name: r.es_customer_name || '', customer_kind: r.es_customer_kind || 'shop', grand_total_cents: int(r.es_grand_total_cents), job_id: r.es_job_id || '', zoho_invoice_id: r.es_zoho_invoice_id || '', zoho_estimate_id: r.es_zoho_estimate_id || '' })
+/** All estimates that point at a job card, keyed by job id — one fetch for the whole board. */
+R.get('/job-map', async (req, res) => {
+  try {
+    const rows = unwrap(await zcql(req, `SELECT ROWID, es_number, es_status, es_customer_name, es_customer_kind, es_grand_total_cents, es_job_id, es_zoho_invoice_id, es_zoho_estimate_id FROM ${T.est} WHERE es_job_id != '' LIMIT 300`), T.est)
+    const map = {}
+    for (const r of rows) { const e = estSummary(r); if (!e.job_id) continue; const cur = map[e.job_id]; if (!cur || ['invoiced', 'approved', 'sent', 'draft', 'declined'].indexOf(e.status) < ['invoiced', 'approved', 'sent', 'draft', 'declined'].indexOf(cur.status)) map[e.job_id] = e }
+    res.json({ ok: true, map })
+  } catch (e) { fail(res, e, 'job-map') }
+})
+export async function estimateForJob(req, jobId) {
+  const rows = unwrap(await zcql(req, `SELECT ROWID, es_number, es_status, es_customer_name, es_customer_kind, es_grand_total_cents, es_job_id, es_zoho_invoice_id, es_zoho_estimate_id FROM ${T.est} WHERE es_job_id = '${esc(jobId)}' LIMIT 10`), T.est).map(estSummary)
+  const order = ['invoiced', 'approved', 'sent', 'draft', 'declined']
+  return rows.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status))[0] || null
+}
+/** Start an estimate FROM a job card / request — customer, car and RO carried over; the card is linked. */
+R.post('/from-job/:jobId', staffOnly, async (req, res) => {
+  try {
+    const { readJobsPublic } = await import('./jobs.js')
+    const job = (await readJobsPublic(req)).find(j => String(j.id) === String(req.params.jobId))
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+    const existing = await estimateForJob(req, job.id)
+    if (existing && existing.status !== 'declined') return res.json({ ok: true, existing: true, estimate: existing })
+    const settings = await loadSettings(req)
+    const retail = job.customer?.kind === 'retail'
+    let customer_id = '', zoho_contact_id = job.customer?.zoho_contact_id || '', discount_bp = 0, customer_contact = {}
+    if (retail) {
+      customer_id = job.customer?.id || ''
+      const rc = customer_id ? await getRetail(req, customer_id).catch(() => null) : null
+      if (rc) { zoho_contact_id = zoho_contact_id || rc.zoho_contact_id || ''; customer_contact = { phone: rc.phone, email: rc.email, address: rc.address, city: rc.city, zip: rc.zip } }
+    } else {
+      try { const { findShopByName } = await import('../services/big3.js'); const sh = await findShopByName(req, job.shop_name); if (sh) { customer_id = sh.id; zoho_contact_id = zoho_contact_id || sh.zoho_contact_id || ''; const br = sh.billing_rules || {}; discount_bp = Math.round((Number(br.discount_value) || 0) * 100); customer_contact = { name: sh.contact_name, phone: sh.phone, email: sh.email, address: sh.address } } } catch { /* fine */ }
+    }
+    const zip = str(customer_contact.zip || '', 12); const taxRow = settings.tax_by_zip?.[zip]
+    const e = {
+      number: await nextNumber(req), status: 'draft', customer_kind: retail ? 'retail' : 'shop', customer_id, customer_name: job.customer?.name || job.shop_name || '', customer_type: retail ? 'retail' : 'wholesale',
+      customer_contact, zoho_contact_id, reseller_permit: '',
+      year: job.year || '', make: job.make || '', model: job.model || '', trim: '', vin: String(job.vin || '').replace(/^\*+/, '').length === 17 ? job.vin : '', plate: '', mileage: job.odo_before || '',
+      ro_number: job.quote_number || job.ro_number || '', claim_number: job.claim || '', insurer: retail ? '' : (job.insurer || ''),
+      service_address: customer_contact.address || '', service_city: customer_contact.city || (taxRow?.city || ''), service_zip: zip,
+      tax_enabled: retail, tax_rate_bp: int(taxRow?.rate_bp) || (retail ? (settings.retail_tax?.rate_bp || 1010) : 0), zoho_tax_id: taxRow?.tax_id || settings.retail_tax?.tax_id || '', tax_note: '',
+      supplies_enabled: retail, supplies_pct_bp: settings.supplies_pct_bp, supplies_cap_cents: settings.supplies_cap_cents,
+      discount_type: discount_bp > 0 ? 'pct' : 'none', discount_value: discount_bp, detail_level: '',
+      labor_rate_cents: int(settings.labor_rate_cents) || 20000, parts_markup_bp: settings.parts_markup_bp == null ? 4000 : int(settings.parts_markup_bp),
+      concern: String(job.notes || '').slice(0, 500), notes: '', terms: '', valid_until: '', totals: {}, grand_total_cents: 0, flags: [],
+      created_by: who(req), created_at: now(), updated_at: now(), job_id: String(job.id),
+    }
+    const row = await tbl(req, T.est).insertRow(estToRow(e))
+    console.log(`[estimator] ${e.number} started from job ${job.id} (${e.customer_kind}) by ${who(req)}`)
+    res.json({ ok: true, created: true, estimate: { id: String(row.ROWID), number: e.number, status: 'draft' } })
+  } catch (e) { fail(res, e, 'from-job') }
+})
+
 R.get('/', async (req, res) => {
   try {
     const rows = unwrap(await zcql(req, `SELECT ROWID, es_number, es_status, es_customer_name, es_customer_kind, es_year, es_make, es_model, es_ro_number, es_grand_total_cents, es_flags, es_created_at, es_updated_at, es_sent_at, es_created_by, es_insurer, es_vin FROM ${T.est} ORDER BY CREATEDTIME DESC LIMIT 300`), T.est)

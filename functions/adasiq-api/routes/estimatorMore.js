@@ -55,6 +55,19 @@ export async function renderPdf(req, I, id, kind) {
   return buildEstimatePdf({ est: f.est, jobs: f.jobs, totals: f.totals, kind, company, threeC, warranty })
 }
 
+/** Bill it (Phase F): create the Books invoice from an approved estimate — same
+ *  push the estimator's own button does (3 C's notes, tax, discount), same
+ *  row patch. internals is imported lazily to dodge the circular import. */
+export async function pushEstimateInvoice(req, estId, by = 'staff') {
+  const { internals: I } = await import('./estimator.js')
+  const f = await loadFull(req, I, estId); if (!f) throw new Error('Estimate not found')
+  if (f.est.status === 'invoiced' && f.est.zoho_invoice_id) return { id: f.est.zoho_invoice_id, number: f.est.zoho_invoice_number || '', warnings: ['already invoiced'], existing: true }
+  const byJob = await approvedThreeC(req, I, f.est.id)
+  const out = await pushToBooks({ req, est: f.est, jobs: f.jobs, totals: f.totals, settings: f.settings, mode: 'invoice', detail: null, by, threeCNotes: threeCNotesText(byJob, f.jobs) })
+  await I.tbl(req, I.T.est).updateRow({ ROWID: String(f.est.id), ...I.estToRow({ zoho_invoice_id: out.id, zoho_invoice_number: out.number, status: 'invoiced', pushed_at: I.now(), push_status: `invoice ${out.number} via Bill it by ${by}${out.warnings?.length ? ' · ' + out.warnings.join(' · ') : ''}`.slice(0, 255), updated_at: I.now() }) })
+  return out
+}
+
 export function mountMore(R, I) {
   const { staffOnly, fail, tbl, T, estToRow, now, who, isOwner } = I
 

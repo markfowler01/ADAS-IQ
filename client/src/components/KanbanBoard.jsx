@@ -3,6 +3,7 @@ import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import CollectPanel from './CollectPanel.jsx'
 import BuildJobModal from './BuildJobModal.jsx'
+import EstimatePill from './EstimatePill.jsx'
 import { Big3Badge, DrpBadge, BillingPill } from './books/Big3Rules.jsx'
 import BillItModal from './BillItModal.jsx'
 import { needsWindshieldCheck } from './MobileJobCard.jsx'
@@ -834,8 +835,8 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /></p>}
-      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
+      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
@@ -2704,6 +2705,7 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
   const [busy, setBusy] = useState(false)
   const [showChooser, setShowChooser] = useState(false)
   const [build, setBuild] = useState(false)   // 🔧 Build job — no report (Phase C)
+  const [estBusy, setEstBusy] = useState(false)   // 📝 Estimate first (Phase F)
   const inputRef = useRef(null)
 
   async function handleFile(e) {
@@ -2744,6 +2746,10 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
             <button onClick={e => { e.stopPropagation(); setShowChooser(false); setBuild(true) }} className="w-full text-left rounded-xl px-3 py-2.5 mb-2" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE_C}` }}>
               <div className="text-sm font-bold" style={{ color: ORANGE_C }}>🔧 Build job — no report</div>
               <div className="text-[11px]" style={{ color: '#666' }}>Programming, diagnostic, a calibration off the list. Repair shops, dealers, people. One invoice at the end.</div>
+            </button>
+            <button onClick={async e => { e.stopPropagation(); setEstBusy(true); try { const r = await apiFetch(`${API_BASE}/api/estimator/from-job/${job.id}`, { method: 'POST' }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); try { sessionStorage.setItem('adas_estimator_open', d.estimate.id) } catch {}; setShowChooser(false); window.dispatchEvent(new CustomEvent('adas:navigate', { detail: 'estimator' })) } catch (err) { alert(err.message) } finally { setEstBusy(false) } }} disabled={estBusy} className="w-full text-left rounded-xl px-3 py-2.5 mb-2" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac' }}>
+              <div className="text-sm font-bold" style={{ color: '#166534' }}>📝 {estBusy ? 'Opening Rick…' : 'Estimate first — Rick prices it, they approve, then the job'}</div>
+              <div className="text-[11px]" style={{ color: '#666' }}>Customer, car and RO carry over. Their signed yes creates the job; Bill it uses the estimate.</div>
             </button>
             <p className="text-xs mb-4" style={{ color: '#888' }}>
               {job.shop_name || 'Job'}{job.vehicle ? ` · ${job.vehicle}` : ''}

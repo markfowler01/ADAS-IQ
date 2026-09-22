@@ -123,7 +123,13 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!p) return
     const list = emails.split(/[,\s]+/).map(s => s.trim()).filter(Boolean)
     if (!list.length) { setErr('Add at least one email.'); return }
-    if (!rows.length) { setErr('Nothing left to bill.'); return }
+    if (!rows.length && p.mode !== 'estimator') { setErr('Nothing left to bill.'); return }
+    if (p.mode === 'estimator') {
+      if (!dry && !window.confirm(`Create the Books invoice from estimate ${p.estimate.number} (${fmt((p.estimate.grand_total_cents || 0) / 100)}) and email it to ${list.join(', ')}?`)) return
+      setBusy(true); setErr('')
+      try { const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emails: list }) }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setDone(d); if (!dry) onBilled && onBilled(d) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+      return
+    }
     if (single && !ctype) { setErr('Pick what kind of customer this is first.'); return }
     if (!dry && single && !window.confirm(`Send ONE invoice to ${list.join(', ')}?\n\n${fmt(grand)}${pct ? ` (${pct}% shown, list ${fmt(insTotal)})` : ''}${isRetail ? ` incl. ${p.tax?.pct || 10.1}% tax` : ''}\n${payMode === 'net_terms' ? 'Net terms.' : 'Collect on site.'}`)) return
     if (!dry && !single && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
@@ -213,6 +219,14 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 </div>
               </div>
             )}
+            {p.mode === 'estimator' && (
+              <div className="rounded-xl p-4" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac' }}>
+                <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: GREEN }}>📝 This job has an estimate — the invoice comes from it</div>
+                <div className="text-lg font-extrabold" style={{ color: '#1a1a1a' }}>{p.estimate.number} · {p.estimate.status}{p.estimate.grand_total_cents ? ` · ${fmt(p.estimate.grand_total_cents / 100)}` : ''}</div>
+                <div className="text-sm mt-1" style={{ color: '#374151' }}>{p.estimate.status === 'invoiced' ? `Already invoiced in Books${p.estimate.zoho_invoice_number ? ` — ${p.estimate.zoho_invoice_number}` : ''}. Nothing to send.` : p.estimate.status === 'approved' ? 'Approved by the customer. Send creates the Books invoice from the estimate exactly as they approved it (tax, discount, 3 C\'s), emails it, and marks the card.' : `Not approved yet (${p.estimate.status}). Open the estimator to send it for approval first — or approve it there if they said yes in person.`}</div>
+                {p.warnings?.length > 0 && <div className="text-xs mt-2" style={{ color: '#92400e' }}>{p.warnings.join(' · ')}</div>}
+              </div>
+            )}
             {single && (
               <div className="rounded-xl p-3" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
                 <div className="flex items-center gap-2 flex-wrap">
@@ -244,7 +258,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 })()}
               </div>
             )}
-            <div className={single ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 md:grid-cols-2 gap-4'}>
+            <div className={single ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 md:grid-cols-2 gap-4'} style={p.mode === 'estimator' ? { display: 'none' } : {}}>
               {/* LEFT — editable estimate (or THE invoice, in single mode) */}
               <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: `1.5px solid ${single ? '#bbf7d0' : '#bfdbfe'}` }}>
                 <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: single ? '#f0fdf4' : '#eff6ff', color: single ? GREEN : '#1d4ed8' }}>
@@ -329,7 +343,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
           <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}>
             <button onClick={onClose} className="flex-1 rounded-xl py-3.5 text-base font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
             <button onClick={send} disabled={busy || (!dry && !p.can_bill)} className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: dry ? '#92400e' : GREEN, opacity: busy || (!dry && !p.can_bill) ? .45 : 1 }}>
-              {busy ? 'Sending…' : dry ? '🧪 Dry run' : single ? `💸 Send invoice — ${fmt(grand)}` : `💸 Send both — ${fmt(insTotal)} insurance · ${fmt(costTotal)} cost`}
+              {busy ? 'Sending…' : dry ? '🧪 Dry run' : p.mode === 'estimator' ? `💸 Invoice from ${p.estimate?.number} — ${fmt((p.estimate?.grand_total_cents || 0) / 100)}` : single ? `💸 Send invoice — ${fmt(grand)}` : `💸 Send both — ${fmt(insTotal)} insurance · ${fmt(costTotal)} cost`}
             </button>
           </div>
         )}

@@ -228,6 +228,8 @@ function MainApp() {
 
   // Current screen for the blank-screen watchdog (hook lives ABOVE the early returns).
   useEffect(() => { try { window.__adasScreen = screen } catch {} }, [screen])
+  // Components deep in a card can ask for a screen (e.g. "📝 Estimate first" → the estimator). Above the early returns on purpose.
+  useEffect(() => { const fn = e => { if (typeof e.detail === 'string') setScreen(e.detail) }; window.addEventListener('adas:navigate', fn); return () => window.removeEventListener('adas:navigate', fn) }, [])
 
   // ?preview=upload — open the review screen with a sample report so the
   // layout can be checked without uploading a Kinetic PDF (2026-09-14).
