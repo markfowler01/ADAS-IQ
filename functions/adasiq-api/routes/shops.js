@@ -2,7 +2,7 @@ import express from 'express'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { getMailAccessToken, getMailAccountId, sendMail } from '../services/mail.js'
-import { listCustomers, getAccessToken } from '../services/zoho.js'
+import { listCustomers, getAccessToken, listInvoicesForDateRange } from '../services/zoho.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 import { findLeadByName, createLead, updateLead, convertLead } from '../services/zohoCrm.js'
 
@@ -157,46 +157,80 @@ function fillTemplate(text, shop) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-// POST /api/shops/sync-customers — import from Zoho Books
-router.post('/sync-customers', async (req, res) => {
-  try {
-    const zohoCustomers = await listCustomers()
-    const businesses = zohoCustomers.filter(c =>
-      c.status !== 'inactive' && c.company_name && c.company_name.trim() !== ''
-    )
-    const shops = await getAllShops(req)
-    const existingNames = new Set(shops.map(s => (s.shop_name || '').toLowerCase().trim()))
-
-    const added = []
-    const skipped = []
-    const now = new Date().toISOString()
-
-    for (const c of businesses) {
-      const name = (c.company_name || c.contact_name || '').trim()
-      if (!name) continue
-      if (existingNames.has(name.toLowerCase())) { skipped.push(name); continue }
-
-      const addr = c.billing_address || {}
-      const addressParts = [addr.address, addr.city, addr.state].filter(Boolean)
-      const phone = c.phone || c.mobile || ''
-      const email = c.email || ''
-      const primaryPerson = (phone || email) ? [{ id: `p_zoho_${c.contact_id || Date.now()}`, name: '', title: '', phone, email }] : []
-
+// Books → CRM import. Mark 2026-09-22: "make sure all of my current
+// customers are in the CRM". Every active Books customer that is a
+// business comes over — by company name, or by contact name when the
+// company field is blank and the name reads like a shop (All Makes Autos
+// LLC was invisible for months because of that blank). Existing shops are
+// matched by normalized name (also minus Inc/LLC, and on the loose key)
+// and get their Books id linked when missing. People (retail) stay out.
+const BIZ_RE = /\b(llc|inc|corp|co|ltd|auto|autos|automotive|body|autobody|collision|shop|glass|carstar|maaco|motors|repair|center|centre|dealer|dealership|fleet|truck|trucks|tire|tires|service|services|garage|detail|paint|fix|gerber|ford|toyota|honda|chevrolet|chevy|subaru|nissan|kia|hyundai|dodge|jeep|ram|gmc|buick|mazda|lexus|bmw|mercedes|audi|volkswagen|vw|tesla|rivian|volvo|porsche|works|restoration|rebuild|customs|sales|rv|towing|mobile)\b/i
+const NOT_SHOP_RE = /^(test|walk-?in customer|amazon customer service|unknown|demo.*)$/i
+// Insurers get billed directly sometimes — they're payers, not shops.
+const INSURER_RE = /\b(state farm|allstate|geico|liberty mutual|safeco|progressive|usaa|farmers|pemco|nationwide|travelers|american family|amfam|hartford|mutual of enumclaw|country financial)\b/i
+const keyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+const keyNoSuffix = s => keyOf(s).replace(/(inc|llc|corp|ltd)$/, '')
+const looseOf = s => keyOf(s).replace(/(autobody|bodyshop|collision|repair|center|centre|inc|llc|auto|body|shop)/g, '')
+export async function syncCustomersFromBooks(req, { dry = false } = {}) {
+  const [zohoCustomers, invoices] = await Promise.all([listCustomers(), listInvoicesForDateRange('2024-01-01', new Date().toISOString().slice(0, 10))])
+  // "Current customer" = someone we've actually invoiced. A Books contact
+  // with no invoice stays out until it earns one.
+  const billed = new Set(invoices.map(i => String(i.customer_id || '')).filter(Boolean))
+  const unbilled = []
+  const candidates = zohoCustomers.filter(c => {
+    if (c.status === 'inactive') return false
+    const cn = String(c.contact_name || '').trim(), co = String(c.company_name || '').trim()
+    if (NOT_SHOP_RE.test(cn) || NOT_SHOP_RE.test(co) || INSURER_RE.test(cn) || INSURER_RE.test(co)) return false
+    return !!(co || BIZ_RE.test(cn))
+  })
+  const shops = await getAllShops(req)
+  const byKey = new Map(), byNoSuffix = new Map(), byLoose = new Map(), byContact = new Map()
+  for (const s of shops) {
+    byKey.set(keyOf(s.shop_name), s); byNoSuffix.set(keyNoSuffix(s.shop_name), s)
+    const l = looseOf(s.shop_name); if (l.length >= 4 && !byLoose.has(l)) byLoose.set(l, s)
+    if (s.zoho_contact_id) byContact.set(String(s.zoho_contact_id), s)
+  }
+  const added = [], linked = [], skipped = [], people = zohoCustomers.length - candidates.length
+  const now = new Date().toISOString()
+  for (const c of candidates) {
+    const name = (String(c.company_name || '').trim() || String(c.contact_name || '').trim())
+    if (!name) continue
+    const names = [name, String(c.contact_name || '').trim()].filter(Boolean)
+    let hit = byContact.get(String(c.contact_id)) || null
+    for (const n of names) hit = hit || byKey.get(keyOf(n)) || byNoSuffix.get(keyNoSuffix(n)) || (looseOf(n).length >= 4 ? byLoose.get(looseOf(n)) : null)
+    if (hit) {
+      if (!hit.zoho_contact_id) {
+        linked.push({ shop: hit.shop_name, books: name, contact_id: c.contact_id })
+        if (!dry) await updateShop(req, hit.id, { ...hit, zoho_contact_id: c.contact_id })
+        hit.zoho_contact_id = c.contact_id; byContact.set(String(c.contact_id), hit)
+      } else skipped.push(name)
+      continue
+    }
+    // Never invoiced → not a customer yet; link if we already have them, but don't add.
+    if (!billed.has(String(c.contact_id))) { unbilled.push(name); continue }
+    const addr = c.billing_address || {}
+    const addressParts = [addr.address, addr.city, addr.state].filter(Boolean)
+    const phone = c.phone || c.mobile || ''
+    const email = c.email || ''
+    const primaryPerson = (phone || email) ? [{ id: `p_zoho_${c.contact_id || Date.now()}`, name: c.company_name ? (c.contact_name || '') : '', title: '', phone, email }] : []
+    added.push({ name, city: addr.city || '', phone, email, contact_id: c.contact_id })
+    if (!dry) {
       const shop = await insertShop(req, {
-        shop_name: name, contact_name: c.contact_name || '', phone, email,
+        shop_name: name, contact_name: c.company_name ? (c.contact_name || '') : '', phone, email,
         address: addressParts.join(', '), pipeline_stage: 'active',
         people: primaryPerson, referral_source: 'Zoho Sync',
         zoho_contact_id: c.contact_id || '', created_at: now,
       })
-      added.push(name)
-      existingNames.add(name.toLowerCase())
+      byKey.set(keyOf(name), shop); byContact.set(String(c.contact_id), shop)
     }
-
-    res.json({ added: added.length, skipped: skipped.length, added_names: added })
-  } catch (err) {
-    console.error('[shops sync-customers]', err.message)
-    res.status(500).json({ error: err.message })
   }
+  return { dry, candidates: candidates.length, people_skipped: people, unbilled_skipped: unbilled, added: added.length, added_names: added, linked: linked.length, linked_names: linked, already: skipped.length }
+}
+
+// POST /api/shops/sync-customers — import from Zoho Books (?dry=1 to preview)
+router.post('/sync-customers', async (req, res) => {
+  try { res.json(await syncCustomersFromBooks(req, { dry: req.query.dry === '1' })) }
+  catch (err) { console.error('[shops sync-customers]', err.message); res.status(500).json({ error: err.message }) }
 })
 
 // GET /api/shops/debug-size

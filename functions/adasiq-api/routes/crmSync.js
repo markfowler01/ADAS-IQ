@@ -114,4 +114,17 @@ router.post('/shop/:id', async (req, res) => {
   }
 })
 
+
+// POST /api/crm-sync-cron/customers?dry=1 — Books customers → CRM shops
+// (Mark 2026-09-22). Same secret as the rest of this router. Additive only.
+router.post('/customers', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  const provided = String(req.headers['x-cron-secret'] || req.headers['x_cron_secret'] || '').trim()
+  if (provided !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { syncCustomersFromBooks } = await import('./shops.js')
+    res.json(await syncCustomersFromBooks(req, { dry: req.query.dry === '1' }))
+  } catch (err) { console.error('[crm-sync-cron customers]', err.message); res.status(500).json({ error: err.message }) }
+})
+
 export default router

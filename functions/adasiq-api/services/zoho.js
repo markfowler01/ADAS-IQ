@@ -1243,6 +1243,7 @@ export async function listInvoicesForDateRange(fromISO, toISO) {
       all.push({
         invoice_id:       inv.invoice_id,
         invoice_number:   inv.invoice_number,
+        customer_id:      inv.customer_id || '',
         customer_name:    inv.customer_name,
         salesperson_name: inv.salesperson_name || '',
         total:            Number(inv.total || 0) || 0,
