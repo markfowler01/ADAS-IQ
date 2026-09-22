@@ -29,7 +29,7 @@ const router = express.Router()
 // ── Who + what ──────────────────────────────────────────────────────────────
 // Recipient: the Autel Remote Expert program address Mark has been writing
 // to from Zoho Mail. Env override so it can change without a code edit.
-const TO_ADDRESS   = (process.env.REMOTE_EXPERT_APPLY_TO || '').trim()
+const TO_ADDRESS   = (process.env.REMOTE_EXPERT_APPLY_TO || 'autelexpert@autel.com').trim()
 const FROM_ADDRESS = 'mf@absoluteadas.com'
 // Subject rotates weekly so each ask reads fresh in their inbox.
 const SUBJECTS = [
