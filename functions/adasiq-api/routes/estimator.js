@@ -535,7 +535,8 @@ R.post('/', staffOnly, async (req, res) => {
       year: b.year || '', make: b.make || '', model: b.model || '', trim: b.trim || '', vin: b.vin || '', plate: b.plate || '', mileage: b.mileage || '',
       ro_number: b.ro_number || '', claim_number: b.claim_number || '', insurer: b.insurer || '',
       service_address: b.service_address || '', service_city: b.service_city || (taxRow?.city || ''), service_zip: zip,
-      tax_enabled: customer_type === 'retail', tax_rate_bp: int(taxRow?.rate_bp), zoho_tax_id: taxRow?.tax_id || '', tax_note: '',
+      // Retail always carries sales tax at 10.1% (Mark 2026-09-22); a zip row overrides the rate.
+      tax_enabled: customer_type === 'retail', tax_rate_bp: int(taxRow?.rate_bp) || (customer_type === 'retail' ? (settings.retail_tax?.rate_bp || 1010) : 0), zoho_tax_id: taxRow?.tax_id || settings.retail_tax?.tax_id || '', tax_note: '',
       supplies_enabled: customer_type === 'retail', supplies_pct_bp: settings.supplies_pct_bp, supplies_cap_cents: settings.supplies_cap_cents,
       discount_type: discountPct > 0 ? 'pct' : 'none', discount_value: discountPct > 0 ? Math.round(discountPct * 100) : 0, detail_level: '',
       labor_rate_cents: int(settings.labor_rate_cents) || 20000, parts_markup_bp: settings.parts_markup_bp == null ? 4000 : int(settings.parts_markup_bp),

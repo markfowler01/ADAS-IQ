@@ -64,6 +64,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   const [rules, setRules] = useState(null)
   const [rulesTouched, setRulesTouched] = useState(false)
   const [remember, setRemember] = useState(true)
+  const [ctype, setCtype] = useState('')      // single mode: pick the type once, remembered on the shop
+  const [payMode, setPayMode] = useState('')
   const isOwner = isOwnerUser(user)
 
   useEffect(() => {
@@ -73,7 +75,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
       if (dead) return
       if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
       const ls = (d.lines || []).map(l => ({ ...l, big3_key: l.big3_key || big3KeyFor(l.name) }))
-      setP(d); setLines(ls); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct)
+      setP(d); setLines(ls); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct); setCtype(d.customer_type || ''); setPayMode(d.pay_mode || 'on_site')
       // Picker starts from what is actually ON the estimate (a paid line = Charge,
       // a $0 line = Included, missing = Off), falling back to the shop rule —
       // so a click changes only the slot Kat clicked.
@@ -111,6 +113,10 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   })
   const insTotal = r2(rows.reduce((s, l) => s + l.amount, 0))
   const costTotal = r2(rows.reduce((s, l) => s + l.cost, 0))
+  const single = p?.mode === 'single'
+  const isRetail = single && ctype === 'retail'
+  const taxAmt = isRetail && p?.tax ? r2(costTotal * (p.tax.pct || 10.1) / 100) : 0
+  const grand = r2(costTotal + taxAmt)
   const edited = rows.some(l => l._edited) || (p && rows.length !== (p.lines || []).length)
 
   async function send() {
@@ -118,11 +124,13 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     const list = emails.split(/[,\s]+/).map(s => s.trim()).filter(Boolean)
     if (!list.length) { setErr('Add at least one email.'); return }
     if (!rows.length) { setErr('Nothing left to bill.'); return }
-    if (!dry && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
+    if (single && !ctype) { setErr('Pick what kind of customer this is first.'); return }
+    if (!dry && single && !window.confirm(`Send ONE invoice to ${list.join(', ')}?\n\n${fmt(grand)}${pct ? ` (${pct}% shown, list ${fmt(insTotal)})` : ''}${isRetail ? ` incl. ${p.tax?.pct || 10.1}% tax` : ''}\n${payMode === 'net_terms' ? 'Net terms.' : 'Collect on site.'}`)) return
+    if (!dry && !single && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
     setBusy(true); setErr('')
     try {
       const learnNew = !!(rules && p.big3 && !p.big3.has_rule && !p.big3.insurer_rule)   // first invoice for this shop → remember what we did (never from an insurer-forced invoice)
-      const body = { emails: list, discount_pct: pct, big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
+      const body = { emails: list, discount_pct: pct, ...(single ? { customer_type: ctype, pay_mode: payMode } : {}), big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -205,12 +213,29 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 </div>
               </div>
             )}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* LEFT — editable estimate */}
-              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bfdbfe' }}>
-                <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
-                  <span>🏦 Insurance invoice · estimate {p.estimate_number}</span>
-                  <span className="text-xs font-semibold text-right" style={{ color: edited ? ORANGE : '#3b82f6' }}>{edited ? '✏️ edited — Books estimate will be updated' : 'tap a price or qty to edit'}</span>
+            {single && (
+              <div className="rounded-xl p-3" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>🏢 Customer</span>
+                  {Object.entries(p.customer_types || {}).filter(([k]) => k !== 'body_shop').map(([k, t]) => (
+                    <button key={k} type="button" onClick={() => { setCtype(k); if (t.discount != null && !p.has_discount) setPct(t.discount); setPayMode(t.pay) }} className="text-xs font-bold rounded-full px-3 py-1.5" style={ctype === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{t.label}</button>
+                  ))}
+                  <span className="text-xs mx-1" style={{ color: '#aaa' }}>·</span>
+                  {[['on_site', '🚐 pays on site'], ['net_terms', '✉️ net terms'], ['either', 'either']].map(([k, l]) => (
+                    <button key={k} type="button" onClick={() => setPayMode(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={payMode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>
+                  ))}
+                </div>
+                <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>{p.has_type ? `On file for ${p.shop_name}. Change it here and it's remembered.` : `First invoice for ${p.shop_name} — what you pick is remembered on the CRM card.`}{p.agreed_price ? <span className="font-bold ml-2" style={{ color: '#b45309' }}>🤝 Tech agreed ${Number(p.agreed_price.amount || p.agreed_price).toFixed(0)}{p.agreed_price.with ? ` with ${p.agreed_price.with}` : ''}</span> : null}</div>
+              </div>
+            )}
+            <div className={single ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 md:grid-cols-2 gap-4'}>
+              {/* LEFT — editable estimate (or THE invoice, in single mode) */}
+              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: `1.5px solid ${single ? '#bbf7d0' : '#bfdbfe'}` }}>
+                <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: single ? '#f0fdf4' : '#eff6ff', color: single ? GREEN : '#1d4ed8' }}>
+                  <span>{single ? `💸 Invoice${p.estimate_number ? ` · RO ${p.estimate_number}` : ''}` : `🏦 Insurance invoice · estimate ${p.estimate_number}`}</span>
+                  {single
+                    ? <span className="flex items-center gap-1 text-sm">discount <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-16 text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #86efac' }} />%</span>
+                    : <span className="text-xs font-semibold text-right" style={{ color: edited ? ORANGE : '#3b82f6' }}>{edited ? '✏️ edited — Books estimate will be updated' : 'tap a price or qty to edit'}</span>}
                 </div>
                 {rows.map((l, i) => (
                   <div key={i} className="flex items-center gap-2 px-3 py-2 text-base" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: l._added ? '#f0fdf4' : 'white' }}>
@@ -221,6 +246,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                     <span style={{ color: '#94a3b8' }}>×</span>
                     <input type="number" step="0.01" min="0" value={l.rate} onChange={e => setLine(i, { rate: e.target.value })} onBlur={e => setLine(i, { rate: r2(e.target.value) })} style={{ ...cell, width: 96 }} title="Price" />
                     <span className="tabular-nums font-semibold flex-shrink-0" style={{ color: '#1a1a1a', minWidth: 84, textAlign: 'right' }}>{fmt(l.amount)}</span>
+                    {single && <span className="tabular-nums text-sm flex-shrink-0" style={{ color: l.d ? GREEN : '#aaa', minWidth: 96, textAlign: 'right' }}>{l.d ? `−${l.d}% → ${fmt(l.cost)}` : l.why ? l.why : ''}</span>}
                     <button type="button" onClick={() => removeLine(i)} className="w-7 h-7 rounded-full font-bold flex-shrink-0" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }} title="Remove line">×</button>
                   </div>
                 ))}
@@ -236,11 +262,19 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                     </div>
                   )}
                 </div>
-                <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: '2px solid #e2e8f0', color: '#1a1a1a', marginTop: 'auto' }}><span>Total</span><span className="tabular-nums">{fmt(insTotal)}</span></div>
+                {!single && <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: '2px solid #e2e8f0', color: '#1a1a1a', marginTop: 'auto' }}><span>Total</span><span className="tabular-nums">{fmt(insTotal)}</span></div>}
+                {single && (
+                  <div className="px-4 py-3 space-y-1" style={{ borderTop: '2px solid #dcfce7', marginTop: 'auto' }}>
+                    {pct > 0 && <div className="flex justify-between text-sm" style={{ color: '#555' }}><span>List</span><span className="tabular-nums">{fmt(insTotal)}</span></div>}
+                    {pct > 0 && <div className="flex justify-between text-sm" style={{ color: GREEN }}><span>Discount shown ({pct}%)</span><span className="tabular-nums">−{fmt(insTotal - costTotal)}</span></div>}
+                    {isRetail && <div className="flex justify-between text-sm" style={{ color: p.tax?.missing ? '#b91c1c' : '#555' }}><span>Sales tax {p.tax?.pct || 10.1}%{p.tax?.missing ? ' — NOT in Books yet' : ''}</span><span className="tabular-nums">{fmt(taxAmt)}</span></div>}
+                    <div className="flex justify-between text-xl font-extrabold" style={{ color: GREEN }}><span>Total · Due on Receipt</span><span className="tabular-nums">{fmt(grand)}</span></div>
+                  </div>
+                )}
               </div>
 
-              {/* RIGHT — cost invoice, mirrors the left */}
-              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bbf7d0' }}>
+              {/* RIGHT — cost invoice, mirrors the left (dual mode only) */}
+              {!single && <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bbf7d0' }}>
                 <div className="px-4 py-3 text-base font-bold flex items-center justify-between" style={{ backgroundColor: '#f0fdf4', color: GREEN }}>
                   <span>💸 Cost invoice · {p.customer_type ? p.customer_type.replace(/_/g, ' ') : 'shop'} discount</span>
                   <span className="flex items-center gap-1">
@@ -254,17 +288,17 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                   </div>
                 ))}
                 <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: '2px solid #dcfce7', color: GREEN, marginTop: 'auto' }}><span>Total · Due on Receipt</span><span className="tabular-nums">{fmt(costTotal)}</span></div>
-              </div>
+              </div>}
             </div>
             <div>
-              <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Send both to</label>
+              <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>{single ? 'Send the invoice to' : 'Send both to'}</label>
               <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="shop@email.com, second@email.com" className="w-full rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
-              <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact. Saves the shop {fmt(insTotal - costTotal)}. Rule on file: {p.rule}.</div>
+              <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact.{single ? (payMode === 'net_terms' ? ' Net terms — they pay the link.' : ' Collect on site after — check, cash, or the card QR on the job card.') : ` Saves the shop ${fmt(insTotal - costTotal)}. Rule on file: ${p.rule}.`}</div>
               {(!p.has_discount || Number(p.discount_pct) !== Number(pct)) && Number(pct) >= 0 && (
                 <div className="text-sm mt-1 font-semibold" style={{ color: '#92400e' }}>🧠 {p.has_discount ? `${p.shop_name} is on file at ${p.discount_pct}% — sending at ${pct}% updates the shop to ${pct}%.` : `No discount on file for ${p.shop_name} — ${pct}% will be remembered for next time.`}</div>
               )}
               {p.templates && (
-                <div className="text-sm mt-1" style={{ color: '#888' }}>PDF templates: insurance → <b>{p.templates.estimate?.name || 'missing'}</b> · cost → <b>{p.templates.invoice?.name || 'missing'}</b>. Header carries RO#, Year/Make/Model, VIN and the scan-report link, same as Kat's.</div>
+                <div className="text-sm mt-1" style={{ color: '#888' }}>{single ? <>PDF template: <b>{p.templates.invoice?.name || 'missing'}</b>. Header carries RO#, Year/Make/Model, VIN and the folder link.</> : <>PDF templates: insurance → <b>{p.templates.estimate?.name || 'missing'}</b> · cost → <b>{p.templates.invoice?.name || 'missing'}</b>. Header carries RO#, Year/Make/Model, VIN and the scan-report link, same as Kat's.</>}</div>
               )}
             </div>
             {isOwner && (
@@ -279,7 +313,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
           <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}>
             <button onClick={onClose} className="flex-1 rounded-xl py-3.5 text-base font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
             <button onClick={send} disabled={busy || (!dry && !p.can_bill)} className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: dry ? '#92400e' : GREEN, opacity: busy || (!dry && !p.can_bill) ? .45 : 1 }}>
-              {busy ? 'Sending…' : dry ? '🧪 Dry run' : `💸 Send both — ${fmt(insTotal)} insurance · ${fmt(costTotal)} cost`}
+              {busy ? 'Sending…' : dry ? '🧪 Dry run' : single ? `💸 Send invoice — ${fmt(grand)}` : `💸 Send both — ${fmt(insTotal)} insurance · ${fmt(costTotal)} cost`}
             </button>
           </div>
         )}

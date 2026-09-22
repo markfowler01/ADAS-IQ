@@ -401,8 +401,26 @@ router.get('/:id/big3', async (req, res) => {
     const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
     const b3 = await import('../services/big3.js')
     const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
-    res.json({ ok: true, rules: b3.normalizeRules(br.big3), set_by: br.big3_set_by || '', set_at: br.big3_set_at || '', modes: b3.MODES, big3: b3.BIG3 })
+    res.json({ ok: true, rules: b3.normalizeRules(br.big3), set_by: br.big3_set_by || '', set_at: br.big3_set_at || '', modes: b3.MODES, big3: b3.BIG3,
+      customer_type: br.customer_type || '', discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, pay_mode: br.pay_mode || '', types: b3.CUSTOMER_TYPES, pay_modes: b3.PAY_MODES })
   } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// The three billing questions (Mark 2026-09-22): what kind of customer,
+// discount shown, how they pay. Saved on billing_rules next to the Big 3.
+router.put('/:id/billing', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    const b3 = await import('../services/big3.js')
+    const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
+    const ctype = String(req.body?.customer_type || '')
+    if (!b3.CUSTOMER_TYPES[ctype]) return res.status(400).json({ error: 'customer_type must be body_shop, repair_shop, dealer or retail' })
+    const pct = req.body?.discount_pct == null || req.body.discount_pct === '' ? (b3.CUSTOMER_TYPES[ctype].discount ?? Number(br.discount_value) ?? 0) : Math.max(0, Math.min(60, Number(req.body.discount_pct) || 0))
+    const pay = b3.PAY_MODES[req.body?.pay_mode] ? req.body.pay_mode : b3.CUSTOMER_TYPES[ctype].pay
+    const rules = b3.normalizeRules(br.big3) || b3.DEFAULT_RULES
+    const r = await b3.saveBig3(req, shop.shop_name, rules, req.user?.name || req.user?.email || '', { shop, customer_type: ctype, discount_pct: pct, pay_mode: pay, silent: true })
+    console.log(`[billing] ${shop.shop_name}: ${ctype} · ${pct}% · ${pay} (by ${req.user?.name || '?'})`)
+    res.json({ ok: true, ...r, customer_type: ctype, discount_pct: pct, pay_mode: pay })
+  } catch (e) { console.error('[shops billing PUT]', req.params.id, e.message); res.status(500).json({ error: e.message }) }
 })
 router.put('/:id/big3', async (req, res) => {
   try {

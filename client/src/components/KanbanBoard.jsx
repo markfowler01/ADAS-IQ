@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
-import { Big3Badge, DrpBadge } from './books/Big3Rules.jsx'
+import { Big3Badge, DrpBadge, BillingPill } from './books/Big3Rules.jsx'
 import BillItModal from './BillItModal.jsx'
 import { needsWindshieldCheck } from './MobileJobCard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -832,7 +832,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
+      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
@@ -1691,10 +1691,22 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   }
 
   // Opens the calibration review modal — actual status change happens after confirmation
-  function handleMoveToReadyInvoice(job) {
+  async function handleMoveToReadyInvoice(job) {
     setPhotoOverride(''); setPhotosPending(null)
     // Photos never hold up billing (Mark 2026-09-17) — the card carries the
     // debt and the 6pm owed list chases it.
+    // No Books estimate = no Kinetic lines to review (Mark 2026-09-22:
+    // "definitely only one thing") → move it and open Bill it.
+    if (!job.zoho_estimate_id && !isTechnician) {
+      try {
+        const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'ready_invoice' }) })
+        const d = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+        setJobs(prev => prev.map(j => j.id === job.id ? { ...j, ...d, status: 'ready_invoice' } : j))
+        setBillItJob({ ...job, ...d, status: 'ready_invoice' })
+      } catch (e) { showToast(e.message) }
+      return
+    }
     setCalReviewJob(job)
   }
 
@@ -2833,7 +2845,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
           >{insurerPricingBadge(job).label}</span>
         )}
-        {job.status !== 'job_requested' && <><Big3Badge shopName={job.shop_name} /> <DrpBadge shopName={job.shop_name} /></>}
+        {job.status !== 'job_requested' && <><BillingPill shopName={job.shop_name} /> <Big3Badge shopName={job.shop_name} /> <DrpBadge shopName={job.shop_name} /></>}
         {isTeslaJob(job) && (
           <span
             className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
@@ -2869,11 +2881,11 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
 
       {/* Action button — Bill it (Books quote) / legacy Create Invoices if ready, else Ready to Invoice */}
       {!job.invoiced && job.status !== 'job_requested' && (
-        (canInvoice && onBillIt && job.zoho_estimate_id && !job.billed_via_app) ? (
+        (canInvoice && onBillIt && !job.billed_via_app) ? (
           <button onClick={e => { e.stopPropagation(); onBillIt(job) }}
             className="w-full flex items-center justify-center gap-2 rounded-xl text-white active:opacity-60"
             style={{ backgroundColor: '#15803d', padding: '11px 0', minHeight: '44px' }}>
-            <span className="text-sm font-extrabold">💸 Create invoices — Bill it</span>
+            <span className="text-sm font-extrabold">💸 {job.zoho_estimate_id ? 'Create invoices — Bill it' : 'Bill it — one invoice'}</span>
           </button>
         ) : canInvoice ? (
           <button

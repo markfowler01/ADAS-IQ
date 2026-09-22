@@ -31,6 +31,18 @@ export const BIG3 = [
 export const MODES = { charge: 'Charge', included: 'Included', off: 'Off' }
 // Until a shop has a rule: Cal ID charged (as today), PCSI + Post-Scan included, Snapshot off.
 export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
+// Customer types (Mark 2026-09-22, single-invoice billing). body_shop is
+// the collision shop (kept as the stored value from 2026-09-10).
+//   mode: dual = insurance invoice + cost invoice · single = one invoice
+//   discount: default % shown on the invoice (body shop is per shop)
+export const CUSTOMER_TYPES = {
+  body_shop:   { label: 'Collision shop',    mode: 'dual',   discount: null, pay: 'net_terms', tax: false },
+  repair_shop: { label: 'Auto repair shop',  mode: 'single', discount: 10,   pay: 'on_site',   tax: false },
+  dealer:      { label: 'Dealer',            mode: 'single', discount: 10,   pay: 'on_site',   tax: false },
+  retail:      { label: 'Retail (person)',   mode: 'single', discount: 0,    pay: 'on_site',   tax: true },
+}
+export const PAY_MODES = { net_terms: 'Net terms — email the invoice', on_site: 'On site — tech collects (check or card QR)', either: 'Either' }
+export const billingModeFor = ctype => (CUSTOMER_TYPES[ctype]?.mode || 'dual')
 export const BASE_TO_KEY = Object.fromEntries(BIG3.map(b => [b.base, b.key]))
 const LEGACY = { bill: 'charge', shop: 'included' }
 
@@ -100,12 +112,13 @@ export async function saveBig3(req, shopName, rules, by = '', extra = {}) {
   const before = shop ? normalizeRules(prevBR.big3) : null
   // Optional cost-invoice discount + customer type ride along (Mark's list, 2026-09-10).
   const pct = Number.isFinite(Number(extra.discount_pct)) ? Number(extra.discount_pct) : null
-  const ctype = extra.customer_type ? String(extra.customer_type) : null
+  const ctype = extra.customer_type && CUSTOMER_TYPES[extra.customer_type] ? String(extra.customer_type) : (extra.customer_type === 'cash' ? 'cash' : null)
+  const pay = extra.pay_mode && PAY_MODES[extra.pay_mode] ? String(extra.pay_mode) : null
   const sameBig3 = before && BIG3.every(b => before[b.key] === clean[b.key])
-  const sameExtra = (pct == null || Number(prevBR.discount_value) === pct) && (!ctype || prevBR.customer_type === ctype)
+  const sameExtra = (pct == null || Number(prevBR.discount_value) === pct) && (!ctype || prevBR.customer_type === ctype) && (!pay || prevBR.pay_mode === pay)
   if (sameBig3 && sameExtra) return { shop_id: shop.id, changed: false }
   const br = { ...prevBR, big3: clean, big3_set_by: by || 'app', big3_set_at: new Date().toISOString(),
-    ...(pct != null ? { discount_type: 'percentage', discount_value: pct } : {}), ...(ctype ? { customer_type: ctype } : {}) }
+    ...(pct != null ? { discount_type: 'percentage', discount_value: pct } : {}), ...(ctype ? { customer_type: ctype } : {}), ...(pay ? { pay_mode: pay } : {}) }
   if (shop) shop = await updateShop(req, shop.id, { ...shop, billing_rules: br })
   else shop = await insertShop(req, { shop_name: shopName, pipeline_stage: 'active', referral_source: 'Invoice', billing_rules: br, people: [], activities: [] })
   const line = `🧾 *Big 3 rule ${before ? 'changed' : 'set'} · ${shop.shop_name}*\n${describeRules(clean)}${pct != null ? ` · cost-invoice discount ${pct}%` : ''}${before ? `\n(was: ${describeRules(before)})` : ''}\nby ${by || 'app'}`
@@ -131,8 +144,9 @@ export async function big3Map(req) {
     const rules = normalizeRules(br.big3)
     const complete = rules && BIG3.every(b => rules[b.key])
     const drps = Array.isArray(sh.drps) ? sh.drps : []
-    if (rules || drps.length) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete: !!complete, drps }
-    if (!complete && ['active', 'second_active', 'active2'].includes(sh.pipeline_stage)) missing.push({ id: sh.id, shop_name: sh.shop_name })
+    const billing = br.customer_type ? { customer_type: br.customer_type, discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, pay_mode: br.pay_mode || CUSTOMER_TYPES[br.customer_type]?.pay || '', mode: billingModeFor(br.customer_type) } : null
+    if (rules || drps.length || billing) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete: !!complete, drps, billing }
+    if ((!complete || !billing) && ['active', 'second_active', 'active2'].includes(sh.pipeline_stage)) missing.push({ id: sh.id, shop_name: sh.shop_name, no_big3: !complete, no_billing: !billing })
   }
   return { map, missing }
 }

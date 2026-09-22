@@ -151,6 +151,58 @@ export async function createCostInvoice({ token, app, est, lines, pct, customerT
   return inv
 }
 
+/**
+ * SINGLE-mode invoice (Mark 2026-09-22): repair shops, dealers, retail —
+ * one Books invoice straight from the job, no estimate. Discount per
+ * eligible line (shown), Due on Receipt, Zoho Payments button on; retail
+ * carries the sales-tax id on every line. Does NOT email.
+ */
+export async function createSingleInvoice({ token, app, customerId, job, lines, pct, customerType, technician, by, template, taxId, taxPct }) {
+  const text = await standardText(app)
+  const invLines = lines.map(l => ({
+    ...(l.item_id ? { item_id: l.item_id } : { name: l.name }), description: l.description || '', rate: l.rate, quantity: l.quantity,
+    ...(l.discount_pct > 0 ? { discount: `${l.discount_pct}%` } : {}),
+    ...(taxId ? { tax_id: taxId } : {}),
+  }))
+  const ro = String(job.invoice_number || job.quote_number || job.ro_number || '').trim()
+  const cf = []
+  const push = (api, v) => { if (v) cf.push({ api_name: api, value: String(v).slice(0, 100) }) }
+  push('cf_ro_1', ro); push('cf_vin', job.vin); push('cf_year', job.year); push('cf_make', job.make); push('cf_model', job.model)
+  if (job.folder_url) push('cf_scan_report_and_documentation', job.folder_url)
+  const body = {
+    customer_id: customerId, ...(ro ? { reference_number: ro } : {}),
+    date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), payment_terms: 0, payment_terms_label: 'Due on Receipt',
+    discount_type: 'item_level', is_discount_before_tax: true, line_items: invLines,
+    notes: text.notes, terms: text.terms, custom_fields: cf, salesperson_name: technician || '',
+    ...(template?.id ? { template_id: template.id } : {}),
+    payment_options: { payment_gateways: [{ gateway_name: 'zoho_payments', configured: true }] },
+  }
+  const post = b => axios.post(`${API}/invoices`, b, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
+  let c = await post(body)
+  const msg = () => String(c.data?.message || '')
+  if (c.data?.code !== 0 && /payment|gateway/i.test(msg())) { console.log('[single-invoice] payment options rejected, retrying without:', msg()); delete body.payment_options; c = await post(body) }
+  if (c.data?.code !== 0 && /tax/i.test(msg())) { console.log('[single-invoice] tax id rejected, retrying without:', msg()); body.line_items = body.line_items.map(({ tax_id, ...l }) => l); c = await post(body) }
+  if (c.data?.code !== 0 && /custom ?field|cf_/i.test(msg())) { console.log('[single-invoice] custom field rejected, retrying without:', msg()); body.custom_fields = []; c = await post(body) }
+  if (c.data?.code !== 0) throw new Error(`Invoice failed: ${msg() || c.status}`)
+  const inv = c.data.invoice
+  if (template?.id && String(inv.template_id) !== String(template.id)) await applyInvoiceTemplate(token, inv.invoice_id, template)
+  await axios.post(`${API}/invoices/${inv.invoice_id}/comments`, { description: `Single invoice · ${String(customerType || '').replace(/_/g, ' ')}${pct ? ` · ${pct}% discount on services` : ''}${taxPct ? ` · sales tax ${taxPct}%` : ''} · billed via Absolute ADAS app by ${by || 'staff'} · job ${job.id}` }, { headers: H(token), params: org(), timeout: 12000, validateStatus: s => s < 500 }).catch(() => {})
+  return inv
+}
+/** Books sales-tax record for retail (10.1% — Mark 2026-09-22). Cached in AppConfig `retail_tax`. */
+export async function retailTax(token, app, wantPct = 10.1) {
+  const table = app.datastore().table('AppConfig')
+  const rows = await app.zcql().executeZCQLQuery("SELECT ROWID, config_value FROM AppConfig WHERE config_key = 'retail_tax' LIMIT 1").catch(() => [])
+  const r = rows?.[0]?.AppConfig || rows?.[0]
+  try { const v = r?.config_value ? JSON.parse(r.config_value) : null; if (v?.tax_id && Number(v.pct) === wantPct) return v } catch { /* refetch */ }
+  const t = await axios.get(`${API}/settings/taxes`, { headers: H(token), params: org(), timeout: 15000, validateStatus: s => s < 500 })
+  const taxes = t.data?.taxes || []
+  const hit = taxes.find(x => Math.abs(Number(x.tax_percentage) - wantPct) < 0.001 && !x.is_compound) || taxes.find(x => Math.abs(Number(x.tax_percentage) - wantPct) < 0.001)
+  const v = hit ? { tax_id: hit.tax_id, name: hit.tax_name, pct: Number(hit.tax_percentage) } : { tax_id: '', name: '', pct: wantPct, missing: true, available: taxes.map(x => `${x.tax_name} ${x.tax_percentage}%`) }
+  if (hit) { if (r?.ROWID) await table.updateRow({ ROWID: String(r.ROWID), config_key: 'retail_tax', config_value: JSON.stringify(v) }); else await table.insertRow({ config_key: 'retail_tax', config_value: JSON.stringify(v) }) }
+  return v
+}
+
 export async function emailEstimate(token, estimateId, emails) {
   const r = await axios.post(`${API}/estimates/${estimateId}/email`, { to_mail_ids: emails }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
   return r.data?.code === 0 ? null : (r.data?.message || `HTTP ${r.status}`)

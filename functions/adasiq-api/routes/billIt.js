@@ -20,7 +20,7 @@ import { readJobsPublic, updateJobPublic } from './jobs.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 
 import axios from 'axios'
-import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, invoiceCustomFields, createCostInvoice, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
+import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, invoiceCustomFields, createCostInvoice, createSingleInvoice, retailTax, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
 import catalyst from 'zcatalyst-sdk-node'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
@@ -42,7 +42,14 @@ async function contactEmails(token, customerId) {
 
 // Everything the modal shows. Pure read except for nothing — no writes.
 async function buildPreview(req, job) {
-  if (!job.zoho_estimate_id) throw Object.assign(new Error('This card has no Books estimate to bill from.'), { status: 400 })
+  // Single-invoice mode (Mark 2026-09-22): the shop's customer type
+  // decides. Repair shops, dealers and retail get ONE invoice straight
+  // from the job's lines; so does any card with no Books estimate.
+  const big3mod = await import('../services/big3.js')
+  const shopRow = await big3mod.findShopByName(req, job.shop_name).catch(() => null)
+  const brEarly = shopRow?.billing_rules ? (typeof shopRow.billing_rules === 'string' ? JSON.parse(shopRow.billing_rules || '{}') : shopRow.billing_rules) : {}
+  const ctypeEarly = String(job.cash_quoted || '').trim() ? 'cash' : (brEarly.customer_type || '')
+  if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return buildSinglePreview(req, job, shopRow, brEarly)
   const token = await getAccessToken()
   const [est, catalog, big3] = await Promise.all([
     getEstimate(token, job.zoho_estimate_id),
@@ -106,7 +113,7 @@ async function buildPreview(req, job) {
   const alreadyConverted = est.status === 'invoiced'
   if (alreadyConverted) warnings.push('Books says this estimate was already converted to an invoice (by hand?) — the button will not bill it again.')
   return {
-    ok: true, job_id: job.id, shop_name: shopName, estimate_id: est.estimate_id, estimate_number: est.estimate_number, estimate_status: est.status,
+    ok: true, mode: 'dual', job_id: job.id, shop_name: shopName, estimate_id: est.estimate_id, estimate_number: est.estimate_number, estimate_status: est.status,
     customer_id: est.customer_id, customer_type: customerType, discount_pct: pct ?? 0, has_discount: pct != null, emails,
     cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''),
     lines: discounted, insurance_total: insuranceTotal, cost_total: costTotal, saved: r2(insuranceTotal - costTotal),
@@ -119,7 +126,87 @@ async function buildPreview(req, job) {
     _est: { custom_fields: est.custom_fields || [], terms: est.terms || '', notes: est.notes || '', reference_number: est.reference_number || '', salesperson_name: est.salesperson_name || '' },
   }
 }
-const pub = p => { const { _byId, _byName, _est, ...rest } = p; return rest }
+// ONE invoice, priced from the job itself — the same engine the
+// calibration review uses (pools, tiers, Big 3) plus the tech's extras.
+async function buildSinglePreview(req, job, shop, br) {
+  const token = await getAccessToken()
+  const big3 = await import('../services/big3.js')
+  const cashJob = !!String(job.cash_quoted || '').trim()
+  const customerType = cashJob ? 'cash' : (br.customer_type || '')
+  const typeDef = big3.CUSTOMER_TYPES[customerType] || null
+  const pct = cashJob ? 0 : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : (typeDef?.discount ?? null))
+  const payMode = br.pay_mode || typeDef?.pay || 'on_site'
+  const catalog = await getItemCatalogForAudit().catch(() => ({ allItems: [] }))
+  const byName = new Map((catalog.allItems || []).map(it => [String(it.name).toLowerCase().trim(), it]))
+  const byId = new Map((catalog.allItems || []).map(it => [String(it.item_id), it]))
+  let cals = []; try { cals = JSON.parse(job.calibrations || '[]') } catch { cals = [] }
+  cals = (Array.isArray(cals) ? cals : []).filter(c => c && (c.enabled !== false)).map(c => ({ calibration_name: c.calibration_name || c.name || String(c), cal_type: c.cal_type || '', quantity: Number(c.quantity) || 1 }))
+  const rule = await big3.readBig3(req, job.shop_name)
+  const effB3 = big3.effectiveBig3(rule.rules, job.insurer)
+  let priced = { lines: [] }
+  if (cals.length) {
+    const { previewInvoiceLines } = await import('../services/zoho.js')
+    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (job.insurer || ''), make: job.make || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : null, big3Rules: effB3.rules })
+  }
+  let extras = []; try { extras = job.extra_items ? JSON.parse(job.extra_items) : [] } catch { extras = [] }
+  const extraLines = (Array.isArray(extras) ? extras : []).map(x => {
+    const it = x.item_id ? byId.get(String(x.item_id)) : byName.get(String(x.name || '').toLowerCase().trim())
+    return { item_id: it?.item_id || null, name: it?.name || x.name || 'Extra', description: x.note || '', rate: x.rate != null ? Number(x.rate) : Number(it?.rate) || 0, quantity: Number(x.quantity) || 1, product_type: it?.product_type || 'service', _extra: true }
+  })
+  const lines = [
+    ...(priced.lines || []).filter(l => !l.needs_price || Number(l.rate) > 0).map(l => { const it = byName.get(String(l.name || '').toLowerCase().trim()); return { item_id: it?.item_id || null, name: l.name, description: '', rate: Number(l.rate) || 0, quantity: Number(l.quantity) || 1, product_type: it?.product_type || 'service', needs_price: !!l.needs_price, _extra: false } }),
+    ...extraLines,
+  ]
+  const discounted = lines.map(li => {
+    const amount = r2(li.rate * li.quantity); const part = isPart(li)
+    const eligible = pct != null && pct > 0 && amount > 0 && !part && !NO_DISCOUNT.test(li.name || '')
+    const disc = eligible ? pct : 0
+    return { ...li, amount, big3_key: big3KeyFor(li.name), is_part: part, never_discount: NO_DISCOUNT.test(li.name || ''), discount_pct: disc, cost_amount: r2(amount * (1 - disc / 100)), why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
+  })
+  const listTotal = r2(discounted.reduce((s, l) => s + l.amount, 0))
+  const costTotal = r2(discounted.reduce((s, l) => s + l.cost_amount, 0))
+  // Retail = sales tax 10.1%, always (Mark 2026-09-22).
+  let tax = null
+  if (customerType === 'retail' || typeDef?.tax) {
+    const t = await retailTax(token, catalyst.initialize(req)).catch(e => ({ tax_id: '', pct: 10.1, missing: true, error: e.message }))
+    tax = { pct: t.pct || 10.1, tax_id: t.tax_id || '', name: t.name || '', missing: !t.tax_id, amount: r2(costTotal * (t.pct || 10.1) / 100), available: t.available || [] }
+  }
+  const grand = r2(costTotal + (tax?.amount || 0))
+  // Books customer: the CRM shop's linked contact, else a name search.
+  let customerId = shop?.zoho_contact_id || job.zoho_customer_id || ''
+  let customerName = shop?.shop_name || job.shop_name || ''
+  if (!customerId && customerName) {
+    const r = await axios.get(`${API}/contacts`, { headers: H(token), params: { ...org(), contact_name: customerName }, timeout: 15000, validateStatus: s => s < 500 }).catch(() => null)
+    const hit = (r?.data?.contacts || []).find(c => String(c.contact_name).toLowerCase() === customerName.toLowerCase()) || (r?.data?.contacts || [])[0]
+    if (hit) { customerId = hit.contact_id; customerName = hit.contact_name }
+  }
+  const emails = customerId ? await contactEmails(token, customerId).catch(() => []) : []
+  const tpl = await resolveTemplates(token, customerType === 'retail' ? 'retail' : customerType)
+  const ro = String(job.invoice_number || job.quote_number || '').trim()
+  let existing = null
+  if (ro) { const r = await axios.get(`${API}/invoices`, { headers: H(token), params: { ...org(), reference_number: ro }, timeout: 15000, validateStatus: s => s < 500 }).catch(() => null); existing = (r?.data?.invoices || []).find(i => i.reference_number === ro && i.customer_id === customerId) || null }
+  const warnings = []
+  if (!customerType) warnings.push(`No customer type on file for ${job.shop_name} — answer the three billing questions on the CRM card (or pick one below) and it's remembered.`)
+  if (!customerId) warnings.push(`No Zoho Books customer linked to ${job.shop_name} — link one on the CRM card (🧾 Zoho Books) so the invoice has somewhere to go.`)
+  if (!lines.length) warnings.push('No lines yet — add the work (calibrations on the card, or items below).')
+  if (lines.some(l => l.needs_price)) warnings.push('A line has no price in Books — type one or swap the item.')
+  if (tax?.missing) warnings.push(`Retail needs a 10.1% sales-tax record in Books (Settings → Taxes) — none found${tax.available?.length ? ` (have: ${tax.available.join(', ')})` : ''}. The invoice would go out WITHOUT tax.`)
+  if (existing) warnings.push(`Invoice ${existing.invoice_number} already exists in Books for RO ${ro} (${existing.status}). The button will not create a second one.`)
+  if (job.invoiced || job.billed_via_app) warnings.push(`This card is already marked invoiced${job.billed_via_app ? ` (via app ${job.billed_via_app})` : ''}.`)
+  if (!emails.length) warnings.push('No email on the Books contact — add one in Books or type it below.')
+  if (!tpl.invoice) warnings.push('No invoice PDF template in Books — the button will not send until it exists.')
+  return {
+    ok: true, mode: 'single', job_id: job.id, shop_name: customerName, estimate_id: null, estimate_number: ro || '', customer_id: customerId,
+    customer_type: customerType, customer_types: big3.CUSTOMER_TYPES, pay_mode: payMode, discount_pct: pct ?? 0, has_discount: pct != null, has_type: !!br.customer_type, emails,
+    cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''), agreed_price: job.agreed_price || null,
+    lines: discounted, insurance_total: listTotal, list_total: listTotal, cost_total: costTotal, tax, grand_total: grand, saved: r2(listTotal - costTotal),
+    extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
+    can_bill: !existing && !job.billed_via_app && !!customerId && !!emails.length && !!tpl.invoice && lines.length > 0 && !lines.some(l => l.needs_price) && !(tax?.missing),
+    templates: { estimate: null, invoice: tpl.invoice }, big3: { rules: effB3.rules, insurer_rule: effB3.insurer_rule, has_rule: !!rule.rules, items: {} },
+    warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default', _byId: byId, _byName: byName, _shop: shop || null,
+  }
+}
+const pub = p => { const { _byId, _byName, _est, _shop, ...rest } = p; return rest }
 
 // Which Big 4 slot a line belongs to (by name — Books items vary by insurer pool).
 export function big3KeyFor(name) {
@@ -174,6 +261,7 @@ router.post('/:id/bill', async (req, res) => {
     const job = (await readJobsPublic(req)).find(j => String(j.id) === String(req.params.id))
     if (!job) return res.status(404).json({ error: 'Job not found' })
     const p = await buildPreview(req, job)
+    if (p.mode === 'single') return billSingle(req, res, job, p, dry)
     const emails = (Array.isArray(req.body?.emails) && req.body.emails.length ? req.body.emails : p.emails).map(e => String(e).trim().toLowerCase()).filter(e => /.+@.+\..+/.test(e))
     if (!emails.length) return res.status(400).json({ error: 'No email to send to.' })
     if (p.existing_invoice) return res.status(409).json({ error: `Already billed — invoice ${p.existing_invoice.number} exists in Books.`, preview: pub(p) })
@@ -265,5 +353,53 @@ router.post('/:id/bill', async (req, res) => {
     res.status(e.status || 500).json({ error: e.response?.data?.message || e.message })
   }
 })
+
+// ── Single mode: one Books invoice, emailed, card stamped ──────────────
+async function billSingle(req, res, job, p, dry) {
+  const emails = (Array.isArray(req.body?.emails) && req.body.emails.length ? req.body.emails : p.emails).map(e => String(e).trim().toLowerCase()).filter(e => /.+@.+\..+/.test(e))
+  if (!emails.length) return res.status(400).json({ error: 'No email to send to.' })
+  if (p.existing_invoice) return res.status(409).json({ error: `Already billed — invoice ${p.existing_invoice.number} exists in Books.`, preview: pub(p) })
+  if (job.billed_via_app) return res.status(409).json({ error: `Already billed via the app (${job.billed_via_app}).` })
+  if (!p.customer_id) return res.status(400).json({ error: `No Zoho Books customer linked to ${p.shop_name} — link one on the CRM card first.` })
+  if (!p.templates.invoice) return res.status(400).json({ error: 'Invoice PDF template missing in Books. Nothing sent.', preview: pub(p) })
+  const by = req.user?.name || req.user?.email || 'staff'
+  const big3 = await import('../services/big3.js')
+  // The type can be picked right on the modal the first time; remembered on the shop.
+  const ctype = big3.CUSTOMER_TYPES[req.body?.customer_type] ? req.body.customer_type : p.customer_type
+  const pct = Number(req.body?.discount_pct ?? p.discount_pct) || 0
+  const pay = big3.PAY_MODES[req.body?.pay_mode] ? req.body.pay_mode : p.pay_mode
+  const edited = Array.isArray(req.body?.lines) ? linesFromEdit(p, req.body.lines) : null
+  if (edited) { if (!edited.length) return res.status(400).json({ error: 'Nothing to bill.' }); p.lines = edited }
+  p.lines = applyDiscount(p.lines, pct)
+  p.cost_total = r2(p.lines.reduce((s, l) => s + l.cost_amount, 0)); p.list_total = r2(p.lines.reduce((s, l) => s + l.amount, 0))
+  const isRetail = ctype === 'retail'
+  if (isRetail && p.tax?.missing && !dry) return res.status(400).json({ error: 'Retail needs the 10.1% sales-tax record in Books first (Settings → Taxes). Nothing sent.' })
+  if (p.tax) p.tax.amount = r2(p.cost_total * p.tax.pct / 100)
+  p.grand_total = r2(p.cost_total + (p.tax?.amount || 0))
+  // Learn: type / % / pay for the shop (never for a cash job — that's the card, not the shop).
+  if (!dry && ctype !== 'cash' && ctype && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== p.customer_type)) {
+    try { const rules = big3.withDefaults(p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
+  }
+  let inv = null
+  if (!dry) {
+    const token = await getAccessToken()
+    inv = await createSingleInvoice({ token, app: catalyst.initialize(req), customerId: p.customer_id, job, lines: p.lines, pct, customerType: ctype, technician: job.technician, by, template: p.templates.invoice, taxId: isRetail ? p.tax?.tax_id : '', taxPct: isRetail ? p.tax?.pct : 0 })
+    const e2 = await emailInvoice(token, inv.invoice_id, emails)
+    if (e2) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${inv.invoice_number}: invoice created but email failed (${e2}) — send from Books by hand.`).catch(() => {})
+    // On-site payers stay on the board until Collect flips them Paid (Phase B); net-terms cards are done.
+    const onSite = pay === 'on_site' || pay === 'either'
+    await updateJobPublic(req, job.id, { ...job, status: onSite ? 'ready_invoice' : 'complete', invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', zoho_invoice_id: inv.invoice_id, billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`, billing_mode: 'single', pay_mode: pay,
+      notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: invoice ${inv.invoice_number} ($${p.grand_total.toFixed(2)}${pct ? `, ${pct}% off` : ''}${isRetail ? `, tax ${p.tax?.pct}%` : ''}) → ${emails.join(', ')}${onSite ? ' · collect on site' : ''}` })
+  }
+  const summary = [
+    `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}* (${big3.CUSTOMER_TYPES[ctype]?.label || ctype || 'shop'})`,
+    `Invoice ${inv?.invoice_number || '(dry)'} $${p.grand_total.toFixed(2)}${pct ? ` · ${pct}% shown (list $${p.list_total.toFixed(2)})` : ''}${isRetail && p.tax ? ` · tax $${p.tax.amount.toFixed(2)}` : ''} → ${emails.join(', ')}`,
+    pay === 'net_terms' ? 'Net terms — emailed.' : '🚐 Collect on site — check, cash, or the card QR on the job card.',
+    `by ${by}`,
+  ].join('\n')
+  await postToCliqChannel(DISPATCH_CHANNEL, summary).catch(() => {})
+  console.log(`[bill-it single] ${dry ? 'DRY' : 'LIVE'} ${p.shop_name} ${ctype} ${pct}% $${p.grand_total} by ${by}`)
+  res.json({ ok: true, dry, mode: 'single', invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, preview: pub(p) })
+}
 
 export default router

@@ -155,6 +155,67 @@ export function Big3Badge({ shopName, size = 'xs' }) {
   return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#dcfce7', color: '#166534' }} title={describeRules(r)}>🧾 {text}</span>
 }
 
+// "🏢 Dealer · 10% · pays on site" on job + shop cards (Mark 2026-09-22).
+const TYPE_SHORT = { body_shop: 'Collision', repair_shop: 'Repair shop', dealer: 'Dealer', retail: 'Retail' }
+const PAY_SHORT = { on_site: 'pays on site', net_terms: 'net terms', either: 'on site or terms' }
+export function BillingPill({ shopName, size = 'xs' }) {
+  const map = useBig3Map()
+  const entry = map[shopKeyOf(shopName)]
+  if (!shopName) return null
+  const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
+  const b = entry?.billing
+  if (!b) return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e' }} title="No customer type yet — the first Bill it will ask (collision / repair shop / dealer / retail).">🏢 type? (asks at Bill it)</span>
+  const single = b.mode === 'single'
+  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: single ? '#e0f2fe' : '#ede9fe', color: single ? '#0369a1' : '#5b21b6' }} title={single ? 'One invoice, straight from the job' : 'Insurance invoice + cost invoice'}>🏢 {TYPE_SHORT[b.customer_type] || b.customer_type}{b.discount_pct != null ? ` · ${b.discount_pct}%` : ''}{b.customer_type === 'retail' ? ' · +10.1% tax' : ''} · {PAY_SHORT[b.pay_mode] || b.pay_mode || ''}</span>
+}
+
+// The three billing questions on the CRM card (Mark 2026-09-22).
+export function BillingQuestions({ shop }) {
+  const [d, setD] = useState(null)
+  const [f, setF] = useState({ customer_type: '', discount_pct: '', pay_mode: '' })
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const load = () => apiFetch(`${API_BASE}/api/shops/${shop.id}/big3`).then(r => r.json()).then(x => { if (x.ok) { setD(x); setF({ customer_type: x.customer_type || '', discount_pct: x.discount_pct ?? '', pay_mode: x.pay_mode || '' }) } }).catch(() => {})
+  useEffect(() => { if (shop?.id) load() }, [shop?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!d) return null
+  const types = d.types || {}, pays = d.pay_modes || {}
+  const pick = k => { const t = types[k]; setF(x => ({ customer_type: k, discount_pct: x.discount_pct === '' || x.discount_pct == null ? (t?.discount ?? 0) : x.discount_pct, pay_mode: x.pay_mode || t?.pay || '' })) }
+  async function save() {
+    setSaving(true); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/billing`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) })
+      const x = await r.json(); if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`)
+      invalidateBig3Map(); setMsg('✓ Saved — Bill it reads this on every invoice for this shop'); await load()
+    } catch (e) { setMsg(`✗ ${e.message}`) } finally { setSaving(false) }
+  }
+  const complete = !!f.customer_type
+  return (
+    <div className="rounded-xl p-4 mb-4" style={{ border: `1.5px solid ${complete ? '#bae6fd' : '#fde68a'}`, backgroundColor: complete ? '#f0f9ff' : '#fffbeb' }}>
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🏢 How we bill them</div>
+          <div className="text-xs" style={{ color: '#666' }}>{complete ? `${types[f.customer_type]?.label || f.customer_type} · ${types[f.customer_type]?.mode === 'dual' ? 'insurance + cost invoice' : 'one invoice'}` : 'Not set — the first Bill it will ask. Answer here and it never asks.'}</div>
+        </div>
+        <button type="button" onClick={save} disabled={saving || !f.customer_type} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0e7490', opacity: saving || !f.customer_type ? .4 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+      </div>
+      <div className="text-[11px] font-bold mb-1" style={{ color: '#555' }}>1 · What kind of customer?</div>
+      <div className="flex gap-1.5 flex-wrap mb-3">{Object.entries(types).map(([k, t]) => <button key={k} type="button" onClick={() => pick(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={f.customer_type === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{t.label}</button>)}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <div className="text-[11px] font-bold mb-1" style={{ color: '#555' }}>2 · Discount shown on their invoice</div>
+          <div className="flex items-center gap-2"><input type="number" min="0" max="60" value={f.discount_pct} onChange={e => setF(x => ({ ...x, discount_pct: e.target.value }))} className="w-20 text-base font-bold rounded-md px-2 py-1 text-right" style={{ border: '1.5px solid #e0dbd6' }} /><span className="text-sm" style={{ color: '#555' }}>% off list · 0 = list price</span></div>
+          {f.customer_type === 'retail' && <div className="text-[11px] mt-1" style={{ color: '#0369a1' }}>Retail always adds 10.1% sales tax.</div>}
+        </div>
+        <div>
+          <div className="text-[11px] font-bold mb-1" style={{ color: '#555' }}>3 · How do they pay?</div>
+          <div className="flex gap-1.5 flex-wrap">{Object.entries(pays).map(([k, l]) => <button key={k} type="button" onClick={() => setF(x => ({ ...x, pay_mode: k }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={f.pay_mode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l.split(' — ')[0]}</button>)}</div>
+        </div>
+      </div>
+      {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
+    </div>
+  )
+}
+
 // CRM Billing tab block — loads and saves the shop's rule.
 export default function Big3Rules({ shop }) {
   const [rules, setRules] = useState(null)
@@ -202,7 +263,8 @@ export default function Big3Rules({ shop }) {
       apiFetch(`${API_BASE}/api/shops/${shop.id}/big3`).then(r => r.json()).then(x => { if (x.ok) { setRules(x.rules); setMeta({ set_by: x.set_by, set_at: x.set_at }) } }).catch(() => {})
     } catch (e) { setMsg(`✗ Not saved: ${e.message} — try again, and tell Mark if it keeps happening`) } finally { setSaving(false) }
   }
-  return (
+  return (<>
+    <BillingQuestions shop={shop} />
     <div className="rounded-xl p-4 mb-4" style={{ border: `1.5px solid ${complete ? '#bbf7d0' : '#fde68a'}`, backgroundColor: complete ? '#f0fdf4' : '#fffbeb' }}>
       <div className="flex items-center justify-between mb-2">
         <div>
@@ -241,7 +303,7 @@ export default function Big3Rules({ shop }) {
         </div>
       )}
     </div>
-  )
+  </>)
 }
 
 
