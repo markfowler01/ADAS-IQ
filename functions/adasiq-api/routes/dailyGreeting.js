@@ -34,7 +34,9 @@ const DEFAULT_MONTHLY_GOAL = 20000
 const JOBS_TABLE = 'Jobs'
 const CRON_SECRET_FALLBACK = 'morning-2026'
 
-// Full roster. Techs get sales digests; non-techs get warm greetings only.
+// Fallback roster, used only if the Directory can't be read. Since
+// 2026-09-22 (Mark: "add whoever is new automatically to my 8am morning
+// text chain") the roster comes from the Directory — see rosterFromDirectory.
 // `to` is passed straight to postToCliqUser — accepts numeric ID OR email.
 const RECIPIENTS = [
   { name: 'Mark',   type: 'tech',    to: null,                          markChannel: true },
@@ -42,6 +44,41 @@ const RECIPIENTS = [
   { name: 'Kat',    type: 'greet',   to: 914153354 },
   { name: 'Joyce',  type: 'greet',   to: 'joyce@absoluteadas.com' },
 ]
+
+// The roster, live from the Directory: every active person with a company
+// email (or a known Cliq id) whose start date has arrived. Techs (track
+// ≠ ops, not Mark's channel) get the sales digest; ops get the greeting.
+// A new hire joins the chain the morning of their first day, with no edit
+// here. Falls back to the hard-coded list if the Directory is unreadable.
+async function rosterFromDirectory(req) {
+  try {
+    const { readTeamMembers } = await import('./team.js')
+    const { TECH_CLIQ_IDS } = await import('../services/cliq.js')
+    const today = todayPT()
+    const first = s => String(s || '').trim().split(/\s+/)[0]
+    const out = [], skipped = []
+    for (const m of await readTeamMembers(req)) {
+      const name = m.preferred_name || first(m.name)
+      if (m.active === false) { skipped.push({ name, why: 'inactive' }); continue }
+      if (m.hire_date && m.hire_date > today) { skipped.push({ name, why: `starts ${m.hire_date}` }); continue }
+      if (/\b(test|delete me)\b/i.test(m.name || '')) { skipped.push({ name, why: 'test record' }); continue }
+      const email = String(m.email || '').toLowerCase()
+      const isMark = email.startsWith('mark@') || m.employment === 'owner'
+      // Joyce's Directory card has no email (no app account) — her old address keeps the greeting going until Mark fills the card.
+      const KNOWN = { Joyce: 'joyce@absoluteadas.com' }
+      const to = isMark ? null : (TECH_CLIQ_IDS[name] || TECH_CLIQ_IDS[first(m.name)] || (email.endsWith('@absoluteadas.com') ? email : null) || KNOWN[first(m.name)] || null)
+      if (!isMark && !to) { skipped.push({ name, why: `no company email (${email || 'blank'})` }); continue }
+      const type = isMark || (m.track || 'tech') !== 'ops' ? 'tech' : 'greet'
+      out.push({ name, type, to, ...(isMark ? { markChannel: true } : {}), member_id: m.id })
+    }
+    if (!out.length) throw new Error('empty roster')
+    out.skipped = skipped
+    return out
+  } catch (e) {
+    console.log('[kickoff] Directory roster failed — using the fallback list:', e.message)
+    return RECIPIENTS
+  }
+}
 
 function requireCronSecret(req, res, next) {
   const expected = String(process.env.MORNING_CRON_SECRET || CRON_SECRET_FALLBACK).trim()
@@ -248,7 +285,8 @@ export async function sendMorningKickoff(req, { force = false } = {}) {
   const invoices = await listInvoicesForDateRange(fetchStart, dateStr)
 
   const results = []
-  for (const r of RECIPIENTS) {
+  const roster = await rosterFromDirectory(req)
+  for (const r of roster) {
     let msg
     let mtd = 0, refSales = 0, weekTotal = 0, jobsToday = 0
     if (r.type === 'tech') {
@@ -394,6 +432,12 @@ export async function maybeFireMorningKickoff(req) {
 // Cron-fired endpoint. Gate is inside the sender; ?force=1 bypasses it for
 // a deliberate manual test (this DMs real people — use sparingly).
 // ?stamp_only=1 claims today without sending (mute a day by hand).
+// Who the chain goes to right now (read-only; nothing sent).
+router.get('/roster', requireCronSecret, async (req, res) => {
+  const roster = await rosterFromDirectory(req)
+  res.json({ date: todayPT(), roster: roster.map(r => ({ name: r.name, type: r.type, to: r.markChannel ? 'mark-channel' : String(r.to), member_id: r.member_id || null })), skipped: roster.skipped || [], source: roster === RECIPIENTS ? 'fallback' : 'directory' })
+})
+
 router.post('/', requireCronSecret, async (req, res) => {
   try {
     if (req.query.stamp_only === '1') {
