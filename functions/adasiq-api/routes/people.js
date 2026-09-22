@@ -436,7 +436,7 @@ router.get('/onboarding', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 // What makes them pumped (phase 3): a video from Mark, the first-day plan.
-const WELCOME_DEFAULT = { kinetic_email: '', video_url: '', note: "Welcome to the crew. You're here because you do it right the first time — that's the whole job. First week you ride with me, then you're loose. GET SOME!!!", first_day: { where: 'Meet at the van — I\'ll text you the shop address the night before.', time: '7:45 AM', bring: "Driver's license, water, work boots, a good attitude. Shirts are in the van." } }
+const WELCOME_DEFAULT = { kinetic_email: 'parisa.sayadi@kinetic.auto', video_url: '', note: "Welcome to the crew. You're here because you do it right the first time — that's the whole job. First week you ride with me, then you're loose. GET SOME!!!", first_day: { where: 'Meet at the van — I\'ll text you the shop address the night before.', time: '7:45 AM', bring: "Driver's license, water, work boots, a good attitude. Shirts are in the van." } }
 router.put('/onboarding/welcome', async (req, res) => {
   try {
     if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
@@ -507,7 +507,7 @@ router.post('/onboarding/:id/kinetic-email', async (req, res) => {
     const { m } = await memberFor(req, req.params.id)
     if (!m) return res.status(404).json({ error: 'Not found' })
     const w = await cfgJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
-    const to = String(req.body?.to || w.kinetic_email || '').trim()
+    const to = String(req.body?.to || w.kinetic_email || WELCOME_DEFAULT.kinetic_email || '').trim()
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return res.status(400).json({ error: 'Set the Kinetic support email first (🚀 Onboarding → Welcome video + first day).' })
     const email = emailFor(m)
     const { getMailAccessToken, getMailAccountId, sendMail } = await import('../services/mail.js')
