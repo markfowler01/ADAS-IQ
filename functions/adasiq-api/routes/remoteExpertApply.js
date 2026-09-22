@@ -5,7 +5,10 @@
 // email from mf@absoluteadas.com once a week so the ask never lapses. It is
 // deliberately a plain, polite, one-screen email — not marketing copy.
 //
-// Fired by .github/workflows/remote-expert-weekly.yml (Tuesday ~9:17 AM PT).
+// Fired by .github/workflows/remote-expert-weekly.yml (Monday 8:00 AM Eastern).
+// Mark 2026-09-22: wording must change every week — Claude rewrites the
+// locked base letter each send (same facts, fresh phrasing), validated
+// against a fact list; any failure falls back to the base copy verbatim.
 // POST /api/cron/remote-expert-apply   (x-cron-secret: MORNING_CRON_SECRET)
 //   ?dry=1    → compose only, return the email, send nothing
 //   ?force=1  → ignore the 5-day spacing guard
@@ -15,6 +18,7 @@
 // AppConfig, not Cache — Cache tops out at 48h and this is weekly.
 
 import express from 'express'
+import Anthropic from '@anthropic-ai/sdk'
 import catalyst from 'zcatalyst-sdk-node'
 import { getMailAccessToken, getMailAccountIdFor, sendMail } from '../services/mail.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
@@ -27,7 +31,16 @@ const router = express.Router()
 // to from Zoho Mail. Env override so it can change without a code edit.
 const TO_ADDRESS   = (process.env.REMOTE_EXPERT_APPLY_TO || '').trim()
 const FROM_ADDRESS = 'mf@absoluteadas.com'
-const SUBJECT      = 'Remote Expert standby for Pacific hours and rare makes (Mark Fowler, 30-year technician)'
+// Subject rotates weekly so each ask reads fresh in their inbox.
+const SUBJECTS = [
+  'Remote Expert standby for Pacific hours and rare makes (Mark Fowler, 30-year technician)',
+  'Remote Expert: a backup for your thinnest hours (Mark Fowler, Absolute ADAS)',
+  'Weekly check-in: Remote Expert application, Pacific time + network diagnostics',
+  'Still here for the gaps: Remote Expert application from a 30-year technician',
+  'Remote Expert overflow, West Coast hours, Bentley/Lamborghini/Stellantis (Mark Fowler)',
+  'Remote Expert application, week check-in: Mark Fowler, Absolute ADAS',
+]
+const subjectFor = n => SUBJECTS[(Math.max(1, n) - 1) % SUBJECTS.length]
 const MIN_DAYS_BETWEEN_SENDS = 5
 const CRON_NAME    = 'remote_expert_apply'
 const CONFIG_KEY   = 'remote_expert_apply'
@@ -86,8 +99,63 @@ export function composeEmail(n, todayPT) {
     'absoluteadas.com',
   ]
   const text = lines.join('\n')
-  const html = lines.map(l => l === '' ? '<br>' : `<div>${escapeHtml(l)}</div>`).join('\n')
-  return { to: TO_ADDRESS, from: FROM_ADDRESS, subject: SUBJECT, text, html, week: n, date: todayPT }
+  const html = toHtml(text)
+  return { to: TO_ADDRESS, from: FROM_ADDRESS, subject: subjectFor(n), text, html, week: n, date: todayPT, variant: 'base' }
+}
+
+function toHtml(text) {
+  return String(text).split('\n').map(l => l === '' ? '<br>' : `<div>${escapeHtml(l)}</div>`).join('\n')
+}
+
+// ── Weekly rewording ────────────────────────────────────────────────────────
+// Facts that must survive any rewrite. If Claude drops one, or invents a
+// number the base letter never had, we send the base copy instead.
+const REQUIRED = ['ODIS', 'XENTRY', 'ISTA', 'FDRS', 'FJDS', 'GDS2', 'SPS2', 'wiTECH', 'Master Certified',
+  'Bentley', 'Lamborghini', '30 years', 'Pacific', 'CAN', 'Absolute ADAS', FROM_ADDRESS, 'weekly check-in']
+const numbersIn = t => new Set((String(t).match(/\d+/g) || []))
+
+export function validateVariant(text, base) {
+  const problems = []
+  for (const r of REQUIRED) if (!text.includes(r)) problems.push(`missing: ${r}`)
+  const allowed = numbersIn(base)
+  for (const n of numbersIn(text)) if (!allowed.has(n)) problems.push(`new number: ${n}`)
+  if (/[—!]/.test(text)) problems.push('em dash or exclamation')
+  const ratio = text.length / base.length
+  if (ratio < 0.6 || ratio > 1.4) problems.push(`length ratio ${ratio.toFixed(2)}`)
+  return problems
+}
+
+export async function varyEmail(base, n) {
+  if (!process.env.ANTHROPIC_API_KEY) return { text: base, variant: 'base', reason: 'no api key' }
+  const claude = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  const seed = ['plain and direct', 'warm and brief', 'matter-of-fact, shop-floor voice', 'confident and short', 'friendly, one idea per sentence', 'straight talk, no filler'][(n - 1) % 6]
+  const prompt = `Rewrite the letter below so it reads fresh, in a ${seed} tone. It is week ${n} of a weekly check-in to Autel's Remote Expert program from Mark Fowler, a 30-year technician.
+
+Hard rules:
+- Same facts only. Do not add, remove, or change any claim, tool, make, number, year, hour, or credential. Do not invent anything.
+- Keep every OEM tool line (ODIS, XENTRY, ISTA, FDRS, FJDS, GDS2, SPS2, wiTECH) and what each is used for. You may reorder or reformat them.
+- Keep the four "gaps" ideas: Pacific hours standby with a 10 minute response, rare makes, network and no-communication problems, overflow-only.
+- Keep the CAN network X-ray idea and the "I have been that tech" idea.
+- Keep the line "This is my ${n <= 1 ? 'first' : n + ordinalSuffix(n)} weekly check-in." exactly, and the closing signature block exactly as written.
+- Short sentences. No em dashes. No exclamation points. No marketing words. No headings. Plain text only, no markdown.
+- Length within 20 percent of the original.
+
+Return only the rewritten letter, starting with the greeting.
+
+LETTER:
+${base}`
+  try {
+    const r = await claude.messages.create({
+      model: 'claude-sonnet-4-6', max_tokens: 1800, temperature: 1,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    const text = (r.content?.[0]?.text || '').trim()
+    const problems = validateVariant(text, base)
+    if (problems.length) return { text: base, variant: 'base', reason: problems.join('; ') }
+    return { text, variant: 'claude' }
+  } catch (e) {
+    return { text: base, variant: 'base', reason: e.message }
+  }
 }
 
 function ordinalSuffix(n) {
@@ -141,6 +209,11 @@ router.all('/', heartbeatAttempt(CRON_NAME), requireCronSecret, async (req, res)
     const state = await readState(app)
     const n = (state.count || 0) + 1
     const email = composeEmail(n, today)
+    const varied = await varyEmail(email.text, n)
+    email.text = varied.text
+    email.html = toHtml(varied.text)
+    email.variant = varied.variant
+    if (varied.reason) email.fallback_reason = varied.reason
 
     if (dry) {
       return res.json({ ok: true, dry: true, would_send: !!TO_ADDRESS, state: { count: state.count, last_sent: state.last_sent }, email })
@@ -154,18 +227,18 @@ router.all('/', heartbeatAttempt(CRON_NAME), requireCronSecret, async (req, res)
 
     const token = await getMailAccessToken()
     const accountId = await getMailAccountIdFor(token, FROM_ADDRESS)
-    await sendMail(token, accountId, { to: TO_ADDRESS, subject: SUBJECT, body: email.html })
+    await sendMail(token, accountId, { to: TO_ADDRESS, subject: email.subject, body: email.html })
 
     const sentAt = new Date().toISOString()
-    await writeState(app, { ...state, count: n, last_sent: sentAt, history: [...(state.history || []), sentAt] })
-    await stampSuccess(req, CRON_NAME, { count: n })
+    await writeState(app, { ...state, count: n, last_sent: sentAt, history: [...(state.history || []), { at: sentAt, subject: email.subject, variant: email.variant }] })
+    await stampSuccess(req, CRON_NAME, { count: n, variant: email.variant })
 
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `📨 Knock #${n}: weekly Autel Remote Expert application sent to ${TO_ADDRESS} from ${FROM_ADDRESS}. ` +
+      `📨 Knock #${n}: weekly Autel Remote Expert application sent to ${TO_ADDRESS} from ${FROM_ADDRESS} (${email.variant === 'claude' ? 'fresh wording' : 'base copy'}). ` +
       `It's in your Zoho Sent folder. If they reply, this keeps going until you tell me to stop.`
     ).catch(() => {})
 
-    return res.json({ ok: true, sent: true, count: n, to: TO_ADDRESS, at: sentAt })
+    return res.json({ ok: true, sent: true, count: n, to: TO_ADDRESS, at: sentAt, subject: email.subject, variant: email.variant })
   } catch (e) {
     console.error('[remote-expert-apply] failed:', e.response?.data || e.message)
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,

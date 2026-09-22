@@ -2,15 +2,17 @@ name: Knock — weekly Autel Remote Expert application
 
 # Mark 2026-09-22: Autel keeps saying there are no Remote Expert spots and he
 # keeps forgetting to ask again. This fires the app's weekly application
-# email (from mf@absoluteadas.com via Zoho Mail) every Tuesday morning. The
-# route itself refuses to send twice inside 5 days, so a GitHub retry or a
-# manual run can never double-send.
+# email (from mf@absoluteadas.com via Zoho Mail) every MONDAY at 8:00 AM
+# EASTERN, with fresh wording each week (Claude rewrite, validated).
 #
-# 16:17 UTC = 9:17 AM PDT / 8:17 AM PST. Kept clear of GitHub's 13:00-14:30
-# UTC congestion window where schedules get silently dropped.
+# GitHub fires crons late and DST moves 8 AM ET between 12:00 and 13:00 UTC,
+# so two crons are scheduled 10 min early and the job waits for 08:00 ET.
+# The wrong-DST twin lands ~08:50 ET and exits. The route itself also
+# refuses to send twice inside 5 days, so nothing can double-send.
 on:
   schedule:
-    - cron: '17 16 * * 2'
+    - cron: '50 11 * * 1'   # 7:50 AM EDT
+    - cron: '50 12 * * 1'   # 7:50 AM EST
   workflow_dispatch:
     inputs:
       mode:
@@ -26,11 +28,16 @@ jobs:
   knock:
     runs-on: ubuntu-latest
     steps:
-      - name: Fire the weekly application
+      - name: Fire the weekly application at 8:00 AM Eastern
         run: |
           MODE="${{ inputs.mode || 'send' }}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            now=$(TZ=America/New_York date +%H%M)
+            if [ "$now" -gt "0830" ]; then echo "wrong-DST twin ($now ET), exiting"; exit 0; fi
+            while [ "$(TZ=America/New_York date +%H%M)" -lt "0800" ]; do sleep 20; done
+          fi
           Q=""; [ "$MODE" = "dry" ] && Q="?dry=1"
-          code=$(curl -sS -o /tmp/k.json -w '%{http_code}' --max-time 90 -X POST \
+          code=$(curl -sS -o /tmp/k.json -w '%{http_code}' --max-time 120 -X POST \
             -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" \
             "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/cron/remote-expert-apply$Q")
           echo "mode=$MODE http=$code"; head -c 1500 /tmp/k.json; echo
