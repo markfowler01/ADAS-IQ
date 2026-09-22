@@ -75,14 +75,15 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
       <div className="rounded-2xl p-3 mb-4" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="text-[10px] uppercase tracking-wider font-bold" style={{ color: '#555', fontFamily: 'IBM Plex Mono, monospace' }}>⚙️ Setup</div>
-          {!setup && <button onClick={() => setSetup({ experience_level: m.experience_level, van: m.van, scan_tool: m.scan_tool, region: m.region, route_notes: m.route_notes, hire_date: m.hire_date, email: m.work_email })} className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>Edit</button>}
+          {!setup && <button onClick={() => setSetup({ experience_level: m.experience_level, van: m.van, scan_tool: m.scan_tool, route_zone: m.route_zone, route_notes: m.route_notes, hire_date: m.hire_date, email: m.work_email })} className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>Edit</button>}
         </div>
         {!setup ? (
           <div className="flex gap-x-4 gap-y-1 flex-wrap text-xs mt-1" style={{ color: '#374151' }}>
             <span>🎓 <b>{m.experience_level === 'certified' ? 'Certified tech · ~1 week ride-along' : 'New to calibration · ~3 weeks ride-along'}</b></span>
             <span>✉️ {m.work_email}</span>
             {m.track !== 'ops' && <span>🚐 {m.van ? `Van ${m.van}` : <i style={{ color: RED }}>no van assigned</i>}{m.scan_tool ? ` · ${m.scan_tool}` : ''}</span>}
-            {m.track !== 'ops' && <span>🗺 {m.region || <i style={{ color: RED }}>no area</i>}{m.route_notes ? ` · ${m.route_notes.slice(0, 60)}${m.route_notes.length > 60 ? '…' : ''}` : ''}</span>}
+            {m.track !== 'ops' && <span>🗺 {m.route_zone ? `${m.region} zone` : <i style={{ color: RED }}>no territory</i>}{d.route?.service ? ` · ${d.route.service.length} service shop${d.route.service.length === 1 ? '' : 's'} · ${d.route.grow.length} to grow` : ''}{m.route_notes ? ` · ${m.route_notes.slice(0, 50)}${m.route_notes.length > 50 ? '…' : ''}` : ''}</span>}
+            <span>👕 {m.shirt_size || <i style={{ color: '#999' }}>shirt ?</i>} · 👖 {m.pants_waist || m.pants_inseam ? `W${m.pants_waist || '?'}×L${m.pants_inseam || '?'}` : <i style={{ color: '#999' }}>pants ?</i>}</span>
           </div>
         ) : (
           <div className="mt-2">
@@ -94,10 +95,15 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
               <label className="text-[11px] font-bold sm:col-span-2" style={{ color: '#888' }}>Work email (Zoho user to create)<input value={setup.email || ''} onChange={e => setSetup(x => ({ ...x, email: e.target.value }))} className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>
               {m.track !== 'ops' && <><label className="text-[11px] font-bold" style={{ color: '#888' }}>Van #<input value={setup.van || ''} onChange={e => setSetup(x => ({ ...x, van: e.target.value }))} placeholder="Van 2" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>
               <label className="text-[11px] font-bold" style={{ color: '#888' }}>Scan tool<input value={setup.scan_tool || ''} onChange={e => setSetup(x => ({ ...x, scan_tool: e.target.value }))} placeholder="Autel MA600 #…" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>
-              <label className="text-[11px] font-bold" style={{ color: '#888' }}>Area<input value={setup.region || ''} onChange={e => setSetup(x => ({ ...x, region: e.target.value }))} placeholder="Tacoma / South Sound" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label></>}
+              <label className="text-[11px] font-bold" style={{ color: '#888' }}>Territory (CRM zone)<select value={setup.route_zone || ''} onChange={e => setSetup(x => ({ ...x, route_zone: e.target.value }))} className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp}><option value="">— pick —</option>{(d.zones || []).map(z => <option key={z.id} value={z.id}>{z.label} · {z.day}</option>)}</select></label></>}
             </div>
-            {m.track !== 'ops' && <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>Route — shops they service, shops to grow<textarea value={setup.route_notes || ''} onChange={e => setSetup(x => ({ ...x, route_notes: e.target.value }))} rows={2} placeholder="Service: Avon, B&H, L-M. Grow: Carstar Bellevue, Express Auto Body…" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>}
+            {m.track !== 'ops' && <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>Route notes — anything beyond the zone's shops<textarea value={setup.route_notes || ''} onChange={e => setSetup(x => ({ ...x, route_notes: e.target.value }))} rows={2} placeholder="Service: Avon, B&H, L-M. Grow: Carstar Bellevue, Express Auto Body…" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>}
             <div className="flex gap-2"><button onClick={saveSetup} disabled={busy === 'setup'} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: GREEN }}>{busy === 'setup' ? 'Saving…' : 'Save — re-dates the runway'}</button><button onClick={() => setSetup(null)} className="text-xs px-2" style={{ color: '#888' }}>cancel</button></div>
+          </div>
+        )}
+        {d.route?.service && !setup && (
+          <div className="text-[11px] mt-2" style={{ color: '#555' }}>
+            <b>Service:</b> {d.route.service.join(', ') || 'none yet'}{d.route.grow.length ? <> · <b>Grow:</b> {d.route.grow.slice(0, 8).join(', ')}{d.route.grow.length > 8 ? ` +${d.route.grow.length - 8}` : ''}</> : null}
           </div>
         )}
       </div>
@@ -153,7 +159,7 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
             </div>
             {linkResult && <div className="text-[11px] mt-1.5" style={{ color: '#555' }}>{linkResult}</div>}
           </div>
-          <div className="text-[11px] mt-2" style={{ color: '#166534' }}>Their login turns on by itself once training, the handbook and the paperwork are in. Crew gets a "say hi" in #dispatch when they hit 100%.</div>
+          <div className="text-[11px] mt-2" style={{ color: '#166534' }}>Their app account is on from Hired — it works the moment Kat creates their Zoho user. Crew gets a "say hi" in #dispatch when they hit 100%.</div>
         </div>
       </div>
     </Shell>

@@ -183,7 +183,13 @@ router.post('/exchange', async (req, res) => {
     try {
       const { findMemberByIdentity } = await import('./team.js')
       const m = await findMemberByIdentity(req, mapped, name)
-      if (m && m.active !== false && m.role && m.role !== 'none') { dirRole = { role: m.role, techName: m.role === 'technician' ? (m.preferred_name || m.name.split(' ')[0]) : undefined }; dirName = m.name; if (!mapped && m.user_id) mapped = m.user_id }
+      if (m && m.active !== false && m.role && m.role !== 'none') {
+        dirRole = { role: m.role, techName: m.role === 'technician' ? (m.preferred_name || m.name.split(' ')[0]) : undefined }; dirName = m.name; if (!mapped && m.user_id) mapped = m.user_id
+        // First sign-in ticks the onboarding item (2026-09-22).
+        if (m.checklist?.kind === 'onboarding' && !m.checklist.completed_at && m.checklist.items.some(i => i.key === 'login' && !i.done)) {
+          try { const { tickChecklist } = await import('./people.js'); const { saveMemberPublic } = await import('./team.js'); tickChecklist(m, 'login', 'first sign-in'); await saveMemberPublic(req, m) } catch (e) { console.warn('[auth] login tick failed:', e.message) }
+        }
+      }
       else if (m && (m.role === 'none' || m.active === false)) return res.status(403).json({ error: `${m.name} doesn't have app access. Ask Mark.` })
     } catch (e) { console.warn('[auth] directory lookup failed:', e.message) }
     const user = {

@@ -116,9 +116,11 @@ router.get('/:id', async (req, res) => {
     const progress = m.training || {}
     const company = await cfgReadJson(req, 'company_page', null)
     const welcome = await cfgReadJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
+    let route = null
+    if (m.route_zone) { try { const { ZONE_BY_ID } = await import('../services/pipeline.js'); const { getAllShops } = await import('./shops.js'); const z = ZONE_BY_ID[m.route_zone]; const shops = (await getAllShops(req)).filter(x => x.region === m.route_zone && ['active', 'active2'].includes(x.stage || x.pipeline_stage)).map(x => x.shop_name); route = { zone: z?.label || m.region, day: z?.day || '', shops } } catch { route = { zone: m.region, day: '', shops: [] } } }
     const crew = members.filter(x => x.active !== false && x.id !== m.id && x.employment !== undefined).map(x => ({ name: x.preferred_name ? `${x.preferred_name} ${x.name.split(' ').slice(1).join(' ')}` : x.name, title: x.title || '', department: x.department || '', photo_url: x.photo_url || '', phone: x.phone || '', color: x.avatar_color || '#CD4419', is_boss: x.user_id === m.reports_to }))
-    res.json({ ok: true, mode, welcome, crew,
-      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '', van: m.van || '', scan_tool: m.scan_tool || '', van_handover: m.van_handover || null, equipment: (m.equipment || []).map(e => ({ name: e.name, serial: e.serial || '', issued: e.issued || '' })) },
+    res.json({ ok: true, mode, welcome, crew, route,
+      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '', van: m.van || '', scan_tool: m.scan_tool || '', van_handover: m.van_handover || null, equipment: (m.equipment || []).map(e => ({ name: e.name, serial: e.serial || '', issued: e.issued || '' })) },
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
       signed: m.signatures || {},
@@ -136,7 +138,9 @@ router.post('/:id/profile', async (req, res) => {
   try {
     const g = await guard(req, res); if (!g) return
     const { m } = g; const b = req.body || {}
-    for (const k of ['preferred_name', 'personal_phone', 'personal_email', 'address', 'birthday', 'shirt_size']) if (b[k] !== undefined) m[k] = String(b[k]).slice(0, 200)
+    for (const k of ['preferred_name', 'personal_phone', 'personal_email', 'address', 'birthday', 'shirt_size', 'pants_waist', 'pants_inseam']) if (b[k] !== undefined) m[k] = String(b[k]).slice(0, 200)
+    // Sizes change the uniform line on our side.
+    try { const { restampChecklist } = await import('./people.js'); restampChecklist(m) } catch { /* fine */ }
     if (b.license_expiry !== undefined) m.license_expiry = /^\d{4}-\d{2}-\d{2}$/.test(String(b.license_expiry)) ? String(b.license_expiry) : ''
     if (b.license_number !== undefined) m.license_last4 = String(b.license_number).replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase()   // never the full number
     if (b.phone !== undefined && !m.phone) m.phone = String(b.phone).slice(0, 40)

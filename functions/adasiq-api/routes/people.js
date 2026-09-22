@@ -70,16 +70,18 @@ function stripPay(m) { const { hourly_rate, payroll_type, salary_annual, period_
 // one). "auto" items tick themselves from the portal.
 const ONBOARDING = [
   // ── before day one: accounts + kit (Mark 2026-09-22, the real list) ──
-  { key: 'zoho_account',   label: 'Zoho user + email created — {email}', owner: 'mark', due: -10 },
+  { key: 'zoho_account',   label: 'Zoho user + email created — {email}', owner: 'kat', due: -10 },
   { key: 'invite',         label: 'Onboarding link sent (text + email)', owner: 'auto', due: -10 },
   { key: 'contract',       label: 'Contract / offer letter signed', owner: 'auto', due: -10 },
   { key: 'sim',            label: 'SIM card / hotspot ordered for the tablet', owner: 'kat', due: -7, tech_only: true },
+  { key: 'uniform',        label: 'Uniform ordered — 6 khaki pants (Costco) {pants}, 6 embroidered polos {shirt}, hat', owner: 'kat', due: -7 },
+  { key: 'insurance',      label: 'Added to the Progressive auto policy — BEFORE they drive', owner: 'kat', due: -3, tech_only: true },
   { key: 'photo',          label: 'Profile photo uploaded', owner: 'auto', due: -7 },
   { key: 'emergency',      label: 'Personal info + emergency contact filled in', owner: 'auto', due: -7 },
   { key: 'ids',            label: "Driver's license + Social Security card photographed", owner: 'auto', due: -7 },
   { key: 'kinetic',        label: 'Kinetic: added to our account so they can look up calibrations (one-tap email below)', owner: 'kat', due: -3, tech_only: true },
-  { key: 'alldata',        label: 'AllData login + password created', owner: 'mark', due: -3, tech_only: true },
-  { key: 'autoauth',       label: 'AutoAuth (secure gateway) access set up', owner: 'mark', due: -3, tech_only: true },
+  { key: 'alldata',        label: 'AllData login + password created', owner: 'kat', due: -3, tech_only: true },
+  { key: 'autoauth',       label: 'AutoAuth (secure gateway) access set up', owner: 'kat', due: -3, tech_only: true },
   { key: 'w4',             label: 'Form W-4 uploaded', owner: 'auto', due: -3, w2_only: true },
   { key: 'mvr',            label: 'Driving record (MVR) on file — techs drive customers\' cars', owner: 'auto', due: -3, tech_only: true },
   { key: 'direct_deposit', label: 'Direct deposit / payout authorization signed', owner: 'auto', due: -3 },
@@ -89,13 +91,13 @@ const ONBOARDING = [
   { key: 'cliq',           label: 'Added to Cliq — {cliq}', owner: 'kat', due: -1 },
   { key: 'gear',           label: 'Kit issued — every line gets an issue date', owner: 'mark', due: -1 },
   { key: 'training',       label: 'Training course passed — all modules', owner: 'auto', due: -1 },
-  { key: 'login',          label: 'App login turned on (flips itself once training + paperwork are done)', owner: 'auto', due: -1 },
+  { key: 'login',          label: 'Signed into the Absolute ADAS app at least once (account is on from day one so they can poke around)', owner: 'auto', due: -3 },
   // ── day one and after ──
   { key: 'van_handover',   label: 'Van handover done by the tech on their portal — tools inventoried with photos + video, mileage, tread, damage, signed', owner: 'auto', due: 0, tech_only: true },
-  { key: 'payroll',        label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise, from the signed payout PDF', owner: 'mark', due: 2 },
-  { key: 'i9',             label: 'Form I-9 completed in Zoho Payroll (within 3 business days of the start date)', owner: 'mark', due: 3, w2_only: true },
+  { key: 'payroll',        label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise, from the signed payout PDF', owner: 'kat', due: 2 },
+  { key: 'i9',             label: 'Form I-9 completed in Zoho Payroll (within 3 business days of the start date)', owner: 'kat', due: 3, w2_only: true },
   { key: 'rideaong',       label: 'Ride-along with Mark done — {ride}', owner: 'mark', due: 7 },
-  { key: 'oem',            label: 'OEM tool logins — one shared subscription if we can swing it', owner: 'mark', due: 30, tech_only: true },
+  { key: 'oem',            label: 'OEM tool logins — one shared subscription if we can swing it', owner: 'kat', due: 30, tech_only: true },
   { key: 'checkin30',      label: '30-day check-in logged', owner: 'mark', due: 30 },
 ]
 // Ride-along length depends on who they are (Mark): green → three weeks, certified → one.
@@ -104,7 +106,9 @@ const rideText = m => (m.experience_level === 'certified' ? 'certified tech, abo
 const cliqText = m => ((m.track || 'tech') === 'ops' ? '#dispatch + #technicians' : '#technicians + #technician-notifications')
 const emailFor = m => (m.email || `${String(m.preferred_name || m.name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '')}@absoluteadas.com`)
 function fillLabel(t, m) {
-  return t.label.replace('{email}', emailFor(m)).replace('{cliq}', cliqText(m)).replace('{ride}', rideText(m))
+  const pants = m.pants_waist || m.pants_inseam ? `(W${m.pants_waist || '?'} × L${m.pants_inseam || '?'})` : '(waist/inseam from their portal)'
+  const shirt = m.shirt_size ? `(${m.shirt_size})` : '(size from their portal)'
+  return t.label.replace('{email}', emailFor(m)).replace('{cliq}', cliqText(m)).replace('{ride}', rideText(m)).replace('{pants}', pants).replace('{shirt}', shirt)
 }
 function dueFor(t, m) { return t.key === 'rideaong' ? rideDays(m) : t.due }
 export { WELCOME_DEFAULT }
@@ -300,8 +304,8 @@ export function restampChecklist(m) {
 // Per-role equipment kits (Mark 2026-09-22: automate our side). Landed on
 // the record at Hired with no issue date; 'gear' ticks when every line has one.
 const KITS = {
-  tech: ['Van + keys', 'Autel scan tool + tablet', 'Calibration frame + targets', 'Radar reflector / doppler', 'Tire pressure gauge', 'Company phone', 'Uniform shirts (3)', 'Fuel card'],
-  apprentice: ['Autel tablet (shared)', 'Company phone', 'Uniform shirts (3)', 'Safety glasses + gloves'],
+  tech: ['Van + keys', 'Autel MA600 All Systems package (tablet + VCI)', 'Calibration tool kit — targets, reflectors, frame, the whole shebang', 'Basic hand tool set', 'Tread depth gauge', 'Tire pressure gauge', 'Tablet SIM / hotspot', 'Khaki pants ×6', 'Embroidered polos ×6', 'Hat', 'Fuel card'],
+  apprentice: ['Basic hand tool set', 'Tread depth gauge', 'Khaki pants ×6', 'Embroidered polos ×6', 'Hat', 'Safety glasses + gloves'],
   ops: ['Laptop / login to Zoho Books + Cliq', 'Headset', 'Company phone (optional)'],
 }
 export function seedKit(m) {
@@ -319,15 +323,7 @@ export async function autoAdvance(req, m) {
   // gear: every kit line has an issue date
   if (has('gear') && !done('gear') && Array.isArray(m.equipment) && m.equipment.length && m.equipment.every(e => e.issued)) { tickChecklist(m, 'gear', 'auto'); changed = true }
   if (has('van_assigned') && !done('van_assigned') && m.van) { tickChecklist(m, 'van_assigned', 'auto'); changed = true }
-  if (has('route') && !done('route') && m.region && m.route_notes) { tickChecklist(m, 'route', 'auto'); changed = true }
-  // login: training passed + (I-9 for W-2 | contract for contractors) → access from track
-  const paperwork = m.employment === 'contractor' ? done('contract') : (!has('i9') || done('i9'))
-  if (has('login') && !done('login') && done('training') && done('handbook') && paperwork && (m.access === 'none' || !m.access)) {
-    m.access = (m.track || 'tech') === 'ops' ? 'dispatcher' : 'technician'
-    tickChecklist(m, 'login', 'auto'); changed = true
-    try { const { invalidateGate } = await import('./team.js'); invalidateGate() } catch { /* fine */ }
-    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🔓 *${m.name}'s app login is on* (${m.access}) — training, handbook and paperwork are all in.`) } catch { /* fine */ }
-  }
+  if (has('route') && !done('route') && m.route_zone) { tickChecklist(m, 'route', 'auto'); changed = true }
   return { changed }
 }
 export function addBusinessDays(iso, n) { let d = new Date(iso + 'T12:00:00Z'); let left = n; while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) left-- } return d.toISOString().slice(0, 10) }
@@ -393,7 +389,10 @@ router.get('/onboarding/:id/launch', async (req, res) => {
       ...((m.track || 'tech') !== 'ops' ? [['van', 'Van handover signed (photos, video, mileage, tread)', !!m.van_handover?.at]] : []),
     ].map(([key, label, done]) => ({ key, label, done }))
     const w = await cfgJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
-    res.json({ ok: true, member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, track: m.track || 'tech', employment: m.employment, hire_date: m.hire_date || '', photo_url: m.photo_url || '', phone: m.phone || m.personal_phone || '', email: m.personal_email || m.email || '', work_email: emailFor(m), access: m.access, boss: members.find(x => x.user_id === m.reports_to)?.name || '', experience_level: m.experience_level || 'green', van: m.van || '', scan_tool: m.scan_tool || '', region: m.region || '', route_notes: m.route_notes || '', kinetic_requested_at: m.kinetic_requested_at || '', van_handover: m.van_handover || null },
+    const { ZONES } = await import('../services/pipeline.js')
+    let route = null
+    if (m.route_zone) { try { const { getAllShops } = await import('./shops.js'); const shops = (await getAllShops(req)).filter(x => x.region === m.route_zone); route = { service: shops.filter(x => ['active', 'active2'].includes(x.stage || x.pipeline_stage)).map(x => x.shop_name), grow: shops.filter(x => !['active', 'active2', 'lost', 'denied'].includes(x.stage || x.pipeline_stage)).map(x => x.shop_name).slice(0, 25) } } catch (e) { route = { error: e.message } } }
+    res.json({ ok: true, zones: ZONES.map(z => ({ id: z.id, label: z.label, day: z.day })), route, member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, track: m.track || 'tech', employment: m.employment, hire_date: m.hire_date || '', photo_url: m.photo_url || '', phone: m.phone || m.personal_phone || '', email: m.personal_email || m.email || '', work_email: emailFor(m), access: m.access, boss: members.find(x => x.user_id === m.reports_to)?.name || '', experience_level: m.experience_level || 'green', van: m.van || '', scan_tool: m.scan_tool || '', region: m.region || '', route_zone: m.route_zone || '', route_notes: m.route_notes || '', pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', shirt_size: m.shirt_size || '', kinetic_requested_at: m.kinetic_requested_at || '', van_handover: m.van_handover || null },
       kinetic_email: w.kinetic_email || '',
       ours: (m.checklist?.kind === 'onboarding' ? m.checklist.items : []).map(i => ({ ...i, owner: i.owner || ONBOARDING.find(t => t.key === i.key)?.owner || 'mark' })), theirs, portal_pct: onboardingPct(m), equipment: m.equipment || [],
       link: { invited_at: m.onboarding_invited_at || '', revoked_at: m.onboarding_revoked_at || '', completed_at: m.onboarding_completed_at || '' }, today: todayPT() })
@@ -407,7 +406,8 @@ router.post('/onboarding/:id/setup', async (req, res) => {
     if (!m) return res.status(404).json({ error: 'Not found' })
     const b = req.body || {}
     if (b.experience_level !== undefined) m.experience_level = b.experience_level === 'certified' ? 'certified' : 'green'
-    for (const k of ['van', 'scan_tool', 'region', 'route_notes']) if (b[k] !== undefined) m[k] = String(b[k]).slice(0, k === 'route_notes' ? 600 : 80)
+    for (const k of ['van', 'scan_tool', 'route_notes']) if (b[k] !== undefined) m[k] = String(b[k]).slice(0, k === 'route_notes' ? 600 : 80)
+    if (b.route_zone !== undefined) { const { ZONE_BY_ID } = await import('../services/pipeline.js'); const z = ZONE_BY_ID[String(b.route_zone)]; m.route_zone = z ? z.id : ''; if (z) m.region = z.label }
     if (b.hire_date !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(String(b.hire_date))) m.hire_date = b.hire_date
     if (b.email !== undefined) { const e = String(b.email).trim().toLowerCase().slice(0, 120); if (e && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { m.email = e; if (!m.user_id || !m.user_id.includes('@')) m.user_id = e } }
     restampChecklist(m)
@@ -880,6 +880,8 @@ export async function onCandidateHired(req, cand) {
   const roleText = String(cand.role || '').toLowerCase()
   const track = /apprentice|trainee|junior/.test(roleText) ? 'apprentice' : /billing|dispatch|office|admin|assistant|book|account|ops/.test(roleText) ? 'ops' : 'tech'
   const m = await createMemberPublic(req, { name: cand.name, email, user_id: email, phone: cand.phone || '', title: cand.role || (track === 'apprentice' ? 'Apprentice ADAS Technician' : track === 'ops' ? 'Billing & Dispatch' : 'ADAS Calibration Technician'), department: track === 'ops' ? 'Operations' : 'Field', track, access: 'none', employment: 'w2', reports_to: 'mark@absoluteadas.com', region: cand.city || '', hire_date: todayPT(), notes: `From Recruiting${cand.source ? ` (${cand.source})` : ''}. Set App access once ready.` })
+  // Account on from day one (Mark 2026-09-22: "make up an account so they can get familiar").
+  m.access = track === 'ops' ? 'dispatcher' : 'technician'
   startChecklist(m, 'onboarding', req.user?.name || 'Recruiting')
   seedKit(m)
   await saveMember(req, m)

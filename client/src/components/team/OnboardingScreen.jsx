@@ -108,6 +108,11 @@ function Welcome({ d, m, onNext }) {
           <div className="text-xs pt-1" style={{ color: '#888' }}>You'll get a text the morning of with the same details.</div>
         </div>
       </Card>
+      {d.route?.zone && (
+        <Card title={`Your territory: ${d.route.zone}`} sub={d.route.day ? `Route day${d.route.day.includes('·') ? 's' : ''}: ${d.route.day}` : ''}>
+          <div className="text-sm" style={{ color: '#374151' }}>{d.route.shops?.length ? <><b>Shops you'll be servicing:</b> {d.route.shops.join(', ')}.</> : 'Your shops get assigned before day one.'}</div>
+        </Card>
+      )}
       {crew.length > 0 && (
         <Card title="Meet the crew" sub="The people you'll be working with. Tap a number to call.">
           <div className="grid grid-cols-2 gap-2">
@@ -177,7 +182,7 @@ function Van({ d, m, onDone }) {
   )
 }
 function About({ m, onSaved, isTech = false }) {
-  const [f, setF] = useState({ preferred_name: m.preferred_name, personal_phone: m.personal_phone, personal_email: m.personal_email, address: m.address, birthday: m.birthday, shirt_size: m.shirt_size, license_expiry: m.license_expiry || '', license_number: '', ec: { ...m.emergency_contact } })
+  const [f, setF] = useState({ preferred_name: m.preferred_name, personal_phone: m.personal_phone, personal_email: m.personal_email, address: m.address, birthday: m.birthday, shirt_size: m.shirt_size, pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', license_expiry: m.license_expiry || '', license_number: '', ec: { ...m.emergency_contact } })
   const [busy, setBusy] = useState(false)
   async function save() { setBusy(true); try { await call('/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...f, emergency_contact: f.ec }) }); onSaved() } catch (e) { alert(e.message) } finally { setBusy(false) } }
   return (
@@ -186,7 +191,14 @@ function About({ m, onSaved, isTech = false }) {
       <L label="Your cell (for the schedule and texts)"><I v={f.personal_phone} set={v => setF(x => ({ ...x, personal_phone: v }))} type="tel" placeholder="(425) 555-0123" /></L>
       <L label="Personal email"><I v={f.personal_email} set={v => setF(x => ({ ...x, personal_email: v }))} type="email" /></L>
       <L label="Home address"><I v={f.address} set={v => setF(x => ({ ...x, address: v }))} placeholder="Street, City, WA ZIP" /></L>
-      <div className="grid grid-cols-2 gap-2"><L label="Birthday (MM-DD)"><I v={f.birthday} set={v => setF(x => ({ ...x, birthday: v }))} placeholder="07-04" /></L><L label="Shirt size"><I v={f.shirt_size} set={v => setF(x => ({ ...x, shirt_size: v }))} placeholder="L" /></L></div>
+      <div className="grid grid-cols-2 gap-2"><L label="Birthday (MM-DD)"><I v={f.birthday} set={v => setF(x => ({ ...x, birthday: v }))} placeholder="07-04" /></L></div>
+      <div className="text-xs font-bold mt-2 mb-1" style={{ color: '#1a1a1a' }}>Uniform sizes</div>
+      <div className="text-[11px] mb-1" style={{ color: '#888' }}>Six embroidered polos, six khaki pants, and a hat are on the way. Get these right — they're ordered off this.</div>
+      <div className="grid grid-cols-3 gap-2">
+        <L label="Polo"><select value={f.shirt_size || ''} onChange={e => setF(x => ({ ...x, shirt_size: e.target.value }))} className="w-full text-sm rounded-lg px-2 py-2.5" style={inp}><option value="">—</option>{['S', 'M', 'L', 'XL', '2XL', '3XL'].map(z => <option key={z}>{z}</option>)}</select></L>
+        <L label="Pants waist"><I v={f.pants_waist} set={v => setF(x => ({ ...x, pants_waist: v }))} inputMode="numeric" placeholder="34" /></L>
+        <L label="Pants inseam"><I v={f.pants_inseam} set={v => setF(x => ({ ...x, pants_inseam: v }))} inputMode="numeric" placeholder="32" /></L>
+      </div>
       {isTech && <>
         <div className="text-xs font-bold mt-2 mb-1" style={{ color: '#1a1a1a' }}>Driver's license</div>
         <div className="text-[11px] mb-1" style={{ color: '#888' }}>You'll drive customers' cars on test drives, so we track the expiry. We keep only the last 4 of the number.</div>
