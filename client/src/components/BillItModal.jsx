@@ -68,11 +68,13 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   const [payMode, setPayMode] = useState('')
   const isOwner = isOwnerUser(user)
 
-  useEffect(() => {
-    let dead = false
-    apiFetch(`${API_BASE}/api/jobs/${job.id}/bill/preview`, { method: 'POST' }).then(async r => {
+  const [switching, setSwitching] = useState(false)
+  // Load (or re-load after a pill pick) — the server prices the job in that mode.
+  function loadPreview(pickType, isDead = () => false) {
+    setErr('')
+    return apiFetch(`${API_BASE}/api/jobs/${job.id}/bill/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pickType ? { customer_type: pickType } : {}) }).then(async r => {
       const d = await r.json().catch(() => ({}))
-      if (dead) return
+      if (isDead()) return
       if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
       const ls = (d.lines || []).map(l => ({ ...l, big3_key: l.big3_key || big3KeyFor(l.name) }))
       setP(d); setLines(ls); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct); setCtype(d.customer_type || ''); setPayMode(d.pay_mode || 'on_site')
@@ -87,12 +89,21 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
           else if (key === 'post_scan' || key === 'snapshot' || key === 'cal_id') eff[key] = 'off'
         }
         if (eff.snapshot === 'charge') eff.post_scan = d.big3.rules.post_scan
-        setRules(eff)
+        setRules(eff); setRulesTouched(false)
       }
-    }).catch(e => !dead && setErr(e.message))
+    }).catch(e => !isDead() && setErr(e.message))
+  }
+  useEffect(() => {
+    let dead = false
+    loadPreview('', () => dead)
     apiFetch(`${API_BASE}/api/jobs/catalog`).then(r => r.json()).then(d => { if (!dead && d.ok) setCatalog(d.items || []) }).catch(() => {})
     return () => { dead = true }
   }, [job.id])
+  async function pickType(k) {
+    if (!p || busy || switching || k === ctype) return
+    setSwitching(true); setCtype(k)
+    try { await loadPreview(k) } finally { setSwitching(false) }
+  }
 
   function changeRules(next) { setRules(next); setRulesTouched(true); setLines(ls => applyBig3(ls, next, p?.big3?.items)) }
   function setLine(i, patch) { setLines(ls => ls.map((l, j) => j === i ? { ...l, ...patch, _edited: true } : l)) }
@@ -136,7 +147,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     setBusy(true); setErr('')
     try {
       const learnNew = !!(rules && p.big3 && !p.big3.has_rule && !p.big3.insurer_rule)   // first invoice for this shop → remember what we did (never from an insurer-forced invoice)
-      const body = { emails: list, discount_pct: pct, ...(single ? { customer_type: ctype, pay_mode: payMode } : {}), big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
+      const body = { emails: list, discount_pct: pct, customer_type: ctype || undefined, ...(single ? { pay_mode: payMode } : {}), big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -172,6 +183,19 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
             </div>
           )}
           {p && !done && (<>
+            {p.mode !== 'estimator' && !p.retail_person && (
+              <div className="rounded-xl p-3" style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e0dbd6', opacity: switching ? .6 : 1 }}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>🏢 Customer</span>
+                  {Object.entries(p.customer_types || {}).map(([k, t]) => {
+                    const dual = t.mode === 'dual', on = ctype === k, blocked = dual && !p.can_dual
+                    return <button key={k} type="button" disabled={blocked || switching} title={blocked ? 'Two invoices need a Books estimate behind the job' : ''} onClick={() => pickType(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={on ? { backgroundColor: dual ? '#5b21b6' : '#0369a1', color: 'white' } : { backgroundColor: 'white', color: blocked ? '#bbb' : '#555', border: '1px solid #e0dbd6' }}>{t.label} <span style={{ opacity: .75 }}>· {dual ? '2 invoices' : '1 invoice'}</span></button>
+                  })}
+                  {switching && <span className="text-xs" style={{ color: '#888' }}>re-pricing…</span>}
+                </div>
+                <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>{p.saved_type ? (ctype === p.saved_type ? `On file for ${p.shop_name}.` : `${p.shop_name} is on file as ${p.customer_types?.[p.saved_type]?.label || p.saved_type} — sending remembers the new pick.`) : `First invoice for ${p.shop_name} — what you pick is remembered on the CRM card.`}</div>
+              </div>
+            )}
             {p.cash_quoted && (
               <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={{ backgroundColor: '#dcfce7', border: '2px solid #15803d' }}>
                 <div>
@@ -230,16 +254,12 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
             {single && (
               <div className="rounded-xl p-3" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>🏢 Customer</span>
-                  {Object.entries(p.customer_types || {}).filter(([k]) => k !== 'body_shop').map(([k, t]) => (
-                    <button key={k} type="button" onClick={() => { setCtype(k); if (t.discount != null && !p.has_discount) setPct(t.discount); setPayMode(t.pay) }} className="text-xs font-bold rounded-full px-3 py-1.5" style={ctype === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{t.label}</button>
-                  ))}
-                  <span className="text-xs mx-1" style={{ color: '#aaa' }}>·</span>
+                  <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>💳 How they pay</span>
                   {[['on_site', '🚐 pays on site'], ['net_terms', '✉️ net terms'], ['either', 'either']].map(([k, l]) => (
                     <button key={k} type="button" onClick={() => setPayMode(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={payMode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>
                   ))}
                 </div>
-                <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>{p.has_type ? `On file for ${p.shop_name}. Change it here and it's remembered.` : `First invoice for ${p.shop_name} — what you pick is remembered on the CRM card.`}</div>
+                <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>Remembered on the CRM card with the customer type.</div>
                 {p.agreed_price?.amount > 0 && (() => {
                   const agreed = r2(p.agreed_price.amount)
                   const eligible = rows.filter(l => l.amount > 0 && !l.is_part && !l.never_discount).reduce((s, l) => s + l.amount, 0)

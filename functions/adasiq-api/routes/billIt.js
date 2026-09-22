@@ -41,7 +41,7 @@ async function contactEmails(token, customerId) {
 
 
 // Everything the modal shows. Pure read except for nothing — no writes.
-async function buildPreview(req, job) {
+async function buildPreview(req, job, pickType = '') {
   // Single-invoice mode (Mark 2026-09-22): the shop's customer type
   // decides. Repair shops, dealers and retail get ONE invoice straight
   // from the job's lines; so does any card with no Books estimate.
@@ -54,9 +54,20 @@ async function buildPreview(req, job) {
   const big3mod = await import('../services/big3.js')
   const isRetailJob = job.customer?.kind === 'retail'
   const shopRow = isRetailJob ? null : await big3mod.findShopByName(req, job.shop_name).catch(() => null)
-  const brEarly = isRetailJob ? { customer_type: 'retail', discount_value: 0, pay_mode: 'on_site' } : (shopRow?.billing_rules ? (typeof shopRow.billing_rules === 'string' ? JSON.parse(shopRow.billing_rules || '{}') : shopRow.billing_rules) : {})
+  const brSaved = isRetailJob ? { customer_type: 'retail', discount_value: 0, pay_mode: 'on_site' } : (shopRow?.billing_rules ? (typeof shopRow.billing_rules === 'string' ? JSON.parse(shopRow.billing_rules || '{}') : shopRow.billing_rules) : {})
+  // Four pills on the modal (Mark 2026-09-22): the pick wins over the file
+  // for this preview; sending learns it on the shop. A person is always retail.
+  const pick = !isRetailJob && big3mod.CUSTOMER_TYPES[pickType] ? pickType : ''
+  const brEarly = pick && pick !== brSaved.customer_type
+    ? { ...brSaved, customer_type: pick, discount_value: big3mod.CUSTOMER_TYPES[pick].discount ?? 0, pay_mode: big3mod.CUSTOMER_TYPES[pick].pay }
+    : brSaved
   const ctypeEarly = String(job.cash_quoted || '').trim() ? 'cash' : (brEarly.customer_type || '')
-  if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return buildSinglePreview(req, job, shopRow, brEarly)
+  const extra = { saved_type: brSaved.customer_type || '', can_dual: !!job.zoho_estimate_id, customer_types: big3mod.CUSTOMER_TYPES }
+  if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return { ...(await buildSinglePreview(req, job, shopRow, brEarly)), ...extra }
+  const dual = await buildDualPreview(req, job, brEarly)
+  return { ...dual, ...extra }
+}
+async function buildDualPreview(req, job, brPicked) {
   const token = await getAccessToken()
   const [est, catalog, big3] = await Promise.all([
     getEstimate(token, job.zoho_estimate_id),
@@ -67,7 +78,7 @@ async function buildPreview(req, job) {
   const shopName = est.customer_name || job.shop_name
   const rule = await big3.readBig3(req, shopName)
   const shop = rule.shop_id ? await big3.findShopByName(req, shopName) : null
-  const br = shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {}
+  const br = brPicked || (shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {})
   const cashJob = !!String(job.cash_quoted || '').trim()
   const pct = cashJob ? 0 : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null)
   const customerType = cashJob ? 'cash' : (br.customer_type || '')
@@ -304,7 +315,7 @@ router.post('/:id/bill/preview', async (req, res) => {
   try {
     const job = (await readJobsPublic(req)).find(j => String(j.id) === String(req.params.id))
     if (!job) return res.status(404).json({ error: 'Job not found' })
-    res.json(pub(await buildPreview(req, job)))
+    res.json(pub(await buildPreview(req, job, String(req.body?.customer_type || ''))))
   } catch (e) { res.status(e.status || 500).json({ error: e.response?.data?.message || e.message }) }
 })
 
@@ -313,7 +324,7 @@ router.post('/:id/bill', async (req, res) => {
   try {
     const job = (await readJobsPublic(req)).find(j => String(j.id) === String(req.params.id))
     if (!job) return res.status(404).json({ error: 'Job not found' })
-    const p = await buildPreview(req, job)
+    const p = await buildPreview(req, job, String(req.body?.customer_type || ''))
     if (p.mode === 'estimator') return billEstimator(req, res, job, p, dry)
     if (p.mode === 'single') return billSingle(req, res, job, p, dry)
     const emails = (Array.isArray(req.body?.emails) && req.body.emails.length ? req.body.emails : p.emails).map(e => String(e).trim().toLowerCase()).filter(e => /.+@.+\..+/.test(e))
@@ -359,12 +370,13 @@ router.post('/:id/bill', async (req, res) => {
     // Remember the discount too (Mark 2026-09-11: "if I set their discount to
     // 25% I want it to remember this") — whenever it differs from the file.
     const learnPct = !dry && (!p.has_discount || Number(p.discount_pct) !== pct)
+    const learnType = !dry && p.saved_type !== 'body_shop'   // picked the Collision pill → remembered
     const saveRules = !p.big3?.insurer_rule && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
-    if (!dry && (saveRules || learnPct)) {
+    if (!dry && (saveRules || learnPct || learnType)) {
       try {
         const b3 = await import('../services/big3.js')
         const want = saveRules ? b3.withDefaults(req.body.big3_rules) : b3.withDefaults(p.big3?.rules)
-        const r = await b3.saveBig3(req, p.shop_name, want, by, learnPct ? { discount_pct: pct, customer_type: p.customer_type || 'body_shop' } : {})
+        const r = await b3.saveBig3(req, p.shop_name, want, by, (learnPct || learnType) ? { discount_pct: pct, customer_type: 'body_shop' } : {})
         if (r?.changed) console.log(`[bill-it] learned for ${p.shop_name}: ${b3.describeRules(want)}${learnPct ? ` · ${pct}%` : ''}`)
       } catch (e) { console.log('[bill-it] rule/discount save failed (non-fatal):', e.message) }
     }
@@ -430,7 +442,7 @@ async function billSingle(req, res, job, p, dry) {
   if (p.tax) p.tax.amount = r2(p.cost_total * p.tax.pct / 100)
   p.grand_total = r2(p.cost_total + (p.tax?.amount || 0))
   // Learn: type / % / pay for the shop (never for a cash job — that's the card, not the shop).
-  if (!dry && ctype !== 'cash' && ctype && !p.retail_person && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== p.customer_type)) {
+  if (!dry && ctype !== 'cash' && ctype && !p.retail_person && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== (p.saved_type || p.customer_type))) {
     try { const rules = big3.withDefaults(p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
   }
   let inv = null
