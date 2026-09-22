@@ -7,6 +7,7 @@
 // invoice at Ready to Invoice.
 import { useEffect, useMemo, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { useBig3Map } from './books/Big3Rules.jsx'
 
 const ORANGE = '#CD4419', GREEN = '#15803d', RED = '#b91c1c'
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
@@ -36,6 +37,12 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
   function add(it, extra = {}) { setLines(ls => { const i = ls.findIndex(l => l.item_id === it.item_id && !extra.description); if (i >= 0 && !extra.description) return ls.map((l, n) => n === i ? { ...l, quantity: l.quantity + 1 } : l); return [...ls, { item_id: it.item_id, name: it.name, rate: Number(it.rate) || 0, quantity: 1, description: '', ...extra }] }); setQ('') }
   const total = lines.reduce((s, l) => s + l.rate * l.quantity, 0)
   const custType = job.customer?.kind === 'retail' ? 'Retail person' : ''
+  const b3map = useBig3Map()
+  const shopBilling = b3map[String(job.shop_name || '').toLowerCase().replace(/[^a-z0-9]/g, '')]?.billing
+  const repairish = ['repair_shop', 'dealer'].includes(shopBilling?.customer_type) || job.customer?.kind === 'retail'
+  // Mark 2026-09-22: "the majority of what we're doing for automotive repair
+  // shops is programming, diagnostic, and then calibration" — one tap starts there.
+  function addUsual() { if (suggested) add(suggested); if (diag) add(diag, { description: '' }) }
   async function build() {
     if (!lines.length) { setErr('Add the work first.'); return }
     setBusy(true); setErr('')
@@ -63,8 +70,14 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
           </div>
           <button onClick={onClose} className="text-2xl leading-none px-1" style={{ color: '#888' }}>×</button>
         </div>
+        {repairish && (suggested || diag) && !lines.length && (
+          <button onClick={addUsual} className="w-full text-left rounded-xl px-3 py-2.5 mb-3" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE}` }}>
+            <div className="text-sm font-bold" style={{ color: ORANGE }}>⚡ The usual for a repair shop{suggested ? ` — ${suggested.make} programming` : ''}{diag ? ' + diagnostic' : ''}</div>
+            <div className="text-[11px]" style={{ color: '#666' }}>Programming, diagnostic, then a calibration if it needs one. Adjust anything after.</div>
+          </button>
+        )}
         <div className="flex gap-1 mb-3">
-          {[['programming', '🔌 Programming'], ['books', '📚 Zoho Books — any item'], ['calibration', '🎯 Calibration'], ['diagnostic', '🔍 Diagnostic']].map(([k, l]) => <button key={k} onClick={() => setTab(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={tab === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
+          {[['programming', '🔌 Programming'], ['diagnostic', '🔍 Diagnostic'], ['calibration', '🎯 Calibration'], ['books', '📚 Zoho Books — any item']].map(([k, l]) => <button key={k} onClick={() => setTab(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={tab === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
         </div>
         {tab === 'programming' && (
           <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#faf9f7', border: '1px solid #e8e4e0' }}>
