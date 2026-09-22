@@ -99,25 +99,34 @@ const EXTRA_START = '<<EXTRAS>>'
 const EXTRA_END   = '<</EXTRAS>>'
 const EXTRA_RE = new RegExp(`\\n*${EXTRA_START}([\\s\\S]*?)${EXTRA_END}\\n*`, 'g')
 
+// 🤝 Price talked on site (Mark 2026-09-22) rides in notes the same way —
+// {amount, with, note, by, at} — so no schema change; Bill it reads it.
+const AGREED_START = '<<AGREED>>'
+const AGREED_END   = '<</AGREED>>'
+const AGREED_RE = new RegExp(`\\n*${AGREED_START}([\\s\\S]*?)${AGREED_END}\\n*`, 'g')
+
 function splitNotes(rawNotes) {
   const raw = String(rawNotes || '')
-  let extras = ''
+  let extras = '', agreed = null
   const m = raw.match(new RegExp(`${EXTRA_START}([\\s\\S]*?)${EXTRA_END}`))
   if (m) extras = m[1].trim()
-  const cleanNotes = raw.replace(EXTRA_RE, '').trim()
-  return { cleanNotes, extras }
+  const a = raw.match(new RegExp(`${AGREED_START}([\\s\\S]*?)${AGREED_END}`))
+  if (a) { try { agreed = JSON.parse(a[1]) } catch { agreed = null } }
+  const cleanNotes = raw.replace(EXTRA_RE, '').replace(AGREED_RE, '').trim()
+  return { cleanNotes, extras, agreed }
 }
 
-function joinNotes(cleanNotes, extras) {
+function joinNotes(cleanNotes, extras, agreed = null) {
   const base = String(cleanNotes || '').trim()
   const ex = String(extras || '').trim()
-  if (!ex) return base
-  const block = `${EXTRA_START}${ex}${EXTRA_END}`
-  return base ? `${base}\n\n${block}` : block
+  const parts = [base]
+  if (ex) parts.push(`${EXTRA_START}${ex}${EXTRA_END}`)
+  if (agreed && Number(agreed.amount) > 0) parts.push(`${AGREED_START}${JSON.stringify({ amount: Math.round(Number(agreed.amount) * 100) / 100, with: String(agreed.with || '').slice(0, 60), note: String(agreed.note || '').slice(0, 200), by: String(agreed.by || '').slice(0, 40), at: agreed.at || new Date().toISOString() })}${AGREED_END}`)
+  return parts.filter(Boolean).join('\n\n')
 }
 
 function rowToJob(row) {
-  const { cleanNotes, extras } = splitNotes(row.notes)
+  const { cleanNotes, extras, agreed } = splitNotes(row.notes)
   return {
     id:               String(row.ROWID),
     shop_name:        row.shop_name        || '',
@@ -133,6 +142,7 @@ function rowToJob(row) {
     calibrations:     row.calibrations     || '[]',
     notes:            cleanNotes,
     extra_services:   extras,
+    agreed_price:     agreed,
     report_url:       row.report_url       || '',
     status:           row.status           || 'need_dispatch',
     invoiced:         row.invoiced === 'true',
@@ -160,8 +170,10 @@ function jobToRow(job) {
   // Do not spread unknown/new fields — Catalyst returns an error for unknown column names.
   // extra_services piggybacks inside `notes` via joinNotes so no schema change
   // is required.
-  const cleanNotes = String(job.notes || '').replace(EXTRA_RE, '').trim()
-  const notesWithExtras = joinNotes(cleanNotes, job.extra_services)
+  const cleanNotes = String(job.notes || '').replace(EXTRA_RE, '').replace(AGREED_RE, '').trim()
+  // agreed_price: null clears it; undefined keeps whatever the notes already carry.
+  const keep = job.agreed_price === undefined ? splitNotes(job.notes).agreed : job.agreed_price
+  const notesWithExtras = joinNotes(cleanNotes, job.extra_services, keep)
   return {
     shop_name:        job.shop_name        || '',
     vehicle:          job.vehicle          || '',

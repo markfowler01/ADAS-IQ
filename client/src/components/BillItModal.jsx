@@ -225,7 +225,23 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                     <button key={k} type="button" onClick={() => setPayMode(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={payMode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>
                   ))}
                 </div>
-                <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>{p.has_type ? `On file for ${p.shop_name}. Change it here and it's remembered.` : `First invoice for ${p.shop_name} — what you pick is remembered on the CRM card.`}{p.agreed_price ? <span className="font-bold ml-2" style={{ color: '#b45309' }}>🤝 Tech agreed ${Number(p.agreed_price.amount || p.agreed_price).toFixed(0)}{p.agreed_price.with ? ` with ${p.agreed_price.with}` : ''}</span> : null}</div>
+                <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>{p.has_type ? `On file for ${p.shop_name}. Change it here and it's remembered.` : `First invoice for ${p.shop_name} — what you pick is remembered on the CRM card.`}</div>
+                {p.agreed_price?.amount > 0 && (() => {
+                  const agreed = r2(p.agreed_price.amount)
+                  const eligible = rows.filter(l => l.amount > 0 && !l.is_part && !l.never_discount).reduce((s, l) => s + l.amount, 0)
+                  const fixed = insTotal - eligible
+                  const needPct = eligible > 0 ? Math.max(0, Math.min(60, r2((1 - (agreed - fixed) / eligible) * 100))) : 0
+                  const cals = rows.filter(l => /calibrat|static|dynamic/i.test(l.name) && !l.never_discount).length || 1
+                  const under = agreed < 350 * cals
+                  const matched = Math.abs(grand - agreed) < 0.5
+                  return (
+                    <div className="rounded-lg px-3 py-2 mt-2 text-sm" style={{ backgroundColor: under ? '#fef2f2' : '#fff7ed', border: `1.5px solid ${under ? '#fecaca' : '#fdba74'}`, color: under ? '#991b1b' : '#9a3412' }}>
+                      <b>🤝 Tech agreed {fmt(agreed)}{p.agreed_price.with ? ` with ${p.agreed_price.with}` : ''}</b>{p.agreed_price.note ? ` — ${p.agreed_price.note}` : ''}{p.agreed_price.by ? <span className="text-xs" style={{ opacity: .8 }}> · {p.agreed_price.by}</span> : null}
+                      <div className="text-xs mt-1">{matched ? '✓ The invoice matches.' : `Invoice is ${fmt(grand)}${isRetail ? ' incl. tax' : ''}.`}{under ? ` ⚠ Under the $350 floor for ${cals} calibration${cals === 1 ? '' : 's'} — your call.` : ''}</div>
+                      {!matched && eligible > 0 && !isRetail && <button type="button" onClick={() => setPct(needPct)} className="text-xs font-bold rounded-full px-3 py-1 mt-1.5 text-white" style={{ backgroundColor: under ? '#b91c1c' : '#b45309' }}>Match {fmt(agreed)} → set discount to {needPct}%</button>}
+                    </div>
+                  )
+                })()}
               </div>
             )}
             <div className={single ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 md:grid-cols-2 gap-4'}>

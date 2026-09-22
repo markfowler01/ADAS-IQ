@@ -364,6 +364,9 @@ export default function MobileJobCard({
       {job.pcsi_checks && (
         <div className="mb-1"><span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#dcfce7', color: '#166534' }}>✅ PCSI done</span></div>
       )}
+      {/* 🤝 Price talked on site (Mark 2026-09-22): the tech reports it; Kat applies it at Bill it. */}
+      {!job.invoiced && job.status !== 'job_requested' && !isComplete && <AgreedPrice job={job} />}
+      {job.invoiced && job.agreed_price?.amount > 0 && <div className="mb-1"><span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#fff7ed', color: '#b45309' }}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span></div>}
       {needsWindshieldCheck(job) && !isComplete && (
         <div className="mb-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b' }}>
           🪟 WINDSHIELD CAMERA — check the glass before calibrating (aftermarket, bracket, cracks, tint)
@@ -505,6 +508,51 @@ export default function MobileJobCard({
         >
           <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>🧾 Bill from Quote (${Number(billableQuote.total).toFixed(0)})</span>
         </button>
+      )}
+    </div>
+  )
+}
+
+// 🤝 "Sometimes the technician will talk about price" — a box on the card
+// before Ready to Invoice. The number, who said yes, a note. Shows as a
+// pill; Bill it pre-fills to it with a warning if it's under the floor.
+function AgreedPrice({ job }) {
+  const a = job.agreed_price
+  const [open, setOpen] = useState(false)
+  const [f, setF] = useState({ amount: a?.amount || '', with: a?.with || '', note: a?.note || '' })
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(a || null)
+  async function save(clear = false) {
+    setBusy(true)
+    try {
+      const body = { agreed_price: clear ? null : { amount: Number(f.amount), with: f.with, note: f.note } }
+      const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setSaved(clear ? null : d.agreed_price || body.agreed_price); setOpen(false)
+      if (clear) setF({ amount: '', with: '', note: '' })
+    } catch (e) { alert(e.message) } finally { setBusy(false) }
+  }
+  const inp = { border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }
+  return (
+    <div className="mb-2" onClick={e => e.stopPropagation()}>
+      {!open && (saved?.amount > 0
+        ? <button type="button" onClick={() => setOpen(true)} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: '#fff7ed', color: '#b45309', border: '1px solid #fdba74' }}>🤝 Agreed ${Number(saved.amount).toFixed(0)}{saved.with ? ` with ${saved.with}` : ''} · edit</button>
+        : <button type="button" onClick={() => setOpen(true)} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#b45309', border: '1px dashed #fdba74' }}>🤝 Talked price with the shop?</button>)}
+      {open && (
+        <div className="rounded-xl p-2.5 mt-1" style={{ backgroundColor: '#fff7ed', border: '1.5px solid #fdba74' }}>
+          <div className="text-[11px] font-bold mb-1.5" style={{ color: '#9a3412' }}>What did you agree to? Kat sees this on the invoice before it goes out.</div>
+          <div className="flex gap-2 mb-1.5">
+            <div className="flex items-center rounded-lg px-2" style={inp}><span style={{ color: '#9a3412' }}>$</span><input value={f.amount} onChange={e => setF(x => ({ ...x, amount: e.target.value }))} inputMode="decimal" placeholder="400" className="w-20 text-base font-bold py-1.5 outline-none" style={{ backgroundColor: 'transparent' }} /></div>
+            <input value={f.with} onChange={e => setF(x => ({ ...x, with: e.target.value }))} placeholder="Who agreed (name)" className="flex-1 text-sm rounded-lg px-2 py-1.5" style={inp} />
+          </div>
+          <input value={f.note} onChange={e => setF(x => ({ ...x, note: e.target.value }))} placeholder="Note (optional) — e.g. two cals, they'll pay by check" className="w-full text-sm rounded-lg px-2 py-1.5 mb-2" style={inp} />
+          <div className="flex gap-2">
+            <button type="button" onClick={() => save(false)} disabled={busy || !(Number(f.amount) > 0)} className="flex-1 rounded-lg py-2 text-sm font-bold text-white" style={{ backgroundColor: '#b45309', opacity: !(Number(f.amount) > 0) ? .5 : 1 }}>{busy ? 'Saving…' : 'Save'}</button>
+            {saved?.amount > 0 && <button type="button" onClick={() => save(true)} disabled={busy} className="rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: 'white', color: '#b91c1c', border: '1px solid #fecaca' }}>Clear</button>}
+            <button type="button" onClick={() => setOpen(false)} className="text-sm px-2" style={{ color: '#888' }}>cancel</button>
+          </div>
+        </div>
       )}
     </div>
   )
