@@ -62,7 +62,7 @@ export async function pushToBooks({ req, est, jobs, totals, settings, mode = 'in
   if (mode === 'invoice' && est.zoho_invoice_id) throw Object.assign(new Error(`Already pushed as invoice ${est.zoho_invoice_number || est.zoho_invoice_id}.`), { status: 409 })
   if (mode === 'estimate' && est.zoho_estimate_id) throw Object.assign(new Error(`Already pushed as Books estimate ${est.zoho_estimate_number || est.zoho_estimate_id}.`), { status: 409 })
   if (est.customer_type === 'wholesale' && !est.tax_enabled && !est.reseller_permit) warnings.push('Wholesale with no reseller permit on file')
-  if (est.tax_enabled && !est.zoho_tax_id) warnings.push(`Sales tax is ON for this estimate but no Books tax id is set for zip ${est.service_zip || '?'} — the Books ${mode} has NO tax. Add the zip + Books tax id in Estimator settings, or set the tax on the ${mode} in Books.`)
+  if (est.tax_enabled && !est.zoho_tax_id && !(totals.tax > 0)) warnings.push(`Sales tax is ON but the estimate computed $0 tax — check the rate in Estimator settings.`)
   const level = detail || est.detail_level || settings.detail_level || 'rolled_up'
   const lines = buildLines({ est, jobs, totals, settings, detail: level })
   const unmapped = [...new Set(jobs.filter(j => j.status === 'approved' && !(settings.category_items || {})[j.category]).map(j => j.category))]
@@ -89,6 +89,9 @@ export async function pushToBooks({ req, est, jobs, totals, settings, mode = 'in
     line_items: lines, notes, terms: est.terms || STANDARD_TERMS, custom_fields, salesperson_name: by,
     ...(mode === 'invoice' ? { payment_terms: 0, payment_terms_label: 'Due on Receipt', ...(est.zoho_estimate_id ? { invoiced_estimate_id: est.zoho_estimate_id } : {}), payment_options: { payment_gateways: [{ gateway_name: 'zoho_payments', configured: true }] } } : { ...(est.valid_until ? { expiry_date: est.valid_until } : {}) }),
     ...(totals.discount > 0 ? { discount: est.discount_type === 'pct' ? `${(est.discount_value / 100).toFixed(2)}%` : dollars(totals.discount), discount_type: 'entity_level', is_discount_before_tax: true } : {}),
+    // No Books tax record (Mark's org, 2026-09-22): the engine's tax rides as the
+    // labeled adjustment line above Total — "Tax 10.1%" — same number the estimate showed.
+    ...(est.tax_enabled && !est.zoho_tax_id && totals.tax > 0 ? { adjustment: Math.round(totals.tax) / 100, adjustment_description: `Tax ${(est.tax_rate_bp / 100).toFixed(1).replace(/\.0$/, '')}%` } : {}),
   }
   const post = async b => { let r; for (let i = 0; i < 3; i++) { r = await axios.post(`${API}/${kind}`, b, { headers: H(token), params: org(), timeout: 25000, validateStatus: st => st < 500 }); if (r.status === 429) { await sleep(1500 * (i + 1)); continue } break } return r }
   let r = await post(body)

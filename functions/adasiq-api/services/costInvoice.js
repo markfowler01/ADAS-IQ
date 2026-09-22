@@ -177,6 +177,13 @@ export async function createSingleInvoice({ token, app, customerId, job, lines, 
     ...(template?.id ? { template_id: template.id } : {}),
     payment_options: { payment_gateways: [{ gateway_name: 'zoho_payments', configured: true }] },
   }
+  // Sales tax the way Mark's org does it (2026-09-22, no tax records in Books):
+  // the labeled adjustment line above Total — "Tax 10.1%" — on the discounted subtotal.
+  if (taxPct > 0 && !taxId) {
+    const sub = lines.reduce((s, l) => s + (Number(l.cost_amount ?? l.amount) || 0), 0)
+    body.adjustment = Math.round(sub * taxPct) / 100
+    body.adjustment_description = `Tax ${taxPct}%`
+  }
   const post = b => axios.post(`${API}/invoices`, b, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
   let c = await post(body)
   const msg = () => String(c.data?.message || '')

@@ -178,8 +178,10 @@ async function buildSinglePreview(req, job, shop, br) {
   // Retail = sales tax 10.1%, always (Mark 2026-09-22).
   let tax = null
   if (customerType === 'retail' || typeDef?.tax) {
-    const t = await retailTax(token, catalyst.initialize(req)).catch(e => ({ tax_id: '', pct: 10.1, missing: true, error: e.message }))
-    tax = { pct: t.pct || 10.1, tax_id: t.tax_id || '', name: t.name || '', missing: !t.tax_id, amount: r2(costTotal * (t.pct || 10.1) / 100), available: t.available || [] }
+    // A Books tax record is used if one exists; otherwise the tax rides as the
+    // labeled adjustment line above Total, which is how Mark's invoices carry it.
+    const t = await retailTax(token, catalyst.initialize(req)).catch(() => ({ tax_id: '', pct: 10.1 }))
+    tax = { pct: t.pct || 10.1, tax_id: t.tax_id || '', name: t.name || 'Tax 10.1% (adjustment line)', missing: false, via: t.tax_id ? 'tax record' : 'adjustment', amount: r2(costTotal * (t.pct || 10.1) / 100) }
   }
   const grand = r2(costTotal + (tax?.amount || 0))
   // Books customer: the CRM shop's linked contact, else a name search.
@@ -203,7 +205,6 @@ async function buildSinglePreview(req, job, shop, br) {
   if (!customerId) warnings.push(`No Zoho Books customer linked to ${job.shop_name} — link one on the CRM card (🧾 Zoho Books) so the invoice has somewhere to go.`)
   if (!lines.length) warnings.push('No lines yet — add the work (calibrations on the card, or items below).')
   if (lines.some(l => l.needs_price)) warnings.push('A line has no price in Books — type one or swap the item.')
-  if (tax?.missing) warnings.push(`Retail needs a 10.1% sales-tax record in Books (Settings → Taxes) — none found${tax.available?.length ? ` (have: ${tax.available.join(', ')})` : ''}. The invoice would go out WITHOUT tax.`)
   if (existing) warnings.push(`Invoice ${existing.invoice_number} already exists in Books for RO ${ro} (${existing.status}). The button will not create a second one.`)
   if (job.invoiced || job.billed_via_app) warnings.push(`This card is already marked invoiced${job.billed_via_app ? ` (via app ${job.billed_via_app})` : ''}.`)
   if (!emails.length) warnings.push('No email on the Books contact — add one in Books or type it below.')
@@ -214,7 +215,7 @@ async function buildSinglePreview(req, job, shop, br) {
     cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''), agreed_price: job.agreed_price || null,
     lines: discounted, insurance_total: listTotal, list_total: listTotal, cost_total: costTotal, tax, grand_total: grand, saved: r2(listTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
-    can_bill: !existing && !job.billed_via_app && !!customerId && !!emails.length && !!tpl.invoice && lines.length > 0 && !lines.some(l => l.needs_price) && !(tax?.missing),
+    can_bill: !existing && !job.billed_via_app && !!customerId && !!emails.length && !!tpl.invoice && lines.length > 0 && !lines.some(l => l.needs_price),
     templates: { estimate: null, invoice: tpl.invoice }, big3: { rules: effB3.rules, insurer_rule: effB3.insurer_rule, has_rule: !!rule.rules, items: {} },
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default', _byId: byId, _byName: byName, _shop: shop || null,
   }
@@ -426,7 +427,6 @@ async function billSingle(req, res, job, p, dry) {
   p.lines = applyDiscount(p.lines, pct)
   p.cost_total = r2(p.lines.reduce((s, l) => s + l.cost_amount, 0)); p.list_total = r2(p.lines.reduce((s, l) => s + l.amount, 0))
   const isRetail = ctype === 'retail'
-  if (isRetail && p.tax?.missing && !dry) return res.status(400).json({ error: 'Retail needs the 10.1% sales-tax record in Books first (Settings → Taxes). Nothing sent.' })
   if (p.tax) p.tax.amount = r2(p.cost_total * p.tax.pct / 100)
   p.grand_total = r2(p.cost_total + (p.tax?.amount || 0))
   // Learn: type / % / pay for the shop (never for a cash job — that's the card, not the shop).
