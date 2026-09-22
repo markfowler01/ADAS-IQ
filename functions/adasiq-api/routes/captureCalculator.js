@@ -4079,22 +4079,56 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     const dayPt = pt.getDay()   // 0=Sun ... 6=Sat
     const hourPt = pt.getHours()
 
-    // ─── 1. RETRY PENDING BROADCAST SCHEDULE (if broadcast_error is set) ──
+    // ─── 1. RETRY PENDING BROADCAST — two failure modes handled ──────────
+    // (a) broadcast_id exists but scheduling failed → retry sendVanBroadcast
+    // (b) broadcast_id missing entirely (create timed out) → create fresh + schedule
+    //
+    // Case (b) added 2026-09-22 after Issue #9's create hit a 10s timeout and
+    // safety-net skipped it. If we don't handle this, the Tuesday send just
+    // silently doesn't fire and Mark has to notice the empty inbox.
     try {
       const pending = await readPendingDraft(req)
-      if (pending && pending.broadcast_id && pending.broadcast_error && pending.scheduled_for) {
+      if (pending && pending.broadcast_error && pending.scheduled_for) {
         const scheduledMs = Date.parse(pending.scheduled_for)
-        if (Number.isFinite(scheduledMs) && scheduledMs > nowMs) {
-          // Still in the future — worth retrying
-          const sched = await sendVanBroadcast(pending.broadcast_id, pending.scheduled_for)
-          if (sched.ok) {
-            const patched = { ...pending, broadcast_error: null, status: 'auto_scheduled', safety_net_scheduled_at: new Date().toISOString() }
-            await writePendingDraft(req, patched)
-            const msg = `🛡️ Safety-net RESCHEDULED Issue #${pending.issue_number} for ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}.\nBroadcast: ${pending.broadcast_url || pending.broadcast_id}`
-            await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
-            out.actions.push({ action: 'retry_schedule', ok: true, broadcast_id: pending.broadcast_id })
+        // Give up on retries once we're 2h past send time — auto-clear will
+        // sweep it out at the stale_pending_clear step.
+        if (Number.isFinite(scheduledMs) && scheduledMs > nowMs - 2 * 3600 * 1000) {
+          if (pending.broadcast_id) {
+            // Case (a): existing broadcast, retry schedule
+            const sched = await sendVanBroadcast(pending.broadcast_id, pending.scheduled_for)
+            if (sched.ok) {
+              const patched = { ...pending, broadcast_error: null, status: 'auto_scheduled', safety_net_scheduled_at: new Date().toISOString() }
+              await writePendingDraft(req, patched)
+              const msg = `🛡️ Safety-net RESCHEDULED Issue #${pending.issue_number} for ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}.\nBroadcast: ${pending.broadcast_url || pending.broadcast_id}`
+              await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+              out.actions.push({ action: 'retry_schedule', ok: true, broadcast_id: pending.broadcast_id })
+            } else {
+              out.actions.push({ action: 'retry_schedule', ok: false, error: sched.error })
+            }
           } else {
-            out.actions.push({ action: 'retry_schedule', ok: false, error: sched.error })
+            // Case (b): no broadcast at all — create it now with the pending
+            // content, keep the same scheduled_for target.
+            const created = await createVanBroadcast({
+              subject: pending.subject,
+              html: pending.html,
+              text: pending.text,
+              previewText: pending.preview_text,
+              name: `From the Van #${pending.issue_number}${pending.is_synthetic ? ' 🤖' : ''} (safety-net create)`,
+            })
+            if (created.ok) {
+              const sched = await sendVanBroadcast(created.id, pending.scheduled_for)
+              if (sched.ok) {
+                const patched = { ...pending, broadcast_id: created.id, broadcast_url: created.dashboardUrl, broadcast_error: null, status: 'auto_scheduled', safety_net_recreated_at: new Date().toISOString() }
+                await writePendingDraft(req, patched)
+                const msg = `🛡️ Safety-net CREATED + SCHEDULED Issue #${pending.issue_number} (initial create had failed with: ${pending.broadcast_error}).\nBroadcast: ${created.dashboardUrl}`
+                await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
+                out.actions.push({ action: 'safety_net_create', ok: true, broadcast_id: created.id })
+              } else {
+                out.actions.push({ action: 'safety_net_create', ok: false, error: `create ok, schedule failed: ${sched.error}` })
+              }
+            } else {
+              out.actions.push({ action: 'safety_net_create', ok: false, error: `create failed: ${created.error}` })
+            }
           }
         }
       }

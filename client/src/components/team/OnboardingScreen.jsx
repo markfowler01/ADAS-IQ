@@ -19,8 +19,8 @@ async function shrink(file, max = 1800) {
     return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' })
   } catch { return file }
 }
-const STEPS_W2 = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['w4', '4 · W-4'], ['deposit', '5 · Direct deposit'], ['sign', '6 · Sign'], ['training', '7 · Training'], ['ask', '8 · Ask']]
-const STEPS_CONTRACTOR = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
+const STEPS_W2 = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['w4', '4 · W-4'], ['deposit', '5 · Direct deposit'], ['sign', '6 · Sign'], ['training', '7 · Training'], ['van', '8 · Your van'], ['ask', '9 · Ask']]
+const STEPS_CONTRACTOR = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['van', '7 · Your van'], ['ask', '8 · Ask']]
 // Existing staff catching up (Mark 2026-09-21): just the bits their file is missing.
 const STEPS_CATCHUP = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['sign', '3 · Sign'], ['ask', '4 · Ask']]
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
@@ -42,7 +42,9 @@ export default function OnboardingScreen() {
   const catchup = d.mode === 'catchup'
   const isTech = (m.track || 'tech') !== 'ops'
   const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), w4: has('w4'), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
-  const steps = catchup ? STEPS_CATCHUP : contractor ? STEPS_CONTRACTOR : STEPS_W2
+  const hasVan = isTech && !!m.van
+  done.van = !!m.van_handover?.at
+  const steps = (catchup ? STEPS_CATCHUP : contractor ? STEPS_CONTRACTOR : STEPS_W2).filter(([k]) => k !== 'van' || hasVan)
   const counted = steps.map(([k]) => k).filter(k => k !== 'ask' && k !== 'welcome')
   const pct = Math.round((counted.filter(k => done[k]).length / counted.length) * 100)
   const flash = t => { setMsg(t); setTimeout(() => setMsg(''), 3500) }
@@ -68,6 +70,7 @@ export default function OnboardingScreen() {
       {step === 'deposit' && (contractor ? <Payout d={d} m={m} onDone={() => { load(); flash('✓ Payout details on file'); setStep('sign') }} /> : <Deposit d={d} m={m} onDone={() => { load(); flash('✓ Direct deposit on file'); setStep('sign') }} />)}
       {step === 'sign' && <Sign d={d} m={m} onDone={() => { load(); flash('✓ Signed and filed'); setStep('training') }} />}
       {step === 'training' && <Training d={d} onDone={load} />}
+      {step === 'van' && <Van d={d} m={m} onDone={() => { load(); flash('✓ Van handover signed and filed') }} />}
       {step === 'ask' && <Ask m={m} />}
       <div className="text-[11px] mt-6 text-center" style={{ color: '#999' }}>Your files go to a private folder only Mark and Kat can open. The app keeps none of your bank or Social Security numbers.</div>
     </Shell>
@@ -122,6 +125,57 @@ function Welcome({ d, m, onNext }) {
     </div>
   )
 }
+// Van handover (Mark 2026-09-22): "inventory their tools in their van 100%
+// with photos and video and have them sign off on it… note the mileage…
+// tire tread depth, maintenance, exterior damage."
+function Van({ d, m, onDone }) {
+  const done = m.van_handover
+  const docs = d.documents || []
+  const photos = docs.filter(x => x.kind === 'van_photo').length, videos = docs.filter(x => x.kind === 'van_video').length
+  const [f, setF] = useState({ mileage: '', fuel: '', tread: { lf: '', rf: '', lr: '', rr: '' }, damage: '', maintenance: '', tools: (m.equipment || []).map(e => ({ name: e.name, present: true, note: '' })), signature: '' })
+  const [busy, setBusy] = useState(false)
+  async function sign() { setBusy(true); try { await call('/van-handover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) }); onDone() } catch (e) { alert(e.message) } finally { setBusy(false) } }
+  if (done) return (
+    <Card title={`✅ ${m.van} is yours`} sub={`Signed ${String(done.at).slice(0, 10)} · ${Number(done.mileage).toLocaleString()} mi · tread ${done.tread?.lf}/${done.tread?.rf}/${done.tread?.lr}/${done.tread?.rr} · ${done.photos} photos${done.videos ? ` · ${done.videos} video` : ''}`}>
+      <div className="text-sm" style={{ color: '#374151' }}>The signed handover is in your folder. Find damage or a missing tool later? Tell Mark that day.</div>
+    </Card>
+  )
+  const T = ({ k, label }) => <label className="text-[11px] font-bold" style={{ color: '#888' }}>{label}<input value={f.tread[k]} onChange={e => setF(x => ({ ...x, tread: { ...x.tread, [k]: e.target.value } }))} inputMode="decimal" placeholder="/32" className="w-full text-sm rounded-lg px-2 py-2 mt-0.5 font-normal text-center" style={inp} /></label>
+  return (
+    <div>
+      <Card title={`Your van: ${m.van}`} sub={`${m.scan_tool ? `Scan tool: ${m.scan_tool}. ` : ''}Walk it once, honestly. What you sign for is what you're responsible for — and what you note now can't be pinned on you later.`}>
+        <div className="text-xs font-bold mb-1" style={{ color: '#1a1a1a' }}>1 · Photos & video</div>
+        <div className="text-[11px] mb-2" style={{ color: '#666' }}>Four corners of the van, the dash with the odometer, the cargo area, then the tools laid out. A short walk-around clip (under a minute) is worth a lot.</div>
+        <Upload kind="van_photo" label={`Van photo${photos ? ` (${photos} so far)` : ''}`} hint="Add as many as it takes — 4 minimum." has={photos > 0} onDone={onDone} capture="environment" />
+        <Upload kind="van_video" label={`Walk-around video${videos ? ` (${videos})` : ''}`} hint="Under a minute. Talk through what you see." has={videos > 0} onDone={onDone} accept="video/*" capture="environment" tone="blue" />
+        <div className="text-xs font-bold mt-4 mb-1" style={{ color: '#1a1a1a' }}>2 · Numbers</div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <L label="Odometer (miles)"><I v={f.mileage} set={v => setF(x => ({ ...x, mileage: v }))} inputMode="numeric" placeholder="e.g. 48210" /></L>
+          <L label="Fuel"><I v={f.fuel} set={v => setF(x => ({ ...x, fuel: v }))} placeholder="3/4, full…" /></L>
+        </div>
+        <div className="text-[11px] font-bold mb-1" style={{ color: '#888' }}>Tread depth in 32nds — use the gauge in the van (new is ~10–12, replace at 4)</div>
+        <div className="grid grid-cols-4 gap-2 mb-3"><T k="lf" label="LF" /><T k="rf" label="RF" /><T k="lr" label="LR" /><T k="rr" label="RR" /></div>
+        <div className="text-xs font-bold mb-1" style={{ color: '#1a1a1a' }}>3 · Condition</div>
+        <L label="Exterior / interior damage — dents, scuffs, cracked glass, stains. Say where."><textarea value={f.damage} onChange={e => setF(x => ({ ...x, damage: e.target.value }))} rows={3} placeholder="None, or: scuff on rear bumper driver side, small chip in windshield lower right…" className="w-full text-sm rounded-lg px-3 py-2.5" style={inp} /></L>
+        <L label="Maintenance — warning lights, next oil change sticker, brakes, wipers, anything due"><textarea value={f.maintenance} onChange={e => setF(x => ({ ...x, maintenance: e.target.value }))} rows={2} placeholder="Oil sticker says 51,000. No lights on." className="w-full text-sm rounded-lg px-3 py-2.5" style={inp} /></L>
+        {f.tools.length > 0 && <>
+          <div className="text-xs font-bold mt-2 mb-1" style={{ color: '#1a1a1a' }}>4 · Tools & equipment — uncheck anything that isn't there</div>
+          {f.tools.map((t, i) => (
+            <div key={i} className="flex items-center gap-2 py-1.5" style={{ borderBottom: '1px solid #f3f3f3' }}>
+              <input type="checkbox" checked={t.present} onChange={e => setF(x => ({ ...x, tools: x.tools.map((y, n) => n === i ? { ...y, present: e.target.checked } : y) }))} />
+              <span className="text-sm flex-1" style={{ color: t.present ? '#1a1a1a' : RED }}>{t.name}</span>
+              <input value={t.note} onChange={e => setF(x => ({ ...x, tools: x.tools.map((y, n) => n === i ? { ...y, note: e.target.value } : y) }))} placeholder="serial / note" className="text-xs rounded-lg px-2 py-1 w-28" style={inp} />
+            </div>
+          ))}
+        </>}
+        <div className="text-xs font-bold mt-4 mb-1" style={{ color: '#1a1a1a' }}>5 · Sign for it</div>
+        <div className="text-[11px] mb-2" style={{ color: '#666' }}>"I've inspected this van and its equipment, the inventory is complete and accurate, and I'm responsible for it while it's in my care."</div>
+        <I v={f.signature} set={v => setF(x => ({ ...x, signature: v }))} placeholder={`Type your full name: ${m.name}`} />
+        <div className="mt-3"><Btn onClick={sign} disabled={busy || photos < 4 || !f.mileage || !f.signature}>{busy ? 'Filing…' : photos < 4 ? `Add ${4 - photos} more photo${4 - photos === 1 ? '' : 's'} first` : 'Sign the handover →'}</Btn></div>
+      </Card>
+    </div>
+  )
+}
 function About({ m, onSaved, isTech = false }) {
   const [f, setF] = useState({ preferred_name: m.preferred_name, personal_phone: m.personal_phone, personal_email: m.personal_email, address: m.address, birthday: m.birthday, shirt_size: m.shirt_size, license_expiry: m.license_expiry || '', license_number: '', ec: { ...m.emergency_contact } })
   const [busy, setBusy] = useState(false)
@@ -153,11 +207,11 @@ function Upload({ kind, label, hint, has, onDone, accept = 'image/*', capture, t
   const [meta, setMeta] = useState({ label: '', issuer: '', expires: '' })
   async function send(f0, m = {}) {
     setBusy(true)
-    try { const f = await shrink(f0, kind === 'photo' ? 1000 : 2000); const fd = new FormData(); fd.append('file', f, f.name); fd.append('kind', kind); if (m.label) fd.append('label', m.label); if (m.issuer) fd.append('issuer', m.issuer); if (/^\d{4}-\d{2}-\d{2}$/.test(m.expires || '')) fd.append('expires', m.expires); await call('/upload', { method: 'POST', body: fd }); setPending(null); setMeta({ label: '', issuer: '', expires: '' }); onDone() } catch (err) { alert(err.message) } finally { setBusy(false) }
+    try { const f = kind === 'van_video' ? f0 : await shrink(f0, kind === 'photo' ? 1000 : 2000); const fd = new FormData(); fd.append('file', f, f.name); fd.append('kind', kind); if (m.label) fd.append('label', m.label); if (m.issuer) fd.append('issuer', m.issuer); if (/^\d{4}-\d{2}-\d{2}$/.test(m.expires || '')) fd.append('expires', m.expires); await call('/upload', { method: 'POST', body: fd }); setPending(null); setMeta({ label: '', issuer: '', expires: '' }); onDone() } catch (err) { alert(err.message) } finally { setBusy(false) }
   }
   function onFile(e) {
     const f0 = e.target.files?.[0]; e.target.value = ''; if (!f0) return
-    if (kind === 'cert' || kind === 'other') setPending(f0); else send(f0)
+    if (kind === 'cert' || kind === 'other') setPending(f0); else send(f0, kind === 'van_photo' ? { label: `#${(Date.now() % 100000)}` } : {})
   }
   return (
     <div className="py-2" style={{ borderBottom: '1px solid #f3f3f3' }}>

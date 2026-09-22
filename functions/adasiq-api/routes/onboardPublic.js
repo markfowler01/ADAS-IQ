@@ -16,6 +16,7 @@ import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJso
 
 const router = express.Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
+const uploadBig = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } })   // the van walk-around clip
 // Fail closed (2026-09-21 review): with no SESSION_SECRET every link would
 // be forgeable, so the portal refuses to sign or verify anything instead.
 const secret = () => { const s = process.env.SESSION_SECRET; if (!s || s.length < 16) throw new Error('SESSION_SECRET is not set — onboarding links are disabled'); return s }
@@ -65,10 +66,13 @@ const KINDS = {
   other:        { n: '10', label: 'Document' },
   w4:           { n: '11', label: 'Form W-4', tick: 'w4' },
   mvr:          { n: '12', label: 'Driving record (MVR)', tick: 'mvr' },
+  van_photo:    { n: '13', label: 'Van handover photo' },
+  van_video:    { n: '13', label: 'Van handover video' },
+  van_handover: { n: '13', label: 'Van handover (signed)', tick: 'van_handover' },
 }
 const extOf = (f) => (f.originalname || '').match(/\.[a-z0-9]+$/i)?.[0]?.toLowerCase() || (f.mimetype === 'application/pdf' ? '.pdf' : /png/.test(f.mimetype) ? '.png' : /webp/.test(f.mimetype) ? '.webp' : '.jpg')
 const safe = s => String(s || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
-export function fileNameFor(kind, m, label, ext) { const k = KINDS[kind] || KINDS.other; const what = kind === 'cert' || kind === 'other' ? `${k.label}${label ? ` — ${safe(label)}` : ''}` : k.label; return `${k.n} ${what} — ${safe(m.name)}${ext}` }
+export function fileNameFor(kind, m, label, ext) { const k = KINDS[kind] || KINDS.other; const what = ['cert', 'other', 'van_photo', 'van_video'].includes(kind) ? `${k.label}${label ? ` — ${safe(label)}` : ''}` : k.label; return `${k.n} ${what} — ${safe(m.name)}${ext}` }
 
 async function guard(req, res) {
   const t = req.query.t || req.body?.t
@@ -88,7 +92,7 @@ export async function putFile(req, m, kind, label, buffer, mimetype, ext) {
   const fileId = String(up?.fileId || up?.id || up || '')
   const doc = { kind, name: filename.replace(/\.[a-z0-9]+$/i, ''), url: fileId ? `https://workdrive.zoho.com/file/${fileId}` : m.workdrive_folder_url, file_id: fileId, added: todayPT(), by: m.name }
   // one file per single-slot kind (re-uploads replace the entry, the newer file wins in WorkDrive too via override-name-exist)
-  const single = !['cert', 'other'].includes(kind)
+  const single = !['cert', 'other', 'van_photo', 'van_video'].includes(kind)
   m.documents = [...(Array.isArray(m.documents) ? m.documents : []).filter(d => !(single && d.kind === kind)), doc]
   if (KINDS[kind]?.tick) tickChecklist(m, KINDS[kind].tick, m.name)
   return doc
@@ -114,7 +118,7 @@ router.get('/:id', async (req, res) => {
     const welcome = await cfgReadJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
     const crew = members.filter(x => x.active !== false && x.id !== m.id && x.employment !== undefined).map(x => ({ name: x.preferred_name ? `${x.preferred_name} ${x.name.split(' ').slice(1).join(' ')}` : x.name, title: x.title || '', department: x.department || '', photo_url: x.photo_url || '', phone: x.phone || '', color: x.avatar_color || '#CD4419', is_boss: x.user_id === m.reports_to }))
     res.json({ ok: true, mode, welcome, crew,
-      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '' },
+      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '', van: m.van || '', scan_tool: m.scan_tool || '', van_handover: m.van_handover || null, equipment: (m.equipment || []).map(e => ({ name: e.name, serial: e.serial || '', issued: e.issued || '' })) },
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
       signed: m.signatures || {},
@@ -144,13 +148,14 @@ router.post('/:id/profile', async (req, res) => {
 })
 
 // ── Uploads (photo, IDs, SSN card, voided check, certs) ─────────────
-router.post('/:id/upload', upload.single('file'), async (req, res) => {
+router.post('/:id/upload', uploadBig.single('file'), async (req, res) => {
   try {
     const g = await guard(req, res); if (!g) return
     const { m } = g
     if (!req.file) return res.status(400).json({ error: 'No file' })
-    if (!/^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/i.test(req.file.mimetype || '')) return res.status(400).json({ error: 'Photos (JPG, PNG, HEIC) or PDF only.' })
     const kind = KINDS[req.body?.kind] ? req.body.kind : 'other'
+    const okType = kind === 'van_video' ? /^video\//i.test(req.file.mimetype || '') : /^(image\/(jpeg|png|webp|heic|heif)|application\/pdf)$/i.test(req.file.mimetype || '')
+    if (!okType) return res.status(400).json({ error: kind === 'van_video' ? 'Video files only for the walk-around clip.' : 'Photos (JPG, PNG, HEIC) or PDF only.' })
     const doc = await putFile(req, m, kind, req.body?.label || '', req.file.buffer, req.file.mimetype, extOf(req.file))
     if (kind === 'photo') { m.photo_file_id = doc.file_id; m.photo_url = photoUrlFor(m.id); tickChecklist(m, 'photo', m.name) }
     if (kind === 'mvr') m.mvr_checked_at = todayPT()
@@ -223,6 +228,51 @@ router.post('/:id/payout', async (req, res) => {
     console.log(`[onboard] ${m.name} Wise payout on file (${currency})`)
     res.json({ ok: true, payout: m.payout, document: { kind: 'deposit', name: d.name, added: d.added } })
   } catch (e) { console.error('[onboard payout]', e.message); res.status(500).json({ error: e.message }) }
+})
+
+// ── Van handover (Mark 2026-09-22): the tech inventories the van and
+//    signs for it — tools 100% with photos + video, mileage, tread depth,
+//    exterior damage, maintenance notes. PDF into their folder; the
+//    numbers on the record so the van's history starts on day one.
+router.post('/:id/van-handover', async (req, res) => {
+  try {
+    const g = await guard(req, res); if (!g) return
+    const { m } = g; const b = req.body || {}
+    const typed = String(b.signature || '').trim()
+    if (typed.toLowerCase().replace(/\s+/g, ' ') !== m.name.toLowerCase().replace(/\s+/g, ' ')) return res.status(400).json({ error: `Sign by typing your full name exactly: ${m.name}` })
+    const mileage = Number(String(b.mileage || '').replace(/[^\d.]/g, ''))
+    if (!(mileage > 0)) return res.status(400).json({ error: 'Enter the odometer reading.' })
+    const tread = {}; for (const k of ['lf', 'rf', 'lr', 'rr']) { const v = Number(b.tread?.[k]); tread[k] = Number.isFinite(v) && v >= 0 && v <= 20 ? v : null }
+    if (Object.values(tread).some(v => v == null)) return res.status(400).json({ error: 'Tread depth for all four tires, in 32nds (e.g. 8).' })
+    const tools = Array.isArray(b.tools) ? b.tools.map(t => ({ name: String(t.name || '').slice(0, 80), present: !!t.present, note: String(t.note || '').slice(0, 120) })) : []
+    const damage = String(b.damage || '').slice(0, 1500), maintenance = String(b.maintenance || '').slice(0, 1500), fuel = String(b.fuel || '').slice(0, 20)
+    const photos = (m.documents || []).filter(d => d.kind === 'van_photo').length, videos = (m.documents || []).filter(d => d.kind === 'van_video').length
+    if (photos < 4) return res.status(400).json({ error: `Add at least 4 photos of the van first (you have ${photos}) — four corners, then the tools.` })
+    const when = new Date().toISOString(), from = ip(req)
+    const buf = await pdfBuffer(doc => {
+      doc.fontSize(18).text('Absolute ADAS — Van & Equipment Handover').moveDown(0.5)
+      doc.fontSize(12).text(`Technician: ${m.name}`).text(`Van: ${m.van || '(unassigned)'}${m.scan_tool ? ` · Scan tool: ${m.scan_tool}` : ''}`).text(`Date: ${when.slice(0, 10)}`).moveDown(0.8)
+      doc.fontSize(12).text(`Odometer at handover: ${mileage.toLocaleString('en-US')} mi`).text(`Fuel: ${fuel || 'n/a'}`).text(`Tread depth (32nds): LF ${tread.lf} · RF ${tread.rf} · LR ${tread.lr} · RR ${tread.rr}`).moveDown(0.8)
+      doc.fontSize(12).text('Exterior / interior condition', { underline: true }); doc.fontSize(10).text(damage || 'No damage noted.').moveDown(0.6)
+      doc.fontSize(12).text('Maintenance status', { underline: true }); doc.fontSize(10).text(maintenance || 'Nothing noted.').moveDown(0.6)
+      doc.fontSize(12).text('Tools & equipment inventory', { underline: true })
+      doc.fontSize(10)
+      for (const t of tools) doc.text(`${t.present ? '[x]' : '[ ]'} ${t.name}${t.note ? ` — ${t.note}` : ''}`)
+      if (!tools.length) doc.text('(no kit lines)')
+      doc.moveDown(0.6).text(`${photos} photo(s) and ${videos} video clip(s) filed in this folder as "13 Van handover".`).moveDown(1)
+      doc.fontSize(11).text('I have inspected this van and its equipment, the inventory above is complete and accurate, and I take responsibility for the van and everything in it while they are in my care. I will report damage or missing items to Mark the day I find them.').moveDown(1.2)
+      doc.fontSize(12).text(`Signed: ${typed}`).text(`Date: ${when.slice(0, 10)} (${when})`).text(`Signed from IP ${from || 'n/a'} via the Absolute ADAS onboarding link`)
+    })
+    const d = await putFile(req, m, 'van_handover', '', buf, 'application/pdf', '.pdf')
+    m.van_handover = { at: when, mileage, tread, fuel, damage, maintenance, tools, photos, videos, file_id: d.file_id }
+    for (const e of Array.isArray(m.equipment) ? m.equipment : []) { const t = tools.find(x => x.name === e.name); if (t?.present && !e.issued) e.issued = when.slice(0, 10) }
+    m.signatures = { ...(m.signatures || {}), van_handover: { at: when, file_id: d.file_id } }
+    await saveMember(req, m)
+    autoAdvance(req, m).then(r => r.changed && saveMember(req, m)).catch(() => {})
+    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚐 *${m.name} signed for ${m.van || 'the van'}* — ${mileage.toLocaleString('en-US')} mi, tread ${tread.lf}/${tread.rf}/${tread.lr}/${tread.rr}, ${photos} photos${videos ? ` + ${videos} video` : ''}.${damage ? ` Damage noted: ${damage.slice(0, 120)}` : ' No damage noted.'}${tools.some(t => !t.present) ? ` ⚠ Missing: ${tools.filter(t => !t.present).map(t => t.name).join(', ')}` : ''}`) } catch { /* fine */ }
+    console.log(`[onboard] ${m.name} van handover signed (${mileage} mi)`)
+    res.json({ ok: true, van_handover: m.van_handover })
+  } catch (e) { console.error('[onboard van]', e.message); res.status(500).json({ error: e.message }) }
 })
 
 // ── Sign the handbook (and a contract/offer the owner dropped in the folder) ──

@@ -60,6 +60,7 @@ export default function OnboardingTab({ onOpenProfile, launchId, onLaunchClose }
       {edit && w && (
         <div className="rounded-2xl p-4 mb-4" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE}` }}>
           <div className="text-xs font-bold mb-2" style={{ color: '#1a1a1a' }}>What every new hire sees first on their portal — before any paperwork.</div>
+          <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>Kinetic support email (for the one-tap "add this tech" request)<input value={w.kinetic_email || ''} onChange={e => setW(x => ({ ...x, kinetic_email: e.target.value }))} placeholder="support@kinetic…" className="w-full text-sm rounded-lg px-3 py-2 mt-0.5 font-normal" style={inp} /></label>
           <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>Welcome video (YouTube or WorkDrive link — record it once on your phone, 60 seconds)<input value={w.video_url} onChange={e => setW(x => ({ ...x, video_url: e.target.value }))} placeholder="https://youtu.be/…" className="w-full text-sm rounded-lg px-3 py-2 mt-0.5 font-normal" style={inp} /></label>
           <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>A note from you<textarea value={w.note} onChange={e => setW(x => ({ ...x, note: e.target.value }))} rows={3} className="w-full text-sm rounded-lg px-3 py-2 mt-0.5 font-normal" style={inp} /></label>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">

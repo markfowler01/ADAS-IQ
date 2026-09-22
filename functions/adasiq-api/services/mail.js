@@ -259,12 +259,13 @@ export async function saveDraftReply(token, accountId, { to, subject, body, inRe
 }
 
 // Send an email from Mark's account.
-export async function sendMail(token, accountId, { to, subject, body }) {
+export async function sendMail(token, accountId, { to, subject, body, cc }) {
   const res = await axios.post(
     `${MAIL_API}/accounts/${accountId}/messages`,
     {
       fromAddress: 'mf@absoluteadas.com',
       toAddress:   to,
+      ...(cc ? { ccAddress: cc } : {}),
       subject,
       content:     body,
       mailFormat:  'html',

@@ -19,6 +19,10 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
   const [busy, setBusy] = useState('')
   const [issue, setIssue] = useState(null)   // { index, serial }
   const [linkResult, setLinkResult] = useState('')
+  const [setup, setSetup] = useState(null)      // editable copy of the plan facts
+  const [kinTo, setKinTo] = useState('')
+  async function saveSetup() { setBusy('setup'); try { await j(`/api/people/onboarding/${memberId}/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(setup) }); setSetup(null); await load() } catch (e) { alert(e.message) } finally { setBusy('') } }
+  async function kinetic() { setBusy('kinetic'); try { const r = await j(`/api/people/onboarding/${memberId}/kinetic-email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: kinTo || undefined }) }); setLinkResult(`Kinetic request sent to ${r.to}`); await load() } catch (e) { alert(e.message) } finally { setBusy('') } }
   const load = () => j(`/api/people/onboarding/${memberId}/launch`).then(setD).catch(e => setErr(e.message))
   useEffect(() => { load() }, [memberId]) // eslint-disable-line react-hooks/exhaustive-deps
   async function toggle(key) { setBusy(key); try { await j(`/api/people/checklist/${memberId}/toggle`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key }) }); await load() } catch (e) { alert(e.message) } finally { setBusy('') } }
@@ -44,6 +48,13 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
             {it.due_date && <span className="rounded-full px-2 py-0.5 font-bold" style={late ? { backgroundColor: '#fef2f2', color: RED } : today ? { backgroundColor: '#fffbeb', color: '#b45309' } : { backgroundColor: '#f5f3f0', color: '#888' }}>{late ? `⚠ was due ${fmt(it.due_date)}` : today ? 'due today' : `by ${fmt(it.due_date)}`}</span>}
             {it.done && it.at && <span style={{ color: '#aaa' }}>✓ {String(it.at).slice(0, 10)}{it.by && it.by !== 'auto' ? ` · ${it.by}` : ''}</span>}
           </span>
+          {it.key === 'kinetic' && !it.done && (
+            <span className="flex gap-1.5 items-center mt-1.5 flex-wrap">
+              {!d.kinetic_email && <input value={kinTo} onChange={e => setKinTo(e.target.value)} placeholder="Kinetic support email" className="text-xs rounded-lg px-2 py-1 w-52" style={inp} />}
+              <button onClick={e => { e.preventDefault(); kinetic() }} disabled={busy === 'kinetic' || (!d.kinetic_email && !kinTo)} className="text-[11px] font-bold rounded-full px-2.5 py-1 text-white" style={{ backgroundColor: BLUE, opacity: busy === 'kinetic' ? .6 : 1 }}>{busy === 'kinetic' ? 'Sending…' : `📧 Email Kinetic${d.kinetic_email ? ` (${d.kinetic_email})` : ''}`}</button>
+            </span>
+          )}
+          {it.key === 'zoho_account' && !it.done && <span className="block text-[11px] mt-1" style={{ color: '#666' }}>Zoho Admin → Users → Add: <b>{m.work_email}</b>. Then their Cliq + WorkDrive follow.</span>}
         </span>
       </label>
     )
@@ -60,6 +71,36 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
         {onOpenProfile && <button onClick={() => onOpenProfile(m.id)} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Full profile</button>}
       </div>
       {!m.hire_date && <div className="text-xs mb-3 px-3 py-2 rounded-lg font-semibold" style={{ backgroundColor: '#fffbeb', color: '#92400e' }}>Set a start date on the profile — every due date on our side hangs off it.</div>}
+      {/* Setup — the facts that change the plan (Mark 2026-09-22) */}
+      <div className="rounded-2xl p-3 mb-4" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-[10px] uppercase tracking-wider font-bold" style={{ color: '#555', fontFamily: 'IBM Plex Mono, monospace' }}>⚙️ Setup</div>
+          {!setup && <button onClick={() => setSetup({ experience_level: m.experience_level, van: m.van, scan_tool: m.scan_tool, region: m.region, route_notes: m.route_notes, hire_date: m.hire_date, email: m.work_email })} className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>Edit</button>}
+        </div>
+        {!setup ? (
+          <div className="flex gap-x-4 gap-y-1 flex-wrap text-xs mt-1" style={{ color: '#374151' }}>
+            <span>🎓 <b>{m.experience_level === 'certified' ? 'Certified tech · ~1 week ride-along' : 'New to calibration · ~3 weeks ride-along'}</b></span>
+            <span>✉️ {m.work_email}</span>
+            {m.track !== 'ops' && <span>🚐 {m.van ? `Van ${m.van}` : <i style={{ color: RED }}>no van assigned</i>}{m.scan_tool ? ` · ${m.scan_tool}` : ''}</span>}
+            {m.track !== 'ops' && <span>🗺 {m.region || <i style={{ color: RED }}>no area</i>}{m.route_notes ? ` · ${m.route_notes.slice(0, 60)}${m.route_notes.length > 60 ? '…' : ''}` : ''}</span>}
+          </div>
+        ) : (
+          <div className="mt-2">
+            <div className="flex gap-2 flex-wrap mb-2">
+              {[['green', '🌱 New to calibration — 3 weeks with Mark'], ['certified', '🎓 Certified tech — about a week']].map(([v, l]) => <button key={v} onClick={() => setSetup(x => ({ ...x, experience_level: v }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={setup.experience_level === v ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
+              <label className="text-[11px] font-bold" style={{ color: '#888' }}>Start date<input type="date" value={setup.hire_date || ''} onChange={e => setSetup(x => ({ ...x, hire_date: e.target.value }))} className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>
+              <label className="text-[11px] font-bold sm:col-span-2" style={{ color: '#888' }}>Work email (Zoho user to create)<input value={setup.email || ''} onChange={e => setSetup(x => ({ ...x, email: e.target.value }))} className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>
+              {m.track !== 'ops' && <><label className="text-[11px] font-bold" style={{ color: '#888' }}>Van #<input value={setup.van || ''} onChange={e => setSetup(x => ({ ...x, van: e.target.value }))} placeholder="Van 2" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>
+              <label className="text-[11px] font-bold" style={{ color: '#888' }}>Scan tool<input value={setup.scan_tool || ''} onChange={e => setSetup(x => ({ ...x, scan_tool: e.target.value }))} placeholder="Autel MA600 #…" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>
+              <label className="text-[11px] font-bold" style={{ color: '#888' }}>Area<input value={setup.region || ''} onChange={e => setSetup(x => ({ ...x, region: e.target.value }))} placeholder="Tacoma / South Sound" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label></>}
+            </div>
+            {m.track !== 'ops' && <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>Route — shops they service, shops to grow<textarea value={setup.route_notes || ''} onChange={e => setSetup(x => ({ ...x, route_notes: e.target.value }))} rows={2} placeholder="Service: Avon, B&H, L-M. Grow: Carstar Bellevue, Express Auto Body…" className="w-full text-sm rounded-lg px-2 py-1.5 mt-0.5 font-normal" style={inp} /></label>}
+            <div className="flex gap-2"><button onClick={saveSetup} disabled={busy === 'setup'} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: GREEN }}>{busy === 'setup' ? 'Saving…' : 'Save — re-dates the runway'}</button><button onClick={() => setSetup(null)} className="text-xs px-2" style={{ color: '#888' }}>cancel</button></div>
+          </div>
+        )}
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* ── Our side ── */}
         <div className="rounded-2xl p-4" style={{ backgroundColor: '#fff7ed', border: '1.5px solid #fdba74' }}>
@@ -102,6 +143,7 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
               <span style={{ color: t.done ? '#999' : '#1a1a1a', fontWeight: t.done ? 400 : 600 }}>{t.label}</span>
             </div>
           ))}
+          {m.van_handover?.at && <div className="mt-3 rounded-xl p-3 bg-white text-xs" style={{ border: '1px solid #bbf7d0', color: '#374151' }}><div className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: GREEN }}>🚐 Van handover · {String(m.van_handover.at).slice(0, 10)}</div>{Number(m.van_handover.mileage).toLocaleString()} mi · tread {m.van_handover.tread?.lf}/{m.van_handover.tread?.rf}/{m.van_handover.tread?.lr}/{m.van_handover.tread?.rr} · {m.van_handover.photos} photos{m.van_handover.videos ? ` · ${m.van_handover.videos} video` : ''}{m.van_handover.damage ? <div className="mt-1">Damage: {m.van_handover.damage}</div> : null}{(m.van_handover.tools || []).some(t => !t.present) && <div className="mt-1 font-bold" style={{ color: RED }}>Missing: {m.van_handover.tools.filter(t => !t.present).map(t => t.name).join(', ')}</div>}</div>}
           <div className="mt-3 rounded-xl p-3 bg-white" style={{ border: '1px solid #bbf7d0' }}>
             <div className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: GREEN }}>Their link</div>
             <div className="text-xs mb-2" style={{ color: '#555' }}>{d.link.completed_at ? `✅ Finished ${String(d.link.completed_at).slice(0, 10)} — welcome text sent.` : d.link.invited_at ? `Sent ${String(d.link.invited_at).slice(0, 10)}. Nudges go to them on day 2 and 5.` : 'Not sent yet.'}{d.link.revoked_at ? ` Old links revoked ${String(d.link.revoked_at).slice(0, 10)}.` : ''}</div>
