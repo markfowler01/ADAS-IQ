@@ -70,7 +70,7 @@ export function composeEmail(n, todayPT) {
     '',
     'Where I think I help you most:',
     '',
-    '1. Pacific time coverage. Standby Monday through Friday, 7 AM to 5 PM Pacific, with a response inside 10 minutes. West Coast shops at 3 PM are your thinnest hour.',
+    '1. Pacific time coverage. Standby Monday through Friday, 7 AM to 7 PM Pacific, with a response inside 10 minutes. West Coast shops at 3 PM are your thinnest hour.',
     '',
     '2. Makes most experts do not carry. Bentley and Lamborghini on ODIS, and Stellantis as a Master Certified Technician.',
     '',
