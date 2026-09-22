@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -111,8 +112,8 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
       if (data.make      != null && data.make      !== '') { setMake(String(data.make));           fieldsFound++ }
       if (data.model     != null && data.model     !== '') { setModel(String(data.model));         fieldsFound++ }
       if (data.vin) {
-        const v = String(data.vin).replace(/\s/g, '')
-        setLastFourVin(v.slice(-4).toUpperCase())
+        const v = String(data.vin).replace(/\s/g, '').toUpperCase()
+        setLastFourVin(v.length === 17 ? v : v.slice(-4))
         fieldsFound++
       }
       if (data.notes && !notes) { setNotes(data.notes); fieldsFound++ }
@@ -177,7 +178,7 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
         year:       String(year     || '').trim(),
         make:       String(make     || '').trim(),
         model:      String(model    || '').trim(),
-        vin:        lastFourVin ? `****${lastFourVin.toUpperCase()}` : '',
+        vin:        lastFourVin.length === 17 ? lastFourVin.toUpperCase() : (lastFourVin ? `****${lastFourVin.slice(-4).toUpperCase()}` : ''),
         technician: technician,
         insurer:    String(insurer || '').trim(),
         notes:      String(notes || '').trim(),
@@ -507,21 +508,25 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
             />
           </div>
 
-          {/* Last 4 of VIN */}
+          {/* VIN — the full 17 (decodes the car for you) or just the last 4 (Mark 2026-09-22) */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">
-              Last 4 of VIN
+              VIN <span style={{ color: '#bbb', textTransform: 'none' }}>(full 17, or just the last 4)</span>
             </label>
-            <input
-              className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
-              style={{ borderColor: '#ddd' }}
-              value={lastFourVin}
-              onChange={e => setLastFourVin(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase())}
-              placeholder="e.g. A1B2"
-              maxLength={4}
-              onFocus={e => (e.target.style.borderColor = ORANGE)}
-              onBlur={e  => (e.target.style.borderColor = '#ddd')}
-            />
+            <div className="flex gap-2 items-center">
+              <input
+                className="flex-1 border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
+                style={{ borderColor: lastFourVin.length === 17 ? '#16a34a' : '#ddd' }}
+                value={lastFourVin}
+                onChange={e => setLastFourVin(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 17).toUpperCase())}
+                placeholder="A1B2  or  1HGCM82633A004352"
+                maxLength={17}
+                onFocus={e => (e.target.style.borderColor = ORANGE)}
+                onBlur={e  => (e.target.style.borderColor = lastFourVin.length === 17 ? '#16a34a' : '#ddd')}
+              />
+              <VinDecodeButton vin={lastFourVin} compact onDecoded={d => { if (d?.year && !year) setYear(String(d.year)); if (d?.make && !make) setMake(String(d.make)); if (d?.model && !model) setModel(String(d.model)) }} />
+            </div>
+            {lastFourVin.length > 4 && lastFourVin.length < 17 && <p className="text-[11px] mt-1" style={{ color: '#b45309' }}>{17 - lastFourVin.length} more for a full VIN — or just the last 4 is fine.</p>}
           </div>
 
           {/* Scheduled date (optional) */}

@@ -30,6 +30,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
   const fees = useMemo(() => ['Security Access and Authorization Fee', 'Gateway Access Fee'].map(n => byName.get(n.toLowerCase())).filter(Boolean), [byName])
   const jobMake = String(job.make || '').toLowerCase()
   const suggested = modItems.find(i => jobMake && (i.make.toLowerCase() === jobMake || jobMake.includes(i.make.toLowerCase())))
+  const booksHits = q.trim().length >= 2 ? catalog.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 14) : []
   const calHits = q.trim().length >= 2 ? catalog.filter(i => !KEY_STUFF.test(i.name) && CAL_WORDS.test(i.name) && i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 10) : []
   const diag = byName.get('diagnostic 1') || catalog.find(i => /^diagnostic/i.test(i.name))
   function add(it, extra = {}) { setLines(ls => { const i = ls.findIndex(l => l.item_id === it.item_id && !extra.description); if (i >= 0 && !extra.description) return ls.map((l, n) => n === i ? { ...l, quantity: l.quantity + 1 } : l); return [...ls, { item_id: it.item_id, name: it.name, rate: Number(it.rate) || 0, quantity: 1, description: '', ...extra }] }); setQ('') }
@@ -63,7 +64,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
           <button onClick={onClose} className="text-2xl leading-none px-1" style={{ color: '#888' }}>×</button>
         </div>
         <div className="flex gap-1 mb-3">
-          {[['programming', '🔌 Programming'], ['calibration', '🎯 Calibration'], ['diagnostic', '🔍 Diagnostic']].map(([k, l]) => <button key={k} onClick={() => setTab(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={tab === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
+          {[['programming', '🔌 Programming'], ['books', '📚 Zoho Books — any item'], ['calibration', '🎯 Calibration'], ['diagnostic', '🔍 Diagnostic']].map(([k, l]) => <button key={k} onClick={() => setTab(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={tab === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
         </div>
         {tab === 'programming' && (
           <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#faf9f7', border: '1px solid #e8e4e0' }}>
@@ -71,6 +72,15 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
             {suggested && <button onClick={() => add(suggested)} className="text-sm font-bold rounded-xl px-3 py-2 mb-2 text-white" style={{ backgroundColor: ORANGE }}>＋ {suggested.make} module · {fmt(suggested.rate)}</button>}
             <div className="flex gap-1.5 flex-wrap mb-2">{modItems.map(i => <button key={i.item_id} onClick={() => add(i)} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#1a1a1a', border: '1px solid #e0dbd6' }}>{i.make} <span style={{ color: '#888' }}>{fmt(i.rate)}</span></button>)}</div>
             <div className="flex gap-1.5 flex-wrap">{fees.map(f => <button key={f.item_id} onClick={() => add(f)} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: '#fff7ed', color: '#b45309', border: '1px solid #fdba74' }}>＋ {f.name} {fmt(f.rate)}</button>)}</div>
+          </div>
+        )}
+        {tab === 'books' && (
+          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#faf9f7', border: '1px solid #e8e4e0' }}>
+            <div className="text-[11px] mb-1.5" style={{ color: '#666' }}>The whole Zoho Books menu — programming, diagnostics, labor, parts, anything. Tap to add a line; tap again for another.</div>
+            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search every Books item…" className="w-full text-sm rounded-lg px-3 py-2 mb-2" style={inp} onKeyDown={e => { if (e.key === 'Enter' && booksHits[0]) add(booksHits[0]) }} />
+            {booksHits.map(it => <button key={it.item_id} onClick={() => add(it)} className="w-full text-left flex justify-between px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: 'white', border: '1px solid #eee', marginBottom: 4 }}><span>{it.name}{it.type === 'goods' ? <span className="text-xs" style={{ color: '#888' }}> · part</span> : null}</span><span className="font-bold" style={{ color: GREEN }}>{fmt(it.rate)}</span></button>)}
+            {q.trim().length >= 2 && !booksHits.length && <div className="text-xs" style={{ color: '#888' }}>Nothing in Books matches "{q.trim()}".</div>}
+            {q.trim().length < 2 && <div className="text-xs" style={{ color: '#aaa' }}>{catalog.length ? `${catalog.length} items in Books.` : 'Loading Books…'}</div>}
           </div>
         )}
         {tab === 'calibration' && (
@@ -99,6 +109,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
               {/diagnos|mechanical/i.test(l.name) && <input value={l.description} onChange={e => setLines(ls => ls.map((x, n) => n === i ? { ...x, description: e.target.value } : x))} placeholder="What was diagnosed / done" className="w-full text-xs rounded-lg px-2 py-1.5 mt-1" style={inp} />}
             </div>
           ))}
+          <div className="flex items-center justify-between px-3 py-2" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#f8fafc' }}><button onClick={() => { setTab('books'); setQ('') }} className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: 'white', color: ORANGE, border: `1px dashed ${ORANGE}` }}>＋ Add another line from Books</button><span className="text-[11px]" style={{ color: '#888' }}>{lines.length} line{lines.length === 1 ? '' : 's'}</span></div>
           <div className="flex justify-between px-3 py-2 text-base font-extrabold" style={{ borderTop: '2px solid #dcfce7', color: GREEN }}><span>List total (before any discount / tax)</span><span className="tabular-nums">{fmt(total)}</span></div>
         </div>
         <div className="grid grid-cols-2 gap-2 mb-2">

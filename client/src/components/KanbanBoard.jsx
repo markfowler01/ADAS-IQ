@@ -2766,11 +2766,11 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
             <button
               onClick={async e => { e.stopPropagation(); setShowChooser(false); setBusy(true); try { await onInvoiceFromJob(job) } finally { setBusy(false) } }}
               className="w-full flex items-center justify-between rounded-xl p-3 transition-all hover:opacity-80 active:opacity-60"
-              style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0', textAlign: 'left' }}
+              style={{ backgroundColor: '#f9fafb', border: '1.5px solid #e5e7eb', textAlign: 'left' }}
             >
-              <span className="text-sm font-bold" style={{ color: '#16a34a' }}>✍️ Without Kinetic Report</span>
+              <span className="text-sm font-bold" style={{ color: '#6b7280' }}>✍️ Old way — review screen (calibrations from the request)</span>
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: '#16a34a', color: 'white' }}>Manual</span>
+                style={{ backgroundColor: '#9ca3af', color: 'white' }}>Legacy</span>
             </button>
             <button
               onClick={e => { e.stopPropagation(); setShowChooser(false) }}
