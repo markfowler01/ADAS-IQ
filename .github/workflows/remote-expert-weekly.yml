@@ -1,0 +1,37 @@
+name: Knock — weekly Autel Remote Expert application
+
+# Mark 2026-09-22: Autel keeps saying there are no Remote Expert spots and he
+# keeps forgetting to ask again. This fires the app's weekly application
+# email (from mf@absoluteadas.com via Zoho Mail) every Tuesday morning. The
+# route itself refuses to send twice inside 5 days, so a GitHub retry or a
+# manual run can never double-send.
+#
+# 16:17 UTC = 9:17 AM PDT / 8:17 AM PST. Kept clear of GitHub's 13:00-14:30
+# UTC congestion window where schedules get silently dropped.
+on:
+  schedule:
+    - cron: '17 16 * * 2'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'send = real email · dry = compose only, nothing sent'
+        required: true
+        default: 'dry'
+        type: choice
+        options:
+          - dry
+          - send
+
+jobs:
+  knock:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire the weekly application
+        run: |
+          MODE="${{ inputs.mode || 'send' }}"
+          Q=""; [ "$MODE" = "dry" ] && Q="?dry=1"
+          code=$(curl -sS -o /tmp/k.json -w '%{http_code}' --max-time 90 -X POST \
+            -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" \
+            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/cron/remote-expert-apply$Q")
+          echo "mode=$MODE http=$code"; head -c 1500 /tmp/k.json; echo
+          [ "$code" = "200" ] || exit 1

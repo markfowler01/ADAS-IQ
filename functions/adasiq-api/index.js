@@ -37,6 +37,7 @@ import billItRouter from './routes/billIt.js'
 import { smsWebhookRouter, smsAuthRouter } from './routes/sms.js'
 import { voiceWebhookRouter, voicemailsAuthRouter, callsAuthRouter } from './routes/voice.js'
 import { phoneHealthRouter } from './routes/phoneHealth.js'
+import remoteExpertApplyRouter from './routes/remoteExpertApply.js'
 import phoneConfigRouter from './routes/phoneConfig.js'
 import reportRouter from './routes/report.js'
 import auditRouter from './routes/audit.js'
@@ -276,6 +277,8 @@ app.use('/api/cron/daily-greeting', dailyGreetingRouter)
 // returns invalid TwiML, fires a Cliq alert to Mark's channel so a
 // broken phone system never survives one interval unnoticed.
 app.use('/api/cron/phone-health', phoneHealthRouter)
+// Weekly Autel Remote Expert application ("Knock") — GitHub Actions, Tuesdays.
+app.use('/api/cron/remote-expert-apply', remoteExpertApplyRouter)
 
 // SMS routes — inbound webhook is public (Twilio signature-validated),
 // send + threads endpoints require auth.

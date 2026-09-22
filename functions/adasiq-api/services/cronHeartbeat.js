@@ -39,6 +39,7 @@ export const CRON_NAMES = [
   'capture_van_weekly_draft',  // Sunday drafter for the weekly Van newsletter
   'capture_van_safety_net',    // hourly safety-net that retries broadcasts + triggers stale crons
   'postscan',                  // hourly mail scan + ALL HR piggybacks — GH-hourly since 2026-08-27
+  'remote_expert_apply',       // Knock — weekly Autel Remote Expert application, Tuesdays via GH
 ]
 
 export const HB_ATTEMPT_KEY = name => `capture_hb_attempt_${name}`
