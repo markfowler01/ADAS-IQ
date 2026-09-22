@@ -392,7 +392,10 @@ router.post('/zoho-books', async (req, res) => {
     const payload = req.body
     console.log('[webhook] Zoho Books payload:', JSON.stringify(payload).slice(0, 500))
     const result = await processSentInvoice(req, payload.invoice || payload)
-    res.json({ success: true, ...result })
+    // Zoho Payments on (Mark 2026-09-22) — once per invoice, awaited (Catalyst freezes after the response).
+    let zp = null
+    try { const { ensureZohoPayments } = await import('../services/zohoPayments.js'); zp = await ensureZohoPayments(req, payload.invoice || payload) } catch (e) { console.log('[webhook] zoho-payments failed:', e.message) }
+    res.json({ success: true, ...result, zoho_payments: zp })
   } catch (err) {
     console.error('[webhook] Error:', err.message)
     res.status(500).json({ error: err.message })

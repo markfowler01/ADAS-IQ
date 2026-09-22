@@ -127,4 +127,12 @@ router.post('/customers', async (req, res) => {
   } catch (err) { console.error('[crm-sync-cron customers]', err.message); res.status(500).json({ error: err.message }) }
 })
 
+// POST /api/crm-sync-cron/zoho-payments — run the Zoho Payments sweep now (cron secret).
+router.post('/zoho-payments', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { sweepZohoPayments } = await import('../services/zohoPayments.js'); res.json(await sweepZohoPayments(req)) }
+  catch (err) { res.status(500).json({ error: err.message }) }
+})
+
 export default router
