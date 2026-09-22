@@ -12,7 +12,7 @@ import multer from 'multer'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
 import { readTeamMembers, saveMemberPublic as saveMember } from './team.js'
-import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson, readLadder, ladderProgress, maybeWelcome } from './people.js'
+import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson, readLadder, ladderProgress, maybeWelcome, autoAdvance, WELCOME_DEFAULT } from './people.js'
 
 const router = express.Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
@@ -111,7 +111,9 @@ router.get('/:id', async (req, res) => {
     const course = await readCourse(req)
     const progress = m.training || {}
     const company = await cfgReadJson(req, 'company_page', null)
-    res.json({ ok: true, mode,
+    const welcome = await cfgReadJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
+    const crew = members.filter(x => x.active !== false && x.id !== m.id && x.employment !== undefined).map(x => ({ name: x.preferred_name ? `${x.preferred_name} ${x.name.split(' ').slice(1).join(' ')}` : x.name, title: x.title || '', department: x.department || '', photo_url: x.photo_url || '', phone: x.phone || '', color: x.avatar_color || '#CD4419', is_boss: x.user_id === m.reports_to }))
+    res.json({ ok: true, mode, welcome, crew,
       member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '' },
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
@@ -154,6 +156,7 @@ router.post('/:id/upload', upload.single('file'), async (req, res) => {
     if (kind === 'mvr') m.mvr_checked_at = todayPT()
     if (kind === 'cert') { const name = String(req.body?.label || '').trim().slice(0, 120) || 'Certification'; const expires = /^\d{4}-\d{2}-\d{2}$/.test(String(req.body?.expires || '')) ? String(req.body.expires) : ''; m.certifications = [...(Array.isArray(m.certifications) ? m.certifications : []), { name, issuer: String(req.body?.issuer || '').slice(0, 80), expires, file_id: doc.file_id, added: todayPT() }] }
     await saveMember(req, m)
+    autoAdvance(req, m).then(r => r.changed && saveMember(req, m)).catch(() => {})
     maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} uploaded ${doc.name}`)
     res.json({ ok: true, document: { kind, name: doc.name, added: doc.added }, photo_url: m.photo_url || '' })
@@ -186,6 +189,7 @@ router.post('/:id/direct-deposit', async (req, res) => {
     const doc = await putFile(req, m, 'deposit', '', buf, 'application/pdf', '.pdf')
     m.direct_deposit = { bank, last4: account.slice(-4), type, at: when }
     await saveMember(req, m)
+    autoAdvance(req, m).then(r => r.changed && saveMember(req, m)).catch(() => {})
     maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} direct deposit on file (${bank} …${account.slice(-4)})`)
     res.json({ ok: true, direct_deposit: m.direct_deposit, document: { kind: 'deposit', name: doc.name, added: doc.added } })
@@ -214,6 +218,7 @@ router.post('/:id/payout', async (req, res) => {
     const d = await putFile(req, m, 'deposit', '', buf, 'application/pdf', '.pdf')
     m.payout = { method: 'wise', email, currency, at: when }; m.wise_email = email; m.wise_currency = currency
     await saveMember(req, m)
+    autoAdvance(req, m).then(r => r.changed && saveMember(req, m)).catch(() => {})
     maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} Wise payout on file (${currency})`)
     res.json({ ok: true, payout: m.payout, document: { kind: 'deposit', name: d.name, added: d.added } })
@@ -251,6 +256,7 @@ router.post('/:id/sign', async (req, res) => {
       await cfgWriteJson(req, `policy_ack:${emailKey(m.user_id)}`, acks)
     }
     await saveMember(req, m)
+    autoAdvance(req, m).then(r => r.changed && saveMember(req, m)).catch(() => {})
     maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     console.log(`[onboard] ${m.name} signed ${what}`)
     res.json({ ok: true, signed: m.signatures })
@@ -275,6 +281,7 @@ router.post('/:id/course/:mid', async (req, res) => {
     const mine = course.modules.filter(x => (x.tracks || ['core']).includes('core') || (x.tracks || []).includes(m.track || 'tech'))
     if (mine.every(x => m.training[x.id]?.passed)) tickChecklist(m, 'training', m.name)
     await saveMember(req, m)
+    autoAdvance(req, m).then(r => r.changed && saveMember(req, m)).catch(() => {})
     maybeWelcome(req, m).catch(e => console.log('[onboard] welcome failed:', e.message))
     res.json({ ok: true, score, passed, correct: (mod.quiz || []).map(q => ({ id: q.id, correct: q.correct })), progress: m.training[mod.id] })
   } catch (e) { res.status(500).json({ error: e.message }) }

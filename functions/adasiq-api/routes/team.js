@@ -218,6 +218,7 @@ router.put('/members/:id', async (req, res) => {
     for (const f of allowed) if (req.body[f] !== undefined) m[f] = req.body[f]
     if (m.user_id) m.user_id = String(m.user_id).toLowerCase()
     if (m.email) m.email = String(m.email).toLowerCase()
+    try { const { restampChecklist } = await import('./people.js'); restampChecklist(m) } catch { /* fine */ }
     await saveMember(req, m)
     res.json({ ...m, role: roleOf(m) })
   } catch (e) { res.status(500).json({ error: e.message }) }

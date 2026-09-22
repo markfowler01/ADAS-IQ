@@ -3,6 +3,7 @@ import Navbar from './Navbar'
 import { API_BASE, apiFetch, ORANGE } from './books/shared'
 import { DirectoryTab, OrgChartTab, MemberEditModal } from './team/Directory.jsx'
 import ProfileDrawer from './team/Profile.jsx'
+import OnboardingTab from './team/OnboardingTab.jsx'
 import CalendarTab from './team/Calendar.jsx'
 import CompanyTab from './team/Company.jsx'
 import TrainingTab from './team/Training.jsx'
@@ -21,7 +22,9 @@ const ROLE_COLORS = {
 const AVATAR_COLORS = ['#CD4419', '#2563eb', '#16a34a', '#7c3aed', '#b45309', '#0e7490', '#db2777', '#0891b2']
 
 export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }) {
-  const [tab, setTab] = useState('directory')
+  const launchParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('launch') : null
+  const [tab, setTab] = useState(launchParam ? 'onboarding' : 'directory')
+  const [launchId, setLaunchId] = useState(launchParam || null)
   const [profile, setProfile] = useState(null)
   const [members, setMembers] = useState([])
   const [status, setStatus] = useState({})   // who's on the clock / off today
@@ -70,6 +73,7 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
     { id: 'calendar', label: 'Calendar' },
     { id: 'company', label: 'Company' },
     { id: 'training', label: 'Training' },
+    ...(isOwnerUser(user) ? [{ id: 'onboarding', label: '🚀 Onboarding' }] : []),
     { id: 'announcements', label: `Announcements (${announcements.length})` },
   ]
 
@@ -113,6 +117,8 @@ export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }
           <CompanyTab />
         ) : tab === 'training' ? (
           <TrainingTab />
+        ) : tab === 'onboarding' ? (
+          <OnboardingTab launchId={launchId} onLaunchClose={() => setLaunchId(null)} onOpenProfile={id => { const m = members.find(x => x.id === id); if (m) setProfile(m) }} />
         ) : (
           <AnnouncementsTab announcements={announcements} isAdmin={isAdmin}
             currentUserId={user?.email}

@@ -19,10 +19,10 @@ async function shrink(file, max = 1800) {
     return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' })
   } catch { return file }
 }
-const STEPS_W2 = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['w4', '4 · W-4'], ['deposit', '5 · Direct deposit'], ['sign', '6 · Sign'], ['training', '7 · Training'], ['ask', '8 · Ask']]
-const STEPS_CONTRACTOR = [['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
+const STEPS_W2 = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['w4', '4 · W-4'], ['deposit', '5 · Direct deposit'], ['sign', '6 · Sign'], ['training', '7 · Training'], ['ask', '8 · Ask']]
+const STEPS_CONTRACTOR = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['ask', '7 · Ask']]
 // Existing staff catching up (Mark 2026-09-21): just the bits their file is missing.
-const STEPS_CATCHUP = [['about', '1 · About you'], ['photo', '2 · Photo'], ['sign', '3 · Sign'], ['ask', '4 · Ask']]
+const STEPS_CATCHUP = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['sign', '3 · Sign'], ['ask', '4 · Ask']]
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
 const Btn = ({ children, onClick, disabled, tone = 'green', full = true }) => <button type="button" onClick={onClick} disabled={disabled} className={`${full ? 'w-full' : ''} rounded-2xl py-3.5 px-4 text-base font-extrabold text-white`} style={{ backgroundColor: tone === 'orange' ? ORANGE : tone === 'blue' ? BLUE : GREEN, opacity: disabled ? .5 : 1 }}>{children}</button>
 const ytEmbed = u => { const m = String(u || '').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{6,})/); return m ? `https://www.youtube.com/embed/${m[1]}` : null }
@@ -30,7 +30,7 @@ const ytEmbed = u => { const m = String(u || '').match(/(?:youtu\.be\/|youtube\.
 export default function OnboardingScreen() {
   const [d, setD] = useState(null)
   const [err, setErr] = useState('')
-  const [step, setStep] = useState('about')
+  const [step, setStep] = useState('welcome')
   const [msg, setMsg] = useState('')
   const load = () => call('').then(x => { setD(x); if (!x.member.photo_url && x.member.emergency_contact?.name) setStep(s => s) }).catch(e => setErr(e.message))
   useEffect(() => { if (!ID || !T) setErr('This link is missing its key. Ask Mark to resend it.'); else load() }, [])
@@ -43,7 +43,7 @@ export default function OnboardingScreen() {
   const isTech = (m.track || 'tech') !== 'ops'
   const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), w4: has('w4'), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
   const steps = catchup ? STEPS_CATCHUP : contractor ? STEPS_CONTRACTOR : STEPS_W2
-  const counted = steps.map(([k]) => k).filter(k => k !== 'ask')
+  const counted = steps.map(([k]) => k).filter(k => k !== 'ask' && k !== 'welcome')
   const pct = Math.round((counted.filter(k => done[k]).length / counted.length) * 100)
   const flash = t => { setMsg(t); setTimeout(() => setMsg(''), 3500) }
   return (
@@ -60,6 +60,7 @@ export default function OnboardingScreen() {
         {steps.map(([k, label]) => <button key={k} onClick={() => setStep(k)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0" style={step === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: done[k] && k !== 'ask' ? GREEN : '#555', border: `1px solid ${done[k] && k !== 'ask' ? '#86efac' : '#e0dbd6'}` }}>{done[k] && k !== 'ask' ? '✓ ' : ''}{label}</button>)}
       </div>
       {msg && <div className="text-sm font-semibold mb-2 px-3 py-2 rounded-lg" style={{ backgroundColor: msg.startsWith('✓') ? '#dcfce7' : '#fef2f2', color: msg.startsWith('✓') ? GREEN : RED }}>{msg}</div>}
+      {step === 'welcome' && <Welcome d={d} m={m} onNext={() => setStep('about')} />}
       {step === 'about' && <About m={m} isTech={isTech && !catchup} onSaved={() => { load(); flash('✓ Saved'); setStep('photo') }} />}
       {step === 'photo' && <Photo m={m} onDone={() => { load(); flash('✓ Photo saved to your folder'); setStep(catchup ? 'sign' : 'docs') }} />}
       {step === 'docs' && <Docs d={d} has={has} contractor={contractor} isTech={isTech} onDone={() => { load(); flash('✓ Uploaded to your folder') }} onNext={() => setStep(contractor ? 'deposit' : 'w4')} />}
@@ -77,6 +78,50 @@ function Card({ title, sub, children }) { return <div className="rounded-2xl p-4
 const L = ({ label, children }) => <label className="block text-[11px] font-bold mb-2" style={{ color: '#888' }}>{label}<div className="mt-0.5 font-normal">{children}</div></label>
 const I = ({ v, set, ...p }) => <input value={v || ''} onChange={e => set(e.target.value)} className="w-full text-sm rounded-lg px-3 py-2.5" style={inp} {...p} />
 
+// First thing they see (Mark 2026-09-22: "make the new employee feel wanted
+// and pumped"): Mark on video, a note, the crew's faces, and day one — before
+// a single form.
+function Welcome({ d, m, onNext }) {
+  const w = d.welcome || {}, crew = d.crew || [], first = m.preferred_name || m.name.split(' ')[0]
+  const days = m.hire_date ? Math.round((new Date(m.hire_date + 'T12:00:00') - new Date(new Date().toDateString())) / 86400000) : null
+  const yt = ytEmbed(w.video_url)
+  const boss = crew.find(c => c.is_boss)
+  return (
+    <div>
+      <div className="rounded-2xl p-5 mb-3 text-white" style={{ background: 'linear-gradient(135deg, #CD4419, #b45309)' }}>
+        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>Absolute ADAS</div>
+        <div className="text-2xl font-extrabold leading-tight mt-1">Welcome to the crew, {first}.</div>
+        {days != null && <div className="text-sm mt-2" style={{ opacity: .95 }}>{days > 0 ? `${days} day${days === 1 ? '' : 's'} until your first day — ${new Date(m.hire_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.` : days === 0 ? "Today's the day." : 'You\'re in.'}</div>}
+      </div>
+      {yt ? <div className="rounded-2xl overflow-hidden mb-3" style={{ aspectRatio: '16/9', backgroundColor: '#000' }}><iframe src={yt} title="Welcome from Mark" className="w-full h-full" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowFullScreen /></div>
+        : w.video_url ? <a href={w.video_url} target="_blank" rel="noreferrer" className="block rounded-2xl p-4 mb-3 text-center font-bold" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>▶ A word from Mark</a> : null}
+      {w.note && <Card title="From Mark"><div className="text-sm whitespace-pre-wrap" style={{ color: '#374151' }}>{w.note}</div></Card>}
+      <Card title="Your first day" sub={m.hire_date ? new Date(m.hire_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : 'Mark will confirm the date'}>
+        <div className="text-sm space-y-1.5" style={{ color: '#374151' }}>
+          {w.first_day?.time && <div>🕗 <b>{w.first_day.time}</b></div>}
+          {w.first_day?.where && <div>📍 {w.first_day.where}</div>}
+          {boss && <div>👤 You're with <b>{boss.name}</b>{boss.phone ? <> — <a href={`tel:${boss.phone.replace(/[^\d+]/g, '')}`} className="font-bold" style={{ color: BLUE }}>{boss.phone}</a></> : null}</div>}
+          {w.first_day?.bring && <div>🎒 Bring: {w.first_day.bring}</div>}
+          <div className="text-xs pt-1" style={{ color: '#888' }}>You'll get a text the morning of with the same details.</div>
+        </div>
+      </Card>
+      {crew.length > 0 && (
+        <Card title="Meet the crew" sub="The people you'll be working with. Tap a number to call.">
+          <div className="grid grid-cols-2 gap-2">
+            {crew.map((c, i) => (
+              <div key={i} className="rounded-xl p-2.5 flex items-center gap-2" style={{ backgroundColor: '#faf9f7', border: `1px solid ${c.is_boss ? ORANGE : '#eee'}` }}>
+                {c.photo_url ? <img src={c.photo_url} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" /> : <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style={{ backgroundColor: c.color }}>{c.name.split(' ').map(x => x[0]).slice(0, 2).join('')}</div>}
+                <div className="min-w-0"><div className="text-sm font-bold truncate" style={{ color: '#1a1a1a' }}>{c.name.split(' ')[0]}{c.is_boss ? ' ★' : ''}</div><div className="text-[11px] truncate" style={{ color: '#666' }}>{c.title}</div>{c.phone && <a href={`tel:${c.phone.replace(/[^\d+]/g, '')}`} className="text-[11px] font-bold" style={{ color: BLUE }}>📞 call</a>}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      {d.company?.who_to_call?.length > 0 && <Card title="Who to call for what"><div className="text-sm space-y-1" style={{ color: '#374151' }}>{d.company.who_to_call.slice(0, 6).map((x, i) => <div key={i}><b>{x.need}:</b> {x.person}{x.note ? <span style={{ color: '#888' }}> · {x.note}</span> : ''}</div>)}</div></Card>}
+      <Btn onClick={onNext}>Let's get you set up → (about 20 minutes)</Btn>
+    </div>
+  )
+}
 function About({ m, onSaved, isTech = false }) {
   const [f, setF] = useState({ preferred_name: m.preferred_name, personal_phone: m.personal_phone, personal_email: m.personal_email, address: m.address, birthday: m.birthday, shirt_size: m.shirt_size, license_expiry: m.license_expiry || '', license_number: '', ec: { ...m.emergency_contact } })
   const [busy, setBusy] = useState(false)

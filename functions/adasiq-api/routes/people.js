@@ -64,25 +64,30 @@ function stripPay(m) { const { hourly_rate, payroll_type, salary_annual, period_
 
 // ── Checklists ────────────────────────────────────────────────────────
 // Items marked (auto) tick themselves as the new hire works through the onboarding link.
+// Our side of Hired (Mark 2026-09-22: "two flows pop up… one for us on the
+// backside so we don't forget anything"). Every item has an OWNER who gets
+// nudged and a DUE day relative to the start date (negative = before day
+// one). "auto" items tick themselves from the portal.
 const ONBOARDING = [
-  { key: 'invite',         label: 'Onboarding link sent (text + email)' },
-  { key: 'photo',          label: 'Profile photo uploaded (auto)' },
-  { key: 'emergency',      label: 'Personal info + emergency contact filled in (auto)' },
-  { key: 'ids',            label: "Driver's license + Social Security card photographed (auto)" },
-  { key: 'direct_deposit', label: 'Direct deposit authorization signed (auto)' },
-  { key: 'handbook',       label: 'Handbook & policies signed (auto)' },
-  { key: 'contract',       label: 'Contract / offer letter signed (auto — owner drops the PDF in their folder first)' },
-  { key: 'training',       label: 'Training course passed — all modules (auto)' },
-  { key: 'w4',             label: 'Form W-4 uploaded (auto, W-2 only)', w2_only: true },
-  { key: 'mvr',            label: 'Driving record (MVR) on file — techs drive customers\' cars (auto when uploaded)', tech_only: true },
-  { key: 'i9',             label: 'Form I-9 completed in Zoho Payroll within 3 business days of the start date (W-2 only) — Mark', w2_only: true },
-  { key: 'login',          label: 'App login + access level set (Directory → App access) — Mark or Kat' },
-  { key: 'cliq',           label: 'Added to Cliq (#dispatch, #aajobs) — Kat' },
-  { key: 'payroll',        label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise, from the signed payout PDF — Mark' },
-  { key: 'gear',           label: 'Van / tools / phone issued and listed under Equipment — Mark' },
-  { key: 'rideaong',       label: 'First-week ride-along — Mark or Jayden' },
-  { key: 'checkin30',      label: '30-day check-in on the calendar — Mark' },
+  { key: 'invite',         label: 'Onboarding link sent (text + email)', owner: 'auto', due: -14 },
+  { key: 'photo',          label: 'Profile photo uploaded', owner: 'auto', due: -7 },
+  { key: 'emergency',      label: 'Personal info + emergency contact filled in', owner: 'auto', due: -7 },
+  { key: 'ids',            label: "Driver's license + Social Security card photographed", owner: 'auto', due: -7 },
+  { key: 'w4',             label: 'Form W-4 uploaded', owner: 'auto', due: -3, w2_only: true },
+  { key: 'mvr',            label: 'Driving record (MVR) on file — techs drive customers\' cars', owner: 'auto', due: -3, tech_only: true },
+  { key: 'direct_deposit', label: 'Direct deposit / payout authorization signed', owner: 'auto', due: -3 },
+  { key: 'handbook',       label: 'Handbook & policies signed', owner: 'auto', due: -3 },
+  { key: 'contract',       label: 'Contract / offer letter signed', owner: 'auto', due: -10 },
+  { key: 'training',       label: 'Training course passed — all modules', owner: 'auto', due: -1 },
+  { key: 'gear',           label: 'Van / tools / phone issued — every kit item gets an issue date under Equipment', owner: 'mark', due: -1 },
+  { key: 'cliq',           label: 'Added to Cliq (#dispatch, #aajobs)', owner: 'kat', due: -1 },
+  { key: 'login',          label: 'App login turned on (flips itself once training + paperwork are done)', owner: 'auto', due: -1 },
+  { key: 'payroll',        label: 'Payroll set up — W-2 in Zoho Payroll or contractor in Wise, from the signed payout PDF', owner: 'mark', due: 2 },
+  { key: 'i9',             label: 'Form I-9 completed in Zoho Payroll (within 3 business days of the start date)', owner: 'mark', due: 3, w2_only: true },
+  { key: 'rideaong',       label: 'First-week ride-along done', owner: 'mark', due: 5 },
+  { key: 'checkin30',      label: '30-day check-in logged', owner: 'mark', due: 30 },
 ]
+export { WELCOME_DEFAULT }
 export function tickChecklist(m, key, by) {
   if (!m.checklist || m.checklist.kind !== 'onboarding') return
   const it = m.checklist.items.find(x => x.key === key)
@@ -253,8 +258,45 @@ router.post('/policy/ack', async (req, res) => {
 // ── Onboarding / offboarding ─────────────────────────────────────────
 export function startChecklist(m, kind, by) {
   const tpl = (kind === 'offboarding' ? OFFBOARDING : ONBOARDING).filter(t => (!t.w2_only || m.employment !== 'contractor') && (!t.tech_only || (m.track || 'tech') !== 'ops'))
-  m.checklist = { kind, started_at: new Date().toISOString(), started_by: by, items: tpl.map(({ w2_only, tech_only, ...t }) => ({ ...t, done: false, at: '', by: '' })) }
+  m.checklist = { kind, started_at: new Date().toISOString(), started_by: by, items: tpl.map(({ w2_only, tech_only, ...t }) => ({ ...t, done: false, at: '', by: '', due_date: kind === 'onboarding' && m.hire_date && Number.isFinite(t.due) ? addDays(m.hire_date, t.due) : '' })) }
   return m
+}
+/** Re-stamp due dates when the start date changes. */
+export function restampChecklist(m) {
+  if (!m.checklist || m.checklist.kind !== 'onboarding' || !m.hire_date) return m
+  for (const it of m.checklist.items) { const t = ONBOARDING.find(x => x.key === it.key); if (t && Number.isFinite(t.due)) it.due_date = addDays(m.hire_date, t.due) }
+  return m
+}
+// Per-role equipment kits (Mark 2026-09-22: automate our side). Landed on
+// the record at Hired with no issue date; 'gear' ticks when every line has one.
+const KITS = {
+  tech: ['Van + keys', 'Autel scan tool + tablet', 'Calibration frame + targets', 'Radar reflector / doppler', 'Tire pressure gauge', 'Company phone', 'Uniform shirts (3)', 'Fuel card'],
+  apprentice: ['Autel tablet (shared)', 'Company phone', 'Uniform shirts (3)', 'Safety glasses + gloves'],
+  ops: ['Laptop / login to Zoho Books + Cliq', 'Headset', 'Company phone (optional)'],
+}
+export function seedKit(m) {
+  if (Array.isArray(m.equipment) && m.equipment.length) return m
+  m.equipment = (KITS[m.track || 'tech'] || KITS.tech).map(name => ({ name, serial: '', issued: '', kit: true }))
+  return m
+}
+// Things that should flip on their own once the pieces are in place. Run
+// after every save that could complete a piece (portal steps, checklist ticks).
+export async function autoAdvance(req, m) {
+  if (!m.checklist || m.checklist.kind !== 'onboarding') return { changed: false }
+  const done = k => !!m.checklist.items.find(x => x.key === k)?.done
+  const has = k => !!m.checklist.items.find(x => x.key === k)
+  let changed = false
+  // gear: every kit line has an issue date
+  if (has('gear') && !done('gear') && Array.isArray(m.equipment) && m.equipment.length && m.equipment.every(e => e.issued)) { tickChecklist(m, 'gear', 'auto'); changed = true }
+  // login: training passed + (I-9 for W-2 | contract for contractors) → access from track
+  const paperwork = m.employment === 'contractor' ? done('contract') : (!has('i9') || done('i9'))
+  if (has('login') && !done('login') && done('training') && done('handbook') && paperwork && (m.access === 'none' || !m.access)) {
+    m.access = (m.track || 'tech') === 'ops' ? 'dispatcher' : 'technician'
+    tickChecklist(m, 'login', 'auto'); changed = true
+    try { const { invalidateGate } = await import('./team.js'); invalidateGate() } catch { /* fine */ }
+    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🔓 *${m.name}'s app login is on* (${m.access}) — training, handbook and paperwork are all in.`) } catch { /* fine */ }
+  }
+  return { changed }
 }
 export function addBusinessDays(iso, n) { let d = new Date(iso + 'T12:00:00Z'); let left = n; while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); if (d.getUTCDay() !== 0 && d.getUTCDay() !== 6) left-- } return d.toISOString().slice(0, 10) }
 export function i9Deadline(m) { return m.employment !== 'contractor' && m.hire_date ? addBusinessDays(m.hire_date, 3) : null }
@@ -266,6 +308,77 @@ export function onboardingPct(m) {
   const steps = [!!(m.emergency_contact?.name && m.personal_phone), !!m.photo_url, contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), !!(m.direct_deposit || m.payout), !!m.signatures?.handbook, !!(m.training && Object.values(m.training).length && Object.values(m.training).every(t => t.passed))]
   return Math.round((steps.filter(Boolean).length / steps.length) * 100)
 }
+// ── Onboarding board (Mark 2026-09-22): every hire in flight, one page ──
+export function ourSide(m) {
+  const items = m.checklist?.kind === 'onboarding' ? m.checklist.items : []
+  const today = todayPT()
+  const open = items.filter(i => !i.done)
+  return { total: items.length, done: items.length - open.length, overdue: open.filter(i => i.due_date && i.due_date < today).map(i => i.key), due_today: open.filter(i => i.due_date === today).map(i => i.key), next: open.slice().sort((a, b) => String(a.due_date || '9').localeCompare(String(b.due_date || '9')))[0] || null }
+}
+router.get('/onboarding', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const members = await readTeamMembers(req)
+    const today = todayPT()
+    const list = members.filter(m => m.checklist?.kind === 'onboarding' && (!m.checklist.completed_at || m.checklist.completed_at.slice(0, 10) >= addDays(today, -14)))
+      .map(m => ({ id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, track: m.track || 'tech', employment: m.employment, hire_date: m.hire_date || '', photo_url: m.photo_url || '', days_to_start: m.hire_date ? Math.round((new Date(m.hire_date + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000) : null, portal_pct: onboardingPct(m), ours: ourSide(m), invited_at: m.onboarding_invited_at || '', completed_at: m.checklist.completed_at || '', portal_done_at: m.onboarding_completed_at || '', access: m.access }))
+      .sort((a, b) => String(a.hire_date || '9').localeCompare(String(b.hire_date || '9')))
+    const welcome = await cfgJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
+    res.json({ ok: true, today, hires: list, welcome })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// What makes them pumped (phase 3): a video from Mark, the first-day plan.
+const WELCOME_DEFAULT = { video_url: '', note: "Welcome to the crew. You're here because you do it right the first time — that's the whole job. First week you ride with me, then you're loose. GET SOME!!!", first_day: { where: 'Meet at the van — I\'ll text you the shop address the night before.', time: '7:45 AM', bring: "Driver's license, water, work boots, a good attitude. Shirts are in the van." } }
+router.put('/onboarding/welcome', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const b = req.body || {}
+    const w = { video_url: String(b.video_url || '').slice(0, 300), note: String(b.note || '').slice(0, 1200), first_day: { where: String(b.first_day?.where || '').slice(0, 300), time: String(b.first_day?.time || '').slice(0, 40), bring: String(b.first_day?.bring || '').slice(0, 400) } }
+    await cfgWrite(req, 'onboarding_welcome', w)
+    res.json({ ok: true, welcome: w })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+/** Everything the Launch view needs for one hire: our list with owners/dues, their steps, links, kit. */
+router.get('/onboarding/:id/launch', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m, members } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    const docs = Array.isArray(m.documents) ? m.documents : []
+    const has = k => docs.some(d => d.kind === k)
+    const contractor = m.employment === 'contractor'
+    const trainingDone = !!(m.training && Object.values(m.training).length && Object.values(m.training).every(t => t.passed))
+    const theirs = [
+      ['about', 'About you + emergency contact', !!(m.emergency_contact?.name && m.personal_phone)],
+      ['photo', 'Profile photo', !!m.photo_url],
+      ['docs', contractor ? 'Government ID' : "Driver's license + Social Security card", contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn'))],
+      ...(contractor ? [] : [['w4', 'Form W-4', has('w4')]]),
+      ...((m.track || 'tech') !== 'ops' ? [['mvr', 'Driving record', has('mvr')]] : []),
+      ['deposit', contractor ? 'Payout (Wise)' : 'Direct deposit', !!(m.direct_deposit || m.payout)],
+      ['sign', 'Handbook signed', !!m.signatures?.handbook],
+      ['contract', 'Offer / contract signed', !!m.signatures?.contract],
+      ['training', 'Training passed', trainingDone],
+    ].map(([key, label, done]) => ({ key, label, done }))
+    res.json({ ok: true, member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, track: m.track || 'tech', employment: m.employment, hire_date: m.hire_date || '', photo_url: m.photo_url || '', phone: m.phone || m.personal_phone || '', email: m.personal_email || m.email || '', access: m.access, boss: members.find(x => x.user_id === m.reports_to)?.name || '' },
+      ours: (m.checklist?.kind === 'onboarding' ? m.checklist.items : []).map(i => ({ ...i, owner: i.owner || ONBOARDING.find(t => t.key === i.key)?.owner || 'mark' })), theirs, portal_pct: onboardingPct(m), equipment: m.equipment || [],
+      link: { invited_at: m.onboarding_invited_at || '', revoked_at: m.onboarding_revoked_at || '', completed_at: m.onboarding_completed_at || '' }, today: todayPT() })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// Mark issues a kit line (date + serial) from the Launch view.
+router.post('/onboarding/:id/equipment', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const { m } = await memberFor(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    const idx = Number(req.body?.index)
+    if (!Array.isArray(m.equipment) || !m.equipment[idx]) return res.status(400).json({ error: 'No such line' })
+    m.equipment[idx] = { ...m.equipment[idx], issued: req.body?.issued === '' ? '' : (req.body?.issued || todayPT()), serial: String(req.body?.serial ?? m.equipment[idx].serial ?? '').slice(0, 80) }
+    await autoAdvance(req, m)
+    await saveMember(req, m)
+    res.json({ ok: true, equipment: m.equipment, checklist: m.checklist })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.post('/checklist/:id/start', async (req, res) => {
   try {
     if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
@@ -286,6 +399,7 @@ router.post('/checklist/:id/toggle', async (req, res) => {
     it.done = !it.done; it.at = it.done ? new Date().toISOString() : ''; it.by = it.done ? (req.user?.name || '') : ''
     const allDone = m.checklist.items.every(x => x.done)
     if (allDone) { m.checklist.completed_at = new Date().toISOString(); if (m.checklist.kind === 'offboarding') { m.active = false; m.access = 'none'; m.left_at = m.left_at || todayPT() } }
+    await autoAdvance(req, m)
     await saveMember(req, m)
     res.json({ ok: true, checklist: m.checklist, member_active: m.active })
   } catch (e) { res.status(500).json({ error: e.message }) }
@@ -319,6 +433,7 @@ router.get('/calendar', async (req, res) => {
         }
         for (let y = y0; y <= y1; y++) if (m.hire_date.slice(0, 4) < String(y) && !(m.checkins || {})[`y${y}`]) ev.push({ date: `${y}-${m.hire_date.slice(5)}`, type: 'checkin', title: `⭐ ${who} — annual review`, user_id: m.user_id, member_id: m.id, checkin: `y${y}`, log_type: 'review' })
       }
+      if (owner && m.hire_date >= from && m.checklist?.kind === 'onboarding' && !m.checklist.completed_at) { ev.push({ date: m.hire_date, type: 'checkin', title: `🚀 ${who} — first day${(m.track || 'tech') === 'ops' ? ' (shadows Kat)' : ' (ride-along week starts)'}`, user_id: m.user_id }) }
       // Driving record: re-check yearly (techs drive customers' cars).
       if (owner && m.mvr_checked_at && (m.track || 'tech') !== 'ops') ev.push({ date: addDays(m.mvr_checked_at, 365), type: 'expiry', title: `🚗 ${who}: driving record re-check due`, user_id: m.user_id })
       const i9 = i9Deadline(m); const i9Item = m.checklist?.items?.find(x => x.key === 'i9')
@@ -544,7 +659,7 @@ export async function maybePeopleNudges(req) {
   const stamp = `people_nudges:${today}`
   if (await cfgRead(req, stamp).catch(() => null)) return { fired: false, reason: 'already today' }
   const members = (await readTeamMembers(req)).filter(m => m.active !== false)
-  const lines = []
+  const lines = [], katLines = []
   const mmdd = today.slice(5), tomorrow = addDays(today, 1).slice(5)
   for (const m of members) {
     const who = m.preferred_name || firstName(m.name)
@@ -563,6 +678,29 @@ export async function maybePeopleNudges(req) {
       else if (m.checklist?.kind === 'onboarding' && m.checklist.started_at.slice(0, 10) <= addDays(today, -7)) lines.push(`🚗 ${who}: no driving record on file yet (techs drive customers' cars)`)
     }
     if (m.checklist && !m.checklist.completed_at) { const open = m.checklist.items.filter(i => !i.done).length; if (open && m.checklist.started_at.slice(0, 10) <= addDays(today, -7)) lines.push(`📋 ${who}: ${m.checklist.kind} still has ${open} open item(s) after a week`) }
+    // Owned items with a clock (2026-09-22): the owner hears about it the day it's due and every day it's late.
+    if (m.checklist?.kind === 'onboarding' && !m.checklist.completed_at) {
+      for (const it of m.checklist.items) {
+        if (it.done || !it.due_date || it.due_date > today) continue
+        const owner = it.owner || ONBOARDING.find(t => t.key === it.key)?.owner || 'mark'
+        if (owner === 'auto') continue
+        const late = it.due_date < today ? ` — was due ${it.due_date}` : ' — due TODAY'
+        const line = `☑️ ${who}: ${it.label.split(' — ')[0]}${late} (Directory → Onboarding)`
+        if (owner === 'kat') katLines.push(line); else lines.push(line)
+      }
+    }
+    // Day one, 7am: the hire gets where / when / who from us — once.
+    if (m.hire_date === today && !m.day1_texted_at && m.employment !== 'owner') {
+      try {
+        const w = await cfgJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
+        const first = m.preferred_name || firstName(m.name)
+        const boss = members.find(x => x.user_id === m.reports_to)
+        const to = m.personal_phone || m.phone
+        if (to) { const { sendTwilioSMS } = await import('../services/twilio.js'); await sendTwilioSMS({ to, body: `Morning ${first} — it's day one! ${w.first_day?.time ? `${w.first_day.time}. ` : ''}${w.first_day?.where || ''}${boss ? ` You're with ${boss.name}${boss.phone ? ` (${boss.phone})` : ''}.` : ''} ${w.first_day?.bring ? `Bring: ${w.first_day.bring}` : ''} GET SOME!!! — Mark` }) }
+        m.day1_texted_at = new Date().toISOString(); await saveMember(req, m)
+        lines.push(`🚀 ${who} starts TODAY — day-one text sent`)
+      } catch (e) { console.warn('[people] day-one text failed:', e.message) }
+    }
     const i9 = i9Deadline(m); const i9Item = m.checklist?.items?.find(x => x.key === 'i9')
     if (i9 && i9Item && !i9Item.done && m.checklist?.kind === 'onboarding') { if (i9 === today) lines.push(`🪪 ${who}: Form I-9 is due TODAY (Zoho Payroll) — tick it on the checklist when done`); else if (i9 < today) lines.push(`🚨 ${who}: Form I-9 is OVERDUE (was due ${i9}) — complete it in Zoho Payroll now`); else if (i9 === addDays(today, 1)) lines.push(`🪪 ${who}: Form I-9 due tomorrow`) }
     // Nudge the hire themselves on day 2 and day 5 after the invite if they haven't finished (Mark 2026-09-17).
@@ -587,10 +725,15 @@ export async function maybePeopleNudges(req) {
     for (const m of members) if (m.access !== 'none') { const acks = await policyAcksFor(req, m.user_id); if (!Object.keys(acks).length) lines.push(`📝 ${m.preferred_name || firstName(m.name)} hasn't acknowledged the HR policy yet`) }
   }
   await cfgWrite(req, stamp, new Date().toISOString())
-  if (!lines.length) return { fired: true, sent: 0 }
-  const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+  const { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+  if (katLines.length) {
+    // Kat's onboarding items land in her working channel + her bell.
+    await postToCliqChannel(DISPATCH_CHANNEL, `👥 *Kat — onboarding today*\n${katLines.join('\n')}`).catch(e => console.warn('[people] kat nudge failed:', e.message))
+    try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'onboarding', title: 'Onboarding items due', body: katLines.map(l => l.replace(/ \(Directory.*\)$/, '')).join(' · '), skipCliq: true, skipTechChannel: true }) } catch { /* fine */ }
+  }
+  if (!lines.length) return { fired: true, sent: katLines.length }
   await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `👥 *People today*\n${lines.join('\n')}`)
-  return { fired: true, sent: lines.length }
+  return { fired: true, sent: lines.length + katLines.length }
 }
 
 // Recruiting → Hired: create the directory entry + start onboarding
@@ -620,6 +763,8 @@ export async function maybeWelcome(req, m) {
       out.email = true
     } catch (e) { out.email = false }
   }
+  // The crew meets them before day one (Mark 2026-09-22: "make the new employee feel wanted").
+  try { const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js'); const base = process.env.WEB_BASE_URL ? process.env.WEB_BASE_URL.replace(/\/app$/, '') : ''; await postToCliqChannel(DISPATCH_CHANNEL, `👋 *Say hi to ${first} — ${m.title}${m.region ? ', ' + m.region : ''}.* Starts ${start}. Onboarding done, ${(m.track || 'tech') === 'ops' ? 'shadowing Kat' : 'riding with ' + (boss?.name || 'Mark')} week one.${m.photo_url && base ? ` Photo: ${base}${m.photo_url}` : ''} Drop a welcome in here — they'll see it day one. GET SOME!!!`) } catch { /* fine */ }
   try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🎉 *${m.name} finished onboarding — 100%.* Welcome text ${out.sms ? 'sent' : 'not sent'}, email ${out.email ? 'sent' : 'not sent'}. Left for you: ${(m.checklist?.items || []).filter(i => !i.done).map(i => i.label.split(' — ')[0]).join(' · ') || 'nothing'}.`) } catch {}
   console.log(`[people] welcome sent to ${m.name}: sms=${out.sms} email=${out.email}`)
   return { sent: true, ...out }
@@ -662,6 +807,7 @@ export async function onCandidateHired(req, cand) {
   const track = /apprentice|trainee|junior/.test(roleText) ? 'apprentice' : /billing|dispatch|office|admin|assistant|book|account|ops/.test(roleText) ? 'ops' : 'tech'
   const m = await createMemberPublic(req, { name: cand.name, email, user_id: email, phone: cand.phone || '', title: cand.role || (track === 'apprentice' ? 'Apprentice ADAS Technician' : track === 'ops' ? 'Billing & Dispatch' : 'ADAS Calibration Technician'), department: track === 'ops' ? 'Operations' : 'Field', track, access: 'none', employment: 'w2', reports_to: 'mark@absoluteadas.com', region: cand.city || '', hire_date: todayPT(), notes: `From Recruiting${cand.source ? ` (${cand.source})` : ''}. Set App access once ready.` })
   startChecklist(m, 'onboarding', req.user?.name || 'Recruiting')
+  seedKit(m)
   await saveMember(req, m)
   try { await ensurePersonFolder(req, m) } catch (e) { console.warn('[people] folder on hire failed:', e.message) }
   try { if (m.phone || m.email) await sendOnboardingInvite(req, m, 'Recruiting') } catch (e) { console.warn('[people] invite on hire failed:', e.message) }

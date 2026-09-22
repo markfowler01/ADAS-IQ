@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
+import OnboardingLaunch from '../components/team/OnboardingLaunch.jsx'
 
 const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
@@ -18,6 +19,7 @@ const digits = s => String(s || '').replace(/[^\d+]/g, '')
 
 export default function RecruitingScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [stages, setStages] = useState([])
+  const [launch, setLaunch] = useState(null)   // 🚀 the two-flow view that pops up on Hired
   const [cands, setCands] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
@@ -62,6 +64,8 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
       if (okMsg) say(okMsg)
+      // Hired → the two-flow Launch view pops up (Mark 2026-09-22).
+      if (body.stage === 'hired' && j.member_id) { setOpen(null); setLaunch(j.member_id) }
     } catch (e) { setCands(prev); say(`Save failed: ${e.message}`) }
   }
   async function remove(id) {
@@ -155,6 +159,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
           onPatch={(body, msg) => patch(current.id, body, msg)}
           onDelete={() => remove(current.id)} />
       )}
+      {launch && <OnboardingLaunch memberId={launch} onClose={() => setLaunch(null)} onOpenProfile={() => { setLaunch(null); onNavigate && onNavigate('team') }} />}
       {adding && (
         <AddModal onClose={() => setAdding(false)} onSaved={c => { setCands(cs => [c, ...cs]); setAdding(false); say('✅ Candidate added') }} />
       )}
