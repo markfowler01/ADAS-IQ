@@ -1529,6 +1529,20 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
   useEffect(() => { fetchJobs() }, [fetchJobs])
 
+  // Live board (Mark 2026-09-22: "auto update as job requests come in so we
+  // don't have to refresh"). Every 30s while the tab is showing, plus the
+  // moment it comes back to the front. Quiet — fetchJobs never flips the
+  // loading splash — and it stays out of the way of a drag in progress.
+  const dragRef = useRef(null)
+  useEffect(() => { dragRef.current = dragJob }, [dragJob])
+  useEffect(() => {
+    const tick = () => { if (document.visibilityState === 'visible' && !dragRef.current) fetchJobs() }
+    const id = setInterval(tick, 30000)
+    const onVis = () => { if (document.visibilityState === 'visible') tick() }
+    document.addEventListener('visibilitychange', onVis); window.addEventListener('focus', tick)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', tick) }
+  }, [fetchJobs])
+
   useEffect(() => {
     apiFetch(`${API_BASE}/api/jobs/completions`)
       .then(r => r.ok ? r.json() : [])
