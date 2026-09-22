@@ -925,6 +925,35 @@ export async function maybePeopleNudges(req) {
   return { fired: true, sent: lines.length + katLines.length }
 }
 
+// For Ada's morning brief (Mark 2026-09-22: "add them to my 8am morning
+// text"): the onboarding + new-shop items one owner has due today or late.
+// Same rule as the 7am nudge; read-only.
+export async function ownedItemsDue(req, who = 'mark') {
+  const today = todayPT(); const out = []
+  const members = (await readTeamMembers(req)).filter(m => m.active !== false)
+  for (const m of members) {
+    if (m.checklist?.kind !== 'onboarding' || m.checklist.completed_at) continue
+    const name = m.preferred_name || firstName(m.name)
+    for (const it of m.checklist.items || []) {
+      if (it.done || !it.due_date || it.due_date > today) continue
+      const owner = it.owner || ONBOARDING.find(t => t.key === it.key)?.owner || 'mark'
+      if (owner !== who) continue
+      out.push({ who: name, label: it.label.split(' — ')[0], due: it.due_date, late: it.due_date < today })
+    }
+  }
+  try {
+    const { getAllShops } = await import('./shops.js')
+    for (const sh of await getAllShops(req)) {
+      const cl = sh.billing_rules?.new_shop; if (!cl || cl.completed_at) continue
+      for (const it of cl.items || []) {
+        if (it.done || !it.due_date || it.due_date > today || (it.owner === 'kat' ? 'kat' : 'mark') !== who) continue
+        out.push({ who: sh.shop_name, label: it.label.split(' — ')[0], due: it.due_date, late: it.due_date < today, shop: true })
+      }
+    }
+  } catch (e) { console.warn('[people] ownedItemsDue shops failed:', e.message) }
+  return out
+}
+
 // Recruiting → Hired: create the directory entry + start onboarding
 // G (2026-09-21): the moment onboarding hits 100%, the person hears it
 // from us — text + email with the first-day plan — and Mark gets a ping.

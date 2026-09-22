@@ -506,6 +506,17 @@ function formatDigestTech(tr) {
   return ' ' + tr.rows.map(([t, a]) => `${t} ${money(a)}`).join(', ') + '.'
 }
 
+// Onboarding / new-shop items on Mark today — full brief + one SMS sentence.
+function formatPeople(items) {
+  if (!Array.isArray(items) || !items.length) return ''
+  return `\n👥 *On you today — onboarding*\n` + items.map(i => `• ${i.who}: ${i.label}${i.late ? ` — was due ${i.due}` : ' — due today'}`).join('\n') + '\n'
+}
+function formatDigestPeople(items) {
+  if (!Array.isArray(items) || !items.length) return ''
+  const first = items.slice(0, 3).map(i => `${i.who} ${i.label.toLowerCase()}`).join('; ')
+  return ` On you: ${items.length} onboarding item${items.length === 1 ? '' : 's'} — ${first}${items.length > 3 ? '…' : ''}.`
+}
+
 function formatDigest(b) {
   const proj = b.revenue?.projectable ? money(b.revenue.projected || 0) : 'too early to project'
   const mtd = b.revenue ? money(b.revenue.monthlyTotal || 0) : 'n/a'
@@ -1220,6 +1231,9 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
     safe('recruit', () => recruitingBrief(req, ptDate())),
     safe('shops-pipe', () => shopsBrief(req, ptDate())),
   ])
+  // Onboarding + new-shop items Mark owns, due today or late (Mark 2026-09-22:
+  // "add them to my 8am morning text"). Read-only, fail-soft.
+  const onYou = await safe('onboarding-owned', async () => (await import('./people.js')).ownedItemsDue(req, 'mark'))
   const hold = await safe('hold', async () => {
     const t = ptDate()
     const [due, bd] = await Promise.all([holdOverdue(req, t, 3), holdBirthdays(req, t, 14)])
@@ -1266,7 +1280,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // `full` goes to email and the page. `cliqBody` is the same brief minus the
   // private block.
   const body = formatAffirmation(big3) + formatFull(b, paceText) + formatTechRevenue(tr) +
-               formatTriage(triage) + formatBig3(big3)
+               formatTriage(triage) + formatBig3(big3) + formatPeople(onYou)
   let full = body + d2Text + closingText
   const cliqBody = body + closingText
   // SMS is billed and read by the segment — keep the digest to one or two.
@@ -1274,7 +1288,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   const shortBig3 = (big3?.big3 || [])
     .map((x, i) => `${i + 1}) ${x.text.length > 64 ? x.text.slice(0, 61).trimEnd() + '...' : x.text}`)
     .join(' ')
-  let digest = formatAffirmation(big3) + (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b) + formatDigestTech(tr)
+  let digest = formatAffirmation(big3) + (shortBig3 ? `Big 3: ${shortBig3}\n` : '') + formatDigest(b) + formatDigestTech(tr) + formatDigestPeople(onYou)
   if (dry) {
     return { ok: true, dry: true, digest, full, big3, commitments: b.commitments, timings: b.timings, sources: b.sources,
       counts: { jobsToday: b.todaysJobs.length, events: b.events.length, dueToday: b.dueToday.length, overdue: b.overdue.length, followups: b.followups.length, shops: b.shops.length } }
