@@ -17,6 +17,22 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
   // 🏢 Shop or 👤 Person (Mark 2026-09-22): a person is a retail customer —
   // no billing questions, one invoice + tax, pays at the van.
   const [who,          setWho]          = useState('shop')
+  // ➕ New shop (Phase E): the tech, standing in the shop, gives the short version.
+  const [newShop,      setNewShop]      = useState(null)   // null | { shop_name, contact_name, phone, email, address, customer_type, pay_mode }
+  const [newShopBusy,  setNewShopBusy]  = useState(false)
+  async function createShop() {
+    if (!newShop.shop_name.trim()) { setError('Shop name, please.'); return }
+    setNewShopBusy(true); setError(null)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/quick`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newShop) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      const c = { contact_id: d.contact_id || `crm_${d.shop.id}`, contact_name: d.contact_name || d.shop.shop_name }
+      setCustomers(cs => [c, ...cs.filter(x => x.contact_id !== c.contact_id)])
+      setSelected(c); setNewShop(null); setCustDropOpen(false)
+      if (d.books_error) setError(`Shop saved, but the Zoho Books customer didn't get created (${d.books_error}) — Kat can link it on the CRM card.`)
+    } catch (e) { setError(e.message) } finally { setNewShopBusy(false) }
+  }
   const [person,       setPerson]       = useState({ name: '', phone: '', email: '' })
 
   const [technician,  setTechnician]  = useState('')
@@ -305,6 +321,24 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
               </div>
             </div>
           )}
+          {newShop && who === 'shop' && (
+            <div className="rounded-xl p-3" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE}` }}>
+              <div className="flex items-center justify-between mb-2"><div className="text-sm font-bold" style={{ color: ORANGE }}>➕ New shop</div><button type="button" onClick={() => setNewShop(null)} className="text-xs" style={{ color: '#888' }}>cancel</button></div>
+              <div className="text-[11px] mb-2" style={{ color: '#666' }}>The short version. The app makes the CRM card and the Books customer; Kat gets the rest as a checklist.</div>
+              <input value={newShop.shop_name} onChange={e => setNewShop(x => ({ ...x, shop_name: e.target.value }))} placeholder="Shop name *" className="w-full text-sm rounded-lg px-3 py-2 mb-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <input value={newShop.contact_name} onChange={e => setNewShop(x => ({ ...x, contact_name: e.target.value }))} placeholder="Who you talked to" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
+                <input value={newShop.phone} onChange={e => setNewShop(x => ({ ...x, phone: e.target.value }))} placeholder="Their phone" inputMode="tel" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
+                <input value={newShop.email} onChange={e => setNewShop(x => ({ ...x, email: e.target.value }))} placeholder="Email for invoices" inputMode="email" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
+                <input value={newShop.address} onChange={e => setNewShop(x => ({ ...x, address: e.target.value }))} placeholder="Address (street, city, WA zip)" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
+              </div>
+              <div className="text-[11px] font-bold mb-1" style={{ color: '#9a3412' }}>What kind of shop?</div>
+              <div className="flex gap-1.5 flex-wrap mb-2">{[['body_shop', 'Collision'], ['repair_shop', 'Auto repair'], ['dealer', 'Dealer']].map(([k, l]) => <button key={k} type="button" onClick={() => setNewShop(x => ({ ...x, customer_type: k, pay_mode: k === 'body_shop' ? 'net_terms' : 'on_site' }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={newShop.customer_type === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}</div>
+              <div className="text-[11px] font-bold mb-1" style={{ color: '#9a3412' }}>How do they pay?</div>
+              <div className="flex gap-1.5 flex-wrap mb-3">{[['on_site', '🚐 On site'], ['net_terms', '✉️ Net terms'], ['either', 'Either']].map(([k, l]) => <button key={k} type="button" onClick={() => setNewShop(x => ({ ...x, pay_mode: k }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={newShop.pay_mode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}</div>
+              <button type="button" onClick={createShop} disabled={newShopBusy || !newShop.shop_name.trim()} className="w-full rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: ORANGE, opacity: newShopBusy || !newShop.shop_name.trim() ? .5 : 1 }}>{newShopBusy ? 'Creating…' : '➕ Create the shop and use it'}</button>
+            </div>
+          )}
           {/* Customer dropdown */}
           <div style={who === 'person' ? { display: 'none' } : {}}>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">
@@ -353,7 +387,12 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
                       <p className="text-sm px-4 py-3" style={{ color: '#bbb' }}>Loading…</p>
                     ) : filteredCustomers.length === 0 ? (
                       <p className="text-sm px-4 py-3" style={{ color: '#bbb' }}>No matches</p>
-                    ) : filteredCustomers.map(c => (
+                    ) : (<>
+                    <button type="button" onMouseDown={() => { setNewShop({ shop_name: custSearch.trim(), contact_name: '', phone: '', email: '', address: '', customer_type: 'repair_shop', pay_mode: 'on_site' }); setCustDropOpen(false) }}
+                      className="w-full text-left px-4 py-2.5 text-sm font-bold" style={{ color: ORANGE, backgroundColor: '#fff5f0', borderBottom: '1px solid #fde4d8' }}>
+                      ➕ New shop{custSearch.trim() ? ` — "${custSearch.trim()}"` : ''}
+                    </button>
+                    {filteredCustomers.map(c => (
                       <button
                         key={c.contact_id}
                         type="button"
@@ -369,7 +408,7 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
                       >
                         {c.contact_name}
                       </button>
-                    ))}
+                    ))}</>)}
                   </div>
                 </div>
               )}

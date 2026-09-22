@@ -864,6 +864,7 @@ export async function maybePeopleNudges(req) {
         if (owner === 'kat') katLines.push(line); else lines.push(line)
       }
     }
+    // (new-shop checklist nudges are added after the people loop — see below)
     // Day one, 7am: the hire gets where / when / who from us — once.
     if (m.hire_date === today && !m.day1_texted_at && m.employment !== 'owner') {
       try {
@@ -899,6 +900,19 @@ export async function maybePeopleNudges(req) {
   if (new Date(today + 'T12:00:00Z').getUTCDay() === 1) {
     for (const m of members) if (m.access !== 'none') { const acks = await policyAcksFor(req, m.user_id); if (!Object.keys(acks).length) lines.push(`📝 ${m.preferred_name || firstName(m.name)} hasn't acknowledged the HR policy yet`) }
   }
+  // New-shop onboarding (Phase E, 2026-09-22): open items due today or late,
+  // to whoever owns them.
+  try {
+    const { getAllShops } = await import('./shops.js')
+    for (const sh of await getAllShops(req)) {
+      const cl = sh.billing_rules?.new_shop; if (!cl || cl.completed_at) continue
+      for (const it of cl.items || []) {
+        if (it.done || !it.due_date || it.due_date > today) continue
+        const line = `🆕 ${sh.shop_name}: ${it.label.split(' — ')[0]}${it.due_date < today ? ` — was due ${it.due_date}` : ' — due TODAY'} (CRM → Billing)`
+        if (it.owner === 'kat') katLines.push(line); else lines.push(line)
+      }
+    }
+  } catch (e) { console.warn('[people] new-shop nudges failed:', e.message) }
   await cfgWrite(req, stamp, new Date().toISOString())
   const { postToCliqChannelById, postToCliqChannel, MARK_ALERT_CHANNEL_ID, DISPATCH_CHANNEL } = await import('../services/cliq.js')
   if (katLines.length) {

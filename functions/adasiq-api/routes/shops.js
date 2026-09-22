@@ -395,6 +395,97 @@ router.post('/:id/books-customer', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// ── ➕ New shop from the request form (single-invoice billing Phase E, Mark
+//    2026-09-22: "make sure there is something that says New Shop and then
+//    the new shop onboarding"). The tech, standing in the shop, gives the
+//    short version; the app makes the CRM card, the Books customer, the
+//    billing rules, and hands Kat a checklist. Any signed-in user.
+const NEW_SHOP_ITEMS = [
+  { key: 'w9',       label: 'W-9 / resale certificate on file (if they ask for one, send ours)', owner: 'kat', due: 7 },
+  { key: 'insurers', label: 'Which insurers / DRPs they work with — on the CRM card',          owner: 'kat', due: 7 },
+  { key: 'signoff',  label: 'Who signs off on invoices (name + email) — on the CRM card',       owner: 'kat', due: 3 },
+  { key: 'terms',    label: 'Payment terms confirmed with them (on site / net terms)',          owner: 'kat', due: 3 },
+  { key: 'route',    label: 'Added to the route day for their zone',                            owner: 'mark', due: 7 },
+  { key: 'welcome',  label: 'Welcome email sent — who to call, how to book, the Big 3',         owner: 'kat', due: 2 },
+  { key: 'first30',  label: '30-day check-in after the first job',                              owner: 'mark', due: 30 },
+]
+const addDaysISO = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+const todayISO = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+function newShopChecklist(by) { const t = todayISO(); return { started_at: new Date().toISOString(), started_by: by || '', items: NEW_SHOP_ITEMS.map(i => ({ ...i, done: false, at: '', by: '', due_date: addDaysISO(t, i.due) })) } }
+
+/** Books customer for a CRM shop — linked, found by name, or created (business). */
+async function ensureShopBooksContact(req, shop, by) {
+  if (shop.zoho_contact_id) return { contact_id: shop.zoho_contact_id, contact_name: shop.shop_name, existing: true }
+  const token = await getAccessToken()
+  const B = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+  const name = String(shop.shop_name || '').trim(); if (!name) throw new Error('Shop has no name')
+  const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const found = await axios.get(`${B}/contacts`, { headers: H, params: { ...P, contact_name_contains: name.slice(0, 40), contact_type: 'customer' }, timeout: 15000, validateStatus: s => s < 500 })
+  const hit = (found.data?.contacts || []).find(c => norm(c.contact_name) === norm(name) || norm(c.company_name) === norm(name))
+  if (hit) { await updateShop(req, shop.id, { ...shop, zoho_contact_id: hit.contact_id }); return { contact_id: hit.contact_id, contact_name: hit.contact_name, linked: true } }
+  let people = shop.people; if (typeof people === 'string') { try { people = JSON.parse(people) } catch { people = [] } }
+  const persons = (people || []).filter(p => p?.name).slice(0, 10).map((p, i) => { const parts = String(p.name).trim().split(/\s+/); return { first_name: parts[0] || '', last_name: parts.slice(1).join(' ') || '', email: p.email || '', phone: p.phone || '', designation: p.title || '', is_primary_contact: i === 0 } })
+  const addr = String(shop.address || '').trim()
+  const m = /^(.*?),?\s*([A-Za-z .]+),\s*([A-Z]{2})\s+(\d{5})(?:-\d{4})?$/.exec(addr)
+  const billing_address = m ? { address: m[1].trim(), city: m[2].trim(), state: m[3], zip: m[4], country: 'U.S.A' } : (addr ? { address: addr, country: 'U.S.A' } : undefined)
+  const body = { contact_name: name, company_name: name, contact_type: 'customer', customer_sub_type: 'business', ...(shop.phone ? { phone: shop.phone } : {}), ...(billing_address ? { billing_address, shipping_address: billing_address } : {}), contact_persons: persons, payment_terms: 0, payment_terms_label: 'Due on Receipt', notes: `Created from the Absolute ADAS app by ${by || 'staff'} on ${new Date().toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' })}` }
+  const c = await axios.post(`${B}/contacts`, body, { headers: H, params: P, timeout: 20000, validateStatus: s => s < 500 })
+  if (c.data?.code !== 0) throw new Error(`Books said: ${c.data?.message || c.status}`)
+  await updateShop(req, shop.id, { ...shop, zoho_contact_id: c.data.contact.contact_id })
+  return { contact_id: c.data.contact.contact_id, contact_name: c.data.contact.contact_name, created: true }
+}
+
+router.post('/quick', async (req, res) => {
+  try {
+    const b = req.body || {}
+    const name = String(b.shop_name || '').trim().slice(0, 120)
+    if (!name) return res.status(400).json({ error: 'Shop name is required.' })
+    const by = req.user?.name || req.user?.email || 'tech'
+    const b3 = await import('../services/big3.js')
+    const ctype = b3.CUSTOMER_TYPES[b.customer_type] ? b.customer_type : 'repair_shop'
+    const pay = b3.PAY_MODES[b.pay_mode] ? b.pay_mode : b3.CUSTOMER_TYPES[ctype].pay
+    // Never a duplicate: same name (normalized) → use the card that exists.
+    const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+    const all = await getAllShops(req)
+    let shop = all.find(x => norm(x.shop_name) === norm(name)) || null
+    let created = false
+    if (!shop) {
+      const person = b.contact_name ? [{ id: `p_${Date.now()}`, name: String(b.contact_name).slice(0, 80), title: String(b.contact_title || 'Contact').slice(0, 40), phone: String(b.phone || '').slice(0, 40), email: String(b.email || '').trim().toLowerCase().slice(0, 120), source: 'new-shop' }] : []
+      shop = await insertShop(req, await autoZone({ shop_name: name, contact_name: String(b.contact_name || '').slice(0, 80), phone: String(b.phone || '').slice(0, 40), email: String(b.email || '').trim().toLowerCase().slice(0, 120), address: String(b.address || '').slice(0, 200), pipeline_stage: 'active', referral_source: `New shop · ${by}`, people: person, activities: [{ id: `a_${Date.now()}`, type: 'note', at: new Date().toISOString(), by, text: `Added from the field by ${by} on a job request.` }], notes: String(b.notes || '').slice(0, 500), stage_changed_at: new Date().toISOString() }))
+      created = true
+    }
+    // Billing answers + the new-shop checklist, in one save.
+    const br = shop.billing_rules && typeof shop.billing_rules === 'object' ? shop.billing_rules : {}
+    const rules = b3.normalizeRules(br.big3) || b3.DEFAULT_RULES
+    await b3.saveBig3(req, shop.shop_name, rules, by, { shop, customer_type: ctype, discount_pct: br.discount_value ?? (b3.CUSTOMER_TYPES[ctype].discount ?? 0), pay_mode: pay, silent: true })
+    shop = rowToShop(await getTable(req).getRow(String(shop.id)))
+    if (!shop.billing_rules?.new_shop) { shop.billing_rules = { ...(shop.billing_rules || {}), new_shop: newShopChecklist(by) }; shop = await updateShop(req, shop.id, shop) }
+    let books = null
+    try { books = await ensureShopBooksContact(req, shop, by) } catch (e) { console.warn('[shops quick] Books customer failed:', e.message); books = { error: e.message } }
+    if (created) {
+      await postToCliqChannel(DISPATCH_CHANNEL, `🆕 *New shop — ${shop.shop_name}* · ${b3.CUSTOMER_TYPES[ctype].label} · ${pay.replace('_', ' ')} · by ${by}${shop.region ? ` · zone ${shop.region}` : ''}${books?.contact_id ? ' · Books customer ready' : ' · ⚠ Books customer NOT created'}\nKat: the new-shop checklist is on the CRM card → Billing.`).catch(() => {})
+      try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'new_shop', title: `New shop: ${shop.shop_name}`, body: `${b3.CUSTOMER_TYPES[ctype].label} · added by ${by} · checklist on the CRM card`, skipCliq: true, skipTechChannel: true }) } catch { /* fine */ }
+    }
+    console.log(`[shops quick] ${created ? 'created' : 'matched'} ${shop.shop_name} (${ctype}, ${pay}) by ${by} → Books ${books?.contact_id || books?.error}`)
+    res.json({ ok: true, created, shop: { id: shop.id, shop_name: shop.shop_name, region: shop.region }, contact_id: books?.contact_id || '', contact_name: books?.contact_name || shop.shop_name, books_error: books?.error || '' })
+  } catch (e) { console.error('[shops quick]', e.message); res.status(500).json({ error: e.message }) }
+})
+// Kat ticks the new-shop checklist from the CRM card.
+router.post('/:id/new-shop', async (req, res) => {
+  try {
+    if (req.user?.role === 'technician') return res.status(403).json({ error: 'Staff only' })
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    const br = shop.billing_rules && typeof shop.billing_rules === 'object' ? shop.billing_rules : {}
+    if (req.body?.action === 'start' || !br.new_shop) br.new_shop = newShopChecklist(req.user?.name || '')
+    const key = String(req.body?.key || '')
+    if (key) { const it = br.new_shop.items.find(i => i.key === key); if (it) { it.done = !it.done; it.at = it.done ? new Date().toISOString() : ''; it.by = it.done ? (req.user?.name || '') : '' } }
+    if (br.new_shop.items.every(i => i.done)) br.new_shop.completed_at = br.new_shop.completed_at || new Date().toISOString(); else br.new_shop.completed_at = ''
+    const saved = await updateShop(req, shop.id, { ...shop, billing_rules: br })
+    res.json({ ok: true, new_shop: saved.billing_rules?.new_shop || br.new_shop })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // Big 3 rule on a CRM shop (Mark 2026-09-10) — read/set from the Billing tab.
 router.get('/:id/big3', async (req, res) => {
   try {

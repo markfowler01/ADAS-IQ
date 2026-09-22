@@ -212,6 +212,40 @@ export function BillingQuestions({ shop }) {
         </div>
       </div>
       {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
+      <NewShopChecklist shop={shop} />
+    </div>
+  )
+}
+
+// New-shop onboarding (Phase E, Mark 2026-09-22) — what Kat finishes after a
+// tech adds a shop from the field. Lives on billing_rules.new_shop.
+function NewShopChecklist({ shop }) {
+  const [cl, setCl] = useState(shop?.billing_rules?.new_shop || null)
+  const [busy, setBusy] = useState('')
+  useEffect(() => { setCl(shop?.billing_rules?.new_shop || null) }, [shop?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  async function tick(key, action) {
+    setBusy(key || action)
+    try { const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/new-shop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(action ? { action } : { key }) }); const d = await r.json(); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setCl(d.new_shop) }
+    catch (e) { alert(e.message) } finally { setBusy('') }
+  }
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
+  if (!cl) return <div className="mt-3 flex items-center gap-2 text-[11px]" style={{ color: '#888' }}>No new-shop checklist running. <button type="button" onClick={() => tick(null, 'start')} disabled={!!busy} className="font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#0e7490', border: '1px solid #0e7490' }}>▶ Start new-shop onboarding</button></div>
+  const done = cl.items.filter(i => i.done).length
+  return (
+    <div className="mt-3 rounded-lg p-3" style={{ backgroundColor: 'white', border: '1px solid #bae6fd' }}>
+      <div className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: '#0369a1', fontFamily: 'IBM Plex Mono, monospace' }}>🆕 New-shop onboarding · {done}/{cl.items.length}{cl.completed_at ? ' · done' : ''}</div>
+      {cl.items.map(it => {
+        const late = !it.done && it.due_date && it.due_date < today
+        return (
+          <label key={it.key} className="flex items-start gap-2 py-1 text-sm cursor-pointer" style={{ borderBottom: '1px solid #f3f3f3' }}>
+            <input type="checkbox" checked={!!it.done} disabled={busy === it.key} onChange={() => tick(it.key)} className="mt-1" />
+            <span className="flex-1" style={{ color: it.done ? '#999' : '#1a1a1a', textDecoration: it.done ? 'line-through' : 'none' }}>{it.label}
+              <span className="text-[10px] ml-1.5 font-bold rounded-full px-1.5 py-0.5" style={{ backgroundColor: it.owner === 'kat' ? '#faf5ff' : '#fff7ed', color: it.owner === 'kat' ? '#7e22ce' : '#b45309' }}>{it.owner === 'kat' ? 'Kat' : 'Mark'}</span>
+              {it.due_date && !it.done && <span className="text-[10px] ml-1" style={{ color: late ? '#b91c1c' : '#888' }}>{late ? `⚠ was due ${it.due_date}` : `by ${it.due_date}`}</span>}
+            </span>
+          </label>
+        )
+      })}
     </div>
   )
 }
