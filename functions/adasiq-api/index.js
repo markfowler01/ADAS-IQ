@@ -322,6 +322,7 @@ app.use('/api/report', requireAuth, reportRouter)
 app.use('/api/audit', requireAuth, auditLimiter, auditRouter)
 app.use('/api/history', requireAuth, historyRouter)
 app.use('/api/jobs', requireAuth, jobsRouter)
+app.use('/api/jobs', requireAuth, (await import('./routes/collect.js')).default)   // 💵 Collect — techs can present the QR + log a check
 app.use('/api/workdrive-cleanup', requireAuth, (await import('./routes/workdriveCleanup.js')).default)   // owner-only inside
 app.use('/api/today', requireAuth, todayRouter)
 app.use('/api/dispatch', requireAuth, dispatchRouter)

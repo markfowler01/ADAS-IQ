@@ -7,6 +7,7 @@ import { useState, useRef, useEffect } from 'react'
 import { familyFor } from '../lib/insurerFamilies.js'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { TakePhotosControl } from './JobPhotos'
+import CollectPanel from './CollectPanel.jsx'
 import { Big3Badge, DrpBadge, BillingPill } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
@@ -423,6 +424,8 @@ export default function MobileJobCard({
       {/* 📸 Job photo set (Mark 2026-09-08) — one tap opens the camera.
           Shown on requests too (2026-09-09): shoot before Kat creates the job. */}
       <TakePhotosControl job={job} />
+      {/* 💵 Collect — billed, pays on site, not paid yet (Mark 2026-09-22) */}
+      {job.invoiced && job.status === 'ready_invoice' && <CollectPanel job={job} />}
       {job.status !== 'job_requested' && (<>
       {wdUrl ? (
         <a href={wdUrl} target="_blank" rel="noopener noreferrer"

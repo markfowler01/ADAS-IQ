@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
+import CollectPanel from './CollectPanel.jsx'
 import { Big3Badge, DrpBadge, BillingPill } from './books/Big3Rules.jsx'
 import BillItModal from './BillItModal.jsx'
 import { needsWindshieldCheck } from './MobileJobCard.jsx'
@@ -1001,7 +1002,8 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
       )}
 
       {/* 💸 Bill it (Mark 2026-09-10): insurance + cost invoice in one go, reviewed first. Staff only. */}
-      {onBillIt && !job.invoiced && !job.billed_via_app && (job.status === 'ready_invoice' || job.status === 'complete') && job.zoho_estimate_id && (
+      {job.invoiced && job.status === 'ready_invoice' && <CollectPanel job={job} />}
+      {onBillIt && !job.invoiced && !job.billed_via_app && (job.status === 'ready_invoice' || job.status === 'complete') && (
         <button onClick={e => { e.stopPropagation(); onBillIt(job) }}
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 text-white"
           style={{ backgroundColor: '#15803d', padding: '11px 0', minHeight: '44px', boxShadow: '0 3px 10px rgba(21,128,61,.25)' }}>
