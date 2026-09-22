@@ -27,7 +27,7 @@ const router = express.Router()
 // to from Zoho Mail. Env override so it can change without a code edit.
 const TO_ADDRESS   = (process.env.REMOTE_EXPERT_APPLY_TO || '').trim()
 const FROM_ADDRESS = 'mf@absoluteadas.com'
-const SUBJECT      = 'Remote Expert application — Mark Fowler, Absolute ADAS'
+const SUBJECT      = 'Remote Expert application — OEM tool coverage across 8 makes (Mark Fowler, Absolute ADAS)'
 const MIN_DAYS_BETWEEN_SENDS = 5
 const CRON_NAME    = 'remote_expert_apply'
 const CONFIG_KEY   = 'remote_expert_apply'
@@ -49,16 +49,23 @@ export function composeEmail(n, todayPT) {
   const lines = [
     'Hello Autel Remote Expert team,',
     '',
-    'I am writing to apply, again, to join the Remote Expert program as an Expert. I understand there were no open spots the last time I asked. I would like to be first in line when one opens.',
+    'I am applying again to become a Remote Expert. I know spots have been full the last few times I asked. I would like to be on the list for the next one, and I will keep checking in weekly until there is a spot.',
     '',
-    'About me:',
-    '• Owner of Absolute ADAS (absoluteadas.com), a mobile ADAS calibration and module programming company serving body shops along the I-5 corridor in the Pacific Northwest.',
-    '• Daily hands-on with Autel tooling: static and dynamic calibrations, module programming and coding, pre/post scans, across the makes body shops send us.',
-    '• Insurance-grade documentation on every job, and a full-time dispatch team, so I can take Remote Expert requests reliably during business hours.',
+    'What I bring to the platform is OEM software access across the makes shops ask for most:',
+    '• Volkswagen, Audi, Bentley, Lamborghini: ODIS',
+    '• Mercedes-Benz: XENTRY',
+    '• BMW: ISTA',
+    '• Ford and Lincoln: FDRS and FJDS software support',
+    '• GM: OEM programming and diagnostics',
+    '• Stellantis: OEM programming and diagnostics, Master Certified Technician',
     '',
-    'Please add me to the waitlist if there is one, and let me know anything I can do to move the application along: paperwork, tool serial numbers, references, or a call.',
+    'Background: 26 years in the trade, Stellantis Master Certified, and owner of Absolute ADAS (absoluteadas.com), a mobile ADAS calibration and module programming company serving body shops along the I-5 corridor in the Pacific Northwest. My daily work is module programming, coding, and static and dynamic calibrations with Autel and OEM tools, with insurance-grade documentation on every job.',
     '',
-    `This is my ${nth} weekly check-in. I will keep checking in each week until there is a spot, and I appreciate your patience with that.`,
+    'I can take Remote Expert requests during business hours, and my own technicians will use the platform as well, so the account will be active from day one.',
+    '',
+    'I can send documentation today: certifications, OEM subscription proof, tool serial numbers, business license, and references. Tell me what you need.',
+    '',
+    `This is my ${nth} weekly check-in. I will keep it short each week and stop as soon as you tell me the spots are gone for good or I am in.`,
     '',
     'Thank you,',
     'Mark Fowler',
