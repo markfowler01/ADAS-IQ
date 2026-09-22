@@ -154,8 +154,9 @@ async function buildSinglePreview(req, job, shop, br) {
   let priced = { lines: [] }
   if (cals.length) {
     const { previewInvoiceLines } = await import('../services/zoho.js')
-    // A retail person is customer pay → the CP schedule (Mark's cash rule), plus tax.
-    priced = await previewInvoiceLines({ insurer: cashJob || retailJob ? 'Cash' : (job.insurer || ''), make: job.make || '', calibrations: cals, req, poolOverride: cashJob || retailJob ? 'CP' : null, big3Rules: effB3.rules })
+    // A retail person bills the STANDARD list ($450 a static) + tax, no discount
+    // (Mark 2026-09-22: "standard price at 450"). Only a cash-quoted shop job uses the CP schedule.
+    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (retailJob ? '' : (job.insurer || '')), make: job.make || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : (retailJob ? 'STD' : null), big3Rules: effB3.rules })
   }
   let extras = []; try { extras = job.extra_items ? JSON.parse(job.extra_items) : [] } catch { extras = [] }
   const extraLines = (Array.isArray(extras) ? extras : []).map(x => {
