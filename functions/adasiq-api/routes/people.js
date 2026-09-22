@@ -106,7 +106,7 @@ const ONBOARDING = [
 // Ride-along length depends on who they are (Mark): green → three weeks, certified → one.
 const rideDays = m => (m.experience_level === 'certified' ? 7 : 21)
 const rideText = m => (m.experience_level === 'certified' ? 'certified tech, about a week' : 'new to calibration, about three weeks')
-const cliqText = m => ((m.track || 'tech') === 'ops' ? '#dispatch + #technicians' : '#technicians + #technician-notifications')
+const cliqText = m => ((m.track || 'tech') === 'ops' ? '#dispatch + #aajobs + #technicians' : '#technicians + #aajobs')
 const emailFor = m => (m.email || `${String(m.preferred_name || m.name || '').trim().split(/\s+/)[0].toLowerCase().replace(/[^a-z0-9]/g, '')}@absoluteadas.com`)
 function fillLabel(t, m) {
   const pants = m.pants_waist || m.pants_inseam ? `(W${m.pants_waist || '?'} × L${m.pants_inseam || '?'})` : '(waist/inseam from their portal)'
