@@ -6,7 +6,7 @@
 // you open this when a new quote hits in the middle of a busy day.
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from '../components/ReadyChecks.jsx'
+import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote, useSafetyChecksApply } from '../components/ReadyChecks.jsx'
 import SalesStopSheet, { SalesStopScoreboard } from '../components/SalesStopSheet'
 import { JobPhotosSheet, TakePhotosControl, PhotoBadge, photoProgress, gateApplies } from '../components/JobPhotos'
 import BuildJobModal from '../components/BuildJobModal.jsx'
@@ -437,7 +437,8 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
 function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
   const [text, setText] = useState('')
   const [checks, setChecks] = useState({ ...DEFAULT_CHECKS })
-  const checksOk = readyChecksValid(checks, job)
+  const safety = useSafetyChecksApply(job)
+  const checksOk = readyChecksValid(checks, job, safety)
   // Real Books items instead of a text (Mark 2026-09-10: "have the
   // technician add the actual item"). Searchable catalog, qty, note.
   const [catalog, setCatalog] = useState([])
@@ -510,17 +511,17 @@ function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
 
         <div className="flex gap-2 mt-3">
           <button
-            onClick={() => onSubmit('', [], checks)}
+            onClick={() => onSubmit('', [], { ...checks, _safety: safety })}
             disabled={!checksOk}
             className="flex-1 rounded-xl py-3 text-sm font-semibold"
             style={{ backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #e0dbd6', opacity: checksOk ? 1 : .45 }}
           >Skip · No extras</button>
           <button
-            onClick={() => onSubmit(text, items, checks)}
+            onClick={() => onSubmit(text, items, { ...checks, _safety: safety })}
             disabled={!checksOk}
             className="flex-[2] rounded-xl py-3 text-base font-bold text-white"
             style={{ backgroundColor: '#15803d', opacity: checksOk ? 1 : .45 }}
-          >{!checksOk ? `☐ ${readyChecksMissing(checks, job)[0]}` : items.length ? `🟢 Ready · ${items.length} item${items.length === 1 ? '' : 's'} added` : text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
+          >{!checksOk ? `☐ ${readyChecksMissing(checks, job, safety)[0]}` : items.length ? `🟢 Ready · ${items.length} item${items.length === 1 ? '' : 's'} added` : text.trim() ? '🚩 Send to Kat' : '🟢 Ready to Invoice'}</button>
         </div>
       </div>
     </div>
@@ -1021,7 +1022,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     setReadyInvoiceJob(null)
     try {
       const body = { status: 'ready_invoice' }
-      if (checks) Object.assign(body, readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician, job))
+      if (checks) Object.assign(body, readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician, job, checks._safety !== false))
       const itemText = (extraItems || []).map(i => `${i.name}${i.quantity > 1 ? ` ×${i.quantity}` : ''}`).join(', ')
       const note = [itemText, (extraServices || '').trim(), checks ? readyChecksNote(checks, job) : ''].filter(Boolean).join(' · ')
       if (note) body.extra_services = note

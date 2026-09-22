@@ -5,36 +5,23 @@
 // card converts in place — photos, tires, notes stay — and the WorkDrive
 // folder is made by RO. No Books document yet; Bill it makes the one
 // invoice at Ready to Invoice.
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { useBig3Map } from './books/Big3Rules.jsx'
+import LinePicker from './upload/LinePicker.jsx'
 
 const ORANGE = '#CD4419', GREEN = '#15803d', RED = '#b91c1c'
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
-const KEY_STUFF = /\bkeys?\b|fob|transponder|remote|blade|prox|smart key|key ?less|immobil/i
-const CAL_WORDS = /calibrat|scan|radar|camera|sensor|blind|adas|lidar|aim|static|dynamic|inspection|snapshot|steering|seat weight|park|occupant|\bsas\b|\bsws\b|headlamp|night vision|mirror|windshield|360|surround|lane|cruise|collision|alignment/i
 const inp = { border: '1.5px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
 
 export default function BuildJobModal({ job, user, onClose, onBuilt }) {
-  const [catalog, setCatalog] = useState([])
   const [lines, setLines] = useState([])
-  const [q, setQ] = useState('')
-  const [tab, setTab] = useState('programming')   // programming | calibration | diagnostic
   const [tech, setTech] = useState(job.technician || '')
   const [date, setDate] = useState(job.scheduled_date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }))
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  useEffect(() => { apiFetch(`${API_BASE}/api/jobs/catalog`).then(r => r.json()).then(d => setCatalog(d.items || [])).catch(() => {}) }, [])
-  const byName = useMemo(() => new Map(catalog.map(i => [i.name.toLowerCase(), i])), [catalog])
-  const modItems = useMemo(() => catalog.filter(i => /^module programming and reflash - /i.test(i.name)).map(i => ({ ...i, make: i.name.replace(/^module programming and reflash - /i, '') })).sort((a, b) => a.make.localeCompare(b.make)), [catalog])
-  const fees = useMemo(() => ['Security Access and Authorization Fee', 'Gateway Access Fee'].map(n => byName.get(n.toLowerCase())).filter(Boolean), [byName])
-  const jobMake = String(job.make || '').toLowerCase()
-  const suggested = modItems.find(i => jobMake && (i.make.toLowerCase() === jobMake || jobMake.includes(i.make.toLowerCase())))
-  const booksHits = q.trim().length >= 2 ? catalog.filter(i => i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 14) : []
-  const calHits = q.trim().length >= 2 ? catalog.filter(i => !KEY_STUFF.test(i.name) && CAL_WORDS.test(i.name) && i.name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 10) : []
-  const diag = byName.get('diagnostic 1') || catalog.find(i => /^diagnostic/i.test(i.name))
-  function add(it, extra = {}) { setLines(ls => { const i = ls.findIndex(l => l.item_id === it.item_id && !extra.description); if (i >= 0 && !extra.description) return ls.map((l, n) => n === i ? { ...l, quantity: l.quantity + 1 } : l); return [...ls, { item_id: it.item_id, name: it.name, rate: Number(it.rate) || 0, quantity: 1, description: '', ...extra }] }); setQ('') }
+  function add(it, extra = {}) { setLines(ls => { const i = ls.findIndex(l => l.item_id === it.item_id && !extra.description); if (i >= 0 && !extra.description) return ls.map((l, n) => n === i ? { ...l, quantity: l.quantity + 1 } : l); return [...ls, { item_id: it.item_id, name: it.name, rate: Number(it.rate) || 0, quantity: 1, description: '', ...extra }] }) }
   const total = lines.reduce((s, l) => s + l.rate * l.quantity, 0)
   const custType = job.customer?.kind === 'retail' ? 'Retail person' : ''
   const b3map = useBig3Map()
@@ -42,7 +29,6 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
   const repairish = ['repair_shop', 'dealer'].includes(shopBilling?.customer_type) || job.customer?.kind === 'retail'
   // Mark 2026-09-22: "the majority of what we're doing for automotive repair
   // shops is programming, diagnostic, and then calibration" — one tap starts there.
-  function addUsual() { if (suggested) add(suggested); if (diag) add(diag, { description: '' }) }
   async function build() {
     if (!lines.length) { setErr('Add the work first.'); return }
     setBusy(true); setErr('')
@@ -70,45 +56,8 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
           </div>
           <button onClick={onClose} className="text-2xl leading-none px-1" style={{ color: '#888' }}>×</button>
         </div>
-        {repairish && (suggested || diag) && !lines.length && (
-          <button onClick={addUsual} className="w-full text-left rounded-xl px-3 py-2.5 mb-3" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE}` }}>
-            <div className="text-sm font-bold" style={{ color: ORANGE }}>⚡ The usual for a repair shop{suggested ? ` — ${suggested.make} programming` : ''}{diag ? ' + diagnostic' : ''}</div>
-            <div className="text-[11px]" style={{ color: '#666' }}>Programming, diagnostic, then a calibration if it needs one. Adjust anything after.</div>
-          </button>
-        )}
-        <div className="flex gap-1 mb-3">
-          {[['programming', '🔌 Programming'], ['diagnostic', '🔍 Diagnostic'], ['calibration', '🎯 Calibration'], ['books', '📚 Zoho Books — any item']].map(([k, l]) => <button key={k} onClick={() => setTab(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={tab === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
-        </div>
-        {tab === 'programming' && (
-          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#faf9f7', border: '1px solid #e8e4e0' }}>
-            <div className="text-[11px] mb-1.5" style={{ color: '#666' }}>Priced <b>per module</b> — tap the make once per module flashed.</div>
-            {suggested && <button onClick={() => add(suggested)} className="text-sm font-bold rounded-xl px-3 py-2 mb-2 text-white" style={{ backgroundColor: ORANGE }}>＋ {suggested.make} module · {fmt(suggested.rate)}</button>}
-            <div className="flex gap-1.5 flex-wrap mb-2">{modItems.map(i => <button key={i.item_id} onClick={() => add(i)} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#1a1a1a', border: '1px solid #e0dbd6' }}>{i.make} <span style={{ color: '#888' }}>{fmt(i.rate)}</span></button>)}</div>
-            <div className="flex gap-1.5 flex-wrap">{fees.map(f => <button key={f.item_id} onClick={() => add(f)} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: '#fff7ed', color: '#b45309', border: '1px solid #fdba74' }}>＋ {f.name} {fmt(f.rate)}</button>)}</div>
-          </div>
-        )}
-        {tab === 'books' && (
-          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#faf9f7', border: '1px solid #e8e4e0' }}>
-            <div className="text-[11px] mb-1.5" style={{ color: '#666' }}>The whole Zoho Books menu — programming, diagnostics, labor, parts, anything. Tap to add a line; tap again for another.</div>
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search every Books item…" className="w-full text-sm rounded-lg px-3 py-2 mb-2" style={inp} onKeyDown={e => { if (e.key === 'Enter' && booksHits[0]) add(booksHits[0]) }} />
-            {booksHits.map(it => <button key={it.item_id} onClick={() => add(it)} className="w-full text-left flex justify-between px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: 'white', border: '1px solid #eee', marginBottom: 4 }}><span>{it.name}{it.type === 'goods' ? <span className="text-xs" style={{ color: '#888' }}> · part</span> : null}</span><span className="font-bold" style={{ color: GREEN }}>{fmt(it.rate)}</span></button>)}
-            {q.trim().length >= 2 && !booksHits.length && <div className="text-xs" style={{ color: '#888' }}>Nothing in Books matches "{q.trim()}".</div>}
-            {q.trim().length < 2 && <div className="text-xs" style={{ color: '#aaa' }}>{catalog.length ? `${catalog.length} items in Books.` : 'Loading Books…'}</div>}
-          </div>
-        )}
-        {tab === 'calibration' && (
-          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#faf9f7', border: '1px solid #e8e4e0' }}>
-            <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search the price list… blind spot, front radar, windshield" className="w-full text-sm rounded-lg px-3 py-2 mb-2" style={inp} onKeyDown={e => { if (e.key === 'Enter' && calHits[0]) add(calHits[0]) }} />
-            {calHits.map(it => <button key={it.item_id} onClick={() => add(it)} className="w-full text-left flex justify-between px-3 py-2 text-sm rounded-lg" style={{ backgroundColor: 'white', border: '1px solid #eee', marginBottom: 4 }}><span>{it.name}</span><span className="font-bold" style={{ color: GREEN }}>{fmt(it.rate)}</span></button>)}
-            {q.trim().length >= 2 && !calHits.length && <div className="text-xs" style={{ color: '#888' }}>Nothing on the list matches.</div>}
-          </div>
-        )}
-        {tab === 'diagnostic' && (
-          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#faf9f7', border: '1px solid #e8e4e0' }}>
-            {diag ? <button onClick={() => add(diag, { description: '' })} className="text-sm font-bold rounded-xl px-3 py-2 text-white" style={{ backgroundColor: ORANGE }}>＋ {diag.name} · {fmt(diag.rate)}</button> : <div className="text-xs" style={{ color: '#888' }}>No "Diagnostic 1" item in Books.</div>}
-            <div className="text-[11px] mt-1.5" style={{ color: '#666' }}>Write what was diagnosed on the line after adding it.</div>
-          </div>
-        )}
+        <LinePicker onAdd={(it, extra) => add(it, extra)} jobMake={job.make || ''} existingNames={lines.map(l => l.name)} usual={repairish && !lines.length} />
+        <div style={{ height: 12 }} />
         <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1.5px solid #bbf7d0' }}>
           {!lines.length && <div className="px-3 py-3 text-sm" style={{ color: '#888' }}>No work added yet.</div>}
           {lines.map((l, i) => (
@@ -122,7 +71,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
               {/diagnos|mechanical/i.test(l.name) && <input value={l.description} onChange={e => setLines(ls => ls.map((x, n) => n === i ? { ...x, description: e.target.value } : x))} placeholder="What was diagnosed / done" className="w-full text-xs rounded-lg px-2 py-1.5 mt-1" style={inp} />}
             </div>
           ))}
-          <div className="flex items-center justify-between px-3 py-2" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#f8fafc' }}><button onClick={() => { setTab('books'); setQ('') }} className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: 'white', color: ORANGE, border: `1px dashed ${ORANGE}` }}>＋ Add another line from Books</button><span className="text-[11px]" style={{ color: '#888' }}>{lines.length} line{lines.length === 1 ? '' : 's'}</span></div>
+          <div className="flex items-center justify-end px-3 py-1.5" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#f8fafc' }}><span className="text-[11px]" style={{ color: '#888' }}>{lines.length} line{lines.length === 1 ? '' : 's'} · add more above</span></div>
           <div className="flex justify-between px-3 py-2 text-base font-extrabold" style={{ borderTop: '2px solid #dcfce7', color: GREEN }}><span>List total (before any discount / tax)</span><span className="tabular-nums">{fmt(total)}</span></div>
         </div>
         <div className="grid grid-cols-2 gap-2 mb-2">

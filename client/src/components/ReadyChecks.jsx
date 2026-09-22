@@ -8,6 +8,20 @@
 //   🪟 Windshield checked before calibrating — only when the job has a
 //      windshield / forward camera calibration.
 import { needsWindshieldCheck } from './MobileJobCard.jsx'
+import { useBig3Map } from './books/Big3Rules.jsx'
+
+// Mark 2026-09-22: the safety inspection + tire pressures are collision
+// work. Repair-shop jobs and retail (person) jobs skip them. Dealers and
+// body shops keep them. Same rule on the server (tireGate in jobs.js).
+export const SAFETY_SKIP_TYPES = ['repair_shop', 'retail']
+const shopKeyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+export function safetyChecksApply(job, big3Map) {
+  if (!job) return true
+  if (job.customer?.kind === 'retail') return false
+  const t = big3Map?.[shopKeyOf(job.shop_name)]?.billing?.customer_type
+  return !(t && SAFETY_SKIP_TYPES.includes(t))
+}
+export function useSafetyChecksApply(job) { const map = useBig3Map(); return safetyChecksApply(job, map) }
 
 const GREEN = '#15803d'
 const ORANGE = '#CD4419'
@@ -15,27 +29,28 @@ const ORANGE = '#CD4419'
 export const DEFAULT_CHECKS = { cash: 'no', belts: false, airbags: false, windshieldOk: false }
 const parseTires = t => { const m = /(\d+)F\/(\d+)R/.exec(String(t || '')); return m ? { front: Number(m[1]), rear: Number(m[2]) } : null }
 
-export function readyChecksValid(v, job) {
-  if (!v.belts || !v.airbags) return false
-  if (!parseTires(job?.tires_set)) return false          // set in the photo checklist
+export function readyChecksValid(v, job, safety = true) {
+  if (safety && (!v.belts || !v.airbags)) return false
+  if (safety && !parseTires(job?.tires_set)) return false          // set in the photo checklist
   if (v.cash === 'yes') return false                       // picked "yes" but no number yet
   if (needsWindshieldCheck(job) && !v.windshieldOk) return false
   return true
 }
-export function readyChecksMissing(v, job) {
+export function readyChecksMissing(v, job, safety = true) {
   const out = []
-  if (!v.belts) out.push('check the seat belts')
-  if (!v.airbags) out.push('inspect the airbag system')
-  if (!parseTires(job?.tires_set)) out.push('set the tire pressures in the photo checklist')
+  if (safety && !v.belts) out.push('check the seat belts')
+  if (safety && !v.airbags) out.push('inspect the airbag system')
+  if (safety && !parseTires(job?.tires_set)) out.push('set the tire pressures in the photo checklist')
   if (v.cash === 'yes') out.push('pick $350 or $700')
   if (needsWindshieldCheck(job) && !v.windshieldOk) out.push('confirm the windshield check')
   return out
 }
 // → fields for the PATCH that moves the job to Ready to Invoice
-export function readyChecksToPatch(v, who, job = null) {
+export function readyChecksToPatch(v, who, job = null, safety = true) {
   const at = new Date().toISOString()
   const t = parseTires(job?.tires_set) || { front: 36, rear: 36 }
-  const patch = { pcsi_checks: JSON.stringify({ belts: !!v.belts, airbags: !!v.airbags, front: t.front, rear: t.rear, windshield: !!v.windshieldOk, by: who || '', at }) }
+  // Skipped (repair shop / retail): no PCSI record, so the card never shows a ✅ PCSI it didn't earn.
+  const patch = safety ? { pcsi_checks: JSON.stringify({ belts: !!v.belts, airbags: !!v.airbags, front: t.front, rear: t.rear, windshield: !!v.windshieldOk, by: who || '', at }) } : {}
   if (v.cash === '350' || v.cash === '700') patch.cash_quoted = v.cash
   return patch
 }
@@ -50,6 +65,7 @@ export default function ReadyChecks({ job, value, onChange, compact = false }) {
   const set = patch => onChange({ ...v, ...patch })
   const big = { minHeight: 48, fontSize: 16 }
   const windshield = needsWindshieldCheck(job)
+  const safety = useSafetyChecksApply(job)
   return (
     <div className="space-y-2">
       {/* 💵 Customer pay */}
@@ -76,8 +92,9 @@ export default function ReadyChecks({ job, value, onChange, compact = false }) {
         )}
       </div>
 
+      {!safety && <div className="rounded-xl px-3 py-2 text-xs font-semibold" style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', color: '#0369a1' }}>🔧 {job?.customer?.kind === 'retail' ? 'Retail job' : 'Repair-shop job'} — no safety inspection or tire-pressure check needed.</div>}
       {/* 🦺 PCSI: belts + airbags */}
-      <div className="rounded-xl p-3 space-y-2" style={{ backgroundColor: v.belts && v.airbags ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${v.belts && v.airbags ? '#86efac' : '#fdba74'}` }}>
+      {safety && <div className="rounded-xl p-3 space-y-2" style={{ backgroundColor: v.belts && v.airbags ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${v.belts && v.airbags ? '#86efac' : '#fdba74'}` }}>
         <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🦺 Post Collision Safety Inspection</div>
         <button type="button" onClick={() => set({ belts: !v.belts })} className="w-full rounded-xl font-bold text-left px-3 flex items-center gap-2" style={{ ...big, backgroundColor: v.belts ? GREEN : 'white', color: v.belts ? 'white' : '#9a3412', border: `1.5px solid ${v.belts ? GREEN : '#fdba74'}` }}>
           <span className="text-xl">{v.belts ? '☑' : '☐'}</span> Seat belts checked at every position (latch + retract)
@@ -85,12 +102,12 @@ export default function ReadyChecks({ job, value, onChange, compact = false }) {
         <button type="button" onClick={() => set({ airbags: !v.airbags })} className="w-full rounded-xl font-bold text-left px-3 flex items-center gap-2" style={{ ...big, backgroundColor: v.airbags ? GREEN : 'white', color: v.airbags ? 'white' : '#9a3412', border: `1.5px solid ${v.airbags ? GREEN : '#fdba74'}` }}>
           <span className="text-xl">{v.airbags ? '☑' : '☐'}</span> Airbag system visually inspected (no light, covers intact)
         </button>
-      </div>
+      </div>}
 
       {/* 🛞 Tires — shown for reference; set in the photo checklist */}
-      <div className="rounded-xl px-3 py-2 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: parseTires(job?.tires_set) ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${parseTires(job?.tires_set) ? '#86efac' : '#fdba74'}`, color: parseTires(job?.tires_set) ? GREEN : '#9a3412' }}>
+      {safety && <div className="rounded-xl px-3 py-2 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: parseTires(job?.tires_set) ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${parseTires(job?.tires_set) ? '#86efac' : '#fdba74'}`, color: parseTires(job?.tires_set) ? GREEN : '#9a3412' }}>
         <span className="text-xl">{parseTires(job?.tires_set) ? '☑' : '☐'}</span> 🛞 Tire pressures {parseTires(job?.tires_set) ? `${parseTires(job.tires_set).front}/${parseTires(job.tires_set).rear} psi · set` : '— set them in the photo checklist'}
-      </div>
+      </div>}
 
       {/* 🪟 Windshield */}
       {windshield && (

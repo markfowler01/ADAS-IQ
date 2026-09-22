@@ -10,6 +10,7 @@ import Navbar from './Navbar'
 import LoadingSplash from './LoadingSplash.jsx'
 import { Big3Picker, describeRules as describeBig3 } from './books/Big3Rules.jsx'
 import ReviewLayout from './upload/ReviewLayout.jsx'
+import ReviewCompact from './upload/ReviewCompact.jsx'
 import { familyFor as insurerFamilyFor } from '../lib/insurerFamilies.js'
 
 function todayPT() {
@@ -49,6 +50,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // New look (Mark 2026-09-14) — Bill it review kit. Old layout kept behind
   // localStorage adas_upload_look = 'old' for a day so nothing is lost.
   const [oldLook, setOldLook] = useState(() => { try { return localStorage.getItem('adas_upload_look') === 'old' } catch { return false } })
+  // Compact look (Mark 2026-09-22: "make the w/ Kinetic report like this" —
+  // the Build-job modal). Default. 'panel' = the 09-14 panel layout.
+  const [panelLook, setPanelLook] = useState(() => { try { return localStorage.getItem('adas_upload_look') === 'panel' } catch { return false } })
   const [submitting, setSubmitting] = useState(false)
   const [pricePreview, setPricePreview] = useState(null)   // review-before-create modal
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -540,7 +544,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       {creatingJob && <LoadingSplash overlay label="Creating job" />}
 
       {!oldLook ? (<>
-        <ReviewLayout
+        {(() => { const Look = panelLook ? ReviewLayout : ReviewCompact; return (
+        <Look
           jobData={jobData} cashMode={cashMode} toggleCash={toggleCash}
           calibrations={calibrations} rowPrices={rowPrices} toggleCal={toggleCal} updateCalField={updateCalField}
           showManualForm={showManualForm} setShowManualForm={setShowManualForm} addManual={addManual}
@@ -554,7 +559,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           poolOverride={poolOverride} onPool={pickPoolOnScreen}
           big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={setBig3Rules} big3Save={big3Save} setBig3Save={setBig3Save}
           onOldLook={() => { try { localStorage.setItem('adas_upload_look', 'old') } catch {} setOldLook(true) }}
-        />
+          onPanelLook={panelLook ? () => { try { localStorage.removeItem('adas_upload_look') } catch {} setPanelLook(false) } : () => { try { localStorage.setItem('adas_upload_look', 'panel') } catch {} setPanelLook(true) }}
+        />) })()}
         {priceModal}
       </>) : (
       <div className="max-w-2xl mx-auto px-4 py-6 flex flex-col gap-5">
@@ -816,7 +822,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
               <p className="text-xs text-center" style={{ color: '#9ca3af' }}>
                 Safe to test — creates a draft in Absolute ADAS Books only. No Zoho side effects.
               </p>
-              <button type="button" onClick={() => { try { localStorage.removeItem('adas_upload_look') } catch {} setOldLook(false) }} className="text-xs" style={{ color: '#aaa' }}>switch to the new look</button>
+              <button type="button" onClick={() => { try { localStorage.removeItem('adas_upload_look') } catch {} setOldLook(false); setPanelLook(false) }} className="text-xs" style={{ color: '#aaa' }}>switch to the new look</button>
             </div>
           )}
         </div>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import AddCalibration from './upload/AddCalibration.jsx'
 import { Panel, Chip, Eyebrow, PrimaryButton } from './ui/ReviewKit.jsx'
-import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from './ReadyChecks.jsx'
+import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote, useSafetyChecksApply } from './ReadyChecks.jsx'
 
 const API_BASE = ''
 const ORANGE = '#CD4419'
@@ -30,7 +30,8 @@ function normalizeCal(c) {
  */
 export default function CalibrationReviewModal({ job, onConfirm, onClose, user = null }) {
   const [checks, setChecks] = useState({ ...DEFAULT_CHECKS })
-  const checksOk = readyChecksValid(checks, job)
+  const safety = useSafetyChecksApply(job)
+  const checksOk = readyChecksValid(checks, job, safety)
   const [cals, setCals] = useState(() => {
     let c = []
     try { c = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations) : (job.calibrations || []) } catch {}
@@ -80,7 +81,7 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose, user =
   async function handleConfirm() {
     if (!checksOk) return
     setSaving(true)
-    const patch = readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician, job)
+    const patch = readyChecksToPatch(checks, user?.techName || user?.name || user?.email || job.technician, job, safety)
     const note = readyChecksNote(checks, job)
     if (note) patch.extra_services = note
     await onConfirm(cals, patch)
@@ -147,7 +148,7 @@ export default function CalibrationReviewModal({ job, onConfirm, onClose, user =
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="flex-1 rounded-xl py-3 text-sm font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #e0dbd6' }}>Cancel</button>
             <PrimaryButton onClick={handleConfirm} disabled={saving || !checksOk} tone="green">
-              {saving ? 'Saving…' : !checksOk ? `☐ ${readyChecksMissing(checks, job)[0]}` : '🟢 Done — Ready to Invoice'}
+              {saving ? 'Saving…' : !checksOk ? `☐ ${readyChecksMissing(checks, job, safety)[0]}` : '🟢 Done — Ready to Invoice'}
             </PrimaryButton>
           </div>
         </div>

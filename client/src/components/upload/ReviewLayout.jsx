@@ -41,7 +41,7 @@ export const POOL_OPTIONS = [
 ]
 
 // The header pill IS the switcher — tap it, pick the schedule.
-function PoolPill({ pool, poolOverride, onPool, disabled }) {
+export function PoolPill({ pool, poolOverride, onPool, disabled }) {
   const [open, setOpen] = useState(false)
   const box = useRef(null)
   useEffect(() => {

@@ -646,7 +646,7 @@ router.put('/:id', async (req, res) => {
       // becomes a debt the app chases (red card + 6pm owed list) instead
       // of a wall. Safety inspection + tires still block: that's work.
       if (!prog.complete) { await markPending(merged, prog, req); req.body.photo_slots = merged.photo_slots }
-      if (tireGate(req, res, merged)) return
+      if (await tireGate(req, res, merged)) return
       relayCustomerPay(req, req.body, cur)
       delete req.body.photo_override
       delete req.body.photos_pending
@@ -763,7 +763,7 @@ router.patch('/:id', async (req, res) => {
         const prog = photoProgress(merged)
         if (!prog.complete) await markPending(merged, prog, req)   // debt, not a block (2026-09-17)
       }
-      if (tireGate(req, res, merged)) return
+      if (await tireGate(req, res, merged)) return
       relayCustomerPay(req, merged, currentJob)
       delete merged.photo_override
       delete merged.photos_pending
@@ -1644,10 +1644,24 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
 
 // 🛞 Tire gate (Mark 2026-09-11): every job needs "all four set to the
 // manufacturer spec" confirmed at Ready to Invoice. Same override as photos.
-function tireGate(req, res, merged) {
+// Mark 2026-09-22: collision work only — repair-shop jobs and retail
+// (person) jobs skip the inspection + tires. Dealers and body shops keep it.
+const SAFETY_SKIP_TYPES = new Set(['repair_shop', 'retail'])
+async function safetyGateApplies(req, merged) {
+  if (merged?.customer?.kind === 'retail') return false
+  try {
+    const { findShopByName } = await import('../services/big3.js')
+    const shop = await findShopByName(req, merged?.shop_name)
+    const br = shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {}
+    if (br?.customer_type && SAFETY_SKIP_TYPES.has(br.customer_type)) return false
+  } catch (e) { console.log('[tireGate] shop lookup failed (gate stays on):', e.message) }
+  return true
+}
+async function tireGate(req, res, merged) {
   const isOwner = String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
   const override = String(req.body.photo_override || '').trim()
   if (isOwner && override) return false
+  if (!(await safetyGateApplies(req, merged))) return false
   let c = null
   try { c = merged.pcsi_checks ? JSON.parse(merged.pcsi_checks) : null } catch { c = null }
   const missing = []
