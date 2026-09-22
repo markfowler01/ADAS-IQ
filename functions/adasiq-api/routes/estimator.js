@@ -325,6 +325,44 @@ R.delete('/retail-customers/:id', staffOnly, async (req, res) => {
   } catch (e) { fail(res, e, 'retail delete') }
 })
 // Zoho Books: link by exact name or create an INDIVIDUAL customer (shops are business customers; these are people).
+// ── Retail person from a job request (single-invoice billing Phase C, 2026-09-22) ──
+// Match by phone, then email, then exact name; otherwise create. Never
+// duplicates a person the tech already served.
+export async function findOrCreateRetail(req, { name, phone, email, source = 'Job request' }) {
+  const nm = str(name, 200).trim(); if (!nm) throw new Error('Name is required')
+  const digits = x => String(x || '').replace(/\D/g, '').slice(-10)
+  const ph = digits(phone), em = str(email, 200).trim().toLowerCase()
+  const rows = await zcql(req, `SELECT * FROM ${T.retail} LIMIT 300`).catch(() => [])
+  const all = unwrap(rows, T.retail).map(rowToRetail)
+  const hit = (ph && all.find(c => digits(c.phone) === ph)) || (em && all.find(c => String(c.email || '').toLowerCase() === em)) || all.find(c => c.name.trim().toLowerCase() === nm.toLowerCase())
+  if (hit) return { customer: hit, created: false }
+  const row = await tbl(req, T.retail).insertRow(retailToRow({ name: nm, phone: str(phone, 30), email: em, source, created_at: now(), updated_at: now() }))
+  return { customer: rowToRetail(row), created: true }
+}
+/** The person's Books contact — linked, found by name, or created (individual). Returns the contact_id. */
+export async function ensureRetailBooksContact(req, retailId) {
+  const c = await getRetail(req, retailId); if (!c) throw new Error('Retail customer not found')
+  if (c.zoho_contact_id) return { contact_id: c.zoho_contact_id, contact_name: c.name, existing: true }
+  const axios = (await import('axios')).default
+  const { getAccessToken } = await import('../services/zoho.js')
+  const token = await getAccessToken()
+  const B = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+  const name = c.name.trim(); const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const found = await axios.get(`${B}/contacts`, { headers: H, params: { ...P, contact_name_contains: name.slice(0, 40), contact_type: 'customer' }, timeout: 15000, validateStatus: s => s < 500 })
+  const hit = (found.data?.contacts || []).find(x => norm(x.contact_name) === norm(name))
+  let id = hit?.contact_id
+  if (!id) {
+    const [first, ...rest] = name.split(/\s+/); const last = rest.join(' ')
+    const billing_address = c.address ? { address: c.address, city: c.city || '', state: 'WA', zip: c.zip || '', country: 'U.S.A' } : undefined
+    const body = { contact_name: name, contact_type: 'customer', customer_sub_type: 'individual', first_name: first, last_name: last, ...(c.email ? { email: c.email } : {}), ...(c.phone ? { phone: c.phone } : {}), ...(billing_address ? { billing_address } : {}) }
+    const r = await axios.post(`${B}/contacts`, body, { headers: H, params: P, timeout: 20000, validateStatus: s => s < 500 })
+    if (r.data?.code !== 0) throw new Error(`Books said: ${r.data?.message || r.status}`)
+    id = r.data.contact.contact_id
+  }
+  await tbl(req, T.retail).updateRow({ ROWID: c.id, er_zoho_contact_id: String(id), er_updated_at: now() })
+  return { contact_id: String(id), contact_name: name, existing: false }
+}
+
 R.post('/retail-customers/:id/books-customer', staffOnly, async (req, res) => {
   try {
     const c = await getRetail(req, req.params.id); if (!c) return res.status(404).json({ error: 'Customer not found' })

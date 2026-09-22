@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import CollectPanel from './CollectPanel.jsx'
+import BuildJobModal from './BuildJobModal.jsx'
 import { Big3Badge, DrpBadge, BillingPill } from './books/Big3Rules.jsx'
 import BillItModal from './BillItModal.jsx'
 import { needsWindshieldCheck } from './MobileJobCard.jsx'
@@ -833,6 +834,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /></p>}
       {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
@@ -1486,6 +1488,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     }
     onManualInvoice(data)
   }
+  useEffect(() => { const fn = () => fetchJobs(); window.addEventListener('adas:jobs-refresh', fn); return () => window.removeEventListener('adas:jobs-refresh', fn) }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [calReviewJob, setCalReviewJob] = useState(null)
   const [billItJob, setBillItJob] = useState(null)   // 💸 Bill it review modal (staff only)
   // 📸 Photos-first before Ready to Invoice, on the board too (Mark
@@ -2696,9 +2699,11 @@ function ImHereButton({ job, onEdit }) {
   )
 }
 
+const ORANGE_C = '#CD4419'
 function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
   const [busy, setBusy] = useState(false)
   const [showChooser, setShowChooser] = useState(false)
+  const [build, setBuild] = useState(false)   // 🔧 Build job — no report (Phase C)
   const inputRef = useRef(null)
 
   async function handleFile(e) {
@@ -2726,6 +2731,7 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
         style={{ display: 'none' }}
         onChange={handleFile}
       />
+      {build && <BuildJobModal job={job} onClose={() => setBuild(false)} onBuilt={() => setBuild(false)} />}
       {/* Two-path chooser (Mark 2026-07-14): Kinetic report when there
           is one, straight-to-invoice from the request's own data when
           there isn't. Both land on the same review screen. */}
@@ -2735,6 +2741,10 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
           onClick={e => { e.stopPropagation(); if (e.target === e.currentTarget) setShowChooser(false) }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
             <h3 className="text-base font-bold mb-1" style={{ color: '#1a1a1a' }}>Create Job</h3>
+            <button onClick={e => { e.stopPropagation(); setShowChooser(false); setBuild(true) }} className="w-full text-left rounded-xl px-3 py-2.5 mb-2" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE_C}` }}>
+              <div className="text-sm font-bold" style={{ color: ORANGE_C }}>🔧 Build job — no report</div>
+              <div className="text-[11px]" style={{ color: '#666' }}>Programming, diagnostic, a calibration off the list. Repair shops, dealers, people. One invoice at the end.</div>
+            </button>
             <p className="text-xs mb-4" style={{ color: '#888' }}>
               {job.shop_name || 'Job'}{job.vehicle ? ` · ${job.vehicle}` : ''}
             </p>

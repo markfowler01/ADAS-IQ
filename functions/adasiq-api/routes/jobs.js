@@ -104,6 +104,11 @@ const EXTRA_RE = new RegExp(`\\n*${EXTRA_START}([\\s\\S]*?)${EXTRA_END}\\n*`, 'g
 const AGREED_START = '<<AGREED>>'
 const AGREED_END   = '<</AGREED>>'
 const AGREED_RE = new RegExp(`\\n*${AGREED_START}([\\s\\S]*?)${AGREED_END}\\n*`, 'g')
+// <<CUST>> — who the job is for, from the tech's request (Phase C, 2026-09-22):
+// { kind: 'shop'|'retail', id (retail customer id), name, zoho_contact_id }
+const CUST_START = '<<CUST>>'
+const CUST_END   = '<</CUST>>'
+const CUST_RE = new RegExp(`\\n*${CUST_START}([\\s\\S]*?)${CUST_END}\\n*`, 'g')
 
 function splitNotes(rawNotes) {
   const raw = String(rawNotes || '')
@@ -112,21 +117,25 @@ function splitNotes(rawNotes) {
   if (m) extras = m[1].trim()
   const a = raw.match(new RegExp(`${AGREED_START}([\\s\\S]*?)${AGREED_END}`))
   if (a) { try { agreed = JSON.parse(a[1]) } catch { agreed = null } }
-  const cleanNotes = raw.replace(EXTRA_RE, '').replace(AGREED_RE, '').trim()
-  return { cleanNotes, extras, agreed }
+  let customer = null
+  const c = raw.match(new RegExp(`${CUST_START}([\\s\\S]*?)${CUST_END}`))
+  if (c) { try { customer = JSON.parse(c[1]) } catch { customer = null } }
+  const cleanNotes = raw.replace(EXTRA_RE, '').replace(AGREED_RE, '').replace(CUST_RE, '').trim()
+  return { cleanNotes, extras, agreed, customer }
 }
 
-function joinNotes(cleanNotes, extras, agreed = null) {
+function joinNotes(cleanNotes, extras, agreed = null, customer = null) {
   const base = String(cleanNotes || '').trim()
   const ex = String(extras || '').trim()
   const parts = [base]
   if (ex) parts.push(`${EXTRA_START}${ex}${EXTRA_END}`)
+  if (customer && (customer.kind === 'retail' || customer.kind === 'shop')) parts.push(`${CUST_START}${JSON.stringify({ kind: customer.kind, id: String(customer.id || '').slice(0, 40), name: String(customer.name || '').slice(0, 120), zoho_contact_id: String(customer.zoho_contact_id || '').slice(0, 40) })}${CUST_END}`)
   if (agreed && Number(agreed.amount) > 0) parts.push(`${AGREED_START}${JSON.stringify({ amount: Math.round(Number(agreed.amount) * 100) / 100, with: String(agreed.with || '').slice(0, 60), note: String(agreed.note || '').slice(0, 200), by: String(agreed.by || '').slice(0, 40), at: agreed.at || new Date().toISOString() })}${AGREED_END}`)
   return parts.filter(Boolean).join('\n\n')
 }
 
 function rowToJob(row) {
-  const { cleanNotes, extras, agreed } = splitNotes(row.notes)
+  const { cleanNotes, extras, agreed, customer } = splitNotes(row.notes)
   return {
     id:               String(row.ROWID),
     shop_name:        row.shop_name        || '',
@@ -143,6 +152,7 @@ function rowToJob(row) {
     notes:            cleanNotes,
     extra_services:   extras,
     agreed_price:     agreed,
+    customer:         customer,
     report_url:       row.report_url       || '',
     status:           row.status           || 'need_dispatch',
     invoiced:         row.invoiced === 'true',
@@ -170,10 +180,12 @@ function jobToRow(job) {
   // Do not spread unknown/new fields — Catalyst returns an error for unknown column names.
   // extra_services piggybacks inside `notes` via joinNotes so no schema change
   // is required.
-  const cleanNotes = String(job.notes || '').replace(EXTRA_RE, '').replace(AGREED_RE, '').trim()
-  // agreed_price: null clears it; undefined keeps whatever the notes already carry.
-  const keep = job.agreed_price === undefined ? splitNotes(job.notes).agreed : job.agreed_price
-  const notesWithExtras = joinNotes(cleanNotes, job.extra_services, keep)
+  const cleanNotes = String(job.notes || '').replace(EXTRA_RE, '').replace(AGREED_RE, '').replace(CUST_RE, '').trim()
+  // agreed_price / customer: null clears; undefined keeps whatever the notes already carry.
+  const carried = splitNotes(job.notes)
+  const keep = job.agreed_price === undefined ? carried.agreed : job.agreed_price
+  const keepCust = job.customer === undefined ? carried.customer : job.customer
+  const notesWithExtras = joinNotes(cleanNotes, job.extra_services, keep, keepCust)
   return {
     shop_name:        job.shop_name        || '',
     vehicle:          job.vehicle          || '',
@@ -497,6 +509,21 @@ router.post('/', async (req, res) => {
       console.log(`[jobs POST] job_requested without via_request → need_dispatch (${body.shop_name || ''} ${body.quote_number || ''})`)
       body.status = 'need_dispatch'
     }
+    // 👤 Person (retail) request (Phase C): find-or-create the retail customer,
+    // pin it on the card. A shop request carries the Books contact the tech picked.
+    if (body.customer_kind === 'retail' && body.retail?.name) {
+      try {
+        const { findOrCreateRetail } = await import('./estimator.js')
+        const { customer, created } = await findOrCreateRetail(req, { name: body.retail.name, phone: body.retail.phone, email: body.retail.email })
+        body.customer = { kind: 'retail', id: customer.id, name: customer.name, zoho_contact_id: customer.zoho_contact_id || '' }
+        body.shop_name = customer.name
+        if (!body.insurer) body.insurer = 'Cash'
+        console.log(`[jobs POST] retail person ${created ? 'created' : 'matched'}: ${customer.name} (${customer.id})`)
+      } catch (e) { console.warn('[jobs POST] retail customer failed (card still created):', e.message) }
+    } else if (body.customer && body.customer.kind === 'shop') {
+      body.customer = { kind: 'shop', id: '', name: String(body.customer.name || body.shop_name || '').slice(0, 120), zoho_contact_id: String(body.customer.zoho_contact_id || '').slice(0, 40) }
+    }
+    delete body.customer_kind; delete body.retail
     const autoStatus = dispatchedStatusFor(body.technician)
     const autoDispatched = !body.via_request && autoStatus &&
       (!body.status || body.status === 'need_dispatch')

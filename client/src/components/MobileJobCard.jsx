@@ -326,6 +326,7 @@ export default function MobileJobCard({
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /></p>}
       {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">

@@ -14,6 +14,10 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
   const [custSearch,   setCustSearch]   = useState('')
   const [custDropOpen, setCustDropOpen] = useState(false)
   const [selected,     setSelected]     = useState(null)
+  // 🏢 Shop or 👤 Person (Mark 2026-09-22): a person is a retail customer —
+  // no billing questions, one invoice + tax, pays at the van.
+  const [who,          setWho]          = useState('shop')
+  const [person,       setPerson]       = useState({ name: '', phone: '', email: '' })
 
   const [technician,  setTechnician]  = useState('')
   const [roNumber,    setRoNumber]    = useState('')
@@ -126,7 +130,8 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
 
   // ── Submit ──────────────────────────────────────────────────────────────────
   async function handleSubmit() {
-    if (!selected)                         { setError('Please select a customer.'); return }
+    if (who === 'shop' && !selected)       { setError('Please select a customer.'); return }
+    if (who === 'person' && (!person.name.trim() || !person.phone.trim())) { setError('Name and cell number, please.'); return }
     setSaving(true)
     setError(null)
     try {
@@ -145,7 +150,10 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
         } catch { /* check is best-effort */ }
       }
       await onSubmit({
-        shop_name:  selected.contact_name,
+        shop_name:  who === 'person' ? person.name.trim() : selected.contact_name,
+        ...(who === 'person'
+          ? { customer_kind: 'retail', retail: { name: person.name.trim(), phone: person.phone.trim(), email: person.email.trim() } }
+          : { customer: { kind: 'shop', name: selected.contact_name, zoho_contact_id: selected.contact_id } }),
         // Belt-and-suspenders: coerce to string in case a setter ever
         // slips through with a non-string value again (Claude scan,
         // future paste/autofill, etc.).
@@ -281,8 +289,24 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
             )}
           </div>
 
+          {/* Shop or person */}
+          <div className="flex gap-1 rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
+            {[['shop', '🏢 Shop'], ['person', '👤 Person (retail)']].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => setWho(k)} className="flex-1 rounded-full py-1.5 text-xs font-bold" style={who === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { color: '#555' }}>{l}</button>
+            ))}
+          </div>
+          {who === 'person' && (
+            <div className="rounded-xl p-3" style={{ backgroundColor: '#f0fdfa', border: '1.5px solid #99f6e4' }}>
+              <div className="text-[11px] mb-2" style={{ color: '#0f766e' }}>A person paying for their own car. One invoice with 10.1% tax, pay at the van. Nothing else to ask.</div>
+              <input value={person.name} onChange={e => setPerson(p => ({ ...p, name: e.target.value }))} placeholder="Full name *" className="w-full text-sm rounded-lg px-3 py-2 mb-2" style={{ border: '1.5px solid #99f6e4', outline: 'none', backgroundColor: 'white' }} />
+              <div className="grid grid-cols-2 gap-2">
+                <input value={person.phone} onChange={e => setPerson(p => ({ ...p, phone: e.target.value }))} placeholder="Cell *" inputMode="tel" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #99f6e4', outline: 'none', backgroundColor: 'white' }} />
+                <input value={person.email} onChange={e => setPerson(p => ({ ...p, email: e.target.value }))} placeholder="Email (for the receipt)" inputMode="email" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #99f6e4', outline: 'none', backgroundColor: 'white' }} />
+              </div>
+            </div>
+          )}
           {/* Customer dropdown */}
-          <div>
+          <div style={who === 'person' ? { display: 'none' } : {}}>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">
               Customer
             </label>

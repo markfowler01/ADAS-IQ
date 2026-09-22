@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote } from '../components/ReadyChecks.jsx'
 import SalesStopSheet, { SalesStopScoreboard } from '../components/SalesStopSheet'
 import { JobPhotosSheet, TakePhotosControl, PhotoBadge, photoProgress, gateApplies } from '../components/JobPhotos'
+import BuildJobModal from '../components/BuildJobModal.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
 import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstimateTotals } from '../components/MobileJobCard.jsx'
@@ -823,6 +824,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [photosOwed,       setPhotosOwed]       = useState([])    // 📸 shots still owed on invoiced jobs
   const [owedJob,          setOwedJob]          = useState(null)  // the owed card open in the sheet
   const [requestPhotoJob,  setRequestPhotoJob]  = useState(null)  // 📷 on a Waiting-for-Kat request
+  const [buildJob,         setBuildJob]         = useState(null)  // 🔧 Build job — no report (staff)
   const [salesStopOpen,    setSalesStopOpen]    = useState(false)  // 🚐 sales stop sheet
   const [salesStopTick,    setSalesStopTick]    = useState(0)      // bumps the scoreboard after a stop
   const refreshTimerRef = useRef(null)
@@ -1361,9 +1363,14 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                     {/* Photos don't wait for Kat (Mark 2026-09-21): shoot now, the card she builds inherits them. */}
                     <div className="mt-1"><PhotoBadge job={j} onClick={() => setRequestPhotoJob(j)} /></div>
                   </div>
-                  <button onClick={() => setRequestPhotoJob(j)}
-                    className="text-xs font-bold rounded-lg px-3 py-2 text-white flex-shrink-0"
-                    style={{ backgroundColor: '#7e22ce' }}>📷 Photos</button>
+                  <div className="flex flex-col gap-1 flex-shrink-0">
+                    <button onClick={() => setRequestPhotoJob(j)}
+                      className="text-xs font-bold rounded-lg px-3 py-2 text-white"
+                      style={{ backgroundColor: '#7e22ce' }}>📷 Photos</button>
+                    {user?.role !== 'technician' && <button onClick={() => setBuildJob(j)}
+                      className="text-xs font-bold rounded-lg px-3 py-2 text-white"
+                      style={{ backgroundColor: ORANGE }}>🔧 Build</button>}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -1403,6 +1410,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
         <SalesStopSheet user={user} onClose={() => setSalesStopOpen(false)} onLogged={() => setSalesStopTick(t => t + 1)} />
       )}
 
+      {buildJob && <BuildJobModal job={buildJob} user={user} onClose={() => setBuildJob(null)} onBuilt={() => { setBuildJob(null); load() }} />}
       {requestPhotoJob && (
         <JobPhotosSheet
           job={requestPhotoJob}

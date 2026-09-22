@@ -46,8 +46,9 @@ async function buildPreview(req, job) {
   // decides. Repair shops, dealers and retail get ONE invoice straight
   // from the job's lines; so does any card with no Books estimate.
   const big3mod = await import('../services/big3.js')
-  const shopRow = await big3mod.findShopByName(req, job.shop_name).catch(() => null)
-  const brEarly = shopRow?.billing_rules ? (typeof shopRow.billing_rules === 'string' ? JSON.parse(shopRow.billing_rules || '{}') : shopRow.billing_rules) : {}
+  const isRetailJob = job.customer?.kind === 'retail'
+  const shopRow = isRetailJob ? null : await big3mod.findShopByName(req, job.shop_name).catch(() => null)
+  const brEarly = isRetailJob ? { customer_type: 'retail', discount_value: 0, pay_mode: 'on_site' } : (shopRow?.billing_rules ? (typeof shopRow.billing_rules === 'string' ? JSON.parse(shopRow.billing_rules || '{}') : shopRow.billing_rules) : {})
   const ctypeEarly = String(job.cash_quoted || '').trim() ? 'cash' : (brEarly.customer_type || '')
   if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return buildSinglePreview(req, job, shopRow, brEarly)
   const token = await getAccessToken()
@@ -131,6 +132,7 @@ async function buildPreview(req, job) {
 async function buildSinglePreview(req, job, shop, br) {
   const token = await getAccessToken()
   const big3 = await import('../services/big3.js')
+  const retailJob = job.customer?.kind === 'retail'
   const cashJob = !!String(job.cash_quoted || '').trim()
   const customerType = cashJob ? 'cash' : (br.customer_type || '')
   const typeDef = big3.CUSTOMER_TYPES[customerType] || null
@@ -146,7 +148,8 @@ async function buildSinglePreview(req, job, shop, br) {
   let priced = { lines: [] }
   if (cals.length) {
     const { previewInvoiceLines } = await import('../services/zoho.js')
-    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (job.insurer || ''), make: job.make || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : null, big3Rules: effB3.rules })
+    // A retail person is customer pay → the CP schedule (Mark's cash rule), plus tax.
+    priced = await previewInvoiceLines({ insurer: cashJob || retailJob ? 'Cash' : (job.insurer || ''), make: job.make || '', calibrations: cals, req, poolOverride: cashJob || retailJob ? 'CP' : null, big3Rules: effB3.rules })
   }
   let extras = []; try { extras = job.extra_items ? JSON.parse(job.extra_items) : [] } catch { extras = [] }
   const extraLines = (Array.isArray(extras) ? extras : []).map(x => {
@@ -173,8 +176,11 @@ async function buildSinglePreview(req, job, shop, br) {
   }
   const grand = r2(costTotal + (tax?.amount || 0))
   // Books customer: the CRM shop's linked contact, else a name search.
-  let customerId = shop?.zoho_contact_id || job.zoho_customer_id || ''
-  let customerName = shop?.shop_name || job.shop_name || ''
+  let customerId = job.customer?.zoho_contact_id || shop?.zoho_contact_id || job.zoho_customer_id || ''
+  let customerName = job.customer?.name || shop?.shop_name || job.shop_name || ''
+  if (retailJob && !customerId && job.customer?.id) {
+    try { const { ensureRetailBooksContact } = await import('./estimator.js'); const c = await ensureRetailBooksContact(req, job.customer.id); customerId = c.contact_id; customerName = c.contact_name || customerName } catch (e) { console.log('[bill-it single] retail Books contact failed:', e.message) }
+  }
   if (!customerId && customerName) {
     const r = await axios.get(`${API}/contacts`, { headers: H(token), params: { ...org(), contact_name: customerName }, timeout: 15000, validateStatus: s => s < 500 }).catch(() => null)
     const hit = (r?.data?.contacts || []).find(c => String(c.contact_name).toLowerCase() === customerName.toLowerCase()) || (r?.data?.contacts || [])[0]
@@ -197,7 +203,7 @@ async function buildSinglePreview(req, job, shop, br) {
   if (!tpl.invoice) warnings.push('No invoice PDF template in Books — the button will not send until it exists.')
   return {
     ok: true, mode: 'single', job_id: job.id, shop_name: customerName, estimate_id: null, estimate_number: ro || '', customer_id: customerId,
-    customer_type: customerType, customer_types: big3.CUSTOMER_TYPES, pay_mode: payMode, discount_pct: pct ?? 0, has_discount: pct != null, has_type: !!br.customer_type, emails,
+    customer_type: customerType, customer_types: big3.CUSTOMER_TYPES, pay_mode: payMode, discount_pct: pct ?? 0, has_discount: pct != null, has_type: !!br.customer_type, retail_person: retailJob, emails,
     cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''), agreed_price: job.agreed_price || null,
     lines: discounted, insurance_total: listTotal, list_total: listTotal, cost_total: costTotal, tax, grand_total: grand, saved: r2(listTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
@@ -377,7 +383,7 @@ async function billSingle(req, res, job, p, dry) {
   if (p.tax) p.tax.amount = r2(p.cost_total * p.tax.pct / 100)
   p.grand_total = r2(p.cost_total + (p.tax?.amount || 0))
   // Learn: type / % / pay for the shop (never for a cash job — that's the card, not the shop).
-  if (!dry && ctype !== 'cash' && ctype && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== p.customer_type)) {
+  if (!dry && ctype !== 'cash' && ctype && !p.retail_person && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== p.customer_type)) {
     try { const rules = big3.withDefaults(p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
   }
   let inv = null
