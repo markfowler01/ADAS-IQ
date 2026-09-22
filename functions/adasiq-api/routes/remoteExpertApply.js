@@ -27,7 +27,7 @@ const router = express.Router()
 // to from Zoho Mail. Env override so it can change without a code edit.
 const TO_ADDRESS   = (process.env.REMOTE_EXPERT_APPLY_TO || '').trim()
 const FROM_ADDRESS = 'mf@absoluteadas.com'
-const SUBJECT      = 'Remote Expert application — OEM tool coverage across 8 makes (Mark Fowler, Absolute ADAS)'
+const SUBJECT      = 'Remote Expert standby for Pacific hours and rare makes (Mark Fowler, 30-year technician)'
 const MIN_DAYS_BETWEEN_SENDS = 5
 const CRON_NAME    = 'remote_expert_apply'
 const CONFIG_KEY   = 'remote_expert_apply'
@@ -49,25 +49,35 @@ export function composeEmail(n, todayPT) {
   const lines = [
     'Hello Autel Remote Expert team,',
     '',
-    'I am applying again to become a Remote Expert. I know spots have been full the last few times I asked. I would like to be on the list for the next one, and I will keep checking in weekly until there is a spot.',
+    'I know you have said the Expert roster is full, so I am not asking for a seat someone else is using. I am asking for the gaps.',
     '',
-    'My biggest advantage is simple: I have been a technician for the last 30 years. I know how technicians think, what they expect from the person on the other end of a remote session, and what it feels like when that person is slow, vague, or has never held the tool. I can deliver the opposite: clear direction, no wasted time, and a finished car.',
+    'I spent 30 years as a technician. I am off the floor now, and module programming and ADAS calibration is all I do, every day. That means two things for your platform. I know exactly what the tech on the other end expects from a remote session, because I have been that tech. And I can answer fast, because I am not being pulled back to a car.',
     '',
-    'What I bring to the platform is OEM software access across the makes shops ask for most:',
-    '• Volkswagen, Audi, Bentley, Lamborghini: ODIS',
-    '• Mercedes-Benz: XENTRY',
-    '• BMW: ISTA',
-    '• Ford and Lincoln: FDRS and FJDS software support',
-    '• GM: OEM programming and diagnostics',
-    '• Stellantis: OEM programming and diagnostics, Master Certified Technician',
+    'One more thing I bring that most programming experts do not: electrical and network diagnostics is my strongest skill. I can read a CAN network like an X-ray. When a flash fails halfway, a module will not wake up on the bus, or a calibration will not complete because of a communication fault, that is where I am at my best. I am happy to be the one your team sends those to.',
     '',
-    'Background: 30 years as a technician, Stellantis Master Certified, and owner of Absolute ADAS (absoluteadas.com), a mobile ADAS calibration and module programming company serving body shops along the I-5 corridor in the Pacific Northwest. My daily work is module programming, coding, and static and dynamic calibrations with Autel and OEM tools, with insurance-grade documentation on every job.',
+    'Where I think I help you most:',
     '',
-    'I can take Remote Expert requests during business hours, and my own technicians will use the platform as well, so the account will be active from day one.',
+    '1. Pacific time coverage. Standby Monday through Friday, 7 AM to 5 PM Pacific, with a response inside 10 minutes. West Coast shops at 3 PM are your thinnest hour.',
     '',
-    'I can send documentation today: certifications, OEM subscription proof, tool serial numbers, business license, and references. Tell me what you need.',
+    '2. Makes most experts do not carry. Bentley and Lamborghini on ODIS, and Stellantis as a Master Certified Technician.',
     '',
-    `This is my ${nth} weekly check-in. I will keep it short each week and stop as soon as you tell me the spots are gone for good or I am in.`,
+    '3. Network and no-communication problems. The sessions that stall out on other experts.',
+    '',
+    '4. Overflow only, if that is all you have. Put me on as a backup that only gets pinged when your regular experts are busy. If I never get a call, it costs you nothing.',
+    '',
+    'OEM software I own and use, with active subscriptions:',
+    '• Volkswagen, Audi, Bentley, Lamborghini: ODIS. Module flashing, coding and adaptations, and ADAS calibrations.',
+    '• Mercedes-Benz: XENTRY Diagnosis. Module programming, SCN coding, and camera and radar calibrations.',
+    '• BMW: ISTA. Module programming and coding, and ADAS calibrations.',
+    '• Ford and Lincoln: FDRS and FJDS software support. Module programming, Programmable Module Installation, as-built data, and calibrations.',
+    '• GM: Techline Connect with GDS2 and SPS2. Module programming, setup and configuration, and calibrations.',
+    '• Stellantis (Chrysler, Dodge, Jeep, Ram, Fiat, Alfa Romeo): wiTECH 2.0 with TechAuthority. Module flashing, PROXI alignment and configuration, and calibrations. Stellantis Master Certified Technician.',
+    '',
+    'Background: owner of Absolute ADAS (absoluteadas.com), a mobile ADAS calibration and module programming company serving body shops along the I-5 corridor in the Pacific Northwest, with insurance-grade documentation and pre and post scan reports on every job.',
+    '',
+    'I can send verification today: OEM subscription confirmations, certifications, tool serial numbers, business license, insurance certificate, and shop references. Tell me what you need and I will have it back to you the same day.',
+    '',
+    `This is my ${nth} weekly check-in. I will keep it short each week and stop as soon as you tell me I am in, or that the program is closed for good.`,
     '',
     'Thank you,',
     'Mark Fowler',
