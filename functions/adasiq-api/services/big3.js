@@ -37,8 +37,8 @@ export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', post_scan: 'i
 //   discount: default % shown on the invoice (body shop is per shop)
 export const CUSTOMER_TYPES = {
   body_shop:   { label: 'Collision shop',    mode: 'dual',   discount: null, pay: 'net_terms', tax: false },
-  repair_shop: { label: 'Auto repair shop',  mode: 'single', discount: 10,   pay: 'on_site',   tax: false },
-  dealer:      { label: 'Dealer',            mode: 'single', discount: 10,   pay: 'on_site',   tax: false },
+  repair_shop: { label: 'Auto repair shop',  mode: 'single', discount: 0,    pay: 'on_site',   tax: false },   // Mark 2026-09-22: 0% for now (was 10)
+  dealer:      { label: 'Dealer',            mode: 'single', discount: 0,    pay: 'on_site',   tax: false },   // Mark 2026-09-22: 0% for now (was 10)
   retail:      { label: 'Retail (person)',   mode: 'single', discount: 0,    pay: 'on_site',   tax: true },
 }
 export const PAY_MODES = { net_terms: 'Net terms — email the invoice', on_site: 'On site — tech collects (check or card QR)', either: 'Either' }
