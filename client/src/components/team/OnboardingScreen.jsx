@@ -137,12 +137,16 @@ function Van({ d, m, onDone }) {
   const done = m.van_handover
   const docs = d.documents || []
   const photos = docs.filter(x => x.kind === 'van_photo').length, videos = docs.filter(x => x.kind === 'van_video').length
-  const [f, setF] = useState({ mileage: '', fuel: '', tread: { lf: '', rf: '', lr: '', rr: '' }, damage: '', maintenance: '', tools: (m.equipment || []).map(e => ({ name: e.name, present: true, note: '' })), signature: '' })
+  const [f, setF] = useState({ mileage: '', fuel: '', tread: { lf: '', rf: '', lr: '', rr: '' }, damage: '', maintenance: '', tools: (m.van_equipment || []).map(e => ({ name: e.name, part: e.part || '', usage: e.usage || '', group: e.group || 'Other', present: true, note: e.serial || '' })), signature: '' })
+  const [openGroups, setOpenGroups] = useState({})
   const [busy, setBusy] = useState(false)
+  const [extra, setExtra] = useState(null)   // { name, group } — something they found that isn't on the list
+  useEffect(() => { setF(x => { const have = new Set(x.tools.map(t => t.name)); const add = (m.van_equipment || []).filter(e => !have.has(e.name)).map(e => ({ name: e.name, part: e.part || '', usage: e.usage || '', group: e.group || 'Other', present: true, note: e.serial || '' })); return add.length ? { ...x, tools: [...x.tools, ...add] } : x }) }, [m.van_equipment]) // eslint-disable-line react-hooks/exhaustive-deps
+  async function addExtra() { setBusy(true); try { await call('/van-equipment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(extra) }); setExtra(null); onDone() } catch (e) { alert(e.message) } finally { setBusy(false) } }
   async function sign() { setBusy(true); try { await call('/van-handover', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) }); onDone() } catch (e) { alert(e.message) } finally { setBusy(false) } }
   if (done) return (
     <Card title={`✅ ${m.van} is yours`} sub={`Signed ${String(done.at).slice(0, 10)} · ${Number(done.mileage).toLocaleString()} mi · tread ${done.tread?.lf}/${done.tread?.rf}/${done.tread?.lr}/${done.tread?.rr} · ${done.photos} photos${done.videos ? ` · ${done.videos} video` : ''}`}>
-      <div className="text-sm" style={{ color: '#374151' }}>The signed handover is in your folder. Find damage or a missing tool later? Tell Mark that day.</div>
+      <div className="text-sm" style={{ color: '#374151' }}>The signed handover is in your folder. The list is locked on your side now — find something later, tell Mark and he adds it to the van.</div>
     </Card>
   )
   const T = ({ k, label }) => <label className="text-[11px] font-bold" style={{ color: '#888' }}>{label}<input value={f.tread[k]} onChange={e => setF(x => ({ ...x, tread: { ...x.tread, [k]: e.target.value } }))} inputMode="decimal" placeholder="/32" className="w-full text-sm rounded-lg px-2 py-2 mt-0.5 font-normal text-center" style={inp} /></label>
@@ -165,14 +169,30 @@ function Van({ d, m, onDone }) {
         <L label="Maintenance — warning lights, next oil change sticker, brakes, wipers, anything due"><textarea value={f.maintenance} onChange={e => setF(x => ({ ...x, maintenance: e.target.value }))} rows={2} placeholder="Oil sticker says 51,000. No lights on." className="w-full text-sm rounded-lg px-3 py-2.5" style={inp} /></L>
         {f.tools.length > 0 && <>
           <div className="text-xs font-bold mt-2 mb-1" style={{ color: '#1a1a1a' }}>4 · Tools & equipment — uncheck anything that isn't there</div>
-          {f.tools.map((t, i) => (
-            <div key={i} className="flex items-center gap-2 py-1.5" style={{ borderBottom: '1px solid #f3f3f3' }}>
-              <input type="checkbox" checked={t.present} onChange={e => setF(x => ({ ...x, tools: x.tools.map((y, n) => n === i ? { ...y, present: e.target.checked } : y) }))} />
-              <span className="text-sm flex-1" style={{ color: t.present ? '#1a1a1a' : RED }}>{t.name}</span>
-              <input value={t.note} onChange={e => setF(x => ({ ...x, tools: x.tools.map((y, n) => n === i ? { ...y, note: e.target.value } : y) }))} placeholder="serial / note" className="text-xs rounded-lg px-2 py-1 w-28" style={inp} />
-            </div>
-          ))}
+          <div className="text-[11px] mb-1" style={{ color: '#888' }}>This is the same list you'll check every morning (handbook chapter 14). Charged, clean, all there.</div>
+          <div className="text-[11px] mb-2" style={{ color: '#666' }}>{f.tools.length} lines in {[...new Set(f.tools.map(t => t.group))].length} groups. Open a group, walk that shelf, uncheck what's missing. {f.tools.filter(t => !t.present).length ? <b style={{ color: RED }}>{f.tools.filter(t => !t.present).length} marked missing.</b> : ''}</div>
+          {[...new Set(f.tools.map(t => t.group))].map(g => {
+            const rows = f.tools.map((t, i) => [t, i]).filter(([t]) => t.group === g)
+            const missing = rows.filter(([t]) => !t.present).length, open = !!openGroups[g]
+            return (
+              <div key={g} className="rounded-xl mb-1.5" style={{ border: `1px solid ${missing ? '#fecaca' : '#eee'}`, backgroundColor: 'white' }}>
+                <button type="button" onClick={() => setOpenGroups(o => ({ ...o, [g]: !o[g] }))} className="w-full flex items-center justify-between px-3 py-2 text-left">
+                  <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{g} <span className="font-normal" style={{ color: '#888' }}>· {rows.length}</span>{missing ? <span className="text-xs font-bold ml-2" style={{ color: RED }}>{missing} missing</span> : null}</span>
+                  <span style={{ color: '#888' }}>{open ? '▾' : '▸'}</span>
+                </button>
+                {open && rows.map(([t, i]) => (
+                  <div key={i} className="flex items-center gap-2 px-3 py-1.5" style={{ borderTop: '1px solid #f3f3f3' }}>
+                    <input type="checkbox" checked={t.present} onChange={e => setF(x => ({ ...x, tools: x.tools.map((y, n) => n === i ? { ...y, present: e.target.checked } : y) }))} className="w-5 h-5" />
+                    <span className="text-sm flex-1 min-w-0" style={{ color: t.present ? '#1a1a1a' : RED }}>{t.name}{t.part ? <span className="text-[11px] font-mono" style={{ color: '#888' }}> {t.part}</span> : ''}{t.usage ? <span className="block text-[11px]" style={{ color: '#999' }}>{t.usage}</span> : null}</span>
+                    <input value={t.note} onChange={e => setF(x => ({ ...x, tools: x.tools.map((y, n) => n === i ? { ...y, note: e.target.value } : y) }))} placeholder="S/N" className="text-xs rounded-lg px-2 py-1 w-20" style={inp} />
+                  </div>
+                ))}
+              </div>
+            )
+          })}
         </>}
+        {!extra ? <button type="button" onClick={() => setExtra({ name: '', group: 'Supplies' })} className="text-xs font-bold rounded-full px-3 py-1.5 mt-2" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>＋ Something in the van that isn't listed</button>
+          : <div className="rounded-xl p-2 mt-2 flex gap-2 flex-wrap items-center" style={{ backgroundColor: '#fff5f0', border: `1px solid ${ORANGE}` }}><input autoFocus value={extra.name} onChange={e => setExtra(x => ({ ...x, name: e.target.value }))} placeholder="What is it?" className="text-sm rounded-lg px-2 py-1.5 flex-1 min-w-[140px]" style={inp} /><select value={extra.group} onChange={e => setExtra(x => ({ ...x, group: e.target.value }))} className="text-sm rounded-lg px-2 py-1.5" style={inp}>{[...new Set((m.van_equipment || []).map(e => e.group || 'Other')), 'Other'].map(g => <option key={g}>{g}</option>)}</select><button type="button" onClick={addExtra} disabled={busy || !extra.name.trim()} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: GREEN }}>Add to the van</button><button type="button" onClick={() => setExtra(null)} className="text-xs px-2" style={{ color: '#888' }}>×</button></div>}
         <div className="text-xs font-bold mt-4 mb-1" style={{ color: '#1a1a1a' }}>5 · Sign for it</div>
         <div className="text-[11px] mb-2" style={{ color: '#666' }}>"I've inspected this van and its equipment, the inventory is complete and accurate, and I'm responsible for it while it's in my care."</div>
         <I v={f.signature} set={v => setF(x => ({ ...x, signature: v }))} placeholder={`Type your full name: ${m.name}`} />

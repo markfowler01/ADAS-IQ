@@ -776,6 +776,11 @@ export async function maybeBackupTimeclock(req) {
 
   const { readEntriesPublic } = await import('../routes/timeclock.js')
   const entries = await readEntriesPublic(req)
+  // People + vans ride along (2026-09-22): the Directory (with each person's
+  // kit, documents index, handover) and every van record with its inventory.
+  let peopleJson = '[]', vansJson = '{}'
+  try { const { readTeamMembers } = await import('../routes/team.js'); peopleJson = JSON.stringify(await readTeamMembers(req), null, 1) } catch (e) { console.warn('[backup] people:', e.message) }
+  try { const { readVans } = await import('../routes/people.js'); vansJson = JSON.stringify(await readVans(req), null, 1) } catch (e) { console.warn('[backup] vans:', e.message) }
 
   const csvRows = [['user', 'email', 'clock_in', 'clock_out', 'total_minutes', 'auto_punched', 'auto_closed', 'acknowledged', 'reported', 'notes']]
   for (const e of entries) {
@@ -794,9 +799,11 @@ export async function maybeBackupTimeclock(req) {
     if (resendConfigured()) {
       await sendBroadcast({
         recipients: ['mark@absoluteadas.com'],
-        subject: `Time clock backup — ${today} (${entries.length} entries)`,
+        subject: `Time clock + people + vans backup — ${today} (${entries.length} entries)`,
         text: `Nightly off-site backup of the Absolute ADAS time clock.\n${entries.length} entries attached as JSON (restore format) and CSV (readable).\nKeep a few of these — any one email restores the whole clock.`,
         attachments: [
+          { filename: `directory-${today}.json`, content: Buffer.from(peopleJson).toString('base64') },
+          { filename: `vans-${today}.json`, content: Buffer.from(vansJson).toString('base64') },
           { filename: `timeclock-${today}.json`, content: Buffer.from(JSON.stringify(entries, null, 1), 'utf8').toString('base64') },
           { filename: `timeclock-${today}.csv`, content: Buffer.from(csv, 'utf8').toString('base64') },
         ],

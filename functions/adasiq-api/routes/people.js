@@ -14,6 +14,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import multer from 'multer'
 import { readTeamMembers, findMemberByIdentity, saveMemberPublic as saveMember } from './team.js'
+import { VAN_KIT } from '../services/vanKit.js'
 
 const router = express.Router()
 // Personnel files root in WorkDrive: Absolute ADAS Command Center → HR → Team (Mark, 2026-09-16). One subfolder per person.
@@ -76,6 +77,8 @@ const ONBOARDING = [
   { key: 'sim',            label: 'SIM card / hotspot ordered for the tablet', owner: 'kat', due: -7, tech_only: true },
   { key: 'uniform',        label: 'Uniform ordered — 6 khaki pants (Costco) {pants}, 6 embroidered polos {shirt}, hat', owner: 'kat', due: -7 },
   { key: 'insurance',      label: 'Added to the Progressive auto policy — BEFORE they drive', owner: 'kat', due: -3, tech_only: true },
+  { key: 'fuel_card',      label: 'Fuel card ordered in their name (last 4 on the Cards line)', owner: 'kat', due: -5, tech_only: true },
+  { key: 'remote_expert',  label: 'Remote Expert payment set up — preloaded Autel balance or a virtual card locked to Autel with a monthly cap; no physical credit card', owner: 'kat', due: -3, tech_only: true },
   { key: 'photo',          label: 'Profile photo uploaded', owner: 'auto', due: -7 },
   { key: 'emergency',      label: 'Personal info + emergency contact filled in', owner: 'auto', due: -7 },
   { key: 'ids',            label: "Driver's license + Social Security card photographed", owner: 'auto', due: -7 },
@@ -89,7 +92,7 @@ const ONBOARDING = [
   { key: 'van_assigned',   label: 'Van + scan tool assigned (set in Setup above)', owner: 'mark', due: -2, tech_only: true },
   { key: 'route',          label: 'Route assigned — area, service shops, shops to grow', owner: 'mark', due: -1, tech_only: true },
   { key: 'cliq',           label: 'Added to Cliq — {cliq}', owner: 'kat', due: -1 },
-  { key: 'gear',           label: 'Kit issued — every line gets an issue date', owner: 'mark', due: -1 },
+  { key: 'gear',           label: 'Gear handed over — van signed for by the tech (office: every personal line issued)', owner: 'mark', due: -1 },
   { key: 'training',       label: 'Training course passed — all modules', owner: 'auto', due: -1 },
   { key: 'login',          label: 'Signed into the Absolute ADAS app at least once (account is on from day one so they can poke around)', owner: 'auto', due: -3 },
   // ── day one and after ──
@@ -111,7 +114,7 @@ function fillLabel(t, m) {
   return t.label.replace('{email}', emailFor(m)).replace('{cliq}', cliqText(m)).replace('{ride}', rideText(m)).replace('{pants}', pants).replace('{shirt}', shirt)
 }
 function dueFor(t, m) { return t.key === 'rideaong' ? rideDays(m) : t.due }
-export { WELCOME_DEFAULT }
+export { WELCOME_DEFAULT, vanKey, PERSONAL_GROUPS }
 export function tickChecklist(m, key, by) {
   if (!m.checklist || m.checklist.kind !== 'onboarding') return
   const it = m.checklist.items.find(x => x.key === key)
@@ -298,20 +301,97 @@ export function restampChecklist(m) {
     m.checklist.items.push({ ...rest, label: fillLabel(t, m), due: dueFor(t, m), done: false, at: '', by: '', due_date: Number.isFinite(dueFor(t, m)) ? addDays(m.hire_date, dueFor(t, m)) : '' })
   }
   m.checklist.items.sort((a, b) => (Number.isFinite(a.due) ? a.due : 99) - (Number.isFinite(b.due) ? b.due : 99))
+  seedKit(m)
   if (!m.checklist.items.every(x => x.done)) m.checklist.completed_at = ''
   return m
 }
 // Per-role equipment kits (Mark 2026-09-22: automate our side). Landed on
 // the record at Hired with no issue date; 'gear' ticks when every line has one.
+// Handbook chapter 14, "Van Equipment Checklist" (Mark 2026-09-22: "you
+// have an inventory list already"). Same list the tech verifies every
+// morning — so the handover inventory IS the daily checklist.
+const KIT_TECH = [
+  ['Van', 'Van + keys'], ['Van', 'Fuel card'],
+  ['Diagnostic', 'Autel MaxiSYS ADAS MA600 tablet'], ['Diagnostic', 'Autel VCI (MaxiVCI V150)'], ['Diagnostic', 'Cardaq 3/4 + case'], ['Diagnostic', 'OEM-specific VCI dongles'], ['Diagnostic', 'Laptop (ISTA / WiTech / HDS / FDRS / Xentry)'], ['Diagnostic', 'OBD2 extension cables (1 m + 3 m)'], ['Diagnostic', 'USB-C / USB-A charger cables'], ['Diagnostic', 'Mobile hotspot / SIM'],
+  ['Targets', 'Full Autel ADAS target set — every panel'], ['Targets', 'Target stands — legs + locking pins'], ['Targets', 'Laser alignment tool / line laser'], ['Targets', 'Metric tape measure (5 m+)'], ['Targets', 'Plumb bob / magnetic level'], ['Targets', 'Chalk / floor marking tape'],
+  ['Tools', 'Tire pressure gauge (digital)'], ['Tools', 'Tread depth gauge'], ['Tools', 'Air compressor adapter / portable inflator'], ['Tools', 'Microfiber towels'], ['Tools', 'Flashlight / work light'], ['Tools', 'Extension cord (25 ft+)'], ['Tools', 'Basic hand tools (screwdrivers, trim pry tools)'],
+  ['Safety', 'First aid kit'], ['Safety', 'PPE kit — safety glasses, nitrile gloves, HV-rated insulated gloves'],
+  ['Uniform', 'Khaki pants ×6'], ['Uniform', 'Embroidered polos ×6'], ['Uniform', 'Hat'],
+  ['Cards', 'Fuel card (WEX / fleet) — last 4 in the serial box'], ['Cards', 'Remote Expert payment — Autel balance or merchant-locked virtual card'],
+]
 const KITS = {
-  tech: ['Van + keys', 'Autel MA600 All Systems package (tablet + VCI)', 'Calibration tool kit — targets, reflectors, frame, the whole shebang', 'Basic hand tool set', 'Tread depth gauge', 'Tire pressure gauge', 'Tablet SIM / hotspot', 'Khaki pants ×6', 'Embroidered polos ×6', 'Hat', 'Fuel card'],
-  apprentice: ['Basic hand tool set', 'Tread depth gauge', 'Khaki pants ×6', 'Embroidered polos ×6', 'Hat', 'Safety glasses + gloves'],
-  ops: ['Laptop / login to Zoho Books + Cliq', 'Headset', 'Company phone (optional)'],
+  tech: KIT_TECH,
+  apprentice: KIT_TECH.filter(([g]) => ['Tools', 'Safety', 'Uniform'].includes(g)),
+  ops: [['Office', 'Laptop / logins to Zoho Books + Cliq'], ['Office', 'Headset'], ['Office', 'Company phone (optional)']],
 }
+// Mark 2026-09-22: "the van is assigned the tools, the technician is
+// assigned the van." Personal kit (uniform, PPE, office gear) lives on the
+// person; everything with wheels or a serial lives on the VAN record —
+// AppConfig `vans` — and outlives whoever is driving it this year.
+const PERSONAL_GROUPS = new Set(['Uniform', 'Safety', 'Office', 'Cards'])
 export function seedKit(m) {
-  if (Array.isArray(m.equipment) && m.equipment.length) return m
-  m.equipment = (KITS[m.track || 'tech'] || KITS.tech).map(name => ({ name, serial: '', issued: '', kit: true }))
+  const kit = (KITS[m.track || 'tech'] || KITS.tech).filter(([g]) => PERSONAL_GROUPS.has(g))
+  if (!Array.isArray(m.equipment)) m.equipment = []
+  const have = new Set(m.equipment.map(e => String(e.name || '').toLowerCase()))
+  for (const [group, name] of kit) if (!have.has(name.toLowerCase())) m.equipment.push({ name, group, serial: '', issued: '', kit: true })
+  for (const e of m.equipment) if (!e.group) { const t = KIT_TECH.find(([, n]) => n.toLowerCase() === String(e.name || '').toLowerCase()); e.group = t ? t[0] : 'Other' }
+  // Old records carried van tools on the person — those move to the van when one is named.
   return m
+}
+export async function readVans(req) { const v = await cfgJson(req, 'vans', {}); return v && typeof v === 'object' ? v : {} }
+export async function saveVans(req, vans) { return cfgWrite(req, 'vans', vans) }
+const vanKey = name => String(name || '').trim().replace(/\s+/g, ' ')
+/** The van record, seeded from handbook ch. 14 the first time its name is used. */
+// Seeded from the fleet sheet (services/vanKit.js). A van that already
+// exists picks up any template line it's missing — never loses one.
+export async function ensureVan(req, name, by) {
+  const key = vanKey(name); if (!key) return null
+  const vans = await readVans(req)
+  const line = t => ({ name: t.name, part: t.part || '', usage: t.usage || '', group: t.group, serial: '', added: todayPT(), added_by: 'fleet sheet' })
+  let changed = false
+  if (!vans[key]) { vans[key] = { name: key, created_at: new Date().toISOString(), created_by: by || '', current_tech: '', equipment: VAN_KIT.map(line), handovers: [] }; changed = true }
+  else {
+    const v = vans[key]; v.equipment = Array.isArray(v.equipment) ? v.equipment : []
+    const have = new Set(v.equipment.map(e => `${String(e.part || '').toLowerCase()}|${String(e.name || '').toLowerCase()}`))
+    for (const t of VAN_KIT) { const k = `${String(t.part || '').toLowerCase()}|${t.name.toLowerCase()}`; if (!have.has(k) && !v.equipment.some(e => e.name.toLowerCase() === t.name.toLowerCase() && (!t.part || !e.part))) { v.equipment.push(line(t)); changed = true } }
+    if (changed) { const order = new Map(VAN_KIT.map((t, i) => [t.group, i])); v.equipment.sort((a, b) => (order.get(a.group) ?? 999) - (order.get(b.group) ?? 999)) }
+  }
+  if (changed) await saveVans(req, vans)
+  return vans[key]
+}
+const VANS_FOLDER_NAME = 'Vans'
+/** Command Center → HR → Team → Vans → <van>. Created on first use; id cached on the van record. */
+export async function vanFolder(req, name) {
+  const vans = await readVans(req); const key = vanKey(name); const v = vans[key]; if (!v) return null
+  if (v.folder_id) return { folderId: v.folder_id, folderUrl: v.folder_url }
+  const { getAccessToken } = await import('../services/zoho.js'); const { createFolderUnder, listChildren } = await import('../services/workdrive.js')
+  const tok = await getAccessToken()
+  let parent = await cfgJson(req, 'vans_folder', null)
+  if (!parent?.folderId) {
+    const kids = await listChildren(PEOPLE_FOLDER_ID, tok, { folders: true }).catch(() => [])
+    const found = kids.find(k => k.name === VANS_FOLDER_NAME)
+    parent = found ? { folderId: found.id } : await createFolderUnder(PEOPLE_FOLDER_ID, VANS_FOLDER_NAME, tok)
+    await cfgWrite(req, 'vans_folder', parent)
+  }
+  const f = await createFolderUnder(parent.folderId, key, tok)
+  v.folder_id = f.folderId; v.folder_url = f.folderUrl
+  await saveVans(req, vans)
+  return { folderId: f.folderId, folderUrl: f.folderUrl }
+}
+/** Owner edited the van — drop a fresh JSON snapshot next to the handovers (cheap, durable). */
+export async function snapshotVan(req, name) {
+  try { const vans = await readVans(req); const v = vans[vanKey(name)]; if (!v) return; const vf = await vanFolder(req, v.name); if (!vf) return; const { getAccessToken } = await import('../services/zoho.js'); const { uploadFileToFolder } = await import('../services/workdrive.js'); await uploadFileToFolder(vf.folderId, `${v.name} — inventory + history (latest).json`, Buffer.from(JSON.stringify(v, null, 2)), await getAccessToken(), 'application/json') } catch (e) { console.warn('[vans] snapshot failed:', e.message) }
+}
+export async function assignVan(req, m, by) {
+  if (!m.van) return null
+  const vans = await readVans(req); const key = vanKey(m.van)
+  if (!vans[key]) { await ensureVan(req, key, by); return assignVan(req, m, by) }
+  // van tools that were sitting on the person (pre-2026-09-22) move over once
+  const stray = (m.equipment || []).filter(e => !PERSONAL_GROUPS.has(e.group || ''))
+  if (stray.length) { const have = new Set(vans[key].equipment.map(e => e.name.toLowerCase())); for (const e of stray) if (!have.has(String(e.name).toLowerCase())) vans[key].equipment.push({ name: e.name, group: e.group || 'Other', serial: e.serial || '', added: e.issued || todayPT(), added_by: by || '' }); m.equipment = (m.equipment || []).filter(e => PERSONAL_GROUPS.has(e.group || '')) }
+  vans[key].current_tech = m.name; vans[key].current_tech_id = m.id; vans[key].assigned_at = todayPT()
+  await saveVans(req, vans)
+  return vans[key]
 }
 // Things that should flip on their own once the pieces are in place. Run
 // after every save that could complete a piece (portal steps, checklist ticks).
@@ -321,7 +401,7 @@ export async function autoAdvance(req, m) {
   const has = k => !!m.checklist.items.find(x => x.key === k)
   let changed = false
   // gear: every kit line has an issue date
-  if (has('gear') && !done('gear') && Array.isArray(m.equipment) && m.equipment.length && m.equipment.every(e => e.issued)) { tickChecklist(m, 'gear', 'auto'); changed = true }
+  if (has('gear') && !done('gear') && ((m.track || 'tech') !== 'ops' ? !!m.van_handover?.at : (Array.isArray(m.equipment) && m.equipment.length && m.equipment.every(e => e.issued)))) { tickChecklist(m, 'gear', 'auto'); changed = true }
   if (has('van_assigned') && !done('van_assigned') && m.van) { tickChecklist(m, 'van_assigned', 'auto'); changed = true }
   if (has('route') && !done('route') && m.route_zone) { tickChecklist(m, 'route', 'auto'); changed = true }
   return { changed }
@@ -372,6 +452,7 @@ router.get('/onboarding/:id/launch', async (req, res) => {
     if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
     const { m, members } = await memberFor(req, req.params.id)
     if (!m) return res.status(404).json({ error: 'Not found' })
+    if (m.checklist?.kind === 'onboarding' && m.hire_date) { const before = JSON.stringify([m.checklist, m.equipment]); restampChecklist(m); if (JSON.stringify([m.checklist, m.equipment]) !== before) await saveMember(req, m) }
     const docs = Array.isArray(m.documents) ? m.documents : []
     const has = k => docs.some(d => d.kind === k)
     const contractor = m.employment === 'contractor'
@@ -392,7 +473,9 @@ router.get('/onboarding/:id/launch', async (req, res) => {
     const { ZONES } = await import('../services/pipeline.js')
     let route = null
     if (m.route_zone) { try { const { getAllShops } = await import('./shops.js'); const shops = (await getAllShops(req)).filter(x => x.region === m.route_zone); route = { service: shops.filter(x => ['active', 'active2'].includes(x.stage || x.pipeline_stage)).map(x => x.shop_name), grow: shops.filter(x => !['active', 'active2', 'lost', 'denied'].includes(x.stage || x.pipeline_stage)).map(x => x.shop_name).slice(0, 25) } } catch (e) { route = { error: e.message } } }
-    res.json({ ok: true, zones: ZONES.map(z => ({ id: z.id, label: z.label, day: z.day })), route, member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, track: m.track || 'tech', employment: m.employment, hire_date: m.hire_date || '', photo_url: m.photo_url || '', phone: m.phone || m.personal_phone || '', email: m.personal_email || m.email || '', work_email: emailFor(m), access: m.access, boss: members.find(x => x.user_id === m.reports_to)?.name || '', experience_level: m.experience_level || 'green', van: m.van || '', scan_tool: m.scan_tool || '', region: m.region || '', route_zone: m.route_zone || '', route_notes: m.route_notes || '', pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', shirt_size: m.shirt_size || '', kinetic_requested_at: m.kinetic_requested_at || '', van_handover: m.van_handover || null },
+    const van = m.van ? (await ensureVan(req, m.van, req.user?.name)) : null
+    const { VAN_GROUPS } = await import('../services/vanKit.js')
+    res.json({ ok: true, zones: ZONES.map(z => ({ id: z.id, label: z.label, day: z.day })), route, van: van ? { name: van.name, equipment: van.equipment, current_tech: van.current_tech, handovers: (van.handovers || []).slice(-5) } : null, van_groups: VAN_GROUPS, member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, track: m.track || 'tech', employment: m.employment, hire_date: m.hire_date || '', photo_url: m.photo_url || '', phone: m.phone || m.personal_phone || '', email: m.personal_email || m.email || '', work_email: emailFor(m), access: m.access, boss: members.find(x => x.user_id === m.reports_to)?.name || '', experience_level: m.experience_level || 'green', van: m.van || '', scan_tool: m.scan_tool || '', region: m.region || '', route_zone: m.route_zone || '', route_notes: m.route_notes || '', pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', shirt_size: m.shirt_size || '', kinetic_requested_at: m.kinetic_requested_at || '', van_handover: m.van_handover || null },
       kinetic_email: w.kinetic_email || '',
       ours: (m.checklist?.kind === 'onboarding' ? m.checklist.items : []).map(i => ({ ...i, owner: i.owner || ONBOARDING.find(t => t.key === i.key)?.owner || 'mark' })), theirs, portal_pct: onboardingPct(m), equipment: m.equipment || [],
       link: { invited_at: m.onboarding_invited_at || '', revoked_at: m.onboarding_revoked_at || '', completed_at: m.onboarding_completed_at || '' }, today: todayPT() })
@@ -408,6 +491,7 @@ router.post('/onboarding/:id/setup', async (req, res) => {
     if (b.experience_level !== undefined) m.experience_level = b.experience_level === 'certified' ? 'certified' : 'green'
     for (const k of ['van', 'scan_tool', 'route_notes']) if (b[k] !== undefined) m[k] = String(b[k]).slice(0, k === 'route_notes' ? 600 : 80)
     if (b.route_zone !== undefined) { const { ZONE_BY_ID } = await import('../services/pipeline.js'); const z = ZONE_BY_ID[String(b.route_zone)]; m.route_zone = z ? z.id : ''; if (z) m.region = z.label }
+    if (m.van) await assignVan(req, m, req.user?.name)
     if (b.hire_date !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(String(b.hire_date))) m.hire_date = b.hire_date
     if (b.email !== undefined) { const e = String(b.email).trim().toLowerCase().slice(0, 120); if (e && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) { m.email = e; if (!m.user_id || !m.user_id.includes('@')) m.user_id = e } }
     restampChecklist(m)
@@ -435,6 +519,23 @@ router.post('/onboarding/:id/kinetic-email', async (req, res) => {
     await saveMember(req, m)
     console.log(`[people] Kinetic add-user email sent for ${m.name} → ${to}`)
     res.json({ ok: true, to })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// ── Vans: the tools live here (owners edit any time, even after a handover) ──
+router.get('/vans', async (req, res) => { try { if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' }); res.json({ ok: true, vans: Object.values(await readVans(req)) }) } catch (e) { res.status(500).json({ error: e.message }) } })
+router.post('/vans/:name/equipment', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
+    const van = await ensureVan(req, req.params.name, req.user?.name)
+    if (!van) return res.status(400).json({ error: 'Van name required' })
+    const vans = await readVans(req); const v = vans[van.name]; const b = req.body || {}
+    if (b.action === 'remove') { const i = Number(b.index); if (v.equipment[i]) v.equipment.splice(i, 1) }
+    else if (b.action === 'edit') { const i = Number(b.index); if (v.equipment[i]) v.equipment[i] = { ...v.equipment[i], serial: String(b.serial ?? v.equipment[i].serial ?? '').slice(0, 80), name: String(b.name || v.equipment[i].name).slice(0, 100), group: String(b.group || v.equipment[i].group).slice(0, 30) } }
+    else { const name = String(b.name || '').trim().slice(0, 100); if (!name) return res.status(400).json({ error: 'Name required' }); v.equipment.push({ name, part: String(b.part || '').slice(0, 40), usage: String(b.usage || '').slice(0, 80), group: String(b.group || 'Other').slice(0, 40), serial: String(b.serial || '').slice(0, 80), added: todayPT(), added_by: req.user?.name || '' }) }
+    await saveVans(req, vans)
+    snapshotVan(req, v.name).catch(() => {})
+    res.json({ ok: true, van: v })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 

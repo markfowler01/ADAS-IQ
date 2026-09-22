@@ -12,7 +12,7 @@ import multer from 'multer'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
 import { readTeamMembers, saveMemberPublic as saveMember } from './team.js'
-import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson, readLadder, ladderProgress, maybeWelcome, autoAdvance, WELCOME_DEFAULT } from './people.js'
+import { ensurePersonFolder, tickChecklist, readCourse, cfgWriteJson, cfgReadJson, readLadder, ladderProgress, maybeWelcome, autoAdvance, WELCOME_DEFAULT, readVans, saveVans, ensureVan, vanKey } from './people.js'
 
 const router = express.Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
@@ -120,7 +120,7 @@ router.get('/:id', async (req, res) => {
     if (m.route_zone) { try { const { ZONE_BY_ID } = await import('../services/pipeline.js'); const { getAllShops } = await import('./shops.js'); const z = ZONE_BY_ID[m.route_zone]; const shops = (await getAllShops(req)).filter(x => x.region === m.route_zone && ['active', 'active2'].includes(x.stage || x.pipeline_stage)).map(x => x.shop_name); route = { zone: z?.label || m.region, day: z?.day || '', shops } } catch { route = { zone: m.region, day: '', shops: [] } } }
     const crew = members.filter(x => x.active !== false && x.id !== m.id && x.employment !== undefined).map(x => ({ name: x.preferred_name ? `${x.preferred_name} ${x.name.split(' ').slice(1).join(' ')}` : x.name, title: x.title || '', department: x.department || '', photo_url: x.photo_url || '', phone: x.phone || '', color: x.avatar_color || '#CD4419', is_boss: x.user_id === m.reports_to }))
     res.json({ ok: true, mode, welcome, crew, route,
-      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '', van: m.van || '', scan_tool: m.scan_tool || '', van_handover: m.van_handover || null, equipment: (m.equipment || []).map(e => ({ name: e.name, serial: e.serial || '', issued: e.issued || '' })) },
+      member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || '', personal_email: m.personal_email || '', address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '', van: m.van || '', scan_tool: m.scan_tool || '', van_handover: m.van_handover || null, van_locked: !!m.van_handover?.at, equipment: (m.equipment || []).map(e => ({ name: e.name, group: e.group || '', serial: e.serial || '', issued: e.issued || '' })), van_equipment: m.van ? ((await readVans(req))[vanKey(m.van)]?.equipment || []).map(e => ({ name: e.name, part: e.part || '', usage: e.usage || '', group: e.group || 'Other', serial: e.serial || '', added_by: e.added_by || '' })) : [] },
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
       signed: m.signatures || {},
@@ -234,6 +234,22 @@ router.post('/:id/payout', async (req, res) => {
   } catch (e) { console.error('[onboard payout]', e.message); res.status(500).json({ error: e.message }) }
 })
 
+// The tech can add something they find in the van — until they sign for it.
+router.post('/:id/van-equipment', async (req, res) => {
+  try {
+    const g = await guard(req, res); if (!g) return
+    const { m } = g
+    if (!m.van) return res.status(400).json({ error: 'No van assigned yet.' })
+    if (m.van_handover?.at) return res.status(409).json({ error: "You've already signed for this van — ask Mark to add it." })
+    const name = String(req.body?.name || '').trim().slice(0, 100); if (!name) return res.status(400).json({ error: 'What is it?' })
+    await ensureVan(req, m.van, m.name)
+    const vans = await readVans(req); const v = vans[vanKey(m.van)]
+    v.equipment.push({ name, group: String(req.body?.group || 'Other').slice(0, 30), serial: String(req.body?.serial || '').slice(0, 80), added: todayPT(), added_by: m.name })
+    await saveVans(req, vans)
+    res.json({ ok: true, van_equipment: v.equipment })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // ── Van handover (Mark 2026-09-22): the tech inventories the van and
 //    signs for it — tools 100% with photos + video, mileage, tread depth,
 //    exterior damage, maintenance notes. PDF into their folder; the
@@ -248,7 +264,7 @@ router.post('/:id/van-handover', async (req, res) => {
     if (!(mileage > 0)) return res.status(400).json({ error: 'Enter the odometer reading.' })
     const tread = {}; for (const k of ['lf', 'rf', 'lr', 'rr']) { const v = Number(b.tread?.[k]); tread[k] = Number.isFinite(v) && v >= 0 && v <= 20 ? v : null }
     if (Object.values(tread).some(v => v == null)) return res.status(400).json({ error: 'Tread depth for all four tires, in 32nds (e.g. 8).' })
-    const tools = Array.isArray(b.tools) ? b.tools.map(t => ({ name: String(t.name || '').slice(0, 80), present: !!t.present, note: String(t.note || '').slice(0, 120) })) : []
+    const tools = Array.isArray(b.tools) ? b.tools.map(t => ({ name: String(t.name || '').slice(0, 100), part: String(t.part || '').slice(0, 40), group: String(t.group || '').slice(0, 40), present: !!t.present, note: String(t.note || '').slice(0, 120) })) : []
     const damage = String(b.damage || '').slice(0, 1500), maintenance = String(b.maintenance || '').slice(0, 1500), fuel = String(b.fuel || '').slice(0, 20)
     const photos = (m.documents || []).filter(d => d.kind === 'van_photo').length, videos = (m.documents || []).filter(d => d.kind === 'van_video').length
     if (photos < 4) return res.status(400).json({ error: `Add at least 4 photos of the van first (you have ${photos}) — four corners, then the tools.` })
@@ -261,7 +277,8 @@ router.post('/:id/van-handover', async (req, res) => {
       doc.fontSize(12).text('Maintenance status', { underline: true }); doc.fontSize(10).text(maintenance || 'Nothing noted.').moveDown(0.6)
       doc.fontSize(12).text('Tools & equipment inventory', { underline: true })
       doc.fontSize(10)
-      for (const t of tools) doc.text(`${t.present ? '[x]' : '[ ]'} ${t.name}${t.note ? ` — ${t.note}` : ''}`)
+      let lastGroup = ''
+      for (const t of tools) { if (t.group && t.group !== lastGroup) { lastGroup = t.group; doc.moveDown(0.3).font('Helvetica-Bold').text(t.group).font('Helvetica') } doc.text(`${t.present ? '[x]' : '[ ]'} ${t.name}${t.part ? ` (${t.part})` : ''}${t.note ? ` — ${t.note}` : ''}`) }
       if (!tools.length) doc.text('(no kit lines)')
       doc.moveDown(0.6).text(`${photos} photo(s) and ${videos} video clip(s) filed in this folder as "13 Van handover".`).moveDown(1)
       doc.fontSize(11).text('I have inspected this van and its equipment, the inventory above is complete and accurate, and I take responsibility for the van and everything in it while they are in my care. I will report damage or missing items to Mark the day I find them.').moveDown(1.2)
@@ -269,7 +286,23 @@ router.post('/:id/van-handover', async (req, res) => {
     })
     const d = await putFile(req, m, 'van_handover', '', buf, 'application/pdf', '.pdf')
     m.van_handover = { at: when, mileage, tread, fuel, damage, maintenance, tools, photos, videos, file_id: d.file_id }
-    for (const e of Array.isArray(m.equipment) ? m.equipment : []) { const t = tools.find(x => x.name === e.name); if (t?.present && !e.issued) e.issued = when.slice(0, 10) }
+    try {
+      await ensureVan(req, m.van, m.name); const vans = await readVans(req); const v = vans[vanKey(m.van)]
+      v.current_tech = m.name; v.current_tech_id = m.id; v.assigned_at = when.slice(0, 10)
+      v.handovers = [...(v.handovers || []), { tech: m.name, at: when, mileage, tread, fuel, damage, missing: tools.filter(t => !t.present).map(t => t.name), file_id: d.file_id }]
+      await saveVans(req, vans)
+      // Backed up with the VAN (Mark 2026-09-22: "if they quit or get fired I'm
+      // gonna need to access this"): Command Center → HR → Team → Vans → <van>
+      // gets the signed PDF and a JSON of the whole record — inventory,
+      // serials, every handover. Survives the person going inactive.
+      const { vanFolder } = await import('./people.js')
+      const vf = await vanFolder(req, v.name)
+      if (vf) {
+        const { getAccessToken } = await import('../services/zoho.js'); const { uploadFileToFolder } = await import('../services/workdrive.js'); const tok = await getAccessToken()
+        await uploadFileToFolder(vf.folderId, `Handover ${when.slice(0, 10)} — ${safe(m.name)} — ${mileage} mi.pdf`, buf, tok, 'application/pdf')
+        await uploadFileToFolder(vf.folderId, `${safe(v.name)} — inventory + history (${when.slice(0, 10)}).json`, Buffer.from(JSON.stringify(v, null, 2)), tok, 'application/json')
+      }
+    } catch (e) { console.warn('[onboard van] van record / folder update failed:', e.message) }
     m.signatures = { ...(m.signatures || {}), van_handover: { at: when, file_id: d.file_id } }
     await saveMember(req, m)
     autoAdvance(req, m).then(r => r.changed && saveMember(req, m)).catch(() => {})

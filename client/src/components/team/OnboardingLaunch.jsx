@@ -21,6 +21,8 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
   const [linkResult, setLinkResult] = useState('')
   const [setup, setSetup] = useState(null)      // editable copy of the plan facts
   const [kinTo, setKinTo] = useState('')
+  const [addLine, setAddLine] = useState(null)
+  async function vanEdit(body) { if (!d?.van) return; setBusy('van'); try { await j(`/api/people/vans/${encodeURIComponent(d.van.name)}/equipment`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); setAddLine(null); await load() } catch (e) { alert(e.message) } finally { setBusy('') } }
   async function saveSetup() { setBusy('setup'); try { await j(`/api/people/onboarding/${memberId}/setup`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(setup) }); setSetup(null); await load() } catch (e) { alert(e.message) } finally { setBusy('') } }
   async function kinetic() { setBusy('kinetic'); try { const r = await j(`/api/people/onboarding/${memberId}/kinetic-email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: kinTo || undefined }) }); setLinkResult(`Kinetic request sent to ${r.to}`); await load() } catch (e) { alert(e.message) } finally { setBusy('') } }
   const load = () => j(`/api/people/onboarding/${memberId}/launch`).then(setD).catch(e => setErr(e.message))
@@ -121,16 +123,47 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
               {list.map(it => <Item key={it.key} it={it} />)}
             </div>
           ))}
+          {m.track !== 'ops' && (
+            <div className="mt-3 rounded-xl p-3 bg-white" style={{ border: '1px solid #fed7aa' }}>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <div className="text-[10px] uppercase tracking-wider font-bold" style={{ color: '#b45309' }}>🚐 {d.van ? `${d.van.name} — the van's tools` : 'Van tools'}{d.van ? ` · ${d.van.equipment.length} lines` : ''}</div>
+                {d.van && !addLine && <button onClick={() => setAddLine({ name: '', group: 'Tools', serial: '' })} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>＋ add</button>}
+              </div>
+              {!d.van && <div className="text-xs" style={{ color: '#888' }}>Name the van in Setup and it gets the full fleet list — every Autel target with its part number, accessories, electrical, diagnostic, supplies. The tech signs for that list at handover.</div>}
+              {d.van && <div className="text-[11px] mb-1" style={{ color: '#888' }}>The tools belong to the van; {first} is assigned the van. {m.van_handover?.at ? `Signed for ${String(m.van_handover.at).slice(0, 10)} — ${first} can't add lines now; you can.` : `${first} can add what they find until they sign. You can add any time.`}</div>}
+              {addLine && (
+                <div className="flex gap-1.5 flex-wrap items-center rounded-lg p-2 mb-2" style={{ backgroundColor: '#fff5f0', border: `1px solid ${ORANGE}` }}>
+                  <input autoFocus value={addLine.name} onChange={e => setAddLine(x => ({ ...x, name: e.target.value }))} placeholder="What" className="text-sm rounded-lg px-2 py-1.5 flex-1 min-w-[140px]" style={inp} />
+                  <select value={addLine.group} onChange={e => setAddLine(x => ({ ...x, group: e.target.value }))} className="text-sm rounded-lg px-2 py-1.5" style={inp}>{[...(d.van_groups || []), 'Other'].map(g => <option key={g}>{g}</option>)}</select>
+                  <input value={addLine.part || ''} onChange={e => setAddLine(x => ({ ...x, part: e.target.value }))} placeholder="Part # (CSC…)" className="text-sm rounded-lg px-2 py-1.5 w-32" style={inp} />
+                  <input value={addLine.serial} onChange={e => setAddLine(x => ({ ...x, serial: e.target.value }))} placeholder="Serial" className="text-sm rounded-lg px-2 py-1.5 w-28" style={inp} />
+                  <button onClick={() => vanEdit({ ...addLine })} disabled={!addLine.name.trim() || busy === 'van'} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: GREEN }}>Add</button>
+                  <button onClick={() => setAddLine(null)} className="text-xs px-2" style={{ color: '#888' }}>×</button>
+                </div>
+              )}
+              {d.van && d.van.equipment.map((e, i) => (
+                <div key={i}>
+                  {(i === 0 || (d.van.equipment[i - 1].group || 'Other') !== (e.group || 'Other')) && <div className="text-[10px] uppercase tracking-wider font-bold mt-2" style={{ color: '#888' }}>{e.group || 'Other'}</div>}
+                  <div className="flex items-center gap-2 py-1" style={{ borderTop: '1px solid #f8f6f4' }}>
+                    <span className="text-sm flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{e.name}{e.part ? <span className="text-[11px] font-mono" style={{ color: '#888' }}> {e.part}</span> : ''}{e.usage ? <span className="text-[11px]" style={{ color: '#999' }}> · {e.usage}</span> : ''}{e.serial ? <span className="text-xs" style={{ color: '#0e7490' }}> · S/N {e.serial}</span> : ''}{e.added_by && !['fleet sheet', 'handbook ch. 14'].includes(e.added_by) ? <span className="text-[10px]" style={{ color: '#aaa' }}> · added by {e.added_by}</span> : ''}</span>
+                    {m.van_handover?.tools?.some(t => t.name === e.name && !t.present) && <span className="text-[10px] font-bold" style={{ color: RED }}>missing at handover</span>}
+                    <button onClick={() => { const serial = window.prompt(`Serial for ${e.name}`, e.serial || ''); if (serial !== null) vanEdit({ action: 'edit', index: i, serial }) }} className="text-[10px] font-bold px-1.5" style={{ color: '#888' }}>serial</button>
+                    <button onClick={() => vanEdit({ action: 'remove', index: i })} className="text-[10px] font-bold px-1.5" style={{ color: RED }}>remove</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {d.equipment.length > 0 && (
             <div className="mt-3 rounded-xl p-3 bg-white" style={{ border: '1px solid #fed7aa' }}>
-              <div className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: '#b45309' }}>🧰 Kit — tap to issue</div>
+              <div className="text-[10px] uppercase tracking-wider font-bold mb-1" style={{ color: '#b45309' }}>👕 {first}'s personal kit · {d.equipment.filter(e => e.issued).length}/{d.equipment.length} issued · tap to issue</div>
               {d.equipment.map((e, i) => (
                 <div key={i} className="py-1.5" style={{ borderTop: '1px solid #f3f3f3' }}>
                   <div className="flex items-center gap-2">
                     <button onClick={() => e.issued ? issueLine(i, '', e.serial) : setIssue({ index: i, serial: e.serial || '' })} disabled={busy === `eq${i}`} className="text-xs font-bold rounded-full px-2.5 py-1 flex-shrink-0" style={e.issued ? { backgroundColor: '#dcfce7', color: GREEN } : { backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>{e.issued ? `✓ ${fmt(e.issued)}` : 'Issue'}</button>
                     <span className="text-sm flex-1" style={{ color: '#1a1a1a' }}>{e.name}{e.serial ? <span className="text-xs" style={{ color: '#888' }}> · {e.serial}</span> : ''}</span>
                   </div>
-                  {issue?.index === i && <div className="flex gap-2 mt-1.5"><input autoFocus value={issue.serial} onChange={ev => setIssue(x => ({ ...x, serial: ev.target.value }))} placeholder="Serial / plate (optional)" className="text-sm rounded-lg px-2 py-1.5 flex-1" style={inp} onKeyDown={ev => { if (ev.key === 'Enter') issueLine(i, d.today, issue.serial); if (ev.key === 'Escape') setIssue(null) }} /><button onClick={() => issueLine(i, d.today, issue.serial)} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: GREEN }}>Issued today</button><button onClick={() => setIssue(null)} className="text-xs px-2" style={{ color: '#888' }}>×</button></div>}
+                  {issue?.index === i && <div className="flex gap-2 mt-1.5"><input autoFocus value={issue.serial} onChange={ev => setIssue(x => ({ ...x, serial: ev.target.value }))} placeholder="Size / note (optional)" className="text-sm rounded-lg px-2 py-1.5 flex-1" style={inp} onKeyDown={ev => { if (ev.key === 'Enter') issueLine(i, d.today, issue.serial); if (ev.key === 'Escape') setIssue(null) }} /><button onClick={() => issueLine(i, d.today, issue.serial)} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: GREEN }}>Issued today</button><button onClick={() => setIssue(null)} className="text-xs px-2" style={{ color: '#888' }}>×</button></div>}
                 </div>
               ))}
             </div>
