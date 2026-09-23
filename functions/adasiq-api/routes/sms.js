@@ -473,8 +473,8 @@ router.post('/conversations', async (req, res) => {
     if (ev === 'onParticipantAdded' || ev === 'onConversationAdded') { await forgetConversation(req, conversationSid); return res.status(200).send('') }
     if (ev !== 'onMessageAdded') return res.status(200).send('')
     const author = String(req.body.Author || '')
-    if (String(req.body.Source || '').toUpperCase() === 'API' || author === OUR_AUTHOR) return res.status(200).send('')
     const from = normalizePhoneUS(author) || author
+    if (String(req.body.Source || '').toUpperCase() === 'API' || author === OUR_AUTHOR || ourNumbers.map(normalizePhoneUS).includes(from)) return res.status(200).send('')
     const info = await conversationInfo(req, cfg, conversationSid, ourNumbers)
     const body = String(req.body.Body || '')
     let media = []
@@ -579,9 +579,10 @@ auth.post('/send', async (req, res) => {
 
     // 👥 Group text (Conversations): the thread key carries the conversation sid.
     if (isGroupKey(to)) {
-      const { sendConversationMessage, OUR_AUTHOR } = await import('../services/conversations.js')
+      const { sendConversationMessage } = await import('../services/conversations.js')
       const conversationSid = to.slice('group:'.length)
-      const sent = await sendConversationMessage(cfg, conversationSid, body, OUR_AUTHOR)
+      // Group MMS: the author must be a participant — that's our 425 (the projected address).
+      const sent = await sendConversationMessage(cfg, conversationSid, body, normalizePhoneUS(cfg.TWILIO_PHONE_NUMBER) || cfg.TWILIO_PHONE_NUMBER)
       const all = await readAllMessages(req)
       const prior = all.filter(m => threadKey(m) === to)
       const record = {
