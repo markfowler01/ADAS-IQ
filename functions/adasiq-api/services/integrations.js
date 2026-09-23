@@ -14,18 +14,19 @@ const cfgRead = async (req, key, fb = '') => { try { const rows = await catalyst
 // ── The walk-through: one screen per click, anyone can follow it at the counter.
 //    image keys map to AppConfig `walkthrough_images` (Mark's screenshots, added later).
 export const KINETIC_STEPS = [
-  { key: 'ask',     title: 'Ask for the person who runs CCC ONE', text: 'Say: "Hi, I\'m with Absolute ADAS. Two minutes on your CCC ONE lets your estimates flow to our calibration reports — no more emailing PDFs." Sit at their CCC ONE computer.', whatIf: 'Nobody available? Get the owner\'s name + email and tap "Turned on at the shop" later — the app will still email Kinetic once you tick it.' },
-  { key: 'config',  title: 'Open Configuration', text: 'Top-right gear (or the ⋮ menu) → Configuration.', whatIf: 'No gear? They may be on an estimator-only login. Ask for an admin login.', image: 'kinetic_config' },
-  { key: 'share',   title: 'Click CCC Secure Share', text: 'In the left list of Configuration, click "CCC Secure Share".', whatIf: 'Not in the list? Secure Share isn\'t enabled on their CCC account — they call CCC support (it\'s free) and we come back.', image: 'kinetic_secureshare' },
-  { key: 'market',  title: 'Open Marketplace', text: 'Click the "Marketplace" tab at the top of Secure Share.', whatIf: 'Tab missing = not an admin. Ask the owner to log in.', image: 'kinetic_marketplace' },
-  { key: 'kinetic', title: 'Find Kinetic and turn it ON', text: 'Scroll down to "Kinetic". Flip it ON (Enabled). Click Save if there is a Save button.', whatIf: 'Already ON? You\'re done — tap "Turned on at the shop".', image: 'kinetic_toggle' },
-  { key: 'done',    title: 'Tap "Turned on at the shop" below', text: 'That\'s it on their side. The app now emails Kinetic (Parisa) the shop name, owner and email; Kinetic connects it within a few days and the first report proves it.', whatIf: '' },
+  { key: 'ask',      title: 'Ask for whoever runs CCC ONE', text: 'Say: "Hi, I\'m with Absolute ADAS. Two minutes on your CCC ONE and your estimates flow straight to our calibration reports — no more emailing PDFs back and forth." You need to be at their CCC ONE computer, logged in as an admin.', whatIf: 'Only an estimator login handy? The Marketplace won\'t show. Ask the owner or manager to log in. Dealer groups sometimes lock this — their IT has to do it.' },
+  { key: 'config',   title: 'Configure → CCC Secure Share', text: 'Top right of CCC ONE, open the "Configure" drop-down and select "CCC Secure Share™".', whatIf: 'No "CCC Secure Share" in the list? Their CCC package doesn\'t have Secure Share turned on yet. They call CCC support (no charge) — we come back after.' },
+  { key: 'market',   title: 'Marketplace tab', text: 'On the Secure Share screen, click the "Marketplace" tab. First time in, there may be a "Get Started" button — click it.', whatIf: 'Marketplace tab missing = not an admin login (see step 1).' },
+  { key: 'kinetic',  title: 'Find the Kinetic card', text: 'Scroll the app cards to "Kinetic" and click it. A panel opens showing what data will be shared.', whatIf: 'Already says ENABLED? Skip to the last step.' },
+  { key: 'next',     title: 'Next → Settings → Next', text: 'Click "Next" on the info page. On the "Settings" page leave everything checked and click "Next" again.', whatIf: 'If they ask which Event Types to keep, leave the defaults — Kinetic needs the estimate events.' },
+  { key: 'enable',   title: 'Swipe to enable, then OK', text: 'On the "Confirm" page, drag the "Swipe to enable" toggle across, click "Next", then "OK". The Kinetic card now reads PENDING, and flips to ENABLED once Kinetic accepts it (usually the same day).', whatIf: 'Stays PENDING for days? That\'s Kinetic\'s side — the app emails Parisa for you in the next step and nudges after 3 business days.' },
+  { key: 'done',     title: 'Tap "Turned on at the shop" below', text: 'That\'s it on their side. The app now emails Kinetic (Parisa) the shop name, owner and email; Kinetic connects it, and the first report that comes in proves it.', whatIf: '' },
 ]
 export const ADASMAPS_STEPS = [
-  { key: 'login',  title: 'Shop logs in to ADAS Maps', text: 'The shop (usually the estimator) opens ADAS Maps — the platform Allstate and State Farm use.', whatIf: 'Not on ADAS Maps? Then they don\'t need this — turn the toggle off.', image: 'adasmaps_home' },
-  { key: 'vendors', title: 'Open Vendors', text: 'Menu → Vendors.', whatIf: '', image: 'adasmaps_vendors' },
-  { key: 'search', title: 'Search "Absolute ADAS"', text: 'Type Absolute ADAS in the vendor search. We\'re the first result.', whatIf: 'Not showing? Try "Absolute" — and tell Mark.', image: 'adasmaps_search' },
-  { key: 'add',    title: 'Add us as their vendor', text: 'Click Add. Done — from now on we\'re notified every time a car is ready.', whatIf: '', image: 'adasmaps_add' },
+  { key: 'login',   title: 'The shop logs in to ADAS MAP', text: 'ADAS MAP (by Opus IVS) is what State Farm Select Service and Allstate Good Hands shops use. The estimator opens it — it\'s the same login they use for the calibration reports on their estimates.', whatIf: 'Not on ADAS MAP? Then they don\'t need this — turn the toggle off.' },
+  { key: 'vendors', title: 'Open Vendors', text: 'In the ADAS MAP menu, open "Vendors" (calibration providers).', whatIf: 'Can\'t find it? Their ADAS MAP "Training" tab has the vendor steps, or ask the estimator who set up ADAS MAP.' },
+  { key: 'search',  title: 'Search "Absolute ADAS"', text: 'Type Absolute ADAS in the vendor search. We\'re the first result.', whatIf: 'Not showing? Try just "Absolute" — and tell Mark.' },
+  { key: 'add',     title: 'Add us as their vendor', text: 'Select Absolute ADAS and click Add (save as their calibration vendor). Done — from now on we\'re notified every time a car is ready for calibration.', whatIf: '' },
 ]
 
 export function readIntegrations(shop) {
