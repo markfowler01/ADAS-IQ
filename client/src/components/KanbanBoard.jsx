@@ -954,6 +954,9 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           "these job requests only need the create job button") — the
           full toolset appears once it's a real job. */}
       {job.status !== 'job_requested' && (!onToggleExpand || expanded) && (<>
+      {/* 📸 Big photo button on the board card too (Mark 2026-09-22: "you took
+          away the picture uploading thing" — the small pill was easy to miss). */}
+      <div onClick={e => e.stopPropagation()}><TakePhotosControl job={job} /></div>
       {/* WorkDrive button — full-width iOS-style */}
       <button
         onClick={e => { e.stopPropagation(); handleOpenWorkDrive(e) }}
