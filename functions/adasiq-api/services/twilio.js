@@ -140,8 +140,16 @@ export function classifyTwilioNumber(twilioNumber, cfg) {
 // Pick the correct From number for an outbound reply. Defaults to the
 // local 425 number when we don't know which line the customer texted
 // (matches Mark's preference — shop-facing traffic goes through local).
+// 2026-09-23: the 425's A2P 10DLC campaign has been FAILED since June —
+// 97 of its last 100 sends bounced (30034). While Twilio says the campaign
+// isn't VERIFIED, 'local' sends go out from the 844 instead of vanishing.
+// The flag is refreshed hourly (keepGroupTextingOn → refreshLocalA2pFlag).
+let _localBlocked = null   // null = unknown (treat as OK), true/false
+export function setLocalA2pBlocked(v) { _localBlocked = !!v }
+export function localA2pBlocked() { return _localBlocked === true }
 export function pickFromNumber(preferred /* 'local' | 'tollfree' */, cfg) {
   const { local, tollfree } = pickCfg(cfg)
+  if (preferred === 'local' && _localBlocked === true && tollfree) return tollfree
   if (preferred === 'tollfree' && tollfree) return tollfree
   if (preferred === 'local'    && local)    return local
   return local || tollfree || null

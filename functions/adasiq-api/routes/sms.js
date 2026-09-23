@@ -867,10 +867,13 @@ auth.get('/cmedia/:serviceSid/:mediaSid', async (req, res) => {
 export async function keepGroupTextingOn(req) {
   const cfg = await resolvePhoneConfig(req)
   if (!twilioConfigured(cfg) || !cfg.TWILIO_PHONE_NUMBER) return { on: false, why: 'not configured' }
-  const { ensureGroupTexting } = await import('../services/conversations.js')
+  const { ensureGroupTexting, localA2pStatus } = await import('../services/conversations.js')
   const r = await ensureGroupTexting(cfg, { number: cfg.TWILIO_PHONE_NUMBER, webhookUrl: conversationsWebhookUrl(req) })
   if (r.changed) console.log('[group-texting] switched on / repaired:', JSON.stringify(r))
-  return r
+  // A2P flag for the 425 (see twilio.js pickFromNumber): blocked ⇒ 'local' sends go from the 844.
+  let a2p = null
+  try { const { setLocalA2pBlocked } = await import('../services/twilio.js'); a2p = await localA2pStatus(cfg); setLocalA2pBlocked(!a2p.verified); if (!a2p.verified) console.log('[a2p] 425 campaign not verified — local sends fall back to the 844:', JSON.stringify(a2p.statuses)) } catch (e) { console.log('[a2p] status check failed:', e.message) }
+  return { ...r, a2p }
 }
 function conversationsWebhookUrl(req) { return process.env.API_PUBLIC_BASE ? `${process.env.API_PUBLIC_BASE}/webhooks/twilio/sms/conversations` : `https://${String(req.get('host') || '').replace(/:443$/, '')}/server/adasiq-api/webhooks/twilio/sms/conversations` }
 auth.get('/group-texting', async (req, res) => {
@@ -882,6 +885,23 @@ auth.get('/group-texting', async (req, res) => {
     const st = await groupTextingStatus(cfg, cfg.TWILIO_PHONE_NUMBER)
     res.json({ ok: true, number: cfg.TWILIO_PHONE_NUMBER, number_pretty: formatPhonePretty(cfg.TWILIO_PHONE_NUMBER), webhook_expected: conversationsWebhookUrl(req), ...st })
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+auth.get('/group-texting/diag/:key', async (req, res) => {
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const cfg = await resolvePhoneConfig(req)
+    const { conversationDiag } = await import('../services/conversations.js')
+    const sid = String(req.params.key || '').replace(/^group:/, '')
+    res.json({ ok: true, conversation: sid, ...(await conversationDiag(cfg, sid)) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+auth.get('/group-texting/a2p', async (req, res) => {
+  try { const { resolvePhoneConfig } = await import('../services/phoneConfig.js'); const cfg = await resolvePhoneConfig(req); const { a2pDiag } = await import('../services/conversations.js'); res.json({ ok: true, local: cfg.TWILIO_PHONE_NUMBER, tollfree: cfg.TWILIO_TOLLFREE_NUMBER, ...(await a2pDiag(cfg)) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+auth.get('/group-texting/a2p-why', async (req, res) => {
+  try { const { resolvePhoneConfig } = await import('../services/phoneConfig.js'); const cfg = await resolvePhoneConfig(req); const { a2pWhy } = await import('../services/conversations.js'); res.json({ ok: true, ...(await a2pWhy(cfg)) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 auth.post('/group-texting/:action', async (req, res) => {
   try {

@@ -83,3 +83,68 @@ export async function ensureGroupTexting(cfg, { number, webhookUrl }) {
   const r = await enableGroupTexting(cfg, { number, webhookUrl })
   return { on: true, changed: true, ...r }
 }
+
+// Diagnostics: the last few messages in a conversation + per-participant delivery receipts.
+export async function conversationDiag(cfg, conversationSid) {
+  const msgs = await call(cfg, 'get', `/Conversations/${conversationSid}/Messages`, { PageSize: 5, Order: 'desc' })
+  const parts = await call(cfg, 'get', `/Conversations/${conversationSid}/Participants`, { PageSize: 50 })
+  const out = []
+  for (const m of msgs.messages || []) {
+    let receipts = []
+    try { const r = await call(cfg, 'get', `/Conversations/${conversationSid}/Messages/${m.sid}/Receipts`, { PageSize: 50 }); receipts = (r.delivery_receipts || []).map(x => ({ participant: x.participant_sid, status: x.status, error: x.error_code || null, channel: x.channel_message_sid || null })) } catch (e) { receipts = [{ error: e.message }] }
+    out.push({ sid: m.sid, author: m.author, body: String(m.body || '').slice(0, 80), date: m.date_created, delivery: m.delivery || null, receipts })
+  }
+  return { participants: (parts.participants || []).map(p => ({ sid: p.sid, address: p.messaging_binding?.address || p.identity || '', proxy: p.messaging_binding?.proxy_address || '' })), messages: out }
+}
+
+// A2P diagnostics: messaging services (sender pools + US A2P campaign) and the
+// Conversations default messaging service. Read-only.
+export async function a2pDiag(cfg) {
+  const A = auth(cfg)
+  const get = async url => { const r = await axios.get(url, { auth: A, timeout: 15000, validateStatus: () => true }); return r.data }
+  const services = (await get('https://messaging.twilio.com/v1/Services?PageSize=20')).services || []
+  const out = []
+  for (const s of services) {
+    const nums = ((await get(`https://messaging.twilio.com/v1/Services/${s.sid}/PhoneNumbers?PageSize=50`)).phone_numbers || []).map(n => n.phone_number)
+    let a2p = null
+    try { const c = await get(`https://messaging.twilio.com/v1/Services/${s.sid}/Compliance/Usa2p?PageSize=5`); a2p = (c.compliance || []).map(x => ({ sid: x.sid, status: x.campaign_status, use_case: x.us_app_to_person_usecase, brand: x.brand_registration_sid })) } catch { a2p = 'n/a' }
+    out.push({ sid: s.sid, name: s.friendly_name, numbers: nums, a2p })
+  }
+  const convCfg = await get('https://conversations.twilio.com/v1/Configuration')
+  return { services: out, conversations_default_messaging_service: convCfg.default_messaging_service_sid || null, conversations_default_chat_service: convCfg.default_chat_service_sid || null }
+}
+
+// Why is A2P failing? Full campaign + brand objects, and the 425's last sends.
+export async function a2pWhy(cfg) {
+  const A = auth(cfg)
+  const get = async url => { const r = await axios.get(url, { auth: A, timeout: 15000, validateStatus: () => true }); return r.data }
+  const services = (await get('https://messaging.twilio.com/v1/Services?PageSize=20')).services || []
+  const campaigns = [], brands = {}
+  for (const s of services) {
+    const c = await get(`https://messaging.twilio.com/v1/Services/${s.sid}/Compliance/Usa2p?PageSize=5`)
+    for (const x of c.compliance || []) {
+      campaigns.push({ service: s.sid, service_name: s.friendly_name, sid: x.sid, campaign_id: x.campaign_id, status: x.campaign_status, use_case: x.us_app_to_person_usecase, description: x.description, message_samples: x.message_samples, errors: x.errors || null, opt_in: x.opt_in_message, help: x.help_message, brand: x.brand_registration_sid, mock: x.mock, date_updated: x.date_updated })
+      if (x.brand_registration_sid && !brands[x.brand_registration_sid]) brands[x.brand_registration_sid] = await get(`https://messaging.twilio.com/v1/a2p/BrandRegistrations/${x.brand_registration_sid}`)
+    }
+  }
+  const last = (await get(`https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages.json?From=${encodeURIComponent(cfg.TWILIO_PHONE_NUMBER)}&PageSize=100`)).messages || []
+  const lastTf = cfg.TWILIO_TOLLFREE_NUMBER ? ((await get(`https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages.json?From=${encodeURIComponent(cfg.TWILIO_TOLLFREE_NUMBER)}&PageSize=10`)).messages || []) : []
+  const lastOkLocal = last.find(m => ['delivered', 'sent'].includes(m.status))
+  return { campaigns, local_summary: { checked: last.length, undelivered: last.filter(m => m.status === 'undelivered').length, last_delivered: lastOkLocal ? { date: lastOkLocal.date_sent, to: lastOkLocal.to } : null, oldest_checked: last.length ? last[last.length - 1].date_created : null }, last_sends_from_tollfree: lastTf.map(m => ({ date: m.date_sent || m.date_created, to: m.to, status: m.status, error: m.error_code })), brands: Object.fromEntries(Object.entries(brands).map(([k, b]) => [k, { status: b.status, identity_status: b.identity_status, brand_type: b.brand_type, failure_reason: b.failure_reason, brand_feedback: b.brand_feedback, errors: b.errors, russell_3000: b.russell_3000, date_updated: b.date_updated }])), last_sends_from_local: last.map(m => ({ date: m.date_sent || m.date_created, to: m.to, status: m.status, error: m.error_code, body: String(m.body || '').slice(0, 40) })) }
+}
+
+// Is the 425 allowed to send? VERIFIED campaign on a messaging service that holds the number.
+export async function localA2pStatus(cfg) {
+  const A = auth(cfg)
+  const get = async url => { const r = await axios.get(url, { auth: A, timeout: 15000, validateStatus: () => true }); return r.data }
+  const want = normalizePhoneUS(cfg.TWILIO_PHONE_NUMBER)
+  const services = (await get('https://messaging.twilio.com/v1/Services?PageSize=20')).services || []
+  for (const s of services) {
+    const nums = ((await get(`https://messaging.twilio.com/v1/Services/${s.sid}/PhoneNumbers?PageSize=50`)).phone_numbers || []).map(n => normalizePhoneUS(n.phone_number))
+    if (!nums.includes(want)) continue
+    const c = await get(`https://messaging.twilio.com/v1/Services/${s.sid}/Compliance/Usa2p?PageSize=5`)
+    const st = (c.compliance || []).map(x => x.campaign_status)
+    return { verified: st.includes('VERIFIED'), statuses: st, service: s.sid }
+  }
+  return { verified: false, statuses: [], service: null }
+}
