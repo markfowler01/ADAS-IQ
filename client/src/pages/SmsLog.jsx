@@ -150,6 +150,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
   }, [])
 
   const [convoContact, setConvoContact] = useState({ contact_name: '', shop_name: '', shop_id: '' })
+  const isGroupThread = String(selectedPhone || '').startsWith('group:')
   const loadConversation = useCallback(async (phone, { silent = false } = {}) => {
     if (!phone) return
     if (!silent) setConvoLoading(true)
@@ -159,7 +160,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
       setConversation(j.messages || [])
       setConvoContact({
-        contact_name: j.contact_name || '',
+        contact_name: j.contact_name || '', group_label: j.group_label || '', participants: j.participants || [],
         shop_name:    j.shop_name    || '',
         shop_id:      j.shop_id      || '',
       })
@@ -518,13 +519,15 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <div className="font-semibold text-sm truncate" style={{ color: '#1a1a1a' }}>
-                      {t.contact_name || t.phone_pretty || fmtPhone(t.phone)}
+                      {t.is_group ? `👥 ${t.group_label || 'Group text'}` : (t.contact_name || t.phone_pretty || fmtPhone(t.phone))}
                     </div>
                     <div className="text-[10px] flex-shrink-0" style={{ color: '#888' }}>
                       {fmtTime(t.last_timestamp)}
                     </div>
                   </div>
-                  {(t.contact_name || t.shop_name) && (
+                  {t.is_group ? (
+                    <div className="text-[11px] truncate" style={{ color: '#0f766e' }}>group text on the 425 · {(t.participants || []).length} people</div>
+                  ) : (t.contact_name || t.shop_name) && (
                     <div className="text-[11px] truncate" style={{ color: '#888' }}>
                       {t.shop_name || t.phone_pretty || fmtPhone(t.phone)}
                       {t.contact_name && t.shop_name ? ` · ${t.phone_pretty || fmtPhone(t.phone)}` : ''}
@@ -561,7 +564,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                   >‹</button>
                   <div className="min-w-0">
                   <div className="font-semibold text-sm truncate" style={{ color: '#1a1a1a' }}>
-                    {convoContact.contact_name || fmtPhone(selectedPhone)}
+                    {isGroupThread ? `👥 ${convoContact.group_label || 'Group text'}` : (convoContact.contact_name || fmtPhone(selectedPhone))}
                   </div>
                   {convoContact.shop_name && (
                     <div className="text-xs font-medium" style={{ color: ORANGE }}>
@@ -569,7 +572,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                     </div>
                   )}
                   <div className="text-[10px] truncate" style={{ color: '#888' }}>
-                    {convoContact.contact_name ? `${fmtPhone(selectedPhone)} · ` : ''}{selectedPhone}
+                    {isGroupThread ? `${(convoContact.participants || []).map(fmtPhone).join(' · ')} · via the 425` : `${convoContact.contact_name ? `${fmtPhone(selectedPhone)} · ` : ''}${selectedPhone}`}
                   </div>
                   </div>
                 </div>
@@ -602,6 +605,9 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                             backgroundColor: isOut ? ORANGE : '#f0ece8',
                             color: isOut ? 'white' : '#1a1a1a',
                           }}>
+                          {isGroupThread && !isOut && (
+                            <div className="text-[10px] font-bold mb-0.5" style={{ color: '#0f766e' }}>{m.sender || m.contact_name || fmtPhone(m.from_number)}</div>
+                          )}
                           {m.body && (
                             <div className="text-sm whitespace-pre-wrap break-words">{m.body}</div>
                           )}
@@ -663,7 +669,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendReply() }
                   }}
-                  placeholder={`Reply from ${fromLine === 'tollfree' ? '844-FIX-ADAS' : 'Local (425)'}…`}
+                  placeholder={isGroupThread ? 'Reply to the whole group (from the 425)…' : `Reply from ${fromLine === 'tollfree' ? '844-FIX-ADAS' : 'Local (425)'}…`}
                   rows={1}
                   className="flex-1 px-3 py-2 rounded-lg resize-none"
                   // 16px font — anything smaller makes iOS Safari zoom the
@@ -945,6 +951,7 @@ function PhoneSetupModal({ onClose, showToast }) {
         </div>
 
         <div className="p-5 space-y-3 overflow-y-auto">
+          <GroupTextingPanel showToast={showToast} />
           {loading ? (
             <div className="text-sm" style={{ color: '#888' }}>Loading…</div>
           ) : entries.map(e => {
@@ -994,6 +1001,39 @@ function PhoneSetupModal({ onClose, showToast }) {
             className="text-sm font-semibold rounded-lg px-4 py-2"
             style={{ color: '#666', backgroundColor: '#f5f3f0' }}>Done</button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+
+// 👥 Group texting on the 425 (Mark 2026-09-23). Twilio refuses group texts on
+// the toll-free 844; the local 425 can join them through Twilio Conversations.
+// This is the switch — Mark flips it, tests with one group, then moves shops.
+function GroupTextingPanel({ showToast }) {
+  const [st, setSt] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(async () => {
+    try { const r = await apiFetch(`${API_BASE}/api/sms/group-texting`); const j = await r.json(); setSt(j) } catch (e) { setSt({ error: e.message }) }
+  }, [])
+  useEffect(() => { load() }, [load])
+  async function flip(action) {
+    if (action === 'enable' && !window.confirm('Turn ON group texting for the 425?\n\nFrom then on every text to the 425 (groups AND one-to-one) comes in through Twilio Conversations. The app handles both. You can turn it off here any time.')) return
+    if (action === 'disable' && !window.confirm('Turn OFF group texting for the 425? Group threads stop arriving; one-to-one texts go back to the plain path.')) return
+    setBusy(true)
+    try { const r = await apiFetch(`${API_BASE}/api/sms/group-texting/${action}`, { method: 'POST' }); const j = await r.json(); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); showToast(`👥 Group texting ${j.on ? 'ON' : 'OFF'}`); setSt(j) }
+    catch (e) { showToast(`Failed: ${e.message}`) } finally { setBusy(false); load() }
+  }
+  const on = !!st?.on
+  return (
+    <div className="rounded-xl p-3" style={{ backgroundColor: on ? '#f0fdfa' : '#fafaf9', border: `1.5px solid ${on ? '#5eead4' : '#ebebeb'}` }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <div className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>👥 Group texting on the 425 {st?.number_pretty ? `· ${st.number_pretty}` : ''}</div>
+          <div className="text-[11px]" style={{ color: '#666' }}>{!st ? 'Checking Twilio…' : st.error ? st.error : on ? 'ON — shops can add the 425 to a group text; every message lands here, replies go to the whole group.' : 'OFF — the 425 only takes one-to-one texts. Turn on, then have a shop add the 425 to a group to test.'}</div>
+          {on && st?.webhook && st.webhook !== st.webhook_expected && <div className="text-[11px] mt-1" style={{ color: '#b45309' }}>⚠ Twilio is pointed at a different webhook — press Enable again to fix it.</div>}
+        </div>
+        <button onClick={() => flip(on ? 'disable' : 'enable')} disabled={busy || !st || !!st?.error} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: busy || !st || st?.error ? '#e5e7eb' : on ? '#b91c1c' : '#0f766e' }}>{busy ? '…' : on ? 'Turn off' : 'Turn on'}</button>
       </div>
     </div>
   )

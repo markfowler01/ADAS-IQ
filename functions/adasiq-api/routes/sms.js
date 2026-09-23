@@ -171,8 +171,10 @@ async function appendMessage(req, record) {
 // counterparty's E.164, regardless of direction. Groups inbound + outbound
 // on the same number into one back-and-forth view.
 function threadKey(record) {
+  if (String(record.thread_key || '').startsWith('group:')) return record.thread_key   // group text (Conversations)
   return record.direction === 'inbound' ? record.from_number : record.to_number
 }
+export const isGroupKey = k => String(k || '').startsWith('group:')
 
 function bucketByThread(messages) {
   const buckets = new Map()
@@ -186,10 +188,15 @@ function bucketByThread(messages) {
   for (const [phone, msgs] of buckets) {
     msgs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
     const last = msgs[msgs.length - 1]
+    const group = isGroupKey(phone)
+    const gl = group ? (msgs.map(m => m.group_label).filter(Boolean).pop() || msgs.map(m => m.shop_name).filter(Boolean).pop() || 'Group text') : ''
     threads.push({
       phone,
-      phone_pretty: formatPhonePretty(phone),
-      last_body: last.body || '',
+      phone_pretty: group ? `👥 ${gl}` : formatPhonePretty(phone),
+      is_group: group,
+      group_label: gl,
+      participants: group ? (msgs.map(m => m.participants).filter(Array.isArray).pop() || []) : [],
+      last_body: group && last.direction === 'inbound' && last.sender ? `${String(last.sender).split(' ')[0]}: ${last.body || ''}` : (last.body || ''),
       last_direction: last.direction,
       last_timestamp: last.timestamp,
       message_count: msgs.length,
@@ -451,6 +458,63 @@ router.post('/', async (req, res) => {
   }
 })
 
+// ── POST /webhooks/twilio/sms/conversations — Twilio Conversations events ───
+// Fires for every message in a conversation on the 425 once group texting is
+// on: 1:1 texts fold back onto the sender's phone thread, real groups (2+
+// outside numbers) get a 'group:<CH>' thread. Our own sends (Source=API /
+// Author=absolute-adas) are already logged at send time and skipped here.
+router.post('/conversations', async (req, res) => {
+  try {
+    const cfg = await resolvePhoneConfig(req)
+    const ev = String(req.body.EventType || '')
+    const conversationSid = String(req.body.ConversationSid || '')
+    const { conversationInfo, forgetConversation, OUR_AUTHOR, groupLabel } = await import('../services/conversations.js')
+    const ourNumbers = [cfg.TWILIO_PHONE_NUMBER, cfg.TWILIO_TOLLFREE_NUMBER].filter(Boolean)
+    if (ev === 'onParticipantAdded' || ev === 'onConversationAdded') { await forgetConversation(req, conversationSid); return res.status(200).send('') }
+    if (ev !== 'onMessageAdded') return res.status(200).send('')
+    const author = String(req.body.Author || '')
+    if (String(req.body.Source || '').toUpperCase() === 'API' || author === OUR_AUTHOR) return res.status(200).send('')
+    const from = normalizePhoneUS(author) || author
+    const info = await conversationInfo(req, cfg, conversationSid, ourNumbers)
+    const body = String(req.body.Body || '')
+    let media = []
+    try { media = (JSON.parse(req.body.Media || '[]') || []).map(m => ({ url: '', contentType: m.ContentType || m.content_type || '', proxy_url: `/api/sms/cmedia/${encodeURIComponent(String(req.body.ChatServiceSid || ''))}/${encodeURIComponent(m.Sid || m.sid || '')}` })) } catch { media = [] }
+    const [contact, phoneIdx] = await Promise.all([findContactByPhone(req, from).catch(() => null), loadPhoneIndex(req).catch(() => new Map())])
+    // Group shop = any participant's CRM shop (the author first).
+    let shop = contact?.shop_name || ''
+    if (!shop) for (const p of info.participants) { const c = phoneIdx.get(normPhone(p)); if (c?.shop_name) { shop = c.shop_name; break } }
+    const label = info.is_group ? `${shop ? shop + ' · ' : ''}${groupLabel(info.participants, phoneIdx)}` : ''
+    const record = {
+      message_sid: String(req.body.MessageSid || ''), direction: 'inbound', from_number: from, to_number: cfg.TWILIO_PHONE_NUMBER || '',
+      thread_key: info.key, body, timestamp: new Date().toISOString(), line_type: 'local', num_media: media.length, media,
+      conversation_sid: conversationSid, is_group: info.is_group, participants: info.participants, group_label: label,
+      sender: contact ? contactLabel(contact) : formatPhonePretty(from), contact_name: contact?.contact_name || '', shop_name: shop,
+    }
+    await appendMessage(req, record)
+    const threadUrl = `https://adas-iq-904191467.development.catalystserverless.com/app/index.html?thread=${encodeURIComponent(info.key)}`
+    const who = contact ? `👤 ${contactLabel(contact)} · ${formatPhonePretty(from)}` : formatPhonePretty(from)
+    try {
+      await postToCliqChannel(SMS_LOCAL_CHANNEL, [`${info.is_group ? '👥 *Group text*' : '📩 *SMS in*'} · ${who} → 425${info.is_group ? ` · ${label}` : ''}`, body ? `"${body.slice(0, 400)}"` : '_(media only)_', media.length ? `📎 ${media.length} attachment${media.length === 1 ? '' : 's'}` : null, `[💬 Reply in app](${threadUrl})`].filter(Boolean).join('\n'))
+    } catch (e) { console.warn('[conv cliq]', e.message) }
+    try { const { sendPushToAll } = await import('./push.js'); await sendPushToAll(req, { title: `${info.is_group ? '👥 ' : '💬 '}${contact ? contactLabel(contact) : formatPhonePretty(from)}`, body: (body || '(media)').slice(0, 180), url: `/app/index.html?thread=${encodeURIComponent(info.key)}`, tag: `sms-${info.key}` }) } catch (e) { console.warn('[conv push]', e.message) }
+    // 📱 Text → Job Request — same rules as 1:1; a group's shop is the group's shop.
+    try {
+      const markCell = normalizePhoneUS(cfg.MARK_PHONE_NUMBER || '')
+      const teamish = /absoluteadas\.com$/i.test(String(contact?.email || '')) || (markCell && from === markCell)
+      if (!teamish && body) {
+        const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
+        const ctx = contact || (shop ? { shop_name: shop, contact_name: '' } : null)
+        const r = await maybeCreateJobsFromText(req, { from, body, contact: ctx, lineType: 'local', jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
+        if (r.created.length || r.appended.length || r.flagged) console.log('[conv] text→job:', JSON.stringify(r).slice(0, 300))
+      }
+    } catch (e) { console.warn('[conv text→job]', e.message) }
+    res.status(200).send('')
+  } catch (err) {
+    console.error('[conversations webhook]', err.message, err.stack)
+    res.status(200).send('')   // never make Twilio retry-storm us
+  }
+})
+
 // ── Public media proxy (HMAC-signed) ────────────────────────────────────────
 // Mounted on the public webhook router so browsers can load <img src>
 // without an auth header. Signature is derived from SESSION_SECRET;
@@ -512,6 +576,23 @@ auth.post('/send', async (req, res) => {
     to = String(to).trim()
     body = String(body).trim()
     if (!body) return res.status(400).json({ ok: false, error: 'body cannot be blank' })
+
+    // 👥 Group text (Conversations): the thread key carries the conversation sid.
+    if (isGroupKey(to)) {
+      const { sendConversationMessage, OUR_AUTHOR } = await import('../services/conversations.js')
+      const conversationSid = to.slice('group:'.length)
+      const sent = await sendConversationMessage(cfg, conversationSid, body, OUR_AUTHOR)
+      const all = await readAllMessages(req)
+      const prior = all.filter(m => threadKey(m) === to)
+      const record = {
+        message_sid: sent.sid, direction: 'outbound', from_number: cfg.TWILIO_PHONE_NUMBER || '', to_number: to, thread_key: to,
+        body, timestamp: new Date().toISOString(), line_type: 'local', sender: req.user?.email || req.user?.techName || 'app',
+        conversation_sid: conversationSid, is_group: true, group_label: prior.map(m => m.group_label).filter(Boolean).pop() || '', participants: prior.map(m => m.participants).filter(Array.isArray).pop() || [], shop_name: prior.map(m => m.shop_name).filter(Boolean).pop() || '',
+        twilio_status: 'sent', attempts: 1,
+      }
+      const persist = await appendMessage(req, record)
+      return res.json({ ok: true, sid: sent.sid, message: record, persisted: persist.ok, persist_error: persist.ok ? undefined : persist.error })
+    }
 
     const result = await sendTwilioSMS({
       to, body, from, cfg,
@@ -769,23 +850,72 @@ auth.get('/media/:sid/:idx', async (req, res) => {
   }
 })
 
+// GET /api/sms/cmedia/:serviceSid/:mediaSid — Conversations (group text) media proxy
+auth.get('/cmedia/:serviceSid/:mediaSid', async (req, res) => {
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const cfg = await resolvePhoneConfig(req)
+    const { fetchConversationMedia } = await import('../services/conversations.js')
+    const m = await fetchConversationMedia(cfg, req.params.serviceSid, req.params.mediaSid)
+    res.set('Content-Type', m.contentType); res.set('Cache-Control', 'private, max-age=86400'); res.send(m.data)
+  } catch (e) { console.warn('[sms cmedia proxy]', e.message); res.status(500).send('media fetch failed') }
+})
+
+// 👥 Group texting switch on the 425 (Twilio Conversations Address Configuration).
+// Mark flips it himself from Phone Setup — "leave the phone alone" rule.
+function conversationsWebhookUrl(req) { return process.env.API_PUBLIC_BASE ? `${process.env.API_PUBLIC_BASE}/webhooks/twilio/sms/conversations` : `https://${req.get('host')}/server/adasiq-api/webhooks/twilio/sms/conversations` }
+auth.get('/group-texting', async (req, res) => {
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg) || !cfg.TWILIO_PHONE_NUMBER) return res.json({ ok: true, on: false, error: 'Twilio or the local 425 number is not configured' })
+    const { groupTextingStatus } = await import('../services/conversations.js')
+    const st = await groupTextingStatus(cfg, cfg.TWILIO_PHONE_NUMBER)
+    res.json({ ok: true, number: cfg.TWILIO_PHONE_NUMBER, number_pretty: formatPhonePretty(cfg.TWILIO_PHONE_NUMBER), webhook_expected: conversationsWebhookUrl(req), ...st })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+auth.post('/group-texting/:action', async (req, res) => {
+  try {
+    const role = String(req.user?.role || '')
+    if (role !== 'owner' && !String(req.user?.email || '').toLowerCase().startsWith('mark@')) return res.status(403).json({ error: 'Owner only' })
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+    const cfg = await resolvePhoneConfig(req)
+    if (!twilioConfigured(cfg) || !cfg.TWILIO_PHONE_NUMBER) return res.status(503).json({ error: 'Twilio or the local 425 number is not configured' })
+    const { enableGroupTexting, disableGroupTexting, groupTextingStatus } = await import('../services/conversations.js')
+    let out
+    if (req.params.action === 'enable') out = await enableGroupTexting(cfg, { number: cfg.TWILIO_PHONE_NUMBER, webhookUrl: conversationsWebhookUrl(req) })
+    else if (req.params.action === 'disable') out = await disableGroupTexting(cfg, cfg.TWILIO_PHONE_NUMBER)
+    else return res.status(400).json({ error: 'enable or disable' })
+    const st = await groupTextingStatus(cfg, cfg.TWILIO_PHONE_NUMBER)
+    console.log(`[group-texting] ${req.params.action} by ${req.user?.email}:`, JSON.stringify(out))
+    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `👥 Group texting on ${formatPhonePretty(cfg.TWILIO_PHONE_NUMBER)} switched *${st.on ? 'ON' : 'OFF'}* by ${req.user?.email || 'owner'}`) } catch { /* fine */ }
+    res.json({ ok: true, ...out, ...st })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 // GET /api/sms/threads/:phone — full ordered conversation
 auth.get('/threads/:phone', async (req, res) => {
   try {
-    const key = normalizePhoneUS(req.params.phone) || String(req.params.phone || '')
+    const raw = String(req.params.phone || '')
+    const key = isGroupKey(raw) ? raw : (normalizePhoneUS(raw) || raw)
     const [all, contact] = await Promise.all([
       readAllMessages(req),
-      findContactByPhone(req, key),
+      isGroupKey(key) ? null : findContactByPhone(req, key),
     ])
     const messages = all
       .filter(m => threadKey(m) === key)
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    const group = isGroupKey(key)
+    const gl = group ? (messages.map(m => m.group_label).filter(Boolean).pop() || 'Group text') : ''
     res.json({
       ok: true,
       phone: key,
-      phone_pretty: formatPhonePretty(key),
-      contact_name: contact?.contact_name || '',
-      shop_name:    contact?.shop_name    || '',
+      phone_pretty: group ? `👥 ${gl}` : formatPhonePretty(key),
+      is_group: group,
+      group_label: gl,
+      participants: group ? (messages.map(m => m.participants).filter(Array.isArray).pop() || []) : [],
+      contact_name: group ? gl : (contact?.contact_name || ''),
+      shop_name:    group ? (messages.map(m => m.shop_name).filter(Boolean).pop() || '') : (contact?.shop_name    || ''),
       shop_id:      contact?.shop_id      || '',
       messages: rewriteMediaUrls(messages),
     })

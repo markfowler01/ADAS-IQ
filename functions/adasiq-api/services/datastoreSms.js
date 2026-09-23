@@ -38,6 +38,7 @@ function getTable(req) {
 // write so /threads/:phone can query directly instead of scanning +
 // bucketing in memory.
 function computeThreadKey(rec) {
+  if (String(rec.thread_key || '').startsWith('group:')) return String(rec.thread_key)   // group text (Conversations)
   return String(rec.direction === 'inbound' ? rec.from_number : rec.to_number || '')
 }
 
