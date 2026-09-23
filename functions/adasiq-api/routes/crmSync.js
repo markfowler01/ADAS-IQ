@@ -135,4 +135,12 @@ router.post('/zoho-payments', async (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }) }
 })
 
+// POST /api/crm-sync-cron/group-texting — make sure the 425's group texting is on (cron secret).
+router.post('/group-texting', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { keepGroupTextingOn } = await import('./sms.js'); res.json(await keepGroupTextingOn(req)) }
+  catch (err) { res.status(500).json({ error: err.message }) }
+})
+
 export default router

@@ -74,3 +74,12 @@ export async function fetchConversationMedia(cfg, chatServiceSid, mediaSid) {
   return { data: Buffer.from(r.data), contentType: r.headers['content-type'] || 'application/octet-stream' }
 }
 export const groupLabel = (phones, phoneIdx) => phones.map(p => { const c = phoneIdx?.get?.(p.replace(/\D/g, '')); return c?.contact_name ? c.contact_name.split(' ')[0] : formatPhonePretty(p) }).join(', ')
+
+// Mark 2026-09-23: "I don't need a kill switch — turn it on forever." The
+// app keeps the 425's group texting on: hourly check, re-create if missing.
+export async function ensureGroupTexting(cfg, { number, webhookUrl }) {
+  const st = await groupTextingStatus(cfg, number)
+  if (st.on && st.enabled && st.webhook === webhookUrl) return { on: true, changed: false }
+  const r = await enableGroupTexting(cfg, { number, webhookUrl })
+  return { on: true, changed: true, ...r }
+}

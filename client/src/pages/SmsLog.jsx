@@ -1030,10 +1030,11 @@ function GroupTextingPanel({ showToast }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <div className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>👥 Group texting on the 425 {st?.number_pretty ? `· ${st.number_pretty}` : ''}</div>
-          <div className="text-[11px]" style={{ color: '#666' }}>{!st ? 'Checking Twilio…' : st.error ? st.error : on ? 'ON — shops can add the 425 to a group text; every message lands here, replies go to the whole group.' : 'OFF — the 425 only takes one-to-one texts. Turn on, then have a shop add the 425 to a group to test.'}</div>
+          <div className="text-[11px]" style={{ color: '#666' }}>{!st ? 'Checking Twilio…' : st.error ? st.error : on ? 'ON — shops can add the 425 to a group text; every message lands here, replies go to the whole group. The app re-checks hourly.' : 'OFF — the app turns this on by itself within the hour; press to do it now.'}</div>
           {on && st?.webhook && st.webhook !== st.webhook_expected && <div className="text-[11px] mt-1" style={{ color: '#b45309' }}>⚠ Twilio is pointed at a different webhook — press Enable again to fix it.</div>}
         </div>
-        <button onClick={() => flip(on ? 'disable' : 'enable')} disabled={busy || !st || !!st?.error} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: busy || !st || st?.error ? '#e5e7eb' : on ? '#b91c1c' : '#0f766e' }}>{busy ? '…' : on ? 'Turn off' : 'Turn on'}</button>
+        {!on && <button onClick={() => flip('enable')} disabled={busy || !st || !!st?.error} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: busy || !st || st?.error ? '#e5e7eb' : '#0f766e' }}>{busy ? '…' : 'Turn on'}</button>}
+        {on && <span className="text-xs font-bold" style={{ color: '#0f766e' }}>● ON · kept on by the app</span>}
       </div>
     </div>
   )
