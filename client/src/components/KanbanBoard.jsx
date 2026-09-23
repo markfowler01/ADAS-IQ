@@ -727,7 +727,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
     : null
 
   return (
-    <div
+    <div data-job-id={job.id} 
       draggable
       onDragStart={(e) => onDragStart(e, job)}
       onClick={() => onEdit(job)}
@@ -1233,6 +1233,20 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // Compact board (Mark 2026-09-03: "the jobs screen is the hardest to
   // navigate"): one card's actions open at a time; Completed starts slim.
   const [expandedCardId, setExpandedCardId] = useState(null)
+  // 📲 Opened from the tech's assignment text (?job=<id>): expand that card and scroll to it.
+  const [openJobId] = useState(() => { try { const v = sessionStorage.getItem('adas_open_job'); sessionStorage.removeItem('adas_open_job'); return v || null } catch { return null } })
+  useEffect(() => {
+    if (!openJobId) return
+    setExpandedCardId(openJobId)
+    try { setMobileCol('all') } catch {}
+    let tries = 0
+    const t = setInterval(() => {
+      const el = document.querySelector(`[data-job-id="${openJobId}"]`)
+      if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.style.boxShadow = '0 0 0 4px #fde68a'; setTimeout(() => { el.style.boxShadow = '' }, 4000); clearInterval(t) }
+      if (++tries > 40) clearInterval(t)
+    }, 250)
+    return () => clearInterval(t)
+  }, [openJobId])
   const [showCompleted, setShowCompleted] = useState(false)
   const isMobile = useIsMobile()
   const [jobs, setJobs] = useState([])
@@ -2308,7 +2322,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                         .sort((a, b) => COLUMNS.findIndex(c => c.id === a.status) - COLUMNS.findIndex(c => c.id === b.status))
                     : visibleJobs.filter(j => colOf(j) === mobileCol)
                   ).map((job, idx, arr) => (
-                    <div key={job.ROWID || job.id}>
+                    <div key={job.ROWID || job.id} data-job-id={job.id}>
                       {/* Status header when the column changes (All view) */}
                       {mobileCol === 'all' && (idx === 0 || arr[idx - 1].status !== job.status) && (
                         <p className="text-[11px] font-extrabold uppercase tracking-widest mb-1.5 mt-1" style={{ color: ORANGE }}>

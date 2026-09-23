@@ -122,6 +122,12 @@ function MainApp() {
   // stripped from the URL.
   useEffect(() => {
     try {
+      const openJob = new URLSearchParams(window.location.search).get('job')
+      if (openJob) {   // 📲 tech assignment text → open that card on the board (2026-09-23)
+        sessionStorage.setItem('adas_open_job', openJob)
+        setScreen('jobs')
+        const u = new URL(window.location.href); u.searchParams.delete('job'); window.history.replaceState({}, '', u)
+      }
       const ptBack = new URLSearchParams(window.location.search).get('partstech_return')
       if (ptBack) {   // back from PartsTech → reopen that estimate (2026-09-22)
         sessionStorage.setItem('adas_estimator_open', ptBack)

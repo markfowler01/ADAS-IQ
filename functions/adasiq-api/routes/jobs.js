@@ -317,8 +317,10 @@ async function syncTechnicianToZoho(job, techName) {
 // On cash-customer jobs we prepend "💵 CASH" to the title so the tech
 // knows before rolling up not to promise extras and to expect the
 // $700-cap invoice.
-async function notifyJobDispatched(req, job) {
+async function notifyJobDispatched(req, job, prevTech = '') {
   if (!job.technician) return
+  // 📲 Text the tech's cell (Mark 2026-09-23) — awaited, Catalyst freezes after the response.
+  try { const { sendTechAssignmentText } = await import('../services/techAssignText.js'); await sendTechAssignmentText(req, job, prevTech) } catch (e) { console.warn('[assign-sms]', e.message) }
   const { isCashCustomer, CASH_MAX_OUT_OF_POCKET } = await import('../services/cashPricing.js')
   const isCash = isCashCustomer(job)
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
@@ -680,7 +682,7 @@ router.put('/:id', async (req, res) => {
     const techChanged = newTech && newTech !== prevTech
     const statusBecameDispatched = /^dispatched_/.test(updated.status || '') && !/^dispatched_/.test(prevStatus || '')
     if (newTech && (techChanged || statusBecameDispatched)) {
-      await notifyJobDispatched(req, updated)
+      await notifyJobDispatched(req, updated, prevTech || '')
     }
     // Keep the linked Zoho estimate's salesperson in sync with the technician
     if (techChanged) {
@@ -797,7 +799,7 @@ router.patch('/:id', async (req, res) => {
     const techChanged = newTech && newTech !== currentJob.technician
     const statusBecameDispatched = /^dispatched_/.test(updated.status || '') && !/^dispatched_/.test(currentJob.status || '')
     if (newTech && (techChanged || statusBecameDispatched)) {
-      await notifyJobDispatched(req, updated)
+      await notifyJobDispatched(req, updated, currentJob.technician || '')
     }
     // Keep the linked Zoho estimate's salesperson in sync with the technician
     if (techChanged) {
