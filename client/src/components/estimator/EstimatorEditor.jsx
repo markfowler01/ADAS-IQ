@@ -109,6 +109,21 @@ export default function EstimatorEditor({ id, user, onBack }) {
   const ready = useMemo(() => est ? readyToSend({ ...est, jobs: est.jobs || [] }) : { ok: false, missing: [] }, [est])
   const t = live?.totals
 
+  // 🔩 PartsTech punchout: first tap starts the session (server), second tap
+  // is a plain link — iOS blocks window.open after an await.
+  const [pt, setPt] = useState({ busy: false, url: '', msg: '', tone: '' })
+  async function shopParts() {
+    setPt({ busy: true, url: '', msg: '', tone: '' })
+    try { const d = await j(`/api/estimator/${id}/partstech/session`, { method: 'POST' }); setPt({ busy: false, url: d.url, msg: 'Session ready — open PartsTech, build the cart, press Submit Quote (or Buy Now). The parts land here.', tone: 'green' }) }
+    catch (e) { setPt({ busy: false, url: '', msg: e.message, tone: e.data?.not_connected ? 'amber' : 'red' }) }
+  }
+  async function pullParts() {
+    setPt(x => ({ ...x, busy: true }))
+    try { const d = await j(`/api/estimator/${id}/partstech/pull`, { method: 'POST' }); setEst(d.estimate); setPt(x => ({ ...x, busy: false, msg: `${d.added} part(s) pulled from PartsTech.`, tone: 'green' })) }
+    catch (e) { setPt(x => ({ ...x, busy: false, msg: e.message, tone: 'red' })) }
+  }
+  // Coming back from PartsTech (tab focus or the returnUrl) → refresh the estimate.
+  useEffect(() => { const fn = () => { if (pt.url) load() }; window.addEventListener('focus', fn); return () => window.removeEventListener('focus', fn) }, [pt.url, load])
   if (err && !est) return <div className="p-6"><Notice tone="red">{err}</Notice><button onClick={onBack} className="mt-3 text-sm font-bold" style={{ color: ORANGE }}>← Back</button></div>
   if (!est || !t) return <div className="p-6 text-sm" style={{ color: '#888' }}>Loading estimate…</div>
 
@@ -161,21 +176,6 @@ export default function EstimatorEditor({ id, user, onBack }) {
     ['First Call', 'https://www.firstcallonline.com/', "O'Reilly aftermarket"],
     ['AutoZone Pro', 'https://www.autozonepro.com/', 'AutoZone commercial'],
   ]
-  // 🔩 PartsTech punchout: first tap starts the session (server), second tap
-  // is a plain link — iOS blocks window.open after an await.
-  const [pt, setPt] = useState({ busy: false, url: '', msg: '', tone: '' })
-  async function shopParts() {
-    setPt({ busy: true, url: '', msg: '', tone: '' })
-    try { const d = await j(`/api/estimator/${id}/partstech/session`, { method: 'POST' }); setPt({ busy: false, url: d.url, msg: 'Session ready — open PartsTech, build the cart, press Submit Quote (or Buy Now). The parts land here.', tone: 'green' }) }
-    catch (e) { setPt({ busy: false, url: '', msg: e.message, tone: e.data?.not_connected ? 'amber' : 'red' }) }
-  }
-  async function pullParts() {
-    setPt(x => ({ ...x, busy: true }))
-    try { const d = await j(`/api/estimator/${id}/partstech/pull`, { method: 'POST' }); setEst(d.estimate); setPt(x => ({ ...x, busy: false, msg: `${d.added} part(s) pulled from PartsTech.`, tone: 'green' })) }
-    catch (e) { setPt(x => ({ ...x, busy: false, msg: e.message, tone: 'red' })) }
-  }
-  // Coming back from PartsTech (tab focus or the returnUrl) → refresh the estimate.
-  useEffect(() => { const fn = () => { if (pt.url) load() }; window.addEventListener('focus', fn); return () => window.removeEventListener('focus', fn) }, [pt.url, load])
   const adasOn = vinInfo?.adas ? Object.entries({ fcw: 'FCW', aeb: 'AEB', lane_departure: 'LDW', lane_keep: 'Lane keep', blind_spot: 'Blind spot', acc: 'ACC', rear_cross: 'RCTA', park_assist: 'Park assist', backup_cam: 'Backup cam' }).filter(([k]) => /standard|optional/i.test(vinInfo.adas[k] || '')).map(([, l]) => l) : []
 
   const footerPrimary = est.status === 'draft'
