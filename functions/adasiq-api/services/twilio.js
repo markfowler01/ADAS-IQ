@@ -187,6 +187,11 @@ export async function sendTwilioSMS({ to, body, from = 'local', cfg, statusCallb
   if (!accountSid || !authToken) {
     return { ok: false, error: 'Twilio not configured — set TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN via Phone Setup' }
   }
+  // Cold start: the A2P flag is unknown until the hourly check runs — ask
+  // Twilio once per instance so a fresh function doesn't send from a blocked 425.
+  if (from === 'local' && _localBlocked === null) {
+    try { const { localA2pStatus } = await import('./conversations.js'); const st = await localA2pStatus(cfg); _localBlocked = !st.verified; if (_localBlocked) console.log('[a2p] 425 not verified — sending from the 844 instead') } catch (e) { console.log('[a2p] cold check failed (assuming OK):', e.message) }
+  }
   const fromNumber = String(from).startsWith('+') ? from : pickFromNumber(from, cfg)
   if (!fromNumber) return { ok: false, error: 'no Twilio From number configured' }
 
