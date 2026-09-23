@@ -43,7 +43,9 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 6 } = {}) 
   if (!dry && !(await emailToJobEnabled(req))) { out.skipped = 'email2job_enabled is not true'; return out }
   const token = await getMailAccessToken()
   const { getAllShops } = await import('../routes/shops.js')
-  const idx = buildEmailIndex(await getAllShops(req))
+  const shops = await getAllShops(req)
+  const idx = buildEmailIndex(shops)
+  let adasDomain = ''; try { const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(`SELECT config_value FROM AppConfig WHERE config_key = 'adasmaps_sender_domain' LIMIT 1`); adasDomain = String(rows?.[0]?.AppConfig?.config_value || '').toLowerCase().replace(/^@/, '') } catch { adasDomain = '' }
   const jobsMod = await import('../routes/jobs.js')
   const jobs = { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic }
   const { row, ids } = await readDone(req)
@@ -57,7 +59,14 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 6 } = {}) 
       out.checked++
       const id = String(m.messageId || ''); if (!id || ids.has(id)) continue
       const from = normEmail(m.fromAddress || m.sender || '')
-      const contact = idx.get(from); if (!contact) continue
+      let contact = idx.get(from)
+      // 🔗 ADAS Maps "car is ready" notifications (sender domain set in AppConfig adasmaps_sender_domain once Mark forwards a sample).
+      if (!contact && adasDomain && from.endsWith('@' + adasDomain)) {
+        const hay = `${m.subject || ''} ${m.summary || ''}`.toLowerCase()
+        const shop = shops.find(sh => sh.shop_name && hay.includes(String(sh.shop_name).toLowerCase()))
+        if (shop) { contact = { contact_name: 'ADAS Maps', shop_name: shop.shop_name, shop_id: shop.id, email: from }; try { const { markConnected } = await import('./integrations.js'); await markConnected(req, shop.shop_name, 'adasmaps', 'first ADAS Maps notification received') } catch { /* fine */ } }
+      }
+      if (!contact) continue
       const age = Date.now() - Number(m.receivedTime || 0); if (Number.isFinite(age) && age > MAX_AGE_MS) { ids.add(id); continue }
       if (budget-- <= 0) break
       out.matched++

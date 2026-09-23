@@ -4,6 +4,7 @@
 // support.
 
 import { useState, useRef, useEffect } from 'react'
+import { IntegrationPills } from './books/Integrations.jsx'
 import { familyFor } from '../lib/insurerFamilies.js'
 import JobIdPill, { cardFrame, isRequestJob } from './JobIdPill'
 import { TakePhotosControl } from './JobPhotos'
@@ -327,8 +328,8 @@ export default function MobileJobCard({
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
-      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
+      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span

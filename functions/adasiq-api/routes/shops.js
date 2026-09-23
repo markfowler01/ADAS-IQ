@@ -233,6 +233,36 @@ router.post('/sync-customers', async (req, res) => {
   catch (err) { console.error('[shops sync-customers]', err.message); res.status(500).json({ error: err.message }) }
 })
 
+// 🔗 Integrations (Mark 2026-09-23): Kinetic via CCC Secure Share, ADAS Maps.
+router.get('/:id/integrations', async (req, res) => {
+  try {
+    const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    const I = await import('../services/integrations.js')
+    let images = {}; try { const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(`SELECT config_value FROM AppConfig WHERE config_key = 'walkthrough_images' LIMIT 1`); images = JSON.parse(rows?.[0]?.AppConfig?.config_value || '{}') } catch { images = {} }
+    res.json({ ok: true, integrations: I.readIntegrations(shop), steps: { kinetic: I.KINETIC_STEPS, adasmaps: I.ADASMAPS_STEPS }, images, labels: I.LABEL })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/integrations/:which/:action', async (req, res) => {
+  try {
+    const which = String(req.params.which); const action = String(req.params.action)
+    const I = await import('../services/integrations.js')
+    if (!I.WHICH.includes(which)) return res.status(400).json({ error: 'kinetic or adasmaps' })
+    const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    const by = req.user?.name || req.user?.techName || req.user?.email || 'staff'
+    const isTech = String(req.user?.role || '') === 'technician'
+    let r
+    if (action === 'start') r = await I.setState(req, shop, which, 'started', by, 'setup started')
+    else if (action === 'step-done' && which === 'kinetic') r = await I.kineticStepDone(req, shop, by)
+    else if (action === 'invite' && which === 'adasmaps') r = await I.adasMapsInvite(req, shop, by)
+    else if (action === 'reemail' && which === 'kinetic') r = await I.kineticStepDone(req, shop, by)
+    else if (action === 'connected' && !isTech) r = await I.setState(req, shop, which, 'connected', by, 'marked connected by hand')
+    else if (action === 'off' && !isTech) r = await I.setState(req, shop, which, 'off', by, 'turned off')
+    else return res.status(400).json({ error: `Can't ${action} on ${which}${isTech ? ' (owner/Kat only)' : ''}` })
+    try { const { invalidate } = await import('../services/big3.js'); invalidate && invalidate() } catch { /* fine */ }
+    res.json({ ok: true, ...r, integrations: I.readIntegrations(r.shop) })
+  } catch (e) { console.error('[integrations]', e.message); res.status(500).json({ error: e.message }) }
+})
+
 // GET /api/shops/debug-size
 router.get('/debug-size', async (req, res) => {
   try {
@@ -441,6 +471,8 @@ const NEW_SHOP_ITEMS = [
   { key: 'terms',    label: 'Payment terms confirmed with them (on site / net terms)',          owner: 'kat', due: 3 },
   { key: 'route',    label: 'Added to the route day for their zone',                            owner: 'mark', due: 7 },
   { key: 'welcome',  label: 'Welcome email sent — who to call, how to book, the Big 3',         owner: 'kat', due: 2 },
+  { key: 'kinetic',  label: 'Kinetic turned on in CCC Secure Share (CRM → Billing → Kinetic → walk-through)', owner: 'mark', due: 7 },
+  { key: 'adasmaps', label: 'ADAS Maps: shop added us as vendor (CRM → Billing → ADAS Maps → send steps)', owner: 'mark', due: 7 },
   { key: 'first30',  label: '30-day check-in after the first job',                              owner: 'mark', due: 30 },
 ]
 const addDaysISO = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }

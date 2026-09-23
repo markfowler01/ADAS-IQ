@@ -334,6 +334,8 @@ router.post('/from-extract', async (req, res) => {
       }
     }
 
+    // 🔗 A Kinetic report for this shop proves the Secure Share link (2026-09-23).
+    if (shop?.shop_name) { try { const { markConnected } = await import('../services/integrations.js'); await markConnected(req, shop.shop_name, 'kinetic', 'first Kinetic report received') } catch (e) { console.log('[integrations] kinetic auto-verify skipped:', e.message) } }
     res.json({
       ok: true,
       invoice,

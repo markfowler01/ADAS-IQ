@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { IntegrationPills } from './books/Integrations.jsx'
 import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import CollectPanel from './CollectPanel.jsx'
@@ -835,8 +836,8 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
-      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
+      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
@@ -2894,7 +2895,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
           >{insurerPricingBadge(job).label}</span>
         )}
-        {job.status !== 'job_requested' && <><BillingPill shopName={job.shop_name} /> <Big3Badge shopName={job.shop_name} /> <DrpBadge shopName={job.shop_name} /></>}
+        {job.status !== 'job_requested' && <><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /> <Big3Badge shopName={job.shop_name} /> <DrpBadge shopName={job.shop_name} /></>}
         {isTeslaJob(job) && (
           <span
             className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
