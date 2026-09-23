@@ -274,6 +274,28 @@ function dateStrPT() {
 }
 
 // ── POST /webhooks/twilio/sms ────────────────────────────────────────────────
+// 📲 "FWD <phone or name>: <text>" from Mark's own cell (iPhone Shortcut,
+// 2026-09-23) → the original sender, looked up in the CRM.
+async function parseForward(req, body) {
+  const m = /^\s*FWD\s*[:\-]?\s*([^:\n]{2,80}?)\s*:\s*([\s\S]+)$/i.exec(body || '')
+  if (!m) return null
+  const key = m[1].trim(); const text = m[2].trim()
+  let c = null
+  const digits = key.replace(/\D/g, '')
+  if (digits.length >= 10) { try { c = await findContactByPhone(req, key) } catch { c = null } }
+  if (!c) { try { const idx = await loadPhoneIndex(req); const k = key.toLowerCase(); for (const v of idx.values()) { if (String(v.contact_name || '').toLowerCase() === k || String(v.shop_name || '').toLowerCase() === k || `${v.contact_name} · ${v.shop_name}`.toLowerCase().includes(k)) { c = v; break } } } catch { c = null } }
+  const phone = digits.length >= 10 ? (normalizePhoneUS(key) || key) : (c?.phone ? normalizePhoneUS(c.phone) : '')
+  console.log(`[sms inbound] FWD from Mark's cell → ${c ? contactLabel(c) : 'no CRM match for "' + key + '"'}`)
+  return { key, text, contact: c, phone }
+}
+async function handleForward(req, fwd, { sid, to, lineType }) {
+  if (fwd.phone) await appendMessage(req, { message_sid: `${sid}-fwd`, direction: 'inbound', from_number: fwd.phone, to_number: to, body: fwd.text, timestamp: new Date().toISOString(), line_type: lineType, sender: `${fwd.contact ? contactLabel(fwd.contact) : fwd.key} (forwarded from Mark's phone)`, contact_name: fwd.contact?.contact_name || '', shop_name: fwd.contact?.shop_name || '' }).catch(() => {})
+  const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
+  const r = await maybeCreateJobsFromText(req, { from: fwd.phone || fwd.key, body: fwd.text, contact: fwd.contact, lineType, jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
+  if (r.created.length || r.appended.length || r.flagged) console.log('[sms inbound] FWD text→job:', JSON.stringify(r).slice(0, 300))
+  return r
+}
+
 // Twilio inbound webhook. Twilio POSTs application/x-www-form-urlencoded.
 // We validate signature, log the message, post to Cliq, forward to Mark.
 // Response is TwiML (empty message) so Twilio doesn't retry.
@@ -409,25 +431,9 @@ router.post('/', async (req, res) => {
       //   "FWD +14255551234: <their text>"  or  "FWD Dave Solver: <their text>"
       // The original sender is looked up in the CRM and the text is handled
       // as if it had come straight from them. Only honored from Mark's cell.
-      let fwd = null
-      if (markCell && senderNorm === markCell) {
-        const m = /^\s*FWD\s*[:\-]?\s*([^:\n]{2,80}?)\s*:\s*([\s\S]+)$/i.exec(body || '')
-        if (m) {
-          const key = m[1].trim(); const text = m[2].trim()
-          let c = null
-          const digits = key.replace(/\D/g, '')
-          if (digits.length >= 10) { try { c = await findContactByPhone(req, key) } catch { c = null } }
-          if (!c) { try { const idx = await loadPhoneIndex(req); const k = key.toLowerCase(); for (const v of idx.values()) { if (String(v.contact_name || '').toLowerCase() === k || String(v.shop_name || '').toLowerCase() === k || `${v.contact_name} · ${v.shop_name}`.toLowerCase().includes(k)) { c = v; break } } } catch { c = null } }
-          fwd = { key, text, contact: c, phone: digits.length >= 10 ? (normalizePhoneUS(key) || key) : (c?.phone ? normalizePhoneUS(c.phone) : '') }
-          console.log(`[sms inbound] FWD from Mark's cell → ${c ? contactLabel(c) : 'no CRM match for "' + key + '"'}`)
-        }
-      }
+      const fwd = (markCell && senderNorm === markCell) ? await parseForward(req, body) : null
       if (fwd) {
-        // Log it on the original sender's thread so Kat sees it where it belongs.
-        if (fwd.phone) await appendMessage(req, { message_sid: `${sid}-fwd`, direction: 'inbound', from_number: fwd.phone, to_number: to, body: fwd.text, timestamp: new Date().toISOString(), line_type: record.line_type, sender: `${fwd.contact ? contactLabel(fwd.contact) : fwd.key} (forwarded from Mark's phone)`, contact_name: fwd.contact?.contact_name || '', shop_name: fwd.contact?.shop_name || '' }).catch(() => {})
-        const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
-        const r = await maybeCreateJobsFromText(req, { from: fwd.phone || fwd.key, body: fwd.text, contact: fwd.contact, lineType: record.line_type, jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
-        if (r.created.length || r.appended.length || r.flagged) console.log('[sms inbound] FWD text→job:', JSON.stringify(r).slice(0, 300))
+        await handleForward(req, fwd, { sid, to, lineType: record.line_type })
       } else if (!teamish && body) {
         const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
         const r = await maybeCreateJobsFromText(req, { from, body, contact, lineType: record.line_type, jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
@@ -524,7 +530,10 @@ router.post('/conversations', async (req, res) => {
     try {
       const markCell = normalizePhoneUS(cfg.MARK_PHONE_NUMBER || '')
       const teamish = /absoluteadas\.com$/i.test(String(contact?.email || '')) || (markCell && from === markCell)
-      if (!teamish && body) {
+      const fwd = (markCell && from === markCell) ? await parseForward(req, body) : null
+      if (fwd) {
+        await handleForward(req, fwd, { sid: record.message_sid, to: cfg.TWILIO_PHONE_NUMBER || '', lineType: 'local' })
+      } else if (!teamish && body) {
         const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
         const ctx = contact || (shop ? { shop_name: shop, contact_name: '' } : null)
         const r = await maybeCreateJobsFromText(req, { from, body, contact: ctx, lineType: 'local', jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
