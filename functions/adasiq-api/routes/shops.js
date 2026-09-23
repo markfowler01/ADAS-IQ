@@ -710,7 +710,13 @@ router.post('/van-contact', async (req, res) => {
 // POST /api/shops
 router.post('/', async (req, res) => {
   try {
-    const shop = await insertShop(req, await autoZone(req.body || {}))
+    const body = await autoZone(req.body || {})
+    // A shop added straight in as a customer (Active) gets the New Shop
+    // checklist — Kinetic + ADAS Maps + billing items — same as the field
+    // "New shop" form (Mark 2026-09-23: "built into both add-a-shop processes").
+    if (['active', 'second_active'].includes(String(body.pipeline_stage || '')) && !body.billing_rules?.new_shop) body.billing_rules = { ...(body.billing_rules || {}), new_shop: newShopChecklist(req.user?.name || req.user?.email || '') }
+    const shop = await insertShop(req, body)
+    if (shop.billing_rules?.new_shop) { try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'onboarding', title: `New shop: ${shop.shop_name}`, body: 'New Shop checklist started — W-9, insurers, sign-off, terms, Kinetic, ADAS Maps (CRM → Billing).', skipCliq: true, skipTechChannel: true }) } catch { /* fine */ } }
     res.status(201).json(shop)
   } catch (err) {
     console.error('[shops POST]', err.message)
@@ -795,6 +801,11 @@ router.put('/:id', async (req, res) => {
     const current = rowToShop(await table.getRow(String(req.params.id)))
     const merged = await autoZone({ ...current, ...req.body, id: current.id, created_at: current.created_at })
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) merged.stage_changed_at = new Date().toISOString()
+    // Prospect → customer: start the New Shop checklist the moment a shop goes Active (Mark 2026-09-23).
+    let seededChecklist = false
+    if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage && ['active', 'second_active'].includes(String(req.body.pipeline_stage)) && !merged.billing_rules?.new_shop) {
+      merged.billing_rules = { ...(merged.billing_rules || {}), new_shop: newShopChecklist(req.user?.name || req.user?.email || '') }; seededChecklist = true
+    }
     const updated = await updateShop(req, req.params.id, merged)
     res.json(updated)
   } catch (err) {
@@ -825,6 +836,7 @@ router.patch('/:id', async (req, res) => {
     }
 
     // Auto-sync stage changes to Zoho CRM (non-blocking)
+    if (seededChecklist) { try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'onboarding', title: `${updated.shop_name} went Active — New Shop checklist started`, body: 'W-9, insurers, sign-off, terms, welcome email, Kinetic, ADAS Maps (CRM → Billing).', skipCliq: true, skipTechChannel: true }); await postToCliqChannel(DISPATCH_CHANNEL, `🆕 *${updated.shop_name} is now Active* — New Shop checklist started (CRM → Billing): billing questions, Kinetic on Secure Share, ADAS Maps.`) } catch { /* fine */ } }
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) {
       setImmediate(async () => {
         try {
