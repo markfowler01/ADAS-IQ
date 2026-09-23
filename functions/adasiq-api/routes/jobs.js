@@ -597,9 +597,10 @@ router.post('/', async (req, res) => {
 
     // Notify dispatchers (Mark + Kat) + #technicians when a new job arrives at need_dispatch
     // (covers: Upload Report → Create Zoho Invoice, ManualQuoteScreen, any other direct job creation)
-    if (autoDispatched) {
+    if (autoDispatched || (newJob.technician && /^dispatched_/.test(String(newJob.status || '')) && !req.body.via_request)) {
       // Straight-to-tech: DM the assigned tech + #technicians instead
-      // of the Needs Dispatch alert.
+      // of the Needs Dispatch alert. Also when the card was created already
+      // marked dispatched (Mark 2026-09-23: every car that gets dispatched).
       await notifyJobDispatched(req, newJob)
     } else if (!req.body.via_request && (newJob.status === 'need_dispatch' || (!newJob.status && req.body.status === 'need_dispatch'))) {
       await notifyNeedsDispatch(req, newJob)

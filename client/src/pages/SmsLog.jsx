@@ -222,9 +222,13 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
     setTimeout(() => setToast(''), 3500)
   }
 
+  // Guard against Enter + Send firing together (2026-09-23: a reply went out three times).
+  const sendingRef = useRef(false)
   async function sendReply() {
     const body = draft.trim()
     if (!body || !selectedPhone) return
+    if (sendingRef.current) return
+    sendingRef.current = true
     setSending(true)
     try {
       const r = await apiFetch(`${API_BASE}/api/sms/send`, {
@@ -248,7 +252,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
     } catch (e) {
       showToast(`Send failed: ${e.message}`)
     } finally {
-      setSending(false)
+      setSending(false); sendingRef.current = false
     }
   }
 
@@ -256,6 +260,8 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
     const to = newTo.trim()
     const body = newBody.trim()
     if (!to || !body) return
+    if (sendingRef.current) return
+    sendingRef.current = true
     setSending(true)
     try {
       const r = await apiFetch(`${API_BASE}/api/sms/send`, {
@@ -276,7 +282,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
     } catch (e) {
       showToast(`Send failed: ${e.message}`)
     } finally {
-      setSending(false)
+      setSending(false); sendingRef.current = false
     }
   }
 
