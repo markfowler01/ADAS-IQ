@@ -154,6 +154,13 @@ export default function EstimatorEditor({ id, user, onBack }) {
   const retailHits = q ? retail.filter(c => `${c.name} ${c.phone}`.toLowerCase().includes(q)).slice(0, 6) : []
   const S = EST_STATUS[est.status] || EST_STATUS.draft
   const vehicle = [est.year, est.make, est.model, est.trim].filter(Boolean).join(' ')
+  // 🔩 Parts lookups (Mark 2026-09-22). Plain links in a new tab — these sites
+  // are login-walled, so never load them inside the app's own webview.
+  const PARTS_LINKS = [
+    ['RepairLink', 'https://repairlinkshop.com/', 'OEM dealer parts'],
+    ['First Call', 'https://www.firstcallonline.com/', "O'Reilly aftermarket"],
+    ['AutoZone Pro', 'https://www.autozonepro.com/', 'AutoZone commercial'],
+  ]
   const adasOn = vinInfo?.adas ? Object.entries({ fcw: 'FCW', aeb: 'AEB', lane_departure: 'LDW', lane_keep: 'Lane keep', blind_spot: 'Blind spot', acc: 'ACC', rear_cross: 'RCTA', park_assist: 'Park assist', backup_cam: 'Backup cam' }).filter(([k]) => /standard|optional/i.test(vinInfo.adas[k] || '')).map(([, l]) => l) : []
 
   const footerPrimary = est.status === 'draft'
@@ -188,6 +195,10 @@ export default function EstimatorEditor({ id, user, onBack }) {
             {est.zoho_invoice_id && <a href={`https://books.zoho.com/app#/invoices/${est.zoho_invoice_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#7c3aed', backgroundColor: '#f3e8ff' }}>🧾 {est.zoho_invoice_number || 'Invoice'} in Books ↗</a>}
             {!est.zoho_invoice_id && est.zoho_estimate_id && <a href={`https://books.zoho.com/app#/estimates/${est.zoho_estimate_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#7c3aed', backgroundColor: '#f3e8ff' }}>🧾 {est.zoho_estimate_number || 'Estimate'} in Books ↗</a>}
             {canEdit && est.status === 'draft' && <button onClick={async () => { if (!confirm(`Delete ${est.number}?`)) return; await j(`/api/estimator/${id}`, { method: 'DELETE' }); onBack() }} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: '#b91c1c', backgroundColor: '#fef2f2' }}>Delete</button>}
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap mt-1">
+            <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#888' }}>🔩 Parts</span>
+            {PARTS_LINKS.map(([label, href, hint]) => <a key={href} href={href} target="_blank" rel="noopener noreferrer" title={hint} className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#9a3412', backgroundColor: '#fff7ed', border: '1px solid #fed7aa' }}>{label} ↗</a>)}
           </div>
         </div>
         {/* Mark 2026-09-14: "adjust the parts markup with a box at the top and also the labor" — defaults $200/hr and 40% on parts */}
