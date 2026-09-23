@@ -10,6 +10,8 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { computeEstimate, readyToSend, authorizationComplete, DEFAULT_SETTINGS, JOB_STATUSES, JOB_CATEGORIES, newId } from '../services/estimator/calc.js'
+import { mountPartsTech } from './partstech.js'
+import { maskPartsTech, mergePartsTech } from '../services/partstech.js'
 import { decodeVin, validateVin } from '../services/estimator/vin.js'
 import { mountMore } from './estimatorMore.js'
 
@@ -182,15 +184,15 @@ const ownerOnly = (req, res, next) => isOwner(req) ? next() : res.status(403).js
 const fail = (res, e, where) => { console.log(`[estimator] ${where}:`, e.message); res.status(500).json({ error: e.message }) }
 
 // Settings
-R.get('/settings', async (req, res) => { try { res.json({ ok: true, settings: await loadSettings(req), is_owner: isOwner(req) }) } catch (e) { fail(res, e, 'settings') } })
+R.get('/settings', async (req, res) => { try { const s = await loadSettings(req); res.json({ ok: true, settings: { ...s, partstech: maskPartsTech(s) }, is_owner: isOwner(req) }) } catch (e) { fail(res, e, 'settings') } })
 R.put('/settings', ownerOnly, async (req, res) => {
   try {
     const cur = await loadSettings(req)
     const b = req.body || {}
-    const next = { ...cur, ...b, rates: { ...cur.rates, ...(b.rates || {}) } }
+    const next = { ...cur, ...b, rates: { ...cur.rates, ...(b.rates || {}) }, partstech: mergePartsTech(cur, b.partstech) }
     for (const k of Object.keys(next.rates)) next.rates[k] = int(next.rates[k])
     await saveSettings(req, next)
-    res.json({ ok: true, settings: next })
+    res.json({ ok: true, settings: { ...next, partstech: maskPartsTech(next) } })
   } catch (e) { fail(res, e, 'settings put') }
 })
 
@@ -796,5 +798,6 @@ R.post('/:id/jobs/:jid/save-template', staffOnly, async (req, res) => {
 // Shared internals for the send / push / 3C routes and the public approval router
 export const internals = { getEst, getJobs, recompute, loadSettings, tbl, T, zcql, unwrap, esc, estToRow, jobToRow, rowToJob, rowToEst, readyToSend, now, who, isOwner, staffOnly, fail, json }
 mountMore(R, internals)
+mountPartsTech(R, internals)   // 🔩 parts ordering (2026-09-22)
 
 export default estimatorRouter

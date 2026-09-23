@@ -122,6 +122,12 @@ function MainApp() {
   // stripped from the URL.
   useEffect(() => {
     try {
+      const ptBack = new URLSearchParams(window.location.search).get('partstech_return')
+      if (ptBack) {   // back from PartsTech → reopen that estimate (2026-09-22)
+        sessionStorage.setItem('adas_estimator_open', ptBack)
+        setScreen('estimator')
+        const u = new URL(window.location.href); u.searchParams.delete('partstech_return'); window.history.replaceState({}, '', u)
+      }
       const thread = new URLSearchParams(window.location.search).get('thread')
       if (thread) {
         sessionStorage.setItem('aa_sms_deeplink', thread)

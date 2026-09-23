@@ -161,6 +161,21 @@ export default function EstimatorEditor({ id, user, onBack }) {
     ['First Call', 'https://www.firstcallonline.com/', "O'Reilly aftermarket"],
     ['AutoZone Pro', 'https://www.autozonepro.com/', 'AutoZone commercial'],
   ]
+  // 🔩 PartsTech punchout: first tap starts the session (server), second tap
+  // is a plain link — iOS blocks window.open after an await.
+  const [pt, setPt] = useState({ busy: false, url: '', msg: '', tone: '' })
+  async function shopParts() {
+    setPt({ busy: true, url: '', msg: '', tone: '' })
+    try { const d = await j(`/api/estimator/${id}/partstech/session`, { method: 'POST' }); setPt({ busy: false, url: d.url, msg: 'Session ready — open PartsTech, build the cart, press Submit Quote (or Buy Now). The parts land here.', tone: 'green' }) }
+    catch (e) { setPt({ busy: false, url: '', msg: e.message, tone: e.data?.not_connected ? 'amber' : 'red' }) }
+  }
+  async function pullParts() {
+    setPt(x => ({ ...x, busy: true }))
+    try { const d = await j(`/api/estimator/${id}/partstech/pull`, { method: 'POST' }); setEst(d.estimate); setPt(x => ({ ...x, busy: false, msg: `${d.added} part(s) pulled from PartsTech.`, tone: 'green' })) }
+    catch (e) { setPt(x => ({ ...x, busy: false, msg: e.message, tone: 'red' })) }
+  }
+  // Coming back from PartsTech (tab focus or the returnUrl) → refresh the estimate.
+  useEffect(() => { const fn = () => { if (pt.url) load() }; window.addEventListener('focus', fn); return () => window.removeEventListener('focus', fn) }, [pt.url, load])
   const adasOn = vinInfo?.adas ? Object.entries({ fcw: 'FCW', aeb: 'AEB', lane_departure: 'LDW', lane_keep: 'Lane keep', blind_spot: 'Blind spot', acc: 'ACC', rear_cross: 'RCTA', park_assist: 'Park assist', backup_cam: 'Backup cam' }).filter(([k]) => /standard|optional/i.test(vinInfo.adas[k] || '')).map(([, l]) => l) : []
 
   const footerPrimary = est.status === 'draft'
@@ -199,7 +214,13 @@ export default function EstimatorEditor({ id, user, onBack }) {
           <div className="flex items-center gap-1.5 flex-wrap mt-1">
             <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#888' }}>🔩 Parts</span>
             {PARTS_LINKS.map(([label, href, hint]) => <a key={href} href={href} target="_blank" rel="noopener noreferrer" title={hint} className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#9a3412', backgroundColor: '#fff7ed', border: '1px solid #fed7aa' }}>{label} ↗</a>)}
+            {canEdit && est.status !== 'invoiced' && (pt.url
+              ? <a href={pt.url} target="_blank" rel="noopener noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg text-white" style={{ backgroundColor: ORANGE }}>🔩 Open PartsTech ↗</a>
+              : <button type="button" onClick={shopParts} disabled={pt.busy} className="text-xs font-bold px-2.5 py-1 rounded-lg text-white" style={{ backgroundColor: ORANGE, opacity: pt.busy ? .5 : 1 }}>{pt.busy ? 'Starting…' : '🔩 Shop parts (PartsTech)'}</button>)}
+            <a href="https://app.partstech.com/" target="_blank" rel="noopener noreferrer" title="PartsTech — open the site directly" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#9a3412', backgroundColor: '#fff7ed', border: '1px solid #fed7aa' }}>PartsTech ↗</a>
+            {canEdit && pt.url && <button type="button" onClick={pullParts} disabled={pt.busy} className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#9a3412', backgroundColor: 'white', border: '1px solid #fed7aa' }} title="If the parts didn't show up after Submit Quote">↻ Pull parts</button>}
           </div>
+          {pt.msg && <div className="text-xs mt-1 rounded-lg px-2.5 py-1.5" style={pt.tone === 'green' ? { backgroundColor: '#f0fdf4', color: '#166534' } : pt.tone === 'amber' ? { backgroundColor: '#fffbeb', color: '#92400e' } : { backgroundColor: '#fef2f2', color: '#991b1b' }}>{pt.msg}{pt.tone === 'amber' ? ' (⚙️ Estimator settings → PartsTech)' : ''}</div>}
         </div>
         {/* Mark 2026-09-14: "adjust the parts markup with a box at the top and also the labor" — defaults $200/hr and 40% on parts */}
         <div className="flex items-center gap-3 flex-wrap rounded-xl px-3 py-2 mb-3" style={{ backgroundColor: 'white', border: '1.5px solid #e8e4e0' }}>

@@ -56,6 +56,7 @@ import postscanRouter from './routes/postscan.js'
 import estimatesRouter from './routes/estimates.js'
 import estimatorRouter, { internals as estimatorInternals } from './routes/estimator.js'  // repair estimator (2026-09-14): Estimate → Job → Line → Part
 import { publicRouter as estimatorPublicRouter } from './routes/estimatorPublic.js'
+import { partsTechPublicRouter } from './routes/partstech.js'
 import calibrationRulesRouter from './routes/calibrationRules.js'
 import shopsRouter from './routes/shops.js'
 import booksRouter from './routes/books.js'
@@ -354,6 +355,7 @@ app.post('/api/client-error', requireAuth, async (req, res) => {
 app.use('/api/estimates', requireAuth, estimatesRouter)
 app.use('/api/estimator', requireAuth, estimatorRouter)   // techs read-only inside the router
 app.use('/api/public/estimate', estimatorPublicRouter(estimatorInternals))  // signed-link approval, no login
+app.use('/api/public/partstech', partsTechPublicRouter(estimatorInternals))  // PartsTech cart/order callback, HMAC-checked
 app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/sales-stops', requireAuth, salesStopsRouter)
