@@ -95,7 +95,9 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
   // 425 sending is HIDDEN until the A2P campaign is approved (Mark
   // 2026-07-15) — carriers block its outbound texts, so offering it is
   // a trap. Flip SHOW_LOCAL_LINE back to true when the campaign clears.
-  const SHOW_LOCAL_LINE = false
+  const SHOW_LOCAL_LINE = true   // back on 2026-09-23 — while the 425's campaign isn't verified the server sends 'local' from the 844 (see note in the picker)
+  const [a2pOk, setA2pOk] = useState(null)
+  useEffect(() => { apiFetch(`${API_BASE}/api/sms/group-texting`).then(r => r.json()).then(j => setA2pOk(!!j.a2p_verified)).catch(() => {}) }, [])
   const [fromLine, setFromLine] = useState(() => {
     if (!SHOW_LOCAL_LINE) return 'tollfree'
     try { return localStorage.getItem('aa_sms_from_line') || 'local' } catch { return 'local' }
@@ -304,7 +306,8 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                 onClick={() => setFromLine('local')}
                 className="px-3 py-1.5"
                 style={{ backgroundColor: fromLine === 'local' ? ORANGE : 'white', color: fromLine === 'local' ? 'white' : ORANGE }}
-              >Local (425)</button>
+              title={a2pOk === false ? 'The 425 is waiting on its A2P campaign — texts you send as Local go out from the 844 until it clears' : 'Send from the local 425'}
+              >Local (425){a2pOk === false ? ' · via 844' : ''}</button>
               )}
               <button
                 onClick={() => setFromLine('tollfree')}

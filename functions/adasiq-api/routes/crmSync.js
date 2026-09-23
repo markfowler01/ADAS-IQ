@@ -143,4 +143,23 @@ router.post('/group-texting', async (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }) }
 })
 
+// POST /api/crm-sync-cron/a2p-resubmit?dry=1 — resubmit the 425's A2P campaign (cron secret; Mark's go 2026-09-23).
+router.post('/a2p-resubmit', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js'); const cfg = await resolvePhoneConfig(req)
+    const { resubmitA2p } = await import('../services/conversations.js')
+    res.json({ ok: true, ...(await resubmitA2p(cfg, { dry: req.query.dry === '1' })) })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
+// POST /api/crm-sync-cron/email-to-job?dry=1 — run the email → job sweep now (cron secret).
+router.post('/email-to-job', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { sweepEmailToJob } = await import('../services/emailToJob.js'); res.json(await sweepEmailToJob(req, { dry: req.query.dry === '1' })) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 export default router

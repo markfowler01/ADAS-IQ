@@ -148,3 +148,50 @@ export async function localA2pStatus(cfg) {
   }
   return { verified: false, statuses: [], service: null }
 }
+
+// A2P campaign resubmission (Mark 2026-09-23 "let's fix this"): delete the FAILED
+// campaign on the messaging service that holds the 425, create the corrected one.
+export const A2P_CAMPAIGN = {
+  UsAppToPersonUsecase: 'LOW_VOLUME',
+  Description: 'Two-way customer-service texting between Absolute ADAS (mobile ADAS calibration, programming and diagnostics) and the commercial auto body / repair shops that hire us for a specific vehicle job. Outbound texts: appointment confirmations, technician arrival ETAs, calibration-complete notices with a link to the OEM report, parts or pre-work needed before we can calibrate, and invoice follow-ups. Inbound texts from the shop are answered by our team on the same number. No marketing, no promotions, no purchased lists.',
+  MessageFlow: 'Recipients are commercial auto body and repair shops (business contacts, not consumers). A shop opts in through ONE of these documented methods before any message is sent: (1) Web form at https://absoluteadas.com/sms-consent.html — the shop enters its business name, email and mobile number and must tick an UNCHECKED consent box that reads: "I consent to receive SMS messages about my ADAS calibration appointment and service updates from Absolute ADAS. I understand message and data rates may apply." The page states: up to ~10 messages per job, message and data rates may apply, reply STOP to opt out, HELP for help, and links to Terms (https://absoluteadas.com/terms/) and Privacy Policy (https://absoluteadas.com/privacy/). (2) Written service quote — the shop signs/accepts a quote that contains the same SMS consent clause and enters the mobile number to be texted. (3) The shop texts our published business line first; our first reply is the opt-in confirmation message (brand, frequency, rates, STOP, HELP). Consent is not a condition of purchase and is optional. The privacy policy states mobile numbers and consent data are never shared with third parties or affiliates for marketing. Opt-out: STOP (and STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT); help: HELP. Expected volume: about 10 messages per job, well under 2,000 per day.',
+  OptInMessage: 'Absolute ADAS: You\'re opted in to job update texts (appointment confirmations, ETAs, completion reports, invoices). Msg frequency varies, ~10 per job. Msg & data rates may apply. Reply STOP to opt out, HELP for help.',
+  OptOutMessage: 'Absolute ADAS: You\'re unsubscribed and will receive no more texts. Reply START to opt back in. Questions: (844) 349-2327.',
+  HelpMessage: 'Absolute ADAS: Job update texts, ~10 per job. Msg & data rates may apply. Call (844) 349-2327 or email mark@absoluteadas.com. Reply STOP to opt out.',
+  OptInKeywords: ['START', 'YES', 'UNSTOP'],
+  OptOutKeywords: ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'],
+  HelpKeywords: ['HELP', 'INFO'],
+  MessageSamples: [
+    'Hi Joe — your 2024 Honda CR-V (RO# 24223) is scheduled for tomorrow 10am at Bellevue Body Shop. We\'ll text when we arrive. Reply STOP to opt out. — Absolute ADAS',
+    'Calibration complete on RO# 24223. Front radar + camera verified to OEM spec. Report uploaded to your WorkDrive folder: https://workdrive.zohoexternal.com/... Reply STOP to opt out. — Absolute ADAS',
+    'Hey Sam — I\'m en route to your shop, ETA about 25 minutes. Please have the keys to RO# 24225 ready. Reply STOP to opt out. — Mark, Absolute ADAS',
+    'RO# 24225 — front radar calibration requires the wheel alignment to be completed first. Can you confirm? Reply STOP to opt out. — Absolute ADAS',
+    'Quick reminder — invoice #INV-5512 for the 6/8 calibration job is past due. Let us know if there\'s any question. Reply STOP to opt out. — Absolute ADAS',
+  ],
+  HasEmbeddedLinks: true, HasEmbeddedPhone: true, SubscriberOptIn: true, AgeGated: false, DirectLending: false,
+}
+export async function resubmitA2p(cfg, { dry = false } = {}) {
+  const A = auth(cfg)
+  const get = async url => { const r = await axios.get(url, { auth: A, timeout: 15000, validateStatus: () => true }); return r.data }
+  const want = normalizePhoneUS(cfg.TWILIO_PHONE_NUMBER)
+  const services = (await get('https://messaging.twilio.com/v1/Services?PageSize=20')).services || []
+  let svc = null
+  for (const s of services) { const nums = ((await get(`https://messaging.twilio.com/v1/Services/${s.sid}/PhoneNumbers?PageSize=50`)).phone_numbers || []).map(n => normalizePhoneUS(n.phone_number)); if (nums.includes(want)) { svc = s; break } }
+  if (!svc) throw new Error('No messaging service holds the 425')
+  const cur = (await get(`https://messaging.twilio.com/v1/Services/${svc.sid}/Compliance/Usa2p?PageSize=5`)).compliance || []
+  const brand = cur[0]?.brand_registration_sid
+  if (!brand) throw new Error('No brand registration sid on the existing campaign')
+  const plan = { service: svc.sid, service_name: svc.friendly_name, brand, existing: cur.map(c => ({ sid: c.sid, status: c.campaign_status })) }
+  if (dry) return { dry: true, ...plan, campaign: A2P_CAMPAIGN }
+  for (const c of cur) {
+    if (['VERIFIED', 'IN_PROGRESS', 'PENDING_REVIEW'].includes(c.campaign_status)) throw new Error(`Campaign ${c.sid} is ${c.campaign_status} — not touching it`)
+    const d = await axios.delete(`https://messaging.twilio.com/v1/Services/${svc.sid}/Compliance/Usa2p/${c.sid}`, { auth: A, timeout: 15000, validateStatus: () => true })
+    if (d.status >= 400) throw new Error(`Delete ${c.sid} → ${d.status}: ${d.data?.message || ''}`)
+  }
+  const params = new URLSearchParams()
+  params.append('BrandRegistrationSid', brand)
+  for (const [k, v] of Object.entries(A2P_CAMPAIGN)) { if (Array.isArray(v)) v.forEach(x => params.append(k, x)); else params.append(k, String(v)) }
+  const r = await axios.post(`https://messaging.twilio.com/v1/Services/${svc.sid}/Compliance/Usa2p`, params.toString(), { auth: A, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000, validateStatus: () => true })
+  if (r.status >= 400) throw new Error(`Create → ${r.status}: ${r.data?.message || JSON.stringify(r.data || {}).slice(0, 300)}`)
+  return { ...plan, created: { sid: r.data.sid, status: r.data.campaign_status, campaign_id: r.data.campaign_id } }
+}

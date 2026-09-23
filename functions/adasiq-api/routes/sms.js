@@ -405,7 +405,30 @@ router.post('/', async (req, res) => {
       const markCell = normalizePhoneUS(cfg.MARK_PHONE_NUMBER || '')
       const senderNorm = normalizePhoneUS(from)
       const teamish = /absoluteadas\.com$/i.test(String(contact?.email || '')) || (markCell && senderNorm === markCell)
-      if (!teamish && body) {
+      // 📲 Forwarded from Mark's own phone (iPhone Shortcut, 2026-09-23):
+      //   "FWD +14255551234: <their text>"  or  "FWD Dave Solver: <their text>"
+      // The original sender is looked up in the CRM and the text is handled
+      // as if it had come straight from them. Only honored from Mark's cell.
+      let fwd = null
+      if (markCell && senderNorm === markCell) {
+        const m = /^\s*FWD\s*[:\-]?\s*([^:\n]{2,80}?)\s*:\s*([\s\S]+)$/i.exec(body || '')
+        if (m) {
+          const key = m[1].trim(); const text = m[2].trim()
+          let c = null
+          const digits = key.replace(/\D/g, '')
+          if (digits.length >= 10) { try { c = await findContactByPhone(req, key) } catch { c = null } }
+          if (!c) { try { const idx = await loadPhoneIndex(req); const k = key.toLowerCase(); for (const v of idx.values()) { if (String(v.contact_name || '').toLowerCase() === k || String(v.shop_name || '').toLowerCase() === k || `${v.contact_name} · ${v.shop_name}`.toLowerCase().includes(k)) { c = v; break } } } catch { c = null } }
+          fwd = { key, text, contact: c, phone: digits.length >= 10 ? (normalizePhoneUS(key) || key) : (c?.phone ? normalizePhoneUS(c.phone) : '') }
+          console.log(`[sms inbound] FWD from Mark's cell → ${c ? contactLabel(c) : 'no CRM match for "' + key + '"'}`)
+        }
+      }
+      if (fwd) {
+        // Log it on the original sender's thread so Kat sees it where it belongs.
+        if (fwd.phone) await appendMessage(req, { message_sid: `${sid}-fwd`, direction: 'inbound', from_number: fwd.phone, to_number: to, body: fwd.text, timestamp: new Date().toISOString(), line_type: record.line_type, sender: `${fwd.contact ? contactLabel(fwd.contact) : fwd.key} (forwarded from Mark's phone)`, contact_name: fwd.contact?.contact_name || '', shop_name: fwd.contact?.shop_name || '' }).catch(() => {})
+        const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
+        const r = await maybeCreateJobsFromText(req, { from: fwd.phone || fwd.key, body: fwd.text, contact: fwd.contact, lineType: record.line_type, jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
+        if (r.created.length || r.appended.length || r.flagged) console.log('[sms inbound] FWD text→job:', JSON.stringify(r).slice(0, 300))
+      } else if (!teamish && body) {
         const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
         const r = await maybeCreateJobsFromText(req, { from, body, contact, lineType: record.line_type, jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
         if (r.created.length || r.appended.length || r.flagged) console.log('[sms inbound] text→job:', JSON.stringify(r).slice(0, 300))
@@ -881,9 +904,9 @@ auth.get('/group-texting', async (req, res) => {
     const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
     const cfg = await resolvePhoneConfig(req)
     if (!twilioConfigured(cfg) || !cfg.TWILIO_PHONE_NUMBER) return res.json({ ok: true, on: false, error: 'Twilio or the local 425 number is not configured' })
-    const { groupTextingStatus } = await import('../services/conversations.js')
-    const st = await groupTextingStatus(cfg, cfg.TWILIO_PHONE_NUMBER)
-    res.json({ ok: true, number: cfg.TWILIO_PHONE_NUMBER, number_pretty: formatPhonePretty(cfg.TWILIO_PHONE_NUMBER), webhook_expected: conversationsWebhookUrl(req), ...st })
+    const { groupTextingStatus, localA2pStatus } = await import('../services/conversations.js')
+    const [st, a2p] = await Promise.all([groupTextingStatus(cfg, cfg.TWILIO_PHONE_NUMBER), localA2pStatus(cfg).catch(() => null)])
+    res.json({ ok: true, number: cfg.TWILIO_PHONE_NUMBER, number_pretty: formatPhonePretty(cfg.TWILIO_PHONE_NUMBER), webhook_expected: conversationsWebhookUrl(req), a2p_verified: !!a2p?.verified, a2p_status: a2p?.statuses || [], ...st })
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 auth.get('/group-texting/diag/:key', async (req, res) => {

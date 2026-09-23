@@ -69,18 +69,25 @@ const cleanVin = v => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
  * Inbound shop text → job request card(s). Called from the Twilio inbound
  * handler. Never throws — returns { created: [], appended: [], flagged: bool }.
  */
-export async function maybeCreateJobsFromText(req, { from, body, contact, lineType, jobs }) {
-  const out = { created: [], appended: [], flagged: false, skipped: '' }
+export async function maybeCreateJobsFromText(req, { from, body, contact, lineType, jobs, channel = 'text', dry = false, subject = '' }) {
+  const out = { created: [], appended: [], flagged: false, skipped: '', dry }
   try {
     if (!looksLikeWork(body)) { out.skipped = 'not work'; return out }
+    const isEmail = channel === 'email'
     const shop = contact?.shop_name || ''
     const name = contact?.contact_name || ''
-    const who = name && shop ? `${name} @ ${shop}` : (name || shop || formatPhonePretty(from))
+    const who = name && shop ? `${name} @ ${shop}` : (name || shop || (isEmail ? from : formatPhonePretty(from)))
     const stamp = `${ptToday()} ${ptTime()}`
     const x = await extractJobsFromText({ body, shop, sender: name })
-    console.log(`[text→job] ${who}: intent=${x.intent} conf=${x.confidence} vehicles=${x.vehicles.length} · ${x.summary}`)
+    console.log(`[${channel}→job] ${who}: intent=${x.intent} conf=${x.confidence} vehicles=${x.vehicles.length} · ${x.summary}`)
+    out.extraction = { intent: x.intent, confidence: x.confidence, vehicles: x.vehicles, summary: x.summary }
+    if (dry) return out
     const { createNotification } = await import('../routes/notifications.js')
-    const threadUrl = `https://adas-iq-904191467.development.catalystserverless.com/app/index.html?thread=${encodeURIComponent(from)}`
+    const threadUrl = isEmail ? '' : `https://adas-iq-904191467.development.catalystserverless.com/app/index.html?thread=${encodeURIComponent(from)}`
+    const verb = isEmail ? 'emailed' : 'texted'
+    const icon = isEmail ? '📧' : '📱'
+    const quoted = isEmail && subject ? `[${subject}] ${String(body).slice(0, 400)}` : String(body).slice(0, 400)
+    const linkLine = threadUrl ? `\n[💬 thread](${threadUrl})` : ''
 
     // "Hold off" with no car named → the shop's one open request, if there is exactly one.
     if (shop && x.intent === 'hold' && !x.vehicles.length) {
@@ -93,8 +100,8 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
     if (!shop || x.confidence < 0.6 || !['new_job', 'update', 'hold'].includes(x.intent) || !x.vehicles.length) {
       if (x.intent === 'chatter' || x.intent === 'question') { out.skipped = x.intent; return out }
       out.flagged = true
-      await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `📱 Text may be a job — create it? (${who})`, body: `"${String(body).slice(0, 200)}" · ${x.summary || ''}`.slice(0, 300), skipCliq: true, skipTechChannel: true }).catch(() => {})
-      await postToCliqChannel(DISPATCH_CHANNEL, `📱 *Text looks like a job* — ${shop ? '' : 'number not in the CRM · '}${who}\n"${String(body).slice(0, 300)}"\n${x.summary ? `_${x.summary}_\n` : ''}Nothing created — [open the thread](${threadUrl}) and request it if it's real.`).catch(() => {})
+      await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `${icon} ${isEmail ? 'Email' : 'Text'} may be a job — create it? (${who})`, body: `"${quoted.slice(0, 200)}" · ${x.summary || ''}`.slice(0, 300), skipCliq: true, skipTechChannel: true }).catch(() => {})
+      await postToCliqChannel(DISPATCH_CHANNEL, `${icon} *${isEmail ? 'Email' : 'Text'} looks like a job* — ${shop ? '' : `${isEmail ? 'sender' : 'number'} not in the CRM · `}${who}\n"${quoted.slice(0, 300)}"\n${x.summary ? `_${x.summary}_\n` : ''}Nothing created — ${threadUrl ? `[open the thread](${threadUrl}) and ` : ''}request it if it's real.`).catch(() => {})
       return out
     }
 
@@ -103,7 +110,7 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
       const vin = cleanVin(v.vin)
       const probe = { shop_name: shop, vehicle, year: v.year || '', make: v.make || '', model: v.model || '', vin, quote_number: v.ro || '', notes: '' }
       const match = await jobs.findOpenRequestFor(req, probe).catch(() => null)
-      const line = `📱 ${stamp} · ${who} texted: "${String(body).slice(0, 400)}"`
+      const line = `${icon} ${stamp} · ${who} ${verb}: "${quoted}"`
       const detail = [v.services?.length ? `Asked for: ${v.services.join(', ')}` : '', v.needed_by_text ? `Needed: ${v.needed_by_text}${v.needed_by_date ? ` (${v.needed_by_date})` : ''}` : '', v.note ? `Note: ${v.note}` : ''].filter(Boolean).join(' · ')
       if (match) {
         const hold = x.intent === 'hold'
@@ -114,26 +121,26 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
         if (v.needed_by_date && !match.scheduled_date) patch.scheduled_date = v.needed_by_date
         const upd = await jobs.updateJob(req, match.id, patch)
         out.appended.push({ id: match.id, vehicle: upd.vehicle, hold })
-        await postToCliqChannel(DISPATCH_CHANNEL, `${hold ? '🛑' : '📱'} *${hold ? 'Hold from a text' : 'Text added to the request'}* · ${shop} · ${upd.vehicle || vehicle}${upd.quote_number ? ` · RO ${upd.quote_number}` : ''}\n"${String(body).slice(0, 300)}"${detail ? `\n${detail}` : ''}\n[💬 thread](${threadUrl})`).catch(() => {})
+        await postToCliqChannel(DISPATCH_CHANNEL, `${hold ? '🛑' : icon} *${hold ? `Hold from ${isEmail ? 'an email' : 'a text'}` : `${isEmail ? 'Email' : 'Text'} added to the request`}* · ${shop} · ${upd.vehicle || vehicle}${upd.quote_number ? ` · RO ${upd.quote_number}` : ''}\n"${quoted.slice(0, 300)}"${detail ? `\n${detail}` : ''}${linkLine}`).catch(() => {})
         continue
       }
       if (x.intent === 'hold') continue   // nothing open to hold
       // 'update' about a car with no open card = it's new to us → card.
       const job = await jobs.insertJob(req, {
-        status: 'job_requested', via_request: true, request_type: 'text',
+        status: 'job_requested', via_request: true, request_type: isEmail ? 'email' : 'text',
         shop_name: shop, customer: { kind: 'shop', id: '', name: shop, zoho_contact_id: '' },
         vehicle, year: v.year || '', make: v.make || '', model: v.model || '', vin,
         quote_number: String(v.ro || '').slice(0, 40), scheduled_date: v.needed_by_date || '',
         technician: '', notes: `${line}${detail ? `\n${detail}` : ''}`.slice(0, 9000),
       })
       out.created.push({ id: job.id, vehicle, vin, ro: v.ro || '' })
-      const head = `📱 *Job Requested — via TEXT* · ${shop}`
+      const head = `${icon} *Job Requested — via ${isEmail ? 'EMAIL' : 'TEXT'}* · ${shop}`
       const l2 = `${vehicle || 'Vehicle TBD'}${vin ? ` · VIN ${vin.length === 17 ? vin : '…' + vin.slice(-4)}` : ''}${v.ro ? ` · RO ${v.ro}` : ''}${v.needed_by_text ? ` · ⏰ ${v.needed_by_text}` : ''}`
-      const l3 = `${name ? `👤 ${name} · ` : ''}"${String(body).slice(0, 240)}"${v.services?.length ? `\n🔧 ${v.services.join(', ')}` : ''}`
-      const msg = `${head}\n${l2}\n${l3}\n[💬 thread](${threadUrl})`
+      const l3 = `${name ? `👤 ${name} · ` : ''}"${quoted.slice(0, 240)}"${v.services?.length ? `\n🔧 ${v.services.join(', ')}` : ''}`
+      const msg = `${head}\n${l2}\n${l3}${linkLine}`
       await postToCliqChannel(AA_JOBS_CHANNEL, msg).catch(e => console.warn('[text→job aajobs]', e.message))
       await postToCliqChannel(DISPATCH_CHANNEL, msg).catch(e => console.warn('[text→job dispatch]', e.message))
-      await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `📱 Text → job request: ${shop}`, body: `${vehicle || 'Vehicle TBD'}${v.ro ? ` · RO ${v.ro}` : ''}${v.needed_by_text ? ` · ${v.needed_by_text}` : ''}`, jobId: job.id, job, skipCliq: true, skipTechChannel: true }).catch(() => {})
+      await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `${icon} ${isEmail ? 'Email' : 'Text'} → job request: ${shop}`, body: `${vehicle || 'Vehicle TBD'}${v.ro ? ` · RO ${v.ro}` : ''}${v.needed_by_text ? ` · ${v.needed_by_text}` : ''}`, jobId: job.id, job, skipCliq: true, skipTechChannel: true }).catch(() => {})
     }
     return out
   } catch (e) {

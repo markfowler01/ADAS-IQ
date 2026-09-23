@@ -13,10 +13,11 @@ const ORANGE = '#CD4419'
 export const isRequestJob = job => (job?.status || '') === 'job_requested'
 export const isQuoteRequest = job => isRequestJob(job) && String(job?.request_type || '').toLowerCase() === 'quote'
 // 📱 Came in by text (Mark 2026-09-23): the team must see it at a glance.
-export const isTextRequest = job => isRequestJob(job) && String(job?.request_type || '').toLowerCase() === 'text'
+export const isTextRequest = job => isRequestJob(job) && ['text', 'email'].includes(String(job?.request_type || '').toLowerCase())
+export const isEmailRequest = job => isRequestJob(job) && String(job?.request_type || '').toLowerCase() === 'email'
 // "📱 2026-09-23 8:26 AM · Dave @ The Auto Repair Shop texted: "…"" → { when, who }
 export function textRequestInfo(job) {
-  const m = /📱 (\d{4}-\d{2}-\d{2} [^·]+?) · (.+?) texted:/.exec(String(job?.notes || ''))
+  const m = /(?:📱|📧) (\d{4}-\d{2}-\d{2} [^·]+?) · (.+?) (?:texted|emailed):/.exec(String(job?.notes || ''))
   return m ? { when: m[1].trim(), who: m[2].trim() } : null
 }
 export function openTextThread(job) {
@@ -60,7 +61,7 @@ export default function JobIdPill({ job, size = 'sm' }) {
     const info = viaText ? textRequestInfo(job) : null
     return (
       <span className="inline-flex items-center gap-1 flex-wrap">
-        {viaText && <span className={base} onClick={e => { e.stopPropagation(); openTextThread(job) }} title={info ? `Texted by ${info.who} · ${info.when} — tap for the thread` : 'Came in by text — tap for the thread'} style={{ backgroundColor: '#0f766e', color: 'white', cursor: 'pointer' }}>📱 VIA TEXT{info ? ` · ${info.who.split(' @ ')[0]}` : ''}</span>}
+        {viaText && <span className={base} onClick={e => { e.stopPropagation(); openTextThread(job) }} title={info ? `${isEmailRequest(job) ? 'Emailed' : 'Texted'} by ${info.who} · ${info.when}${isEmailRequest(job) ? '' : ' — tap for the thread'}` : `Came in by ${isEmailRequest(job) ? 'email' : 'text'}`} style={{ backgroundColor: isEmailRequest(job) ? '#1d4ed8' : '#0f766e', color: 'white', cursor: isEmailRequest(job) ? 'default' : 'pointer' }}>{isEmailRequest(job) ? '📧 VIA EMAIL' : '📱 VIA TEXT'}{info ? ` · ${info.who.split(' @ ')[0]}` : ''}</span>}
         <span className={base} style={quote ? { backgroundColor: 'white', color: BLUE, border: '1.5px dashed #60a5fa' } : { backgroundColor: 'white', color: ORANGE, border: `1.5px dashed ${ORANGE}` }}>{quote ? 'QUOTE REQUEST' : 'REQUEST'}</span>
         {id && <span className={base} style={{ backgroundColor: 'white', color: '#8a8a8a', border: '1px solid #e0dbd6', fontFamily: "'IBM Plex Mono', monospace" }}>{id}</span>}
       </span>
