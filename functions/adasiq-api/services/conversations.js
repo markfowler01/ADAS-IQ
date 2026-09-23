@@ -34,7 +34,7 @@ export async function enableGroupTexting(cfg, { number, webhookUrl }) {
     Type: 'sms', Address: normalizePhoneUS(number), FriendlyName: 'Absolute ADAS app — 425 group texting',
     'AutoCreation.Enabled': true, 'AutoCreation.Type': 'webhook',
     'AutoCreation.WebhookUrl': webhookUrl, 'AutoCreation.WebhookMethod': 'POST',
-    'AutoCreation.WebhookFilters': ['onMessageAdded', 'onConversationAdded', 'onParticipantAdded'],
+    'AutoCreation.WebhookFilters': ['onMessageAdded', 'onParticipantAdded'],   // onConversationAdded is service-level only → 'Invalid Webhook filter'
   }
   if (cur.on) { const d = await call(cfg, 'post', `/Configuration/Addresses/${cur.sid}`, form); return { updated: true, sid: d.sid } }
   const d = await call(cfg, 'post', '/Configuration/Addresses', form)
