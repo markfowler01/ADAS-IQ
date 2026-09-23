@@ -2914,6 +2914,9 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
         <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
       </div>
 
+      {/* 📸 Big photo button on the phone board too (Mark 2026-09-22). */}
+      <div className="mb-2" onClick={e => e.stopPropagation()}><TakePhotosControl job={job} /></div>
+
       {/* Action button — Bill it (Books quote) / legacy Create Invoices if ready, else Ready to Invoice */}
       {!job.invoiced && job.status !== 'job_requested' && (
         (canInvoice && onBillIt && !job.billed_via_app) ? (
