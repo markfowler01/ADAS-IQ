@@ -2092,4 +2092,5 @@ router.post('/:id/enroute', async (req, res) => {
 })
 
 export { getAllJobs as readJobsPublic, updateJob as updateJobPublic, deleteJob as deleteJobPublic, insertJob as insertJobPublic, resolveJobFolder as resolveJobFolderPublic }
+export { findOpenRequestFor, insertJob, updateJob }   // text→job (2026-09-23)
 export default router

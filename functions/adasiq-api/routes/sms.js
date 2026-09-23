@@ -390,6 +390,21 @@ router.post('/', async (req, res) => {
       })
     } catch (e) { console.warn('[sms inbound push]', e.message) }
 
+    // 3c) 📱 Text → Job Request (Mark 2026-09-23): a shop text that reads
+    //     like work becomes a Job Requested card, marked "via text", carrying
+    //     what they wrote. One card per vehicle; the same car appends.
+    //     Skipped for Mark's own cell and the team. Awaited (Catalyst).
+    try {
+      const markCell = normalizePhoneUS(cfg.MARK_PHONE_NUMBER || '')
+      const senderNorm = normalizePhoneUS(from)
+      const teamish = /absoluteadas\.com$/i.test(String(contact?.email || '')) || (markCell && senderNorm === markCell)
+      if (!teamish && body) {
+        const [{ maybeCreateJobsFromText }, jobsMod] = await Promise.all([import('../services/textToJob.js'), import('./jobs.js')])
+        const r = await maybeCreateJobsFromText(req, { from, body, contact, lineType: record.line_type, jobs: { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic } })
+        if (r.created.length || r.appended.length || r.flagged) console.log('[sms inbound] text→job:', JSON.stringify(r).slice(0, 300))
+      }
+    } catch (e) { console.warn('[sms inbound text→job]', e.message) }
+
     // 4) Auto-reply logic — first-contact + after-hours. Both are gated by
     //    Catalyst Cache stamps keyed by phone + day so a customer never
     //    gets two of the same auto-reply on the same day. STOP keyword
