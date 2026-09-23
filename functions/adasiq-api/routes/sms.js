@@ -863,7 +863,7 @@ auth.get('/cmedia/:serviceSid/:mediaSid', async (req, res) => {
 
 // 👥 Group texting switch on the 425 (Twilio Conversations Address Configuration).
 // Mark flips it himself from Phone Setup — "leave the phone alone" rule.
-function conversationsWebhookUrl(req) { return process.env.API_PUBLIC_BASE ? `${process.env.API_PUBLIC_BASE}/webhooks/twilio/sms/conversations` : `https://${req.get('host')}/server/adasiq-api/webhooks/twilio/sms/conversations` }
+function conversationsWebhookUrl(req) { return process.env.API_PUBLIC_BASE ? `${process.env.API_PUBLIC_BASE}/webhooks/twilio/sms/conversations` : `https://${String(req.get('host') || '').replace(/:443$/, '')}/server/adasiq-api/webhooks/twilio/sms/conversations` }
 auth.get('/group-texting', async (req, res) => {
   try {
     const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
