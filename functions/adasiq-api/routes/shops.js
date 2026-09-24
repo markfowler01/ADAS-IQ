@@ -233,6 +233,21 @@ router.post('/sync-customers', async (req, res) => {
   catch (err) { console.error('[shops sync-customers]', err.message); res.status(500).json({ error: err.message }) }
 })
 
+// 📨 Welcome email (Mark 2026-09-24): POST /:id/welcome (?force=1 to resend). Owner/Kat.
+router.post('/:id/welcome', async (req, res) => {
+  try {
+    if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Owner / Kat only' })
+    const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    const { sendShopWelcome } = await import('../services/shopWelcome.js')
+    const r = await sendShopWelcome(req, shop, { by: req.user?.name || req.user?.email || 'staff', force: req.query.force === '1' || req.body?.force === true })
+    res.status(r.sent ? 200 : 409).json({ ok: r.sent, ...r })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/:id/welcome', async (req, res) => {
+  try { const { welcomeCopy } = await import('../services/shopWelcome.js'); const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); const br = shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {}; res.json({ ok: true, welcome: br.welcome || null, preview: welcomeCopy({ firstName: (shop?.people?.[0]?.name || shop?.contact_name || '').split(' ')[0] }) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // 📝 Estimate first (Mark 2026-09-23: "all Express Auto Body / B&H cars need
 // an estimate sent first"). A per-shop rule shown on the CRM card and on
 // every job / request card, and written into request tickets from text/email.
@@ -541,7 +556,9 @@ router.post('/quick', async (req, res) => {
     const rules = b3.normalizeRules(br.big3) || b3.DEFAULT_RULES
     await b3.saveBig3(req, shop.shop_name, rules, by, { shop, customer_type: ctype, discount_pct: br.discount_value ?? (b3.CUSTOMER_TYPES[ctype].discount ?? 0), pay_mode: pay, silent: true })
     shop = rowToShop(await getTable(req).getRow(String(shop.id)))
-    if (!shop.billing_rules?.new_shop) { shop.billing_rules = { ...(shop.billing_rules || {}), new_shop: newShopChecklist(by) }; shop = await updateShop(req, shop.id, shop) }
+    let justStarted = false
+    if (!shop.billing_rules?.new_shop) { shop.billing_rules = { ...(shop.billing_rules || {}), new_shop: newShopChecklist(by) }; shop = await updateShop(req, shop.id, shop); justStarted = true }
+    if (justStarted) { try { const { sendShopWelcome } = await import('../services/shopWelcome.js'); await sendShopWelcome(req, shop, { by }) } catch (e) { console.log('[welcome] on quick failed:', e.message) } }
     let books = null
     try { books = await ensureShopBooksContact(req, shop, by) } catch (e) { console.warn('[shops quick] Books customer failed:', e.message); books = { error: e.message } }
     if (created) {
@@ -731,8 +748,9 @@ router.post('/', async (req, res) => {
     // checklist — Kinetic + ADAS Maps + billing items — same as the field
     // "New shop" form (Mark 2026-09-23: "built into both add-a-shop processes").
     if (['active', 'second_active'].includes(String(body.pipeline_stage || '')) && !body.billing_rules?.new_shop) body.billing_rules = { ...(body.billing_rules || {}), new_shop: newShopChecklist(req.user?.name || req.user?.email || '') }
-    const shop = await insertShop(req, body)
+    let shop = await insertShop(req, body)
     if (shop.billing_rules?.new_shop) { try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'onboarding', title: `New shop: ${shop.shop_name}`, body: 'New Shop checklist started — W-9, insurers, sign-off, terms, Kinetic, ADAS Maps (CRM → Billing).', skipCliq: true, skipTechChannel: true }) } catch { /* fine */ } }
+    if (shop.billing_rules?.new_shop) { try { const { sendShopWelcome } = await import('../services/shopWelcome.js'); const w = await sendShopWelcome(req, shop, { by: req.user?.name || 'app' }); if (w.sent) shop = (await getAllShops(req)).find(x => String(x.id) === String(shop.id)) || shop } catch (e) { console.log('[welcome] on create failed:', e.message) } }
     res.status(201).json(shop)
   } catch (err) {
     console.error('[shops POST]', err.message)
@@ -852,6 +870,7 @@ router.patch('/:id', async (req, res) => {
     }
 
     // Auto-sync stage changes to Zoho CRM (non-blocking)
+    if (seededChecklist) { try { const { sendShopWelcome } = await import('../services/shopWelcome.js'); await sendShopWelcome(req, updated, { by: req.user?.name || 'app' }) } catch (e) { console.log('[welcome] on active failed:', e.message) } }
     if (seededChecklist) { try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'onboarding', title: `${updated.shop_name} went Active — New Shop checklist started`, body: 'W-9, insurers, sign-off, terms, welcome email, Kinetic, ADAS Maps (CRM → Billing).', skipCliq: true, skipTechChannel: true }); await postToCliqChannel(DISPATCH_CHANNEL, `🆕 *${updated.shop_name} is now Active* — New Shop checklist started (CRM → Billing): billing questions, Kinetic on Secure Share, ADAS Maps.`) } catch { /* fine */ } }
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) {
       setImmediate(async () => {

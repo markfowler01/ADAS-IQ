@@ -212,6 +212,7 @@ export function BillingQuestions({ shop }) {
         </div>
       </div>
       {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
+      <WelcomeEmailBox shop={shop} />
       <NewShopChecklist shop={shop} />
     </div>
   )
@@ -398,6 +399,33 @@ export function EstimateFirstToggle({ shop }) {
         {on && <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => save(true)} placeholder="Note for the team (optional) — e.g. send to Dave, wait for his OK" className="mt-1.5 w-full text-xs rounded-lg px-2 py-1.5" style={{ border: '1px solid #fcd34d', backgroundColor: 'white' }} />}
       </div>
       <button disabled={busy} onClick={() => save(!on)} className="text-xs font-bold rounded-lg px-3 py-2" style={on ? { backgroundColor: 'white', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#b45309', color: 'white' }}>{busy ? '…' : on ? 'Turn off' : 'Require an estimate first'}</button>
+    </div>
+  )
+}
+
+
+// 📨 Welcome email (Mark 2026-09-24): goes out on its own when a shop goes
+// Active; this is the by-hand send / resend, with the last send shown.
+export function WelcomeEmailBox({ shop }) {
+  const [w, setW] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  useEffect(() => { if (!shop?.id) return; apiFetch(`${API_BASE}/api/shops/${shop.id}/welcome`).then(r => r.json()).then(d => setW(d.welcome || null)).catch(() => {}) }, [shop?.id])
+  if (!shop?.id) return null
+  async function send(force) {
+    if (force && !window.confirm(`Send the welcome email to ${shop.shop_name} again?`)) return
+    setBusy(true); setMsg('')
+    try { const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/welcome${force ? '?force=1' : ''}`, { method: 'POST' }); const d = await r.json(); if (!r.ok) throw new Error(d.why || d.error || `HTTP ${r.status}`); setW({ sent_at: new Date().toISOString(), to: d.to }); setMsg(`✓ Sent to ${d.to}`) }
+    catch (e) { setMsg(`✗ ${e.message}`) } finally { setBusy(false) }
+  }
+  return (
+    <div className="rounded-xl p-3 mb-3 flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: w ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${w ? '#86efac' : '#fdba74'}` }}>
+      <div className="min-w-0">
+        <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>📨 Welcome email</div>
+        <div className="text-[11px]" style={{ color: '#666' }}>{w ? `Sent ${new Date(w.sent_at).toLocaleDateString()} to ${w.to}` : 'Not sent yet — goes out on its own when the shop goes Active (needs an email on the card).'} · Absolute Promise, first-job offer, pricing sheet, Van invite.</div>
+        {msg && <div className="text-[11px] mt-0.5" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
+      </div>
+      <button disabled={busy} onClick={() => send(!!w)} className="text-xs font-bold rounded-lg px-3 py-2" style={w ? { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' } : { backgroundColor: '#CD4419', color: 'white' }}>{busy ? '…' : w ? 'Resend' : 'Send now'}</button>
     </div>
   )
 }

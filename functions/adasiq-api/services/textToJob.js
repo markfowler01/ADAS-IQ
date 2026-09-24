@@ -81,8 +81,12 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
     // 📝 Estimate-first shops: the ticket says so up top (Mark 2026-09-23).
     let estimateFirst = false, estimateNote = ''
     if (shop) { try { const { findShopByName } = await import('./big3.js'); const sh = await findShopByName(req, shop); const br = typeof sh?.billing_rules === 'string' ? (JSON.parse(sh.billing_rules || '{}') || {}) : (sh?.billing_rules || {}); estimateFirst = !!br.estimate_first; estimateNote = br.estimate_first_note || '' } catch { /* fine */ } }
-    const x = await extractJobsFromText({ body, shop, sender: name })
-    console.log(`[${channel}→job] ${who}: intent=${x.intent} conf=${x.confidence} vehicles=${x.vehicles.length} · ${x.summary}`)
+    // 🥇 "FIRST <last 4>" — the welcome-email ask. Marks the ticket and reminds the team of the offer.
+    const firstJob = /^\s*first\b/i.test(String(body || ''))
+    const x = await extractJobsFromText({ body: firstJob ? String(body).replace(/^\s*first\b[:\s-]*/i, 'Car is ready for calibration: ') : body, shop, sender: name })
+    if (firstJob && x.intent === 'chatter') x.intent = 'new_job'
+    if (firstJob && x.confidence < 0.7) x.confidence = 0.7
+    console.log(`[${channel}→job] ${who}: intent=${x.intent} conf=${x.confidence} vehicles=${x.vehicles.length}${firstJob ? ' · FIRST JOB' : ''} · ${x.summary}`)
     out.extraction = { intent: x.intent, confidence: x.confidence, vehicles: x.vehicles, summary: x.summary }
     if (dry) return out
     const { createNotification } = await import('../routes/notifications.js')
@@ -113,7 +117,7 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
       const vin = cleanVin(v.vin)
       const probe = { shop_name: shop, vehicle, year: v.year || '', make: v.make || '', model: v.model || '', vin, quote_number: v.ro || '', notes: '' }
       const match = await jobs.findOpenRequestFor(req, probe).catch(() => null)
-      const line = `${estimateFirst ? `📝 ESTIMATE FIRST — ${shop} needs an estimate sent before any work${estimateNote ? ` (${estimateNote})` : ''}.\n` : ''}${icon} ${stamp} · ${who} ${verb}: "${quoted}"`
+      const line = `${firstJob ? `🥇 FIRST JOB for ${shop} — welcome offer: if they are not happy with this one, it is free. Make it count.\n` : ''}${estimateFirst ? `📝 ESTIMATE FIRST — ${shop} needs an estimate sent before any work${estimateNote ? ` (${estimateNote})` : ''}.\n` : ''}${icon} ${stamp} · ${who} ${verb}: "${quoted}"`
       const detail = [v.services?.length ? `Asked for: ${v.services.join(', ')}` : '', v.needed_by_text ? `Needed: ${v.needed_by_text}${v.needed_by_date ? ` (${v.needed_by_date})` : ''}` : '', v.note ? `Note: ${v.note}` : ''].filter(Boolean).join(' · ')
       if (match) {
         const hold = x.intent === 'hold'
@@ -137,7 +141,7 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
         technician: '', notes: `${line}${detail ? `\n${detail}` : ''}`.slice(0, 9000),
       })
       out.created.push({ id: job.id, vehicle, vin, ro: v.ro || '' })
-      const head = `${icon} *Job Requested — via ${isEmail ? 'EMAIL' : 'TEXT'}* · ${shop}${estimateFirst ? ' · 📝 *ESTIMATE FIRST*' : ''}`
+      const head = `${firstJob ? '🥇 *FIRST JOB* · ' : ''}${icon} *Job Requested — via ${isEmail ? 'EMAIL' : 'TEXT'}* · ${shop}${estimateFirst ? ' · 📝 *ESTIMATE FIRST*' : ''}`
       const l2 = `${vehicle || 'Vehicle TBD'}${vin ? ` · VIN ${vin.length === 17 ? vin : '…' + vin.slice(-4)}` : ''}${v.ro ? ` · RO ${v.ro}` : ''}${v.needed_by_text ? ` · ⏰ ${v.needed_by_text}` : ''}`
       const l3 = `${name ? `👤 ${name} · ` : ''}"${quoted.slice(0, 240)}"${v.services?.length ? `\n🔧 ${v.services.join(', ')}` : ''}`
       const msg = `${head}\n${l2}\n${l3}${linkLine}`
