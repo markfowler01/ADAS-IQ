@@ -2,7 +2,7 @@ name: Deploy to Catalyst
 
 on:
   push:
-    branches: [main, develop]
+    branches: [develop]   # never main — main only carries the schedule workflows and its code is stale (2026-09-24 incident)
   workflow_dispatch: # Allow manual trigger from GitHub UI
 
 jobs:
