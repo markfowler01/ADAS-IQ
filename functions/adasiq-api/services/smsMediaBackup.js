@@ -42,7 +42,7 @@ const extFor = t => ({ 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'pn
  * Datastore row. Never throws — a failed backup must not break a text.
  * @returns {Promise<{saved:number, files:Array}>}
  */
-export async function backupMessageMedia(req, { message_sid, media = [], cfg, conversation = null }) {
+export async function backupMessageMedia(req, { message_sid, media = [], cfg, conversation = null, meta = null }) {
   const out = { saved: 0, files: [], skipped: '' }
   const items = (media || []).filter(m => m && (m.url || m.sid))
   if (!items.length) { out.skipped = 'no media'; return out }
@@ -72,20 +72,32 @@ export async function backupMessageMedia(req, { message_sid, media = [], cfg, co
         out.saved++
       } catch (e) { console.warn(`[sms-media] ${message_sid}[${i}] backup failed:`, e.message) }
     }
-    if (out.files.length) await stampRow(req, message_sid, out.files)
+    if (out.files.length) out.stamped = await stampRow(req, message_sid, out.files, meta)
   } catch (e) { out.skipped = e.message; console.warn('[sms-media] backup failed:', e.message) }
   return out
 }
 
-/** Write the file ids onto the message's Datastore row. */
-async function stampRow(req, message_sid, files) {
+/**
+ * Write the file ids onto the message's Datastore row — creating the row when
+ * the message predates our Datastore layer. Without this an old picture could
+ * never be marked done and the catch-up re-uploaded it on every pass
+ * (2026-09-24: "left 28" never moved).
+ */
+async function stampRow(req, message_sid, files, meta = null) {
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
+    const table = app.datastore().table(TABLE)
+    const media_files = JSON.stringify(files).slice(0, 9800)
     const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM ${TABLE} WHERE message_sid = '${String(message_sid).replace(/'/g, "''")}' LIMIT 1`)
     const rowid = rows?.[0]?.[TABLE]?.ROWID
-    if (!rowid) return
-    await app.datastore().table(TABLE).updateRow({ ROWID: String(rowid), media_files: JSON.stringify(files).slice(0, 9800) })
-  } catch (e) { console.warn('[sms-media] stamp failed:', e.message) }
+    if (rowid) { await table.updateRow({ ROWID: String(rowid), media_files }); return 'updated' }
+    if (!meta) return 'no row'
+    const rec = { message_sid: String(message_sid), direction: meta.direction || 'inbound', from_number: meta.from || '', to_number: meta.to || '', body: String(meta.body || '').slice(0, 2000), time_stamp: meta.timestamp || new Date().toISOString(), media_files }
+    // Same rule the SMS layer uses: the thread is the counterparty's number.
+    rec.thread_key = rec.direction === 'inbound' ? rec.from_number : rec.to_number
+    await table.insertRow(rec)
+    return 'inserted'
+  } catch (e) { console.warn('[sms-media] stamp failed:', e.message); return 'failed' }
 }
 
 /** The backed-up copies for a message, if any. */
@@ -102,7 +114,7 @@ export async function backedUpMedia(req, message_sid) {
  * 30s gateway cap can't kill it mid-file.
  */
 export async function backfillSmsMedia(req, { limit = 5 } = {}) {
-  const out = { looked: 0, saved: 0, messages: [], left: 0 }
+  const out = { looked: 0, saved: 0, already: 0, messages: [], left: 0 }
   const { resolvePhoneConfig } = await import('./phoneConfig.js')
   const cfg = await resolvePhoneConfig(req)
   const t0 = Date.now()
@@ -113,14 +125,15 @@ export async function backfillSmsMedia(req, { limit = 5 } = {}) {
   out.scanned = (r.data?.messages || []).length
   out.looked = withMedia.length
   for (const m of withMedia) {
-    if (out.saved >= limit || Date.now() - t0 > 20000) { out.left = withMedia.length - out.messages.length; break }
+    if (out.saved >= limit || Date.now() - t0 > 20000) { out.stopped_early = true; break }
     const already = await backedUpMedia(req, m.sid)
-    if (already.length) continue
+    if (already.length) { out.already++; continue }
     const list = await axios.get(`https://api.twilio.com${m.subresource_uris?.media || `/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/Messages/${m.sid}/Media.json`}`, { auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN }, timeout: 20000, validateStatus: () => true })
     const media = (list.data?.media_list || []).map(x => ({ url: `https://api.twilio.com${x.uri.replace(/\.json$/, '')}`, contentType: x.content_type }))
     if (!media.length) continue
-    const b = await backupMessageMedia(req, { message_sid: m.sid, media, cfg })
-    if (b.saved) { out.saved += b.saved; out.messages.push({ sid: m.sid, from: m.from, saved: b.saved }) }
+    const b = await backupMessageMedia(req, { message_sid: m.sid, media, cfg, meta: { direction: m.direction === 'inbound' ? 'inbound' : 'outbound', from: m.from, to: m.to, body: m.body, timestamp: m.date_sent ? new Date(m.date_sent).toISOString() : '' } })
+    if (b.saved) { out.saved += b.saved; out.messages.push({ sid: m.sid, from: m.from, saved: b.saved, row: b.stamped }) }
   }
+  out.left = Math.max(0, out.looked - out.already - out.messages.length)
   return out
 }
