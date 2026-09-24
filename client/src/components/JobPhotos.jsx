@@ -215,7 +215,10 @@ async function pump() {
         const r = await xhrUpload(`${API_BASE}/api/jobs/${item.jobId}/photo-slot`, fd, pct => { item.progress = pct; notifyThrottled() })
         const d = r.data || {}
         if (r.status === 401) { item.status = 'paused'; item.error = 'Signed out — sign back in and these upload on their own.'; notify(); break }
-        if (r.status === 422) { item.status = 'needs_slot'; item.error = d.error; item.suggested = d.suggested; notify(); continue }
+        if (r.status === 422) {
+          if (!item._retriedSlot) { item._retriedSlot = true; item.slot = d.suggested || SLOTS.find(x => !x.multi && !queue.some(q => q.jobId === item.jobId && q.slot === x.key && q.id !== item.id && LIVE.includes(q.status)))?.key || 'setup'; item.status = 'queued'; notify(); continue }
+          item.status = 'needs_slot'; item.error = d.error; item.suggested = d.suggested; notify(); continue
+        }
         if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
         item.status = 'done'; item.progress = 100; item.result = d; item.error = null; notify()
         idbDel(item.id)
@@ -259,11 +262,13 @@ export function enqueuePhoto({ jobId, slot, file, miles = null, filled = null })
   idbPut(item).then(async () => {
     // No slot named → sort it here on the thumbnail before the big upload.
     if (!item.slot) {
+      // Never stop the tech to ask (Mark 2026-09-23: "it's annoying them"):
+      // unsure → the next open slot in shooting order; they can redo later.
+      const nextOpen = () => { const taken = k => filled?.[k]?.fileId || queue.some(q => q.jobId === item.jobId && q.slot === k && q.id !== item.id && LIVE.includes(q.status)); return SLOTS.find(x => !x.multi && !taken(x.key))?.key || 'setup' }
       try {
         const r = await sortOnPhone(item, filled)
-        if (r?.slot && r.confidence >= 0.5) { item.slot = r.slot }
-        else { item.status = 'needs_slot'; item.error = 'Could not tell which shot this is — pick the slot.'; item.suggested = r?.suggested || null; await idbPut(item); notify(); return }
-      } catch { /* sorter unreachable — the server takes a look on upload, as before */ }
+        item.slot = (r?.slot && r.confidence >= 0.5) ? r.slot : (r?.suggested || nextOpen())
+      } catch { item.slot = nextOpen() }
     }
     const small = await shrink(file, item.slot)
     if (small !== file) { item.file = small }
@@ -359,6 +364,18 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   useEffect(() => {
     setOdoEdit({ before: job.odo_before || '', after: job.odo_after || '' })
   }, [job.odo_before, job.odo_after])
+  // Card says shots are owed → ask the server to look in the folder right now (2026-09-23).
+  useEffect(() => {
+    const slots = parseSlots(initialJob?.photo_slots) || {}
+    if (!slots._pending && photoProgress(initialJob).complete) return
+    if (!slots._pending && !initialJob?.folder_url) return
+    let dead = false
+    apiFetch(`${API_BASE}/api/jobs/${initialJob.id}/photos/reconcile`, { method: 'POST' }).then(r => r.json()).then(d => {
+      if (dead || !d?.ok || !d.job) return
+      if (d.images > 0) { setJob(d.job); onJobUpdated && onJobUpdated(d.job); const p = photoProgress(d.job); setCurrent(p.missing[0] || 'setup') }
+    }).catch(() => {})
+    return () => { dead = true }
+  }, [initialJob?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function shoot(slotKey) { setCurrent(slotKey); setTimeout(() => camRef.current?.click(), 0) }
   function choose(slotKey) { setCurrent(slotKey); setChooseFor(slotKey) }
@@ -496,16 +513,16 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         {/* THE big button — what to shoot next */}
         {!prog.complete || current === 'setup' ? (
-          <button type="button" onClick={() => choose(current)}
+          <button type="button" onClick={() => shoot(current)}
             className="w-full rounded-2xl py-5 px-4 text-left text-white mb-3"
             style={{ backgroundColor: ORANGE, boxShadow: '0 6px 18px rgba(205,68,25,.3)' }}>
-            <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap · {cur.n} of {SLOTS.length}</div>
+            <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap to shoot · {cur.n} of {SLOTS.length}</div>
             <div className="text-2xl font-extrabold leading-tight mt-0.5">{cur.label}</div>
             <div className="text-sm mt-1" style={{ opacity: .9 }}>{cur.hint}</div>
           </button>
         ) : (
           <div className="rounded-2xl py-4 px-4 mb-3 text-center font-extrabold text-lg" style={{ backgroundColor: '#dcfce7', color: GREEN }}>
-            ✓ Photo set complete{prog.miles.delta != null ? ` · test drive ${prog.miles.delta} mi` : ''}{tiresDone ? ` · 🛞 ${tire.front}/${tire.rear} psi` : ' · 🛞 tires next'}
+            ✓ All 8 in — nice{prog.miles.delta != null ? ` · test drive ${prog.miles.delta} mi` : ''}{tiresDone ? ` · 🛞 ${tire.front}/${tire.rear} psi` : ' · 🛞 tires next'}
           </div>
         )}
 
@@ -613,7 +630,8 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                     </div>
                   )}
                 </div>
-                <button type="button" onClick={() => choose(s.key)}
+                {!filled && <button type="button" onClick={() => pickFor(s.key)} title="Use a photo already on the phone" className="text-[11px] font-bold rounded-full px-2 py-1.5" style={{ backgroundColor: 'white', color: '#888', border: '1px solid #e0dbd6' }}>🖼</button>}
+                <button type="button" onClick={() => shoot(s.key)}
                   className="text-xs font-bold rounded-full px-2.5 py-1.5"
                   style={filled ? { backgroundColor: 'white', color: '#888', border: '1px solid #ddd' } : { backgroundColor: ORANGE, color: 'white' }}>
                   {filled ? (s.multi ? '+ more' : 'redo') : '📸'}

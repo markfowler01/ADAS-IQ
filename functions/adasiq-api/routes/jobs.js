@@ -1715,6 +1715,18 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
   }
 })
 
+// POST /api/jobs/:id/photos/reconcile — the sheet calls this when a tech
+// opens a card that still shows shots owed, so a set that's already in the
+// folder clears on the spot instead of at the next hourly pass.
+router.post('/:id/photos/reconcile', async (req, res) => {
+  try {
+    const job = rowToJob(await getTable(req).getRow(req.params.id))
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+    const r = await reconcilePhotosFromFolder(req, job)
+    res.json({ ok: true, images: r.images ?? 0, cleared: !!r.cleared, missing: r.missing || [], job: r.job || job })
+  } catch (e) { console.warn('[photos reconcile route]', e.message); res.status(500).json({ error: e.message }) }
+})
+
 // 🛞 Tire gate (Mark 2026-09-11): every job needs "all four set to the
 // manufacturer spec" confirmed at Ready to Invoice. Same override as photos.
 // Mark 2026-09-22: collision work only — repair-shop jobs and retail
