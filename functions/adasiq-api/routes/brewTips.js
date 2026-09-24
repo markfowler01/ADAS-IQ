@@ -191,6 +191,8 @@ async function alertTipsFailure(label, detail) {
 tipsRouter.post('/run', requireCronSecret, async (req, res) => {
   const dryRun = req.query.dry_run === '1' || req.query.dry_run === 'true'
   try {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req) && !dryRun) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     // 1. Try the manual queue first
     const queue = await readQueue(req)
     let manualTip = null

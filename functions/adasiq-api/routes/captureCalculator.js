@@ -535,6 +535,103 @@ captureCalcRouter.get('/approval/queue', requireCronSecretFlex, async (req, res)
 // TEMP DEBUG — unauthenticated diagnostic endpoint. REMOVE after Sunday-batch
 // outage is diagnosed (added 2026-05-26). Returns queue state, recent-draft
 // summary, env-var presence (booleans only — no values), and current PT day.
+// Global marketing kill switch — read/set/clear via admin endpoints.
+// When paused, ALL marketing drafters/publishers short-circuit and return
+// `{ok: true, skipped: true, reason: 'marketing_paused'}`.
+captureCalcRouter.get('/marketing/status', requireCronSecretFlex, async (req, res) => {
+  const { readMarketingKillSwitch } = await import('../services/marketingKillSwitch.js')
+  res.json({ ok: true, ...(await readMarketingKillSwitch(req)) })
+})
+captureCalcRouter.post('/marketing/pause', requireCronSecretFlex, express.json({ limit: '2kb' }), async (req, res) => {
+  const { pauseMarketing } = await import('../services/marketingKillSwitch.js')
+  const reason = String(req.body?.reason || 'paused by admin').slice(0, 300)
+  const setBy = String(req.body?.set_by || 'admin').slice(0, 80)
+  const rec = await pauseMarketing(req, { reason, setBy })
+  postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🛑 MARKETING PAUSED — all drafters/publishers will short-circuit until resumed.\nReason: ${reason}\nSet by: ${setBy}`).catch(() => {})
+  res.json({ ok: true, ...rec })
+})
+captureCalcRouter.post('/marketing/resume', requireCronSecretFlex, express.json({ limit: '2kb' }), async (req, res) => {
+  const { resumeMarketing } = await import('../services/marketingKillSwitch.js')
+  const setBy = String(req.body?.set_by || 'admin').slice(0, 80)
+  const rec = await resumeMarketing(req, { setBy })
+  postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Marketing resumed — drafters/publishers active again.\nSet by: ${setBy}`).catch(() => {})
+  res.json({ ok: true, ...rec })
+})
+
+// EMERGENCY — delete every marketing draft's published post on LI/FB/IG for a
+// given date. Also marks the local draft as deleted so the record stays.
+// Built 2026-09-24 after the "don't use ADAS sublet" self-own regression.
+//   POST /debug/emergency-delete-day?secret=X&date=2026-09-24
+//   Optional body: {categories:['story','van_field',...]} to limit scope
+captureCalcRouter.post('/debug/emergency-delete-day', requireCronSecretFlex, express.json({ limit: '4kb' }), async (req, res) => {
+  const axios = (await import('axios')).default
+  const dateStr = String(req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }))
+  const catFilter = Array.isArray(req.body?.categories) ? new Set(req.body.categories) : null
+  const dryRun = req.query.dry === '1'
+  try {
+    const segment = getSegment(req)
+    const { listQueue, updateDraft } = await import('../services/captureApprovalQueue.js')
+    const drafts = await listQueue(segment, {})
+    const targets = drafts.filter(d => {
+      if (d.status !== 'published') return false
+      if (!d.platform_id) return false
+      const pubDate = String(d.published_at || d.created_at || '').slice(0, 10)
+      if (pubDate !== dateStr) return false
+      if (catFilter && !catFilter.has(d.category)) return false
+      return true
+    })
+
+    const results = []
+    for (const d of targets) {
+      const platform = d.channel
+      const platformId = d.platform_id
+      let deleteResult = { ok: false, error: 'unknown channel: ' + platform }
+
+      if (dryRun) {
+        deleteResult = { ok: true, dry_run: true, would_delete: platformId }
+      } else if (platform === 'linkedin_personal') {
+        try {
+          const { getAccessToken } = await import('../services/brewLinkedIn.js')
+          const token = await getAccessToken()
+          const encoded = encodeURIComponent(platformId)
+          const r = await axios.delete(`https://api.linkedin.com/v2/ugcPosts/${encoded}`, {
+            headers: { Authorization: `Bearer ${token}`, 'X-Restli-Protocol-Version': '2.0.0' },
+            timeout: 15000, validateStatus: () => true,
+          })
+          deleteResult = r.status >= 200 && r.status < 300 || r.status === 204
+            ? { ok: true, status: r.status }
+            : { ok: false, status: r.status, error: JSON.stringify(r.data).slice(0, 200) }
+        } catch (e) { deleteResult = { ok: false, error: e.message } }
+      } else if (platform === 'facebook_page') {
+        try {
+          const token = process.env.FB_PAGE_ACCESS_TOKEN
+          const r = await axios.delete(`https://graph.facebook.com/v22.0/${encodeURIComponent(platformId)}`, {
+            params: { access_token: token }, timeout: 15000, validateStatus: () => true,
+          })
+          deleteResult = r.data?.success || (r.status >= 200 && r.status < 300)
+            ? { ok: true }
+            : { ok: false, status: r.status, error: JSON.stringify(r.data).slice(0, 200) }
+        } catch (e) { deleteResult = { ok: false, error: e.message } }
+      } else if (platform === 'instagram_business') {
+        // Instagram Graph API does NOT reliably support deleting business
+        // media via API — Mark has to delete via the IG app or Meta Business
+        // Suite. Record the miss so Mark knows.
+        deleteResult = { ok: false, error: 'Instagram Graph API does not support post deletion — delete manually via IG app or Meta Business Suite', manual_needed: true, ig_media_id: platformId }
+      }
+
+      if (!dryRun && deleteResult.ok) {
+        await updateDraft(segment, d.id, { status: 'deleted', deleted_at: new Date().toISOString(), delete_reason: 'emergency-delete-day' }).catch(() => {})
+      }
+      results.push({ id: d.id, channel: platform, category: d.category, platform_id: platformId, published_at: d.published_at, delete: deleteResult })
+    }
+
+    res.json({ ok: true, date: dateStr, dry_run: dryRun, total_targets: targets.length, results })
+  } catch (e) {
+    console.error('[emergency-delete-day]', e.message, e.stack)
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 captureCalcRouter.get('/debug/state', async (req, res) => {
   const out = { ok: true, generated_at: new Date().toISOString() }
   try {
@@ -1733,6 +1830,8 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
 captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   let vanStep = 'init'
   try {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     const segment = getSegment(req)
     const { draftVanPost, todayDayName } = await import('../services/vanPostDrafter.js')
     const { pickNextVanPhoto } = await import('../services/vanPhotoLibrary.js')
@@ -4373,6 +4472,8 @@ captureCalcRouter.post('/from-the-van/reset-issue-state', requireCronSecretFlex,
 captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_van_weekly_draft'), requireCronSecretFlex, async (req, res) => {
   const dry = req.query.dry === '1' || req.query.dry === 'true'
   try {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req) && !dry) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     // Cron calls (?cron=1, from the daily aa_van_weekly_draft cron) only run
     // on Sundays PT — the draft lands before Mark's Sunday review, matching
     // the safety net's Sun/Mon window. Manual/debug fires are ungated.
@@ -5954,6 +6055,8 @@ function todayPtDateStr() {
 // One-off draft. Idempotent per date — if pending exists, returns it.
 captureCalcRouter.post('/daily-ad/draft-today', requireCronSecretFlex, async (req, res) => {
   try {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     const { draftDailyAd } = await import('../services/absoluteAdDrafter.js')
     const { pickNextVanPhotoDatastore } = await import('../services/vanPhotoLibrary.js')
     const { composeAdCardImage } = await import('../services/absoluteAdCardImage.js')
@@ -6037,6 +6140,8 @@ captureCalcRouter.post('/daily-ad/draft-today', requireCronSecretFlex, async (re
 // One-off publish. Idempotent — if already published or killed, no-op.
 captureCalcRouter.post('/daily-ad/publish-today', requireCronSecretFlex, async (req, res) => {
   try {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     const { getVal, setVal } = await import('../services/vanDatastore.js')
     const dateStr = req.body?.date ? String(req.body.date) : todayPtDateStr()
     const p = await getVal(req, DAILY_AD_KEY(dateStr))

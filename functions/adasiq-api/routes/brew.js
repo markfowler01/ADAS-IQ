@@ -1956,6 +1956,8 @@ async function executeDailyPipeline(req) {
 
 cronRouter.post('/run', async (req, res) => {
   try {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     // Server-side day filter — keeps the Catalyst cron simple (fires daily)
     // while restricting actual sends to allowed days. Default: Mon–Fri.
     // Override via BREW_SEND_DAYS env var (e.g. "Mon,Tue,Wed,Thu,Fri").
@@ -2011,6 +2013,8 @@ function buildSocialCaption(digest) {
 // which is idempotent against the status row and only retries failed steps.
 cronRouter.post('/run-bonus', async (req, res) => {
   try {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     const dateISO = new Date().toISOString().slice(0, 10)
     const status = await readRunStatus(req, dateISO)
 

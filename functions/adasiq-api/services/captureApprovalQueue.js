@@ -115,7 +115,32 @@ const FULL_BODY_KEY = (id) => `capture_draft_body_${id}`
 export async function enqueueDraft(segment, draft) {
   segment = asSegment(segment)
   const id = crypto.randomBytes(9).toString('base64url')
-  const fullBody = String(draft.body || '')
+  let fullBody = String(draft.body || '')
+
+  // HARD REJECT — anti-sublet self-own guard. Mark IS a sublet ADAS vendor.
+  // Any draft telling shops to avoid/drop/stop-using sublet vendors is a
+  // self-own we cannot ship. Added 2026-09-24 after a marketing post went
+  // out recommending shops "not use an ADAS sublet company".
+  try {
+    const { detectAntiSubletViolation } = await import('./captureStoryGenerator.js')
+    const combined = `${draft.headline || ''}\n${fullBody}`
+    const hit = detectAntiSubletViolation(combined)
+    if (hit) {
+      // 🔄 Flip first (Mark 2026-09-24) — a blocked draft becomes a
+      // Partnership Discount post instead of nothing. Hard block is the floor.
+      const { flipAntiSublet } = await import('./subletFlip.js')
+      const flipped = await flipAntiSublet({ headline: String(draft.headline || ''), body: fullBody }, { what: `${draft.channel || ''} ${draft.category || 'post'}`.trim(), hit, context: `Channel: ${draft.channel || 'unknown'}. Keep the headline short enough for that channel and keep the body the same length.` })
+      if (flipped) { draft = { ...draft, headline: flipped.headline, body: flipped.body, flipped_from_anti_sublet: hit }; fullBody = String(flipped.body || '') }
+      else {
+        const msg = `enqueueDraft REFUSED — anti-sublet self-own detected: "${hit}". Channel=${draft.channel} category=${draft.category} headline="${String(draft.headline || '').slice(0, 100)}". Fix the master prompt or regenerate. This is a HARD block.`
+        console.error(`[enqueueDraft] ${msg}`)
+        throw new Error(msg)
+      }
+    }
+  } catch (e) {
+    // Re-throw the hard-block error; only swallow import errors
+    if (String(e.message || '').startsWith('enqueueDraft REFUSED')) throw e
+  }
 
   // Persist full body under its own key (so publisher + edit/confirm can fetch)
   if (fullBody) {

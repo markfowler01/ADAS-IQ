@@ -110,9 +110,35 @@ export async function draftDailyAd({ avoidPatterns = [] } = {}) {
     }
     return parsed
   }
-  try { return await attempt() }
-  catch (e) {
-    console.warn('[absoluteAd drafter] first attempt failed, retrying:', e.message)
-    return await attempt()
+  const parsed = await (async () => {
+    try { return await attempt() }
+    catch (e) {
+      console.warn('[absoluteAd drafter] first attempt failed, retrying:', e.message)
+      return await attempt()
+    }
+  })()
+
+  // HARD REJECT — anti-sublet self-own guard (same as captureStoryGenerator).
+  // Mark IS a sublet vendor. This drafter can't ship copy telling shops to
+  // avoid sublet vendors. Added 2026-09-24 after the marketing story-drafter
+  // regressed and shipped anti-sublet copy on all channels.
+  try {
+    const { detectAntiSubletViolation } = await import('./captureStoryGenerator.js')
+    const combined = `${parsed.image_headline || ''}\n${parsed.hook || ''}\n${parsed.post_body_markdown || ''}`
+    const hit = detectAntiSubletViolation(combined)
+    if (hit) {
+      // 🔄 Flip it (Mark 2026-09-24) rather than lose the day's ad.
+      const { flipAntiSublet } = await import('./subletFlip.js')
+      const flipped = await flipAntiSublet(
+        { image_headline: String(parsed.image_headline || ''), hook: String(parsed.hook || ''), post_body_markdown: String(parsed.post_body_markdown || '') },
+        { what: 'daily Absolute ADAS ad', hit, context: 'image_headline is the headline burned into the image — keep it under about 7 words. hook is the first line of the post. post_body_markdown is the body.' })
+      if (flipped) Object.assign(parsed, flipped, { flipped_from_anti_sublet: hit })
+      else throw new Error(`daily-ad drafter REFUSED — anti-sublet self-own detected: "${hit}". This is a hard block; the master prompt needs adjustment or regenerate.`)
+    }
+  } catch (e) {
+    if (String(e.message || '').startsWith('daily-ad drafter REFUSED')) throw e
+    // Import errors are non-fatal — better to ship the draft than to block on tooling
   }
+
+  return parsed
 }

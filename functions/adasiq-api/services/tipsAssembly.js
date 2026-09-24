@@ -119,7 +119,7 @@ Generate the tip card.`
   const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
   try {
     const parsed = JSON.parse(cleaned)
-    return {
+    const card = {
       eyebrow: String(parsed.eyebrow || '').toUpperCase().slice(0, 30),
       headline: String(parsed.headline || '').slice(0, 120),
       headlineEmphasis: String(parsed.headline_emphasis || '').slice(0, 40),
@@ -129,6 +129,36 @@ Generate the tip card.`
       caption: String(parsed.caption || '').slice(0, 1800),
       photoSubject: String(parsed.photo_subject || '').slice(0, 250),
     }
+    // HARD REJECT — anti-sublet self-own guard. Mark IS a sublet ADAS
+    // vendor. This drafter shipped "Stop subletting ADAS. Own the margin
+    // instead." on 2026-09-24 — never again. Same guard the story drafter
+    // and daily-ad drafter now carry.
+    try {
+      const { detectAntiSubletViolation } = await import('./captureStoryGenerator.js')
+      const combined = `${card.eyebrow}\n${card.headline}\n${card.headlineEmphasis}\n${card.bullets.join('\n')}\n${card.caption}`
+      const hit = detectAntiSubletViolation(combined)
+      if (hit) {
+        // 🔄 Flip it (Mark 2026-09-24) — the tip card ships as Partnership
+        // Discount copy instead of the run dying. Design spec is unchanged:
+        // same fields, same lengths.
+        const { flipAntiSublet } = await import('./subletFlip.js')
+        const flipped = await flipAntiSublet(
+          { eyebrow: card.eyebrow, headline: card.headline, headlineEmphasis: card.headlineEmphasis, bullets: card.bullets, caption: card.caption },
+          { what: 'ADAS Brew daily tip card', hit, context: 'Locked card design: eyebrow <= 40 chars, headline <= 70, headlineEmphasis <= 40 (a short phrase that also appears inside headline), exactly the same number of bullets, each <= 80 chars, caption is the social caption.' })
+        if (flipped) {
+          card.eyebrow = String(flipped.eyebrow || card.eyebrow).slice(0, 40)
+          card.headline = String(flipped.headline || card.headline).slice(0, 70)
+          card.headlineEmphasis = String(flipped.headlineEmphasis || '').slice(0, 40)
+          card.bullets = (Array.isArray(flipped.bullets) ? flipped.bullets : card.bullets).map(b => String(b).slice(0, 80)).slice(0, 3)
+          card.caption = String(flipped.caption || card.caption).slice(0, 1800)
+          card.flippedFromAntiSublet = hit
+        } else throw new Error(`Brew tip card REFUSED — anti-sublet self-own detected: "${hit}". This is a hard block; fix the master prompt or regenerate.`)
+      }
+    } catch (e) {
+      if (String(e.message || '').startsWith('Brew tip card REFUSED')) throw e
+      // Non-fatal on import errors
+    }
+    return card
   } catch (e) {
     throw new Error(`tip card JSON parse failed: ${e.message} — raw: ${cleaned.slice(0, 200)}`)
   }

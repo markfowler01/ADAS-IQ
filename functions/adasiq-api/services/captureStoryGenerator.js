@@ -72,7 +72,25 @@ Hard constraints:
 - Pick a real Western Washington city.
 - Specific moment, specific number, specific reaction.
 
-v3.1 villain framing: list-price sublet vendors that don't discount. NEVER attack "sublet vendors" as a category — Mark IS a sublet vendor. The villain is specifically vendors who charge full list and don't acknowledge the shop's facility is part of the calibration.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🚨 ABSOLUTE HARD RULE — READ THIS TWICE 🚨
+Mark IS a sublet ADAS calibration vendor. Absolute ADAS is a sublet.
+
+You are FORBIDDEN from generating copy that:
+- Tells shops to avoid, drop, replace, stop using, or "think twice about" ADAS sublet vendors
+- Uses phrases like "don't sublet", "stop subletting", "you don't need a sublet", "cut out the middleman"
+- Frames sublet vendors as a category to escape from
+- Suggests shops bring calibration in-house instead of subletting
+- Calls ADAS vendors overpriced, greedy, or predatory as a group
+
+The villain is SPECIFICALLY: list-price sublet vendors who charge full retail
+and don't share margin with the shop. Mark's Partnership Discount Model
+solves this by giving shops 15-25% off list — WITHIN the sublet relationship,
+not by killing it. The shop keeps their calibration partner AND their margin.
+
+If your draft contains any anti-sublet framing, YOU HAVE VIOLATED THE HARD
+RULE. Rewrite it before returning.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 OUTPUT: just the story. Starts with [COMPOSITE] on its own line. No preamble, no markdown, no closing notes.`
 
@@ -114,7 +132,56 @@ Return just the story body, starting with [COMPOSITE] on its own line.`
   })
   const raw = (msg.content?.[0]?.text || '').trim()
   if (!raw) throw new Error('Empty response from Claude story generator')
-  return sanitizeAiOutput(raw)
+  const sanitized = sanitizeAiOutput(raw)
+
+  // HARD REJECT — anti-sublet phrasing must never ship. Mark IS a sublet
+  // vendor. This is a self-own that hit us 2026-09-24 and prompted the
+  // "delete every post from today" emergency. Better to fail loudly and
+  // block the send than let another anti-sublet post go out.
+  const violation = detectAntiSubletViolation(sanitized)
+  if (violation) {
+    // 🔄 Flip it instead of dying (Mark 2026-09-24): the same story retold as
+    // what the right sublet partner ADDS. Hard block stays the floor.
+    const { flipAntiSublet } = await import('./subletFlip.js')
+    const flipped = await flipAntiSublet(sanitized, { what: 'weekly composite story', hit: violation, context: 'Keep the [COMPOSITE] label on its own first line, 180-240 words, first-name-only shop owner, a Western Washington city, one specific number and one specific reaction.' })
+    // The label has to sit on its own line with a blank line under it — that
+    // is what every downstream LinkedIn draft splits on.
+    if (flipped) return `[COMPOSITE]\n\n${String(flipped).replace(/^\s*\[COMPOSITE\]\s*/i, '').trim()}`
+    throw new Error(`Anti-sublet self-own detected in story output — refusing to return: "${violation}". Rework the master prompt or regenerate.`)
+  }
+
+  return sanitized
+}
+
+/**
+ * Scan text for phrasing that attacks the sublet model as a category
+ * (which Mark IS). Returns the matched phrase if a violation is present,
+ * or null if the copy is safe.
+ *
+ * Deliberately generous — false positives are cheaper than another
+ * self-own that goes public.
+ */
+export function detectAntiSubletViolation(text) {
+  const t = String(text || '').toLowerCase()
+  const patterns = [
+    /don'?t use\s+(?:an?\s+)?(?:adas\s+)?sublet/,
+    /stop\s+(?:using|subletting|paying)\s+(?:an?\s+|your\s+)?(?:adas\s+)?sublet/,
+    /avoid\s+(?:the\s+|using\s+)?(?:adas\s+)?sublet/,
+    /(?:you\s+)?don'?t\s+need\s+(?:an?\s+|the\s+)?(?:adas\s+)?sublet/,
+    /(?:drop|dump|fire|ditch)\s+(?:your\s+)?(?:adas\s+)?sublet/,
+    /cut\s+out\s+the\s+middleman/,
+    /(?:bring|take)\s+(?:calibration|adas|it)\s+in[- ]house(?:\s+instead)?/,
+    /sublet\s+(?:vendors|companies|shops)\s+(?:are\s+)?(?:overpriced|greedy|predatory|ripping)/,
+    /stop\s+subletting/,
+    /don'?t\s+sublet/,
+    /think\s+twice\s+(?:about|before)\s+subletting/,
+    /sublet(?:ting)?\s+is\s+(?:killing|hurting|costing)\s+(?:you|your\s+shop)/,
+  ]
+  for (const re of patterns) {
+    const m = t.match(re)
+    if (m) return m[0]
+  }
+  return null
 }
 
 export { ARCHETYPES, CITIES, SHOP_PROFILES }
