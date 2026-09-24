@@ -166,7 +166,11 @@ router.post('/email-to-job', async (req, res) => {
 router.post('/photos-reconcile', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
-  try { const { reconcileOwedPhotos } = await import('./jobs.js'); res.json(await reconcileOwedPhotos(req)) }
+  try {
+    const J = await import('./jobs.js')
+    if (req.query.job) { const job = (await J.readJobsPublic(req)).find(j => String(j.id) === String(req.query.job)); if (!job) return res.status(404).json({ error: 'job not found' }); const r = await J.reconcilePhotosFromFolder(req, job, { notify: false }); return res.json({ ...r, job: undefined }) }
+    res.json(await J.reconcileOwedPhotos(req))
+  }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 

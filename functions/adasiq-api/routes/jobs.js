@@ -1690,14 +1690,20 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     if (!job.folder_url) patch.folder_url = `https://workdrive.zoho.com/folder/${folderId}`
     if (slotKey === 'odo_before' && miles != null) patch.odo_before = String(miles)
     if (slotKey === 'odo_after' && miles != null) patch.odo_after = String(miles)
-    let updated = await updateJob(req, job.id, { ...job, ...patch })
+    // Fresh read right before the write (2026-09-23): two shots uploading at
+    // once each read the row, added their slot, and the second write erased
+    // the first — the files were in the folder but the card lost the slots.
+    let base = job
+    try { base = rowToJob(await getTable(req).getRow(job.id)); const fresh = parsePhotoSlots(base.photo_slots); if (slotDef.multi) fresh.setup = [...(fresh.setup || []), entry]; else fresh[slotKey] = entry; if (fresh._pending && slots._pending === undefined) delete fresh._pending; patch.photo_slots = JSON.stringify(fresh) } catch (e) { console.log('[photo-slot] fresh read failed, writing what we have:', e.message) }
+    let updated = await updateJob(req, job.id, { ...base, ...patch })
     // Was the card moved to Ready to Invoice on a bad signal? Once the set is whole, clear the flag and tell #dispatch.
     // The debt is the SHOTS, not the test drive: clear it as soon as all
     // eight slots are filled, or a short test drive would keep the card on
     // the owed list forever (Mark 2026-09-18).
-    if (slots._pending && photoProgress(updated).missing.length === 0) {
-      const by = slots._pending.by; delete slots._pending
-      updated = await updateJob(req, job.id, { ...updated, photo_slots: JSON.stringify(slots) })
+    const after = parsePhotoSlots(updated.photo_slots)
+    if (after._pending && photoProgress(updated).missing.length === 0) {
+      const by = after._pending.by; delete after._pending
+      updated = await updateJob(req, job.id, { ...updated, photo_slots: JSON.stringify(after) })
       // Awaited: Catalyst freezes the function once the response goes out.
       await postToCliqChannel(DISPATCH_CHANNEL, `✅ *All photos in* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — the set from ${by}'s phone finished uploading. Good to invoice.`).catch(e => console.log('[photo-slot] cliq failed:', e.message))
     }

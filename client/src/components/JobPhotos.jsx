@@ -191,9 +191,11 @@ function xhrUpload(url, fd, onProgress) {
 let lastNotify = 0
 const notifyThrottled = () => { const n = Date.now(); if (n - lastNotify > 150) { lastNotify = n; notify() } }
 
-// Two uploads at a time (bad signal is latency-bound, not bandwidth-bound).
+// One upload at a time (2026-09-23): two at once raced on the card and the
+// second write erased the first slot. The server now merges on a fresh read
+// too, but one lane keeps the order the tech shot them in and the bar honest.
 let workers = 0
-const MAX_WORKERS = 2
+const MAX_WORKERS = 1
 async function pump() {
   if (workers >= MAX_WORKERS) return
   workers++
