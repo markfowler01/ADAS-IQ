@@ -170,7 +170,16 @@ const RIVIAN_BASE_ITEMS = [
 // same extractor + rules DB + Rivian base lines + auto-learn, so a CCC
 // estimate that arrives by email is scrubbed exactly like one Kat uploads.
 export async function scrubPdfBuffer(req, buffer, { learn = true } = {}) {
-  const data = await extractFromPdf(buffer)
+  // 📋 Hand the scrubber what the manufacturers actually publish, so a
+  // required/not-required call is grounded in the OEM's own words and the
+  // justification can cite it by name (Mark 2026-09-24).
+  let oemRefs = '', refsFor = null
+  try {
+    const { oemReferenceBlock } = await import('../services/positionStatements.js')
+    oemRefs = await oemReferenceBlock(req, {})
+    refsFor = make => oemReferenceBlock(req, { make })   // called once the make is known
+  } catch { oemRefs = '' }
+  const data = await extractFromPdf(buffer, { oemRefs, refsFor })
 
   // Fallback: if no RO number found, use last 8 digits of VIN
   if (!data.ro_number && data.vin && data.vin.length >= 8) {

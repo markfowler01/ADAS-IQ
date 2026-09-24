@@ -154,11 +154,31 @@ export async function detectPdfType(base64Pdf) {
 }
 
 /**
+ * One cheap read that answers both questions the extractor needs up front:
+ * which kind of PDF this is, and whose vehicle it is. Knowing the make before
+ * the big call lets us hand the scrubber that manufacturer's own position
+ * statements in full (Mark 2026-09-24).
+ */
+export async function detectPdfMeta(base64Pdf) {
+  const message = await getClient().messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 40,
+    messages: [{ role: 'user', content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } },
+      { type: 'text', text: 'Reply with exactly two values separated by a pipe and nothing else: (1) CCC if this is a CCC ONE collision repair estimate, otherwise KINETIC; (2) the vehicle manufacturer in full (Toyota, Mercedes-Benz, Ford), or UNKNOWN. Example: CCC|Mercedes-Benz' },
+    ] }],
+  })
+  const raw = (message.content?.[0]?.text || '').trim()
+  const [t, m] = raw.split('|').map(x => String(x || '').trim())
+  return { type: /CCC/i.test(t) ? 'CCC' : 'KINETIC', make: /unknown/i.test(m || '') ? '' : (m || '') }
+}
+
+/**
  * Extract calibration data from a CCC ONE estimate PDF.
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON matching Kinetic extractor format
  */
-export async function extractFromCccPdf(pdfBuffer) {
+export async function extractFromCccPdf(pdfBuffer, { oemRefs = '' } = {}) {
   const base64Pdf = pdfBuffer.toString('base64')
 
   const message = await getClient().messages.create({
@@ -175,7 +195,13 @@ export async function extractFromCccPdf(pdfBuffer) {
         },
         {
           type: 'text',
-          text: 'Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations. Return raw JSON only.',
+          text: `Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations. Return raw JSON only.${oemRefs ? `
+
+━━ ABSOLUTE ADAS OEM DOCUMENT LIBRARY ━━
+These are the manufacturers' own published position statements we hold on file. When one of them covers this vehicle's make, it OUTRANKS your general knowledge: follow what it requires, and name it inside the justification (e.g. "per Ford's Collision Position Statement: ADAS Integrity and Repair Technical Imperatives (2026-05-01)"). If the library says nothing about this make, decide as usual and cite the OEM position statement generically.
+
+${oemRefs}
+━━ END LIBRARY ━━` : ''}`,
         },
       ],
     }],
@@ -207,21 +233,24 @@ export async function extractFromCccPdf(pdfBuffer) {
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON from Claude
  */
-export async function extractFromPdf(pdfBuffer) {
+export async function extractFromPdf(pdfBuffer, { oemRefs = '', refsFor = null } = {}) {
   const base64Pdf = pdfBuffer.toString('base64')
 
-  // Auto-detect PDF type
-  let pdfType = 'KINETIC'
+  // Auto-detect PDF type (and the make, so the OEM library can be narrowed)
+  let pdfType = 'KINETIC', detectedMake = ''
   try {
-    pdfType = await detectPdfType(base64Pdf)
-    console.log(`[extract] PDF type detected: ${pdfType}`)
+    const meta = await detectPdfMeta(base64Pdf)
+    pdfType = meta.type; detectedMake = meta.make
+    console.log(`[extract] PDF type detected: ${pdfType}${detectedMake ? ` · ${detectedMake}` : ''}`)
   } catch (e) {
     console.warn('[extract] PDF type detection failed, defaulting to KINETIC:', e.message)
   }
 
   // Route to appropriate extractor
   if (pdfType === 'CCC') {
-    return extractFromCccPdf(pdfBuffer)
+    // Narrow the library to this manufacturer now that we know it.
+    if (refsFor && detectedMake) { try { oemRefs = (await refsFor(detectedMake)) || oemRefs } catch { /* keep the generic block */ } }
+    return extractFromCccPdf(pdfBuffer, { oemRefs })
   }
 
   // Kinetic extractor

@@ -158,6 +158,31 @@ ${hint ? `\nContext from the page that linked it: ${hint}` : ''}` },
   return out
 }
 
+/**
+ * File a PDF we already hold the bytes for — Mark's own curated collection in
+ * WorkDrive (2026-09-24), not something scraped off the web.
+ */
+export async function importBuffer(req, { buffer, filename, sourceLabel = '', oemHint = '' }) {
+  if (!buffer || buffer.length < 512 || buffer.slice(0, 5).toString('latin1') !== '%PDF-') throw new Error('not a PDF')
+  const meta = await summarizePdf(buffer, [oemHint ? `Filed by Absolute ADAS under "${oemHint}"` : '', filename].filter(Boolean).join(' · '))
+  const name = String(filename || 'document.pdf').replace(/[^\w.\- ]+/g, '-').slice(0, 200)
+  const row = {
+    doc_oem: canonicalOem(meta.oem || oemHint).slice(0, 120),
+    doc_type: String(meta.type || 'reference').slice(0, 60),
+    doc_title: String(meta.title || name.replace(/\.pdf$/i, '')).slice(0, 400),
+    doc_filename: name,
+    doc_summary: String(meta.summary || '').slice(0, 2000),
+    doc_notes: String(meta.notes || '').slice(0, 1000),
+    doc_source_url: String(sourceLabel || `workdrive:${name}`).slice(0, 600),
+    doc_hosted_url: '',
+    doc_published_date: String(meta.published_date || '').slice(0, 10),
+    doc_file_size_bytes: String(buffer.length),
+    doc_imported_at: new Date().toISOString(),
+  }
+  const inserted = await catalyst.initialize(req, { type: 'advancedio' }).datastore().table(TABLE).insertRow(row)
+  return { imported: true, row: { ...row, ROWID: inserted?.ROWID || '' } }
+}
+
 /** Download a PDF, read it, and file it in AdasPositionStatements. */
 export async function importPdf(req, item) {
   const r = await axios.get(item.url, { headers: UA, responseType: 'arraybuffer', timeout: 45000, maxContentLength: MAX_PDF })
@@ -319,4 +344,27 @@ export async function importNextPositionStatement(req) {
     }
     return { skipped: r.skipped, title: item.title, left: queue.length }
   } catch (e) { return { failed: e.message, title: item.title, left: queue.length } }
+}
+
+/**
+ * The OEM library as context for the CCC scrubber (Mark 2026-09-24: "I want
+ * the scrubber to use this as a reference also"). Compact on purpose: the
+ * matching make gets its full summary, everyone else a one-liner, so the
+ * prompt stays small enough to ride along with no extra Claude call.
+ */
+export async function oemReferenceBlock(req, { make = '' } = {}) {
+  try {
+    const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(
+      `SELECT doc_oem, doc_type, doc_title, doc_summary, doc_notes, doc_published_date FROM ${TABLE} LIMIT 300`)
+    const docs = (rows || []).map(r => r[TABLE] || r).filter(d => d.doc_title)
+    if (!docs.length) return ''
+    const want = canonicalOem(make).toLowerCase()
+    const mine = want ? docs.filter(d => canonicalOem(d.doc_oem).toLowerCase() === want) : []
+    const rest = docs.filter(d => !mine.includes(d))
+    const line = (d, long) => `- ${canonicalOem(d.doc_oem) || 'OEM'}: "${d.doc_title}"${d.doc_published_date ? ` (${d.doc_published_date})` : ''}${long ? `\n    ${String(d.doc_summary || '').replace(/\s+/g, ' ').slice(0, 420)}` : ''}`
+    const parts = []
+    if (mine.length) parts.push(`What ${canonicalOem(make)} itself publishes (use these first, cite them by name):\n${mine.map(d => line(d, true)).join('\n')}`)
+    if (rest.length) parts.push(`Other manufacturers' statements on file (only relevant if this vehicle is one of them):\n${rest.slice(0, 60).map(d => line(d, false)).join('\n')}`)
+    return parts.join('\n\n')
+  } catch (e) { console.warn('[pos-stmt] reference block failed:', e.message); return '' }
 }

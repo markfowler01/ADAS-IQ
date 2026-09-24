@@ -279,6 +279,26 @@ router.get('/email-intake/status', async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+// POST /api/crm-sync-cron/position-statements/upload — file one PDF from Mark's
+// own OEM collection. multipart: file=<pdf>, folder=<OEM folder>, path=<label>.
+const oemDocUpload = (await import('multer')).default({ storage: (await import('multer')).default.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } }).single('file')
+router.post('/position-statements/upload', (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  oemDocUpload(req, res, async err => {
+    if (err) return res.status(400).json({ error: err.message })
+    if (!req.file) return res.status(400).json({ error: 'no file' })
+    try {
+      const P = await import('../services/positionStatements.js')
+      const filename = String(req.body?.name || req.file.originalname || 'document.pdf')
+      const known = await P.knownUrls(req)
+      if (known.has(P.normUrl(filename))) return res.json({ skipped: 'already in the library', filename })
+      const r = await P.importBuffer(req, { buffer: req.file.buffer, filename, oemHint: String(req.body?.folder || ''), sourceLabel: String(req.body?.path || `workdrive:${filename}`) })
+      res.json({ ok: true, oem: r.row.doc_oem, title: r.row.doc_title, type: r.row.doc_type, published: r.row.doc_published_date })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+})
+
 // GET /api/crm-sync-cron/who-gets-the-text?tech=Jayden — who a dispatch text would reach. Sends nothing.
 router.get('/who-gets-the-text', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
@@ -318,6 +338,13 @@ router.post('/position-statements/backfill', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
   try { const { backfillPositionStatements } = await import('../services/positionStatements.js'); res.json(await backfillPositionStatements(req, { limit: req.query.limit, oem: String(req.query.oem || '') })) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// GET /api/crm-sync-cron/position-statements/reference?make=Ford — exactly what the scrubber is handed. Scrubs nothing.
+router.get('/position-statements/reference', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { oemReferenceBlock } = await import('../services/positionStatements.js'); const block = await oemReferenceBlock(req, { make: String(req.query.make || '') }); res.json({ ok: true, chars: block.length, block }) }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 // GET /api/crm-sync-cron/position-statements/library — what's in the library today.
