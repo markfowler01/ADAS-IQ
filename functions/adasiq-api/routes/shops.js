@@ -233,6 +233,22 @@ router.post('/sync-customers', async (req, res) => {
   catch (err) { console.error('[shops sync-customers]', err.message); res.status(500).json({ error: err.message }) }
 })
 
+// 📝 Estimate first (Mark 2026-09-23: "all Express Auto Body / B&H cars need
+// an estimate sent first"). A per-shop rule shown on the CRM card and on
+// every job / request card, and written into request tickets from text/email.
+router.put('/:id/estimate-first', async (req, res) => {
+  try {
+    const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Owner / Kat only' })
+    const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
+    const on = !!req.body?.on
+    const next = { ...br, estimate_first: on, estimate_first_note: String(req.body?.note || '').slice(0, 200), estimate_first_by: req.user?.name || req.user?.email || '', estimate_first_at: new Date().toISOString() }
+    const updated = await updateShop(req, shop.id, { ...shop, billing_rules: next })
+    await postToCliqChannel(DISPATCH_CHANNEL, `📝 *${shop.shop_name}: estimate first ${on ? 'ON' : 'OFF'}* — ${on ? 'every car needs an estimate sent before work' : 'no longer required'}${req.body?.note ? ` · ${req.body.note}` : ''} (${req.user?.name || 'staff'})`).catch(() => {})
+    res.json({ ok: true, estimate_first: on, note: next.estimate_first_note, shop: updated })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // 🔗 Integrations (Mark 2026-09-23): Kinetic via CCC Secure Share, ADAS Maps.
 router.get('/:id/integrations', async (req, res) => {
   try {

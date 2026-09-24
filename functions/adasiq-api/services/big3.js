@@ -146,7 +146,8 @@ export async function big3Map(req) {
     const drps = Array.isArray(sh.drps) ? sh.drps : []
     const billing = br.customer_type ? { customer_type: br.customer_type, discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, pay_mode: br.pay_mode || CUSTOMER_TYPES[br.customer_type]?.pay || '', mode: billingModeFor(br.customer_type) } : null
     const ints = br.integrations ? { kinetic: br.integrations.kinetic?.state || 'off', adasmaps: br.integrations.adasmaps?.state || 'off' } : null
-    if (rules || drps.length || billing || ints) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete: !!complete, drps, billing, integrations: ints }
+    const estimateFirst = !!br.estimate_first
+    if (rules || drps.length || billing || ints || estimateFirst) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete: !!complete, drps, billing, integrations: ints, estimate_first: estimateFirst, estimate_first_note: br.estimate_first_note || '' }
     if ((!complete || !billing) && ['active', 'second_active', 'active2'].includes(sh.pipeline_stage)) missing.push({ id: sh.id, shop_name: sh.shop_name, no_big3: !complete, no_billing: !billing })
   }
   return { map, missing }

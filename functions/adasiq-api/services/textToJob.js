@@ -78,6 +78,9 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
     const name = contact?.contact_name || ''
     const who = name && shop ? `${name} @ ${shop}` : (name || shop || (isEmail ? from : formatPhonePretty(from)))
     const stamp = `${ptToday()} ${ptTime()}`
+    // 📝 Estimate-first shops: the ticket says so up top (Mark 2026-09-23).
+    let estimateFirst = false, estimateNote = ''
+    if (shop) { try { const { findShopByName } = await import('./big3.js'); const sh = await findShopByName(req, shop); const br = typeof sh?.billing_rules === 'string' ? (JSON.parse(sh.billing_rules || '{}') || {}) : (sh?.billing_rules || {}); estimateFirst = !!br.estimate_first; estimateNote = br.estimate_first_note || '' } catch { /* fine */ } }
     const x = await extractJobsFromText({ body, shop, sender: name })
     console.log(`[${channel}→job] ${who}: intent=${x.intent} conf=${x.confidence} vehicles=${x.vehicles.length} · ${x.summary}`)
     out.extraction = { intent: x.intent, confidence: x.confidence, vehicles: x.vehicles, summary: x.summary }
@@ -110,7 +113,7 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
       const vin = cleanVin(v.vin)
       const probe = { shop_name: shop, vehicle, year: v.year || '', make: v.make || '', model: v.model || '', vin, quote_number: v.ro || '', notes: '' }
       const match = await jobs.findOpenRequestFor(req, probe).catch(() => null)
-      const line = `${icon} ${stamp} · ${who} ${verb}: "${quoted}"`
+      const line = `${estimateFirst ? `📝 ESTIMATE FIRST — ${shop} needs an estimate sent before any work${estimateNote ? ` (${estimateNote})` : ''}.\n` : ''}${icon} ${stamp} · ${who} ${verb}: "${quoted}"`
       const detail = [v.services?.length ? `Asked for: ${v.services.join(', ')}` : '', v.needed_by_text ? `Needed: ${v.needed_by_text}${v.needed_by_date ? ` (${v.needed_by_date})` : ''}` : '', v.note ? `Note: ${v.note}` : ''].filter(Boolean).join(' · ')
       if (match) {
         const hold = x.intent === 'hold'
@@ -134,13 +137,13 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
         technician: '', notes: `${line}${detail ? `\n${detail}` : ''}`.slice(0, 9000),
       })
       out.created.push({ id: job.id, vehicle, vin, ro: v.ro || '' })
-      const head = `${icon} *Job Requested — via ${isEmail ? 'EMAIL' : 'TEXT'}* · ${shop}`
+      const head = `${icon} *Job Requested — via ${isEmail ? 'EMAIL' : 'TEXT'}* · ${shop}${estimateFirst ? ' · 📝 *ESTIMATE FIRST*' : ''}`
       const l2 = `${vehicle || 'Vehicle TBD'}${vin ? ` · VIN ${vin.length === 17 ? vin : '…' + vin.slice(-4)}` : ''}${v.ro ? ` · RO ${v.ro}` : ''}${v.needed_by_text ? ` · ⏰ ${v.needed_by_text}` : ''}`
       const l3 = `${name ? `👤 ${name} · ` : ''}"${quoted.slice(0, 240)}"${v.services?.length ? `\n🔧 ${v.services.join(', ')}` : ''}`
       const msg = `${head}\n${l2}\n${l3}${linkLine}`
       await postToCliqChannel(AA_JOBS_CHANNEL, msg).catch(e => console.warn('[text→job aajobs]', e.message))
       await postToCliqChannel(DISPATCH_CHANNEL, msg).catch(e => console.warn('[text→job dispatch]', e.message))
-      await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `${icon} ${isEmail ? 'Email' : 'Text'} → job request: ${shop}`, body: `${vehicle || 'Vehicle TBD'}${v.ro ? ` · RO ${v.ro}` : ''}${v.needed_by_text ? ` · ${v.needed_by_text}` : ''}`, jobId: job.id, job, skipCliq: true, skipTechChannel: true }).catch(() => {})
+      await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `${icon} ${isEmail ? 'Email' : 'Text'} → job request: ${shop}${estimateFirst ? ' · 📝 estimate first' : ''}`, body: `${vehicle || 'Vehicle TBD'}${v.ro ? ` · RO ${v.ro}` : ''}${v.needed_by_text ? ` · ${v.needed_by_text}` : ''}`, jobId: job.id, job, skipCliq: true, skipTechChannel: true }).catch(() => {})
     }
     return out
   } catch (e) {

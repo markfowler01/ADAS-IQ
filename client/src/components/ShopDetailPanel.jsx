@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import TextAsMarkModal from './TextAsMarkModal.jsx'
-import Big3Rules, { DrpRules, BooksLink } from './books/Big3Rules.jsx'
+import Big3Rules, { DrpRules, BooksLink, EstimateFirstToggle } from './books/Big3Rules.jsx'
 import IntegrationsPanel from './books/Integrations.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import {
@@ -874,6 +874,7 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
           {tab === 'jobs' && <JobsTab shopName={form.shop_name} />}
           {tab === 'billing' && (<>
             <BooksLink shop={shop} />
+            <EstimateFirstToggle shop={shop} />
             <IntegrationsPanel shop={shop} />
             <Big3Rules shop={form} />
             <DrpRules shop={form} />

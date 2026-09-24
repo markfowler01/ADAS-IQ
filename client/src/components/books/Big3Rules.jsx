@@ -365,3 +365,39 @@ export function BooksLink({ shop }) {
     </div>
   )
 }
+
+
+// 📝 Estimate first (Mark 2026-09-23): shops whose cars always need an
+// estimate sent before work. Bright pill on CRM + job cards; toggle on the
+// Billing tab; text/email tickets carry it in their notes.
+export function EstimateFirstPill({ shopName, size = 'xs' }) {
+  const map = useBig3Map()
+  const e = map[shopKeyOf(shopName)]
+  if (!e?.estimate_first) return null
+  const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
+  return <span className={`${cls} font-extrabold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' }} title={`Every car at this shop needs an estimate sent before work${e.estimate_first_note ? ` · ${e.estimate_first_note}` : ''}`}>📝 ESTIMATE FIRST</span>
+}
+export function EstimateFirstToggle({ shop }) {
+  const map = useBig3Map()
+  const cur = map[shopKeyOf(shop?.shop_name)]
+  const [on, setOn] = useState(!!cur?.estimate_first)
+  const [note, setNote] = useState(cur?.estimate_first_note || '')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => { setOn(!!cur?.estimate_first); setNote(cur?.estimate_first_note || '') }, [cur?.estimate_first, cur?.estimate_first_note])
+  if (!shop?.id) return null
+  async function save(next) {
+    setBusy(true)
+    try { const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/estimate-first`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: next, note }) }); const d = await r.json(); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setOn(!!d.estimate_first); invalidateBig3Map() }
+    catch (e) { alert(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="rounded-xl p-3 mb-3 flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: on ? '#fffbeb' : 'white', border: `1.5px solid ${on ? '#fcd34d' : '#e8e4e0'}` }}>
+      <div className="min-w-0">
+        <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>📝 Estimate first{on ? ' — ON' : ''}</div>
+        <div className="text-[11px]" style={{ color: '#666' }}>Every car at this shop needs an estimate sent (and approved) before work. Shows on the CRM card, every job and request card, and tickets that come in by text or email.</div>
+        {on && <input value={note} onChange={e => setNote(e.target.value)} onBlur={() => save(true)} placeholder="Note for the team (optional) — e.g. send to Dave, wait for his OK" className="mt-1.5 w-full text-xs rounded-lg px-2 py-1.5" style={{ border: '1px solid #fcd34d', backgroundColor: 'white' }} />}
+      </div>
+      <button disabled={busy} onClick={() => save(!on)} className="text-xs font-bold rounded-lg px-3 py-2" style={on ? { backgroundColor: 'white', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#b45309', color: 'white' }}>{busy ? '…' : on ? 'Turn off' : 'Require an estimate first'}</button>
+    </div>
+  )
+}

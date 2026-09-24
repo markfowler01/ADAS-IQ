@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { EstimateFirstPill } from './books/Big3Rules.jsx'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel } from './crmConstants.js'
@@ -209,7 +210,7 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
 
       {/* Header: the whole name, then the chips on their own line */}
       <div className="px-3 py-2 rounded-t-xl" style={{ backgroundColor: ORANGE }}>
-        <p className="text-sm font-bold text-white leading-snug" style={{ wordBreak: 'break-word' }}>{shop.shop_name}</p>
+        <p className="text-sm font-bold text-white leading-snug" style={{ wordBreak: 'break-word' }}>{shop.shop_name} <EstimateFirstPill shopName={shop.shop_name} /></p>
         <div className="flex items-center gap-1 flex-wrap mt-1">
           {shop.region && <span className="text-[10px] px-1.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.95)' }}>📍 {zoneLabel(shop.region)}</span>}
           {shop.assigned_to && <span className="text-[10px] px-1.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>👤 {shop.assigned_to}</span>}
