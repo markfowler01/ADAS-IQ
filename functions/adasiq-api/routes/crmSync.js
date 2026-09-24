@@ -162,4 +162,12 @@ router.post('/email-to-job', async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+// POST /api/crm-sync-cron/photos-reconcile — check every owed card against its WorkDrive folder now (cron secret).
+router.post('/photos-reconcile', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { reconcileOwedPhotos } = await import('./jobs.js'); res.json(await reconcileOwedPhotos(req)) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 export default router

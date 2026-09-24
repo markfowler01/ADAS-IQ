@@ -361,6 +361,7 @@ router.post('/run', async (req, res) => {
     try { const { sweepEmailToJob } = await import('../services/emailToJob.js'); await sweepEmailToJob(req) } catch (e) { console.log('[email→job] sweep failed:', e.message) }
     try { const { drainAssignQueue } = await import('../services/techAssignText.js'); await drainAssignQueue(req) } catch (e) { console.log('[assign-sms] drain failed:', e.message) }
     try { const { integrationNudges } = await import('../services/integrations.js'); await integrationNudges(req) } catch (e) { console.log('[integrations] nudges failed:', e.message) }
+    try { const { reconcileOwedPhotos } = await import('./jobs.js'); const pr = await reconcileOwedPhotos(req); if (pr.cleared || pr.filled) console.log('[photos reconcile] hourly:', JSON.stringify(pr)) } catch (e) { console.log('[photos reconcile] hourly failed:', e.message) }
     try { const { pollOffers } = await import('./recruit.js'); const po = await pollOffers(req); if (po.checked) console.log('[offer] poll:', po) } catch (e) { console.log('[offer] poll failed:', e.message) }
     try { const { maybeNightlyAr } = await import('../services/ar.js'); const ar = await maybeNightlyAr(req); if (ar.fired) console.log('[ar] nightly:', JSON.stringify(ar).slice(0, 400)) } catch (e) { console.log('[ar] nightly failed:', e.message) }
     if (zm.fired) console.log('[postscan] zoho mirror:', JSON.stringify({ invoices: zm.invoices, payments: zm.payments }))

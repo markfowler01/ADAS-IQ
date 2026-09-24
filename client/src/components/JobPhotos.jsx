@@ -69,8 +69,10 @@ export function photosRelevant(job) {
 // ── Badge: "📸 5/8" red until complete, green when done ────────────────
 export function PhotoBadge({ job, onClick, size = 'sm' }) {
   const p = photoProgress(job)
-  const owed = !p.complete && !!parseSlots(job?.photo_slots)?._pending   // invoiced with shots outstanding (2026-09-17)
-  const done = p.complete
+  const slots = parseSlots(job?.photo_slots) || {}
+  const owed = !p.complete && !!slots._pending   // invoiced with shots outstanding (2026-09-17)
+  const folderOk = !p.complete && !!slots._folder_ok   // full set in the folder, some not labeled (2026-09-23)
+  const done = p.complete || folderOk
   const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
   return (
     <button type="button" onClick={e => { e.stopPropagation(); onClick && onClick() }}
@@ -78,7 +80,7 @@ export function PhotoBadge({ job, onClick, size = 'sm' }) {
       style={done
         ? { backgroundColor: '#dcfce7', color: GREEN, border: '1px solid #86efac' }
         : { backgroundColor: '#fef2f2', color: RED, border: '1px solid #fecaca' }}>
-      📸 {p.filled}/{p.total}{done ? ' ✓' : owed ? ' owed' : ''}{!done && p.miles.delta != null && !p.miles.ok ? ` · ${p.miles.delta} mi` : ''}
+      📸 {folderOk ? `${slots._folder_ok.images} in folder ✓` : `${p.filled}/${p.total}${done ? ' ✓' : owed ? ' owed' : ''}`}{!done && p.miles.delta != null && !p.miles.ok ? ` · ${p.miles.delta} mi` : ''}
     </button>
   )
 }
@@ -171,6 +173,24 @@ async function sortOnPhone(item, filled) {
   return { slot: known ? slot : null, confidence: Number(d.confidence) || 0, suggested: known ? slot : null }
 }
 
+// Upload with a live percentage (Mark 2026-09-23: "we can't tell that
+// pictures are uploading"). fetch() has no upload progress; XHR does.
+function xhrUpload(url, fd, onProgress) {
+  return new Promise(resolve => {
+    const x = new XMLHttpRequest()
+    x.open('POST', url)
+    const t = getToken(); if (t) x.setRequestHeader('X-Auth-Token', t)
+    x.upload.onprogress = e => { if (e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100)) }
+    x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText || '{}') } catch { d = {} } resolve({ status: x.status, ok: x.status >= 200 && x.status < 300, data: d }) }
+    x.onerror = () => resolve({ status: 0, ok: false, data: { error: 'Network error' } })
+    x.ontimeout = () => resolve({ status: 0, ok: false, data: { error: 'Upload timed out' } })
+    x.timeout = 120000
+    x.send(fd)
+  })
+}
+let lastNotify = 0
+const notifyThrottled = () => { const n = Date.now(); if (n - lastNotify > 150) { lastNotify = n; notify() } }
+
 // Two uploads at a time (bad signal is latency-bound, not bandwidth-bound).
 let workers = 0
 const MAX_WORKERS = 2
@@ -184,18 +204,18 @@ async function pump() {
       if (!item) break
       if (!getToken()) { item.status = 'paused'; item.error = 'Waiting for sign-in — these upload on their own once you are back in.'; notify(); break }
       if (typeof navigator !== 'undefined' && navigator.onLine === false) { item.status = 'paused'; item.error = 'No signal — will upload as soon as the phone is back online.'; notify(); break }
-      item.status = 'uploading'; notify()
+      item.status = 'uploading'; item.progress = 0; notify()
       try {
         const fd = new FormData()
         fd.append('photo', item.file, item.file.name || 'photo.jpg')
         if (item.slot) fd.append('slot', item.slot)
         if (item.miles != null) fd.append('miles', String(item.miles))
-        const r = await apiFetch(`${API_BASE}/api/jobs/${item.jobId}/photo-slot`, { method: 'POST', body: fd })
-        const d = await r.json().catch(() => ({}))
+        const r = await xhrUpload(`${API_BASE}/api/jobs/${item.jobId}/photo-slot`, fd, pct => { item.progress = pct; notifyThrottled() })
+        const d = r.data || {}
         if (r.status === 401) { item.status = 'paused'; item.error = 'Signed out — sign back in and these upload on their own.'; notify(); break }
         if (r.status === 422) { item.status = 'needs_slot'; item.error = d.error; item.suggested = d.suggested; notify(); continue }
         if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-        item.status = 'done'; item.result = d; item.error = null; notify()
+        item.status = 'done'; item.progress = 100; item.result = d; item.error = null; notify()
         idbDel(item.id)
       } catch (e) {
         item.tries = (item.tries || 0) + 1
@@ -255,9 +275,19 @@ export function useUploadSummary() {
   useEffect(() => { const fn = all => setS(summarize(all)); listeners.add(fn); fn([...queue]); return () => listeners.delete(fn) }, [])
   return s
 }
+export function progressOf(items) {
+  // Percent across this batch: finished ones count 100, in flight count their own %, waiting count 0.
+  const batch = items.filter(q => ['preparing', 'queued', 'uploading', 'done'].includes(q.status))
+  if (!batch.length) return { pct: 0, done: 0, total: 0, busy: 0 }
+  const done = batch.filter(q => q.status === 'done').length
+  const sum = batch.reduce((n, q) => n + (q.status === 'done' ? 100 : q.status === 'uploading' ? (q.progress || 0) : 0), 0)
+  return { pct: Math.round(sum / batch.length), done, total: batch.length, busy: batch.length - done }
+}
 function summarize(all) {
   const live = all.filter(q => LIVE.includes(q.status))
+  const pr = progressOf(all)
   return {
+    pct: pr.pct, done: pr.done, batch: pr.total,
     total: live.length,
     busy: live.filter(q => ['preparing', 'queued', 'uploading'].includes(q.status)).length,
     paused: live.filter(q => q.status === 'paused').length,
@@ -279,7 +309,7 @@ export function UploadTray() {
       style={stuck ? { backgroundColor: '#fef2f2', color: RED, border: '1px solid #fecaca' } : { backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
       {stuck
         ? <><span>⚠️ {stuck} photo{stuck > 1 ? 's' : ''} waiting · {s.note}</span><button type="button" onClick={resumePhotoQueue} className="rounded-full px-2 py-0.5" style={{ backgroundColor: 'white', border: '1px solid #fecaca' }}>Retry</button></>
-        : <span>📤 Uploading {s.busy} photo{s.busy > 1 ? 's' : ''}… saved on this phone, keep working</span>}
+        : <span className="flex items-center gap-2">📤 {s.done}/{s.batch} up · {s.pct}%<span className="inline-block rounded-full overflow-hidden" style={{ width: 90, height: 6, backgroundColor: '#fde68a' }}><span className="block h-full" style={{ width: `${s.pct}%`, backgroundColor: '#b45309', transition: 'width .2s' }} /></span><span className="font-normal">saved on this phone</span></span>}
       {s.needsSlot > 0 && <span>· {s.needsSlot} need a slot</span>}
     </div>
   )
@@ -485,11 +515,13 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           </button>
         </div>
 
-        {pending > 0 && (
+        {pending > 0 && (() => { const pr = progressOf(items); return (
           <div className="text-xs font-semibold mb-2 px-3 py-2 rounded-lg" style={{ backgroundColor: '#fffbeb', color: '#92400e' }}>
-            ⏫ Uploading {pending} photo{pending > 1 ? 's' : ''}… keep shooting. Every shot is saved on this phone first, so nothing is lost if the signal drops or you get signed out.
+            <div className="flex items-center justify-between"><span>⏫ Uploading {pr.done} of {pr.total} · {pr.pct}%</span><span className="font-normal">saved on this phone first</span></div>
+            <div className="rounded-full overflow-hidden mt-1.5" style={{ height: 8, backgroundColor: '#fde68a' }}><div className="h-full" style={{ width: `${pr.pct}%`, backgroundColor: '#b45309', transition: 'width .2s' }} /></div>
+            <div className="mt-1 font-normal">Keep shooting. Nothing is lost if the signal drops or you get signed out.</div>
           </div>
-        )}
+        ) })()}
         {needsSlot.map(item => (
           <div key={item.id} className="rounded-xl p-2 mb-2 flex items-center gap-2" style={{ backgroundColor: '#fff5f0', border: `1px dashed ${ORANGE}` }}>
             <img src={item.preview} alt="" className="w-12 h-12 rounded-lg object-cover" />
@@ -689,8 +721,11 @@ export function TakePhotosControl({ job, onJobUpdated, compact = false }) {
   const [open, setOpen] = useState(false)
   const [local, setLocal] = useState(job)
   useEffect(() => { setLocal(job) }, [job])
+  const items = useQueue(job.id)
   if (!photosRelevant(local)) return null
   const p = photoProgress(local)
+  const up = progressOf(items)
+  const uploading = up.busy > 0
   return (
     <>
       {compact ? (
@@ -700,11 +735,12 @@ export function TakePhotosControl({ job, onJobUpdated, compact = false }) {
           className="w-full flex items-center justify-between gap-2 rounded-xl px-3"
           style={{ backgroundColor: p.complete ? '#f0fdf4' : '#fff5f0', border: `1.5px solid ${p.complete ? '#86efac' : ORANGE}`, padding: '10px 12px', minHeight: '44px' }}>
           <span className="text-sm font-bold" style={{ color: p.complete ? GREEN : ORANGE }}>
-            {p.complete ? '📸 Photos done' : `📸 Take photos · ${p.filled}/${p.total}`}
+            {uploading ? `⬆︎ Uploading ${up.done}/${up.total} · ${up.pct}%` : p.complete ? '📸 Photos done' : `📸 Take photos · ${p.filled}/${p.total}`}
           </span>
           <PhotoBadge job={local} />
         </button>
       )}
+      {uploading && !compact && <div className="rounded-full overflow-hidden -mt-1 mb-2" style={{ height: 5, backgroundColor: '#fde68a' }}><div className="h-full" style={{ width: `${up.pct}%`, backgroundColor: '#b45309', transition: 'width .2s' }} /></div>}
       {open && (
         <JobPhotosSheet job={local} onClose={() => setOpen(false)}
           onJobUpdated={j => { setLocal(j); onJobUpdated && onJobUpdated(j) }} />

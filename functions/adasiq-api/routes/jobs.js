@@ -5,7 +5,7 @@ import catalyst from 'zcatalyst-sdk-node'
 import { listAllEstimates, getEstimateLineItems, getAccessToken, updateEstimateShareLink, updateEstimateSalesperson } from '../services/zoho.js'
 import { createNotification } from './notifications.js'
 import { postToCliqChannel, AA_JOBS_CHANNEL, DISPATCH_CHANNEL } from '../services/cliq.js'
-import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder } from '../services/workdrive.js'
+import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder, listChildren } from '../services/workdrive.js'
 import { appendHistory } from '../services/history.js'
 
 const router = express.Router()
@@ -1392,7 +1392,7 @@ router.post('/:id/photos', upload.array('photos', 20), async (req, res) => {
 // Resolve (or CREATE) the job's WorkDrive folder id. Tries every RO
 // form, then shop+vehicle, then makes the folder — an upload from the
 // field must never dead-end on "folder not found" (Mark 2026-08-30).
-async function resolveJobFolder(req, job, wdToken) {
+async function resolveJobFolder(req, job, wdToken, { noCreate = false } = {}) {
   if (job.folder_url) {
     const m = job.folder_url.match(/workdrive\.zoho\.com\/(?:folder|home[^ ]*?\/folders)\/([a-z0-9]+)/i)
     if (m) return m[1]
@@ -1411,6 +1411,7 @@ async function resolveJobFolder(req, job, wdToken) {
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const byShop = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken).catch(() => null)
   if (byShop?.folderId) return byShop.folderId
+  if (noCreate) return null
   // Last resort: create it, same naming as the report pipeline
   const fullRO = candidates[0] || 'Job'
   const folderName = `${fullRO} — ${job.shop_name || ''} — ${vehicle}`.slice(0, 80)
@@ -1457,6 +1458,68 @@ async function markPending(merged, prog, req) {
   return merged
 }
 
+// ── Reconcile the card with the WorkDrive folder (Mark 2026-09-23: "Jayden
+//    did upload all of those pictures, but it's still notifying us"). Shots
+//    reach the folder by three roads — the guided sheet, the plain 📷 Upload
+//    button, and misfiled slots from the sorter — but only the first fills a
+//    slot. So: read the folder, fill empty slots from the file names, count
+//    everything else as unlabeled, and if the folder holds a full set the
+//    card stops owing. Never creates a folder.
+const IMG_RE = /\.(jpe?g|png|heic|heif|webp|gif)$/i
+export async function reconcilePhotosFromFolder(req, job, { notify = true } = {}) {
+  const { SLOTS, photoProgress } = await import('../services/jobPhotos.js')
+  const slots = parsePhotoSlots(job.photo_slots)
+  const wdToken = await getAccessToken()
+  const folderId = slots._folder_id || await resolveJobFolder(req, job, wdToken, { noCreate: true })
+  if (!folderId) return { ok: false, why: 'no folder' }
+  const files = (await listChildren(folderId, wdToken, { folders: false })).filter(f => IMG_RE.test(f.name || ''))
+  const known = new Set()
+  for (const k of Object.keys(slots)) { const v = slots[k]; if (v?.fileId) known.add(String(v.fileId)); if (Array.isArray(v)) v.forEach(x => x?.fileId && known.add(String(x.fileId))) }
+  let filledFromNames = 0
+  const claimed = new Set()
+  for (const sl of SLOTS) {
+    const re = new RegExp(`^0?${sl.n}\\s+${sl.file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'i')
+    const hits = files.filter(f => re.test(f.name))
+    for (const f of hits) {
+      claimed.add(String(f.id))
+      if (known.has(String(f.id))) continue
+      const entry = { fileId: String(f.id), name: f.name, at: new Date().toISOString(), from: 'folder' }
+      if (sl.multi) { slots.setup = [...(slots.setup || []), entry]; filledFromNames++ }
+      else if (!slots[sl.key]?.fileId) { slots[sl.key] = entry; filledFromNames++ }
+      known.add(String(f.id))
+    }
+  }
+  const unlabeled = files.filter(f => !claimed.has(String(f.id)) && !known.has(String(f.id)))
+  slots._folder_id = folderId
+  const probe = { ...job, photo_slots: JSON.stringify(slots) }
+  const prog = photoProgress(probe)
+  const fullSet = prog.missing.length === 0 || files.length >= SLOTS.length
+  let cleared = false
+  if (slots._pending && fullSet) {
+    cleared = true
+    const by = slots._pending.by
+    delete slots._pending
+    slots._folder_ok = { images: files.length, unlabeled: unlabeled.length, at: new Date().toISOString(), missing_labels: prog.missing }
+    if (notify) await postToCliqChannel(DISPATCH_CHANNEL, `✅ *Photos in* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — ${files.length} photo${files.length === 1 ? '' : 's'} in the folder${prog.missing.length ? ` (${prog.missing.length} not labeled: ${prog.missing.join(', ')})` : ''}${by ? ` · from ${by}` : ''}. Off the owed list.`).catch(e => console.log('[photos reconcile] cliq failed:', e.message))
+  } else if (!slots._pending && fullSet) {
+    slots._folder_ok = { images: files.length, unlabeled: unlabeled.length, at: new Date().toISOString(), missing_labels: prog.missing }
+  }
+  const changed = cleared || filledFromNames > 0 || String(job.photo_slots || '') !== JSON.stringify(slots)
+  let updated = job
+  if (changed) updated = await updateJob(req, job.id, { ...job, photo_slots: JSON.stringify(slots) })
+  console.log(`[photos reconcile] job ${job.id} ${job.shop_name || ''}: ${files.length} images, +${filledFromNames} from names, ${unlabeled.length} unlabeled, missing ${prog.missing.length}${cleared ? ' → cleared' : ''}`)
+  return { ok: true, images: files.length, filled_from_names: filledFromNames, unlabeled: unlabeled.length, missing: prog.missing, cleared, job: updated }
+}
+/** Hourly: every owed card gets checked against its folder. */
+export async function reconcileOwedPhotos(req) {
+  const owed = await photosOwedList(req)
+  const out = { checked: owed.length, cleared: 0, filled: 0 }
+  for (const o of owed) {
+    try { const r = await reconcilePhotosFromFolder(req, { ...o.job, folder_url: '', invoice_number: o.invoice_number, status: o.status }); if (r.cleared) out.cleared++; out.filled += r.filled_from_names || 0 } catch (e) { console.log('[photos reconcile]', o.id, e.message) }
+  }
+  return out
+}
+
 /** Does this card still owe photos? Guards the invoice-time card delete. */
 export function photosStillOwed(job) {
   try { return !!parsePhotoSlots(job?.photo_slots)?._pending?.at } catch { return false }
@@ -1497,6 +1560,7 @@ export async function maybePhotosOwedDigest(req) {
   const stampKey = `photos_owed_digest:${today}`
   const seen = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${stampKey}' LIMIT 1`)
   if (seen?.[0]) return { fired: false, reason: 'already sent today' }
+  try { await reconcileOwedPhotos(req) } catch (e) { console.log('[photos digest] reconcile failed:', e.message) }
   const owed = await photosOwedList(req)
   await app.datastore().table('AppConfig').insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
   if (!owed.length) return { fired: true, owed: 0 }
@@ -1838,7 +1902,9 @@ router.post('/:id/upload-photo', (req, res) => {
       if (!folderId) return res.status(500).json({ error: 'Could not find or create a WorkDrive folder — check the WorkDrive connection.' })
       const filename = req.file.originalname || `photo-${Date.now()}.jpg`
       await uploadFileToFolder(folderId, filename, req.file.buffer, wdToken, req.file.mimetype)
-      res.json({ ok: true, filename })
+      // The plain Upload button never filled a slot — count it against the set now.
+      let rec = null; try { rec = await reconcilePhotosFromFolder(req, job) } catch (e) { console.log('[upload-photo] reconcile skipped:', e.message) }
+      res.json({ ok: true, filename, job: rec?.job || undefined, photos: rec ? { images: rec.images, missing: rec.missing, cleared: rec.cleared } : undefined })
     } catch (e) {
       console.error('[upload-photo]', e.message)
       res.status(500).json({ error: e.message })
