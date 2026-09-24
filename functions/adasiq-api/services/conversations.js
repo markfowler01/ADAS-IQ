@@ -195,3 +195,51 @@ export async function resubmitA2p(cfg, { dry = false } = {}) {
   if (r.status >= 400) throw new Error(`Create → ${r.status}: ${r.data?.message || JSON.stringify(r.data || {}).slice(0, 300)}`)
   return { ...plan, created: { sid: r.data.sid, status: r.data.campaign_status, campaign_id: r.data.campaign_id } }
 }
+
+/**
+ * 🎯 Put the local number on the messaging service whose A2P campaign is
+ * approved (Twilio 2026-09-24: "you can begin sending on this Campaign by
+ * adding phone numbers to the linked messaging service").
+ *
+ * Absolute ADAS has two "Low Volume Mixed" services: the 425 sat on the one
+ * whose June campaign FAILED, while the approved campaign sat on a service
+ * with no numbers. This moves the number to the approved one.
+ *
+ * Reversible: pass `toService` to put it back. Conversations uses its own
+ * default service, so group texting is not affected.
+ */
+export async function attachLocalToVerifiedService(cfg, { dry = true, toService = '' } = {}) {
+  const A = auth(cfg)
+  // cfg stores the number bare ("14256751329"); Twilio answers in E.164.
+  const e164 = v => { const d = String(v || '').replace(/[^0-9]/g, ''); return d ? `+${d.length === 10 ? '1' + d : d}` : '' }
+  const number = e164(cfg.TWILIO_PHONE_NUMBER)
+  const get = async url => { const r = await axios.get(url, { auth: A, timeout: 15000, validateStatus: () => true }); return r.data }
+  const services = (await get('https://messaging.twilio.com/v1/Services?PageSize=20')).services || []
+
+  let target = toService, verifiedCampaign = null, from = null, sid = null
+  for (const s of services) {
+    const nums = (await get(`https://messaging.twilio.com/v1/Services/${s.sid}/PhoneNumbers?PageSize=50`)).phone_numbers || []
+    const mine = nums.find(n => e164(n.phone_number) === number)
+    if (mine) { from = { service: s.sid, name: s.friendly_name, resource: mine.sid } }
+    const c = await get(`https://messaging.twilio.com/v1/Services/${s.sid}/Compliance/Usa2p?PageSize=5`)
+    const ok = (c.compliance || []).find(x => ['VERIFIED', 'APPROVED'].includes(String(x.campaign_status || '').toUpperCase()))
+    if (ok && !toService) { target = s.sid; verifiedCampaign = { sid: ok.sid, status: ok.campaign_status } }
+  }
+  if (!target) return { ok: false, why: 'no messaging service has an approved A2P campaign', from }
+  if (from?.service === target) return { ok: true, already: true, number, service: target, campaign: verifiedCampaign }
+  const plan = { number, from: from || null, to: target, campaign: verifiedCampaign }
+  if (dry) return { ok: true, dry: true, ...plan }
+
+  // Remove from the old service first — a number can only live on one.
+  if (from) {
+    const del = await axios.delete(`https://messaging.twilio.com/v1/Services/${from.service}/PhoneNumbers/${from.resource}`, { auth: A, timeout: 15000, validateStatus: () => true })
+    if (del.status >= 300) return { ok: false, why: `could not remove from ${from.service}: ${del.status} ${JSON.stringify(del.data).slice(0, 200)}`, ...plan }
+  }
+  const nums = (await get(`https://api.twilio.com/2010-04-01/Accounts/${cfg.TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(number)}`)).incoming_phone_numbers || []
+  sid = nums[0]?.sid
+  if (!sid) return { ok: false, why: `${number} is not an incoming number on this account`, ...plan }
+  const body = new URLSearchParams({ PhoneNumberSid: sid })
+  const add = await axios.post(`https://messaging.twilio.com/v1/Services/${target}/PhoneNumbers`, body, { auth: A, timeout: 20000, validateStatus: () => true })
+  if (add.status >= 300) return { ok: false, why: `could not add to ${target}: ${add.status} ${JSON.stringify(add.data).slice(0, 300)}`, ...plan }
+  return { ok: true, moved: true, ...plan }
+}

@@ -927,6 +927,22 @@ auth.get('/group-texting/diag/:key', async (req, res) => {
     res.json({ ok: true, conversation: sid, ...(await conversationDiag(cfg, sid)) })
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
+// 🎯 Put the 425 on the messaging service whose A2P campaign is approved.
+// Read-only unless ?go=1 (Mark presses it). Reversible with ?to=<MG…>.
+auth.post('/group-texting/attach-number', async (req, res) => {
+  try {
+    if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Staff only' })
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js'); const cfg = await resolvePhoneConfig(req)
+    const { attachLocalToVerifiedService, localA2pStatus } = await import('../services/conversations.js')
+    const r = await attachLocalToVerifiedService(cfg, { dry: req.query.go !== '1', toService: String(req.query.to || '') })
+    if (r.moved) {
+      try { const { setLocalA2pBlocked } = await import('../services/twilio.js'); const a2p = await localA2pStatus(cfg); setLocalA2pBlocked(!a2p.verified); r.a2p = a2p } catch (e) { r.a2p_error = e.message }
+      await postToCliqChannel(DISPATCH_CHANNEL, `📱 *The 425 is on the approved A2P campaign* (${req.user?.name || 'staff'}) — texts send from ${cfg.TWILIO_PHONE_NUMBER} again instead of the 844, and group replies work.`).catch(() => {})
+    }
+    res.json(r)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 auth.get('/group-texting/a2p', async (req, res) => {
   try { const { resolvePhoneConfig } = await import('../services/phoneConfig.js'); const cfg = await resolvePhoneConfig(req); const { a2pDiag } = await import('../services/conversations.js'); res.json({ ok: true, local: cfg.TWILIO_PHONE_NUMBER, tollfree: cfg.TWILIO_TOLLFREE_NUMBER, ...(await a2pDiag(cfg)) }) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
