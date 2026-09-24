@@ -1,0 +1,43 @@
+name: Deploy to Catalyst
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Catalyst CLI
+        run: npm install -g zcatalyst-cli
+
+      - name: Restore Catalyst credentials
+        run: |
+          mkdir -p "$HOME/.config/configstore"
+          echo '${{ secrets.CATALYST_CREDENTIALS }}' > "$HOME/.config/configstore/zcatalyst-cli.json"
+          mkdir -p "$HOME/.config/zcatalyst-cli-nodejs"
+          echo '${{ secrets.CATALYST_CREDENTIALS }}' > "$HOME/.config/zcatalyst-cli-nodejs/zcatalyst-cli.json"
+
+      - name: Install client dependencies & build frontend
+        run: |
+          cd client
+          rm -rf node_modules package-lock.json
+          npm install --include=optional
+          npm run build
+
+      - name: Install function dependencies
+        run: cd functions/adasiq-api && npm install
+
+      - name: Deploy
+        run: catalyst deploy
