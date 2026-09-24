@@ -24,6 +24,10 @@ on:
     # GitHub scheduler rush.
     - cron: '7 * * * *'
 
+    # Every 15 min (Mark 2026-09-24): PostScan mail + email intake (estimate /
+    # car-ready emails → tickets) + scrub queue. Cheap, idempotent.
+    - cron: '3,18,33,48 * * * *'
+
     # DAILY 13:13 UTC (~ 6 AM PT) — daily Meta drafter (1 FB + 1 IG + 1 TT).
     # Daily replaces the old Sunday weekly batch — Mark wants posts every day,
     # and a daily run is more resilient (if one day fails, we lose 1 day, not 7).
@@ -58,6 +62,7 @@ on:
         type: choice
         options:
           - hourly
+          - postscan-intake
           - daily-drafters
           - van-post
           - friday-weekly
@@ -68,6 +73,27 @@ env:
 
 jobs:
   # ── HOURLY ─────────────────────────────────────────────────────────────────
+  postscan-intake:
+    if: github.event.schedule == '3,18,33,48 * * * *' || inputs.job == 'postscan-intake'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: postscan — scan-report mail → WorkDrive (+ HR piggybacks)
+        run: |
+          curl -sS --max-time 90 -X POST -H "x-cron-secret: postscan-2026" \
+            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/postscan/run" | head -c 1500 || true
+      - name: email intake — estimates / car-ready → tickets
+        run: |
+          curl -sS --max-time 60 -X POST -H "x-cron-secret: crm-sync-2026" \
+            "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/crm-sync-cron/email-intake" | head -c 1500 || true
+      - name: scrub queue (up to two estimates)
+        run: |
+          for i in 1 2; do
+            curl -sS --max-time 120 -X POST -H "x-cron-secret: crm-sync-2026" \
+              "https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/crm-sync-cron/email-scrub" | head -c 800 || true
+            echo
+          done
+
   hourly:
     if: github.event.schedule == '7 * * * *' || inputs.job == 'hourly'
     runs-on: ubuntu-latest

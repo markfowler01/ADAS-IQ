@@ -11,9 +11,10 @@ const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
 const org = () => ({ organization_id: process.env.ZOHO_ORGANIZATION_ID })
 const MAX_BYTES = 9 * 1024 * 1024
-// Kinetic report + our own Absolute ADAS report (Mark 2026-09-24: "add the kinetic report and the absolute adas report")
-const REPORT_RE = /kinetic|absolute.?adas|calibration.?(id|identification)?.?report|adas.?report|cal.?report/i
-const NOT_RE = /post.?scan|pre.?scan|invoice|estimate|supplement|photo|receipt|quote/i
+// Kinetic report + our Absolute ADAS report + the post-scan (Mark 2026-09-24:
+// "attach the post scan to the insurance estimate and cost estimate").
+const REPORT_RE = /kinetic|absolute.?adas|calibration.?(id|identification)?.?report|adas.?report|cal.?report|post.?scan|postscan|scan.?report|health.?report|diagnostic.?report|\btwf\b/i
+const NOT_RE = /pre.?scan|invoice|estimate|supplement|photo|receipt|quote|pricing/i
 
 /** The calibration report PDFs in a job's folder (Kinetic first, newest first). */
 export async function findJobReportPdfs(req, job) {
@@ -24,12 +25,12 @@ export async function findJobReportPdfs(req, job) {
   const folderId = await resolveJobFolderPublic(req, job, wdToken, { noCreate: true })
   if (!folderId) return []
   const files = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '') && REPORT_RE.test(f.name || '') && !NOT_RE.test(f.name || '') && (f.size || 0) <= MAX_BYTES)
-  const rank = n => /absolute.?adas/i.test(n) ? 0 : /kinetic/i.test(n) ? 1 : 2
+  const rank = n => /absolute.?adas/i.test(n) ? 0 : /kinetic/i.test(n) ? 1 : 2   // 2 = post-scan / other scan report
   files.sort((a, b) => (rank(a.name) - rank(b.name)) || (Number(b.created || 0) - Number(a.created || 0)))
   // One of each kind, newest wins.
   const seen = new Set(); const picked = []
   for (const f of files) { const k = rank(f.name); if (seen.has(k)) continue; seen.add(k); picked.push(f) }
-  return picked.slice(0, 3).map(f => ({ id: f.id, name: f.name, size: f.size, folderId }))
+  return picked.slice(0, 3).map(f => ({ id: f.id, name: f.name, size: f.size, folderId }))   // Absolute ADAS · Kinetic · post-scan
 }
 
 /** No Absolute ADAS report in the folder yet → build one from the card's calibrations and file it. */
