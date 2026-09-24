@@ -56,7 +56,13 @@ const ownerOf = shop => { const p = (shop.people || []).find(x => x?.email) || {
 export async function sendShopWelcome(req, shop, { by = 'app', force = false } = {}) {
   try {
     const br = brOf(shop)
+    // Auto sends happen ONCE, ever (Mark 2026-09-24). Only a person pressing Resend (force) can send again.
     if (br.welcome?.sent_at && !force) return { sent: false, why: `already sent ${br.welcome.sent_at.slice(0, 10)}`, to: br.welcome.to }
+    if (!force) {   // two triggers in the same minute (Active + field form) → the second one loses
+      try { const seg = (await import('zcatalyst-sdk-node')).default.initialize(req, { type: 'advancedio' }).cache().segment(); const k = `welcome_lock:${shop.id}`; if (await seg.getValue(k)) return { sent: false, why: 'already sending' }; await seg.put(k, '1', 1) } catch { /* no cache — carry on */ }
+      const freshBr = brOf((await (await import('../routes/shops.js')).getAllShops(req)).find(x => String(x.id) === String(shop.id)) || shop)
+      if (freshBr.welcome?.sent_at) return { sent: false, why: `already sent ${freshBr.welcome.sent_at.slice(0, 10)}`, to: freshBr.welcome.to }
+    }
     const owner = ownerOf(shop)
     if (!owner.email) {
       try { const { createNotification } = await import('../routes/notifications.js'); await createNotification(req, { to: 'Kath', toEmail: KAT, type: 'onboarding', title: `Welcome email not sent — ${shop.shop_name} has no email`, body: 'Add the owner\'s email on the CRM card, then press Send welcome email on the Billing tab.', skipCliq: true, skipTechChannel: true }) } catch { /* fine */ }
