@@ -27,7 +27,7 @@ import {
   twilioConfigured,
 } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
-import { postToCliqChannel, SMS_TOLLFREE_CHANNEL, SMS_LOCAL_CHANNEL } from '../services/cliq.js'
+import { postToCliqChannel, SMS_TOLLFREE_CHANNEL, SMS_LOCAL_CHANNEL, DISPATCH_CHANNEL } from '../services/cliq.js'
 import { loadPhoneIndex, normPhone, contactLabel, findContactByPhone } from '../services/crmContacts.js'
 import { tryHandleCheckinReply } from './eveningCheckin.js'
 
@@ -918,6 +918,7 @@ auth.get('/group-texting', async (req, res) => {
     // Not verified? Check whether an APPROVED campaign is sitting on another
     // messaging service with no numbers on it — the 2026-09-24 trap. The panel
     // then offers the one-tap move instead of leaving Mark to hunt in Twilio.
+    try { const { setLocalA2pBlocked } = await import('../services/twilio.js'); setLocalA2pBlocked(!a2p?.verified) } catch { /* fine */ }
     let attach_plan = null
     if (!a2p?.verified) {
       try { const { attachLocalToVerifiedService } = await import('../services/conversations.js'); const p = await attachLocalToVerifiedService(cfg, { dry: true }); if (p.ok && !p.already) attach_plan = p } catch (e) { console.log('[group-texting] attach plan check failed:', e.message) }
