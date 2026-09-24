@@ -411,8 +411,22 @@ export async function uploadFileToFolder(folderId, filename, buffer, accessToken
 // wrong job photo (Mark 2026-09-10). Best effort — callers never fail on it.
 /** Download a file's bytes (profile photos are served through the app). */
 export async function downloadFile(fileId, accessToken) {
-  const r = await axios.get(`https://download.zoho.com/v1/workdrive/download/${fileId}`, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }, responseType: 'arraybuffer', timeout: 20000 })
-  return { buffer: Buffer.from(r.data), contentType: r.headers['content-type'] || 'application/octet-stream' }
+  // Three download hosts exist across Zoho's docs; the first 401s for some
+  // tokens (email-intake scrub, 2026-09-24) so fall through on auth errors.
+  const urls = [
+    `https://download.zoho.com/v1/workdrive/download/${fileId}`,
+    `https://www.zohoapis.com/workdrive/download/${fileId}`,
+    `https://workdrive.zoho.com/api/v1/download/${fileId}`,
+  ]
+  let lastErr = null
+  for (const url of urls) {
+    try {
+      const r = await axios.get(url, { headers: { Authorization: `Zoho-oauthtoken ${accessToken}` }, responseType: 'arraybuffer', timeout: 25000, maxRedirects: 5 })
+      return { buffer: Buffer.from(r.data), contentType: r.headers['content-type'] || 'application/octet-stream' }
+    } catch (e) { lastErr = e; const st = e.response?.status; if (!st) throw e; const body = e.response?.data ? Buffer.from(e.response.data).toString('utf8').slice(0, 160) : ''; lastErr._hosts = [...(lastErr._hosts || []), `${url.split('/')[2]} → ${st} ${body}`]; console.warn(`[workdrive download] ${st} from ${url.split('/')[2]} — trying next`) }
+  }
+  lastErr.message = `WorkDrive download failed: ${(lastErr._hosts || []).join(' | ')}`
+  throw lastErr
 }
 
 export async function trashFile(fileId, accessToken) {

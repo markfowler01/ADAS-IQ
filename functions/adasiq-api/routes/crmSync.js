@@ -183,6 +183,27 @@ router.post('/email-scrub', async (req, res) => {
   try { const { runScrubQueue } = await import('../services/emailToJob.js'); res.json(await runScrubQueue(req, { max: Number(req.query.max) || 1 })) }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
+// POST /api/crm-sync-cron/email-scrub/requeue?job=<id> — scrub a card's newest folder PDF again.
+router.post('/email-scrub/requeue', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { requeueScrub } = await import('../services/emailToJob.js'); res.json(await requeueScrub(req, req.query.job)) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// POST /api/crm-sync-cron/email-scrub/unscrub?job=<id> — remove our scrub from a card.
+router.post('/email-scrub/unscrub', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { unscrubCard } = await import('../services/emailToJob.js'); res.json(await unscrubCard(req, req.query.job)) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// GET /api/crm-sync-cron/email-scrub/probe?file=<id> — can the server pull this WorkDrive file? (bytes + head)
+router.get('/email-scrub/probe', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { getAccessToken } = await import('../services/zoho.js'); const { downloadFile } = await import('../services/workdrive.js'); const { buffer, contentType } = await downloadFile(String(req.query.file || ''), await getAccessToken()); res.json({ ok: true, bytes: buffer.length, contentType, head: buffer.slice(0, 8).toString('latin1') }) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
 // GET /api/crm-sync-cron/email-intake/status — what was skipped, what is queued, which inboxes.
 router.get('/email-intake/status', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'

@@ -196,6 +196,19 @@ export async function getInboxFolderId(token, accountId) {
   return id
 }
 
+// Every recent inbox message, read or not (the email intake stamps what it has
+// handled — an estimate Mark already opened on his phone must still count).
+export async function getRecentInboxMessages(token, accountId, limit = 50) {
+  const folderId = await getInboxFolderId(token, accountId)
+  const params = { limit, sortBy: 'date', sortorder: false }
+  if (folderId) params.folderId = folderId
+  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/view`, {
+    headers: mailHeaders(token), params, timeout: 15000,
+    transformResponse: [safeParseMailResponse],
+  })
+  return res.data?.data || []
+}
+
 export async function getUnreadInboxMessages(token, accountId) {
   const folderId = await getInboxFolderId(token, accountId)
   const params = { status: 'unread', limit: 50 }

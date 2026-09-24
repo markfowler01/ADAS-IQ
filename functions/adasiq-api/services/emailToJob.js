@@ -4,7 +4,8 @@
 // a CCC estimate, create a job ticket. No useless tickets we have to delete."
 //
 // Watches every mailbox shops write to (mark@, info@, kat@ + AppConfig
-// email2job_inboxes). Never marks mail read, never moves it.
+// email2job_inboxes). Reads the last 3 days, read or unread (Mark opens mail
+// on his phone before the sweep runs). Never marks mail read, never moves it.
 //
 // Stage A  sweepEmailToJob  — list unread → guardrails → classify (Haiku) →
 //          download the CCC PDF → read its header (Haiku) → ticket via the
@@ -21,7 +22,7 @@
 // confidence → Kat bell; every skip logged (email2job_skipped).
 import catalyst from 'zcatalyst-sdk-node'
 import Anthropic from '@anthropic-ai/sdk'
-import { getMailAccessToken, getUnreadInboxMessages, getMessageContent, getMessageAttachments, downloadAccountAttachment } from './mail.js'
+import { getMailAccessToken, getRecentInboxMessages, getMessageContent, getMessageAttachments, downloadAccountAttachment } from './mail.js'
 import { maybeCreateJobsFromText } from './textToJob.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from './cliq.js'
 
@@ -156,7 +157,7 @@ Body:
 export async function readCccHeader(buffer) {
   const msg = await client().messages.create({ model: 'claude-haiku-4-5', max_tokens: 300, messages: [{ role: 'user', content: [
     { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } },
-    { type: 'text', text: 'From this CCC ONE estimate return JSON only: {"shop": "repair facility / shop name", "ro": "RO or workfile number", "vin": "17-char VIN", "year": "", "make": "", "model": "", "insurer": "insurance company", "claim": "claim number", "owner": "vehicle owner name"}. Empty string when not shown.' },
+    { type: 'text', text: 'From this CCC ONE estimate return JSON only: {"shop": "repair facility / shop name", "ro": "RO or workfile number", "vin": "17-char VIN", "year": "", "make": "full manufacturer name — Toyota not TOYO, Mercedes-Benz not BENZ, Chevrolet not CHEV", "model": "model name only, no trim / body / drive codes (Grand Highlander, not Grand Highlander Hybrid XLE AWD 4D UTV)", "insurer": "insurance company", "claim": "claim number", "owner": "vehicle owner name"}. Empty string when not shown.' },
   ] }] })
   const h = parseJson(msg.content?.[0]?.text || '')
   for (const k of ['shop', 'ro', 'vin', 'year', 'make', 'model', 'insurer', 'claim', 'owner']) h[k] = String(h[k] || '').trim()
@@ -175,6 +176,7 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 4, inboxOn
   const idx = buildEmailIndex(shops)
   const byDomain = domainIndex(idx)
   const suppressed = await readSuppressed(req)
+  const scrubOn = String((await cfgRead(req, 'email2job_scrub', '')).value) === 'true'
   const { value: adasRaw } = await cfgRead(req, 'adasmaps_sender_domain', ''); const adasDomain = String(adasRaw || '').toLowerCase().replace(/^@/, '')
   const jobsMod = await import('../routes/jobs.js')
   const jobs = { findOpenRequestFor: jobsMod.findOpenRequestFor, insertJob: jobsMod.insertJob, updateJob: jobsMod.updateJob, readAll: jobsMod.readJobsPublic }
@@ -194,7 +196,7 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 4, inboxOn
       accountId = String(hit.accountId)
     } catch (e) { console.log('[email intake] no account for', inbox, e.message); continue }
     if (seenAccounts.has(accountId)) continue; seenAccounts.add(accountId)
-    let msgs = []; try { msgs = await getUnreadInboxMessages(token, accountId) } catch (e) { console.log('[email intake] inbox read failed', inbox, e.message); continue }
+    let msgs = []; try { msgs = await getRecentInboxMessages(token, accountId, 60) } catch (e) { console.log('[email intake] inbox read failed', inbox, e.message); continue }
     for (const m of msgs) {
       const id = String(m.messageId || ''); if (!id || ids.has(id)) continue
       if (messageId && id !== String(messageId)) continue
@@ -282,11 +284,14 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 4, inboxOn
       const pre = { intent, vehicles: cls.vehicles, confidence: cls.confidence, summary: cls.summary }
       const combined = `${subject ? subject + '\n' : ''}${text}`.slice(0, 1500)
       if (!dry) ids.add(id)
-      const r = await maybeCreateJobsFromText(req, { from, body: combined, contact, lineType: 'email', jobs, channel: 'email', dry, subject, pre, requestType, header, pdf: ccc ? { buffer: ccc.buffer, name: ccc.name, scrub: true } : null, threadJobId, minConfidence: 0.7, senderEmail: from })
+      const r = await maybeCreateJobsFromText(req, { from, body: combined, contact, lineType: 'email', jobs, channel: 'email', dry, subject, pre, requestType, header, pdf: ccc ? { buffer: ccc.buffer, name: ccc.name, scrub: scrubOn } : null, threadJobId, minConfidence: 0.7, senderEmail: from })
       out.created += r.created?.length || 0; out.appended += r.appended?.length || 0; if (r.flagged) out.flagged++
       const jobId = r.created?.[0]?.id || r.appended?.[0]?.id || ''
       if (!dry && jobId) await threadRemember(req, threadKey, jobId)
-      if (!dry && r.pdf?.fileId && r.pdf.jobId) { await queueScrub(req, { job: String(r.pdf.jobId), file: r.pdf.fileId, name: r.pdf.name }); out.queued++ }
+      // Auto-scrub is OFF (Mark 2026-09-24: "our scrubber is not that good yet") — the
+      // PDF is filed in the folder and the ticket carries the header. AppConfig
+      // email2job_scrub = 'true' turns the scrub back on.
+      if (!dry && r.pdf?.fileId && r.pdf.jobId && scrubOn) { await queueScrub(req, { job: String(r.pdf.jobId), file: r.pdf.fileId, name: r.pdf.name }); out.queued++ }
       out.items.push({ inbox, from, who: `${contact.contact_name} @ ${contact.shop_name}${contact._via ? ` (via ${contact._via})` : ''}`, subject, kind: cls.kind, requestType, ccc: !!ccc, header, skipped: r.skipped || '', extraction: r.extraction || null, created: r.created || [], appended: r.appended || [] })
     }
   }
@@ -299,6 +304,30 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 4, inboxOn
 // ── Stage B: the scrub queue ─────────────────────────────────────────────────
 const QKEY = 'email2job_scrub_queue'
 async function queueScrub(req, item) { const { row, value } = await cfgRead(req, QKEY, []); const q = (Array.isArray(value) ? value : []).filter(x => x.job !== item.job); q.push({ ...item, at: new Date().toISOString(), tries: 0 }); await cfgWrite(req, QKEY, row, q.slice(-40)) }
+// Put a card back on the scrub queue from the newest PDF in its WorkDrive folder.
+export async function requeueScrub(req, jobId) {
+  const jobsMod = await import('../routes/jobs.js')
+  const job = (await jobsMod.readJobsPublic(req)).find(j => String(j.id) === String(jobId))
+  if (!job) throw new Error('card not found')
+  const { getAccessToken } = await import('./zoho.js'); const { listChildren } = await import('./workdrive.js')
+  const wdToken = await getAccessToken()
+  const folderId = await jobsMod.resolveJobFolderPublic(req, job, wdToken, { noCreate: true })
+  if (!folderId) throw new Error('no folder for this card')
+  const pdfs = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '')).sort((a, b) => Number(b.created || 0) - Number(a.created || 0))
+  if (!pdfs.length) throw new Error('no PDF in the folder')
+  await queueScrub(req, { job: String(job.id), file: pdfs[0].id, name: pdfs[0].name })
+  return { job: job.id, file: pdfs[0].id, name: pdfs[0].name }
+}
+// Take our scrub off a card (calibrations + note) — the estimate stays in the folder.
+export async function unscrubCard(req, jobId) {
+  const jobsMod = await import('../routes/jobs.js')
+  const job = (await jobsMod.readJobsPublic(req)).find(j => String(j.id) === String(jobId))
+  if (!job) throw new Error('card not found')
+  const notes = String(job.notes || '').split('\n').filter(l => !/^📎 CCC estimate (scrubbed|attached — scrub failed)/.test(l)).join('\n').replace(/ · scrubbing…/g, '')
+  const upd = await jobsMod.updateJobPublic(req, job.id, { ...job, calibrations: '[]', notes })
+  try { const { row } = await cfgRead(req, `scrub_${job.id}`, null); if (row) await catalyst.initialize(req, { type: 'advancedio' }).datastore().table('AppConfig').deleteRow(row) } catch { /* fine */ }
+  return { job: upd.id, vehicle: upd.vehicle, notes: upd.notes.slice(0, 200) }
+}
 export async function scrubQueue(req) { const { value } = await cfgRead(req, QKEY, []); return Array.isArray(value) ? value : [] }
 
 // Trim the extraction so it fits an AppConfig row (~10k chars).
@@ -324,9 +353,10 @@ export async function runScrubQueue(req, { max = 1 } = {}) {
     if (!job) { q = q.filter(x => x !== item); out.items.push({ job: item.job, result: 'card gone' }); continue }
     try {
       const { getAccessToken } = await import('./zoho.js'); const { downloadFile } = await import('./workdrive.js')
-      const { buffer } = await downloadFile(item.file, await getAccessToken())
+      let buffer; try { ({ buffer } = await downloadFile(item.file, await getAccessToken())) } catch (e) { throw new Error(`download: ${e.message}`) }
+      if (!buffer || buffer.length < 512) throw new Error(`download: ${buffer?.length || 0} bytes`)
       const { scrubPdfBuffer } = await import('../routes/extract.js')
-      const data = await scrubPdfBuffer(req, buffer)
+      let data; try { data = await scrubPdfBuffer(req, buffer) } catch (e) { throw new Error(`scrub: ${String(e.message).slice(0, 300)}`) }
       const cals = (data.calibrations || []).filter(c => c.enabled !== false)
       const names = cals.map(c => c.calibration_name).filter(Boolean)
       const patch = { ...job, calibrations: JSON.stringify(cals) }
@@ -334,6 +364,8 @@ export async function runScrubQueue(req, { max = 1 } = {}) {
       if ((!job.vin || job.vin.length < 17) && data.vin?.length === 17) patch.vin = data.vin
       if (!job.quote_number && data.ro_number && !data._ro_from_vin) patch.quote_number = String(data.ro_number).slice(0, 40)
       for (const k of ['year', 'make', 'model', 'vehicle']) if (!job[k] && data[k]) patch[k] = data[k]
+      // CCC abbreviates makes (TOYO, BENZ, CHEV) — the scrub's full name wins.
+      if (/^[A-Z]{3,5}$/.test(String(job.make || '')) && data.make && data.make.length > 4) { patch.make = data.make; if (data.model) patch.model = data.model; patch.vehicle = data.vehicle || [patch.year || job.year, patch.make, patch.model || job.model].filter(Boolean).join(' ') }
       patch.notes = `📎 CCC estimate scrubbed · ${names.length} calibration${names.length === 1 ? '' : 's'}${names.length ? ': ' + names.join(', ') : ' found'}${data.claim ? ` · claim ${data.claim}` : ''}\n${String(job.notes || '').replace(/ · scrubbing…/, '')}`.slice(0, 9000)
       const upd = await jobsMod.updateJobPublic(req, job.id, patch)
       const { row: srow } = await cfgRead(req, `scrub_${job.id}`, null); await cfgWrite(req, `scrub_${job.id}`, srow, compactScrub({ ...data, _job: job.id, _file: item.file, _at: new Date().toISOString() }))
