@@ -1026,6 +1026,20 @@ function GroupTextingPanel({ showToast }) {
     try { const r = await apiFetch(`${API_BASE}/api/sms/group-texting`); const j = await r.json(); setSt(j) } catch (e) { setSt({ error: e.message }) }
   }, [])
   useEffect(() => { load() }, [load])
+  // 🎯 The A2P campaign is approved but our number is on the old failed
+  // service — Twilio: "begin sending by adding phone numbers to the linked
+  // messaging service". One tap does it; reversible from the same panel.
+  async function attachNumber() {
+    const p = st?.attach_plan
+    if (!window.confirm(`Put ${st?.number_pretty || 'the 425'} on the approved A2P campaign?\n\nRight now it sits on the old campaign that carriers rejected, so every text from it fails and the app sends from the 844 instead.\n\nAfter this: texts and group replies go out from the 425 again.`)) return
+    setBusy(true)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/sms/group-texting/attach-number?go=1`, { method: 'POST' })
+      const j = await r.json()
+      if (!r.ok || j.ok === false) throw new Error(j.why || j.error || `HTTP ${r.status}`)
+      showToast(j.moved ? '📱 The 425 is on the approved campaign — send a test' : j.already ? 'Already on it' : 'Done')
+    } catch (e) { showToast(`Failed: ${e.message}`) } finally { setBusy(false); load() }
+  }
   async function flip(action) {
     if (action === 'enable' && !window.confirm('Turn ON group texting for the 425?\n\nFrom then on every text to the 425 (groups AND one-to-one) comes in through Twilio Conversations. The app handles both. You can turn it off here any time.')) return
     if (action === 'disable' && !window.confirm('Turn OFF group texting for the 425? Group threads stop arriving; one-to-one texts go back to the plain path.')) return
@@ -1045,6 +1059,16 @@ function GroupTextingPanel({ showToast }) {
         {!on && <button onClick={() => flip('enable')} disabled={busy || !st || !!st?.error} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: busy || !st || st?.error ? '#e5e7eb' : '#0f766e' }}>{busy ? '…' : 'Turn on'}</button>}
         {on && <span className="text-xs font-bold" style={{ color: '#0f766e' }}>● ON · kept on by the app</span>}
       </div>
+      {st?.attach_plan && (
+        <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fbbf24' }}>
+          <div className="text-[12px] font-bold" style={{ color: '#92400e' }}>⚠ Texts from the 425 are not reaching anyone</div>
+          <div className="text-[11px] mt-0.5" style={{ color: '#92400e' }}>
+            Your A2P campaign is approved, but {st.number_pretty || 'the 425'} is still attached to the old campaign carriers rejected. Every send from it fails, so the app is using the 844 instead and group replies cannot go out. One tap moves it.
+          </div>
+          <button onClick={attachNumber} disabled={busy} className="mt-2 text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: busy ? '#e5e7eb' : '#b45309' }}>{busy ? 'Moving…' : '📱 Put the 425 on the approved campaign'}</button>
+        </div>
+      )}
+      {st && !st.attach_plan && st.a2p_verified && <div className="text-[11px] mt-1.5" style={{ color: '#0f766e' }}>✅ A2P verified — the 425 sends for real, group replies included.</div>}
     </div>
   )
 }

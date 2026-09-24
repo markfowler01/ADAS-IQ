@@ -915,7 +915,14 @@ auth.get('/group-texting', async (req, res) => {
     if (!twilioConfigured(cfg) || !cfg.TWILIO_PHONE_NUMBER) return res.json({ ok: true, on: false, error: 'Twilio or the local 425 number is not configured' })
     const { groupTextingStatus, localA2pStatus } = await import('../services/conversations.js')
     const [st, a2p] = await Promise.all([groupTextingStatus(cfg, cfg.TWILIO_PHONE_NUMBER), localA2pStatus(cfg).catch(() => null)])
-    res.json({ ok: true, number: cfg.TWILIO_PHONE_NUMBER, number_pretty: formatPhonePretty(cfg.TWILIO_PHONE_NUMBER), webhook_expected: conversationsWebhookUrl(req), a2p_verified: !!a2p?.verified, a2p_status: a2p?.statuses || [], ...st })
+    // Not verified? Check whether an APPROVED campaign is sitting on another
+    // messaging service with no numbers on it — the 2026-09-24 trap. The panel
+    // then offers the one-tap move instead of leaving Mark to hunt in Twilio.
+    let attach_plan = null
+    if (!a2p?.verified) {
+      try { const { attachLocalToVerifiedService } = await import('../services/conversations.js'); const p = await attachLocalToVerifiedService(cfg, { dry: true }); if (p.ok && !p.already) attach_plan = p } catch (e) { console.log('[group-texting] attach plan check failed:', e.message) }
+    }
+    res.json({ ok: true, number: cfg.TWILIO_PHONE_NUMBER, number_pretty: formatPhonePretty(cfg.TWILIO_PHONE_NUMBER), webhook_expected: conversationsWebhookUrl(req), a2p_verified: !!a2p?.verified, a2p_status: a2p?.statuses || [], attach_plan, ...st })
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 auth.get('/group-texting/diag/:key', async (req, res) => {
