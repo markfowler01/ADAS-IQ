@@ -189,8 +189,13 @@ export async function scrubPdfBuffer(req, buffer, { learn = true } = {}) {
 
     const additional = await crossReferenceRules(req, data, repairText, vehicleEquipment)
     if (additional.length > 0) {
-      console.log(`[extract] Rules DB added ${additional.length} additional calibration(s)`)
-      data.calibrations = [...(data.calibrations || []), ...additional]
+      // Since the Kinetic-style rewrite (2026-09-24) the scrub itself lists every
+      // sensor with a verdict; a history rule only adds a disabled "history
+      // suggests" row so a learned false positive can never re-add itself as required.
+      const have = new Set((data.calibrations || []).map(c => String(c.sensor || c.calibration_name || '').toLowerCase()))
+      const extras = additional.filter(a => ![...have].some(h => h && (h.includes(String(a.calibration_name).toLowerCase()) || String(a.calibration_name).toLowerCase().includes(h)))).map(a => ({ ...a, enabled: false, trigger: `History suggests (${a.trigger}) — verify`, justification: `Not required by this estimate's operations. ${a.justification}` }))
+      console.log(`[extract] Rules DB suggested ${additional.length} (${extras.length} shown as suggestions)`)
+      data.calibrations = [...(data.calibrations || []), ...extras]
     }
   }
 

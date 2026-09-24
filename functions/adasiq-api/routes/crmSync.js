@@ -239,6 +239,20 @@ router.post('/email-intake/unblock', async (req, res) => {
   try { const { removeSuppressed } = await import('../services/emailToJob.js'); res.json({ suppress: await removeSuppressed(req, req.query.sender) }) }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
+// POST /api/crm-sync-cron/email-intake/config?key=email2job_scrub&value=true — flip an intake switch (whitelisted keys).
+router.post('/email-intake/config', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  const key = String(req.query.key || ''); const value = String(req.query.value ?? '')
+  if (!['email2job_scrub', 'email2job_enabled', 'email2job_inboxes', 'adasmaps_sender_domain'].includes(key)) return res.status(400).json({ error: 'key not allowed' })
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`)
+    const row = rows?.[0]?.AppConfig?.ROWID; const t = app.datastore().table('AppConfig')
+    if (row) await t.updateRow({ ROWID: String(row), config_key: key, config_value: value }); else await t.insertRow({ config_key: key, config_value: value })
+    res.json({ ok: true, key, value })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
 // GET /api/crm-sync-cron/email-intake/status — what was skipped, what is queued, which inboxes.
 router.get('/email-intake/status', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'

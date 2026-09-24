@@ -358,7 +358,7 @@ export async function runScrubQueue(req, { max = 1 } = {}) {
       let buffer; try { ({ buffer } = await downloadFile(item.file, await getAccessToken())) } catch (e) { throw new Error(`download: ${e.message}`) }
       if (!buffer || buffer.length < 512) throw new Error(`download: ${buffer?.length || 0} bytes`)
       const { scrubPdfBuffer } = await import('../routes/extract.js')
-      let data; try { data = await scrubPdfBuffer(req, buffer) } catch (e) { throw new Error(`scrub: ${String(e.message).slice(0, 300)}`) }
+      let data; try { data = await scrubPdfBuffer(req, buffer, { learn: false }) } catch (e) { throw new Error(`scrub: ${String(e.message).slice(0, 300)}`) }
       const cals = (data.calibrations || []).filter(c => c.enabled !== false)
       const names = cals.map(c => c.calibration_name).filter(Boolean)
       const patch = { ...job, calibrations: JSON.stringify(cals) }
