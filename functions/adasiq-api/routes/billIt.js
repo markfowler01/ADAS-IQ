@@ -22,6 +22,7 @@ import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 import axios from 'axios'
 import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, invoiceCustomFields, createCostInvoice, createSingleInvoice, retailTax, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
 import catalyst from 'zcatalyst-sdk-node'
+import { attachJobReports } from '../services/reportAttach.js'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
@@ -261,6 +262,8 @@ async function billEstimator(req, res, job, p, dry) {
     const { pushEstimateInvoice } = await import('./estimatorMore.js')
     out = await pushEstimateInvoice(req, p.estimate.id, by)
     const token = await getAccessToken()
+    const att = await attachJobReports(req, token, job, [{ kind: 'invoices', id: out.id }]).catch(e => ({ attached: [], errors: [e.message] }))
+    p.attached = att.attached; p.attach_errors = att.errors
     const e2 = await emailInvoice(token, out.id, emails)
     if (e2) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${out.number}: invoice created from estimate ${p.estimate.number} but email failed (${e2}) — send from Books by hand.`).catch(() => {})
     const onSite = p.customer_type === 'retail' || String(req.body?.pay_mode || '') === 'on_site'
@@ -391,6 +394,9 @@ router.post('/:id/bill', async (req, res) => {
     if (!dry) {
       const estFull = await getEstimate(token, p.estimate_id)
       inv = await createCostInvoice({ token, app: catalyst.initialize(req), est: estFull, lines: p.lines, pct, customerType: p.customer_type, technician: job.technician, by, templates: p.templates })
+      // 📎 Kinetic report from the job folder rides along on both documents (Mark 2026-09-24).
+      const att = await attachJobReports(req, token, job, [{ kind: 'estimates', id: p.estimate_id }, { kind: 'invoices', id: inv.invoice_id }]).catch(e => ({ attached: [], errors: [e.message] }))
+      p.attached = att.attached; p.attach_errors = att.errors
       // 3. Insurance invoice = the estimate, emailed as-is. 4. Cost invoice emailed.
       const e1 = await emailEstimate(token, p.estimate_id, emails)
       const e2 = await emailInvoice(token, inv.invoice_id, emails)
@@ -409,11 +415,13 @@ router.post('/:id/bill', async (req, res) => {
       `Cost invoice ${inv?.invoice_number || p.estimate_number} at ${pct}% → $${p.cost_total.toFixed(2)} (saves the shop $${p.saved.toFixed(2)})${p.extras_count ? ` · ${p.extras_count} extra item${p.extras_count === 1 ? '' : 's'} added` : ''}`,
       changedLines ? `Estimate ${p.estimate_number} updated in Books to match the review` : '',
       `Templates: ${p.templates.estimate.name} / ${p.templates.invoice.name}`,
+      p.attached?.length ? `📎 Attached to both: ${p.attached.join(', ')}` : (dry ? '' : '📎 No calibration report PDF found in the job folder — nothing attached'),
+      p.attach_errors?.length ? `⚠️ attach: ${p.attach_errors.join(' | ')}` : '',
       `by ${by}`,
     ].filter(Boolean).join('\n')
     await postToCliqChannel(DISPATCH_CHANNEL, summary).catch(() => {})
     console.log(`[bill-it] ${dry ? 'DRY' : 'LIVE'} ${p.shop_name} ${p.estimate_number} ${pct}% by ${by}`)
-    res.json({ ok: true, dry, invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, estimate_updated: changedLines, preview: pub(p) })
+    res.json({ ok: true, dry, invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, estimate_updated: changedLines, attached: p.attached || [], preview: pub(p) })
   } catch (e) {
     console.error('[bill-it]', e.message)
     res.status(e.status || 500).json({ error: e.response?.data?.message || e.message })
@@ -449,6 +457,8 @@ async function billSingle(req, res, job, p, dry) {
   if (!dry) {
     const token = await getAccessToken()
     inv = await createSingleInvoice({ token, app: catalyst.initialize(req), customerId: p.customer_id, job, lines: p.lines, pct, customerType: ctype, technician: job.technician, by, template: p.templates.invoice, taxId: isRetail ? p.tax?.tax_id : '', taxPct: isRetail ? p.tax?.pct : 0 })
+    const att = await attachJobReports(req, token, job, [{ kind: 'invoices', id: inv.invoice_id }]).catch(e => ({ attached: [], errors: [e.message] }))
+    p.attached = att.attached; p.attach_errors = att.errors
     const e2 = await emailInvoice(token, inv.invoice_id, emails)
     if (e2) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${inv.invoice_number}: invoice created but email failed (${e2}) — send from Books by hand.`).catch(() => {})
     // On-site payers stay on the board until Collect flips them Paid (Phase B); net-terms cards are done.
@@ -460,11 +470,13 @@ async function billSingle(req, res, job, p, dry) {
     `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}* (${big3.CUSTOMER_TYPES[ctype]?.label || ctype || 'shop'})`,
     `Invoice ${inv?.invoice_number || '(dry)'} $${p.grand_total.toFixed(2)}${pct ? ` · ${pct}% shown (list $${p.list_total.toFixed(2)})` : ''}${isRetail && p.tax ? ` · tax $${p.tax.amount.toFixed(2)}` : ''} → ${emails.join(', ')}`,
     pay === 'net_terms' ? 'Net terms — emailed.' : '🚐 Collect on site — check, cash, or the card QR on the job card.',
+    p.attached?.length ? `📎 Attached: ${p.attached.join(', ')}` : '',
+    p.attach_errors?.length ? `⚠️ attach: ${p.attach_errors.join(' | ')}` : '',
     `by ${by}`,
-  ].join('\n')
+  ].filter(Boolean).join('\n')
   await postToCliqChannel(DISPATCH_CHANNEL, summary).catch(() => {})
   console.log(`[bill-it single] ${dry ? 'DRY' : 'LIVE'} ${p.shop_name} ${ctype} ${pct}% $${p.grand_total} by ${by}`)
-  res.json({ ok: true, dry, mode: 'single', invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, preview: pub(p) })
+  res.json({ ok: true, dry, mode: 'single', invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, attached: p.attached || [], preview: pub(p) })
 }
 
 export default router

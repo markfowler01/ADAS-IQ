@@ -253,6 +253,24 @@ router.post('/email-intake/config', async (req, res) => {
     res.json({ ok: true, key, value })
   } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
+// POST /api/crm-sync-cron/attach-report?job=<id> — attach the job folder's Kinetic report to its Books quote + invoice (backfill / retry).
+router.post('/attach-report', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const J = await import('./jobs.js'); const job = (await J.readJobsPublic(req)).find(j => String(j.id) === String(req.query.job || ''))
+    if (!job) return res.status(404).json({ error: 'card not found' })
+    const { getAccessToken, getInvoiceByNumber } = await import('../services/zoho.js'); const { attachJobReports, findJobReportPdfs } = await import('../services/reportAttach.js')
+    const token = await getAccessToken()
+    const targets = []
+    if (job.zoho_estimate_id) targets.push({ kind: 'estimates', id: job.zoho_estimate_id })
+    if (job.zoho_invoice_id) targets.push({ kind: 'invoices', id: job.zoho_invoice_id })
+    else if (job.invoice_number) { try { const inv = await getInvoiceByNumber(job.invoice_number); if (inv?.invoice_id) targets.push({ kind: 'invoices', id: inv.invoice_id }) } catch (e) { console.log('[attach-report] invoice lookup failed:', e.message) } }
+    if (req.query.dry === '1') return res.json({ dry: true, targets, files: await findJobReportPdfs(req, job) })
+    if (!targets.length) return res.status(400).json({ error: 'no Books quote or invoice on this card' })
+    res.json({ ok: true, targets, ...(await attachJobReports(req, token, job, targets)) })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
 // GET /api/crm-sync-cron/email-intake/status — what was skipped, what is queued, which inboxes.
 router.get('/email-intake/status', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
