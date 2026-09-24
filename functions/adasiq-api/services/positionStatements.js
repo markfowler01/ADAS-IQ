@@ -45,10 +45,20 @@ export function canonicalOem(raw) {
   const paren = t.match(/\(([^)]+)\)/)                       // "Lincoln (Ford Motor Company)" → keep Lincoln
   t = t.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
   if (!t && paren) t = paren[1].trim()
+  // "Honda / Acura", "Toyota / Lexus / Scion" → the first brand, so one chip.
+  if (t.includes('/')) t = t.split('/')[0].trim()
   const key = t.toLowerCase().replace(/[.,]/g, '').trim()
   if (OEM_ALIAS[key]) return OEM_ALIAS[key]
   for (const [k, v] of Object.entries(OEM_ALIAS)) if (key.startsWith(k)) return v
   const known = OEMS.find(o => o.toLowerCase() === key); if (known) return known === 'GM' ? 'General Motors' : known === 'Mercedes' ? 'Mercedes-Benz' : known
+  // Corporate tails — "Volvo Car USA LLC", "Mercedes-Benz USA" — but only when
+  // what is left is still a brand we recognise, so "General Motors" survives.
+  const stripped = key.replace(/\b(usa|u s a|inc|llc|corp|corporation|company|cars?|of america|north america|group)\b/g, ' ').replace(/\s+/g, ' ').trim()
+  if (stripped && stripped !== key) {
+    if (OEM_ALIAS[stripped]) return OEM_ALIAS[stripped]
+    const k2 = OEMS.find(o => o.toLowerCase() === stripped)
+    if (k2) return k2 === 'GM' ? 'General Motors' : k2 === 'Mercedes' ? 'Mercedes-Benz' : k2
+  }
   // ALL CAPS or all lower → Title Case, hyphens kept (Snap-on, Mercedes-Benz)
   if (t === t.toUpperCase() || t === t.toLowerCase()) t = t.toLowerCase().replace(/(^|[\s-])([a-z])/g, (m, a, b) => a + b.toUpperCase())
   return t.slice(0, 60)
