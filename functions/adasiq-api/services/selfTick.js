@@ -26,6 +26,9 @@ const TICKS = {
   // 📋 OEM position statements — once a day. The route carries its own PT-day
   // guard too, so whichever scheduler gets there first wins and the rest no-op.
   position_statements: { minutes: 6 * 60, path: '/api/crm-sync-cron/position-statements?once=1', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
+  // Drains one queued OEM PDF at a time — a Claude read is ~17s and the
+  // gateway kills a request at 30s, so they can only go one per invocation.
+  position_import: { minutes: 4, path: '/api/crm-sync-cron/position-statements/import-next', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
 }
 
 /** Claim the window in Cache. Returns false when someone already claimed it. */

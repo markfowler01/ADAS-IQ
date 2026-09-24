@@ -279,6 +279,14 @@ router.get('/email-intake/status', async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+// POST /api/crm-sync-cron/sms-media-backup?limit=5 — copy texted pictures into WorkDrive (catch-up).
+router.post('/sms-media-backup', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { backfillSmsMedia } = await import('../services/smsMediaBackup.js'); res.json(await backfillSmsMedia(req, { limit: Number(req.query.limit) || 5 })) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 // 📋 OEM position statements — daily web scan (Mark 2026-09-24).
 // dry=1 reports without writing. once=1 makes it a no-op after the first run of the PT day.
 router.post('/position-statements', async (req, res) => {

@@ -260,22 +260,47 @@ async function announce(req, out) {
  * it on its own (each PDF costs a Claude read).
  */
 export async function backfillPositionStatements(req, { limit = 5, oem = '' } = {}) {
-  const out = { imported: [], failed: [], limit, oem }
+  // The Catalyst gateway kills a request at ~30s and one PDF read costs ~17s,
+  // so this queues the work and imports only what fits in a safe budget. The
+  // rest drains on its own from the board ticker (Mark hit the cap with
+  // limit=5 on 2026-09-24).
+  const t0 = Date.now()
+  // Only start an import while there is a full read's worth of headroom left.
+  // Source fetching eats ~10s, a Claude PDF read ~17s, the gateway dies at 30s
+  // — so realistically this files one and queues the rest.
+  const BUDGET_MS = 7000
+  const want = Math.min(Math.max(Number(limit) || 5, 1), 40)
+  const out = { imported: [], failed: [], requested: want, oem }
   const { items, errors } = await fetchAllSources()
   const known = await knownUrls(req)
-  const { row: seenRow, value: seenVal } = await cfg(req, SEEN_KEY, [])
-  const seen = new Set(Array.isArray(seenVal) ? seenVal : [])
   let pool = items.filter(i => i.is_pdf && RELEVANT.test(i.title) && !known.has(normUrl(i.url)))
   if (oem) pool = pool.filter(i => new RegExp(oem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(i.title))
   pool.sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')))
-  for (const item of pool.slice(0, Math.min(Number(limit) || 5, 15))) {
-    try { const r = await importPdf(req, item); if (r.imported) { out.imported.push({ oem: r.row.doc_oem, title: r.row.doc_title, published: r.row.doc_published_date }); seen.add(urlHash(item.url)) } else out.failed.push({ title: item.title, why: r.skipped }) }
-    catch (e) { out.failed.push({ title: item.title, why: e.message }) }
+
+  const { row: qRow, value: qVal } = await cfg(req, QUEUE_KEY, [])
+  const queue = Array.isArray(qVal) ? qVal : []
+  const have = new Set(queue.map(x => normUrl(x.url)))
+  for (const i of pool.slice(0, want)) if (!have.has(normUrl(i.url))) { queue.push({ url: i.url, title: i.title, filename: i.filename || '', published: i.published || '' }); have.add(normUrl(i.url)) }
+  await cfgSet(req, QUEUE_KEY, qRow, queue.slice(0, 60))
+
+  // Import what fits, then hand the rest to the ticker.
+  const { row: seenRow, value: seenVal } = await cfg(req, SEEN_KEY, [])
+  const seen = new Set(Array.isArray(seenVal) ? seenVal : [])
+  while (queue.length && Date.now() - t0 < BUDGET_MS) {
+    const item = queue.shift()
+    await cfgSet(req, QUEUE_KEY, qRow, queue)   // drop first — a bad PDF can never loop
+    try {
+      const r = await importPdf(req, { ...item, is_pdf: true })
+      if (r.imported) { out.imported.push({ oem: r.row.doc_oem, title: r.row.doc_title, published: r.row.doc_published_date }); seen.add(urlHash(item.url)) }
+      else out.failed.push({ title: item.title, why: r.skipped })
+    } catch (e) { out.failed.push({ title: item.title, why: e.message }) }
   }
   await cfgSet(req, SEEN_KEY, seenRow, [...seen].slice(-900))
   out.errors = errors
-  out.remaining = Math.max(0, pool.length - out.imported.length - out.failed.length)
-  if (out.imported.length) await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📋 *${out.imported.length} document${out.imported.length === 1 ? '' : 's'} added to the OEM library*\n${out.imported.map(d => `• ${d.oem || 'OEM'} — ${d.title}${d.published ? ` (${d.published})` : ''}`).join('\n')}${out.remaining ? `\n${out.remaining} more available.` : ''}`).catch(() => {})
+  out.left_in_queue = queue.length
+  out.more_available = Math.max(0, pool.length - want)
+  out.note = queue.length ? `${queue.length} queued — they file themselves as the app is used, or call /position-statements/import-next.` : 'Queue empty.'
+  if (out.imported.length) await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📋 *${out.imported.length} document${out.imported.length === 1 ? '' : 's'} added to the OEM library*\n${out.imported.map(d => `• ${d.oem || 'OEM'} — ${d.title}${d.published ? ` (${d.published})` : ''}`).join('\n')}${queue.length ? `\n${queue.length} more queued.` : ''}`).catch(() => {})
   return out
 }
 

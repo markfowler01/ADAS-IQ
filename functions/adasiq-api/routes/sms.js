@@ -129,13 +129,18 @@ async function writeAllMessages(req, records) {
 // while the persisted log never actually contained the message, so the
 // optimistic UI append disappeared on the next refresh.
 async function appendMessage(req, record) {
-  // Durable write FIRST — Datastore has no TTL and no size cap. The
-  // cache write below stays as the fast overlay (media/status fields).
+  // Durable write FIRST — Datastore has no TTL and no size cap. The cache
+  // below is only a fast overlay, so whether IT fits decides nothing: as long
+  // as Datastore took the row the message is saved, and the UI must not cry
+  // "log-save failed" (Mark hit that on a group send, 2026-09-24).
+  let durable = false, durableErr = ''
   try {
     const { upsertMessage } = await import('../services/datastoreSms.js')
     await upsertMessage(req, record)
+    durable = true
   } catch (e) {
-    console.warn('[sms ds write (non-fatal)]', e.message)
+    durableErr = e.message
+    console.warn('[sms ds write]', e.message)
   }
   let records = []
   try { records = await readCacheMessages(req) } catch { records = [] }
@@ -150,20 +155,25 @@ async function appendMessage(req, record) {
   // 2026-07-09. Trim aggressively to 20KB and keep only the most recent
   // 100 records max. Persistent storage is moving to Datastore; this is
   // the interim floor.
-  const MAX_BYTES = 20_000
-  const MAX_RECORDS = 100
+  // A group record carries participants + labels, so the old 20KB/100 ceiling
+  // still overflowed. Keep the overlay small — Datastore holds the history.
+  const MAX_BYTES = 12_000
+  const MAX_RECORDS = 60
   if (records.length > MAX_RECORDS) records = records.slice(-MAX_RECORDS)
   while (records.length > 1 && JSON.stringify(records).length > MAX_BYTES) {
     const dropCount = Math.max(1, Math.floor(records.length * 0.1))
     records = records.slice(dropCount)
   }
-  try {
-    await writeAllMessages(req, records)
-    return { ok: true, count: records.length }
-  } catch (e) {
+  let cacheOk = true, cacheErr = ''
+  try { await writeAllMessages(req, records) }
+  catch (e) {
+    cacheErr = e.message; cacheOk = false
     console.warn('[sms cache write]', e.message)
-    return { ok: false, error: e.message, count: records.length }
+    // Overflowing once should not poison every later write — halve and retry.
+    try { await writeAllMessages(req, records.slice(-Math.max(10, Math.floor(records.length / 2)))); cacheOk = true; cacheErr = '' }
+    catch (e2) { console.warn('[sms cache write retry]', e2.message) }
   }
+  return { ok: durable || cacheOk, durable, cache: cacheOk, error: durable ? '' : (durableErr || cacheErr), count: records.length }
 }
 
 // ── Thread key & bucketing ──────────────────────────────────────────────────
@@ -346,6 +356,9 @@ router.post('/', async (req, res) => {
 
     // 1) Persist to cache log
     await appendMessage(req, record)
+    // 1a) 📷 Keep the pictures. Twilio expires its own copies, so each one is
+    //     copied into WorkDrive and stamped on the Datastore row.
+    if (media.length) { try { const { backupMessageMedia } = await import('../services/smsMediaBackup.js'); await backupMessageMedia(req, { message_sid: sid, media, cfg }) } catch (e) { console.warn('[sms-media inbound]', e.message) } }
 
     // 1b) Evening check-in interception. If this is Mark answering tonight's
     //     end-of-day text, parse it into the day ledger and stop here — his
@@ -565,18 +578,38 @@ router.get('/media/:sid/:idx', async (req, res) => {
     const msg = all.find(m => m.message_sid === sid)
     const i = parseInt(idx, 10)
     const media = msg?.media?.[i]
-    if (!media?.url) return res.status(404).send('not found')
+    // 📷 Our own copy first — Twilio deletes its media, ours does not.
+    const serveBackup = async () => {
+      const { backedUpMedia } = await import('../services/smsMediaBackup.js')
+      const files = await backedUpMedia(req, sid)
+      const f = files[i] || files[0]
+      if (!f?.fileId) return false
+      const { getAccessToken } = await import('../services/zoho.js')
+      const { downloadFile } = await import('../services/workdrive.js')
+      const got = await downloadFile(f.fileId, await getAccessToken())
+      res.set('Content-Type', f.type || got.contentType || 'application/octet-stream')
+      res.set('Cache-Control', 'private, max-age=86400')
+      res.send(got.buffer)
+      return true
+    }
+    if (!media?.url) { if (await serveBackup()) return; return res.status(404).send('not found') }
 
     const axiosMod = (await import('axios')).default
-    const r = await axiosMod.get(media.url, {
-      auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN },
-      responseType: 'arraybuffer',
-      timeout: 15000,
-      maxRedirects: 5,
-    })
-    res.set('Content-Type', media.contentType || r.headers['content-type'] || 'application/octet-stream')
-    res.set('Cache-Control', 'private, max-age=86400')
-    res.send(Buffer.from(r.data))
+    try {
+      const r = await axiosMod.get(media.url, {
+        auth: { username: cfg.TWILIO_ACCOUNT_SID, password: cfg.TWILIO_AUTH_TOKEN },
+        responseType: 'arraybuffer',
+        timeout: 15000,
+        maxRedirects: 5,
+      })
+      res.set('Content-Type', media.contentType || r.headers['content-type'] || 'application/octet-stream')
+      res.set('Cache-Control', 'private, max-age=86400')
+      res.send(Buffer.from(r.data))
+    } catch (e) {
+      console.warn('[sms media] Twilio copy gone, trying our backup:', e.message)
+      if (await serveBackup()) return
+      throw e
+    }
   } catch (e) {
     console.warn('[sms media public]', e.message)
     res.status(500).send('media fetch failed')

@@ -57,6 +57,9 @@ function toRow(rec) {
     contact_name: String(rec.contact_name || ''),
     shop_name:    String(rec.shop_name || ''),
     sender_name:  String(rec.sender || rec.sender_name || ''),
+    // 📷 Backed-up picture ids (WorkDrive). Written by smsMediaBackup after
+    // the row exists, so only carry it here when a caller already has them.
+    ...(rec.media_files ? { media_files: typeof rec.media_files === 'string' ? rec.media_files : JSON.stringify(rec.media_files).slice(0, 9800) } : {}),
   }
 }
 
@@ -76,6 +79,7 @@ function fromRow(row) {
     contact_name: r.contact_name || '',
     shop_name:    r.shop_name || '',
     sender:       r.sender_name || '',
+    media_files:          (() => { try { return r.media_files ? JSON.parse(r.media_files) : [] } catch { return [] } })(),
     // Not persisted — media URLs regenerated from message_sid on serve
     // via signed proxy; delivery-tracking fields default so UI code that
     // reads them doesn't crash.
