@@ -315,7 +315,9 @@ export async function requeueScrub(req, jobId) {
   const wdToken = await getAccessToken()
   const folderId = await jobsMod.resolveJobFolderPublic(req, job, wdToken, { noCreate: true })
   if (!folderId) throw new Error('no folder for this card')
+  // Prefer the CCC estimate over Kinetic reports / post-scans / invoices that share the folder.
   const pdfs = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '')).sort((a, b) => Number(b.created || 0) - Number(a.created || 0))
+    .sort((a, b) => Number(/kinetic|post.?scan|invoice|report/i.test(a.name || '')) - Number(/kinetic|post.?scan|invoice|report/i.test(b.name || '')))
   if (!pdfs.length) throw new Error('no PDF in the folder')
   await queueScrub(req, { job: String(job.id), file: pdfs[0].id, name: pdfs[0].name })
   return { job: job.id, file: pdfs[0].id, name: pdfs[0].name }
