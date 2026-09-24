@@ -11,14 +11,22 @@
 const ORANGE = '#CD4419'
 
 export const isRequestJob = job => (job?.status || '') === 'job_requested'
-export const isQuoteRequest = job => isRequestJob(job) && String(job?.request_type || '').toLowerCase() === 'quote'
+// 'equote' = a quote request that came in by email (2026-09-24) — quote column + 📧 pill.
+export const isQuoteRequest = job => isRequestJob(job) && ['quote', 'equote'].includes(String(job?.request_type || '').toLowerCase())
 // 📱 Came in by text (Mark 2026-09-23): the team must see it at a glance.
-export const isTextRequest = job => isRequestJob(job) && ['text', 'email'].includes(String(job?.request_type || '').toLowerCase())
-export const isEmailRequest = job => isRequestJob(job) && String(job?.request_type || '').toLowerCase() === 'email'
+export const isTextRequest = job => isRequestJob(job) && ['text', 'email', 'equote'].includes(String(job?.request_type || '').toLowerCase())
+export const isEmailRequest = job => isRequestJob(job) && ['email', 'equote'].includes(String(job?.request_type || '').toLowerCase())
 // "📱 2026-09-23 8:26 AM · Dave @ The Auto Repair Shop texted: "…"" → { when, who }
 export function textRequestInfo(job) {
-  const m = /(?:📱|📧) (\d{4}-\d{2}-\d{2} [^·]+?) · (.+?) (?:texted|emailed):/.exec(String(job?.notes || ''))
+  const m = /(?:📱|📧) (\d{4}-\d{2}-\d{2} [^·]+?) · (.+?) (?:texted|emailed)(?: \([^)]*\))?:/.exec(String(job?.notes || ''))
   return m ? { when: m[1].trim(), who: m[2].trim() } : null
+}
+// 📎 The email intake filed a CCC estimate on this card (and scrubbed it, or is about to).
+export const scrubState = job => { const n = String(job?.notes || ''); if (/📎 CCC estimate scrubbed · (\d+) calibration/.test(n)) return { done: true, n: Number(/📎 CCC estimate scrubbed · (\d+) calibration/.exec(n)[1]) }; if (/scrub failed/.test(n)) return { failed: true }; if (/filed to the job folder · scrubbing…/.test(n)) return { pending: true }; return null }
+export function ScrubChip({ job }) {
+  const st = scrubState(job); if (!st) return null
+  const style = st.done ? { backgroundColor: '#1d4ed8', color: 'white' } : st.failed ? { backgroundColor: '#fee2e2', color: '#b91c1c' } : { backgroundColor: '#dbeafe', color: '#1e40af' }
+  return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block" style={style} title={st.done ? 'CCC estimate scrubbed — Create Job → 📎 From the emailed estimate' : st.failed ? 'The estimate is in the folder; the scrub failed' : 'Estimate filed, scrub running'}>{st.done ? `📎 CCC estimate · ${st.n} calibration${st.n === 1 ? '' : 's'}` : st.failed ? '📎 estimate · scrub failed' : '📎 estimate · scrubbing…'}</span>
 }
 export function openTextThread(job) {
   // The thread is keyed by the sender's phone; the notes carry it via the CRM contact label lookup on the SMS screen.

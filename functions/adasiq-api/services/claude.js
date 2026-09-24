@@ -187,7 +187,7 @@ Format:
  * Detect whether a PDF is a CCC ONE estimate or a Kinetic calibration report.
  * Uses a lightweight Claude call on just the first ~2 pages worth of text.
  */
-async function detectPdfType(base64Pdf) {
+export async function detectPdfType(base64Pdf) {
   const message = await getClient().messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 20,

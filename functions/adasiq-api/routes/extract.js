@@ -166,6 +166,68 @@ const RIVIAN_BASE_ITEMS = [
   },
 ]
 
+// Shared scrub (2026-09-24): the upload screen AND the email intake run the
+// same extractor + rules DB + Rivian base lines + auto-learn, so a CCC
+// estimate that arrives by email is scrubbed exactly like one Kat uploads.
+export async function scrubPdfBuffer(req, buffer, { learn = true } = {}) {
+  const data = await extractFromPdf(buffer)
+
+  // Fallback: if no RO number found, use last 8 digits of VIN
+  if (!data.ro_number && data.vin && data.vin.length >= 8) {
+    const vinLast8 = data.vin.slice(-8)
+    data.ro_number = vinLast8
+    data._ro_from_vin = true
+    console.log(`[extract] No RO number found — using last 8 of VIN: ${vinLast8}`)
+  }
+
+  // For CCC estimates, cross-reference against the rules DB to catch anything the AI missed
+  if (data._pdfType === 'CCC') {
+    const repairText = (data._repairText || '') + ' ' +
+      (data.calibrations || []).map(c => c.trigger || '').join(' ')
+    const vehicleEquipment = (data._vehicleEquipment || '') + ' ' +
+      (data.calibrations || []).map(c => c.calibration_name || '').join(' ')
+
+    const additional = await crossReferenceRules(req, data, repairText, vehicleEquipment)
+    if (additional.length > 0) {
+      console.log(`[extract] Rules DB added ${additional.length} additional calibration(s)`)
+      data.calibrations = [...(data.calibrations || []), ...additional]
+    }
+  }
+
+  // Rivian base procedures (Mark 2026-09-08): every Rivian scrub carries
+  // Rivian's published pre-calibration labor as REQUIRED base lines on
+  // the Absolute ADAS report + invoice, then whatever calibrations the
+  // estimate actually needs. Names match the Zoho Books items Mark is
+  // adding for Rivian — keep them identical so the invoice matcher
+  // finds them by exact name.
+  if (/rivian/i.test(String(data.make || '')) || /rivian/i.test(String(data.vehicle || ''))) {
+    const have = new Set((data.calibrations || []).map(c => String(c.calibration_name || '').toLowerCase().trim()))
+    const base = RIVIAN_BASE_ITEMS.filter(b => !have.has(b.calibration_name.toLowerCase()))
+    if (base.length) {
+      data.calibrations = [...base.map(b => ({ ...b })), ...(data.calibrations || [])]
+      console.log(`[extract] Rivian: added ${base.length} base procedure line(s)`)
+    }
+  }
+
+  // Auto-learn: save all detected calibrations as rules (non-blocking, runs after response)
+  // Applies to every PDF type — CCC, Kinetic, and any future formats
+  if (learn && !data._demo && data.make && data.year && data.calibrations?.length) {
+    setImmediate(() => {
+      for (const cal of data.calibrations) {
+        if (cal.base_item) continue   // Rivian base labor is not a calibration rule
+        saveCalibrationAsRule(req, {
+          make: data.make,
+          model: data.model || '',
+          year: data.year,
+          calibration: cal,
+        }).catch(() => {})
+      }
+      console.log(`[extract] Auto-learned ${data.calibrations.length} calibration(s) for ${data.year} ${data.make} ${data.model}`)
+    })
+  }
+  return data
+}
+
 router.post('/', (req, res, next) => {
   upload.single('pdf')(req, res, (err) => {
     if (err) {
@@ -196,61 +258,7 @@ router.post('/', (req, res, next) => {
   }
 
   try {
-    const data = await extractFromPdf(req.file.buffer)
-
-    // Fallback: if no RO number found, use last 8 digits of VIN
-    if (!data.ro_number && data.vin && data.vin.length >= 8) {
-      const vinLast8 = data.vin.slice(-8)
-      data.ro_number = vinLast8
-      data._ro_from_vin = true
-      console.log(`[extract] No RO number found — using last 8 of VIN: ${vinLast8}`)
-    }
-
-    // For CCC estimates, cross-reference against the rules DB to catch anything the AI missed
-    if (data._pdfType === 'CCC') {
-      const repairText = (data._repairText || '') + ' ' +
-        (data.calibrations || []).map(c => c.trigger || '').join(' ')
-      const vehicleEquipment = (data._vehicleEquipment || '') + ' ' +
-        (data.calibrations || []).map(c => c.calibration_name || '').join(' ')
-
-      const additional = await crossReferenceRules(req, data, repairText, vehicleEquipment)
-      if (additional.length > 0) {
-        console.log(`[extract] Rules DB added ${additional.length} additional calibration(s)`)
-        data.calibrations = [...(data.calibrations || []), ...additional]
-      }
-    }
-
-    // Rivian base procedures (Mark 2026-09-08): every Rivian scrub carries
-    // Rivian's published pre-calibration labor as REQUIRED base lines on
-    // the Absolute ADAS report + invoice, then whatever calibrations the
-    // estimate actually needs. Names match the Zoho Books items Mark is
-    // adding for Rivian — keep them identical so the invoice matcher
-    // finds them by exact name.
-    if (/rivian/i.test(String(data.make || '')) || /rivian/i.test(String(data.vehicle || ''))) {
-      const have = new Set((data.calibrations || []).map(c => String(c.calibration_name || '').toLowerCase().trim()))
-      const base = RIVIAN_BASE_ITEMS.filter(b => !have.has(b.calibration_name.toLowerCase()))
-      if (base.length) {
-        data.calibrations = [...base.map(b => ({ ...b })), ...(data.calibrations || [])]
-        console.log(`[extract] Rivian: added ${base.length} base procedure line(s)`)
-      }
-    }
-
-    // Auto-learn: save all detected calibrations as rules (non-blocking, runs after response)
-    // Applies to every PDF type — CCC, Kinetic, and any future formats
-    if (!data._demo && data.make && data.year && data.calibrations?.length) {
-      setImmediate(() => {
-        for (const cal of data.calibrations) {
-          if (cal.base_item) continue   // Rivian base labor is not a calibration rule
-          saveCalibrationAsRule(req, {
-            make: data.make,
-            model: data.model || '',
-            year: data.year,
-            calibration: cal,
-          }).catch(() => {})
-        }
-        console.log(`[extract] Auto-learned ${data.calibrations.length} calibration(s) for ${data.year} ${data.make} ${data.model}`)
-      })
-    }
+    const data = await scrubPdfBuffer(req, req.file.buffer)
 
     res.json(data)
   } catch (err) {

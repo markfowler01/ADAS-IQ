@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { IntegrationPills } from './books/Integrations.jsx'
-import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest } from './JobIdPill'
+import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest, ScrubChip, scrubState } from './JobIdPill'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import CollectPanel from './CollectPanel.jsx'
 import BuildJobModal from './BuildJobModal.jsx'
@@ -62,7 +62,7 @@ function normShopName(name) {
 // Quote requests share status job_requested but live in their own blue
 // column (Mark 2026-09-10). colOf() is the board's column for a job.
 const QUOTE_COL = { id: 'quote_requested', label: '📝 Quotes Requested', blue: true }
-const colOf = j => (j?.status === 'job_requested' && String(j?.request_type || '').toLowerCase() === 'quote') ? 'quote_requested' : j?.status
+const colOf = j => (j?.status === 'job_requested' && ['quote', 'equote'].includes(String(j?.request_type || '').toLowerCase())) ? 'quote_requested' : j?.status
 
 const COLUMNS = [
   { id: 'job_requested',    label: 'Job Requested' },
@@ -836,7 +836,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><ScrubChip job={job} /><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
       {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
@@ -1508,6 +1508,22 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     onManualInvoice(data)
   }
   useEffect(() => { const fn = () => fetchJobs(); window.addEventListener('adas:jobs-refresh', fn); return () => window.removeEventListener('adas:jobs-refresh', fn) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // 📎 Open the stored CCC scrub on the review screen — no re-upload (2026-09-24).
+  useEffect(() => {
+    const fn = async e => {
+      const job = e.detail; if (!job || !onExtracted) return
+      try {
+        const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/scrub`)
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`)
+        if (!Array.isArray(data.calibrations)) data.calibrations = []
+        Object.assign(data, requestCarry(job))
+        if (!data.shop) data.shop = job.shop_name || ''
+        onExtracted(data, null)
+      } catch (err) { showToast(err.message || 'Could not open the scrub.') }
+    }
+    window.addEventListener('adas:open-scrub', fn); return () => window.removeEventListener('adas:open-scrub', fn)
+  }, [onExtracted]) // eslint-disable-line react-hooks/exhaustive-deps
   const [calReviewJob, setCalReviewJob] = useState(null)
   const [billItJob, setBillItJob] = useState(null)   // 💸 Bill it review modal (staff only)
   // 📸 Photos-first before Ready to Invoice, on the board too (Mark
@@ -1648,7 +1664,12 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
   // Delete
   async function handleDelete(job) {
-    const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
+    // 📧 Emailed requests: a delete can teach the intake to ignore that sender (2026-09-24).
+    let block = false
+    if (job.status === 'job_requested' && ['email', 'equote'].includes(String(job.request_type || '').toLowerCase()) && /emailed \([^)]+@/.test(String(job.notes || ''))) {
+      block = window.confirm('This card was made from an email. Also stop future emails from this sender turning into tickets?\n\nOK = yes, block the sender · Cancel = just delete the card')
+    }
+    const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}${block ? '?block=1' : ''}`, {
       method: 'DELETE',
     })
     if (!res.ok) {
@@ -2775,6 +2796,12 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
           onClick={e => { e.stopPropagation(); if (e.target === e.currentTarget) setShowChooser(false) }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
             <h3 className="text-base font-bold mb-1" style={{ color: '#1a1a1a' }}>Create Job</h3>
+            {scrubState(job)?.done && (
+              <button onClick={e => { e.stopPropagation(); setShowChooser(false); window.dispatchEvent(new CustomEvent('adas:open-scrub', { detail: job })) }} className="w-full text-left rounded-xl px-3 py-2.5 mb-2" style={{ backgroundColor: '#eff6ff', border: '1.5px solid #1d4ed8' }}>
+                <div className="text-sm font-bold" style={{ color: '#1d4ed8' }}>📎 From the emailed estimate — already scrubbed</div>
+                <div className="text-[11px]" style={{ color: '#666' }}>Opens the review with the calibrations found on their CCC estimate. The PDF is already in the job folder — nothing to upload.</div>
+              </button>
+            )}
             <button onClick={e => { e.stopPropagation(); setShowChooser(false); setBuild(true) }} className="w-full text-left rounded-xl px-3 py-2.5 mb-2" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE_C}` }}>
               <div className="text-sm font-bold" style={{ color: ORANGE_C }}>🔧 Build job — no report</div>
               <div className="text-[11px]" style={{ color: '#666' }}>Programming, diagnostic, a calibration off the list. Repair shops, dealers, people. One invoice at the end.</div>
@@ -2895,6 +2922,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
           >{insurerPricingBadge(job).label}</span>
         )}
+        {job.status === 'job_requested' && <ScrubChip job={job} />}
         {job.status !== 'job_requested' && <><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /> <Big3Badge shopName={job.shop_name} /> <DrpBadge shopName={job.shop_name} /></>}
         {isTeslaJob(job) && (
           <span

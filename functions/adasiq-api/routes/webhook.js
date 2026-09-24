@@ -380,6 +380,23 @@ export async function sweepSentInvoices(req) {
 
 // POST /webhooks/zoho-books
 // Called by Zoho Books when an invoice is created or sent.
+// 📧 Zoho Mail incoming webhook (2026-09-24): Mail → Settings → Developer
+// Space → Incoming Webhooks → this URL. Fires the moment a mail lands so an
+// emailed estimate becomes a ticket in seconds; the 15-min sweep is the net.
+// Payload shape varies by Zoho version — we only read to/messageId if present.
+router.post('/zoho-mail/incoming', async (req, res) => {
+  const t0 = Date.now()
+  try {
+    const payload = req.body && typeof req.body === 'object' ? req.body : {}
+    console.log('[zoho-mail webhook] keys:', Object.keys(payload).join(','))
+    const { handleZohoMailWebhook, runScrubQueue } = await import('../services/emailToJob.js')
+    const sweep = await handleZohoMailWebhook(req, payload)
+    let scrub = null
+    if (sweep.queued && Date.now() - t0 < 5000) scrub = await runScrubQueue(req, { max: 1 })
+    res.json({ ok: true, checked: sweep.checked, created: sweep.created, appended: sweep.appended, queued: sweep.queued, scrubbed: scrub?.ok || 0 })
+  } catch (e) { console.warn('[zoho-mail webhook]', e.message); res.json({ ok: false, error: e.message }) }
+})
+
 router.post('/zoho-books', async (req, res) => {
   try {
     const webhookSecret = process.env.WEBHOOK_SECRET

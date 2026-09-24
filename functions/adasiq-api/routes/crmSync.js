@@ -162,6 +162,35 @@ router.post('/email-to-job', async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+// 📧 Email intake (2026-09-24) — every 15 min from GitHub Actions + the Zoho Mail webhook.
+// POST /api/crm-sync-cron/email-intake?dry=1 — stage A (sweep) then one stage B (scrub) if there is time.
+router.post('/email-intake', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { sweepEmailToJob, runScrubQueue } = await import('../services/emailToJob.js')
+    const t0 = Date.now()
+    const sweep = await sweepEmailToJob(req, { dry: req.query.dry === '1' })
+    let scrub = null
+    if (req.query.dry !== '1' && Date.now() - t0 < 4000) scrub = await runScrubQueue(req, { max: 1 })
+    res.json({ sweep, scrub })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// POST /api/crm-sync-cron/email-scrub — stage B only: scrub one queued estimate (call until left = 0).
+router.post('/email-scrub', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { runScrubQueue } = await import('../services/emailToJob.js'); res.json(await runScrubQueue(req, { max: Number(req.query.max) || 1 })) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// GET /api/crm-sync-cron/email-intake/status — what was skipped, what is queued, which inboxes.
+router.get('/email-intake/status', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const E = await import('../services/emailToJob.js'); res.json({ ...(await E.mailboxStatus(req)), queue: await E.scrubQueue(req), skipped: await E.readSkipped(req) }) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 // POST /api/crm-sync-cron/photos-reconcile — check every owed card against its WorkDrive folder now (cron secret).
 router.post('/photos-reconcile', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'

@@ -5,10 +5,10 @@
 // card converts in place — photos, tires, notes stay — and the WorkDrive
 // folder is made by RO. No Books document yet; Bill it makes the one
 // invoice at Ready to Invoice.
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { useBig3Map } from './books/Big3Rules.jsx'
-import LinePicker from './upload/LinePicker.jsx'
+import LinePicker, { useBooksCatalog } from './upload/LinePicker.jsx'
 
 const ORANGE = '#CD4419', GREEN = '#15803d', RED = '#b91c1c'
 const fmt = n => `$${Number(n || 0).toFixed(2)}`
@@ -25,6 +25,22 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
   const total = lines.reduce((s, l) => s + l.rate * l.quantity, 0)
   const custType = job.customer?.kind === 'retail' ? 'Retail person' : ''
   const b3map = useBig3Map()
+  // 📎 A card the email intake scrubbed carries its calibrations — start from them (2026-09-24).
+  const catalog = useBooksCatalog()
+  const [seeded, setSeeded] = useState(false)
+  useEffect(() => {
+    if (seeded || !catalog.length) return
+    let cals = []; try { cals = typeof job.calibrations === 'string' ? JSON.parse(job.calibrations || '[]') : (job.calibrations || []) } catch { cals = [] }
+    const names = (Array.isArray(cals) ? cals : []).filter(c => c && c.enabled !== false).map(c => String(c.calibration_name || c.name || '').trim()).filter(Boolean)
+    if (!names.length) { setSeeded(true); return }
+    const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const found = names.map(n => {
+      const k = norm(n)
+      const hit = catalog.find(it => norm(it.name) === k) || catalog.find(it => { const m = norm(it.name); return m.length > 6 && (m.includes(k) || k.includes(m)) })
+      return hit ? { item_id: hit.item_id, name: hit.name, rate: Number(hit.rate) || 0, quantity: 1, description: '' } : { item_id: '', name: n, rate: 0, quantity: 1, description: '' }
+    })
+    setLines(found); setSeeded(true)
+  }, [catalog, seeded, job.calibrations])
   const shopBilling = b3map[String(job.shop_name || '').toLowerCase().replace(/[^a-z0-9]/g, '')]?.billing
   const repairish = ['repair_shop', 'dealer'].includes(shopBilling?.customer_type) || job.customer?.kind === 'retail'
   // Mark 2026-09-22: "the majority of what we're doing for automotive repair
@@ -64,6 +80,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
             <div key={i} className="px-3 py-2" style={{ borderTop: i ? '1px solid #f1f5f9' : 'none' }}>
               <div className="flex items-center gap-2">
                 <span className="flex-1 text-sm font-semibold" style={{ color: '#1a1a1a' }}>{l.name}</span>
+                {!l.item_id && <input type="number" min="0" step="1" value={l.rate} onChange={e => setLines(ls => ls.map((x, n) => n === i ? { ...x, rate: Math.max(0, Number(e.target.value) || 0) } : x))} placeholder="price" title="No Books item matched this line — set the price" className="w-20 text-sm rounded-md px-2 py-1 text-right" style={{ ...inp, borderColor: '#f59e0b' }} />}
                 <input type="number" min="1" value={l.quantity} onChange={e => setLines(ls => ls.map((x, n) => n === i ? { ...x, quantity: Math.max(1, Number(e.target.value) || 1) } : x))} className="w-14 text-sm rounded-md px-2 py-1 text-right" style={inp} />
                 <span className="tabular-nums text-sm w-20 text-right" style={{ color: '#555' }}>{fmt(l.rate * l.quantity)}</span>
                 <button onClick={() => setLines(ls => ls.filter((_, n) => n !== i))} className="w-7 h-7 rounded-full font-bold" style={{ backgroundColor: '#fef2f2', color: RED }}>×</button>

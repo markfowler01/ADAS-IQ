@@ -358,7 +358,7 @@ router.post('/run', async (req, res) => {
     try { const { sweepCollect } = await import('./collect.js'); const sc = await sweepCollect(req); if (sc.closed) console.log('[collect] sweep closed', sc.closed) } catch (e) { console.log('[collect] sweep failed:', e.message) }
     try { const { sweepZohoPayments } = await import('../services/zohoPayments.js'); await sweepZohoPayments(req) } catch (e) { console.log('[zoho-payments] sweep failed:', e.message) }
     try { const { keepGroupTextingOn } = await import('./sms.js'); await keepGroupTextingOn(req) } catch (e) { console.log('[group-texting] keep-on failed:', e.message) }
-    try { const { sweepEmailToJob } = await import('../services/emailToJob.js'); await sweepEmailToJob(req) } catch (e) { console.log('[email→job] sweep failed:', e.message) }
+    try { const { sweepEmailToJob, runScrubQueue } = await import('../services/emailToJob.js'); const sw = await sweepEmailToJob(req); if (sw.queued) await runScrubQueue(req, { max: 1 }) } catch (e) { console.log('[email→job] sweep failed:', e.message) }
     try { const { drainAssignQueue } = await import('../services/techAssignText.js'); await drainAssignQueue(req) } catch (e) { console.log('[assign-sms] drain failed:', e.message) }
     try { const { integrationNudges } = await import('../services/integrations.js'); await integrationNudges(req) } catch (e) { console.log('[integrations] nudges failed:', e.message) }
     try { const { reconcileOwedPhotos } = await import('./jobs.js'); const pr = await reconcileOwedPhotos(req); if (pr.cleared || pr.filled) console.log('[photos reconcile] hourly:', JSON.stringify(pr)) } catch (e) { console.log('[photos reconcile] hourly failed:', e.message) }

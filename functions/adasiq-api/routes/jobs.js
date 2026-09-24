@@ -871,8 +871,31 @@ router.patch('/:id', async (req, res) => {
 })
 
 // DELETE /api/jobs/:id
+// GET /api/jobs/:id/scrub — the CCC extraction the email intake stored for
+// this card (AppConfig scrub_<id>), shaped like /api/extract so the review
+// screen opens on it with no re-upload (2026-09-24).
+router.get('/:id/scrub', async (req, res) => {
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const rows = await app.zcql().executeZCQLQuery(`SELECT config_value FROM AppConfig WHERE config_key = 'scrub_${String(req.params.id).replace(/[^0-9]/g, '')}' LIMIT 1`)
+    const raw = rows?.[0]?.AppConfig?.config_value
+    if (!raw) return res.status(404).json({ error: 'No scrub stored for this card.' })
+    res.json(JSON.parse(raw))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.delete('/:id', async (req, res) => {
   try {
+    // 📧 Learn from a delete (2026-09-24): an emailed request deleted with
+    // ?block=1 puts the sender on the intake suppress list.
+    if (req.query.block === '1') {
+      try {
+        const row = await getTable(req).getRow(req.params.id)
+        const job = row ? rowToJob(row) : null
+        const m = /(?:texted|emailed) \(([^)]+@[^)]+)\):/.exec(String(job?.notes || ''))
+        if (m) { const { addSuppressed } = await import('../services/emailToJob.js'); await addSuppressed(req, m[1]); console.log(`[jobs DELETE] intake sender blocked: ${m[1]}`) }
+      } catch (e) { console.warn('[jobs DELETE] block failed (non-fatal):', e.message) }
+    }
     // Tombstone the linked estimate BEFORE deleting (Mark 2026-07-14:
     // "when I delete a job it doesn't stay deleted") — otherwise the
     // quote sync sees an active Books estimate with no job row and
