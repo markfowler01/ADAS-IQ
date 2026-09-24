@@ -7,7 +7,8 @@
 //   • OEM1Stop   — the OEMs' own PDFs, linked directly
 // Each run reads both, drops anything already in AdasPositionStatements or
 // already dismissed, keeps what is actually about ADAS / scanning /
-// calibration, and tells Mark. New PDFs are read by Claude and filed in the
+// calibration, and tells Mark. Reports go to Mark's alerts channel only —
+// never #dispatch (Mark 2026-09-24). New PDFs are read by Claude and filed in the
 // table with a summary and a "why this matters" note in Mark's terms.
 //
 // It never publishes to absoluteadas.com — hosting a file on the public site
@@ -15,7 +16,7 @@
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import Anthropic from '@anthropic-ai/sdk'
-import { postToCliqChannel, DISPATCH_CHANNEL } from './cliq.js'
+import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from './cliq.js'
 
 const TABLE = 'AdasPositionStatements'
 const SEEN_KEY = 'position_statements_seen'      // urls we've already judged
@@ -34,6 +35,24 @@ const RELEVANT = /(adas|calibrat|scan(ning)?|pre-?scan|post-?scan|sensor|camera|
 const OEMS = ['Stellantis', 'Acura', 'Alfa Romeo', 'Audi', 'BMW', 'Buick', 'Cadillac', 'Chevrolet', 'Chrysler', 'Dodge', 'Fiat', 'Ford', 'Genesis', 'GM', 'General Motors', 'GMC', 'Honda', 'Hyundai', 'Infiniti', 'Jaguar', 'Jeep', 'Kia', 'Land Rover', 'Lexus', 'Lincoln', 'Lucid', 'Maserati', 'Mazda', 'Mercedes-Benz', 'Mercedes', 'Mini', 'Mitsubishi', 'Nissan', 'Polestar', 'Porsche', 'Ram', 'Rivian', 'Subaru', 'Tesla', 'Toyota', 'Volkswagen', 'Volvo', 'Karma', 'VinFast', 'Scout']
 const oemFrom = t => { const s = String(t || ''); const hit = OEMS.find(o => new RegExp(`\\b${o.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(s)); return hit === 'GM' ? 'General Motors' : hit === 'Mercedes' ? 'Mercedes-Benz' : (hit || '') }
 const typeFrom = t => /position statement|position:/i.test(t) ? 'position_statement' : /guide|matrix|chart/i.test(t) ? 'coverage_guide' : /bulletin|tsb/i.test(t) ? 'bulletin' : 'reference'
+// One brand, one name. Claude reads the PDF letterhead and returns things like
+// "Ford Motor Company", "FCA US LLC (Stellantis / Mopar)" or "INFINITI"; the
+// search chips need "Ford", "Stellantis", "Infiniti" (Mark 2026-09-24).
+const OEM_ALIAS = { 'ford motor company': 'Ford', 'fca us llc': 'Stellantis', 'fca': 'Stellantis', 'mopar': 'Stellantis', 'chrysler group': 'Stellantis', 'general motors': 'General Motors', 'gm': 'General Motors', 'american honda': 'Honda', 'honda motor': 'Honda', 'toyota motor': 'Toyota', 'nissan north america': 'Nissan', 'hyundai motor': 'Hyundai', 'kia motors': 'Kia', 'kia america': 'Kia', 'mercedes benz': 'Mercedes-Benz', 'mbusa': 'Mercedes-Benz', 'subaru of america': 'Subaru', 'volkswagen group': 'Volkswagen', 'snap-on / john bean': 'Snap-on', 'john bean': 'Snap-on', 'hunter engineering': 'Hunter', 'launch tech': 'Launch', 'rivian automotive': 'Rivian', 'lucid motors': 'Lucid' }
+export function canonicalOem(raw) {
+  let t = String(raw || '').trim()
+  if (!t) return ''
+  const paren = t.match(/\(([^)]+)\)/)                       // "Lincoln (Ford Motor Company)" → keep Lincoln
+  t = t.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!t && paren) t = paren[1].trim()
+  const key = t.toLowerCase().replace(/[.,]/g, '').trim()
+  if (OEM_ALIAS[key]) return OEM_ALIAS[key]
+  for (const [k, v] of Object.entries(OEM_ALIAS)) if (key.startsWith(k)) return v
+  const known = OEMS.find(o => o.toLowerCase() === key); if (known) return known === 'GM' ? 'General Motors' : known === 'Mercedes' ? 'Mercedes-Benz' : known
+  // ALL CAPS or all lower → Title Case, hyphens kept (Snap-on, Mercedes-Benz)
+  if (t === t.toUpperCase() || t === t.toLowerCase()) t = t.toLowerCase().replace(/(^|[\s-])([a-z])/g, (m, a, b) => a + b.toUpperCase())
+  return t.slice(0, 60)
+}
 const abs = (href, base) => { try { return new URL(href, base).toString() } catch { return '' } }
 const clean = s => String(s || '').replace(/&amp;/g, '&').replace(/&#039;|&apos;/g, "'").replace(/&quot;/g, '"').replace(/&nbsp;/g, ' ').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
 // oem1stop links arrive %20-encoded in one place and spaced in another; the
@@ -148,7 +167,7 @@ export async function importPdf(req, item) {
   if (meta.adas_relevant === false) return { skipped: 'not ADAS related', meta }
   const filename = (item.filename || item.url.split('/').pop() || 'document.pdf').replace(/[^\w.\-]+/g, '-').toLowerCase()
   const row = {
-    doc_oem: String(meta.oem || oemFrom(item.title) || '').slice(0, 120),
+    doc_oem: canonicalOem(meta.oem || oemFrom(item.title)).slice(0, 120),
     doc_type: String(meta.type || typeFrom(item.title)).slice(0, 60),
     doc_title: String(meta.title || item.title).slice(0, 400),
     doc_filename: filename.slice(0, 200),
@@ -201,7 +220,7 @@ export async function scanPositionStatements(req, { dry = false, onceADay = fals
     out.newest = news.slice().sort((a, b) => String(b.published || '').localeCompare(String(a.published || ''))).slice(0, 10).map(i => ({ oem: oemFrom(i.title), title: i.title, published: i.published, url: i.url }))
     await stampDay()
     console.log(`[pos-stmt] baseline set: ${news.length} documents catalogued, watching from here`)
-    if (!dry) await postToCliqChannel(DISPATCH_CHANNEL, `📋 *OEM document watch is on.* Baseline set from I-CAR RTS and OEM1Stop: ${news.length} ADAS-related documents catalogued. From now on you only hear about ones that appear after today.`).catch(() => {})
+    if (!dry) await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📋 *OEM document watch is on.* Baseline set from I-CAR RTS and OEM1Stop: ${news.length} ADAS-related documents catalogued. From now on you only hear about ones that appear after today.`).catch(() => {})
     return out
   }
   if (!news.length) { await stampDay(); console.log(`[pos-stmt] ${out.checked} checked, ${out.relevant} relevant, nothing new`); return out }
@@ -228,7 +247,7 @@ async function announce(req, out) {
   for (const f of out.flagged.slice(0, 8)) lines.push(`👀 *${f.oem || 'OEM'}* — ${f.title}${f.published ? ` (${f.published})` : ''}${f.why ? ` · ${f.why}` : ''}\n   [open](${f.url})`)
   if (out.flagged.length > 8) lines.push(`…and ${out.flagged.length - 8} more.`)
   if (out.errors.length) lines.push(`⚠ ${out.errors.slice(0, 3).join(' · ')}`)
-  await postToCliqChannel(DISPATCH_CHANNEL, lines.join('\n')).catch(e => console.warn('[pos-stmt] cliq failed:', e.message))
+  await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, lines.join('\n')).catch(e => console.warn('[pos-stmt] cliq failed:', e.message))
   try {
     const { createNotification } = await import('../routes/notifications.js')
     await createNotification(req, { to: 'Mark', toEmail: 'mark@absoluteadas.com', type: 'onboarding', title: `📋 ${out.imported.length + out.flagged.length} new OEM document${out.imported.length + out.flagged.length === 1 ? '' : 's'}`, body: [...out.imported, ...out.flagged].slice(0, 3).map(d => `${d.oem || 'OEM'}: ${d.title}`).join(' · ').slice(0, 300), skipCliq: true, skipTechChannel: true })
@@ -256,7 +275,7 @@ export async function backfillPositionStatements(req, { limit = 5, oem = '' } = 
   await cfgSet(req, SEEN_KEY, seenRow, [...seen].slice(-900))
   out.errors = errors
   out.remaining = Math.max(0, pool.length - out.imported.length - out.failed.length)
-  if (out.imported.length) await postToCliqChannel(DISPATCH_CHANNEL, `📋 *${out.imported.length} document${out.imported.length === 1 ? '' : 's'} added to the OEM library*\n${out.imported.map(d => `• ${d.oem || 'OEM'} — ${d.title}${d.published ? ` (${d.published})` : ''}`).join('\n')}${out.remaining ? `\n${out.remaining} more available.` : ''}`).catch(() => {})
+  if (out.imported.length) await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📋 *${out.imported.length} document${out.imported.length === 1 ? '' : 's'} added to the OEM library*\n${out.imported.map(d => `• ${d.oem || 'OEM'} — ${d.title}${d.published ? ` (${d.published})` : ''}`).join('\n')}${out.remaining ? `\n${out.remaining} more available.` : ''}`).catch(() => {})
   return out
 }
 
@@ -270,7 +289,7 @@ export async function importNextPositionStatement(req) {
   try {
     const r = await importPdf(req, { ...item, is_pdf: true })
     if (r.imported) {
-      await postToCliqChannel(DISPATCH_CHANNEL, `📋 *Added to the OEM library* — ${r.row.doc_oem || 'OEM'}: ${r.row.doc_title}${r.row.doc_published_date ? ` (${r.row.doc_published_date})` : ''}\n${r.row.doc_summary.slice(0, 280)}\n_${r.row.doc_notes.slice(0, 200)}_`).catch(() => {})
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📋 *Added to the OEM library* — ${r.row.doc_oem || 'OEM'}: ${r.row.doc_title}${r.row.doc_published_date ? ` (${r.row.doc_published_date})` : ''}\n${r.row.doc_summary.slice(0, 280)}\n_${r.row.doc_notes.slice(0, 200)}_`).catch(() => {})
       return { imported: r.row.doc_title, oem: r.row.doc_oem, left: queue.length }
     }
     return { skipped: r.skipped, title: item.title, left: queue.length }

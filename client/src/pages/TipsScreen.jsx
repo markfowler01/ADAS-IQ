@@ -83,7 +83,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
         </div>
 
         <div className="flex gap-1.5 mb-3">
-          {[['tips', '📖 Tips'], ['cloning', '🧬 Hex Prog Coverage']].map(([v, label]) => (
+          {[['tips', '📖 Tips'], ['oem', '📋 OEM Statements'], ['cloning', '🧬 Hex Prog Coverage']].map(([v, label]) => (
             <button key={v} onClick={() => setView(v)}
               className="text-sm font-bold rounded-xl px-4 py-2.5"
               style={view === v
@@ -93,6 +93,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
         </div>
 
         {view === 'cloning' && <CloningCoverage />}
+        {view === 'oem' && <OemDocs />}
 
         {view === 'tips' && (<>
         <AskBox />
@@ -551,6 +552,72 @@ function TsbPhotoEditor({ tsb }) {
 
 // Ask-the-brain box (Phase 2, Mark 2026-09-07): natural-language Q over
 // the TSB library — Claude answers and cites the tips it used.
+// 📋 What the manufacturer requires. Filled by the daily watcher; read-only
+// here so a tech at the bay can find the statement that backs a line item.
+function OemDocs() {
+  const [docs, setDocs] = useState([])
+  const [oems, setOems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [q, setQ] = useState('')
+  const [oem, setOem] = useState('all')
+  const [openId, setOpenId] = useState(null)
+  useEffect(() => {
+    let live = true
+    apiFetch(`${API_BASE}/api/tsb/oem-docs`).then(r => r.json()).then(d => { if (!live) return; if (d.error) throw new Error(d.error); setDocs(d.docs || []); setOems(d.oems || []) })
+      .catch(e => live && setErr(e.message)).finally(() => live && setLoading(false))
+    return () => { live = false }
+  }, [])
+  const shown = useMemo(() => {
+    const w = q.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    return docs.filter(d => (oem === 'all' || d.oem === oem) &&
+      (!w.length || w.every(x => `${d.oem} ${d.title} ${d.summary} ${d.notes} ${d.type}`.toLowerCase().includes(x))))
+  }, [docs, q, oem])
+  if (loading) return <div className="text-sm" style={{ color: '#888' }}>Loading the OEM library…</div>
+  if (err) return <div className="text-sm" style={{ color: '#b91c1c' }}>{err}</div>
+  return (
+    <>
+      <input type="search" value={q} onChange={e => setQ(e.target.value)}
+        placeholder="Search OEM statements — make, sensor, scanning, glass…"
+        className="w-full rounded-xl px-4 py-3 text-sm mb-3" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white' }} />
+      <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth: 'none' }}>
+        {['all', ...oems].map(o => (
+          <button key={o} onClick={() => setOem(o)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0"
+            style={oem === o ? { backgroundColor: '#1d4ed8', color: 'white' } : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>
+            {o === 'all' ? `All (${docs.length})` : o}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] mb-2" style={{ color: '#888' }}>{shown.length} of {docs.length} · what the manufacturer requires. Use these when a shop or adjuster questions a calibration.</p>
+      <div className="flex flex-col gap-2">
+        {shown.map(d => {
+          const open = openId === d.id
+          return (
+            <div key={d.id} className="rounded-xl p-3" style={{ backgroundColor: 'white', border: '1px solid #e0dbd6' }}>
+              <button onClick={() => setOpenId(open ? null : d.id)} className="w-full text-left">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 flex-shrink-0" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>{d.oem || 'OEM'}</span>
+                  <span className="text-[10px] flex-shrink-0" style={{ color: '#aaa' }}>{d.published_date || ''}</span>
+                </div>
+                <p className="text-sm font-bold mt-1" style={{ color: '#1a1a1a' }}>{d.title}</p>
+                {!open && <p className="text-xs mt-0.5" style={{ color: '#666', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{d.summary}</p>}
+              </button>
+              {open && (
+                <>
+                  <p className="text-xs mt-1.5 whitespace-pre-wrap" style={{ color: '#333' }}>{d.summary}</p>
+                  {d.notes && <p className="text-xs mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}><b>How we use it:</b> {d.notes}</p>}
+                  {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1d4ed8' }}>📄 Open the PDF ↗</a>}
+                </>
+              )}
+            </div>
+          )
+        })}
+        {!shown.length && <p className="text-sm" style={{ color: '#888' }}>Nothing matches. Try the make on its own, or "scanning".</p>}
+      </div>
+    </>
+  )
+}
+
 function AskBox() {
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
@@ -594,6 +661,16 @@ function AskBox() {
       {ans && (
         <div className="mt-3">
           <p className="text-sm whitespace-pre-wrap" style={{ color: '#1a1a1a' }}>{ans.answer}</p>
+          {ans.cited_docs?.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              {ans.cited_docs.map(d => (
+                <a key={d.id} href={d.url} target="_blank" rel="noreferrer" className="rounded-lg px-3 py-2 block" style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                  <p className="text-xs font-bold" style={{ color: '#1d4ed8' }}>📋 {d.oem} — {d.title}</p>
+                  <p className="text-[11px]" style={{ color: '#64748b' }}>{d.published_date || ''} · what the manufacturer requires · tap to open the PDF</p>
+                </a>
+              ))}
+            </div>
+          )}
           {ans.cited?.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
               {ans.cited.map(t => (

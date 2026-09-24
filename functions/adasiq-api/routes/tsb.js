@@ -118,6 +118,32 @@ async function cleanupTip(body) {
   return null
 }
 
+// 📋 OEM position statements — the same library the daily watcher fills,
+// opened up to technicians here (Mark 2026-09-24: "make this database
+// available to the technicians under the TSB page"). Read-only for everyone.
+let _canonOem = null
+async function readOemDocs(req) {
+  try {
+    if (!_canonOem) { try { ({ canonicalOem: _canonOem } = await import('../services/positionStatements.js')) } catch { _canonOem = x => x } }
+    const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(
+      `SELECT ROWID, doc_oem, doc_type, doc_title, doc_summary, doc_notes, doc_published_date, doc_source_url, doc_hosted_url, doc_filename FROM AdasPositionStatements LIMIT ${ZCQL_PAGE}`)
+    return (rows || []).map(r => { const x = r.AdasPositionStatements || r; return {
+      id: String(x.ROWID), oem: _canonOem(x.doc_oem || ''), oem_full: x.doc_oem || '', type: x.doc_type || '', title: x.doc_title || '',
+      summary: x.doc_summary || '', notes: x.doc_notes || '', published_date: x.doc_published_date || '',
+      url: x.doc_hosted_url || x.doc_source_url || '', source_url: x.doc_source_url || '', filename: x.doc_filename || '',
+    } })
+  } catch (e) { console.warn('[tsb] OEM docs read failed:', e.message); return [] }
+}
+
+// GET /api/tsb/oem-docs — the OEM library for the TSB page's search.
+router.get('/oem-docs', async (req, res) => {
+  try {
+    const docs = await readOemDocs(req)
+    docs.sort((a, b) => String(b.published_date || '').localeCompare(String(a.published_date || '')))
+    res.json({ docs, oems: [...new Set(docs.map(d => d.oem).filter(Boolean))].sort() })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // GET /api/tsb — everything; the client filters instantly.
 router.get('/', async (req, res) => {
   try {
@@ -313,8 +339,8 @@ router.post('/ask', async (req, res) => {
   try {
     const question = String(req.body?.question || '').trim()
     if (!question) return res.status(400).json({ error: 'Ask a question.' })
-    const all = await readAllTsbs(req)
-    if (!all.length) return res.json({ answer: 'No TSBs in the library yet — write the first one.', cited: [] })
+    const [all, docs] = await Promise.all([readAllTsbs(req), readOemDocs(req)])
+    if (!all.length && !docs.length) return res.json({ answer: 'No TSBs in the library yet — write the first one.', cited: [] })
 
     // Rank by how many question words hit each TSB; always keep a floor
     // so a loosely-worded question still gets the newest tips as context.
@@ -323,12 +349,22 @@ router.post('/ask', async (req, res) => {
       const hay = [t.title, t.body, t.make, t.model, t.year_from, t.year_to, t.tools, t.category].join(' ').toLowerCase()
       return { t, score: words.reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0) }
     }).sort((a, b) => b.score - a.score || String(b.t.created_at || '').localeCompare(String(a.t.created_at || '')))
-    const shortlist = (scored.some(x => x.score > 0) ? scored.filter(x => x.score > 0) : scored).slice(0, 12).map(x => x.t)
+    const shortlist = (scored.some(x => x.score > 0) ? scored.filter(x => x.score > 0) : scored).slice(0, 10).map(x => x.t)
+    // OEM statements ranked the same way — an OEM requirement outranks shop
+    // lore when a tech is arguing a line item, so they get their own block.
+    const dScored = docs.map(d => {
+      const hay = [d.oem, d.title, d.summary, d.notes, d.type].join(' ').toLowerCase()
+      return { d, score: words.reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0) }
+    }).sort((a, b) => b.score - a.score || String(b.d.published_date || '').localeCompare(String(a.d.published_date || '')))
+    const docShort = dScored.filter(x => x.score > 0).slice(0, 5).map(x => x.d)
 
     const context = shortlist.map((t, i) =>
       `[${i + 1}] ${t.number || `TSB-${t.id}`} — ${t.title}\n` +
       `    Category: ${t.category} · Vehicles: ${[t.year_from && t.year_to ? `${t.year_from}-${t.year_to}` : (t.year_from || t.year_to || ''), t.make, t.model].filter(Boolean).join(' ') || 'all'}` +
       `${t.tools ? ` · Tools: ${t.tools}` : ''}\n    ${String(t.body).replace(/\s+/g, ' ').slice(0, 500)}`
+    ).join('\n\n')
+    const docContext = docShort.map((d, i) =>
+      `[D${i + 1}] ${d.oem} — ${d.title}${d.published_date ? ` (${d.published_date})` : ''}\n    ${String(d.summary).replace(/\s+/g, ' ').slice(0, 700)}${d.notes ? `\n    How we use it: ${String(d.notes).replace(/\s+/g, ' ').slice(0, 300)}` : ''}`
     ).join('\n\n')
 
     const Anthropic = (await import('@anthropic-ai/sdk')).default
@@ -340,8 +376,10 @@ router.post('/ask', async (req, res) => {
         `You are the Absolute ADAS shop knowledge assistant. Answer the technician's question using ONLY the TSBs below. ` +
         `Be direct and practical, like a senior tech giving a quick answer at the bay. If a TSB applies, name it by its number. ` +
         `If none of the TSBs actually answer the question, say so plainly and suggest they write one.\n\n` +
-        `After your answer, add a line exactly like: CITED: [1, 3] listing the bracket numbers you used (or CITED: [] if none).\n\n` +
-        `QUESTION: ${question}\n\nTSBs:\n${context}` }],
+        `After your answer, add a line exactly like: CITED: [1, 3] listing the bracket numbers you used (or CITED: [] if none), ` +
+        `and a second line CITEDOEM: [D1] for any OEM documents you used (or CITEDOEM: []).\n\n` +
+        `QUESTION: ${question}\n\nTSBs (what our techs learned):\n${context || '(none)'}` +
+        `${docContext ? `\n\nOEM POSITION STATEMENTS (what the manufacturer requires — this outranks shop lore when a shop or adjuster is pushing back; name the document and its date):\n${docContext}` : ''}` }],
     })
     let answer = (msg.content || []).map(b => b.text || '').join('').trim()
     let cited = []
@@ -350,8 +388,14 @@ router.post('/ask', async (req, res) => {
       cited = m[1].split(',').map(x => parseInt(x.trim(), 10)).filter(n => n >= 1 && n <= shortlist.length)
       answer = answer.replace(/CITED:\s*\[[^\]]*\]/i, '').trim()
     }
+    let citedDocs = []
+    const dm = answer.match(/CITEDOEM:\s*\[([^\]]*)\]/i)
+    if (dm) {
+      citedDocs = [...new Set(dm[1].split(',').map(x => parseInt(String(x).replace(/[^0-9]/g, ''), 10)).filter(n => n >= 1 && n <= docShort.length))].map(n => docShort[n - 1]).filter(Boolean)
+      answer = answer.replace(/CITEDOEM:\s*\[[^\]]*\]/i, '').trim()
+    }
     const citedTsbs = [...new Set(cited)].map(n => shortlist[n - 1]).filter(Boolean)
-    res.json({ answer, cited: citedTsbs })
+    res.json({ answer, cited: citedTsbs, cited_docs: citedDocs })
   } catch (e) {
     console.error('[tsb ask]', e.message)
     res.status(500).json({ error: e.message || 'Ask failed.' })
