@@ -197,6 +197,34 @@ router.post('/email-scrub/unscrub', async (req, res) => {
   try { const { unscrubCard } = await import('../services/emailToJob.js'); res.json(await unscrubCard(req, req.query.job)) }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
+// POST /api/crm-sync-cron/email-scrub/upload?job=<id>&name=<file.pdf> — raw PDF body → the car's WorkDrive folder
+// (Kinetic ID report hand-off, 2026-09-24). Stamps the card: report_url + a 📄 note.
+router.post('/email-scrub/upload', express.raw({ type: 'application/pdf', limit: '25mb' }), async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const buf = Buffer.isBuffer(req.body) ? req.body : null
+    if (!buf || buf.length < 512) return res.status(400).json({ error: 'no PDF body' })
+    const J = await import('./jobs.js'); const job = (await J.readJobsPublic(req)).find(j => String(j.id) === String(req.query.job || ''))
+    if (!job) return res.status(404).json({ error: 'card not found' })
+    const { getAccessToken } = await import('../services/zoho.js'); const { uploadFileToFolder } = await import('../services/workdrive.js')
+    const wdToken = await getAccessToken(); const folderId = await J.resolveJobFolderPublic(req, job, wdToken)
+    if (!folderId) return res.status(500).json({ error: 'no WorkDrive folder' })
+    const name = String(req.query.name || 'Kinetic report.pdf').replace(/[\\/:*?"<>|]+/g, '-').slice(0, 120)
+    const { fileId } = await uploadFileToFolder(folderId, name, buf, wdToken, 'application/pdf')
+    const patch = { ...job, notes: `📄 ${name} filed to the job folder (Kinetic ID)\n${job.notes || ''}`.slice(0, 9000) }
+    if (!job.folder_url) patch.folder_url = `https://workdrive.zoho.com/folder/${folderId}`
+    const upd = await J.updateJobPublic(req, job.id, patch)
+    res.json({ ok: true, fileId, folderId, name, job: upd.id })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// GET /api/crm-sync-cron/email-scrub/pdf?file=<id> — stream a job-folder PDF (for the Kinetic ID hand-off).
+router.get('/email-scrub/pdf', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { getAccessToken } = await import('../services/zoho.js'); const { downloadFile } = await import('../services/workdrive.js'); const { buffer } = await downloadFile(String(req.query.file || ''), await getAccessToken()); res.setHeader('Content-Type', 'application/pdf'); res.send(buffer) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
 // GET /api/crm-sync-cron/email-scrub/probe?file=<id> — can the server pull this WorkDrive file? (bytes + head)
 router.get('/email-scrub/probe', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
