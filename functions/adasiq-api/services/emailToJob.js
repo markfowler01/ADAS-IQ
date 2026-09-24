@@ -104,6 +104,8 @@ export async function mailboxStatus(req) {
   return { accounts: seen, inboxes: reach }
 }
 export async function readSkipped(req) { const { value } = await cfgRead(req, 'email2job_skipped', []); return Array.isArray(value) ? value : [] }
+export async function readSuppressedList(req) { const { value } = await cfgRead(req, 'email2job_suppress', []); return Array.isArray(value) ? value : [] }
+export async function removeSuppressed(req, entry) { const e = String(entry || '').trim().toLowerCase(); const { row, value } = await cfgRead(req, 'email2job_suppress', []); const list = (Array.isArray(value) ? value : []).filter(x => x !== e); await cfgWrite(req, 'email2job_suppress', row, list); return list }
 export async function addSuppressed(req, entry) {
   const e = String(entry || '').trim().toLowerCase(); if (!e) return []
   const { row, value } = await cfgRead(req, 'email2job_suppress', []); const list = Array.isArray(value) ? value : []

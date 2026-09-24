@@ -204,11 +204,18 @@ router.get('/email-scrub/probe', async (req, res) => {
   try { const { getAccessToken } = await import('../services/zoho.js'); const { downloadFile } = await import('../services/workdrive.js'); const { buffer, contentType } = await downloadFile(String(req.query.file || ''), await getAccessToken()); res.json({ ok: true, bytes: buffer.length, contentType, head: buffer.slice(0, 8).toString('latin1') }) }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
+// POST /api/crm-sync-cron/email-intake/unblock?sender=<email> — take a sender off the suppress list.
+router.post('/email-intake/unblock', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { removeSuppressed } = await import('../services/emailToJob.js'); res.json({ suppress: await removeSuppressed(req, req.query.sender) }) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
 // GET /api/crm-sync-cron/email-intake/status — what was skipped, what is queued, which inboxes.
 router.get('/email-intake/status', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
-  try { const E = await import('../services/emailToJob.js'); res.json({ ...(await E.mailboxStatus(req)), queue: await E.scrubQueue(req), skipped: await E.readSkipped(req) }) }
+  try { const E = await import('../services/emailToJob.js'); res.json({ ...(await E.mailboxStatus(req)), suppress: await E.readSuppressedList(req), queue: await E.scrubQueue(req), skipped: await E.readSkipped(req) }) }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 

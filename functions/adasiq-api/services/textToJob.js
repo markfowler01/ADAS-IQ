@@ -141,6 +141,18 @@ export async function maybeCreateJobsFromText(req, { from, body, contact, lineTy
       const vin = cleanVin(v.vin)
       const probe = { shop_name: shop, vehicle, year: v.year || '', make: v.make || '', model: v.model || '', vin, quote_number: v.ro || '', notes: '' }
       let match = await jobs.findOpenRequestFor(req, probe).catch(() => null)
+      // A car that is already a real job on the board (any status, last 45
+      // days) — "it's ready" / the estimate lands on THAT job, never a twin
+      // (Gerber GLC 2026-09-24: Kat had to delete the duplicate).
+      if (!match && isEmail) {
+        try {
+          const digits = str => { const d = (String(str || '').match(/\d{4,}/) || [''])[0]; return /^(19[89]\d|20[0-3]\d)$/.test(d) ? '' : d }
+          const ro = digits(v.ro); const cut = Date.now() - 45 * 86400000
+          const real = (await jobs.readAll(req)).filter(j => j.status !== 'job_requested' && (Date.parse(j.created_at || '') > cut || Date.parse(j.scheduled_date || '') > cut))
+          const hits = real.filter(j => (ro && (digits(j.quote_number) === ro || digits(j.invoice_number) === ro)) || (vin.length === 17 && String(j.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === vin))
+          if (hits.length === 1) match = { ...hits[0], _via: 'existing job' }
+        } catch { /* fine */ }
+      }
       // Same email thread as an earlier ticket → that card (2026-09-24).
       if (!match && threadJobId) { try { const t = (await jobs.readAll(req)).find(j => String(j.id) === String(threadJobId)); if (t && t.status !== 'complete') match = { ...t, _via: 'thread' } } catch { /* fine */ } }
       const line = `${firstJob ? `🥇 FIRST JOB for ${shop} — welcome offer: if they are not happy with this one, it is free. Make it count.\n` : ''}${estimateFirst ? `📝 ESTIMATE FIRST — ${shop} needs an estimate sent before any work${estimateNote ? ` (${estimateNote})` : ''}.\n` : ''}${icon} ${stamp} · ${who} ${verb}: "${quoted}"`
