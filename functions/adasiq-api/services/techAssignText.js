@@ -11,11 +11,23 @@ import { postToCliqChannel, DISPATCH_CHANNEL } from './cliq.js'
 
 const QUEUE_KEY = 'assign_sms_queue'
 const first = s => String(s || '').trim().split(/\s+/)[0].toLowerCase()
-const sameTech = (a, b) => !!a && !!b && (first(a) === first(b) || (first(a).startsWith('jay') && first(b).startsWith('jay')))
+// The board writes "Jaden" on some cards and "Jayden" on others, and the
+// Directory says "Jayden Goshorn" — all one person (Mark 2026-09-24: "jobs
+// dispatched to Jayden need to go to him").
+const ALIAS = { jaden: 'jayden', jayden: 'jayden', jaiden: 'jayden', jay: 'jayden', marc: 'mark', mark: 'mark', kath: 'kat', kat: 'kat', katherine: 'kat' }
+const canonFirst = n => { const f = first(n); return ALIAS[f] || f }
+const sameTech = (a, b) => !!a && !!b && canonFirst(a) === canonFirst(b)
 const ptHour = () => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(new Date()))
 const inHours = () => { const h = ptHour(); return h >= 7 && h < 20 }
 const seg = req => catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
 const appBase = () => (process.env.WEB_BASE_URL || 'https://adas-iq-904191467.development.catalystserverless.com/app').replace(/\/$/, '')
+
+export async function whoGetsTheText(req, techName) {
+  const { resolvePhoneConfig } = await import('./phoneConfig.js')
+  const cfg = await resolvePhoneConfig(req)
+  const { phone, member } = await techPhone(req, cfg, techName)
+  return { tech: techName, phone: phone || '', matched: member ? member.name : '', source: member ? 'Directory card' : (phone ? 'phone config fallback' : 'nothing — no cell on file') }
+}
 
 async function techPhone(req, cfg, techName) {
   try {
@@ -24,8 +36,8 @@ async function techPhone(req, cfg, techName) {
     const p = normalizePhoneUS(m?.phone || m?.personal_phone || '')
     if (p) return { phone: p, member: m }
   } catch (e) { console.log('[assign-sms] directory lookup failed:', e.message) }
-  const k = first(techName)
-  const fb = k.startsWith('jay') ? cfg.JAYDEN_PHONE_NUMBER : k.startsWith('mark') ? cfg.MARK_PHONE_NUMBER : k.startsWith('kat') ? cfg.KAT_PHONE_NUMBER : ''
+  const k = canonFirst(techName)
+  const fb = k === 'jayden' ? cfg.JAYDEN_PHONE_NUMBER : k === 'mark' ? cfg.MARK_PHONE_NUMBER : k === 'kat' ? cfg.KAT_PHONE_NUMBER : ''
   return { phone: normalizePhoneUS(fb || ''), member: null }
 }
 function whenLine(job) {

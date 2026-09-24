@@ -279,6 +279,17 @@ router.get('/email-intake/status', async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+// GET /api/crm-sync-cron/who-gets-the-text?tech=Jayden — who a dispatch text would reach. Sends nothing.
+router.get('/who-gets-the-text', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { whoGetsTheText } = await import('../services/techAssignText.js')
+    const names = String(req.query.tech || 'Mark,Jayden,Jaden,Jayden Goshorn,Mark Fowler').split(',').map(x => x.trim()).filter(Boolean)
+    res.json({ ok: true, checked: await Promise.all(names.map(n => whoGetsTheText(req, n))) })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 // POST /api/crm-sync-cron/sms-media-backup?limit=5 — copy texted pictures into WorkDrive (catch-up).
 router.post('/sms-media-backup', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
