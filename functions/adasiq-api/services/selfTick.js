@@ -23,6 +23,9 @@ const baseUrl = req => (process.env.API_PUBLIC_BASE
 
 const TICKS = {
   email_intake: { minutes: 15, path: '/api/crm-sync-cron/email-intake', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
+  // 📋 OEM position statements — once a day. The route carries its own PT-day
+  // guard too, so whichever scheduler gets there first wins and the rest no-op.
+  position_statements: { minutes: 6 * 60, path: '/api/crm-sync-cron/position-statements?once=1', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
 }
 
 /** Claim the window in Cache. Returns false when someone already claimed it. */

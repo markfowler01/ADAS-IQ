@@ -468,7 +468,7 @@ router.get('/', async (req, res) => {
     const jobs = await getAllJobs(req)
     // ⏱ The board is the app's heartbeat — it carries the 15-minute email
     // intake, because GitHub drops most of its scheduled runs (2026-09-24).
-    try { const { maybeSelfTick } = await import('../services/selfTick.js'); await maybeSelfTick(req) } catch { /* never block the board */ }
+    try { const { maybeSelfTick } = await import('../services/selfTick.js'); if (!(await maybeSelfTick(req, 'email_intake'))) await maybeSelfTick(req, 'position_statements') } catch { /* never block the board */ }
     res.json(jobs)
   } catch (err) {
     console.error('[jobs GET]', err.message, err.stack)

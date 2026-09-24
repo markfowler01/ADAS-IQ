@@ -279,6 +279,38 @@ router.get('/email-intake/status', async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+// 📋 OEM position statements — daily web scan (Mark 2026-09-24).
+// dry=1 reports without writing. once=1 makes it a no-op after the first run of the PT day.
+router.post('/position-statements', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { scanPositionStatements } = await import('../services/positionStatements.js'); res.json(await scanPositionStatements(req, { dry: req.query.dry === '1', onceADay: req.query.once === '1' })) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// POST /api/crm-sync-cron/position-statements/import-next — read one queued PDF into the library.
+router.post('/position-statements/import-next', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { importNextPositionStatement } = await import('../services/positionStatements.js'); res.json(await importNextPositionStatement(req)) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// POST /api/crm-sync-cron/position-statements/backfill?limit=5&oem=Toyota — fill the library from the back catalogue.
+router.post('/position-statements/backfill', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { backfillPositionStatements } = await import('../services/positionStatements.js'); res.json(await backfillPositionStatements(req, { limit: req.query.limit, oem: String(req.query.oem || '') })) }
+  catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+// GET /api/crm-sync-cron/position-statements/library — what's in the library today.
+router.get('/position-statements/library', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery("SELECT ROWID, doc_oem, doc_type, doc_title, doc_published_date, doc_hosted_url, doc_source_url FROM AdasPositionStatements LIMIT 300")
+    res.json({ ok: true, docs: (rows || []).map(r => r.AdasPositionStatements || r) })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 // POST /api/crm-sync-cron/photos-reconcile — check every owed card against its WorkDrive folder now (cron secret).
 router.post('/photos-reconcile', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
