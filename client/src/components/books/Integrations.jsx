@@ -30,6 +30,7 @@ export function IntegrationPills({ shopName, size = 'xs' }) {
 
 function Walkthrough({ which, steps, images, onClose, onDone, doneLabel }) {
   const [i, setI] = useState(0)
+  const [copied, setCopied] = useState('')
   const st = steps[i]; const last = i === steps.length - 1
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,.55)' }} onClick={e => e.target === e.currentTarget && onClose()}>
@@ -43,6 +44,21 @@ function Walkthrough({ which, steps, images, onClose, onDone, doneLabel }) {
             ? <img src={images[st.image]} alt="" className="w-full rounded-xl" style={{ border: '1px solid #e8e4e0' }} />
             : <div className="rounded-xl flex items-center justify-center text-xs" style={{ height: 120, backgroundColor: '#faf9f7', border: '1.5px dashed #e0dbd6', color: '#aaa' }}>📷 screenshot coming — Mark shoots it at the next setup</div>)}
           <div className="text-base leading-snug" style={{ color: '#1a1a1a' }}>{st.text}</div>
+          {/* A real anchor, not window.open — the iOS PWA rule (2026-06). */}
+          {st.link && <a href={st.link.url} target="_blank" rel="noreferrer" className="block text-center rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: '#1d4ed8' }}>{st.link.label || 'Open'} ↗</a>}
+          {Array.isArray(st.fields) && st.fields.length > 0 && (
+            <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #e8e4e0' }}>
+              <div className="px-3 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#faf9f7', color: '#888' }}>Paste these into the form — tap a line to copy</div>
+              {st.fields.map(([k, v], n) => (
+                <button key={n} onClick={() => { try { navigator.clipboard?.writeText(String(v)); setCopied(k) } catch { /* no clipboard */ } }}
+                  className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left" style={{ borderTop: n ? '1px solid #f4f2f0' : 'none' }}>
+                  <span className="text-[11px] shrink-0" style={{ color: '#888' }}>{k}</span>
+                  <span className="text-sm font-semibold truncate" style={{ color: '#1a1a1a' }}>{v}</span>
+                  <span className="text-[10px] font-bold shrink-0" style={{ color: copied === k ? GREEN : '#bbb' }}>{copied === k ? '✓ copied' : 'copy'}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {st.whatIf && <div className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}><b>What if?</b> {st.whatIf}</div>}
         </div>
         <div className="p-3 flex gap-2" style={{ borderTop: '1px solid #f0ece8' }}>
@@ -70,6 +86,7 @@ export default function IntegrationsPanel({ shop }) {
       setD(p => ({ ...(p || {}), integrations: x.integrations }))
       invalidateBig3Map()
       if (action === 'step-done' || action === 'reemail') setMsg(x.emailed ? `✓ Turned on. Parisa emailed at ${x.to}. Connected when the first report lands.` : `⚠ Turned on, but the email to Kinetic failed: ${x.error}`)
+      if (action === 'account-done') setMsg(`✓ Kinetic account made${x.account_email ? ` for ${x.account_email}` : ''} — they set their own password from Kinetic's email. Next: CCC Secure Share at their computer.`)
       if (action === 'invite') setMsg(`✓ Steps sent${x.texted ? ' by text' : ''}${x.emailed ? ' by email' : ''}${x.errors?.length ? ' · ⚠ ' + x.errors.join('; ') : ''}${!x.texted && !x.emailed ? ' — nothing went out: add the owner\'s phone or email to the card' : ''}`)
     } catch (e) { setMsg(`✗ ${e.message}`) } finally { setBusy('') }
   }
@@ -82,11 +99,13 @@ export default function IntegrationsPanel({ shop }) {
       <div className="px-3 py-2.5" style={{ borderTop: '1px solid #f1f5f9' }}>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="min-w-0">
-            <div className="flex items-center gap-2"><span className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>{label}</span><span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: S.bg, color: S.fg }}>{S.dot} {S.label}{it.state === 'connected' && it.connected_at ? ` · ${fmtDay(it.connected_at)}` : it.state === 'pending' && (it.emailed_at || it.invited_at) ? ` · since ${fmtDay(it.emailed_at || it.invited_at)}` : ''}</span></div>
+            <div className="flex items-center gap-2"><span className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>{label}</span><span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: S.bg, color: S.fg }}>{S.dot} {S.label}{it.state === 'connected' && it.connected_at ? ` · ${fmtDay(it.connected_at)}` : it.state === 'pending' && (it.emailed_at || it.invited_at) ? ` · since ${fmtDay(it.emailed_at || it.invited_at)}` : ''}</span>{which === 'kinetic' && it.account_created_at && <span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }} title={it.account_email ? `Kinetic ID: ${it.account_email}` : ''}>🆕 account {fmtDay(it.account_created_at)}</span>}</div>
             <div className="text-[11px]" style={{ color: '#888' }}>{sub}{last ? ` · last: ${last.note} (${last.by || 'app'}, ${fmtDay(last.at)})` : ''}</div>
           </div>
           <div className="flex gap-1 flex-wrap">
             {which === 'kinetic' && it.state !== 'connected' && <button disabled={!!busy} onClick={() => setWalk('kinetic')} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: ORANGE }}>📱 Walk-through</button>}
+            {/* 🆕 Their own Kinetic ID account (Mark 2026-09-24): made first, they set the password from Kinetic's email. */}
+            {which === 'kinetic' && it.state !== 'connected' && !it.account_created_at && <button disabled={!!busy} onClick={() => act('kinetic', 'account-done')} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>🆕 Account made</button>}
             {which === 'kinetic' && it.state === 'pending' && <button disabled={!!busy} onClick={() => act('kinetic', 'reemail')} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>✉️ Re-email Parisa</button>}
             {which === 'adasmaps' && it.state !== 'connected' && <button disabled={!!busy} onClick={() => setWalk('adasmaps')} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: ORANGE }}>📱 Walk-through</button>}
             {which === 'adasmaps' && it.state !== 'connected' && <button disabled={!!busy} onClick={() => act('adasmaps', 'invite')} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>{it.state === 'pending' ? '↻ Resend the steps' : '📨 Send the shop the steps'}</button>}

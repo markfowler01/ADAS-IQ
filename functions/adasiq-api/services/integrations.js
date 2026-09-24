@@ -13,6 +13,34 @@ const cfgRead = async (req, key, fb = '') => { try { const rows = await catalyst
 
 // ── The walk-through: one screen per click, anyone can follow it at the counter.
 //    image keys map to AppConfig `walkthrough_images` (Mark's screenshots, added later).
+export const KINETIC_SIGNUP_URL = 'https://ops.kinetic.auto/invite/signup/'
+
+// Mark 2026-09-24: onboarding now starts by making the shop's own Kinetic ID
+// account for them — they get Kinetic's email and set their own password (we
+// never set it) — then CCC Secure Share, then Parisa connects on the backend.
+export function kineticAccountSteps(shop) {
+  const o = ownerOf(shop || {})
+  const email = o.email || ''
+  return [
+    {
+      key: 'account', title: 'Make their Kinetic ID account',
+      text: 'Open the Kinetic sign-up page and create the account FOR them with the details below. Kinetic emails them a link to set their own password — we never pick or type a password for them.',
+      link: { url: KINETIC_SIGNUP_URL, label: 'Open the Kinetic sign-up page' },
+      fields: [['Shop / company', shop?.shop_name || ''], ['Contact name', o.name || ''], ['Email', email], ['Phone', o.phone || shop?.phone || '']].filter(f => f[1]),
+      whatIf: !email
+        ? 'No owner email on this CRM card yet — add it on the shop first. Kinetic\'s password link goes to that address, so the account is useless without it.'
+        : 'They already have a Kinetic login? Skip this and the next step — go straight to CCC Secure Share.',
+    },
+    {
+      key: 'password', title: 'They set their own password',
+      text: `Kinetic emails ${email || 'them'} a "set your password" link. Ask them to open it while you are standing there — it takes a minute, and the account has to be live before Secure Share will connect.`,
+      whatIf: 'Nothing in their inbox after a few minutes? Check junk, then use "Resend" on the Kinetic sign-up page. Never read or type their password — they set it themselves.',
+    },
+  ]
+}
+/** The whole Kinetic walk-through for a shop: account → CCC Secure Share → we email Parisa. */
+export function kineticSteps(shop) { return [...kineticAccountSteps(shop), ...KINETIC_STEPS] }
+
 export const KINETIC_STEPS = [
   { key: 'ask',      title: 'Ask for whoever runs CCC ONE', text: 'Say: "Hi, I\'m with Absolute ADAS. Two minutes on your CCC ONE and your estimates flow straight to our calibration reports — no more emailing PDFs back and forth." You need to be at their CCC ONE computer, logged in as an admin.', whatIf: 'Only an estimator login handy? The Marketplace won\'t show. Ask the owner or manager to log in. Dealer groups sometimes lock this — their IT has to do it.' },
   { key: 'config',   title: 'Configure → CCC Secure Share', text: 'Top right of CCC ONE, open the "Configure" drop-down and select "CCC Secure Share™".', whatIf: 'No "CCC Secure Share" in the list? Their CCC package doesn\'t have Secure Share turned on yet. They call CCC support (no charge) — we come back after.' },
@@ -20,7 +48,7 @@ export const KINETIC_STEPS = [
   { key: 'kinetic',  title: 'Find the Kinetic card', text: 'Scroll the app cards to "Kinetic" and click it. A panel opens showing what data will be shared.', whatIf: 'Already says ENABLED? Skip to the last step.' },
   { key: 'next',     title: 'Next → Settings → Next', text: 'Click "Next" on the info page. On the "Settings" page leave everything checked and click "Next" again.', whatIf: 'If they ask which Event Types to keep, leave the defaults — Kinetic needs the estimate events.' },
   { key: 'enable',   title: 'Swipe to enable, then OK', text: 'On the "Confirm" page, drag the "Swipe to enable" toggle across, click "Next", then "OK". The Kinetic card now reads PENDING, and flips to ENABLED once Kinetic accepts it (usually the same day).', whatIf: 'Stays PENDING for days? That\'s Kinetic\'s side — the app emails Parisa for you in the next step and nudges after 3 business days.' },
-  { key: 'done',     title: 'Tap "Turned on at the shop" below', text: 'That\'s it on their side. The app now emails Kinetic (Parisa) the shop name, owner and email; Kinetic connects it, and the first report that comes in proves it.', whatIf: '' },
+  { key: 'done',     title: 'Tap "Turned on at the shop" below', text: 'That\'s it on their side. The app emails Kinetic (Parisa) the shop name, owner, email and the Kinetic ID account we made; she connects us to them on the back end. The first report that lands proves it.', whatIf: '' },
 ]
 export const ADASMAPS_STEPS = [
   { key: 'login',   title: 'The shop logs in to ADAS MAP', text: 'ADAS MAP (by Opus IVS) is what State Farm Select Service and Allstate Good Hands shops use. The estimator opens it — it\'s the same login they use for the calibration reports on their estimates.', whatIf: 'Not on ADAS MAP? Then they don\'t need this — turn the toggle off.' },
@@ -35,13 +63,16 @@ export function readIntegrations(shop) {
   const norm = w => ({ state: 'off', history: [], ...(ints[w] || {}) })
   return { kinetic: norm('kinetic'), adasmaps: norm('adasmaps') }
 }
-async function save(req, shop, which, patch, by, note) {
+async function save(req, shop, which, patch, by, note, tick = '') {
   const { updateShop } = await import('../routes/shops.js')
   const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
   const cur = { state: 'off', history: [], ...((br.integrations || {})[which] || {}) }
   const next = { ...cur, ...patch, history: [...(cur.history || []).slice(-19), { at: nowIso(), by: by || '', note: note || patch.state || '' }] }
   const integrations = { ...(br.integrations || {}), [which]: next }
-  const updated = await updateShop(req, shop.id, { ...shop, billing_rules: { ...br, integrations } })
+  // Tick the matching New Shop checklist item in the same write (no second save, no race).
+  const newShop = br.new_shop
+  if (tick && newShop?.items) { const it = newShop.items.find(i => i.key === tick); if (it && !it.done) { it.done = true; it.at = nowIso(); it.by = by || 'app' } }
+  const updated = await updateShop(req, shop.id, { ...shop, billing_rules: { ...br, integrations, ...(newShop ? { new_shop: newShop } : {}) } })
   return { shop: updated, integration: next }
 }
 const ownerOf = shop => { const p = (shop.people || []).find(x => x?.name || x?.email) || {}; return { name: p.name || shop.contact_name || '', email: p.email || shop.email || '', phone: p.phone || shop.phone || '' } }
@@ -51,20 +82,30 @@ export async function setState(req, shop, which, state, by, note) { return save(
 /** Kinetic: the on-site step was done → email Parisa automatically (Mark 2026-09-23). */
 export async function kineticStepDone(req, shop, by) {
   const owner = ownerOf(shop)
+  const kin = readIntegrations(shop).kinetic
   const to = String(await cfgRead(req, 'kinetic_contact_email', 'parisa.sayadi@kinetic.auto')).trim() || 'parisa.sayadi@kinetic.auto'
   let emailed = false, err = ''
   try {
     const { getMailAccessToken, getMailAccountIdFor, sendMail } = await import('./mail.js')
     const token = await getMailAccessToken(); const accountId = await getMailAccountIdFor(token, 'mark@absoluteadas.com')
-    const body = `<p>Hi Parisa,</p><p>Please connect a new shop to Absolute ADAS on Kinetic. They turned Kinetic on in CCC Secure Share today.</p>
-<table style="border-collapse:collapse">${[['Shop', shop.shop_name], ['Owner / contact', owner.name || '—'], ['Email', owner.email || '—'], ['Phone', owner.phone || shop.phone || '—'], ['Address', shop.address || '—'], ['Calibration vendor', 'Absolute ADAS']].map(([k, v]) => `<tr><td style="padding:3px 10px 3px 0;color:#666">${k}</td><td style="padding:3px 0"><b>${String(v).replace(/</g, '&lt;')}</b></td></tr>`).join('')}</table>
+    const body = `<p>Hi Parisa,</p><p>Please connect a new shop to Absolute ADAS on Kinetic. Their Kinetic ID account is set up and they turned Kinetic on in CCC Secure Share today.</p>
+<table style="border-collapse:collapse">${[['Shop', shop.shop_name], ['Owner / contact', owner.name || '—'], ['Email', owner.email || '—'], ['Phone', owner.phone || shop.phone || '—'], ['Address', shop.address || '—'], ['Their Kinetic ID login', kin.account_email || owner.email || '—'], ['Account created', kin.account_created_at ? kin.account_created_at.slice(0, 10) : 'not yet — please create/link on your side'], ['Calibration vendor', 'Absolute ADAS']].map(([k, v]) => `<tr><td style="padding:3px 10px 3px 0;color:#666">${k}</td><td style="padding:3px 0"><b>${String(v).replace(/</g, '&lt;')}</b></td></tr>`).join('')}</table>
 <p>Thanks!<br>Mark Fowler · Absolute ADAS · (844) 349-2327</p>`
     await sendMail(token, accountId, { to, cc: KAT, subject: `Kinetic connection request — ${shop.shop_name}`, body })
     emailed = true
   } catch (e) { err = e.message; console.warn('[integrations] Parisa email failed:', e.message) }
-  const r = await save(req, shop, 'kinetic', { state: 'pending', step_done_at: nowIso(), emailed_at: emailed ? nowIso() : '', owner_name: owner.name, owner_email: owner.email, email_error: err }, by, emailed ? `turned on at the shop · emailed ${to}` : `turned on at the shop · EMAIL FAILED: ${err}`)
+  const r = await save(req, shop, 'kinetic', { state: 'pending', step_done_at: nowIso(), emailed_at: emailed ? nowIso() : '', owner_name: owner.name, owner_email: owner.email, email_error: err }, by, emailed ? `turned on at the shop · emailed ${to}` : `turned on at the shop · EMAIL FAILED: ${err}`, 'kinetic')
   await postToCliqChannel(DISPATCH_CHANNEL, `🔗 *Kinetic turned on at ${shop.shop_name}* by ${by || 'staff'} — ${emailed ? `Parisa emailed (${owner.name || 'owner'}${owner.email ? ' · ' + owner.email : ''}). Connected when the first report lands.` : `⚠ email to Kinetic failed: ${err}`}`).catch(() => {})
   return { ...r, emailed, to, error: err }
+}
+
+/** Kinetic ID account made for the shop (Mark 2026-09-24) — they set the password from Kinetic's email. */
+export async function kineticAccountDone(req, shop, by, email) {
+  const owner = ownerOf(shop)
+  const acct = String(email || owner.email || '').trim()
+  const r = await save(req, shop, 'kinetic', { account_created_at: nowIso(), account_email: acct }, by, `Kinetic ID account made${acct ? ` for ${acct}` : ''}`, 'kinetic_acct')
+  await postToCliqChannel(DISPATCH_CHANNEL, `🔗 *Kinetic account made for ${shop.shop_name}* by ${by || 'staff'}${acct ? ` — ${acct} sets their password from Kinetic's email.` : ''} Next: CCC Secure Share at their computer, then we email Parisa.`).catch(() => {})
+  return { ...r, account_email: acct }
 }
 
 /** ADAS Maps: send the shop the three steps (text + email), state → pending. */
@@ -74,7 +115,7 @@ export async function adasMapsInvite(req, shop, by) {
   let texted = false, emailed = false, errs = []
   if (owner.phone) { try { const { sendTwilioSMS } = await import('./twilio.js'); const { resolvePhoneConfig } = await import('./phoneConfig.js'); const cfg = await resolvePhoneConfig(req); const r = await sendTwilioSMS({ to: owner.phone, body: `Absolute ADAS: ${owner.name ? owner.name.split(' ')[0] + ', ' : ''}quick one for ADAS Maps. ${steps} Questions? Call (844) 349-2327. — Mark`, from: 'local', cfg }); texted = !!r.ok; if (!r.ok) errs.push(r.error) } catch (e) { errs.push(e.message) } }
   if (owner.email) { try { const { getMailAccessToken, getMailAccountIdFor, sendMail } = await import('./mail.js'); const token = await getMailAccessToken(); const accountId = await getMailAccountIdFor(token, 'mark@absoluteadas.com'); await sendMail(token, accountId, { to: owner.email, cc: KAT, subject: `Add Absolute ADAS as your vendor in ADAS Maps (2 minutes)`, body: `<p>Hi ${owner.name ? owner.name.split(' ')[0] : 'there'},</p><p>Quick one so your ADAS calibrations flow straight to us:</p><ol><li>Open <b>ADAS Maps</b></li><li>Go to <b>Vendors</b></li><li>Search <b>Absolute ADAS</b> — we're the first result</li><li>Click <b>Add</b></li></ol><p>That's it. From then on we get told the moment a car is ready.</p><p>Thanks,<br>Mark Fowler · Absolute ADAS · (844) 349-2327</p>` }); emailed = true } catch (e) { errs.push(e.message) } }
-  const r = await save(req, shop, 'adasmaps', { state: 'pending', invited_at: nowIso(), owner_name: owner.name, owner_email: owner.email, invite_error: errs.join('; ') }, by, `steps sent${texted ? ' by text' : ''}${emailed ? ' by email' : ''}${errs.length ? ' · errors: ' + errs.join('; ') : ''}`)
+  const r = await save(req, shop, 'adasmaps', { state: 'pending', invited_at: nowIso(), owner_name: owner.name, owner_email: owner.email, invite_error: errs.join('; ') }, by, `steps sent${texted ? ' by text' : ''}${emailed ? ' by email' : ''}${errs.length ? ' · errors: ' + errs.join('; ') : ''}`, 'adasmaps')
   await postToCliqChannel(DISPATCH_CHANNEL, `🔗 *ADAS Maps steps sent to ${shop.shop_name}* by ${by || 'staff'} — ${texted ? 'text ✓ ' : ''}${emailed ? 'email ✓ ' : ''}${errs.length ? '⚠ ' + errs.join('; ') : ''}${!owner.phone && !owner.email ? '⚠ no owner phone or email on the CRM card — nothing went out' : ''}`).catch(() => {})
   return { ...r, texted, emailed, errors: errs }
 }
