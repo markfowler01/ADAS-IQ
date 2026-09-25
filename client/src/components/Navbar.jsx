@@ -6,55 +6,57 @@ const ORANGE = '#CD4419'
 
 // Primary nav — everyday workflow, 6 items max
 const PRIMARY_LINKS = [
-  { id: 'live',    label: 'Live', adminOnly: true },
-  { id: 'schedule', label: 'Schedule', adminOnly: true },
-  { id: 'today',   label: 'Today' },
-  { id: 'kanban',  label: 'Jobs' },
-  { id: 'dispatch-map', label: 'Map', adminOnly: true },
-  { id: 'crm',     label: 'CRM', adminOnly: true },
-  { id: 'sms',     label: 'Phone', adminOnly: true },
-  { id: 'books',   label: 'Books', adminOnly: true },
-  { id: 'payroll', label: 'Payroll', ownerOnly: true },   // Mark 2026-09-16: one click to the Hours tab (Mark + Kat)
+  // `icon` and `mobileLabel` are for the phone sheet (Mark 2026-09-24: the
+  // menu was hard to find things in and hard to press).
+  { id: 'live',    label: 'Live', mobileLabel: 'Live Day', icon: '⚡', adminOnly: true },
+  { id: 'schedule', label: 'Schedule', icon: '🗓', adminOnly: true },
+  { id: 'today',   label: 'Today', icon: '☀️' },
+  { id: 'kanban',  label: 'Jobs', icon: '🗂' },
+  { id: 'dispatch-map', label: 'Map', icon: '🗺', adminOnly: true },
+  { id: 'crm',     label: 'CRM', icon: '🏢', adminOnly: true },
+  { id: 'sms',     label: 'Phone', icon: '💬', adminOnly: true },
+  { id: 'books',   label: 'Books', icon: '📗', adminOnly: true },
+  { id: 'payroll', label: 'Payroll', icon: '💵', ownerOnly: true },   // Mark 2026-09-16: one click to the Hours tab (Mark + Kat)
 ]
 
 // Secondary nav — grouped by category in a spacious dropdown
 const MORE_GROUPS = [
   { label: 'Finance', links: [
-    { id: 'quotes',    label: 'Quotes', adminOnly: true },
-    { id: 'disputes',  label: 'Disputes', adminOnly: true },
-    { id: 'manual',    label: 'Manual Invoice', adminOnly: true },
-    { id: 'estimator', label: 'Estimator', adminOnly: true },
+    { id: 'quotes',    label: 'Quotes', adminOnly: true , icon: '📝' },
+    { id: 'disputes',  label: 'Disputes', adminOnly: true , icon: '⚖️' },
+    { id: 'manual',    label: 'Manual Invoice', adminOnly: true , icon: '🧾' },
+    { id: 'estimator', label: 'Estimator', adminOnly: true , icon: '🔧' },
   ]},
   { label: 'People & Time', links: [
-    { id: 'timeclock', label: 'Time Clock' },
-    { id: 'pto',       label: 'Time Off' },
-    { id: 'hr-policy', label: 'HR Policy' },
-    { id: 'mileage',   label: 'Mileage' },
-    { id: 'payroll',   label: 'Payroll', ownerOnly: true },
-    { id: 'team',      label: 'Directory & Org' },
-    { id: 'recruit',   label: 'Recruiting', adminOnly: true },
+    { id: 'timeclock', label: 'Time Clock' , icon: '⏱' },
+    { id: 'pto',       label: 'Time Off' , icon: '🏖' },
+    { id: 'hr-policy', label: 'HR Policy' , icon: '📋' },
+    { id: 'mileage',   label: 'Mileage' , icon: '🚐' },
+    { id: 'payroll',   label: 'Payroll', ownerOnly: true , icon: '💵' },
+    { id: 'team',      label: 'Directory & Org' , icon: '👥' },
+    { id: 'recruit',   label: 'Recruiting', adminOnly: true , icon: '🧑‍🔧' },
   ]},
   { label: 'Intelligence', links: [
-    { id: 'daily-review', label: 'Daily Review', ownerOnly: true },
-    { id: 'intel',        label: 'Business Intelligence', ownerOnly: true },
-    { id: 'cx',           label: 'Customer Experience', ownerOnly: true },
-    { id: 'history',      label: 'History' },
+    { id: 'daily-review', label: 'Daily Review', ownerOnly: true , icon: '📈' },
+    { id: 'intel',        label: 'Business Intelligence', ownerOnly: true , icon: '🧠' },
+    { id: 'cx',           label: 'Customer Experience', ownerOnly: true , icon: '⭐' },
+    { id: 'history',      label: 'History' , icon: '📚' },
   ]},
   { label: 'Tools', links: [
-    { id: 'upload',    label: 'Upload PDF' },
-    { id: 'planner',   label: 'My Day Planner' },
-    { id: 'projects',  label: 'Projects' },
-    { id: 'tips',      label: 'TSB Tips' },
-    { id: 'rules',     label: 'Calibration Rules' },
-    { id: 'item-map',  label: 'Item Mapping', adminOnly: true },
-    { id: 'wd-cleanup', label: 'WorkDrive Cleanup', ownerOnly: true },
-    { id: 'messages',  label: 'Messages' },
+    { id: 'upload',    label: 'Upload PDF' , icon: '📄' },
+    { id: 'planner',   label: 'My Day Planner' , icon: '🗒' },
+    { id: 'projects',  label: 'Projects' , icon: '📌' },
+    { id: 'tips',      label: 'TSB Tips' , icon: '📖' },
+    { id: 'rules',     label: 'Calibration Rules' , icon: '⚙️' },
+    { id: 'item-map',  label: 'Item Mapping', adminOnly: true , icon: '🔗' },
+    { id: 'wd-cleanup', label: 'WorkDrive Cleanup', ownerOnly: true , icon: '🧹' },
+    { id: 'messages',  label: 'Messages' , icon: '✉️' },
   ]},
   { label: 'Admin', links: [
-    { id: 'ops',         label: 'Ops', ownerOnly: true },
-    { id: 'scaling',     label: 'Scaling', ownerOnly: true },
-    { id: 'branding',    label: 'Branding', ownerOnly: true },
-    { id: 'zoho-import', label: 'Import from Zoho', ownerOnly: true },
+    { id: 'ops',         label: 'Ops', ownerOnly: true , icon: '🛠' },
+    { id: 'scaling',     label: 'Scaling', ownerOnly: true , icon: '📊' },
+    { id: 'branding',    label: 'Branding', ownerOnly: true , icon: '🎨' },
+    { id: 'zoho-import', label: 'Import from Zoho', ownerOnly: true , icon: '⬇️' },
   ]},
 ]
 
@@ -336,8 +338,8 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
               </button>
               {/* Mobile hamburger */}
               <button onClick={() => setShowMobileMenu(v => !v)}
-                className="md:hidden flex flex-col items-center justify-center w-8 h-8 gap-1.5 rounded-md"
-                style={{ backgroundColor: showMobileMenu ? '#f5f3f0' : 'transparent' }}
+                className="md:hidden flex flex-col items-center justify-center gap-1.5 rounded-xl"
+                style={{ width: 44, height: 44, backgroundColor: showMobileMenu ? '#f5f3f0' : '#fff7f5', border: `1px solid ${showMobileMenu ? '#e0dbd6' : '#fcd5c5'}` }}
                 aria-label="Menu">
                 {showMobileMenu ? (
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2.5" strokeLinecap="round">
@@ -356,63 +358,78 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
         </div>
       </div>
 
-      {/* Mobile menu dropdown — grouped just like the desktop More dropdown */}
+      {/* Mobile menu — a full-height sheet (Mark 2026-09-24). It used to be an
+          inline dropdown inside the header: 14px rows, no scroll, so with
+          thirty-odd links the bottom ran off the screen and nothing was easy
+          to hit. Now it scrolls, the rows are 56px, and every one has an icon. */}
       {showMobileMenu && (
-        <div className="md:hidden" style={{ borderTop: '1px solid #ebebeb', backgroundColor: 'white' }}>
-          <nav className="px-4 py-3 flex flex-col gap-0.5">
-            {/* Primary links — styled as featured */}
-            <p className="text-[10px] font-bold uppercase tracking-wider px-1 pt-1 pb-2"
-              style={{ color: '#b8b8b8', letterSpacing: '0.1em' }}>Daily</p>
-            {visiblePrimary.map(link => {
-              const isActive = currentScreen === link.id
-              return (
-                <button key={link.id} onClick={() => navigate(link.id)}
-                  className="text-sm px-3 py-2.5 font-medium text-left rounded-lg transition-colors"
-                  style={{ color: isActive ? ORANGE : '#1a1a1a', backgroundColor: isActive ? '#fff7f5' : 'transparent' }}>
-                  {link.label}
-                </button>
-              )
-            })}
-            {MORE_GROUPS.map(group => {
-              const visibleLinks = group.links.filter(canSee)
-              if (visibleLinks.length === 0) return null
-              return (
-                <div key={group.label}>
-                  <p className="text-[10px] font-bold uppercase tracking-wider px-1 pt-3 pb-2"
-                    style={{ color: '#b8b8b8', letterSpacing: '0.1em' }}>{group.label}</p>
-                  {visibleLinks.map(link => {
-                    const isActive = currentScreen === link.id
-                    return (
-                      <button key={link.id} onClick={() => navigate(link.id)}
-                        className="text-sm px-3 py-2.5 font-medium text-left rounded-lg transition-colors w-full"
-                        style={{ color: isActive ? ORANGE : '#1a1a1a', backgroundColor: isActive ? '#fff7f5' : 'transparent' }}>
-                        {link.label}
-                      </button>
-                    )
-                  })}
-                </div>
-              )
-            })}
-            <div className="flex gap-2 mt-4 pt-4 flex-wrap" style={{ borderTop: '1px solid #f0ece8' }}>
-              {isAdmin && (
-                <button onClick={() => navigate('settings')}
-                  className="text-xs px-3 py-2 rounded-lg font-medium flex-1"
-                  style={{ backgroundColor: currentScreen === 'settings' ? '#fff7f5' : '#f5f3f0', color: currentScreen === 'settings' ? ORANGE : '#555' }}>
-                  Settings
-                </button>
-              )}
-              <button onClick={() => { setShowFeedback(true); setShowMobileMenu(false) }}
-                className="text-xs px-3 py-2 rounded-lg font-medium flex-1"
-                style={{ backgroundColor: '#fff7f5', color: ORANGE, border: `1px solid #fcd5c5` }}>
-                Feedback
-              </button>
-              <button onClick={onLogout}
-                className="text-xs px-3 py-2 rounded-lg text-gray-500 font-medium flex-1"
-                style={{ backgroundColor: '#f5f3f0' }}>
-                Sign out
-              </button>
+        <div className="md:hidden fixed inset-0 z-[80]" style={{ backgroundColor: 'rgba(20,16,14,.45)' }}
+          onClick={e => { if (e.target === e.currentTarget) setShowMobileMenu(false) }}>
+          <div className="absolute inset-x-0 bottom-0 top-14 flex flex-col rounded-t-2xl overflow-hidden"
+            style={{ backgroundColor: '#faf9f7', boxShadow: '0 -8px 32px rgba(0,0,0,.18)' }}>
+            <div className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+              style={{ backgroundColor: 'white', borderBottom: '1px solid #efeae6' }}>
+              <span className="text-base font-extrabold" style={{ color: '#1a1a1a' }}>Menu</span>
+              <button onClick={() => setShowMobileMenu(false)} className="rounded-xl font-bold"
+                style={{ width: 44, height: 44, backgroundColor: '#f5f3f0', color: '#555', fontSize: 22, lineHeight: '44px' }}
+                aria-label="Close menu">×</button>
             </div>
-          </nav>
+
+            <nav className="flex-1 overflow-y-auto px-3 py-3" style={{ WebkitOverflowScrolling: 'touch' }}>
+              <p className="text-[11px] font-bold uppercase px-2 pb-2" style={{ color: '#a8a29e', letterSpacing: '0.09em' }}>Daily</p>
+              <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'white', border: '1px solid #efeae6' }}>
+                {visiblePrimary.map((link, i) => {
+                  const isActive = currentScreen === link.id
+                  return (
+                    <button key={link.id} onClick={() => navigate(link.id)}
+                      className="w-full flex items-center gap-3 px-4 text-left"
+                      style={{ minHeight: 56, borderTop: i ? '1px solid #f5f2ef' : 'none', backgroundColor: isActive ? '#fff7f5' : 'white' }}>
+                      <span style={{ fontSize: 20, width: 26, textAlign: 'center' }}>{link.icon || '•'}</span>
+                      <span className="flex-1 font-semibold" style={{ fontSize: 17, color: isActive ? ORANGE : '#1a1a1a' }}>{link.mobileLabel || link.label}</span>
+                      {isActive && <span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: ORANGE, color: 'white' }}>HERE</span>}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {MORE_GROUPS.map(group => {
+                const visibleLinks = group.links.filter(canSee)
+                if (!visibleLinks.length) return null
+                return (
+                  <div key={group.label} className="mt-4">
+                    <p className="text-[11px] font-bold uppercase px-2 pb-2" style={{ color: '#a8a29e', letterSpacing: '0.09em' }}>{group.label}</p>
+                    <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'white', border: '1px solid #efeae6' }}>
+                      {visibleLinks.map((link, i) => {
+                        const isActive = currentScreen === link.id
+                        return (
+                          <button key={link.id} onClick={() => navigate(link.id)}
+                            className="w-full flex items-center gap-3 px-4 text-left"
+                            style={{ minHeight: 52, borderTop: i ? '1px solid #f5f2ef' : 'none', backgroundColor: isActive ? '#fff7f5' : 'white' }}>
+                            <span style={{ fontSize: 18, width: 26, textAlign: 'center' }}>{link.icon || '•'}</span>
+                            <span className="flex-1 font-medium" style={{ fontSize: 16, color: isActive ? ORANGE : '#33302e' }}>{link.mobileLabel || link.label}</span>
+                            {isActive && <span className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: ORANGE, color: 'white' }}>HERE</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+              <div style={{ height: 12 }} />
+            </nav>
+
+            <div className="flex gap-2 px-3 py-3 flex-shrink-0"
+              style={{ backgroundColor: 'white', borderTop: '1px solid #efeae6', paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
+              {isAdmin && (
+                <button onClick={() => navigate('settings')} className="flex-1 rounded-xl font-bold"
+                  style={{ minHeight: 48, fontSize: 15, backgroundColor: currentScreen === 'settings' ? '#fff7f5' : '#f5f3f0', color: currentScreen === 'settings' ? ORANGE : '#555' }}>Settings</button>
+              )}
+              <button onClick={() => { setShowFeedback(true); setShowMobileMenu(false) }} className="flex-1 rounded-xl font-bold"
+                style={{ minHeight: 48, fontSize: 15, backgroundColor: '#fff7f5', color: ORANGE, border: '1px solid #fcd5c5' }}>Feedback</button>
+              <button onClick={onLogout} className="flex-1 rounded-xl font-bold"
+                style={{ minHeight: 48, fontSize: 15, backgroundColor: '#f5f3f0', color: '#777' }}>Sign out</button>
+            </div>
+          </div>
         </div>
       )}
     </header>

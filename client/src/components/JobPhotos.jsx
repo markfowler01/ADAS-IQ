@@ -98,7 +98,7 @@ export function PhotoBadge({ job, onClick, size = 'sm' }) {
 const queue = []
 const listeners = new Set()
 const notify = () => listeners.forEach(fn => fn([...queue]))
-const LIVE = ['preparing', 'queued', 'uploading', 'needs_slot', 'failed', 'paused']
+const LIVE = ['preparing', 'queued', 'uploading', 'needs_slot', 'failed', 'paused', 'orphan']
 
 // IndexedDB — the photo file itself is stored, not just a pointer.
 const DB_NAME = 'adasiq-photo-queue', STORE = 'queue'
@@ -225,6 +225,11 @@ async function pump() {
         const r = await xhrUpload(`${API_BASE}/api/jobs/${item.jobId}/photo-slot`, fd, pct => { item.progress = pct; notifyThrottled() })
         const d = r.data || {}
         if (r.status === 401) { item.status = 'paused'; item.error = 'Signed out — sign back in and these upload on their own.'; notify(); break }
+        // The job card these were shot against has been deleted (a duplicate
+        // request card, usually). Retrying can never work — park them and let
+        // the tech move them onto the car's live card (Mark 2026-09-24:
+        // "1 photo waiting · Job not found").
+        if (r.status === 404) { item.status = 'orphan'; item.error = 'That job card is gone — open the right job and tap Move here.'; notify(); continue }
         if (r.status === 422) {
           if (!item._retriedSlot) { item._retriedSlot = true; item.slot = d.suggested || SLOTS.find(x => !x.multi && !queue.some(q => q.jobId === item.jobId && q.slot === x.key && q.id !== item.id && LIVE.includes(q.status)))?.key || 'setup'; item.status = 'queued'; notify(); continue }
           item.status = 'needs_slot'; item.error = d.error; item.suggested = d.suggested; notify(); continue
@@ -245,6 +250,20 @@ async function pump() {
     if (workers === 0 && !queue.some(q => ['queued', 'uploading', 'preparing'].includes(q.status))) releaseScreen()
   }
 }
+/** How many photos are stranded on a deleted job card. */
+export function orphanCount() { return queue.filter(q => q.status === 'orphan').length }
+/** Move every stranded photo onto this job and send them. */
+export function adoptOrphanPhotos(jobId) {
+  let n = 0
+  for (const q of queue) {
+    if (q.status !== 'orphan') continue
+    q.jobId = jobId; q.status = 'queued'; q.tries = 0; q.error = null; q._retriedSlot = false; n++
+    idbPut(q)
+  }
+  if (n) { notify(); pump() }
+  return n
+}
+
 /** Put every paused/failed photo back in line and push. Called on sign-in, on 'online', when the app comes back to the front, and by the Retry button. */
 export function resumePhotoQueue() {
   let any = false
@@ -364,22 +383,27 @@ function summarize(all) {
     paused: live.filter(q => q.status === 'paused').length,
     failed: live.filter(q => q.status === 'failed').length,
     needsSlot: live.filter(q => q.status === 'needs_slot').length,
-    note: live.find(q => q.status === 'paused' || q.status === 'failed')?.error || '',
+    orphans: live.filter(q => q.status === 'orphan').length,
+    note: live.find(q => ['paused', 'failed', 'orphan'].includes(q.status))?.error || '',
   }
 }
 /** Floating pill, app-wide: shows while photos are still going up and
  *  offers one-tap Retry when something got stuck. Also restores the
  *  queue from the phone on first mount (i.e. once the user is signed in). */
-export function UploadTray() {
+export function UploadTray({ jobId = null } = {}) {
   const s = useUploadSummary()
   useEffect(() => { restorePhotoQueue() }, [])
   if (!s.total) return null
-  const stuck = s.paused + s.failed
+  const stuck = s.paused + s.failed + s.orphans
   return (
     <div className="fixed left-3 bottom-3 z-[60] rounded-full shadow-lg text-xs font-bold flex items-center gap-2 px-3 py-2"
       style={stuck ? { backgroundColor: '#fef2f2', color: RED, border: '1px solid #fecaca' } : { backgroundColor: '#fffbeb', color: '#92400e', border: '1px solid #fde68a' }}>
       {stuck
-        ? <><span>⚠️ {stuck} photo{stuck > 1 ? 's' : ''} waiting · {s.note}</span><button type="button" onClick={resumePhotoQueue} className="rounded-full px-2 py-0.5" style={{ backgroundColor: 'white', border: '1px solid #fecaca' }}>Retry</button></>
+        ? <><span>⚠️ {stuck} photo{stuck > 1 ? 's' : ''} waiting · {s.note}</span>
+            {s.orphans > 0 && jobId
+              ? <button type="button" onClick={() => adoptOrphanPhotos(jobId)} className="rounded-full px-2 py-0.5 font-bold" style={{ backgroundColor: RED, color: 'white' }}>Move {s.orphans} here</button>
+              : <button type="button" onClick={resumePhotoQueue} className="rounded-full px-2 py-0.5" style={{ backgroundColor: 'white', border: '1px solid #fecaca' }}>Retry</button>}
+          </>
         : <span className="flex items-center gap-2">📤 {s.done}/{s.batch} up · {s.pct}%<span className="inline-block rounded-full overflow-hidden" style={{ width: 90, height: 6, backgroundColor: '#fde68a' }}><span className="block h-full" style={{ width: `${s.pct}%`, backgroundColor: '#b45309', transition: 'width .2s' }} /></span><span className="font-normal">saved on this phone</span></span>}
       {s.needsSlot > 0 && <span>· {s.needsSlot} need a slot</span>}
     </div>
@@ -411,6 +435,8 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   // slot asks first — camera, or the photos already on the phone.
   const [chooseFor, setChooseFor] = useState(null)
   const items = useQueue(job.id)
+  const [orphans, setOrphans] = useState(() => orphanCount())
+  useEffect(() => { const fn = () => setOrphans(orphanCount()); listeners.add(fn); fn(); return () => listeners.delete(fn) }, [])
   const prog = photoProgress(job)
   const isOwner = isOwnerUser(user)
 
@@ -587,6 +613,20 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
         ) : (
           <div className="rounded-2xl py-4 px-4 mb-3 text-center font-extrabold text-lg" style={{ backgroundColor: '#dcfce7', color: GREEN }}>
             ✓ All 8 in — nice{prog.miles.delta != null ? ` · test drive ${prog.miles.delta} mi` : ''}{tiresDone ? ` · 🛞 ${tire.front}/${tire.rear} psi` : ' · 🛞 tires next'}
+          </div>
+        )}
+
+        {/* Photos shot against a card that has since been deleted (a duplicate
+            request card, usually) land here instead of retrying forever.
+            One tap puts them on this car (Mark 2026-09-24). */}
+        {orphans > 0 && (
+          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fecaca' }}>
+            <div className="text-sm font-bold" style={{ color: RED }}>⚠️ {orphans} photo{orphans > 1 ? 's are' : ' is'} stuck on a job card that was deleted</div>
+            <div className="text-xs mt-0.5" style={{ color: '#7f1d1d' }}>They are still saved on this phone. Move them onto this car and they go up now.</div>
+            <button type="button" onClick={() => { const n = adoptOrphanPhotos(job.id); if (n) setOrphans(0) }}
+              className="mt-2 w-full rounded-xl font-bold text-white" style={{ minHeight: 48, fontSize: 16, backgroundColor: RED }}>
+              📤 Move {orphans} photo{orphans > 1 ? 's' : ''} to this job
+            </button>
           </div>
         )}
 
