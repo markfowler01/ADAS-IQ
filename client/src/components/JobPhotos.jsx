@@ -184,21 +184,31 @@ function xhrUpload(url, fd, onProgress) {
     x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText || '{}') } catch { d = {} } resolve({ status: x.status, ok: x.status >= 200 && x.status < 300, data: d }) }
     x.onerror = () => resolve({ status: 0, ok: false, data: { error: 'Network error' } })
     x.ontimeout = () => resolve({ status: 0, ok: false, data: { error: 'Upload timed out' } })
-    x.timeout = 120000
+    x.timeout = 45000   // a hung request must free its lane quickly, not sit for two minutes
     x.send(fd)
   })
 }
 let lastNotify = 0
 const notifyThrottled = () => { const n = Date.now(); if (n - lastNotify > 150) { lastNotify = n; notify() } }
 
-// One upload at a time (2026-09-23): two at once raced on the card and the
-// second write erased the first slot. The server now merges on a fresh read
-// too, but one lane keeps the order the tech shot them in and the bar honest.
+// Three lanes (2026-09-24). It was one, because two at once used to race on
+// the card and the second write erased the first slot — the server merges on
+// a fresh read now, so that is handled. One lane meant a single hung photo
+// blocked the other 48.
+// A 49-shot batch takes longer than the screen stays on, and iOS suspends a
+// sleeping tab mid-upload. Hold a wake lock while anything is in flight.
+let wakeLock = null
+async function holdScreen() {
+  try { if (!wakeLock && navigator.wakeLock?.request) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener?.('release', () => { wakeLock = null }) } } catch { /* not supported — uploads still run */ }
+}
+function releaseScreen() { try { wakeLock?.release?.(); } catch { /* fine */ } wakeLock = null }
+
 let workers = 0
-const MAX_WORKERS = 1
+const MAX_WORKERS = 3
 async function pump() {
   if (workers >= MAX_WORKERS) return
   workers++
+  holdScreen()
   if (workers < MAX_WORKERS && queue.filter(q => q.status === 'queued').length > 1) pump()
   try {
     while (true) {
@@ -230,7 +240,10 @@ async function pump() {
         } else { item.status = 'failed'; item.error = e.message; notify() }
       }
     }
-  } finally { workers-- }
+  } finally {
+    workers--
+    if (workers === 0 && !queue.some(q => ['queued', 'uploading', 'preparing'].includes(q.status))) releaseScreen()
+  }
 }
 /** Put every paused/failed photo back in line and push. Called on sign-in, on 'online', when the app comes back to the front, and by the Retry button. */
 export function resumePhotoQueue() {
@@ -266,6 +279,18 @@ if (typeof window !== 'undefined') {
 // eight shots each, zero in WorkDrive). Anything stuck this long gets a slot
 // and goes in line.
 const PREP_STALL_MS = 40000
+// Prep = one classify fetch + a full-size image decode per photo. Unbounded,
+// a 49-shot batch fired 49 of each at once: the phone ran out of memory and
+// the browser's 6-connection budget went to classify calls, so the actual
+// upload sat at 0% with no connection (Mark 2026-09-24). Two lanes, and big
+// batches skip the phone-side sort entirely — the server sorts in ~1s while
+// it stores the photo, which is one round trip instead of two.
+const PREP_LANES = 2
+const SKIP_SORT_OVER = 4
+let prepping = 0
+const prepWaiting = []
+const prepAcquire = () => prepping < PREP_LANES ? (prepping++, Promise.resolve()) : new Promise(r => prepWaiting.push(r)).then(() => { prepping++ })
+const prepRelease = () => { prepping--; const next = prepWaiting.shift(); if (next) next() }
 function pickOpenSlot(item, filled = null) {
   const taken = k => filled?.[k]?.fileId || queue.some(q => q.jobId === item.jobId && q.slot === k && q.id !== item.id && LIVE.includes(q.status))
   return SLOTS.find(x => !x.multi && !taken(x.key))?.key || 'setup'
@@ -289,19 +314,23 @@ export function enqueuePhoto({ jobId, slot, file, miles = null, filled = null })
   queue.push(item); notify()
   // Save the original to the phone first (nothing is ever lost), then swap in the shrunk copy.
   idbPut(item).then(async () => {
-    // No slot named → sort it here on the thumbnail before the big upload.
-    if (!item.slot) {
-      // Never stop the tech to ask (Mark 2026-09-23: "it's annoying them"):
-      // unsure → the next open slot in shooting order; they can redo later.
-      const nextOpen = () => { const taken = k => filled?.[k]?.fileId || queue.some(q => q.jobId === item.jobId && q.slot === k && q.id !== item.id && LIVE.includes(q.status)); return SLOTS.find(x => !x.multi && !taken(x.key))?.key || 'setup' }
-      try {
-        const r = await sortOnPhone(item, filled)
-        item.slot = (r?.slot && r.confidence >= 0.5) ? r.slot : (r?.suggested || nextOpen())
-      } catch { item.slot = nextOpen() }
-    }
-    const small = await shrink(file, item.slot)
-    if (small !== file) { item.file = small }
-    await idbPut(item)
+    await prepAcquire()
+    try {
+      // A big batch goes up unsorted and lets the server place each shot —
+      // one request instead of two, and the uploader keeps its connection.
+      const batch = queue.filter(q => q.jobId === item.jobId && ['preparing', 'queued'].includes(q.status)).length
+      if (!item.slot && batch <= SKIP_SORT_OVER) {
+        // Never stop the tech to ask (Mark 2026-09-23: "it's annoying them"):
+        // unsure → the next open slot in shooting order; they can redo later.
+        try {
+          const r = await sortOnPhone(item, filled)
+          item.slot = (r?.slot && r.confidence >= 0.5) ? r.slot : (r?.suggested || pickOpenSlot(item, filled))
+        } catch { item.slot = pickOpenSlot(item, filled) }
+      }
+      const small = await shrink(file, item.slot)
+      if (small !== file) { item.file = small }
+      await idbPut(item)
+    } finally { prepRelease() }
     item.status = 'queued'; notify(); pump()
   }).catch(e => {
     // Prep blew up (HEIC decode, storage, a suspended tab). The photo still
