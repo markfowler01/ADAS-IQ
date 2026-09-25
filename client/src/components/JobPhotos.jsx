@@ -229,12 +229,16 @@ async function pump() {
         // request card, usually). Retrying can never work — park them and let
         // the tech move them onto the car's live card (Mark 2026-09-24:
         // "1 photo waiting · Job not found").
-        if (r.status === 404) { item.status = 'orphan'; item.error = 'That job card is gone — open the right job and tap Move here.'; notify(); continue }
+        // The server re-homes a photo whose card was deleted and tells us
+        // where it went, so nothing is stranded. A 404 now only means it could
+        // not find the car at all — park it for the next open job sheet.
+        if (r.status === 404) { item.status = 'orphan'; item.error = 'Card gone — will attach to the next job you open.'; notify(); continue }
         if (r.status === 422) {
           if (!item._retriedSlot) { item._retriedSlot = true; item.slot = d.suggested || SLOTS.find(x => !x.multi && !queue.some(q => q.jobId === item.jobId && q.slot === x.key && q.id !== item.id && LIVE.includes(q.status)))?.key || 'setup'; item.status = 'queued'; notify(); continue }
           item.status = 'needs_slot'; item.error = d.error; item.suggested = d.suggested; notify(); continue
         }
         if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+        if (d.moved_to && d.moved_to !== item.jobId) item.jobId = d.moved_to
         item.status = 'done'; item.progress = 100; item.result = d; item.error = null; notify()
         idbDel(item.id)
       } catch (e) {
@@ -435,8 +439,17 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
   // slot asks first — camera, or the photos already on the phone.
   const [chooseFor, setChooseFor] = useState(null)
   const items = useQueue(job.id)
-  const [orphans, setOrphans] = useState(() => orphanCount())
-  useEffect(() => { const fn = () => setOrphans(orphanCount()); listeners.add(fn); fn(); return () => listeners.delete(fn) }, [])
+  // Photos whose card was deleted and that the server could not place attach
+  // themselves to whichever job the tech opens next — no button to find, no
+  // decision to make (Mark 2026-09-24: "I need this to work with the card gone").
+  const [adopted, setAdopted] = useState(0)
+  useEffect(() => {
+    // Orphans only appear once an upload has come back 404, which can happen
+    // well after this sheet opened — so watch the queue, not just mount.
+    const claim = () => { const n = adoptOrphanPhotos(job.id); if (n) setAdopted(a => a + n) }
+    claim(); listeners.add(claim)
+    return () => listeners.delete(claim)
+  }, [job.id])
   const prog = photoProgress(job)
   const isOwner = isOwnerUser(user)
 
@@ -616,17 +629,9 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           </div>
         )}
 
-        {/* Photos shot against a card that has since been deleted (a duplicate
-            request card, usually) land here instead of retrying forever.
-            One tap puts them on this car (Mark 2026-09-24). */}
-        {orphans > 0 && (
-          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fecaca' }}>
-            <div className="text-sm font-bold" style={{ color: RED }}>⚠️ {orphans} photo{orphans > 1 ? 's are' : ' is'} stuck on a job card that was deleted</div>
-            <div className="text-xs mt-0.5" style={{ color: '#7f1d1d' }}>They are still saved on this phone. Move them onto this car and they go up now.</div>
-            <button type="button" onClick={() => { const n = adoptOrphanPhotos(job.id); if (n) setOrphans(0) }}
-              className="mt-2 w-full rounded-xl font-bold text-white" style={{ minHeight: 48, fontSize: 16, backgroundColor: RED }}>
-              📤 Move {orphans} photo{orphans > 1 ? 's' : ''} to this job
-            </button>
+        {adopted > 0 && (
+          <div className="rounded-xl px-3 py-2 mb-3 text-xs font-semibold" style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534' }}>
+            ✓ {adopted} photo{adopted > 1 ? 's' : ''} from a deleted card moved onto this one and sent.
           </div>
         )}
 

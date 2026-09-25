@@ -927,6 +927,20 @@ router.delete('/:id', async (req, res) => {
     } catch (e) {
       console.warn('[jobs DELETE] tombstone failed (non-fatal):', e.message)
     }
+    // 🪦 Leave a marker so photos still queued on a phone can find the car
+    // after the card is gone (Mark 2026-09-24: "I need this to work with the
+    // card gone"). Small, and swept by the 400-row cap on AppConfig writes.
+    try {
+      const row = await getTable(req).getRow(req.params.id).catch(() => null)
+      const j = row ? rowToJob(row) : null
+      if (j) {
+        const app = catalyst.initialize(req, { type: 'advancedio' })
+        await app.datastore().table('AppConfig').insertRow({
+          config_key: `job_gone:${String(req.params.id)}`.slice(0, 64),
+          config_value: JSON.stringify({ shop_name: j.shop_name || '', vehicle: j.vehicle || '', vin: j.vin || '', ro: j.quote_number || j.invoice_number || '', at: new Date().toISOString() }).slice(0, 900),
+        })
+      }
+    } catch (e) { console.warn('[jobs DELETE] tombstone note failed (non-fatal):', e.message) }
     await deleteJob(req, req.params.id)
     res.json({ success: true })
   } catch (err) {
@@ -1648,12 +1662,40 @@ router.post('/photo-classify', upload.single('photo'), async (req, res) => {
 // it. Odometer slots get their miles read (tech can correct via PATCH
 // odo_before / odo_after). File lands in the job's WorkDrive folder
 // with a self-describing name and the slot map is saved on the row.
+/** The live card for a car whose old job row was deleted. Tombstone first, then the usual RO / VIN / shop+vehicle net. */
+async function findLiveJobForDeleted(req, deadId) {
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const rows = await app.zcql().executeZCQLQuery(`SELECT config_value FROM AppConfig WHERE config_key = 'job_gone:${String(deadId).replace(/[^0-9]/g, '')}' LIMIT 1`)
+    const note = rows?.[0]?.AppConfig?.config_value
+    if (!note) return null
+    const t = JSON.parse(note)
+    const all = await getAllJobs(req)
+    const digits = x => (String(x || '').match(/\d{4,}/) || [''])[0]
+    const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const vin = String(t.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    const ro = digits(t.ro)
+    let hit = null
+    if (vin.length === 17) hit = all.find(j => String(j.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') === vin)
+    if (!hit && ro) hit = all.find(j => digits(j.quote_number) === ro || digits(j.invoice_number) === ro)
+    if (!hit && t.shop_name && t.vehicle) hit = all.find(j => norm(j.shop_name) === norm(t.shop_name) && norm(j.vehicle) === norm(t.vehicle))
+    return hit || null
+  } catch (e) { console.warn('[photo-slot] tombstone lookup failed:', e.message); return null }
+}
+
 router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No photo. Send the image in the "photo" field.' })
     const { SLOTS, parseSlots, photoProgress, fileNameFor, classifyPhoto, MAX_SETUP_PHOTOS } = await import('../services/jobPhotos.js')
     const table = getTable(req)
-    const row = await table.getRow(req.params.id)
+    let row = await table.getRow(req.params.id).catch(() => null)
+    let movedTo = ''
+    if (!row) {
+      // The card was deleted while the photos sat on the phone. Find the car
+      // from the tombstone and put the shot on its live card.
+      const live = await findLiveJobForDeleted(req, req.params.id)
+      if (live) { row = await table.getRow(live.id).catch(() => null); movedTo = live.id; console.log(`[photo-slot] card ${req.params.id} is gone — filed on ${live.id} (${live.shop_name} ${live.vehicle})`) }
+    }
     if (!row) return res.status(404).json({ error: 'Job not found' })
     const job = rowToJob(row)
     const slots = parseSlots(job.photo_slots)
@@ -1737,7 +1779,7 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
       await postToCliqChannel(DISPATCH_CHANNEL, `✅ *All photos in* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — the set from ${by}'s phone finished uploading. Good to invoice.`).catch(e => console.log('[photo-slot] cliq failed:', e.message))
     }
     console.log(`[photo-slot] job ${job.id} ← ${name}${miles != null ? ` (${miles} mi)` : ''}${ai ? ` [ai ${ai.slot} ${ai.confidence}]` : ''}`)
-    res.json({ ok: true, slot: slotKey, miles, vin: vinInfo, name, fileId, job: updated, progress: photoProgress(updated) })
+    res.json({ ok: true, slot: slotKey, miles, vin: vinInfo, name, fileId, moved_to: movedTo || undefined, job: updated, progress: photoProgress(updated) })
   } catch (err) {
     console.error('[photo-slot]', err.message)
     res.status(500).json({ error: err.message })

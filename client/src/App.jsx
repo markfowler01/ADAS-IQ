@@ -38,7 +38,6 @@ import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
 import WorkDriveCleanup from './pages/WorkDriveCleanup'
 import SoftphonePanel from './components/SoftphonePanel'
-import { UploadTray } from './components/JobPhotos'
 import TimeClockReview from './components/TimeClockReview'
 import MorningClockIn from './components/MorningClockIn'
 import HRPolicyScreen from './pages/HRPolicyScreen'
@@ -238,6 +237,11 @@ function MainApp() {
     setScreen('kanban')
   }
 
+  // Photos still waiting on this phone resume as soon as the app opens. The
+  // floating tray used to do this on mount and it has been removed, so the
+  // restore lives here (hook is ABOVE the early returns on purpose).
+  useEffect(() => { if (!user) return; import('./components/JobPhotos').then(m => m.restorePhotoQueue?.()).catch(() => {}) }, [user])
+
   // Current screen for the blank-screen watchdog (hook lives ABOVE the early returns).
   useEffect(() => { try { window.__adasScreen = screen } catch {} }, [screen])
   // Components deep in a card can ask for a screen (e.g. "📝 Estimate first" → the estimator). Above the early returns on purpose.
@@ -301,7 +305,9 @@ function MainApp() {
           place (Mark 2026-08-12). Techs don't get it. */}
       {user?.role !== 'technician' && !isDemo && <SoftphonePanel showControls={screen === 'sms'} />}
       {/* Photo uploads still in flight / stuck — restores the queue from the phone on sign-in (2026-09-15) */}
-      <UploadTray />
+      {/* The floating upload pill is gone (Mark 2026-09-24: "delete the banner
+          at the bottom"). Progress lives inside the job photo sheet, which is
+          where the tech already is; restorePhotoQueue still runs there. */}
       {/* Morning clock-in prompt — everyone, once per day (not demo) */}
       {!isDemo && <MorningClockIn user={user} />}
       {/* Time card review + approve at login on the 15th / last day (Mark 2026-09-16) */}
