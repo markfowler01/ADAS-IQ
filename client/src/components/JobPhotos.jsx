@@ -73,7 +73,7 @@ export function PhotoBadge({ job, onClick, size = 'sm' }) {
   const owed = !p.complete && !!slots._pending   // invoiced with shots outstanding (2026-09-17)
   const folderOk = !p.complete && !!slots._folder_ok   // full set in the folder, some not labeled (2026-09-23)
   const done = p.complete || folderOk
-  const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
+  const cls = size === 'xs' ? 'text-[12px] px-1.5 py-0.5' : 'text-[13px] px-2 py-0.5'
   return (
     <button type="button" onClick={e => { e.stopPropagation(); onClick && onClick() }}
       className={`${cls} font-extrabold rounded-full inline-flex items-center gap-1`}
@@ -604,7 +604,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         <div className="flex items-start justify-between gap-2 mb-2">
           <div>
-            <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>Job photos</div>
+            <div className="text-[12px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>Job photos</div>
             <div className="font-bold text-base" style={{ color: '#1a1a1a' }}>{job.shop_name || 'Job'}</div>
             <div className="text-xs" style={{ color: '#666' }}>{job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')}</div>
           </div>
@@ -619,7 +619,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           <button type="button" onClick={() => shoot(current)}
             className="w-full rounded-2xl py-5 px-4 text-left text-white mb-3"
             style={{ backgroundColor: ORANGE, boxShadow: '0 6px 18px rgba(205,68,25,.3)' }}>
-            <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap to shoot · {cur.n} of {SLOTS.length}</div>
+            <div className="text-[13px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap to shoot · {cur.n} of {SLOTS.length}</div>
             <div className="text-2xl font-extrabold leading-tight mt-0.5">{cur.label}</div>
             <div className="text-sm mt-1" style={{ opacity: .9 }}>{cur.hint}</div>
           </button>
@@ -658,7 +658,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
               <div className="flex flex-wrap gap-1 mt-1">
                 {SLOTS.map(s => (
                   <button key={s.key} type="button" onClick={() => resolveNeedsSlot(item, s.key)}
-                    className="text-[10px] font-bold rounded-full px-2 py-0.5"
+                    className="text-[12px] font-bold rounded-full px-2 py-0.5"
                     style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>{s.short}</button>
                 ))}
               </div>
@@ -688,11 +688,11 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-bold" style={{ color: tiresDone ? GREEN : '#1a1a1a' }}>Tire pressures — manufacturer spec</div>
                     <div className="flex items-center gap-1 mt-0.5">
-                      <span className="text-[11px]" style={{ color: '#888' }}>F</span>
+                      <span className="text-[13px]" style={{ color: '#888' }}>F</span>
                       <input type="number" inputMode="numeric" min="20" max="80" value={tire.front} onChange={e => setTire(t => ({ ...t, front: e.target.value }))} className="w-14 text-sm rounded-md px-1 py-1 text-center font-bold" style={{ border: '1px solid #e0dbd6' }} />
-                      <span className="text-[11px]" style={{ color: '#888' }}>R</span>
+                      <span className="text-[13px]" style={{ color: '#888' }}>R</span>
                       <input type="number" inputMode="numeric" min="20" max="80" value={tire.rear} onChange={e => setTire(t => ({ ...t, rear: e.target.value }))} className="w-14 text-sm rounded-md px-1 py-1 text-center font-bold" style={{ border: '1px solid #e0dbd6' }} />
-                      <span className="text-[11px]" style={{ color: '#888' }}>psi{tiresDone ? ' · set' : ''}</span>
+                      <span className="text-[13px]" style={{ color: '#888' }}>psi{tiresDone ? ' · set' : ''}</span>
                     </div>
                   </div>
                   <button type="button" onClick={saveTires} disabled={tireBusy}
@@ -716,11 +716,11 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                         {read ? (
                           <div className="flex items-center gap-1 flex-wrap">
                             <span className="text-xs font-bold tracking-wider" style={{ fontFamily: 'IBM Plex Mono, monospace', color: mismatch ? RED : '#1a1a1a' }}>{read}</span>
-                            <button type="button" onClick={() => copyVin(read)} className="text-[11px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: copied ? '#dcfce7' : '#f5f3f0', color: copied ? GREEN : '#555', border: '1px solid #e0dbd6' }}>{copied ? 'Copied ✓' : 'Copy'}</button>
+                            <button type="button" onClick={() => copyVin(read)} className="text-[13px] font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: copied ? '#dcfce7' : '#f5f3f0', color: copied ? GREEN : '#555', border: '1px solid #e0dbd6' }}>{copied ? 'Copied ✓' : 'Copy'}</button>
                           </div>
-                        ) : <div className="text-[11px]" style={{ color: '#888' }}>Couldn't read the VIN — redo the shot straight on.</div>}
+                        ) : <div className="text-[13px]" style={{ color: '#888' }}>Couldn't read the VIN — redo the shot straight on.</div>}
                         {mismatch && (
-                          <div className="text-[11px] mt-0.5 flex items-center gap-1 flex-wrap" style={{ color: RED }}>
+                          <div className="text-[13px] mt-0.5 flex items-center gap-1 flex-wrap" style={{ color: RED }}>
                             ⚠️ Card says {cardVin}
                             <button type="button" onClick={() => useVin(read)} className="font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: RED }}>Use the plate's VIN</button>
                           </div>
@@ -735,11 +735,11 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                         onBlur={() => saveMiles(s.key === 'odo_before' ? 'before' : 'after')}
                         inputMode="decimal" placeholder="miles"
                         className="w-24 text-xs rounded-md px-2 py-1" style={{ border: '1px solid #e0dbd6', fontFamily: 'IBM Plex Mono, monospace' }} />
-                      <span className="text-[10px]" style={{ color: '#888' }}>mi · fix if the read is off</span>
+                      <span className="text-[12px]" style={{ color: '#888' }}>mi · fix if the read is off</span>
                     </div>
                   )}
                 </div>
-                {!filled && <button type="button" onClick={() => pickFor(s.key)} title="Use a photo already on the phone" className="text-[11px] font-bold rounded-full px-2 py-1.5" style={{ backgroundColor: 'white', color: '#888', border: '1px solid #e0dbd6' }}>🖼</button>}
+                {!filled && <button type="button" onClick={() => pickFor(s.key)} title="Use a photo already on the phone" className="text-[13px] font-bold rounded-full px-2 py-1.5" style={{ backgroundColor: 'white', color: '#888', border: '1px solid #e0dbd6' }}>🖼</button>}
                 <button type="button" onClick={() => shoot(s.key)}
                   className="text-xs font-bold rounded-full px-2.5 py-1.5"
                   style={filled ? { backgroundColor: 'white', color: '#888', border: '1px solid #ddd' } : { backgroundColor: ORANGE, color: 'white' }}>
@@ -759,7 +759,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           {prog.setupCount > 0 && (
             <div className="px-3 pb-2 flex flex-wrap gap-1.5" style={{ backgroundColor: 'white' }}>
               {(prog.slots.setup || []).map((e, i) => (
-                <span key={e.fileId || i} className="inline-flex items-center gap-1 text-[11px] font-semibold rounded-full pl-2 pr-1 py-0.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
+                <span key={e.fileId || i} className="inline-flex items-center gap-1 text-[13px] font-semibold rounded-full pl-2 pr-1 py-0.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
                   Setup {i + 1}
                   <button type="button" onClick={() => removePhoto('setup', e.fileId, `Setup photo ${i + 1}`)} disabled={removing === `setup:${e.fileId}`}
                     aria-label={`Delete setup photo ${i + 1}`} className="w-5 h-5 rounded-full flex items-center justify-center font-bold" style={{ backgroundColor: '#fef2f2', color: RED }}>×</button>
@@ -783,7 +783,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
                 : `🟢 Continue → Ready to Invoice (${prog.missing.length} photo${prog.missing.length === 1 ? '' : 's'} still owed)`}
             </button>
             {!prog.complete && (
-              <div className="text-[11px] text-center" style={{ color: '#666' }}>
+              <div className="text-[13px] text-center" style={{ color: '#666' }}>
                 {coveredByPhone
                   ? 'Photos are saved on this phone and upload on their own. Kat can invoice now; the card clears itself when they land.'
                   : 'Kat can invoice now. The missing shots stay on the card and on the 6pm owed list until you add them — take them when you can.'}
@@ -820,7 +820,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
             onClick={e => { e.stopPropagation(); setChooseFor(null) }}>
             <div className="bg-white w-full sm:max-w-xs rounded-t-2xl sm:rounded-2xl p-4" onClick={e => e.stopPropagation()}>
-              <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
+              <div className="text-[12px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
                 {slot ? `${slot.n} of ${SLOTS.length}` : 'Photo'}
               </div>
               <div className="font-extrabold text-lg mb-3" style={{ color: '#1a1a1a' }}>{slot?.label || 'Add a photo'}</div>
@@ -830,7 +830,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
               <button type="button" onClick={() => pickFor(chooseFor)}
                 className="w-full rounded-xl py-3.5 text-base font-bold mb-2"
                 style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>🖼 Upload a picture</button>
-              <div className="text-[11px] text-center mb-2" style={{ color: '#888' }}>
+              <div className="text-[13px] text-center mb-2" style={{ color: '#888' }}>
                 {slot?.multi
                   ? 'Pick as many as you like — they all land here.'
                   : 'Already shot it? Pick it from your phone. Extras you pick get sorted into the right slots.'}

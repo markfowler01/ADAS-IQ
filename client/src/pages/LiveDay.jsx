@@ -53,7 +53,7 @@ function StatusPill({ tech }) {
   }
   const s = labels[tech.status] || labels.idle
   return (
-    <span className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+    <span className="text-[13px] font-bold px-2 py-0.5 rounded-full"
       style={{ backgroundColor: s.bg, color: s.fg }}>
       {tech.status === 'en-route' && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1 animate-pulse" style={{ backgroundColor: s.fg }} />}
       {s.label}
@@ -173,13 +173,13 @@ function TechScoreboard({ tech, viewerRole }) {
           Today: <b>{stats ? fmt$(todaySales) : (statsErr ? '$ —' : '…')}</b>
           <span style={{ color: '#888' }}> · {jobsToday} {jobsToday === 1 ? 'job' : 'jobs'}</span>
         </div>
-        <div className="text-[10px] uppercase tracking-wider font-semibold"
+        <div className="text-[12px] uppercase tracking-wider font-semibold"
           style={{ color: hitTarget ? '#15803d' : color, fontFamily: 'IBM Plex Mono, monospace' }}>
           {targetLabel}
         </div>
       </div>
       {statsErr && (
-        <div className="text-[10px] mt-1" style={{ color: '#b45309' }}>
+        <div className="text-[12px] mt-1" style={{ color: '#b45309' }}>
           Zoho stats unavailable — showing job count only
         </div>
       )}
@@ -238,7 +238,7 @@ function TodoSection({ techName, items, onSave }) {
   const openCount = list.filter(t => !t.done).length
   return (
     <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: '#fafaf9', border: '1px solid #ebebeb' }}>
-      <div className="text-[10px] uppercase tracking-wider font-semibold mb-2"
+      <div className="text-[12px] uppercase tracking-wider font-semibold mb-2"
         style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
         ✅ To-Do{openCount > 0 ? ` · ${openCount} open` : ''}
       </div>
@@ -250,7 +250,7 @@ function TodoSection({ techName, items, onSave }) {
           <div key={t.id} className="flex items-center gap-2">
             <button
               onClick={() => toggle(t.id)}
-              className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[11px]"
+              className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[13px]"
               style={{
                 border: `2px solid ${t.done ? '#15803d' : '#ccc'}`,
                 backgroundColor: t.done ? '#15803d' : 'white',
@@ -328,7 +328,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
       {/* Capacity bar — progress toward the GET SOME!!! target */}
       <div className="mb-3">
         <CapacityBar tech={tech} />
-        <div className="flex items-center justify-between text-[10px] mt-1.5 uppercase tracking-wider font-semibold"
+        <div className="flex items-center justify-between text-[12px] mt-1.5 uppercase tracking-wider font-semibold"
           style={{ fontFamily: 'IBM Plex Mono, monospace', color: capColor }}>
           <span>{capLabel}</span>
           {tech.eod_projected && (
@@ -340,7 +340,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
       {/* Current job */}
       {current ? (
         <div className="rounded-xl p-3 mb-2" style={{ backgroundColor: '#fafaf9', borderLeft: `3px solid ${color}` }}>
-          <div className="text-[10px] uppercase tracking-wider font-semibold mb-0.5"
+          <div className="text-[12px] uppercase tracking-wider font-semibold mb-0.5"
             style={{ color, fontFamily: 'IBM Plex Mono, monospace' }}>
             Current
           </div>
@@ -406,7 +406,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
         .filter(j => !current || j.id !== current.id)
         .map((j, i) => (
           <div key={j.id || i} className={i > 0 ? 'mt-2' : ''}>
-            <div className="text-[10px] uppercase tracking-wider font-semibold mb-1"
+            <div className="text-[12px] uppercase tracking-wider font-semibold mb-1"
               style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
               {j.status === 'job_requested'
                 ? '🟠 Scheduled — paperwork coming from Kat'
@@ -457,7 +457,7 @@ function ReadyToInvoiceModal({ job, onSubmit, onClose }) {
       <div className="rounded-2xl bg-white w-full max-w-md p-5">
         <div className="flex items-start justify-between gap-2 mb-3">
           <div>
-            <div className="text-[10px] uppercase tracking-wider font-semibold"
+            <div className="text-[12px] uppercase tracking-wider font-semibold"
               style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
               Ready to Invoice
             </div>
@@ -535,7 +535,7 @@ function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
       <div className="rounded-2xl bg-white w-full max-w-md p-5">
         <div className="flex items-start justify-between gap-2 mb-3">
           <div>
-            <div className="text-[10px] uppercase tracking-wider font-semibold"
+            <div className="text-[12px] uppercase tracking-wider font-semibold"
               style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
               Insert job
             </div>
@@ -587,7 +587,7 @@ function InsertJobDialog({ job, suggestions, onAssign, onClose }) {
                     : `Already ${s.used} / ${s.cap}, at cap. Tap to overbook.`}
                 </div>
               </div>
-              <div className="text-right text-[11px]" style={{ color: '#888' }}>
+              <div className="text-right text-[13px]" style={{ color: '#888' }}>
                 {s.extra_miles ? `+${s.extra_miles} mi` : ''}
               </div>
             </div>
@@ -647,7 +647,7 @@ function TimeClockChip({ user }) {
     : ''
   return (
     <button onClick={punch} disabled={busy}
-      className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold flex-shrink-0"
+      className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold flex-shrink-0"
       style={entry
         ? { backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #86efac' }
         : { backgroundColor: '#1a1a1a', color: 'white' }}>
@@ -764,7 +764,7 @@ function HeadToJobButton({ job, techName }) {
     <div className="mb-2">
       {choosing ? (
         <div className="rounded-xl p-2.5" style={{ backgroundColor: '#1a1a1a' }}>
-          <p className="text-[11px] font-bold text-center mb-1.5" style={{ color: 'white' }}>Which maps app? (remembered on this phone)</p>
+          <p className="text-[13px] font-bold text-center mb-1.5" style={{ color: 'white' }}>Which maps app? (remembered on this phone)</p>
           <div className="flex gap-1.5">
             <button onClick={() => savePref('apple')}
               className="flex-1 py-2 rounded-lg text-sm font-bold" style={{ backgroundColor: 'white', color: '#1a1a1a' }}> Apple Maps</button>
@@ -786,7 +786,7 @@ function HeadToJobButton({ job, techName }) {
           </button>
         </div>
       )}
-      {done && <p className="text-[11px] font-semibold text-center mt-1" style={{ color: '#555' }}>{done}</p>}
+      {done && <p className="text-[13px] font-semibold text-center mt-1" style={{ color: '#555' }}>{done}</p>}
       {nudge && !busy && (
         <button onClick={textShop}
           className="w-full mt-1.5 py-2 rounded-xl text-sm font-bold"
@@ -795,7 +795,7 @@ function HeadToJobButton({ job, techName }) {
         </button>
       )}
       {!choosing && mapsPref && (
-        <p className="text-[10px] text-center mt-0.5" style={{ color: '#aaa' }}>
+        <p className="text-[12px] text-center mt-0.5" style={{ color: '#aaa' }}>
           {mapsPref === 'apple' ? ' Apple Maps' : 'G Google Maps'} ·{' '}
           <button className="underline" onClick={() => { setChoosing(true) }}>switch</button>
         </p>
@@ -822,6 +822,15 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [quoteRequestOpen, setQuoteRequestOpen] = useState(false)
   const [readyInvoiceJob,  setReadyInvoiceJob]  = useState(null)
   const [photoGateJob,     setPhotoGateJob]     = useState(null)   // 📸 photos-first before Ready to Invoice
+  // 👷 Technician view (Mark 2026-09-25). Live Day was built as the
+  // dispatcher's board — every tech's column, Needs Dispatch, Waiting for Kat,
+  // everyone's owed photos — and technicians were pointed at it, so Jayden had
+  // to find himself in someone else's screen before he could start. For a
+  // technician it now shows his column, his cars and his owed photos. Nothing
+  // is removed for staff.
+  const isTechView = user?.role === 'technician'
+  const meName = String(user?.techName || user?.name || '').trim().toLowerCase()
+  const isMine = name => !meName || String(name || '').trim().toLowerCase().split(' ')[0] === meName.split(' ')[0]
   const [photosOwed,       setPhotosOwed]       = useState([])    // 📸 shots still owed on invoiced jobs
   const [owedJob,          setOwedJob]          = useState(null)  // the owed card open in the sheet
   const [requestPhotoJob,  setRequestPhotoJob]  = useState(null)  // 📷 on a Waiting-for-Kat request
@@ -1163,7 +1172,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               href="https://my.alldata.com/migrate/#/home"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
               style={{ backgroundColor: '#1e40af', color: 'white' }}
               title="Open AllData"
             >AllData</a>
@@ -1171,7 +1180,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               href="https://ops.kinetic.auto/id/"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
               style={{ backgroundColor: '#0e7490', color: 'white' }}
               title="Open Kinetic"
             >Kinetic</a>
@@ -1179,7 +1188,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               href="https://dh.identifix.com/Default/LogOnIdentifix?sessionTerminated=True"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
               style={{ backgroundColor: '#7c2d12', color: 'white' }}
               title="Open Identifix"
             >Identifix</a>
@@ -1187,7 +1196,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               href="https://opusccp.com/"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[11px] px-2.5 py-1.5 rounded-lg font-semibold"
+              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
               style={{ backgroundColor: '#4c1d95', color: 'white' }}
               title="Open Opus CCP"
             >Opus CCP</a>
@@ -1249,14 +1258,14 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             still-need-to-do in the live view to upload pics"). The job is
             already invoiced; these are the shots that never made it up.
             Tap a row to open the same camera sheet and finish it. */}
-        {photosOwed.length > 0 && (
+        {photosOwed.filter(o => !isTechView || isMine(o.technician || o.by)).length > 0 && (
           <div className="rounded-2xl p-4" style={{ backgroundColor: '#faf5ff', border: '2px solid #7e22ce' }}>
             <div className="text-xs uppercase tracking-wider font-bold mb-2"
               style={{ color: '#7e22ce', fontFamily: 'IBM Plex Mono, monospace' }}>
-              📸 Still to do — photos owed ({photosOwed.length})
+              📸 Still to do — photos owed ({photosOwed.filter(o => !isTechView || isMine(o.technician || o.by)).length})
             </div>
             <ul className="space-y-2">
-              {photosOwed.map(o => {
+              {photosOwed.filter(o => !isTechView || isMine(o.technician || o.by)).map(o => {
                 const age = o.hours >= 24 ? `${Math.floor(o.hours / 24)}d` : `${o.hours}h`
                 const mine = String(o.technician || '').toLowerCase() === String(user?.techName || user?.name || '').toLowerCase()
                 return (
@@ -1279,7 +1288,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                 )
               })}
             </ul>
-            <div className="text-[11px] mt-2" style={{ color: '#7e22ce' }}>
+            <div className="text-[13px] mt-2" style={{ color: '#7e22ce' }}>
               These cars are already invoiced. Add the shots when you have signal — each one drops off this list on its own.
             </div>
           </div>
@@ -1289,7 +1298,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             per Mark: "jobs that need to be dispatched, I want them at
             the top and red." Hidden entirely when empty so it doesn't
             waste header space. */}
-        {(data?.unassigned_today || []).length > 0 && (
+        {!isTechView && (data?.unassigned_today || []).length > 0 && (
           <div className="rounded-2xl p-4"
             style={{ backgroundColor: '#fef2f2', border: '2px solid #dc2626' }}>
             <div className="flex items-center justify-between mb-2">
@@ -1331,7 +1340,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             here — not dispatch work. Kat creates the invoice from the
             request; once she does, the real card shows up and this
             entry disappears on its own. Read-only list, no buttons. */}
-        {((data?.waiting_for_kat || []).length > 0 || (data?.scheduled_future || 0) > 0) && (
+        {!isTechView && ((data?.waiting_for_kat || []).length > 0 || (data?.scheduled_future || 0) > 0) && (
           <div className="rounded-2xl p-4"
             style={{ backgroundColor: '#fffbeb', border: '2px solid #f59e0b' }}>
             <div className="text-xs uppercase tracking-wider font-bold mb-2 flex items-center justify-between gap-2"
@@ -1339,7 +1348,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               <span>⏳ Waiting for Kat ({data.waiting_for_kat.length})</span>
               {(data?.scheduled_future || 0) > 0 && onNavigate && (
                 <button onClick={() => onNavigate('schedule')}
-                  className="text-[11px] font-bold rounded-full px-2.5 py-1 normal-case tracking-normal"
+                  className="text-[13px] font-bold rounded-full px-2.5 py-1 normal-case tracking-normal"
                   style={{ backgroundColor: 'white', color: '#b45309', border: '1.5px solid #f59e0b', fontFamily: 'IBM Plex Sans, sans-serif' }}
                 >📅 {data.scheduled_future} scheduled →</button>
               )}
@@ -1375,13 +1384,13 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                 </li>
               ))}
             </ul>
-            <div className="text-[11px] mt-2" style={{ color: '#92400e' }}>Shoot the photos now — they go in the car's folder and ride onto the job when Kat builds it.</div>
+            <div className="text-[13px] mt-2" style={{ color: '#92400e' }}>Shoot the photos now — they go in the car's folder and ride onto the job when Kat builds it.</div>
           </div>
         )}
 
         {/* Tech cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {(data?.techs || []).map(t => (
+          {(data?.techs || []).filter(t => !isTechView || isMine(t.name)).map(t => (
             <TechCard
               key={t.name}
               tech={t}

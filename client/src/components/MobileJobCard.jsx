@@ -322,7 +322,7 @@ export default function MobileJobCard({
       {insurerPricingBadge(job) && (
         <p className="mb-1">
           <span
-            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            className="text-[12px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
             style={{ background: insurerPricingBadge(job).bg, color: '#fff', letterSpacing: '0.06em' }}
             title="This insurer bills on a special price list — use the matching prefixed items"
           >{insurerPricingBadge(job).label}</span>
@@ -333,7 +333,7 @@ export default function MobileJobCard({
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
-            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            className="text-[12px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
             style={{ background: '#E82127', color: '#fff', letterSpacing: '0.06em' }}
             title="Tesla — use Tesla pricing on this invoice"
           >⚡ TESLA · Tesla pricing</span>
@@ -343,7 +343,7 @@ export default function MobileJobCard({
       {isCashCustomerJob(job) ? (
         <p className="mb-1">
           <span
-            className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
+            className="text-[12px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded"
             style={{ background: '#15803d', color: '#fff', letterSpacing: '0.06em' }}
             title="Cash customer — max $700 out of pocket"
           >{job.cash_quoted ? `💵 CUSTOMER PAY · told $${job.cash_quoted}` : '💵 CASH · max $700'}</span>
@@ -365,13 +365,13 @@ export default function MobileJobCard({
       )}
 
       {job.pcsi_checks && (
-        <div className="mb-1"><span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#dcfce7', color: '#166534' }}>✅ PCSI done</span></div>
+        <div className="mb-1"><span className="text-[12px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#dcfce7', color: '#166534' }}>✅ PCSI done</span></div>
       )}
       {/* 🤝 Price talked on site (Mark 2026-09-22): the tech reports it; Kat applies it at Bill it. */}
       {!job.invoiced && job.status !== 'job_requested' && !isComplete && <AgreedPrice job={job} />}
-      {job.invoiced && job.agreed_price?.amount > 0 && <div className="mb-1"><span className="text-[10px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#fff7ed', color: '#b45309' }}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span></div>}
+      {job.invoiced && job.agreed_price?.amount > 0 && <div className="mb-1"><span className="text-[12px] font-bold uppercase tracking-wider inline-block px-2 py-0.5 rounded" style={{ background: '#fff7ed', color: '#b45309' }}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span></div>}
       {needsWindshieldCheck(job) && !isComplete && (
-        <div className="mb-2 rounded-lg px-2.5 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b' }}>
+        <div className="mb-2 rounded-lg px-2.5 py-1.5 text-[13px] font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b' }}>
           🪟 WINDSHIELD CAMERA — check the glass before calibrating (aftermarket, bracket, cracks, tint)
         </div>
       )}
@@ -397,7 +397,7 @@ export default function MobileJobCard({
       {job.extra_services && String(job.extra_services).trim() && (
         <div className="rounded-lg p-2 mb-2"
           style={{ backgroundColor: '#fef2f2', border: '2px solid #dc2626' }}>
-          <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+          <div className="text-[12px] font-bold uppercase tracking-wider mb-1"
             style={{ color: '#dc2626', fontFamily: 'IBM Plex Mono, monospace' }}>
             🚩 Extra Services to Add
           </div>
@@ -540,11 +540,11 @@ function AgreedPrice({ job }) {
   return (
     <div className="mb-2" onClick={e => e.stopPropagation()}>
       {!open && (saved?.amount > 0
-        ? <button type="button" onClick={() => setOpen(true)} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: '#fff7ed', color: '#b45309', border: '1px solid #fdba74' }}>🤝 Agreed ${Number(saved.amount).toFixed(0)}{saved.with ? ` with ${saved.with}` : ''} · edit</button>
-        : <button type="button" onClick={() => setOpen(true)} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#b45309', border: '1px dashed #fdba74' }}>🤝 Talked price with the shop?</button>)}
+        ? <button type="button" onClick={() => setOpen(true)} className="text-[13px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: '#fff7ed', color: '#b45309', border: '1px solid #fdba74' }}>🤝 Agreed ${Number(saved.amount).toFixed(0)}{saved.with ? ` with ${saved.with}` : ''} · edit</button>
+        : <button type="button" onClick={() => setOpen(true)} className="text-[13px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#b45309', border: '1px dashed #fdba74' }}>🤝 Talked price with the shop?</button>)}
       {open && (
         <div className="rounded-xl p-2.5 mt-1" style={{ backgroundColor: '#fff7ed', border: '1.5px solid #fdba74' }}>
-          <div className="text-[11px] font-bold mb-1.5" style={{ color: '#9a3412' }}>What did you agree to? Kat sees this on the invoice before it goes out.</div>
+          <div className="text-[13px] font-bold mb-1.5" style={{ color: '#9a3412' }}>What did you agree to? Kat sees this on the invoice before it goes out.</div>
           <div className="flex gap-2 mb-1.5">
             <div className="flex items-center rounded-lg px-2" style={inp}><span style={{ color: '#9a3412' }}>$</span><input value={f.amount} onChange={e => setF(x => ({ ...x, amount: e.target.value }))} inputMode="decimal" placeholder="400" className="w-20 text-base font-bold py-1.5 outline-none" style={{ backgroundColor: 'transparent' }} /></div>
             <input value={f.with} onChange={e => setF(x => ({ ...x, with: e.target.value }))} placeholder="Who agreed (name)" className="flex-1 text-sm rounded-lg px-2 py-1.5" style={inp} />

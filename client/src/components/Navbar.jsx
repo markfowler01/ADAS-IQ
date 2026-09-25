@@ -66,6 +66,7 @@ const ALL_LINKS = [...PRIMARY_LINKS, ...MORE_LINKS]
 export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
   const [showFeedback,   setShowFeedback]   = useState(false)
   const [showMobileMenu, setShowMobileMenu] = useState(false)
+  const [showAllForTech, setShowAllForTech] = useState(false)
   const [showMore,       setShowMore]       = useState(false)
   const [showNotifs,     setShowNotifs]     = useState(false)
   const [notifs, setNotifs]                 = useState([])
@@ -78,6 +79,10 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
   // Legacy 'admin' tokens behave as dispatcher until next login.
   const isOwner = isOwnerUser(user)
   const canSee = l => (l.ownerOnly ? isOwner : l.adminOnly ? isAdmin : true)
+  // 👷 A technician sees fifteen links and uses five. The rest stay one tap
+  // away behind "Everything else" (Mark 2026-09-25).
+  const TECH_EVERYDAY = ['live', 'kanban', 'timeclock', 'tips', 'mileage']
+  const isTech = user?.role === 'technician'
   const visiblePrimary = PRIMARY_LINKS.filter(canSee)
   const visibleAll = [...visiblePrimary, ...MORE_LINKS]
 
@@ -376,9 +381,9 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
             </div>
 
             <nav className="flex-1 overflow-y-auto px-3 py-3" style={{ WebkitOverflowScrolling: 'touch' }}>
-              <p className="text-[11px] font-bold uppercase px-2 pb-2" style={{ color: '#a8a29e', letterSpacing: '0.09em' }}>Daily</p>
+              <p className="text-[11px] font-bold uppercase px-2 pb-2" style={{ color: '#a8a29e', letterSpacing: '0.09em' }}>{isTech ? 'Your day' : 'Daily'}</p>
               <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'white', border: '1px solid #efeae6' }}>
-                {visiblePrimary.map((link, i) => {
+                {(isTech ? [...visiblePrimary, ...MORE_GROUPS.flatMap(g => g.links)].filter(l => TECH_EVERYDAY.includes(l.id) && canSee(l)).sort((a, b) => TECH_EVERYDAY.indexOf(a.id) - TECH_EVERYDAY.indexOf(b.id)) : visiblePrimary).map((link, i) => {
                   const isActive = currentScreen === link.id
                   return (
                     <button key={link.id} onClick={() => navigate(link.id)}
@@ -392,8 +397,15 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
                 })}
               </div>
 
-              {MORE_GROUPS.map(group => {
-                const visibleLinks = group.links.filter(canSee)
+              {isTech && !showAllForTech && (
+                <button type="button" onClick={() => setShowAllForTech(true)}
+                  className="w-full mt-4 rounded-2xl font-bold"
+                  style={{ minHeight: 52, fontSize: 15, backgroundColor: 'white', border: '1px solid #efeae6', color: '#78716c' }}>
+                  Everything else ›
+                </button>
+              )}
+              {(!isTech || showAllForTech) && MORE_GROUPS.map(group => {
+                const visibleLinks = group.links.filter(canSee).filter(l => !isTech || !TECH_EVERYDAY.includes(l.id))
                 if (!visibleLinks.length) return null
                 return (
                   <div key={group.label} className="mt-4">
