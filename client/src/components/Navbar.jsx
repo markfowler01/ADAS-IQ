@@ -8,7 +8,7 @@ const ORANGE = '#CD4419'
 const PRIMARY_LINKS = [
   // `icon` and `mobileLabel` are for the phone sheet (Mark 2026-09-24: the
   // menu was hard to find things in and hard to press).
-  { id: 'live',    label: 'Live', mobileLabel: 'Live Day', icon: '⚡', adminOnly: true },
+  { id: 'live',    label: 'Live', mobileLabel: 'Live Day', icon: '⚡' },   // techs land here at sign-in — it has to be in their menu too (Mark 2026-09-24)
   { id: 'schedule', label: 'Schedule', icon: '🗓', adminOnly: true },
   { id: 'today',   label: 'Today', icon: '☀️' },
   { id: 'kanban',  label: 'Jobs', icon: '🗂' },
