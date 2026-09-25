@@ -1,69 +1,73 @@
-// Global marketing kill switch.
+// Global marketing kill switch — SCOPED.
 //
-// One flag stored in VanKV Datastore that, when set, short-circuits EVERY
-// marketing drafter and publisher across the app: ADAS Brew, From the Van
-// weekly, Van pillar, Van nurture (Magic Lantern), daily unified marketing
-// drafter, daily "Absolute ADAS" ad, holiday auto-poster, brew tips.
+// One record in VanKV that short-circuits marketing drafters/publishers.
+// Scopes let Mark pause the risky surfaces (social posts, tip cards, daily
+// ad) without holding the newsletters hostage.
 //
-// Built 2026-09-24 after a marketing post shipped anti-sublet copy and Mark
-// asked for a hard blocker to make sure it can't happen again. The
-// per-drafter anti-sublet content reject is layer 1; this switch is layer 0:
-// nothing fires at all until Mark flips it back on.
+//   scope 'social'     — unified story drafter, van pillar, brew tips card,
+//                        daily "Absolute ADAS" ad. Where the 2026-09-24
+//                        anti-sublet self-own actually came from.
+//   scope 'newsletter' — From the Van weekly drafter (all paths: route,
+//                        nurture piggyback, safety-net create).
+//   scope 'all'        — everything above.
+//
+// ADAS Brew's /run and /run-bonus NEVER check this switch (locked rule —
+// see feedback_brew_pipeline_locked). Magic Lantern nurture sends never
+// check it either (opted-in 1:1 sequence).
 //
 // Storage:
-//   VanKV.marketing_paused = { paused: true|false, reason: string, at: iso, set_by: string }
+//   VanKV.marketing_paused = { paused, scopes:[...], reason, at, set_by }
+//   A record with paused:true and no scopes means 'all' (backward compat).
 //
-// Env override:
-//   MARKETING_PAUSED=true forces paused regardless of the Datastore value
-//   (useful for a fast prod pause via Catalyst env var if the app is broken).
+// Env override: MARKETING_PAUSED=true → paused for all scopes.
 
 import { getVal, setVal } from './vanDatastore.js'
 
 const KEY = 'marketing_paused'
+export const SCOPES = ['social', 'newsletter', 'all']
 
-/**
- * Is the marketing pipeline currently paused?
- * @param {*} req  Express req — used to route Datastore access
- * @returns {Promise<{paused: boolean, reason?: string, at?: string, source: 'env'|'datastore'|'default'}>}
- */
 export async function readMarketingKillSwitch(req) {
   if (String(process.env.MARKETING_PAUSED || '').toLowerCase() === 'true') {
-    return { paused: true, reason: 'MARKETING_PAUSED env var set to true', source: 'env' }
+    return { paused: true, scopes: ['all'], reason: 'MARKETING_PAUSED env var set to true', source: 'env' }
   }
   try {
     const rec = await getVal(req, KEY)
     if (rec && typeof rec === 'object' && rec.paused === true) {
-      return { paused: true, reason: rec.reason || '(no reason set)', at: rec.at, set_by: rec.set_by, source: 'datastore' }
+      const scopes = Array.isArray(rec.scopes) && rec.scopes.length ? rec.scopes : ['all']
+      return { paused: true, scopes, reason: rec.reason || '(no reason set)', at: rec.at, set_by: rec.set_by, source: 'datastore' }
     }
   } catch (e) {
     console.warn('[marketingKillSwitch read]', e.message)
   }
-  return { paused: false, source: 'default' }
+  return { paused: false, scopes: [], source: 'default' }
 }
 
 /**
- * Convenience — returns true if marketing is paused. Caller-friendly for
- * `if (await isMarketingPaused(req)) return skip...`.
+ * Is marketing paused for this scope? Default scope is 'social' because
+ * that's what most callers are (drafters that post publicly). The Van
+ * weekly newsletter paths pass 'newsletter' explicitly.
  */
-export async function isMarketingPaused(req) {
-  return (await readMarketingKillSwitch(req)).paused
+export async function isMarketingPaused(req, scope = 'social') {
+  const rec = await readMarketingKillSwitch(req)
+  if (!rec.paused) return false
+  return rec.scopes.includes('all') || rec.scopes.includes(scope)
 }
 
-/**
- * Pause the marketing pipeline. All drafters/publishers that check the
- * switch will short-circuit until unpaused.
- */
-export async function pauseMarketing(req, { reason = 'no reason given', setBy = 'admin' } = {}) {
-  const rec = { paused: true, reason: String(reason).slice(0, 300), at: new Date().toISOString(), set_by: String(setBy).slice(0, 80) }
+export async function pauseMarketing(req, { reason = 'no reason given', setBy = 'admin', scopes = ['all'] } = {}) {
+  const clean = (Array.isArray(scopes) ? scopes : [scopes]).map(s => String(s)).filter(s => SCOPES.includes(s))
+  const rec = {
+    paused: true,
+    scopes: clean.length ? clean : ['all'],
+    reason: String(reason).slice(0, 300),
+    at: new Date().toISOString(),
+    set_by: String(setBy).slice(0, 80),
+  }
   await setVal(req, KEY, rec)
   return rec
 }
 
-/**
- * Un-pause. Marketing pipeline resumes.
- */
 export async function resumeMarketing(req, { setBy = 'admin' } = {}) {
-  const rec = { paused: false, at: new Date().toISOString(), set_by: String(setBy).slice(0, 80) }
+  const rec = { paused: false, scopes: [], at: new Date().toISOString(), set_by: String(setBy).slice(0, 80) }
   await setVal(req, KEY, rec)
   return rec
 }

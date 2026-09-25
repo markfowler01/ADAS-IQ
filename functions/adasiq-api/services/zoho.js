@@ -37,11 +37,21 @@ let tokenExpiresAt = 0
 // hard dep from zoho.js on Van code.
 const DATASTORE_TOKEN_KEY = 'zoho_access_token'
 
+// catalyst.initialize() needs the incoming request (Catalyst injects
+// project/env headers on it). getAccessToken() has no req in scope, so
+// index.js stashes the current request on globalThis for us. Any live
+// request works — they all belong to the same project/env.
+function requireRequestContext() {
+  const req = globalThis.__catalystReq
+  if (!req) throw new Error('no request context available for Datastore token cache')
+  return req
+}
+
 async function readTokenFromDatastore() {
   try {
     const catalyst = (await import('zcatalyst-sdk-node')).default
     // Minimal req-less initialize — Datastore reads work without an HTTP request
-    const app = catalyst.initialize({}, { type: 'advancedio' })
+    const app = catalyst.initialize(requireRequestContext(), { type: 'advancedio' })
     const table = app.datastore().table('VanKV')
     const q = `SELECT value_json FROM VanKV WHERE key_name = '${DATASTORE_TOKEN_KEY}'`
     const rows = await app.zcql().executeZCQLQuery(q)
@@ -58,7 +68,7 @@ async function readTokenFromDatastore() {
 async function writeTokenToDatastore(tokenObj) {
   try {
     const catalyst = (await import('zcatalyst-sdk-node')).default
-    const app = catalyst.initialize({}, { type: 'advancedio' })
+    const app = catalyst.initialize(requireRequestContext(), { type: 'advancedio' })
     const table = app.datastore().table('VanKV')
     const value_json = JSON.stringify(tokenObj)
     // Upsert: try update by SELECT-then-update, fall back to insert

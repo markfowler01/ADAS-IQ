@@ -160,6 +160,8 @@ Generate the tip card.`
     }
     return card
   } catch (e) {
+    // Don't disguise the anti-sublet hard block as a parse failure.
+    if (String(e.message || '').startsWith('Brew tip card REFUSED')) throw e
     throw new Error(`tip card JSON parse failed: ${e.message} — raw: ${cleaned.slice(0, 200)}`)
   }
 }

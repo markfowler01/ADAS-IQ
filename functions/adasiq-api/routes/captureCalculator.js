@@ -546,8 +546,9 @@ captureCalcRouter.post('/marketing/pause', requireCronSecretFlex, express.json({
   const { pauseMarketing } = await import('../services/marketingKillSwitch.js')
   const reason = String(req.body?.reason || 'paused by admin').slice(0, 300)
   const setBy = String(req.body?.set_by || 'admin').slice(0, 80)
-  const rec = await pauseMarketing(req, { reason, setBy })
-  postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🛑 MARKETING PAUSED — all drafters/publishers will short-circuit until resumed.\nReason: ${reason}\nSet by: ${setBy}`).catch(() => {})
+  const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes : (req.body?.scope ? [String(req.body.scope)] : ['all'])
+  const rec = await pauseMarketing(req, { reason, setBy, scopes })
+  postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🛑 MARKETING PAUSED — scopes: ${rec.scopes.join(', ')}. Matching drafters/publishers short-circuit until resumed.\nReason: ${reason}\nSet by: ${setBy}`).catch(() => {})
   res.json({ ok: true, ...rec })
 })
 captureCalcRouter.post('/marketing/resume', requireCronSecretFlex, express.json({ limit: '2kb' }), async (req, res) => {
@@ -4192,12 +4193,16 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
         // Give up on retries once we're 2h past send time — auto-clear will
         // sweep it out at the stale_pending_clear step.
         if (Number.isFinite(scheduledMs) && scheduledMs > nowMs - 2 * 3600 * 1000) {
-          if (pending.broadcast_id) {
+          const { isMarketingPaused: _paused } = await import('../services/marketingKillSwitch.js')
+          if (await _paused(req, 'newsletter')) {
+            out.skipped.push({ check: 'retry_broadcast', reason: 'marketing_paused (newsletter scope)' })
+          } else if (pending.broadcast_id) {
             // Case (a): existing broadcast, retry schedule
             const sched = await sendVanBroadcast(pending.broadcast_id, pending.scheduled_for)
             if (sched.ok) {
               const patched = { ...pending, broadcast_error: null, status: 'auto_scheduled', safety_net_scheduled_at: new Date().toISOString() }
               await writePendingDraft(req, patched)
+              await advanceIssueState(req, patched).catch(e => console.warn('[safety-net advance]', e.message))
               const msg = `🛡️ Safety-net RESCHEDULED Issue #${pending.issue_number} for ${new Date(pending.scheduled_for).toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' })}.\nBroadcast: ${pending.broadcast_url || pending.broadcast_id}`
               await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
               out.actions.push({ action: 'retry_schedule', ok: true, broadcast_id: pending.broadcast_id })
@@ -4219,6 +4224,10 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
               if (sched.ok) {
                 const patched = { ...pending, broadcast_id: created.id, broadcast_url: created.dashboardUrl, broadcast_error: null, status: 'auto_scheduled', safety_net_recreated_at: new Date().toISOString() }
                 await writePendingDraft(req, patched)
+                // Same bookkeeping the drafter does on a clean schedule —
+                // skipping this is what produced two "Issue #9"s.
+                await advanceIssueState(req, patched).catch(e => console.warn('[safety-net advance]', e.message))
+                if (patched.case_note_id) await markCaseNoteUsed(req, patched.case_note_id, patched.issue_number).catch(() => {})
                 const msg = `🛡️ Safety-net CREATED + SCHEDULED Issue #${pending.issue_number} (initial create had failed with: ${pending.broadcast_error}).\nBroadcast: ${created.dashboardUrl}`
                 await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
                 out.actions.push({ action: 'safety_net_create', ok: true, broadcast_id: created.id })
@@ -4240,7 +4249,15 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     // for the coming Tuesday. If one exists, drafter already ran this week.
     const canTriggerWeekly = (dayPt === 0 && hourPt >= 8) || (dayPt === 1 && hourPt >= 0)
     if (canTriggerWeekly) {
-      const pendingNow = await readPendingDraft(req).catch(() => null)
+      let pendingNow = await readPendingDraft(req).catch(() => null)
+      // Clear a stale pending from LAST week here rather than waiting for
+      // section 4 below — otherwise we trigger the drafter, it bails on
+      // "pending exists", posts a confusing Cliq, and we lose an hour.
+      if (pendingNow?.scheduled_for && Date.parse(pendingNow.scheduled_for) < nowMs - 2 * 3600 * 1000) {
+        await clearPendingDraft(req).catch(() => {})
+        out.actions.push({ action: 'clear_stale_pending_before_draft', issue: pendingNow.issue_number, was_scheduled: pendingNow.scheduled_for })
+        pendingNow = null
+      }
       const pendingIsForThisWeek = pendingNow?.scheduled_for && (Date.parse(pendingNow.scheduled_for) - nowMs) < 4 * 86400000 && (Date.parse(pendingNow.scheduled_for) - nowMs) > -2 * 3600000
       if (pendingIsForThisWeek) {
         out.skipped.push({ check: 'weekly_drafter', reason: `pending draft #${pendingNow.issue_number} already scheduled for this week (${pendingNow.scheduled_for})` })
@@ -4306,9 +4323,18 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
           headers: { Authorization: `Bearer ${token}` }, timeout: 15000, validateStatus: () => true,
         })
         const broadcasts = Array.isArray(list.data?.data) ? list.data.data : []
-        const zombies = broadcasts.filter(b =>
-          b.status === 'scheduled' && b.id !== expectedId
-        )
+        // Grace period: the drafter creates the broadcast several seconds
+        // before it writes the pending record. A sweep landing in that gap
+        // would delete the brand-new legit broadcast. Also only touch our
+        // own broadcasts — never anything Mark scheduled by hand in Resend.
+        const GRACE_MS = 3 * 60 * 1000
+        const zombies = broadcasts.filter(b => {
+          if (b.status !== 'scheduled' || b.id === expectedId) return false
+          if (!/^From the Van/i.test(String(b.name || ''))) return false
+          const createdMs = Date.parse(b.created_at || '')
+          if (Number.isFinite(createdMs) && (nowMs - createdMs) < GRACE_MS) return false
+          return true
+        })
         for (const z of zombies) {
           try {
             const del = await deleteVanBroadcast(z.id)
@@ -4473,7 +4499,7 @@ captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_va
   const dry = req.query.dry === '1' || req.query.dry === 'true'
   try {
     const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
-    if (await isMarketingPaused(req) && !dry) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+    if (await isMarketingPaused(req, 'newsletter') && !dry) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     // Cron calls (?cron=1, from the daily aa_van_weekly_draft cron) only run
     // on Sundays PT — the draft lands before Mark's Sunday review, matching
     // the safety net's Sun/Mon window. Manual/debug fires are ungated.
@@ -4528,6 +4554,7 @@ captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_va
       ...overrideAvoid,
       ...persistedRecent.map(x => `Issue #${x.issue}: ${x.subject}`),
     ]
+    const recentPatterns = persistedRecent.map(x => x.pattern_key).filter(Boolean)
 
     // Draft — if no case note, drafter enters SYNTHETIC MODE and generates a composite
     const drafted = await draftWeeklyIssue({
@@ -4535,6 +4562,7 @@ captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_va
       issueNumber: state.next_issue_number,
       forcedAskType: slot.askType,
       recentSubjects,
+      recentPatterns,
     })
 
     // Render + build the pending draft record
@@ -4555,6 +4583,8 @@ captureCalcRouter.all('/from-the-van/draft-weekly', heartbeatAttempt('capture_va
       case_note_id: nextNote?.id || null,
       case_note_source: nextNote?.source || (drafted.is_synthetic ? 'synthetic-composite' : ''),
       is_synthetic: Boolean(drafted.is_synthetic),
+    pattern_key: drafted.pattern_key || null,
+    vehicle: drafted.vehicle || null,
       drafted_at: new Date().toISOString(),
       scheduled_for: scheduledFor,
       subject: rendered.subject,
@@ -4874,6 +4904,10 @@ ${bodyInner}
 // sendVanBroadcast → advanceIssueState so behavior stays aligned with the
 // human-invoked route.
 async function runVanWeeklyDrafterInline(req) {
+  // Honor the kill switch on this path too — it bypassed it before, which
+  // made the switch cosmetic for the newsletter.
+  const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+  if (await isMarketingPaused(req, 'newsletter')) return { ok: true, skipped: true, reason: 'marketing_paused' }
   const state = await readIssueState(req)
   const asksOn = await isVanFlagEnabled(req, 'weekly_asks')
   const slot = computeIssueSlot(state.next_issue_number, state.next_ask_type_index, asksOn)
@@ -4882,6 +4916,7 @@ async function runVanWeeklyDrafterInline(req) {
   const { getVal } = await import('../services/vanDatastore.js')
   const persistedRecent = (await getVal(req, 'van_recent_subjects').catch(() => null)) || []
   const recentSubjects = persistedRecent.map(x => `Issue #${x.issue}: ${x.subject}`)
+  const recentPatterns = persistedRecent.map(x => x.pattern_key).filter(Boolean)
 
   // Case note (rare in Mark's usage — synthetic is the norm)
   const notes = await readCaseNotes(req).catch(() => [])
@@ -4892,6 +4927,7 @@ async function runVanWeeklyDrafterInline(req) {
     issueNumber: state.next_issue_number,
     forcedAskType: slot.askType,
     recentSubjects,
+    recentPatterns,
   })
 
   const rendered = renderWeeklyIssue({
@@ -4911,6 +4947,8 @@ async function runVanWeeklyDrafterInline(req) {
     case_note_id: nextNote?.id || null,
     case_note_source: nextNote?.source || (drafted.is_synthetic ? 'synthetic-composite' : ''),
     is_synthetic: Boolean(drafted.is_synthetic),
+    pattern_key: drafted.pattern_key || null,
+    vehicle: drafted.vehicle || null,
     drafted_at: new Date().toISOString(),
     scheduled_for: nextTuesday7amPT().toISOString(),
     subject: rendered.subject,
@@ -4990,16 +5028,24 @@ async function runVanWeeklyDrafterInline(req) {
 }
 
 async function advanceIssueState(req, approvedPending) {
+  // Idempotent per pending draft. The drafter, edit-pending-body, and both
+  // safety-net recovery paths all call this after a successful schedule;
+  // only the first call for a given draft id may bump the counter. Without
+  // this, a reschedule double-bumps — and a missed call (timeout on the
+  // first create) reuses the number: that's how two "Issue #9"s happened.
+  const { getVal, setVal } = await import('../services/vanDatastore.js')
+  const marker = (await getVal(req, 'van_state_advanced_for').catch(() => null)) || {}
+  if (approvedPending?.id && marker.pending_id === approvedPending.id) return
   const state = await readIssueState(req)
   const nextIssueNumber = approvedPending.issue_number + 1
   let askIdx = state.next_ask_type_index
   if (approvedPending.type === 'soft-ask') askIdx = (askIdx + 1) % 3  // advance rotation only on ask
   await writeIssueState(req, { next_issue_number: nextIssueNumber, next_ask_type_index: askIdx })
+  if (approvedPending?.id) await setVal(req, 'van_state_advanced_for', { pending_id: approvedPending.id, issue: approvedPending.issue_number, at: new Date().toISOString() }).catch(() => {})
   // Keep a rolling 8-week window of recent subjects so the drafter can dedup.
   try {
-    const { getVal, setVal } = await import('../services/vanDatastore.js')
     const list = (await getVal(req, 'van_recent_subjects')) || []
-    const entry = { issue: approvedPending.issue_number, subject: approvedPending.subject, at: new Date().toISOString() }
+    const entry = { issue: approvedPending.issue_number, subject: approvedPending.subject, pattern_key: approvedPending.pattern_key || null, vehicle: approvedPending.vehicle || null, at: new Date().toISOString() }
     const updated = [entry, ...list.filter(x => x.issue !== approvedPending.issue_number)].slice(0, 8)
     await setVal(req, 'van_recent_subjects', updated)
   } catch (e) { console.warn('[van recent-subjects]', e.message) }
@@ -5074,6 +5120,8 @@ captureCalcRouter.post('/from-the-van/recent-subjects', requireCronSecretFlex, e
   const cleaned = incoming.map(x => ({
     issue: Number(x.issue) || 0,
     subject: String(x.subject || '').slice(0, 200),
+    pattern_key: x.pattern_key ? String(x.pattern_key).slice(0, 60) : null,
+    vehicle: x.vehicle ? String(x.vehicle).slice(0, 80) : null,
     at: x.at || new Date().toISOString(),
   })).filter(x => x.issue > 0 && x.subject)
   const current = (await getVal(req, 'van_recent_subjects')) || []
@@ -5389,6 +5437,9 @@ captureCalcRouter.post('/from-the-van/edit-pending-body', requireCronSecretFlex,
       hand_edited_at: new Date().toISOString(),
     }
     await writePendingDraft(req, patched)
+    // A reschedule that finally lands a broadcast must do the drafter's
+    // bookkeeping too (idempotent — no-op if the drafter already advanced).
+    await advanceIssueState(req, patched).catch(e => console.warn('[edit-pending-body advance]', e.message))
     res.json({
       ok: true,
       issue_number: pending.issue_number,
@@ -6127,6 +6178,7 @@ captureCalcRouter.post('/daily-ad/draft-today', requireCronSecretFlex, async (re
     res.json({ ok: true, pending, kill_url: killUrl, image_url: imgCommit.rawUrl })
   } catch (e) {
     console.error('[daily-ad draft-today]', e.message, e.stack)
+    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⚠️ Daily ad draft FAILED for ${todayPtDateStr()} — nothing will publish at 3 PM unless fixed.\n${String(e.message).slice(0, 300)}`).catch(() => {})
     res.status(500).json({
       ok: false,
       error: e.message,
@@ -6233,18 +6285,46 @@ captureCalcRouter.post('/daily-ad/retry-linkedin', requireCronSecretFlex, async 
 })
 
 // Kill link — HMAC-signed. GET renders confirmation, POST commits the kill.
-captureCalcRouter.get('/daily-ad/kill', async (req, res) => {
+// GET = confirmation page only (Cliq/iMessage pre-fetch links for previews —
+// a GET must never have side effects or every day's ad dies the moment the
+// DM lands). POST = the actual kill. Same pattern as the Van weekly kill.
+const dailyAdPage = (title, body) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head><body style="font-family:-apple-system,Helvetica;padding:40px;background:#0d0d0d;color:#fff;max-width:560px;margin:0 auto"><h1 style="color:#CD4419">${title}</h1>${body}</body></html>`
+
+async function loadDailyAdForKill(req) {
   const id = String(req.query.id || '')
   const sig = String(req.query.s || '')
   const dateStr = String(req.query.date || todayPtDateStr())
-  if (!verifyVanAction(id, 'ad-kill', sig)) return res.status(401).type('html').send('<h1>Link invalid or expired</h1>')
-  const { getVal, setVal } = await import('../services/vanDatastore.js')
+  if (!verifyVanAction(id, 'ad-kill', sig)) return { error: 401, dateStr }
+  const { getVal } = await import('../services/vanDatastore.js')
   const p = await getVal(req, DAILY_AD_KEY(dateStr))
-  if (!p || p.id !== id) return res.status(404).type('html').send('<h1>Draft not found</h1><p>Already killed, published, or replaced.</p>')
-  const patched = { ...p, killed: true, killed_at: new Date().toISOString() }
-  await setVal(req, DAILY_AD_KEY(dateStr), patched)
+  if (!p || p.id !== id) return { error: 404, dateStr }
+  return { p, dateStr, id, sig }
+}
+
+captureCalcRouter.get('/daily-ad/kill', async (req, res) => {
+  const r = await loadDailyAdForKill(req)
+  if (r.error === 401) return res.status(401).type('html').send(dailyAdPage('Link invalid or expired', '<p>This kill link does not match. Tap the full URL from the Cliq DM.</p>'))
+  if (r.error === 404) return res.status(404).type('html').send(dailyAdPage('Draft not found', '<p>Already killed, published, or replaced.</p>'))
+  const { p, dateStr, id, sig } = r
+  if (p.killed) return res.type('html').send(dailyAdPage('Already killed', `<p>The ${dateStr} ad was already killed at ${p.killed_at}.</p>`))
+  if (p.status === 'published') return res.type('html').send(dailyAdPage('Already published', `<p>The ${dateStr} ad went out at ${p.published_at}. Too late to kill — delete on the platforms if needed.</p>`))
+  const action = `${VAN_APPROVE_BASE}/daily-ad/kill?id=${encodeURIComponent(id)}&s=${encodeURIComponent(sig)}&date=${encodeURIComponent(dateStr)}`
+  res.type('html').send(dailyAdPage('Kill this ad?', `
+    <p style="color:#ccc">Headline: <strong>${String(p.image_headline || '').replace(/</g, '&lt;')}</strong></p>
+    <p style="color:#999;font-size:14px">Scheduled to publish at 3:00 PM PT on ${dateStr} to LinkedIn + Facebook + Instagram.</p>
+    <form method="POST" action="${action}"><button type="submit" style="background:#dc2626;color:#fff;border:none;padding:14px 26px;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer">Yes, kill it</button></form>`))
+})
+
+captureCalcRouter.post('/daily-ad/kill', async (req, res) => {
+  const r = await loadDailyAdForKill(req)
+  if (r.error === 401) return res.status(401).type('html').send(dailyAdPage('Link invalid or expired', '<p>This kill link does not match.</p>'))
+  if (r.error === 404) return res.status(404).type('html').send(dailyAdPage('Draft not found', '<p>Already killed, published, or replaced.</p>'))
+  const { p, dateStr } = r
+  if (p.status === 'published') return res.type('html').send(dailyAdPage('Already published', `<p>Went out at ${p.published_at}.</p>`))
+  const { setVal } = await import('../services/vanDatastore.js')
+  await setVal(req, DAILY_AD_KEY(dateStr), { ...p, killed: true, killed_at: new Date().toISOString() })
   postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🛑 Absolute ADAS daily ad KILLED for ${dateStr}. Nothing will publish at 3 PM.`).catch(() => {})
-  res.type('html').send(`<!doctype html><html><body style="font-family:-apple-system,Helvetica;padding:40px;background:#0d0d0d;color:#fff"><h1 style="color:#CD4419">Killed.</h1><p>The Absolute ADAS ad for <strong>${dateStr}</strong> will not publish at 3 PM PT.</p><p style="color:#999;font-size:14px;">Headline was: ${p.image_headline}</p></body></html>`)
+  res.type('html').send(dailyAdPage('Killed.', `<p>The Absolute ADAS ad for <strong>${dateStr}</strong> will not publish at 3 PM PT.</p><p style="color:#999;font-size:14px;">Headline was: ${String(p.image_headline || '').replace(/</g, '&lt;')}</p>`))
 })
 
 // Admin — read today's pending

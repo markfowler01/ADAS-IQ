@@ -162,7 +162,9 @@ Return just the story body, starting with [COMPOSITE] on its own line.`
  * self-own that goes public.
  */
 export function detectAntiSubletViolation(text) {
-  const t = String(text || '').toLowerCase()
+  // Normalize curly/typographic apostrophes — Claude emits ’ (U+2019) far
+  // more often than ', and every "don't" pattern below would miss it.
+  const t = String(text || '').toLowerCase().replace(/[‘’ʼ′`]/g, "'")
   const patterns = [
     /don'?t use\s+(?:an?\s+)?(?:adas\s+)?sublet/,
     /stop\s+(?:using|subletting|paying)\s+(?:an?\s+|your\s+)?(?:adas\s+)?sublet/,

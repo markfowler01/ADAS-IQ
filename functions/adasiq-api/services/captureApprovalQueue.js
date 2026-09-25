@@ -134,6 +134,11 @@ export async function enqueueDraft(segment, draft) {
       else {
         const msg = `enqueueDraft REFUSED — anti-sublet self-own detected: "${hit}". Channel=${draft.channel} category=${draft.category} headline="${String(draft.headline || '').slice(0, 100)}". Fix the master prompt or regenerate. This is a HARD block.`
         console.error(`[enqueueDraft] ${msg}`)
+        // A silent block looks identical to "nothing ran today" — tell Mark.
+        try {
+          const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('./cliq.js')
+          await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🚫 Marketing draft BLOCKED (anti-sublet guard, flip also failed)\nChannel: ${draft.channel} · Category: ${draft.category}\nMatched: "${hit}"\nHeadline: ${String(draft.headline || '').slice(0, 120)}\n\nNothing was queued.`).catch(() => {})
+        } catch { /* never let alerting break the block */ }
         throw new Error(msg)
       }
     }

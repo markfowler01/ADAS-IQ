@@ -134,11 +134,36 @@ GUARDRAILS
 
 SYNTHETIC MODE (fallback when no case note is provided)
 When you are told "SYNTHETIC MODE — no case note provided," you are drafting a composite based on common ADAS field patterns Mark has seen. The route handler treats synthetic drafts identically to real ones — silence-approves, only a Kill click stops the send. Rules:
-- Draw from documented composite patterns (Honda camera solder failures, Toyota no-DTC ROB traps, GM 2024+ BSM comm faults, hybrid coolant surprises, etc). Pick ONE pattern.
+- Pick EXACTLY ONE pattern from the PATTERN LIBRARY below and return its key in "pattern_key". Never pick a key that appears in the RECENT ISSUES list you are given — those are burned for 8 weeks. Never reuse a vehicle make OR model from the recent list either. If you can't find a clean pattern, pick the one whose key is least recently used; do NOT default to Honda/Toyota/Jeep.
 - Set is_synthetic to true in your response so Mark can tell at a glance.
 - Set notes_for_mark to begin with "🤖 SYNTHETIC — no case note provided this week. Composite draft based on the [pattern name] pattern Mark has seen many times." Then flag anything worth verifying.
 - The quality bar is HIGH — this draft ships by default unless Mark kills it. Write like you're one Kill click from an embarrassing send.
 - Voice + structure rules are unchanged.
+
+PATTERN LIBRARY (synthetic mode — real, common field patterns; describe generically, no fake TSB numbers or shop names)
+  honda-camera-solder          2013-2016 Honda/Acura forward camera: cracked solder joints, calibrates fine then drops out later
+  toyota-radar-no-dtc          Toyota/Lexus pre-collision radar knocked off aim after front hit, no DTC, no lamp
+  hybrid-coolant-lamp          Hybrid (Corolla Cross, etc.) low inverter coolant trips a warning shops mistake for ADAS
+  gm-bsm-comm                  2024+ GM blind-spot module loses network after rear repair; intermittent comm fault
+  jeep-radio-flash             Stellantis FCW/PEB lamp after an infotainment/radio software update, no hardware issue
+  lexus-bsm-metal-bay          Rear radar "calibrates" while reading a rack, toolbox, or steel bay wall; fails on the road
+  subaru-eyesight-windshield   EyeSight needs full static cal after ANY windshield touch; aftermarket glass often won't pass
+  ford-ipma-windshield         Ford IPMA camera after windshield: wrong bracket/glass or tint strip; passes, then drifts
+  nissan-radar-paint-thickness Repainted bumper cover too many coats; front radar attenuated, dynamic cal never completes
+  hyundai-kia-rear-radar       Rear corner radar bracket bent 2° behind a repaired quarter/bumper; still "calibrates"
+  mazda-camera-bracket         Camera bracket re-glued off-spec during windshield R&R; static passes, lane centering pulls
+  vw-audi-radar-bumper-beam    Front radar rides on the bumper beam; beam replaced, radar never re-aimed
+  tesla-camera-self-cal        Tesla cameras self-calibrate over miles; car delivered before it finishes, Autopilot "unavailable"
+  honda-lanewatch-mirror       Side/LaneWatch camera after mirror replacement; wrong mirror variant, no code
+  ram-park-sensors-painted     Ultrasonic park sensors repainted too thick; phantom beeps, no DTC
+  surround-view-door-skin      360 camera off after door skin or mirror work; stitching seams misaligned, no DTC
+  rear-camera-liftgate         Backup camera guidelines offset after tailgate/liftgate replacement
+  ride-height-radar-aim        Lift/lowering kit or heavy load changes ride height; radar vertical aim off
+  alignment-thrust-angle       Alignment shifts thrust angle; camera/radar need recal; lane keep tugs on a straight road
+  steering-angle-sensor-reset  SAS not reset after alignment; ESC/ADAS complaints that look like a bad calibration
+  hitch-blind-spot             Aftermarket hitch or bike rack in the rear radar field; false blind-spot alerts
+  aftermarket-bumper-radar     Non-OE bumper cover material/thickness attenuates radar; dynamic cal times out
+  camera-heater-variant        Wrong windshield heater/defrost grid variant; fogging blocks the camera intermittently
 
 OUTPUT FORMAT — raw JSON only, no markdown fences:
 {
@@ -147,6 +172,8 @@ OUTPUT FORMAT — raw JSON only, no markdown fences:
   "type": "value" or "soft-ask",
   "ask_type": null OR one of ["capacity","capability","referral"],
   "is_synthetic": true only in SYNTHETIC MODE, otherwise false,
+  "pattern_key": "one key from the PATTERN LIBRARY that best describes this issue's failure pattern (required in BOTH modes — for a real case note, pick the closest key or 'other')",
+  "vehicle": "make and model featured, e.g. 'Subaru Outback' (required)",
   "body_markdown": "string with the full email body. Use markdown-style bold with **word** for emphasis. Use double newlines between paragraphs. Do NOT include the subject, preview text, sign-off, footer, or unsubscribe language — those are added by the renderer.",
   "notes_for_mark": "string, 1-3 sentences flagging anything Mark should verify, edit, or watch for. If the case note was thin, say so. In synthetic mode, begin with the 🤖 SYNTHETIC prefix (see SYNTHETIC MODE rules)."
 }`
@@ -166,7 +193,7 @@ function client() {
  * @param {string} [input.forcedAskType]    for cycle position 4: 'capacity'|'capability'|'referral'
  * @returns {Promise<{subject, preview_text, type, ask_type, body_markdown, notes_for_mark}>}
  */
-export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType, recentSubjects }) {
+export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType, recentSubjects, recentPatterns }) {
   const isSynthetic = !caseNote || String(caseNote).trim().length < 20
   const isAsk = Boolean(forcedAskType)
   const cyclePos = ((issueNumber - 1) % 4) + 1
@@ -206,26 +233,118 @@ export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType, r
     `Draft the issue now. Return raw JSON, no markdown fence.`,
   ].join('\n')
 
-  const attempt = async () => {
+  // Forbidden vehicles come from the recent-subjects log AND any ?avoid=
+  // override strings (both arrive in recentSubjects). Forbidden patterns are
+  // the pattern_keys logged for the last 8 issues.
+  const forbiddenVehicles = vehicleTokensFrom(recentSubjects || [])
+  const forbiddenPatterns = new Set((recentPatterns || []).filter(Boolean))
+
+  const attempt = async (rejectionNote) => {
+    const content = rejectionNote ? `${userMsg}\n\n${rejectionNote}` : userMsg
     const resp = await client().messages.create({
       model: 'claude-opus-4-8',
       max_tokens: 1800,
       system: VAN_MASTER_PROMPT,
-      messages: [{ role: 'user', content: userMsg }],
+      messages: [{ role: 'user', content }],
     })
     const text = resp.content?.map(b => b.text).filter(Boolean).join('') || ''
-    // Strip a possible ```json fence if the model added one
     const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim()
     const parsed = JSON.parse(cleaned)
-    // Minimal shape check
     if (!parsed.subject || !parsed.body_markdown) throw new Error('missing subject or body_markdown')
     return parsed
   }
-  try { return await attempt() }
-  catch (e) {
-    console.warn('[vanWeekly] first draft attempt failed, retrying once:', e.message)
-    return await attempt()
+
+  // Prompt-only enforcement failed three times (Honda×2, Prius×2, Jeep×2,
+  // missing beats). Validate in code and retry with the violations spelled
+  // out; after MAX_ATTEMPTS, fail loudly so nothing repetitive auto-ships.
+  // The route's catch posts "VAN WEEKLY DRAFT FAILED" to Cliq and the
+  // safety-net retries next hour with fresh randomness.
+  const MAX_ATTEMPTS = 3
+  let lastViolations = []
+  let rejectionNote = null
+  for (let i = 1; i <= MAX_ATTEMPTS; i++) {
+    let parsed
+    try { parsed = await attempt(rejectionNote) }
+    catch (e) {
+      console.warn(`[vanWeekly] attempt ${i} threw:`, e.message)
+      if (i === MAX_ATTEMPTS) throw e
+      continue
+    }
+    const violations = validateVanDraft(parsed, { forbiddenVehicles, forbiddenPatterns })
+    if (violations.length === 0) return parsed
+    lastViolations = violations
+    console.warn(`[vanWeekly] attempt ${i} rejected:`, violations.join(' | '))
+    rejectionNote = [
+      `YOUR PREVIOUS DRAFT WAS REJECTED BY THE VALIDATOR. Violations:`,
+      ...violations.map(v => `  - ${v}`),
+      `Produce a NEW draft that fixes every violation. Different vehicle, different pattern_key, all six REQUIRED BEATS present. Return raw JSON only.`,
+    ].join('\n')
   }
+  throw new Error(`Van drafter rejected ${MAX_ATTEMPTS}x — last violations: ${lastViolations.join(' | ')}`)
+}
+
+// ─── Draft validator ──────────────────────────────────────────────────────
+// Maps models → make so "Prius" also forbids "Toyota" and "Grand Cherokee"
+// also forbids "Jeep". Extend as new vehicles show up in issues.
+const MAKE_MODEL_MAP = {
+  toyota: ['toyota', 'prius', 'corolla', 'corolla cross', 'camry', 'rav4', 'tacoma', 'tundra', 'highlander', 'sienna', '4runner'],
+  lexus: ['lexus', 'rx', 'nx', 'es', 'gx'],
+  honda: ['honda', 'odyssey', 'cr-v', 'crv', 'accord', 'civic', 'pilot', 'hr-v', 'ridgeline'],
+  acura: ['acura', 'mdx', 'rdx', 'tlx'],
+  jeep: ['jeep', 'grand cherokee', 'grand cherokee l', 'wrangler', 'cherokee', 'compass', 'renegade', 'gladiator'],
+  stellantis: ['ram', 'ram 1500', 'chrysler', 'pacifica', 'dodge', 'durango', 'charger'],
+  gm: ['gm', 'chevy', 'chevrolet', 'silverado', 'equinox', 'traverse', 'tahoe', 'blazer', 'gmc', 'sierra', 'yukon', 'acadia', 'buick', 'cadillac'],
+  ford: ['ford', 'f-150', 'f150', 'explorer', 'escape', 'bronco', 'mustang', 'edge', 'expedition', 'lincoln'],
+  subaru: ['subaru', 'outback', 'forester', 'crosstrek', 'ascent', 'legacy', 'impreza', 'eyesight'],
+  nissan: ['nissan', 'rogue', 'altima', 'pathfinder', 'murano', 'sentra', 'infiniti'],
+  hyundai: ['hyundai', 'tucson', 'santa fe', 'elantra', 'sonata', 'palisade', 'genesis'],
+  kia: ['kia', 'sportage', 'sorento', 'telluride', 'forte', 'k5'],
+  mazda: ['mazda', 'cx-5', 'cx5', 'cx-50', 'cx-90', 'mazda3', 'mazda6'],
+  vw: ['volkswagen', 'vw', 'tiguan', 'atlas', 'jetta', 'taos', 'audi', 'q5', 'q7', 'a4'],
+  tesla: ['tesla', 'model 3', 'model y', 'model s', 'model x'],
+  bmw: ['bmw', 'x3', 'x5'],
+  mercedes: ['mercedes', 'benz', 'glc', 'gle'],
+  volvo: ['volvo', 'xc60', 'xc90'],
+  rivian: ['rivian', 'r1t', 'r1s'],
+}
+
+/** Given recent subjects / avoid strings, return the set of forbidden make+model tokens. */
+export function vehicleTokensFrom(strings) {
+  const out = new Set()
+  const hay = (Array.isArray(strings) ? strings : [strings]).map(s => String(s || '').toLowerCase()).join(' \n ')
+  for (const [make, tokens] of Object.entries(MAKE_MODEL_MAP)) {
+    if (tokens.some(t => new RegExp(`(^|[^a-z0-9])${t.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}([^a-z0-9]|$)`).test(hay))) {
+      for (const t of tokens) out.add(t)
+    }
+  }
+  return out
+}
+
+/**
+ * Return a list of human-readable violations (empty = draft is acceptable).
+ * Checks: repeated vehicle, repeated pattern_key, the six REQUIRED BEATS,
+ * em dashes, exclamation points.
+ */
+export function validateVanDraft(parsed, { forbiddenVehicles = new Set(), forbiddenPatterns = new Set() } = {}) {
+  const v = []
+  const subject = String(parsed.subject || '')
+  const body = String(parsed.body_markdown || '')
+  const head = `${subject}\n${String(parsed.vehicle || '')}\n${body.slice(0, 500)}`.toLowerCase()
+
+  const hitVehicle = [...forbiddenVehicles].find(t => new RegExp(`(^|[^a-z0-9])${t.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}([^a-z0-9]|$)`).test(head))
+  if (hitVehicle) v.push(`repeats a recently used vehicle ("${hitVehicle}") — pick a make AND model not in the recent list`)
+
+  const key = String(parsed.pattern_key || '').trim()
+  if (!key) v.push('missing pattern_key')
+  else if (forbiddenPatterns.has(key)) v.push(`pattern_key "${key}" was used in the last 8 issues — pick a different pattern`)
+
+  if (!/here'?s what that means for you|here is what that means for you/i.test(body)) v.push('missing the "Here\'s what that means for you" reframe block')
+  if (!/ask your cal shop this week/i.test(body)) v.push('missing the bolded "Ask your cal shop this week:" line with a quoted question')
+  if (!/subrogation|\bRO\b|comeback|denied|guess wh(?:o|ose)|your name/i.test(body)) v.push('missing the consequence closer (subrogation / RO gets pulled / comeback / denied)')
+  if (!/\bthe van\b/i.test(body)) v.push('missing the van-personality outro line')
+  if (/—/.test(subject + body)) v.push('contains an em dash (hard rule: none)')
+  if (/!/.test(subject + body)) v.push('contains an exclamation point (hard rule: none)')
+  return v
 }
 
 // ─── Case-note queue (Datastore) ──────────────────────────────────────────

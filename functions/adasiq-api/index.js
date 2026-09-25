@@ -110,6 +110,10 @@ const app = express()
 
 app.use(cors({ origin: true, credentials: true }))
 app.options('*', cors({ origin: true, credentials: true })) // handle preflight for all routes
+// Stash the live request so req-less helpers (zoho.js token cache) can
+// catalyst.initialize(). Overlapping requests swapping this is harmless —
+// every request carries the same project/env context.
+app.use((req, res, next) => { globalThis.__catalystReq = req; next() })
 // Stripe webhook MUST come before express.json() so we can verify with the raw body
 app.post('/api/portal/stripe-webhook',
   express.raw({ type: 'application/json' }),

@@ -220,7 +220,11 @@ async function handleApply(req, res) {
     })
     const _list = Array.isArray(req.files) ? req.files : []
     await notifyMark(c, { photo: _list.find(f => f.fieldname === 'photo'), resume: _list.find(f => f.fieldname === 'resume') })
-    res.json({ ok: true })
+    // 📧 The six electrical questions go out straight away, from Mark. Once
+    // per candidate, and a mail failure never loses the application.
+    let screen = { sent: false, why: 'skipped' }
+    try { const { sendTechScreen } = await import('../services/techScreenEmail.js'); screen = await sendTechScreen(req, c) } catch (e) { console.warn('[recruit apply] screen email failed:', e.message) }
+    res.json({ ok: true, screen_sent: !!screen.sent })
   } catch (e) {
     console.error('[recruit apply]', e.message)
     res.status(500).json({ error: 'Server error — please call or text us instead.' })
@@ -340,6 +344,22 @@ const isOwner = req => String(req.user?.email || '').toLowerCase().startsWith('m
 router.get('/', async (req, res) => {
   try { res.json({ stages: STAGES, candidates: await readAll(req) }) }
   catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// GET /api/recruit/screen/preview — exactly what a candidate receives.
+router.get('/screen/preview', async (req, res) => {
+  try { const { screenEmail } = await import('../services/techScreenEmail.js'); const e = screenEmail(String(req.query.name || 'Chris')); res.json({ ok: true, subject: e.subject, text: e.text, html: e.body }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+// POST /api/recruit/:id/screen?force=1 — send (or resend) the six questions.
+router.post('/:id/screen', async (req, res) => {
+  try {
+    const all = await readAll(req)
+    const c = all.find(x => String(x.id) === String(req.params.id))
+    if (!c) return res.status(404).json({ error: 'Candidate not found' })
+    const { sendTechScreen } = await import('../services/techScreenEmail.js')
+    res.json(await sendTechScreen(req, c, { force: req.query.force === '1' }))
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 router.post('/:id/send-project', async (req, res) => {

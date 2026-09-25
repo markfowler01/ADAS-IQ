@@ -1687,6 +1687,36 @@ async function alertCronFailure(label, detail) {
 // the brew_run_status Data Store row — each step checks its column for "ok"
 // and skips if already done. /run and /run-bonus both call this; the second
 // call only does what the first missed.
+// ─── CONCURRENCY LOCK — never double-send ──────────────────────────────────
+// Added 2026-09-25 after a race between /run and /run-bonus sent the day's
+// newsletter TWICE to ~1000 subscribers. Hard rule: NEVER SPAM.
+//
+// The lock is held while started_at is newer than finished_at and less
+// than RUN_LOCK_MS old. finished_at is written in a finally, so a run that
+// crashes releases the lock and /run-bonus can still retry the day —
+// the first version of this lock never released and would have silently
+// removed the retry.
+const RUN_LOCK_MS = 15 * 60 * 1000
+
+async function runDailyPipelineLocked(req) {
+  const dateISO = new Date().toISOString().slice(0, 10)
+  const existing = await readRunStatus(req, dateISO)
+  const startedAt = existing?.started_at ? Date.parse(existing.started_at) : 0
+  const finishedAt = existing?.finished_at ? Date.parse(existing.finished_at) : 0
+  const inFlight = startedAt > 0 && startedAt > finishedAt && (Date.now() - startedAt) < RUN_LOCK_MS
+  if (inFlight) {
+    const err = new Error(`Brew pipeline already running for ${dateISO} (started ${Math.round((Date.now() - startedAt) / 1000)}s ago). Refusing a second run — subscribers would get duplicate emails.`)
+    err.code = 'BREW_RUN_LOCKED'
+    throw err
+  }
+  await updateRunStatus(req, dateISO, { started_at: new Date().toISOString() })
+  try {
+    return await executeDailyPipeline(req)
+  } finally {
+    await updateRunStatus(req, dateISO, { finished_at: new Date().toISOString() }).catch(() => {})
+  }
+}
+
 async function executeDailyPipeline(req) {
   const dateISO = new Date().toISOString().slice(0, 10)
   const segment = getHandoffSegment(req)
@@ -1956,8 +1986,11 @@ async function executeDailyPipeline(req) {
 
 cronRouter.post('/run', async (req, res) => {
   try {
-    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
-    if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+    // NOTE 2026-09-25: A previous attempt guarded this route with the
+    // marketing_paused switch and took the newsletter down. Brew's /run and
+    // /run-bonus are LOCKED — no external route-level gates, ever. Any
+    // content-safety concern for Brew belongs INSIDE brew's own assembly,
+    // not at the route boundary. Do not re-add the marketingKillSwitch here.
     // Server-side day filter — keeps the Catalyst cron simple (fires daily)
     // while restricting actual sends to allowed days. Default: Mon–Fri.
     // Override via BREW_SEND_DAYS env var (e.g. "Mon,Tue,Wed,Thu,Fri").
@@ -1974,8 +2007,17 @@ cronRouter.post('/run', async (req, res) => {
     // Run the full pipeline: digest, email, image, archive, LinkedIn, FB, IG.
     // Each step is idempotent against the brew_run_status Data Store row.
     // /run-bonus at 6:03 reads the same status row and only retries failures.
-    const result = await executeDailyPipeline(req)
-    res.json(result)
+    try {
+      const result = await runDailyPipelineLocked(req)
+      res.json(result)
+    } catch (e) {
+      if (e.code === 'BREW_RUN_LOCKED') {
+        // Another /run or /run-bonus is already in progress — refuse to
+        // start a second one. Subscribers would get duplicate emails.
+        return res.json({ skipped: true, reason: 'run_in_progress' })
+      }
+      throw e
+    }
   } catch (e) {
     console.error('[brew cron run]', e.message, e.stack)
     alertCronFailure('cron threw', e.message)
@@ -2013,8 +2055,9 @@ function buildSocialCaption(digest) {
 // which is idempotent against the status row and only retries failed steps.
 cronRouter.post('/run-bonus', async (req, res) => {
   try {
-    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
-    if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+    // NOTE 2026-09-25: LOCKED — do not add a marketingKillSwitch guard here
+    // (took the newsletter down 2026-09-25). Brew content safety belongs
+    // inside brew's own assembly, not at the route boundary.
     const dateISO = new Date().toISOString().slice(0, 10)
     const status = await readRunStatus(req, dateISO)
 
@@ -2030,8 +2073,16 @@ cronRouter.post('/run-bonus', async (req, res) => {
 
     // /run either never ran today, or partially failed. Run the pipeline.
     // It's idempotent — only retries steps that aren't already ok.
-    const result = await executeDailyPipeline(req)
-    res.json({ retry: true, ...result })
+    try {
+      const result = await runDailyPipelineLocked(req)
+      res.json({ retry: true, ...result })
+    } catch (e) {
+      if (e.code === 'BREW_RUN_LOCKED') {
+        // /run is already in progress — bail without double-sending
+        return res.json({ skipped: true, reason: 'run_in_progress', dateISO })
+      }
+      throw e
+    }
   } catch (e) {
     console.error('[brew cron run-bonus]', e.message, e.stack)
     alertCronFailure('run-bonus threw', e.message)
