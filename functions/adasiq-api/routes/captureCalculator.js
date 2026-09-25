@@ -1128,6 +1128,10 @@ captureCalcRouter.get('/internal/story-read', async (req, res) => {
 // (drop via POST /api/capture-calc/weekly-story) if not provided in body.
 captureCalcRouter.all('/linkedin/draft-week-variants', heartbeatAttempt('capture_linkedin'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
+    {
+      const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+      if (await isMarketingPaused(req, 'social')) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+    }
     const force = req.query.force === '1' || req.query.force === 'true'
 
     // Day-of-week gate: only fires on Sunday PT.
@@ -1362,6 +1366,10 @@ function buildMetaApprovalCard(draft, fullBody) {
 //   Query: ?force=1                    ← bypass Sunday-only gate (manual test)
 captureCalcRouter.all('/meta/draft-week', heartbeatAttempt('capture_meta'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
+    {
+      const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+      if (await isMarketingPaused(req, 'social')) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+    }
     const force = req.query.force === '1' || req.query.force === 'true'
     if (!force) {
       const dayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
@@ -1644,6 +1652,10 @@ captureCalcRouter.all('/meta/draft-week', heartbeatAttempt('capture_meta'), requ
 // Skips any channel that already has a live draft for today (idempotent).
 captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
+    {
+      const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+      if (await isMarketingPaused(req, 'social')) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+    }
     const segment = getSegment(req)
     const todayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
     const dayName = String(req.query.dayName || todayPT)
@@ -2427,6 +2439,16 @@ captureCalcRouter.all('/report/weekly', heartbeatAttempt('capture_weekly'), requ
 //   GET /api/capture-calc/scheduler/run?secret=...   → idempotent, safe to retry
 //   GET /api/capture-calc/scheduler/run?dry=1        → log what would publish
 async function runSchedulerOnce(req, { dry = false } = {}) {
+  // Kill switch lives INSIDE the function so /scheduler/run, the
+  // unauthenticated /debug/run-scheduler, and any future caller all respect
+  // it. Approved drafts are left untouched while paused; the existing 24h
+  // staleness rule below means a resume can only publish same-day work.
+  {
+    const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+    if (await isMarketingPaused(req, 'social')) {
+      return { processed: 0, skipped: true, reason: 'marketing_paused', results: [] }
+    }
+  }
   const out = []
   const segment = getSegment(req)
   const list = await listQueue(req, { status: 'approved' })

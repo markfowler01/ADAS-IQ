@@ -139,6 +139,10 @@ Write the post. Return JSON only: {"headline":"...","body":"...","image_prompt":
 // ── The run ─────────────────────────────────────────────────────────────
 router.all('/run', heartbeatAttempt('holiday_poster'), requireCronSecretFlex, async (req, res) => {
   try {
+    {
+      const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
+      if (await isMarketingPaused(req, 'social') && req.query.dry !== '1') return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+    }
     const today = todayPT()
     const tomorrow = addDaysISO(today, 1)
     const year = Number(today.slice(0, 4))

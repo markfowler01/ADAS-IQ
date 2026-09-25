@@ -70,7 +70,7 @@ ${QUESTIONS.map(x => `      <tr><td style="padding:0 0 10px">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 4px">
       <tr><td style="padding:5px 0;font-size:15px;color:#33302e"><b style="color:#CD4419">1.</b> &nbsp;You reply with your answers and the video</td></tr>
       <tr><td style="padding:5px 0;font-size:15px;color:#33302e"><b style="color:#CD4419">2.</b> &nbsp;A short call with me</td></tr>
-      <tr><td style="padding:5px 0;font-size:15px;color:#33302e"><b style="color:#CD4419">3.</b> &nbsp;A <b>paid</b> day out with one of our techs on real cars</td></tr>
+      <tr><td style="padding:5px 0;font-size:15px;color:#33302e"><b style="color:#CD4419">3.</b> &nbsp;A <b>paid</b> day out with me on real cars</td></tr>
     </table>
   </td></tr>
 
@@ -102,7 +102,7 @@ One more thing, and it is the part I look at first: send me a video, about 90 se
 
 If something in here is not your strong suit, say so. I would rather know.
 
-If I like how you think, the next step is a short call with me, then a paid day out with one of our techs on real cars.
+If I like how you think, the next step is a short call, then a paid day out with me on real cars.
 
 Thanks,
 Mark Fowler
