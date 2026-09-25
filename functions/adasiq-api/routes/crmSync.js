@@ -299,6 +299,47 @@ router.post('/position-statements/upload', (req, res) => {
   })
 })
 
+// GET /api/crm-sync-cron/wd-find?q=3111218046 — every WorkDrive folder matching
+// a car, with how many images each holds. Read-only; for chasing "the photos
+// are there but the card says they aren't".
+router.get('/wd-find', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const q = String(req.query.q || '').trim()
+    const folderId = String(req.query.folder || '').trim()
+    if (!q && !folderId) return res.status(400).json({ error: 'q or folder required' })
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js')
+    const { listChildren } = await import('../services/workdrive.js')
+    const token = await getAccessToken()
+    const IMG0 = /\.(jpe?g|png|heic|heif|webp|gif)$/i
+    if (folderId) {
+      // Direct listing — the search index misses folders that plainly exist.
+      const meta = await axios.get(`https://www.zohoapis.com/workdrive/api/v1/files/${folderId}`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, timeout: 20000, validateStatus: () => true })
+      const a = meta.data?.data?.attributes || {}
+      const kids = await listChildren(folderId, token)
+      const parentId = a.parent_id || ''
+      let siblings = []
+      if (parentId && req.query.siblings === '1') { try { siblings = (await listChildren(parentId, token, { folders: true })).map(x => ({ id: x.id, name: x.name, files: x.files_count })) } catch { siblings = [] } }
+      return res.json({ ok: true, folder: { id: folderId, name: a.name || a.display_name || '', parent_id: parentId, created: a.created_time }, files: kids.length, images: kids.filter(k => IMG0.test(k.name || '')).length, names: kids.map(k => k.name), siblings })
+    }
+    const r = await axios.get('https://www.zohoapis.com/workdrive/api/v1/files/search', {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+      params: { search_str: q, search_scope: 'team', type: 'folder' }, timeout: 20000, validateStatus: () => true,
+    })
+    const IMG = /\.(jpe?g|png|heic|heif|webp|gif)$/i
+    const out = []
+    for (const f of (r.data?.data || []).slice(0, 8)) {
+      const id = f.id, name = f.attributes?.name || f.attributes?.display_name || ''
+      let kids = []
+      try { kids = await listChildren(id, token, { folders: false }) } catch (e) { out.push({ id, name, error: e.message }); continue }
+      out.push({ id, name, files: kids.length, images: kids.filter(k => IMG.test(k.name || '')).length, sample: kids.slice(0, 12).map(k => k.name) })
+    }
+    res.json({ ok: true, q, folders: out })
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }) }
+})
+
 // GET /api/crm-sync-cron/who-gets-the-text?tech=Jayden — who a dispatch text would reach. Sends nothing.
 router.get('/who-gets-the-text', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'

@@ -236,6 +236,7 @@ async function pump() {
 export function resumePhotoQueue() {
   let any = false
   for (const q of queue) if (q.status === 'paused' || q.status === 'failed') { q.status = 'queued'; q.tries = 0; q.error = null; any = true }
+  if (rescueStalledPrep()) any = true
   if (any) notify()
   pump()
 }
@@ -254,9 +255,37 @@ export async function restorePhotoQueue() {
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => resumePhotoQueue())
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resumePhotoQueue() })
+  // Heartbeat: nothing should sit in 'preparing' while the app is open.
+  setInterval(() => { rescueStalledPrep(); if (queue.some(q => q.status === 'queued')) pump() }, 15000)
 }
+// A photo sits in 'preparing' while it is sorted by AI and shrunk. If the
+// phone sleeps or the app is backgrounded mid-prep those promises never
+// settle, and nothing used to rescue them: pump() only looks at 'queued' and
+// resumePhotoQueue() only revived 'paused'/'failed'. The thumbnail showed, the
+// photo never left the phone (Mark 2026-09-24, Gerber Mercedes + Avon Subaru:
+// eight shots each, zero in WorkDrive). Anything stuck this long gets a slot
+// and goes in line.
+const PREP_STALL_MS = 40000
+function pickOpenSlot(item, filled = null) {
+  const taken = k => filled?.[k]?.fileId || queue.some(q => q.jobId === item.jobId && q.slot === k && q.id !== item.id && LIVE.includes(q.status))
+  return SLOTS.find(x => !x.multi && !taken(x.key))?.key || 'setup'
+}
+/** Move any photo that stalled while preparing into the upload line. */
+export function rescueStalledPrep(force = false) {
+  let any = false
+  for (const q of queue) {
+    if (q.status !== 'preparing') continue
+    if (!force && Date.now() - (q.prepAt || 0) < PREP_STALL_MS) continue
+    if (!q.slot) q.slot = pickOpenSlot(q)
+    q.status = 'queued'; q.error = null; any = true
+    console.warn('[photos] prep stalled — sending it anyway:', q.id, q.slot)
+  }
+  if (any) { notify(); pump() }
+  return any
+}
+
 export function enqueuePhoto({ jobId, slot, file, miles = null, filled = null }) {
-  const item = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, jobId, slot, file, miles, tries: 0, status: 'preparing', preview: URL.createObjectURL(file), at: new Date().toISOString() }
+  const item = { id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`, jobId, slot, file, miles, tries: 0, status: 'preparing', preview: URL.createObjectURL(file), at: new Date().toISOString(), prepAt: Date.now() }
   queue.push(item); notify()
   // Save the original to the phone first (nothing is ever lost), then swap in the shrunk copy.
   idbPut(item).then(async () => {
@@ -273,6 +302,12 @@ export function enqueuePhoto({ jobId, slot, file, miles = null, filled = null })
     const small = await shrink(file, item.slot)
     if (small !== file) { item.file = small }
     await idbPut(item)
+    item.status = 'queued'; notify(); pump()
+  }).catch(e => {
+    // Prep blew up (HEIC decode, storage, a suspended tab). The photo still
+    // goes up — an unsorted shot beats a lost one.
+    console.warn('[photos] prep failed, queueing the original:', e?.message)
+    if (!item.slot) item.slot = pickOpenSlot(item, filled)
     item.status = 'queued'; notify(); pump()
   })
   return item
