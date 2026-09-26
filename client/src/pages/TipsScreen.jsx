@@ -83,7 +83,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
         </div>
 
         <div className="flex gap-1.5 mb-3">
-          {[['tips', '📖 Tips'], ['oem', '📋 OEM Statements'], ['cloning', '🧬 Hex Prog Coverage']].map(([v, label]) => (
+          {[['tips', '📖 Tips'], ['training', '🎥 Training'], ['oem', '📋 OEM Statements'], ['cloning', '🧬 Hex Prog Coverage']].map(([v, label]) => (
             <button key={v} onClick={() => setView(v)}
               className="text-sm font-bold rounded-xl px-4 py-2.5"
               style={view === v
@@ -94,6 +94,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
 
         {view === 'cloning' && <CloningCoverage />}
         {view === 'oem' && <OemDocs />}
+        {view === 'training' && <TrainingVideos user={user} />}
 
         {view === 'tips' && (<>
         <AskBox />
@@ -552,6 +553,116 @@ function TsbPhotoEditor({ tsb }) {
 
 // Ask-the-brain box (Phase 2, Mark 2026-09-07): natural-language Q over
 // the TSB library — Claude answers and cites the tips it used.
+// 🎥 The same training modules new hires get, kept here so a tech can rewatch
+// one at the bay (Mark 2026-09-25). Videos live on the module's video_url, so
+// filling it in once serves onboarding and this screen both.
+function TrainingVideos({ user }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  const [open, setOpen] = useState(null)
+  const [tag, setTag] = useState('all')
+  const [adding, setAdding] = useState(false)
+  const [form, setForm] = useState({ title: '', url: '', oem: '', minutes: '', notes: '' })
+  const [busy, setBusy] = useState(false)
+  const isStaff = user?.role !== 'technician'
+  const load = useCallback(() => apiFetch(`${API_BASE}/api/tsb/training`).then(r => r.json())
+    .then(x => { if (x.error) throw new Error(x.error); setD(x) }).catch(e => setErr(e.message)), [])
+  useEffect(() => { load() }, [load])
+
+  async function add() {
+    if (!form.url.trim()) { setErr('Paste the video link.'); return }
+    setBusy(true); setErr('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/tsb/training`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      const x = await r.json(); if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`)
+      setForm({ title: '', url: '', oem: '', minutes: '', notes: '' }); setAdding(false); load()
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  async function remove(v) {
+    if (!window.confirm(`Remove "${v.title}" from training?`)) return
+    await apiFetch(`${API_BASE}/api/tsb/training/${v.id}`, { method: 'DELETE' }).catch(() => {})
+    load()
+  }
+
+  if (err && !d) return <div className="text-sm" style={{ color: '#b91c1c' }}>{err}</div>
+  if (!d) return <div className="text-sm" style={{ color: '#888' }}>Loading training…</div>
+  const all = d.videos || []
+  const shown = tag === 'all' ? all : all.filter(v => v.oem === tag)
+  const inp = { border: '1.5px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
+
+  return (
+    <>
+      {isStaff && (
+        adding ? (
+          <div className="rounded-xl p-3 mb-3" style={{ backgroundColor: 'white', border: `1.5px solid ${ORANGE}` }}>
+            <div className="text-sm font-bold mb-2" style={{ color: ORANGE }}>Add a training video</div>
+            <input value={form.url} onChange={e => setForm(f => ({ ...f, url: e.target.value }))} placeholder="Paste the video link (Zoho, YouTube, anything)" className="w-full rounded-lg px-3 py-2.5 text-sm mb-2" style={inp} />
+            <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Title — e.g. Ford FDRS: running a module reprogram" className="w-full rounded-lg px-3 py-2.5 text-sm mb-2" style={inp} />
+            <div className="flex gap-2 mb-2">
+              <input value={form.oem} onChange={e => setForm(f => ({ ...f, oem: e.target.value }))} placeholder="Tag — Ford, Autel, Hunter…" className="flex-1 rounded-lg px-3 py-2.5 text-sm" style={inp} />
+              <input value={form.minutes} onChange={e => setForm(f => ({ ...f, minutes: e.target.value }))} placeholder="min" inputMode="numeric" className="w-20 rounded-lg px-3 py-2.5 text-sm" style={inp} />
+            </div>
+            <input value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="What it covers (optional)" className="w-full rounded-lg px-3 py-2.5 text-sm mb-2" style={inp} />
+            {err && <div className="text-xs mb-2 font-semibold" style={{ color: '#b91c1c' }}>{err}</div>}
+            <div className="flex gap-2">
+              <button onClick={() => { setAdding(false); setErr('') }} className="flex-1 rounded-xl py-2.5 text-sm font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
+              <button onClick={add} disabled={busy} className="flex-[2] rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: ORANGE, opacity: busy ? .5 : 1 }}>{busy ? 'Adding…' : 'Add video'}</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)} className="w-full rounded-xl py-3 text-sm font-bold mb-3" style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px dashed ${ORANGE}` }}>+ Add a training video</button>
+        )
+      )}
+
+      {(d.tags || []).length > 1 && (
+        <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth: 'none' }}>
+          {['all', ...(d.tags || [])].map(t => (
+            <button key={t} onClick={() => setTag(t)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0"
+              style={tag === t ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>
+              {t === 'all' ? `All (${all.length})` : t}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!all.length && <p className="text-sm" style={{ color: '#888' }}>No training videos yet.{isStaff ? ' Add the first one above.' : ''}</p>}
+
+      <div className="flex flex-col gap-2">
+        {shown.map(v => {
+          const isOpen = open === v.id
+          return (
+            <div key={v.id} className="rounded-xl overflow-hidden" style={{ backgroundColor: 'white', border: '1px solid #e0dbd6' }}>
+              <button onClick={() => setOpen(isOpen ? null : v.id)} className="w-full text-left px-3 py-3 flex items-center gap-3">
+                <span className="flex-shrink-0 rounded-xl flex items-center justify-center" style={{ width: 44, height: 44, backgroundColor: '#fff5f0', fontSize: 20 }}>▶️</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-bold" style={{ color: '#1a1a1a' }}>{v.title}</span>
+                  <span className="block text-[12px]" style={{ color: '#888' }}>{v.oem}{v.minutes ? ` · ${v.minutes} min` : ''}</span>
+                </span>
+              </button>
+              {isOpen && (
+                <div className="px-3 pb-3">
+                  <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #e0dbd6', backgroundColor: '#000' }}>
+                    <iframe src={v.url} title={v.title} allow="autoplay; fullscreen; picture-in-picture" allowFullScreen
+                      style={{ width: '100%', height: 220, border: 'none', display: 'block' }} />
+                  </div>
+                  {/* A real anchor, never window.open — the iOS PWA rule. */}
+                  <a href={v.url} target="_blank" rel="noreferrer" className="block text-center rounded-xl py-2.5 text-sm font-bold text-white mb-2" style={{ backgroundColor: ORANGE }}>
+                    Open the video ↗
+                  </a>
+                  {v.notes && <p className="text-[13px] leading-snug mb-2" style={{ color: '#555' }}>{v.notes}</p>}
+                  {isStaff && !v.from_course && (
+                    <button onClick={() => remove(v)} className="text-xs font-bold" style={{ color: '#b91c1c' }}>Remove</button>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
 // 📋 What the manufacturer requires. Filled by the daily watcher; read-only
 // here so a tech at the bay can find the statement that backs a line item.
 function OemDocs() {

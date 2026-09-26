@@ -135,6 +135,73 @@ async function readOemDocs(req) {
   } catch (e) { console.warn('[tsb] OEM docs read failed:', e.message); return [] }
 }
 
+// 🎥 Training videos (Mark 2026-09-25: "a video training section on the TSB
+// page"). These are the SAME modules new hires get in onboarding — filling in
+// a module's video_url once puts it in both places, so there is one library,
+// not two. Any signed-in user, technicians included.
+const TRAIN_KEY = 'training_videos'
+async function readTraining(req) {
+  try {
+    const r = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(`SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${TRAIN_KEY}' LIMIT 1`)
+    const row = r?.[0]?.AppConfig
+    return { row: row ? String(row.ROWID) : null, list: row ? (JSON.parse(row.config_value || '[]') || []) : [] }
+  } catch { return { row: null, list: [] } }
+}
+async function writeTraining(req, row, list) {
+  const t = catalyst.initialize(req, { type: 'advancedio' }).datastore().table('AppConfig')
+  const v = JSON.stringify(list).slice(0, 9800)
+  if (row) await t.updateRow({ ROWID: row, config_key: TRAIN_KEY, config_value: v })
+  else await t.insertRow({ config_key: TRAIN_KEY, config_value: v })
+}
+
+router.get('/training', async (req, res) => {
+  try {
+    const { list } = await readTraining(req)
+    let course = []
+    try {
+      const { readCourse } = await import('./people.js')
+      course = ((await readCourse(req))?.modules || [])
+        .filter(m => String(m.video_url || '').trim())
+        .map(m => ({ id: `mod_${m.id}`, title: m.title || '', url: String(m.video_url).trim(), oem: 'Onboarding', minutes: Number(m.minutes) || 0, notes: String(m.reading || '').replace(/\s+/g, ' ').slice(0, 300), from_course: true }))
+    } catch { course = [] }
+    const videos = [...list, ...course]
+    const tags = [...new Set(videos.map(v => v.oem).filter(Boolean))].sort()
+    res.json({ ok: true, videos, tags })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// POST /api/tsb/training — add one. Staff only; techs watch, they do not post.
+router.post('/training', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Staff only' })
+    const b = req.body || {}
+    const url = String(b.url || '').trim()
+    if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Paste the video link (it has to start with http).' })
+    const { row, list } = await readTraining(req)
+    const v = {
+      id: `v_${Date.now().toString(36)}`,
+      title: clean(b.title, 140) || 'Untitled video',
+      url, oem: clean(b.oem, 40) || 'General',
+      minutes: Number(b.minutes) || 0,
+      notes: clean(b.notes, 400),
+      by: req.user?.name || 'staff', at: new Date().toISOString(),
+    }
+    list.unshift(v)
+    await writeTraining(req, row, list.slice(0, 80))
+    res.json({ ok: true, video: v })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+router.delete('/training/:id', async (req, res) => {
+  try {
+    if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Staff only' })
+    const { row, list } = await readTraining(req)
+    const next = list.filter(v => v.id !== req.params.id)
+    await writeTraining(req, row, next)
+    res.json({ ok: true, removed: list.length - next.length })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // GET /api/tsb/oem-docs — the OEM library for the TSB page's search.
 router.get('/oem-docs', async (req, res) => {
   try {
