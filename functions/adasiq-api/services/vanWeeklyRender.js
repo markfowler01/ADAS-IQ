@@ -12,6 +12,7 @@
 
 const BREW_URL = 'https://absoluteadas.com/brew'
 const CALCULATOR_URL = 'https://absoluteadas.com/calculator'
+const ESTIMATOR_GUIDE_URL = 'https://absoluteadas.com/estimator-guide/'
 const MAILING_ADDRESS = '2307 Cedar Rd · Lake Stevens, WA 98258'
 
 function escapeHtml(s) {
@@ -70,6 +71,7 @@ ${bodyHtml}
 </td></tr>
 <tr><td style="border-top:1px solid #e5e5e5;padding-top:16px;margin-top:24px;font-size:13px;line-height:1.55;color:#666;">
 <p style="margin:20px 0 10px 0;">See what your shop would pay: <a href="${CALCULATOR_URL}" style="color:#CD4419;">Partnership Discount pricing sheet</a> (15-25% off list, insurance-approved).</p>
+<p style="margin:0 0 10px 0;">For your estimator: <a href="${ESTIMATOR_GUIDE_URL}" style="color:#CD4419;">When does this car need a calibration?</a> Sensor map, line picker, printable checklist.</p>
 <p style="margin:0 0 10px 0;">Want the daily version? ADAS Brew delivers industry news every morning: <a href="${BREW_URL}" style="color:#CD4419;">absoluteadas.com/brew</a></p>
 <p style="margin:0 0 6px 0;">${MAILING_ADDRESS}</p>
 <p style="margin:0;"><a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#666;text-decoration:underline;">Unsubscribe</a></p>
@@ -85,7 +87,9 @@ ${bodyHtml}
 — Mark
 Absolute ADAS | Lake Stevens, WA
 
-See what your shop would pay — Partnership Discount pricing sheet (15-25% off list, insurance-approved): ${CALCULATOR_URL}
+See what your shop would pay. Partnership Discount pricing sheet (15-25% off list, insurance-approved): ${CALCULATOR_URL}
+
+For your estimator. When does this car need a calibration? Sensor map, line picker, printable checklist: ${ESTIMATOR_GUIDE_URL}
 
 Want the daily version? ADAS Brew delivers industry news every morning: ${BREW_URL}
 
