@@ -24,7 +24,17 @@ const SENT_KEY = 'guide_drop_sent'      // { [email]: { at, shop } }
 const LOCK_KEY = 'guide_drop_lock'      // { started_at, finished_at }
 const LOCK_MS = 15 * 60 * 1000
 const COMPETITOR_RE = /avscalibrations|hivecalibrations|abs-c|calibration/i
-const OURS_RE = /@absoluteadas\.com$|@adas-iq\.com$/i
+const OURS_RE = /@absoluteadas\.com$|@adas-iq\.com$|^mfowler/i                 // our domains + Mark's personal Gmail (test shops)
+const NOT_A_SHOP_RE = /trucking|landscap|autozone|the auto repair shop/i        // CRM rows that are not estimating desks
+// CRM "names" are often the shop name again. Only greet by first name when it reads like a person.
+const BIZ_WORD_RE = /\b(llc|inc|co|corp|auto|autos|automotive|body|shop|collision|motors?|motorsports|transmission|glass|towing|tint|repair|sales|fleet|center|carstar|maaco|gerber|goodyear|ford|toyota|honda|subaru|credit|care|guys|pros|unlimited|international|pioneers|refinishing|service|dealer)\b/i
+export function personFirstName(name, shopName) {
+  const n = String(name || '').trim()
+  if (!n || n.toLowerCase() === String(shopName || '').trim().toLowerCase() || BIZ_WORD_RE.test(n)) return ''
+  const parts = n.split(/\s+/)
+  if (parts.length > 3) return ''
+  return parts[0].replace(/[^A-Za-z'’-]/g, '')
+}
 
 export const GUIDE_URL = 'https://absoluteadas.com/estimator-guide/'
 export const CHECKLIST_URL = 'https://absoluteadas.com/estimator-guide/calibration-checklist.pdf'
@@ -72,9 +82,9 @@ export function pickGuideDropRecipients({ shops, sent = {}, stages = ['active'] 
     const { name, email } = personOf(s)
     if (!email || !email.includes('@')) continue
     if (seen.has(email) || sent[email]) continue
-    if (COMPETITOR_RE.test(`${s.shop_name} ${email}`) || OURS_RE.test(email)) continue
+    if (COMPETITOR_RE.test(`${s.shop_name} ${email}`) || OURS_RE.test(email) || NOT_A_SHOP_RE.test(String(s.shop_name || ''))) continue
     seen.add(email)
-    out.push({ shop_id: s.id, shop_name: s.shop_name, name, first_name: first(name), email })
+    out.push({ shop_id: s.id, shop_name: s.shop_name, name, first_name: personFirstName(name, s.shop_name), email })
   }
   return out.sort((a, b) => String(a.shop_name).localeCompare(String(b.shop_name)))
 }
@@ -92,7 +102,7 @@ export async function runGuideDrop(req, { dry = true, limit = 60, stages = ['act
   const all = pickGuideDropRecipients({ shops, sent, stages })
   const batch = all.slice(0, limit)
   const summary = { dry, stages, eligible: all.length, in_batch: batch.length, already_sent: Object.keys(sent).length }
-  if (dry) return { ...summary, recipients: batch.map(r => ({ shop: r.shop_name, name: r.name, email: r.email })) }
+  if (dry) return { ...summary, recipients: batch.map(r => ({ shop: r.shop_name, greeting: r.first_name ? `Hi ${r.first_name},` : 'Hi there,', email: r.email })) }
 
   await setVal(req, LOCK_KEY, { started_at: new Date(now).toISOString(), finished_at: lock.finished_at || null })
   let attachments
