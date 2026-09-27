@@ -111,7 +111,7 @@ const HL_CAR = 'a silver compact crossover SUV with the proportions of a Toyota 
 const HIGHLIGHTS = {
   'rear-bumper':  { view: `straight rear three-quarter view of ${HL_CAR}`, part: 'the entire rear bumper cover, following its seams exactly from corner to corner', dots: 'two small solid orange dots on the cover at the left and right rear corners, where the blind spot radars sit behind it' },
   'front-bumper': { view: `low front three-quarter view of ${HL_CAR}`, part: 'the entire front bumper cover including the grille opening, following its seams exactly', dots: 'one small solid orange dot at the center of the grille where the radar sits behind the emblem' },
-  'grille':       { view: `straight-on front view of ${HL_CAR}`, part: 'the upper grille and the emblem area only', dots: 'one small solid orange dot at the emblem where the radar sits, and one lower in the grille where the front camera sits' },
+  'grille':       { view: `straight-on front view of ${HL_CAR}, slightly above hood height so the whole face of the car shows`, part: 'the ENTIRE front grille as one shape: the upper grille, the lower grille opening, and the large front emblem in the center of the upper grille, all of it tinted together', dots: 'one small solid darker orange dot exactly on the center of the emblem where the radar sits behind it, and one small dot low in the lower grille where the front camera sits' },
   'windshield':   { view: `front three-quarter view of ${HL_CAR}`, part: 'the entire windshield glass', dots: 'one small solid orange dot at the top center of the windshield behind the mirror where the forward camera mounts' },
   'quarter':      { view: `rear three-quarter view of ${HL_CAR}`, part: 'the rear quarter panel on the visible side, from the door seam to the tail lamp', dots: 'one small solid orange dot low on the rear corner where the blind spot radar mounts to the quarter' },
   'liftgate':     { view: `straight rear view of ${HL_CAR}`, part: 'the liftgate from the roof spoiler down to the bumper cover', dots: 'one small solid orange dot above the license plate recess where the rear camera sits' },
@@ -129,7 +129,7 @@ TECHNICAL CALLOUT (the one deliberate graphic in this image): ${h.part} is tinte
 
 HARD BANS: no people, no hands, no silhouettes. No text, captions, labels, arrows, numbers or watermarks anywhere. No brand logos on the vehicle, tools or walls. No scan tools, no calibration target boards, no measuring equipment. No stock-photo lighting.
 
-COMPOSITION: vehicle fills the upper 60 percent of the frame. Middle 25 percent quiet and out of focus. Bottom 15 percent near-black shadow of the bay floor, no detail.
+COMPOSITION (important): the top 28 percent of the frame is plain, out-of-focus shop wall and ceiling with nothing important in it, because a title band is printed over it later. The vehicle sits in the MIDDLE of the frame: its roof at about 32 percent from the top, its tires at about 80 percent. Nothing of the vehicle above the 28 percent line. Bottom 15 percent is near-black shadow of the bay floor, no detail.
 
 Do not write any words in the image. Just the photograph with the one orange panel.`
 }
