@@ -69,6 +69,10 @@ export async function setVal(req, key, value) {
     // Cap slightly below the 32KB Text limit to leave headroom for the row
     throw new Error(`vanDatastore.setVal: value for '${key}' is ${json.length} bytes, over 30KB safe cap — chunk it`)
   }
+  // Observed 2026-09-26: the value_json column truncates at 10,000 chars with
+  // no error (a 26K chunk came back cut off). Warn loudly so a truncated
+  // write never goes unnoticed again; callers should chunk below ~9.5K.
+  if (json.length > 9500) console.warn(`[vanDatastore setVal ${key}] ${json.length} chars — over the 10,000-char text column, this WILL truncate. Chunk it.`)
 
   // Look up existing row by key
   let existingRowId = null

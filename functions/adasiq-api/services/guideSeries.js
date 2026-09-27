@@ -15,6 +15,10 @@ import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from './cliq.js'
 const META_KEY = 'guide_series_meta'     // { start_date, count, active, imported_at }
 const POSTS_KEY = 'guide_series_posts'   // chunked array of { day, kicker, headline, body, ig, image_url }
 const DONE_KEY = 'guide_series_done'     // { [date]: { ids, at } }
+// VanKV value_json is a Datastore text column: it silently truncates at 10,000
+// chars (found 2026-09-26 when 10 posts per chunk came back cut off mid-post 8).
+// Three posts per chunk keeps every row under ~9.5K.
+const CHUNK = 3
 const PUBLIC_BASE = process.env.API_PUBLIC_BASE || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
 const SCHEDULE = [
   { channel: 'linkedin_personal',  hour: 9,  minute: 0,  field: 'body', label: 'LinkedIn 9:00' },
@@ -49,7 +53,7 @@ export async function importSeries(req, { start_date, posts }) {
     scene: String(p.scene || '').slice(0, 900),          // directive for the capture-image generator
   })).sort((a, b) => a.day - b.day)
   for (const p of clean) if (!p.headline || !p.body || !/^https:\/\//.test(p.image_url)) throw new Error(`day ${p.day}: headline, body and https image_url required`)
-  await writeChunkedArray(req, POSTS_KEY, clean, { chunkSize: 10 })
+  await writeChunkedArray(req, POSTS_KEY, clean, { chunkSize: CHUNK })
   const meta = { start_date, count: clean.length, active: true, imported_at: new Date().toISOString(), end_date: addDays(start_date, clean.length - 1) }
   await setVal(req, META_KEY, meta)
   return meta
@@ -97,7 +101,7 @@ export async function generateSeriesImage(req, { day, segment }) {
   const r = await generateCaptureImage({ headline: post.headline, draftId: `estimator-series-day-${String(post.day).padStart(2, '0')}` }, { force: true, segment, sceneOverride: post.scene || undefined })
   if (!r.ok) return { ok: false, day: post.day, error: r.error }
   posts[idx] = { ...post, image_url: r.url, image_generated_at: new Date().toISOString() }
-  await writeChunkedArray(req, POSTS_KEY, posts, { chunkSize: 10 })
+  await writeChunkedArray(req, POSTS_KEY, posts, { chunkSize: CHUNK })
   return { ok: true, day: post.day, url: r.url }
 }
 
