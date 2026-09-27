@@ -2769,10 +2769,11 @@ captureCalcRouter.all('/series/run', requireCronSecretFlex, async (req, res) => 
 })
 captureCalcRouter.all('/series/images', requireCronSecretFlex, async (req, res) => {
   try {
-    const { generateSeriesImage } = await import('../services/guideSeries.js')
+    const { generateSeriesImage, generateHighlightImage } = await import('../services/guideSeries.js')
     const day = Number(req.query.day)
     if (!Number.isInteger(day) || day < 1) return res.status(400).json({ ok: false, error: 'day required' })
-    res.json(await generateSeriesImage(req, { day, segment: getSegment(req) }))
+    const key = String(req.query.highlight || '').trim()
+    res.json(key ? await generateHighlightImage(req, { day, key, segment: getSegment(req) }) : await generateSeriesImage(req, { day, segment: getSegment(req) }))
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 captureCalcRouter.all('/series/status', requireCronSecretFlex, async (req, res) => {

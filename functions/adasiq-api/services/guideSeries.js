@@ -105,6 +105,50 @@ export async function generateSeriesImage(req, { day, segment }) {
   return { ok: true, day: post.day, url: r.url }
 }
 
+// ── Highlight cards (Mark 2026-09-27: "show the back of a car and highlight
+// the rear bumper orange, bumper on the car") ───────────────────────────────
+const HL_CAR = 'a silver compact crossover SUV with the proportions of a Toyota RAV4, no badges or readable logos, all panels installed'
+const HIGHLIGHTS = {
+  'rear-bumper':  { view: `straight rear three-quarter view of ${HL_CAR}`, part: 'the entire rear bumper cover, following its seams exactly from corner to corner', dots: 'two small solid orange dots on the cover at the left and right rear corners, where the blind spot radars sit behind it' },
+  'front-bumper': { view: `low front three-quarter view of ${HL_CAR}`, part: 'the entire front bumper cover including the grille opening, following its seams exactly', dots: 'one small solid orange dot at the center of the grille where the radar sits behind the emblem' },
+  'grille':       { view: `straight-on front view of ${HL_CAR}`, part: 'the upper grille and the emblem area only', dots: 'one small solid orange dot at the emblem where the radar sits, and one lower in the grille where the front camera sits' },
+  'windshield':   { view: `front three-quarter view of ${HL_CAR}`, part: 'the entire windshield glass', dots: 'one small solid orange dot at the top center of the windshield behind the mirror where the forward camera mounts' },
+  'quarter':      { view: `rear three-quarter view of ${HL_CAR}`, part: 'the rear quarter panel on the visible side, from the door seam to the tail lamp', dots: 'one small solid orange dot low on the rear corner where the blind spot radar mounts to the quarter' },
+  'liftgate':     { view: `straight rear view of ${HL_CAR}`, part: 'the liftgate from the roof spoiler down to the bumper cover', dots: 'one small solid orange dot above the license plate recess where the rear camera sits' },
+  'mirror':       { view: `close three-quarter view of the front door and side mirror of ${HL_CAR}`, part: 'the side mirror housing only', dots: 'one small solid orange dot on the underside of the mirror where the 360 camera lens sits' },
+}
+export const HIGHLIGHT_KEYS = Object.keys(HIGHLIGHTS)
+
+function highlightPrompt(key) {
+  const h = HIGHLIGHTS[key]
+  return `Documentary photograph, square 1080x1080. Photoreal, magazine quality, shot on a 35mm camera with shallow depth of field.
+
+SCENE: ${h.view}, parked inside a clean modern collision repair bay with polished concrete and soft light from a bay door or skylight. The vehicle is complete and undamaged.
+
+TECHNICAL CALLOUT (the one deliberate graphic in this image): ${h.part} is tinted a translucent bright orange, hex #CD4419, at about 65 percent opacity, exactly as if a highlight layer had been placed over that one panel. The tint follows the panel edges and seams precisely, reflections and body lines still show through it. Everything outside that panel stays photoreal and untinted. ${h.dots}.
+
+HARD BANS: no people, no hands, no silhouettes. No text, captions, labels, arrows, numbers or watermarks anywhere. No brand logos on the vehicle, tools or walls. No scan tools, no calibration target boards, no measuring equipment. No stock-photo lighting.
+
+COMPOSITION: vehicle fills the upper 60 percent of the frame. Middle 25 percent quiet and out of focus. Bottom 15 percent near-black shadow of the bay floor, no detail.
+
+Do not write any words in the image. Just the photograph with the one orange panel.`
+}
+
+/** Generate a highlight card for one day and store its URL on the post. */
+export async function generateHighlightImage(req, { day, key, segment }) {
+  if (!HIGHLIGHTS[key]) throw new Error(`unknown highlight '${key}'. Use one of: ${HIGHLIGHT_KEYS.join(', ')}`)
+  const posts = await readChunkedArray(req, POSTS_KEY)
+  const idx = posts.findIndex(p => Number(p.day) === Number(day))
+  if (idx < 0) throw new Error(`no post for day ${day}`)
+  const post = posts[idx]
+  const { generateCaptureImage } = await import('./captureImage.js')
+  const r = await generateCaptureImage({ headline: post.headline, draftId: `estimator-series-day-${String(post.day).padStart(2, '0')}-${key}` }, { force: true, segment, promptOverride: highlightPrompt(key) })
+  if (!r.ok) return { ok: false, day: post.day, key, error: r.error }
+  posts[idx] = { ...post, image_url: r.url, image_generated_at: new Date().toISOString(), highlight: key }
+  await writeChunkedArray(req, POSTS_KEY, posts, { chunkSize: CHUNK })
+  return { ok: true, day: post.day, key, url: r.url }
+}
+
 /**
  * Enqueue today's three channel drafts, once per day. Safe to call every hour.
  * Respects the social kill switch: paused → nothing is queued.

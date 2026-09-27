@@ -505,9 +505,14 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
   const sceneDirective = opts.sceneOverride && typeof opts.sceneOverride === 'string'
     ? opts.sceneOverride
     : pickSceneVariant()
-  const prompt = STYLE_PROMPT
-    .replace('{HEADLINE}', safeHeadline)
-    .replace('{SCENE_DIRECTIVE}', sceneDirective)
+  // opts.promptOverride replaces the whole documentary prompt (used by the
+  // estimator-series "highlight" cards, which deliberately tint one panel
+  // orange). The composite, hosting, audit and budget paths are unchanged.
+  const prompt = opts.promptOverride && typeof opts.promptOverride === 'string'
+    ? opts.promptOverride
+    : STYLE_PROMPT
+      .replace('{HEADLINE}', safeHeadline)
+      .replace('{SCENE_DIRECTIVE}', sceneDirective)
   const t0 = Date.now()
 
   try {
