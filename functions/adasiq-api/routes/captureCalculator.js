@@ -2753,7 +2753,9 @@ ${draftHtml}
 // the lock, the one-per-address stamp and the cap.
 captureCalcRouter.all('/outreach/guide-drop', requireCronSecretFlex, async (req, res) => {
   try {
-    const { runGuideDrop } = await import('../services/guideDrop.js')
+    const { runGuideDrop, sendGuideDropDemo } = await import('../services/guideDrop.js')
+    const demoTo = String(req.query.demo || req.body?.demo || '').trim()
+    if (demoTo) return res.json({ ok: true, ...(await sendGuideDropDemo({ to: demoTo, firstName: String(req.query.first || 'Mark') })) })
     const send = String(req.query.send || req.body?.send || '') === '1'
     const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 60))
     const stages = String(req.query.stages || 'active').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)

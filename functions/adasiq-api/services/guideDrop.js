@@ -89,6 +89,17 @@ export function pickGuideDropRecipients({ shops, sent = {}, stages = ['active'] 
   return out.sort((a, b) => String(a.shop_name).localeCompare(String(b.shop_name)))
 }
 
+/** Demo copy to one of our own addresses. No stamp, no lock, nothing counted. */
+export async function sendGuideDropDemo({ to, firstName = 'Mark' }) {
+  const addr = String(to || '').trim().toLowerCase()
+  if (!/@absoluteadas\.com$|^mfowler4456@gmail\.com$/.test(addr)) throw new Error('demo only goes to our own addresses')
+  const { subject, text, html } = guideDropCopy({ firstName })
+  let attachments
+  try { attachments = [{ filename: 'Absolute ADAS calibration checklist.pdf', content: fs.readFileSync(PDF_PATH).toString('base64') }] } catch (e) { console.warn('[guide-drop] checklist PDF missing:', e.message) }
+  const res = await sendBroadcast({ recipients: [addr], subject: `[DEMO] ${subject}`, html, text, attachments, fromEmail: FROM_EMAIL, fromName: 'Mark Fowler · Absolute ADAS', replyTo: REPLY_TO })
+  return { demo: true, to: addr, sent: res?.sent ?? null, failed: res?.failed ?? null, dryRun: !!res?.dryRun }
+}
+
 export async function runGuideDrop(req, { dry = true, limit = 60, stages = ['active'] } = {}) {
   const now = Date.now()
   const lock = (await getVal(req, LOCK_KEY)) || {}
