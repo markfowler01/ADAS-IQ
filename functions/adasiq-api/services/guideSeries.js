@@ -117,7 +117,7 @@ const HIGHLIGHTS = {
   'windshield':   { view: `front three-quarter view of ${HL_CAR}`, part: 'the entire windshield glass', dots: 'one small solid orange dot at the top center of the windshield behind the mirror where the forward camera mounts' },
   'quarter':      { view: `rear three-quarter view of ${HL_CAR}`, part: 'the rear quarter panel on the visible side, from the door seam to the tail lamp', dots: 'one small solid orange dot low on the rear corner where the blind spot radar mounts to the quarter' },
   'liftgate':     { view: `straight rear view of ${HL_CAR}`, part: 'the liftgate from the roof spoiler down to the bumper cover', dots: 'one small solid orange dot above the license plate recess where the rear camera sits' },
-  'mirror':       { view: `close three-quarter view of the front door and side mirror of ${HL_CAR}`, part: 'the side mirror housing only', dots: 'one small solid orange dot on the underside of the mirror where the 360 camera lens sits' },
+  'mirror':       { view: `close view of the driver side door and its side mirror on ${HL_CAR}, the mirror housing large and near the center of the frame, the front of the car and the headlights OUT of frame, the rear door in soft focus behind`, part: 'the side mirror housing ONLY (the painted mirror cap and the black mirror body on the door). Not the door, not the window, not any lamp', dots: 'one small solid darker orange dot on the underside of the mirror housing where the 360 camera lens sits' },
 }
 export const HIGHLIGHT_KEYS = Object.keys(HIGHLIGHTS)
 
