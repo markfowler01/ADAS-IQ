@@ -46,6 +46,7 @@ export async function importSeries(req, { start_date, posts }) {
     body: String(p.body || '').slice(0, 2800),
     ig: String(p.ig || p.body || '').slice(0, 2100),
     image_url: String(p.image_url || ''),
+    scene: String(p.scene || '').slice(0, 900),          // directive for the capture-image generator
   })).sort((a, b) => a.day - b.day)
   for (const p of clean) if (!p.headline || !p.body || !/^https:\/\//.test(p.image_url)) throw new Error(`day ${p.day}: headline, body and https image_url required`)
   await writeChunkedArray(req, POSTS_KEY, clean, { chunkSize: 10 })
@@ -79,6 +80,25 @@ export async function seriesPostFor(req, dateStr) {
   if (idx < 0 || idx >= (meta.count || 0)) return null
   const posts = await readChunkedArray(req, POSTS_KEY)
   return posts.find(p => Number(p.day) === idx + 1) || posts[idx] || null
+}
+
+/**
+ * Generate the photo card for one day through the capture-image pipeline
+ * (Gemini photo from the post's scene directive, cream masthead with the
+ * headline, dark brand footer, hosted on GitHub Pages) and store its URL on
+ * the post. force:true so the daily budget is not consumed; audit still logs.
+ */
+export async function generateSeriesImage(req, { day, segment }) {
+  const posts = await readChunkedArray(req, POSTS_KEY)
+  const idx = posts.findIndex(p => Number(p.day) === Number(day))
+  if (idx < 0) throw new Error(`no post for day ${day}`)
+  const post = posts[idx]
+  const { generateCaptureImage } = await import('./captureImage.js')
+  const r = await generateCaptureImage({ headline: post.headline, draftId: `estimator-series-day-${String(post.day).padStart(2, '0')}` }, { force: true, segment, sceneOverride: post.scene || undefined })
+  if (!r.ok) return { ok: false, day: post.day, error: r.error }
+  posts[idx] = { ...post, image_url: r.url, image_generated_at: new Date().toISOString() }
+  await writeChunkedArray(req, POSTS_KEY, posts, { chunkSize: 10 })
+  return { ok: true, day: post.day, url: r.url }
 }
 
 /**
