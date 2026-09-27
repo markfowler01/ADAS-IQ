@@ -1,3 +1,4 @@
+import LaptopSetupTab from './ops/LaptopSetupTab.jsx'
 import { useState, useEffect, useRef } from 'react'
 import Navbar from './Navbar'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
@@ -1209,6 +1210,7 @@ const TABS = [
   { id: 'vans',    label: 'Vans & Locations' },
   { id: 'assets',  label: 'Tools & Equipment' },
   { id: 'laptops', label: 'Laptops' },
+  { id: 'setup',   label: 'Laptop Setup' },   // the rule, the asset list and both runbooks (2026-09-27)
   { id: 'oem',     label: 'OEM Software' },
 ]
 
@@ -1268,6 +1270,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
         {tab === 'vans'    && <VansTab    locations={locations} setLocations={setLocations} techs={techs} assets={assets} />}
         {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} />}
         {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} />}
+        {tab === 'setup'   && <LaptopSetupTab />}
         {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} />}
       </div>
     </div>
