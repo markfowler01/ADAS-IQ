@@ -140,9 +140,21 @@ async function incrementCounter(segment) {
 }
 
 async function appendAudit(segment, entry) {
-  const log = (await cacheGet(segment, AUDIT_LOG_KEY, [])) || []
-  const next = [{ ...entry, at: new Date().toISOString() }, ...log].slice(0, AUDIT_LOG_SIZE)
-  await cacheSet(segment, AUDIT_LOG_KEY, next)
+  // 2026-09-27: the log hit Catalyst's per-value cache cap ("Length of the
+  // cache value reached its max length") and took two good generations down
+  // with it. Keep entries slim, cap the list, shrink on overflow, never throw.
+  try {
+    const log = (await cacheGet(segment, AUDIT_LOG_KEY, [])) || []
+    const slim = e => ({ ...e, headline: String(e.headline || '').slice(0, 80), error: e.error ? String(e.error).slice(0, 160) : undefined, prompt: undefined })
+    const next = [slim({ ...entry, at: new Date().toISOString() }), ...log.map(slim)].slice(0, Math.min(AUDIT_LOG_SIZE, 60))
+    try { await cacheSet(segment, AUDIT_LOG_KEY, next) }
+    catch (e) {
+      if (/max length|LIMIT/i.test(String(e.message || ''))) await cacheSet(segment, AUDIT_LOG_KEY, next.slice(0, 20))
+      else throw e
+    }
+  } catch (e) {
+    console.warn('[captureImage audit] skipped:', e.message)
+  }
 }
 
 export async function getAuditLog(segment, limit = 50) {
