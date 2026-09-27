@@ -89,6 +89,41 @@ export function pickGuideDropRecipients({ shops, sent = {}, stages = ['active'] 
   return out.sort((a, b) => String(a.shop_name).localeCompare(String(b.shop_name)))
 }
 
+// ── Scheduled send ──────────────────────────────────────────────────────────
+// Mark 2026-09-26: "send out to the 52 shops on Monday at 10am". The schedule
+// lives in VanKV and is picked up by the hourly Van safety-net cron (which we
+// know fires) and by a one-time Catalyst cron at the exact minute. Both paths
+// are safe to collide: the lock + per-address stamps mean the second finds
+// nothing left to send.
+const SCHEDULE_KEY = 'guide_drop_schedule'   // { send_at, stages, limit, status: pending|done|cancelled, created_at, result }
+
+export async function getGuideDropSchedule(req) { return (await getVal(req, SCHEDULE_KEY)) || null }
+
+export async function setGuideDropSchedule(req, { send_at, stages = ['active'], limit = 60, by = 'app' }) {
+  const t = Date.parse(send_at)
+  if (!t) throw new Error(`bad send_at: ${send_at}`)
+  const sched = { send_at: new Date(t).toISOString(), stages, limit, status: 'pending', created_at: new Date().toISOString(), by }
+  await setVal(req, SCHEDULE_KEY, sched)
+  return sched
+}
+
+export async function clearGuideDropSchedule(req) {
+  const cur = await getGuideDropSchedule(req)
+  if (cur && cur.status === 'pending') await setVal(req, SCHEDULE_KEY, { ...cur, status: 'cancelled', cancelled_at: new Date().toISOString() })
+  return cur
+}
+
+/** Called by the hourly safety net and the one-time cron. Sends only when the time has come, exactly once. */
+export async function runScheduledGuideDrop(req) {
+  const sched = await getGuideDropSchedule(req)
+  if (!sched || sched.status !== 'pending') return { skipped: true, reason: sched ? sched.status : 'no schedule' }
+  if (Date.now() < Date.parse(sched.send_at)) return { skipped: true, reason: 'not yet', send_at: sched.send_at }
+  const result = await runGuideDrop(req, { dry: false, limit: sched.limit || 60, stages: sched.stages || ['active'] })
+  if (result.skipped && result.reason === 'run_in_progress') return { skipped: true, reason: 'run_in_progress' }
+  await setVal(req, SCHEDULE_KEY, { ...sched, status: 'done', ran_at: new Date().toISOString(), result: { sent: result.sent, failed: result.failed, eligible: result.eligible } })
+  return { fired: true, ...result }
+}
+
 /** Demo copy to one of our own addresses. No stamp, no lock, nothing counted. */
 export async function sendGuideDropDemo({ to, firstName = 'Mark' }) {
   const addr = String(to || '').trim().toLowerCase()
@@ -128,6 +163,15 @@ export async function runGuideDrop(req, { dry = true, limit = 60, stages = ['act
         if (ok) {
           sent[r.email] = { at: new Date().toISOString(), shop: r.shop_name }
           await setVal(req, SENT_KEY, sent)                       // stamp per recipient: a crash mid-run can never resend
+          // Log it on the CRM card so the pipeline sees the give. No last_contact change: that drives the quiet clocks.
+          try {
+            const shop = shops.find(s => String(s.id) === String(r.shop_id))
+            if (shop) {
+              const { updateShop } = await import('../routes/shops.js')
+              const activity = { id: `a_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, type: 'email', at: new Date().toISOString(), by: 'app (guide drop)', text: `Estimator guide emailed to ${r.email}: "When does this car need a calibration?" with the checklist PDF. Ask on the next visit if they want printed copies.` }
+              await updateShop(req, shop.id, { ...shop, activities: [activity, ...(Array.isArray(shop.activities) ? shop.activities : [])].slice(0, 200) })
+            }
+          } catch (e) { console.warn('[guide-drop] activity log failed:', r.shop_name, e.message) }
         }
         results.push({ shop: r.shop_name, email: r.email, ok })
       } catch (e) {

@@ -2753,14 +2753,17 @@ ${draftHtml}
 // the lock, the one-per-address stamp and the cap.
 captureCalcRouter.all('/outreach/guide-drop', requireCronSecretFlex, async (req, res) => {
   try {
-    const { runGuideDrop, sendGuideDropDemo } = await import('../services/guideDrop.js')
-    const demoTo = String(req.query.demo || req.body?.demo || '').trim()
-    if (demoTo) return res.json({ ok: true, ...(await sendGuideDropDemo({ to: demoTo, firstName: String(req.query.first || 'Mark') })) })
-    const send = String(req.query.send || req.body?.send || '') === '1'
+    const { runGuideDrop, sendGuideDropDemo, getGuideDropSchedule, setGuideDropSchedule, clearGuideDropSchedule, runScheduledGuideDrop } = await import('../services/guideDrop.js')
+    const q = k => String(req.query[k] || req.body?.[k] || '').trim()
+    if (q('demo')) return res.json({ ok: true, ...(await sendGuideDropDemo({ to: q('demo'), firstName: q('first') || 'Mark' })) })
+    if (q('schedule_at')) return res.json({ ok: true, schedule: await setGuideDropSchedule(req, { send_at: q('schedule_at'), stages: (q('stages') || 'active').split(',').map(s => s.trim().toLowerCase()).filter(Boolean), limit: Math.max(1, Math.min(100, Number(q('limit')) || 60)), by: q('by') || 'Mark via Claude' }) })
+    if (q('schedule') === 'clear') return res.json({ ok: true, cleared: await clearGuideDropSchedule(req) })
+    if (q('tick') === '1') return res.json({ ok: true, ...(await runScheduledGuideDrop(req)) })
+    const send = q('send') === '1'
     const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 60))
     const stages = String(req.query.stages || 'active').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
     const out = await runGuideDrop(req, { dry: !send, limit, stages })
-    res.json({ ok: true, ...out })
+    res.json({ ok: true, schedule: await getGuideDropSchedule(req), ...out })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
@@ -4221,6 +4224,20 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     const pt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }))
     const dayPt = pt.getDay()   // 0=Sun ... 6=Sat
     const hourPt = pt.getHours()
+
+    // ─── 0. SCHEDULED SENDS THAT RIDE THIS CRON ──────────────────────────
+    // The estimator guide drop (services/guideDrop.js) is scheduled in VanKV
+    // and fires here the first hour after its send_at. Locked + stamped, so a
+    // second trigger (the one-time Catalyst cron) finds nothing left to send.
+    try {
+      const { runScheduledGuideDrop } = await import('../services/guideDrop.js')
+      const gd = await runScheduledGuideDrop(req)
+      if (gd.fired) out.actions.push({ action: 'guide_drop_sent', sent: gd.sent, failed: gd.failed })
+      else out.skipped.push({ check: 'guide_drop', reason: gd.reason })
+    } catch (e) {
+      console.warn('[safety-net guide drop]', e.message)
+      out.skipped.push({ check: 'guide_drop', reason: e.message })
+    }
 
     // ─── 1. RETRY PENDING BROADCAST — two failure modes handled ──────────
     // (a) broadcast_id exists but scheduling failed → retry sendVanBroadcast
