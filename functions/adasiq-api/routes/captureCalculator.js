@@ -1656,6 +1656,12 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
       const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
       if (await isMarketingPaused(req, 'social')) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     }
+    {
+      // 📚 While the estimator-guide series is running it IS the daily post.
+      // The series queues its own three channel drafts (services/guideSeries.js).
+      const { seriesPostFor, ptDateStr } = await import('../services/guideSeries.js')
+      if (!req.query.force_unified && await seriesPostFor(req, ptDateStr())) return res.json({ ok: true, skipped: true, reason: 'estimator_series_day' })
+    }
     const segment = getSegment(req)
     const todayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
     const dayName = String(req.query.dayName || todayPT)
@@ -2745,6 +2751,28 @@ button{margin-top:14px;width:100%;padding:14px;border:0;border-radius:8px;backgr
 </form>
 ${draftHtml}
 </body></html>`)
+})
+
+// ── ESTIMATOR GUIDE SERIES (30 days of posts from the guide) ────────────────
+captureCalcRouter.post('/series/import', requireCronSecretFlex, express.json({ limit: '512kb' }), async (req, res) => {
+  try {
+    const { importSeries } = await import('../services/guideSeries.js')
+    res.json({ ok: true, meta: await importSeries(req, { start_date: String(req.body?.start_date || ''), posts: req.body?.posts }) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.all('/series/run', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { enqueueTodaysSeries } = await import('../services/guideSeries.js')
+    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : undefined
+    res.json({ ok: true, ...(await enqueueTodaysSeries(req, { dateStr, dry: req.query.dry === '1' })) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.all('/series/status', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { seriesStatus, setSeriesActive } = await import('../services/guideSeries.js')
+    if (req.query.active === '0' || req.query.active === '1') await setSeriesActive(req, req.query.active === '1')
+    res.json({ ok: true, ...(await seriesStatus(req)) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
 // ── ESTIMATOR GUIDE DROP ─────────────────────────────────────────────────────
@@ -4237,6 +4265,19 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     } catch (e) {
       console.warn('[safety-net guide drop]', e.message)
       out.skipped.push({ check: 'guide_drop', reason: e.message })
+    }
+    // 📚 Estimator-guide daily series: queue today's three drafts in the
+    // morning window; the scheduler publishes them at 9 / 11:30 / 12 PT.
+    try {
+      if (hourPt >= 5 && hourPt <= 8) {
+        const { enqueueTodaysSeries } = await import('../services/guideSeries.js')
+        const s = await enqueueTodaysSeries(req, {})
+        if (s.queued) out.actions.push({ action: 'series_queued', day: s.day })
+        else out.skipped.push({ check: 'series', reason: s.reason })
+      } else out.skipped.push({ check: 'series', reason: 'outside morning window' })
+    } catch (e) {
+      console.warn('[safety-net series]', e.message)
+      out.skipped.push({ check: 'series', reason: e.message })
     }
 
     // ─── 1. RETRY PENDING BROADCAST — two failure modes handled ──────────
