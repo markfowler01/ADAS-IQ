@@ -2715,10 +2715,11 @@ captureCalcRouter.all('/debug/li-welcome', async (req, res) => {
   const name = String(req.body?.name || req.query.name || '').trim()
   const company = String(req.body?.company || req.query.company || '').trim()
   const context = String(req.body?.context || req.query.context || '').trim()
+  const gift = String(req.body?.gift || req.query.gift || '') === '1'
   if (name) {
     try {
-      const { draftWelcomeMessage } = await import('../services/linkedInOutreach.js')
-      const message = await draftWelcomeMessage({ name, company, context })
+      const { draftWelcomeMessage, draftGiftMessage } = await import('../services/linkedInOutreach.js')
+      const message = gift ? await draftGiftMessage({ name, company, context }) : await draftWelcomeMessage({ name, company, context })
       draftHtml = `<label>Draft — long-press to copy</label>
         <textarea id="out" rows="5" readonly onclick="this.select()">${esc(message)}</textarea>
         <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('out').value).then(()=>this.textContent='Copied ✓')">Copy</button>`
@@ -2739,10 +2740,28 @@ button{margin-top:14px;width:100%;padding:14px;border:0;border-radius:8px;backgr
 <label>Their name</label><input name="name" value="${esc(name)}" placeholder="Jake Arnold" required>
 <label>Company (optional)</label><input name="company" value="${esc(company)}" placeholder="Gerber Collision, Tacoma">
 <label>Anything to work in? (optional)</label><input name="context" value="${esc(context)}" placeholder="commented on the van post">
+<label style="display:flex;align-items:center;gap:10px;color:#f5f5f5;font-size:15px;margin-top:16px"><input type="checkbox" name="gift" value="1" style="width:auto"${gift ? ' checked' : ''}> Hand them the estimator guide (already connected)</label>
 <button type="submit">Draft the message</button>
 </form>
 ${draftHtml}
 </body></html>`)
+})
+
+// ── ESTIMATOR GUIDE DROP ─────────────────────────────────────────────────────
+// One email from Mark to each customer shop with the estimator guide + the
+// printable checklist. Dry run unless ?send=1. See services/guideDrop.js for
+// the lock, the one-per-address stamp and the cap.
+captureCalcRouter.all('/outreach/guide-drop', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { runGuideDrop } = await import('../services/guideDrop.js')
+    const send = String(req.query.send || req.body?.send || '') === '1'
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 60))
+    const stages = String(req.query.stages || 'active').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    const out = await runGuideDrop(req, { dry: !send, limit, stages })
+    res.json({ ok: true, ...out })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
 })
 
 const DEBUG_FORWARD_WHITELIST = {

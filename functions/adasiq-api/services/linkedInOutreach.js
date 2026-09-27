@@ -145,6 +145,33 @@ anything. The goal is only that they remember Mark as a real person.`,
   return String(msg.content?.[0]?.text || '').trim()
 }
 
+/**
+ * The "gift" DM: a follow-up to someone already connected, handing them the
+ * estimator guide. This is the ONE place a link is allowed, because the whole
+ * message is the give. Still human-sent from linkedin.com.
+ */
+export const ESTIMATOR_GUIDE_URL = 'https://absoluteadas.com/estimator-guide'
+export async function draftGiftMessage({ name, company, context }) {
+  const msg = await anthropic().messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 400,
+    system: `${VOICE_RULES.replace('no links, ', '')}
+You draft a short LinkedIn DM to an EXISTING connection, handing them Mark's free
+one-sheet for estimators: "When does this car need a calibration?" (sensor map on a
+RAV4, a table of repairs and the line to write for each, a line picker, a printable
+checklist). Three or four sentences. Include the link exactly once, plain text:
+${ESTIMATOR_GUIDE_URL}
+No pitch beyond the gift, no discounts, no "let me know if". Mention one concrete
+thing from the guide (for example: Subaru with EyeSight, any collision repair gets
+the calibration, not just glass). If a first name is given, use it once.`,
+    messages: [{
+      role: 'user',
+      content: `Connection: ${name}${company ? ` (${company})` : ''}${context ? `\nContext from Mark: ${context}` : ''}`,
+    }],
+  })
+  return String(msg.content?.[0]?.text || '').trim()
+}
+
 function liSearchUrl(t) {
   const q = encodeURIComponent([t.contact_name, t.shop_name].filter(Boolean).join(' '))
   return `https://www.linkedin.com/search/results/people/?keywords=${q}`
