@@ -96,12 +96,26 @@ export async function setHiringActive(req, active) {
   return next
 }
 
+/** Raw phone photos are 12 MP; sharp on the full frame took the function down (empty 200, 2026-09-28).
+ *  Rotate for EXIF, crop a square that keeps the van in the lower two-thirds (the masthead covers the top), resize to 1080. */
+async function squareForMasthead(buffer) {
+  const sharp = (await import('sharp')).default
+  const img = sharp(buffer).rotate()
+  const m = await img.metadata()
+  const w = m.width || 1200, h = m.height || 1600
+  const side = Math.min(w, h)
+  const top = h > w ? Math.round((h - w) * 0.30) : 0      // start above the van, not below it
+  const left = w > h ? Math.round((w - h) / 2) : 0
+  return img.extract({ left, top, width: side, height: side }).resize(1080, 1080).jpeg({ quality: 90 }).toBuffer()
+}
+
 async function cardFor(req, n, dateStr) {
   const { pickNextVanPhotoDatastore } = await import('./vanPhotoLibrary.js')
   const { composeAndHostImage } = await import('./captureImage.js')
   const photo = await pickNextVanPhotoDatastore(req, PHOTO_ROTATION_KEY)
   if (!photo?.buffer) throw new Error('no van photo available')
-  const r = await composeAndHostImage({ rawBuffer: photo.buffer, headline: POSTS[n].headline, kicker: 'NOW HIRING', draftId: `hiring-${dateStr}-${String(n + 1).padStart(2, '0')}` })
+  const base = await squareForMasthead(photo.buffer)
+  const r = await composeAndHostImage({ rawBuffer: base, headline: POSTS[n].headline, kicker: 'NOW HIRING', draftId: `hiring-${dateStr}-${String(n + 1).padStart(2, '0')}` })
   if (!r.ok) throw new Error(r.error)
   return { url: r.url, photo: photo.name }
 }
