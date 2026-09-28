@@ -36,6 +36,38 @@ function chunkPayload(json) {
 }
 const joinPayload = r => `${r.scrub_payload || ''}${r.scrub_payload2 || ''}${r.scrub_payload3 || ''}`
 
+/**
+ * What the job card knows. A card built from a scrub, or by hand on Build
+ * job, keeps its calibrations as a JSON string of {calibration_name,
+ * cal_type, trigger, line_references, justification, enabled}. That is
+ * exactly what the Absolute ADAS report PDF is printed from, so it is good
+ * enough to stand in for a scrub when no scrub was ever run.
+ */
+export function cardCalibrations(job) {
+  let cals = []
+  try { cals = typeof job?.calibrations === 'string' ? JSON.parse(job.calibrations || '[]') : (job?.calibrations || []) } catch { cals = [] }
+  return (Array.isArray(cals) ? cals : [])
+    .filter(c => c && (c.calibration_name || c.name || c.sensor))
+    .map(c => ({
+      calibration_name: c.calibration_name || c.name || c.sensor || '',
+      cal_type: c.cal_type || '', trigger: c.trigger || '', line_references: c.line_references || '',
+      justification: c.justification || '', enabled: c.enabled !== false,
+    }))
+}
+
+/** The sensor / count / search columns for a set of calibrations. */
+function calColumns(cals, extraSearch = []) {
+  const required = cals.filter(isRequired)
+  const sensors = cals.map(c => ({ n: sensorName(c), t: str(c.cal_type, 40), r: isRequired(c), l: str(c.line_references, 80), g: str(c.trigger, 120) }))
+  return {
+    scrub_sensor_count: cals.length,
+    scrub_required_count: required.length,
+    scrub_required_names: required.map(sensorName).filter(Boolean).join(', ').slice(0, CHUNK),
+    scrub_sensors: JSON.stringify(sensors).slice(0, CHUNK),
+    scrub_search: [...extraSearch, ...cals.map(sensorName)].filter(Boolean).join(' ').toLowerCase().slice(0, CHUNK),
+  }
+}
+
 /** A sensor counts as required when the scrub enabled it. */
 const isRequired = c => c?.enabled === true || /^required$/i.test(String(c?.verdict || ''))
 const sensorName = c => String(c?.sensor || c?.calibration_name || '').trim()
@@ -246,18 +278,26 @@ export async function linkReports(req, jobId, files = [], job = {}) {
       console.log(`[scrubs] linked ${reports.length} report(s) to scrub ${rowId}`)
       return { ok: true, id: rowId, reports }
     }
-    // No scrub on this card — keep the paperwork anyway.
+    // No scrub on this card — keep the paperwork anyway, and take the
+    // calibrations off the card itself (they are what the report was printed
+    // from). A billed car must never show "0 sensors" just because nobody
+    // pressed Scrub (Mark's Lexus RX screenshot, 2026-09-28).
+    const cals = cardCalibrations(job)
+    const vehicleStr = str(job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' '), 200)
     const stub = await ds(req).datastore().table(TABLE).insertRow({
       scrub_job_id: id,
+      scrub_status: cals.length ? 'from-card' : 'report-only',
+      scrub_stage: 'invoiced', scrub_stage_at: nowIso(),
+      ...calColumns(cals, [job?.shop_name, vehicleStr, job?.vin, job?.invoice_number, job?.quote_number, job?.insurer, ...reports.map(r => r.name)]),
+      ...chunkPayload(JSON.stringify({ shop: job?.shop_name || '', ro_number: job?.invoice_number || job?.quote_number || '', insurer: job?.insurer || '', vin: job?.vin || '', vehicle: vehicleStr, year: job?.year || '', make: job?.make || '', model: job?.model || '', claim: job?.claim_number || '', calibrations: cals, _from: 'job card' })),
       scrub_shop: str(job?.shop_name, 200),
-      scrub_vehicle: str(job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' '), 200),
+      scrub_vehicle: vehicleStr,
       scrub_year: str(job?.year, 8), scrub_make: str(job?.make, 60), scrub_model: str(job?.model, 120),
       scrub_vin: str(job?.vin, 32).toUpperCase(),
       scrub_ro: str(job?.invoice_number || job?.quote_number, 60),
+      scrub_claim: str(job?.claim_number, 80),
       scrub_insurer: str(job?.insurer, 120),
-      scrub_source: 'report-only', scrub_status: 'report-only', scrub_at: nowIso(),
-      scrub_search: [job?.shop_name, job?.vehicle, job?.vin, job?.invoice_number, job?.quote_number, ...reports.map(r => r.name)]
-        .filter(Boolean).join(' ').toLowerCase().slice(0, CHUNK),
+      scrub_source: 'report-only', scrub_source_system: 'job-card', scrub_at: nowIso(),
       ...patch,
     })
     const sid = String(stub?.ROWID || stub?.[0]?.ROWID || '')
@@ -267,6 +307,37 @@ export async function linkReports(req, jobId, files = [], job = {}) {
     console.warn('[scrubs] linkReports failed:', e.message)
     return { ok: false, error: e.message }
   }
+}
+
+/**
+ * Reload a library row's calibrations from the job card it points at. For
+ * rows written before the stub learned to read the card, and for any card
+ * Kat edited after the scrub. Keeps the row's identity and stage; only the
+ * sensor columns and payload change.
+ */
+export async function refreshFromCard(req, scrubId) {
+  const s = await getScrub(req, scrubId)
+  if (!s) return { ok: false, error: 'not found' }
+  if (!s.jobId) return { ok: false, error: 'this scrub is not linked to a job card' }
+  const jobsMod = await import('../routes/jobs.js')
+  const job = (await jobsMod.readJobsPublic(req)).find(j => String(j.id) === String(s.jobId))
+  if (!job) return { ok: false, error: 'the job card is gone' }
+  const cals = cardCalibrations(job)
+  if (!cals.length) return { ok: false, error: 'the job card has no calibrations on it either' }
+  const vehicleStr = str(job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' '), 200)
+  const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const payload = { ...p, shop: p.shop || job.shop_name || '', vehicle: p.vehicle || vehicleStr, vin: p.vin || job.vin || '', ro_number: p.ro_number || job.invoice_number || job.quote_number || '', insurer: p.insurer || job.insurer || '', claim: p.claim || job.claim_number || '', calibrations: cals, _from: 'job card' }
+  const patch = {
+    ROWID: s.id,
+    scrub_status: 'from-card',
+    ...calColumns(cals, [job.shop_name, vehicleStr, job.vin, job.invoice_number, job.quote_number, job.insurer, job.claim_number]),
+    ...chunkPayload(JSON.stringify(payload)),
+  }
+  delete patch._overflow
+  if (!s.claim && job.claim_number) patch.scrub_claim = str(job.claim_number, 80)
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  console.log(`[scrubs] ${s.id} reloaded from card ${s.jobId}: ${patch.scrub_required_count}/${cals.length} required`)
+  return { ok: true, id: s.id, sensors: cals.length, required: patch.scrub_required_count }
 }
 
 const STAGES = ['scrubbed', 'quoted', 'job', 'invoiced', 'paid']

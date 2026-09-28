@@ -17,7 +17,7 @@
 // instead of the request dying with nothing saved.
 import express from 'express'
 import { requeueScrub, runScrubQueue, scrubQueue } from '../services/emailToJob.js'
-import { listScrubs, getScrub, scrubsForJob, scrubStats } from '../services/scrubStore.js'
+import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard } from '../services/scrubStore.js'
 
 const router = express.Router()
 const who = req => req.user?.name || req.user?.email || 'staff'
@@ -114,6 +114,15 @@ router.get('/:id/pdf', async (req, res) => {
     console.error('[scrubs] pdf failed:', e.message)
     res.status(500).json({ error: e.message })
   }
+})
+
+// 🔄 Reload this row's calibrations from the job card it points at.
+router.post('/:id/from-card', async (req, res) => {
+  try {
+    const r = await refreshFromCard(req, req.params.id)
+    if (!r.ok) return res.status(400).json(r)
+    res.json({ ...r, scrub: await getScrub(req, req.params.id) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 router.get('/:id', async (req, res) => {

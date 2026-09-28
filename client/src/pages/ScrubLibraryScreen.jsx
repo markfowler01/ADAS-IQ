@@ -20,6 +20,7 @@ const SOURCE_LABEL = {
   requeue: '🔄 Re-scrub', 'report-only': '📎 Reports only',
 }
 const sourceLabel = s => SOURCE_LABEL[s] || (String(s || '').startsWith('mail:') ? `📥 ${String(s).slice(5)}` : s || '—')
+const statusNote = s => s.status === 'from-card' ? 'from card' : s.status === 'report-only' ? 'not scrubbed' : ''
 
 // Where this car is on the money path. Grey until it turns into paperwork.
 const STAGE = {
@@ -152,7 +153,7 @@ export default function ScrubLibraryScreen() {
                   </td>
                   <td className="py-2.5 pr-3">
                     <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                    <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /></div>
+                    <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.vin || '—'}</td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
@@ -192,7 +193,10 @@ export default function ScrubLibraryScreen() {
 }
 
 // ── One scrub, as a Calibration Identification Report ────────────────────────
-function ScrubReport({ s, onBack }) {
+function ScrubReport({ s: initial, onBack }) {
+  const [s, setS] = useState(initial)
+  const [cardBusy, setCardBusy] = useState(false)
+  const [cardMsg, setCardMsg] = useState('')
   const [pdfBusy, setPdfBusy] = useState(false)
   const [pdfErr, setPdfErr] = useState('')
   const [expanded, setExpanded] = useState({})
@@ -230,6 +234,22 @@ function ScrubReport({ s, onBack }) {
     finally { setPdfBusy(false) }
   }
 
+  const loadFromCard = async () => {
+    setCardBusy(true); setCardMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/from-card`, { method: 'POST' })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      if (d.scrub) setS(d.scrub)
+      setCardMsg(`Loaded ${d.required} required of ${d.sensors} from the job card.`)
+    } catch (e) { setCardMsg(e.message || 'Could not read the job card.') }
+    finally { setCardBusy(false) }
+  }
+
+  // "reports only" = billed with paperwork attached, but nobody ever pressed
+  // Scrub. Zeros would be a lie; say what actually happened.
+  const neverScrubbed = !list.length && ['report-only', 'from-card'].includes(s.status)
+
   const Fact = ({ k, v }) => (
     <div className="text-sm leading-relaxed">
       <span className="font-bold" style={{ color: INK }}>{k}: </span>
@@ -250,8 +270,7 @@ function ScrubReport({ s, onBack }) {
             <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Updated:</span> {when(s.at) || '—'}</p>
             <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">By:</span> {s.by || sourceLabel(s.source)}</p>
             <p className="text-sm mt-1 flex items-center gap-2" style={{ color: '#444' }}><span className="font-bold">Stage:</span> <StagePill s={s} /></p>
-            {s.quoteNumber && <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Quote:</span> {s.quoteNumber}</p>}
-            {s.invoiceNumber && <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Invoice:</span> {s.invoiceNumber}</p>}
+            {s.quoteNumber && s.quoteNumber !== s.invoiceNumber && <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Quote:</span> {s.quoteNumber}</p>}
 
             <button
               onClick={downloadPdf}
@@ -259,6 +278,14 @@ function ScrubReport({ s, onBack }) {
               className="mt-4 w-full rounded-lg px-3 py-2.5 text-sm font-bold"
               style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: list.length ? 1 : 0.5 }}
             >{pdfBusy ? 'Building…' : '📄 Absolute ADAS report ↓'}</button>
+
+            {!list.length && s.jobId && (
+              <button onClick={loadFromCard} disabled={cardBusy} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold"
+                style={{ backgroundColor: '#fff', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>
+                {cardBusy ? 'Reading the card…' : '🔄 Load calibrations from the job card'}
+              </button>
+            )}
+            {cardMsg && <p className="text-xs mt-2" style={{ color: cardMsg.startsWith('Loaded') ? '#166534' : '#b91c1c' }}>{cardMsg}</p>}
 
             <button onClick={onBack} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold"
               style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd' }}>← All scrubs</button>
@@ -286,7 +313,8 @@ function ScrubReport({ s, onBack }) {
                 <div>
                   <div className="text-xs font-bold uppercase tracking-wider pb-1 mb-1.5" style={{ color: ORANGE, borderBottom: `2px solid ${ORANGE}` }}>Repair</div>
                   <Fact k="Customer" v={s.shop} />
-                  <Fact k="Claim" v={[s.claim, s.insurer ? `(${s.insurer})` : ''].filter(Boolean).join(' ')} />
+                  <Fact k="Claim" v={s.claim} />
+                  <Fact k="Insurer" v={s.insurer} />
                   <Fact k="Repair Order" v={s.ro} />
                 </div>
                 <div>
@@ -306,7 +334,7 @@ function ScrubReport({ s, onBack }) {
                 </div>
                 <div className="rounded-lg px-3 py-2.5" style={{ backgroundColor: '#f5f3f0' }}>
                   <div className="text-xs font-bold mb-0.5" style={{ color: '#555' }}>Sensors checked</div>
-                  <div className="text-sm" style={{ color: '#444' }}>{list.length} on this vehicle{p.estimate_version ? ` · ${p.estimate_version}` : ''}</div>
+                  <div className="text-sm" style={{ color: '#444' }}>{neverScrubbed ? 'Not scrubbed' : `${list.length} on this vehicle`}{p.estimate_version ? ` · ${p.estimate_version}` : ''}{s.status === 'from-card' ? ' · from the job card' : ''}</div>
                 </div>
               </div>
 
@@ -331,7 +359,13 @@ function ScrubReport({ s, onBack }) {
                 </div>
               </div>
 
-              {!list.length && <p className="text-sm" style={{ color: '#777' }}>No sensors recorded on this scrub.</p>}
+              {!list.length && (
+                <p className="text-sm" style={{ color: '#777' }}>
+                  {neverScrubbed
+                    ? 'This car was billed with its reports attached, but no scrub was ever run on it. The calibrations live on the job card — load them with the button on the left, or press Scrub estimate on the card to run a real scrub.'
+                    : 'No sensors recorded on this scrub.'}
+                </p>
+              )}
 
               {!!list.length && (
                 <div className="overflow-x-auto">
