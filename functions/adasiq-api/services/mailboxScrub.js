@@ -124,7 +124,7 @@ async function pageMessages(token, accountId, start, limit) {
  * because a scrub can outrun the gateway. Everything else (paging, listing
  * attachments, the done bookkeeping) is cheap and runs to the budget.
  */
-export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max = 1, budgetMs = 22000, dry = false, match = '', via = '', includeOwn = false } = {}) {
+export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max = 1, budgetMs = 22000, dry = false, match = '', via = '', includeOwn = false, depth = 0 } = {}) {
   const t0 = Date.now()
   // `via` lets us harvest one correspondent's mail out of a mailbox we CAN
   // read. ar@ is not a mailbox the token can open, but ar@'s mail is copied
@@ -160,12 +160,16 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
   }
 
   try {
-    while (Date.now() - t0 < budgetMs && out.scrubbed < max) {
+    // `depth` caps how deep one run walks. The ongoing ticker only needs to
+    // see recent mail; without a cap it re-walks thousands of old messages
+    // every cycle looking for a handful of matches.
+    while (Date.now() - t0 < budgetMs && out.scrubbed < max && (!depth || out.scanned < depth)) {
       const msgs = await pageMessages(mb.token, mb.accountId, st.start, PAGE)
       if (!msgs.length) { out.done = true; st.start = 1; break }   // caught up — next run starts at the top
 
       for (const m of msgs) {
         if (Date.now() - t0 > budgetMs || out.scrubbed >= max) break
+        if (depth && out.scanned >= depth) break
         out.scanned++; st.scanned = (st.scanned || 0) + 1
         st.start++                                  // advance past this message whatever happens
         if (m.hasAttachment === false) continue

@@ -422,6 +422,7 @@ router.post('/mail-scrub', async (req, res) => {
       max: Math.min(Number(req.query.max) || 1, 5),
       via: String(req.query.via || ''),
       includeOwn: req.query.includeOwn === '1',
+      depth: Math.min(Number(req.query.depth) || 0, 20000),
       dry: req.query.dry === '1',
     }))
   } catch (e) { res.status(500).json({ error: e.message }) }

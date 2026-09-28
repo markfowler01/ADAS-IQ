@@ -36,7 +36,7 @@ const TICKS = {
   // added as an alias on the app's Zoho account.
   // One PDF per call for the same reason as position_import: an Opus scrub
   // outruns the 30s gateway even though the function keeps running.
-  mail_scrub: { minutes: 3, path: '/api/crm-sync-cron/mail-scrub?inbox=mark@absoluteadas.com&via=ar@absoluteadas.com', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
+  mail_scrub: { minutes: 15, path: '/api/crm-sync-cron/mail-scrub?inbox=mark@absoluteadas.com&via=ar@absoluteadas.com&depth=400', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
 }
 
 /** Claim the window in Cache. Returns false when someone already claimed it. */
