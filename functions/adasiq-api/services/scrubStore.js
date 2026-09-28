@@ -375,6 +375,17 @@ export async function setScrubStage(req, jobId, stage, { quoteNumber = '', quote
   }
 }
 
+/** Is this file already in the library? (cross-source dedupe: the same
+ * estimate is often both an email attachment and a Downloads file.) */
+export async function hasScrubForFile(req, name) {
+  const n = str(name, 255).replace(/'/g, "''")
+  if (!n) return false
+  try {
+    const rows = await ds(req).zcql().executeZCQLQuery(`SELECT ROWID FROM ${TABLE} WHERE scrub_file_name = '${n}' LIMIT 1`)
+    return !!(rows || []).length
+  } catch { return false }
+}
+
 /** Every scrub ever run on one job card, newest first. */
 export async function scrubsForJob(req, jobId) {
   const id = String(jobId || '').replace(/'/g, '')

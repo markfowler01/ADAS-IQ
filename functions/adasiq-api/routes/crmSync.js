@@ -448,4 +448,34 @@ router.post('/mail-scrub/reset', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 📁 Scrub one PDF handed to us as a file — the Downloads-folder sweep
+// (Mark 2026-09-28: "go through my downloads folder and scrub every CCC
+// estimate you can find"). multipart: file=<pdf>, name=<original name>.
+// Classifies first so a bank notice never costs an Opus call; skips files
+// already in the library by name.
+const scrubFileUpload = (await import('multer')).default({ storage: (await import('multer')).default.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } }).single('file')
+router.post('/scrub-file', (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  scrubFileUpload(req, res, async err => {
+    if (err) return res.status(400).json({ error: err.message })
+    if (!req.file || req.file.buffer.length < 512) return res.status(400).json({ error: 'no usable file' })
+    const name = String(req.body?.name || req.file.originalname || 'file.pdf').slice(0, 255)
+    try {
+      const { hasScrubForFile } = await import('../services/scrubStore.js')
+      if (await hasScrubForFile(req, name)) return res.json({ skipped: 'already in the library', name })
+      const { detectPdfKind } = await import('../services/claude.js')
+      let kind = 'OTHER', make = ''
+      try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = 'OTHER' }
+      if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) return res.json({ skipped: kind, name })
+      const { scrubPdfBuffer } = await import('./extract.js')
+      const data = await scrubPdfBuffer(req, req.file.buffer, {
+        learn: false, source: String(req.body?.source || 'downloads').slice(0, 30), by: 'Downloads sweep',
+        file: { name }, pdfType: kind === 'REPORT' ? 'KINETIC' : 'CCC', make,
+      })
+      res.json({ ok: true, kind, name, shop: data?.shop || '', vehicle: data?.vehicle || '', ro: data?.ro_number || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length, scrubId: data?._scrubId || '' })
+    } catch (e) { res.status(500).json({ error: e.message, name }) }
+  })
+})
+
 export default router

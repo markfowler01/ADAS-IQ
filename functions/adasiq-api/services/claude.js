@@ -272,17 +272,29 @@ ${oemRefs}
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON from Claude
  */
-export async function extractFromPdf(pdfBuffer, { oemRefs = '', refsFor = null } = {}) {
+export async function extractFromPdf(pdfBuffer, { oemRefs = '', refsFor = null, pdfType: forcedType = '', make: forcedMake = '' } = {}) {
   const base64Pdf = pdfBuffer.toString('base64')
 
-  // Auto-detect PDF type (and the make, so the OEM library can be narrowed)
+  // Auto-detect PDF type (and the make, so the OEM library can be narrowed).
+  // A caller that already classified the file (the mailbox harvest, the
+  // file scrub) passes pdfType and we trust it — detectPdfMeta is binary
+  // (CCC, else KINETIC), so a Mitchell or Audatex estimate would otherwise
+  // be handed to the Kinetic report reader and come back with nothing
+  // (Mark's Showcase estimates, 2026-09-28). Any collision estimate goes to
+  // the CCC scrubber: it reads the repair lines, whatever printed them.
   let pdfType = 'KINETIC', detectedMake = ''
-  try {
-    const meta = await detectPdfMeta(base64Pdf)
-    pdfType = meta.type; detectedMake = meta.make
-    console.log(`[extract] PDF type detected: ${pdfType}${detectedMake ? ` · ${detectedMake}` : ''}`)
-  } catch (e) {
-    console.warn('[extract] PDF type detection failed, defaulting to KINETIC:', e.message)
+  if (forcedType) {
+    pdfType = /kinetic|report/i.test(forcedType) ? 'KINETIC' : 'CCC'
+    detectedMake = forcedMake || ''
+    console.log(`[extract] PDF type given: ${pdfType}${detectedMake ? ` · ${detectedMake}` : ''}`)
+  } else {
+    try {
+      const meta = await detectPdfMeta(base64Pdf)
+      pdfType = meta.type; detectedMake = meta.make
+      console.log(`[extract] PDF type detected: ${pdfType}${detectedMake ? ` · ${detectedMake}` : ''}`)
+    } catch (e) {
+      console.warn('[extract] PDF type detection failed, defaulting to KINETIC:', e.message)
+    }
   }
 
   // Route to appropriate extractor

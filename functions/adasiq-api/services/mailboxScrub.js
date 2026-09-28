@@ -210,21 +210,29 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
             // point here — an AR mailbox is mostly paperwork we should not
             // spend an Opus call on.
             const { detectPdfKind } = await import('./claude.js')
-            let kind = 'OTHER'
-            try { ({ kind } = await detectPdfKind(buf.toString('base64'))) } catch { kind = 'OTHER' }
+            let kind = 'OTHER', make = ''
+            try { ({ kind, make } = await detectPdfKind(buf.toString('base64'))) } catch { kind = 'OTHER' }
             if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) {
               out.skipped++; st.skipped = (st.skipped || 0) + 1
               out.filed.push({ name: a.attachmentName, kind, result: 'not an estimate or report — skipped' })
               continue
             }
             const type = kind
-
+            // Same estimate is often both an attachment and a Downloads file.
+            const { hasScrubForFile } = await import('./scrubStore.js')
+            if (await hasScrubForFile(req, a.attachmentName)) {
+              out.skipped++; st.skipped = (st.skipped || 0) + 1
+              out.filed.push({ name: a.attachmentName, kind, result: 'already in the library' })
+              continue
+            }
             const { scrubPdfBuffer } = await import('../routes/extract.js')
             const data = await scrubPdfBuffer(req, buf, {
               learn: false,
               source: `mail:${key}`,
               by: `mailbox ${key}`,
               file: { name: a.attachmentName || 'attachment.pdf' },
+              pdfType: kind === 'REPORT' ? 'KINETIC' : 'CCC',   // ESTIMATE (Mitchell/Audatex) → the CCC scrubber too
+              make,
             })
             out.scrubbed++; st.scrubbed = (st.scrubbed || 0) + 1
             out.filed.push({

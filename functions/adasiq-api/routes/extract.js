@@ -170,7 +170,7 @@ const RIVIAN_BASE_ITEMS = [
 // Shared scrub (2026-09-24): the upload screen AND the email intake run the
 // same extractor + rules DB + Rivian base lines + auto-learn, so a CCC
 // estimate that arrives by email is scrubbed exactly like one Kat uploads.
-export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by = '', source = 'upload', file = {}, keep = true } = {}) {
+export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by = '', source = 'upload', file = {}, keep = true, pdfType = '', make = '' } = {}) {
   // 📋 Hand the scrubber what the manufacturers actually publish, so a
   // required/not-required call is grounded in the OEM's own words and the
   // justification can cite it by name (Mark 2026-09-24).
@@ -180,7 +180,7 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
     oemRefs = await oemReferenceBlock(req, {})
     refsFor = make => oemReferenceBlock(req, { make })   // called once the make is known
   } catch { oemRefs = '' }
-  const data = await extractFromPdf(buffer, { oemRefs, refsFor })
+  const data = await extractFromPdf(buffer, { oemRefs, refsFor, pdfType, make })
 
   // Fallback: if no RO number found, use last 8 digits of VIN
   if (!data.ro_number && data.vin && data.vin.length >= 8) {
