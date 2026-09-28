@@ -47,6 +47,7 @@ const MORE_GROUPS = [
     { id: 'planner',   label: 'My Day Planner' , icon: '🗒' },
     { id: 'projects',  label: 'Projects' , icon: '📌' },
     { id: 'tips',      label: 'TSB Tips' , icon: '📖' },
+    { id: 'scrubs',    label: 'Scrub Library' , icon: '🔬' },
     { id: 'rules',     label: 'Calibration Rules' , icon: '⚙️' },
     { id: 'item-map',  label: 'Item Mapping', adminOnly: true , icon: '🔗' },
     { id: 'wd-cleanup', label: 'WorkDrive Cleanup', ownerOnly: true , icon: '🧹' },
