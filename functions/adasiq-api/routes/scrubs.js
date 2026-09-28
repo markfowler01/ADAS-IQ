@@ -86,7 +86,21 @@ router.get('/:id/pdf', async (req, res) => {
     const cals = Array.isArray(p.calibrations) && p.calibrations.length
       ? p.calibrations
       : (s.sensors || []).map(x => ({ calibration_name: x.n, cal_type: x.t, trigger: x.g, line_references: x.l, enabled: !!x.r, justification: '' }))
-    if (!cals.length) return res.status(400).json({ error: 'this scrub has no calibrations to report' })
+    if (!cals.length) {
+      // Billed before the library learned to read the card, and the card is
+      // gone (removed on invoice-sent, Mark's rule). The report that actually
+      // went out is still in WorkDrive — serve that rather than a dead button.
+      const stored = (s.reports || []).find(r => r.kind === 'absolute' && r.id)
+      if (!stored) return res.status(400).json({ error: 'this scrub has no calibrations and no stored report' })
+      const { getAccessToken } = await import('../services/zoho.js')
+      const { downloadFile } = await import('../services/workdrive.js')
+      const { buffer } = await downloadFile(stored.id, await getAccessToken())
+      if (!buffer || buffer.length < 512) return res.status(502).json({ error: 'could not read the stored report from WorkDrive' })
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="${String(stored.name || 'Absolute ADAS report.pdf').replace(/"/g, '')}"`)
+      res.setHeader('Content-Length', buffer.length)
+      return res.end(buffer)
+    }
 
     const { generateADASIQPdf } = await import('../services/pdf.js')
     const buffer = await generateADASIQPdf({

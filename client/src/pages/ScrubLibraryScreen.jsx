@@ -249,6 +249,10 @@ function ScrubReport({ s: initial, onBack }) {
   // "reports only" = billed with paperwork attached, but nobody ever pressed
   // Scrub. Zeros would be a lie; say what actually happened.
   const neverScrubbed = !list.length && ['report-only', 'from-card'].includes(s.status)
+  // Once billed, the card is removed on invoice-sent (Mark's rule), so there
+  // is nothing to reload from — but the report that went out is still filed.
+  const cardGone = neverScrubbed && s.stage === 'invoiced'
+  const hasStoredReport = (s.reports || []).some(r => r.kind === 'absolute' && r.id)
 
   const Fact = ({ k, v }) => (
     <div className="text-sm leading-relaxed">
@@ -274,12 +278,12 @@ function ScrubReport({ s: initial, onBack }) {
 
             <button
               onClick={downloadPdf}
-              disabled={pdfBusy || !list.length}
+              disabled={pdfBusy || (!list.length && !hasStoredReport)}
               className="mt-4 w-full rounded-lg px-3 py-2.5 text-sm font-bold"
-              style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: list.length ? 1 : 0.5 }}
-            >{pdfBusy ? 'Building…' : '📄 Absolute ADAS report ↓'}</button>
+              style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: (list.length || hasStoredReport) ? 1 : 0.5 }}
+            >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report that went out ↓' : '📄 Absolute ADAS report ↓'}</button>
 
-            {!list.length && s.jobId && (
+            {!list.length && s.jobId && !cardGone && (
               <button onClick={loadFromCard} disabled={cardBusy} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold"
                 style={{ backgroundColor: '#fff', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>
                 {cardBusy ? 'Reading the card…' : '🔄 Load calibrations from the job card'}
@@ -361,9 +365,11 @@ function ScrubReport({ s: initial, onBack }) {
 
               {!list.length && (
                 <p className="text-sm" style={{ color: '#777' }}>
-                  {neverScrubbed
-                    ? 'This car was billed with its reports attached, but no scrub was ever run on it. The calibrations live on the job card — load them with the button on the left, or press Scrub estimate on the card to run a real scrub.'
-                    : 'No sensors recorded on this scrub.'}
+                  {cardGone
+                    ? 'This car was billed before the library learned to read the job card, and the card was removed after billing, as designed. The sensor list cannot be rebuilt here, but the report that went out with the invoice is on the button to the left.'
+                    : neverScrubbed
+                      ? 'This car was billed with its reports attached, but no scrub was ever run on it. The calibrations live on the job card — load them with the button on the left, or press Scrub estimate on the card to run a real scrub.'
+                      : 'No sensors recorded on this scrub.'}
                 </p>
               )}
 
