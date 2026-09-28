@@ -244,7 +244,7 @@ function pickSceneVariant() {
 // Fonts embedded as base64:
 //   - Playfair Display variable (used at weight 800) → newspaper headline
 //   - Inter Bold + Regular → kicker, byline, footer
-async function compositeOverlay(rawImageBuffer, headline) {
+async function compositeOverlay(rawImageBuffer, headline, { kicker = 'INDUSTRY REPORT' } = {}) {
   const baseMeta = await sharp(rawImageBuffer).metadata()
   const baseW = baseMeta.width || 1200
   const baseH = baseMeta.height || 627
@@ -388,7 +388,7 @@ async function compositeOverlay(rawImageBuffer, headline) {
     <rect x="0" y="0" width="${baseW}" height="${topH + 6}" fill="${BRAND_DARK}"/>
 
     <!-- Kicker: orange "INDUSTRY REPORT" + light brand on same line -->
-    <text x="${padX}" y="${kickerY}" class="np-kicker">INDUSTRY REPORT</text>
+    <text x="${padX}" y="${kickerY}" class="np-kicker">${escXml(String(kicker || 'INDUSTRY REPORT').toUpperCase().slice(0, 28))}</text>
     <text x="${padX}" y="${kickerY + Math.round(kickerFontSize * 1.4)}" class="np-kicker-brand" style="font-size:${Math.round(kickerFontSize * 0.75)}px;letter-spacing:0.22em;">ABSOLUTE ADAS  ·  COLLISION + ADAS CALIBRATION</text>
 
     <!-- Thin hairline rule below kicker -->
@@ -477,6 +477,29 @@ COMPOSITION (visual zones only — describe the IMAGE, do not write any words):
 DO NOT WRITE ANY WORDS IN THE IMAGE. Do not place the words "HEADLINE", "OVERLAY", "FOOTER", "ABSOLUTE", "ADAS", "BRAND MARK", "LOGO", "HERE", or any other text, label, caption, or annotation anywhere in the photograph. The composition zones above describe brightness and detail levels only — never write the zone names visibly. The image must be 100% photograph, no rendered text of any kind.
 
 Real photography only. Documentary magazine quality. Just the photograph.`
+
+/**
+ * Composite the brand masthead/footer over a photo WE supply (a real van
+ * photo, for example) and host it. No Gemini call. Used by the hiring
+ * campaign (kicker "NOW HIRING"). Same footer policy: no footer, no image.
+ */
+export async function composeAndHostImage({ rawBuffer, headline, kicker, draftId }) {
+  if (!rawBuffer || !headline || !draftId) return { ok: false, error: 'rawBuffer, headline, draftId required' }
+  let buffer
+  try { buffer = await compositeOverlay(rawBuffer, String(headline).slice(0, 100), { kicker }) }
+  catch (e) { return { ok: false, error: `composite failed: ${e.message}` } }
+  let url = null, lastErr = null
+  try {
+    const { uploadImageToCloudinary, cloudinaryImageConfigured } = await import('./cloudinaryImage.js')
+    if (cloudinaryImageConfigured()) { const up = await uploadImageToCloudinary({ buffer, publicId: `capture-${draftId}` }); if (up.ok) url = up.url; else lastErr = up.error }
+  } catch (e) { lastErr = e.message }
+  if (!url) {
+    const p = `capture-images/${draftId}.png`
+    const r = await commitBinaryFile({ path: p, buffer, message: `Capture campaign image: ${draftId}` }).catch(e => ({ ok: false, error: e.message }))
+    if (r?.ok) url = `https://absoluteadas.com/${p}`; else lastErr = r?.error || lastErr
+  }
+  return url ? { ok: true, url } : { ok: false, error: lastErr || 'hosting failed' }
+}
 
 /**
  * Generate a LinkedIn-share-sized image for one post variant.

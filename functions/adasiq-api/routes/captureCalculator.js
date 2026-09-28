@@ -2750,6 +2750,26 @@ ${draftHtml}
 </body></html>`)
 })
 
+// ── NOW HIRING CAMPAIGN (Mon/Wed/Fri 5:30 PM PT, real van photos) ───────────
+captureCalcRouter.all('/hiring/run', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { enqueueTodaysHiring } = await import('../services/hiringCampaign.js')
+    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : undefined
+    res.json({ ok: true, ...(await enqueueTodaysHiring(req, { dateStr, dry: req.query.dry === '1' })) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.all('/hiring/status', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { hiringStatus, setHiringActive } = await import('../services/hiringCampaign.js')
+    if (req.query.active === '0' || req.query.active === '1') await setHiringActive(req, req.query.active === '1')
+    res.json({ ok: true, ...(await hiringStatus(req)) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.get('/hiring/preview', requireCronSecretFlex, async (req, res) => {
+  try { const { previewHiring } = await import('../services/hiringCampaign.js'); res.json({ ok: true, ...(await previewHiring(req, Number(req.query.n) || 1)) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 // ── ESTIMATOR MAGIC LANTERN (five lessons, one every three days) ────────────
 // Public opt-in from the guide page (form-encoded; JSON would preflight).
 // See services/estimatorLantern.js.
@@ -4364,6 +4384,17 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     } catch (e) {
       console.warn('[safety-net series]', e.message)
       out.skipped.push({ check: 'series', reason: e.message })
+    }
+    // 👷 Now Hiring: queue tonight's post (Mon/Wed/Fri) any hour before 4 PM.
+    try {
+      if (hourPt >= 5 && hourPt <= 15) {
+        const { enqueueTodaysHiring } = await import('../services/hiringCampaign.js')
+        const h = await enqueueTodaysHiring(req, {})
+        if (h.queued) out.actions.push({ action: 'hiring_queued', n: h.n }); else out.skipped.push({ check: 'hiring', reason: h.reason })
+      } else out.skipped.push({ check: 'hiring', reason: 'outside window' })
+    } catch (e) {
+      console.warn('[safety-net hiring]', e.message)
+      out.skipped.push({ check: 'hiring', reason: e.message })
     }
     // 📊 Estimator campaign card to Mark once a day at 5 PM PT.
     try {

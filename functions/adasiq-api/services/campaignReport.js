@@ -43,11 +43,21 @@ export async function campaignNumbers(req, { dateStr = ptDate() } = {}) {
   } catch (e) { console.warn('[campaign] series:', e.message) }
   let guideDrop = null
   try { const s = (await getVal(req, 'guide_drop_sent')) || {}; guideDrop = { emailed_total: Object.keys(s).length } } catch { /* fine */ }
+  // Hiring campaign: careers clicks come from the same beacon; applications from AdasCandidates.
+  let hiring = { careers_clicks_today: sumBy(today, 'careers'), careers_clicks_month: sumBy(mtd, 'careers'), applications_today: 0, applications_month: 0 }
+  try {
+    const catalyst = (await import('zcatalyst-sdk-node')).default
+    const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery('SELECT ROWID, cand_created_at, CREATEDTIME FROM AdasCandidates LIMIT 300')
+    const when = r => String(r.cand_created_at || r.CREATEDTIME || '')
+    const all = (rows || []).map(r => r.AdasCandidates || r)
+    hiring.applications_today = all.filter(r => when(r).startsWith(dateStr)).length
+    hiring.applications_month = all.filter(r => when(r).startsWith(month)).length
+  } catch (e) { console.warn('[campaign] hiring:', e.message) }
   return {
     date: dateStr,
     today: { checklist: sumBy(today, 'checklist'), checklist_by_source: bySource(today, 'checklist'), guide_clicks: sumBy(today, 'guide') - (Number(today['guide-page']) || 0), guide_page_views: Number(today['guide-page']) || 0 },
     month: { checklist: sumBy(mtd, 'checklist'), checklist_by_source: bySource(mtd, 'checklist'), guide_clicks: sumBy(mtd, 'guide') - (Number(mtd['guide-page']) || 0), guide_page_views: Number(mtd['guide-page']) || 0 },
-    lantern, series, guide_drop: guideDrop,
+    lantern, series, guide_drop: guideDrop, hiring,
   }
 }
 
@@ -59,6 +69,7 @@ export function formatCampaignCard(n) {
     `Guide clicks today: ${n.today.guide_clicks} · guide page views: ${n.today.guide_page_views}`,
     `Lesson signups today: *${n.lantern.today}* · active ${n.lantern.active} · finished ${n.lantern.done} · stopped ${n.lantern.unsubscribed}`,
     `Series posts published today: ${n.series.published_today}${n.series.failed_today ? ` · failed ${n.series.failed_today}` : ''}`,
+    `Hiring: careers clicks today ${n.hiring.careers_clicks_today} · applications today *${n.hiring.applications_today}* (month ${n.hiring.applications_month}, careers clicks ${n.hiring.careers_clicks_month})`,
     '',
     `Month to date: ${n.month.checklist} checklist downloads (${src(n.month.checklist_by_source)}), ${n.month.guide_clicks} guide clicks, ${n.month.guide_page_views} page views, ${n.lantern.total} lesson signups${n.guide_drop ? `, ${n.guide_drop.emailed_total} shops emailed` : ''}.`,
   ].join('\n')
