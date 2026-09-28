@@ -197,7 +197,8 @@ export async function detectPdfKind(base64Pdf) {
         '(1) one of:',
         'CCC = a CCC ONE collision repair estimate',
         'ESTIMATE = a collision repair estimate in any other format (Mitchell, Audatex, a shop\'s own)',
-        'REPORT = an ADAS calibration or diagnostic scan report (Kinetic ID, post-scan, pre-scan, health report)',
+        'ABSOLUTE = an Absolute ADAS calibration report (orange header, "Absolute ADAS" wordmark) — our own document',
+        'REPORT = any other ADAS calibration or diagnostic scan report (Kinetic ID, post-scan, pre-scan, health report)',
         'INVOICE = an invoice, bill, statement, remittance advice or payment confirmation',
         'OTHER = anything else',
         '(2) the vehicle manufacturer in full (Toyota, Mercedes-Benz, Ford), or UNKNOWN.',
@@ -208,7 +209,7 @@ export async function detectPdfKind(base64Pdf) {
   const raw = (message.content?.[0]?.text || '').trim()
   const [t, m] = raw.split('|').map(x => String(x || '').trim())
   const k = String(t).toUpperCase()
-  const kind = ['CCC', 'ESTIMATE', 'REPORT', 'INVOICE', 'OTHER'].find(x => k.includes(x)) || 'OTHER'
+  const kind = ['ABSOLUTE', 'CCC', 'ESTIMATE', 'REPORT', 'INVOICE', 'OTHER'].find(x => k.includes(x)) || 'OTHER'
   return { kind, make: /unknown/i.test(m || '') ? '' : (m || ''), raw }
 }
 

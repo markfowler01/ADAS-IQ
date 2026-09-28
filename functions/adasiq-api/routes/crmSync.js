@@ -467,11 +467,11 @@ router.post('/scrub-file', (req, res) => {
       const { detectPdfKind } = await import('../services/claude.js')
       let kind = 'OTHER', make = ''
       try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = 'OTHER' }
-      if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) return res.json({ skipped: kind, name })
+      if (!['CCC', 'ESTIMATE'].includes(kind)) return res.json({ skipped: kind, name })   // estimates only; ABSOLUTE = our own report
       const { scrubPdfBuffer } = await import('./extract.js')
       const data = await scrubPdfBuffer(req, req.file.buffer, {
         learn: false, source: String(req.body?.source || 'downloads').slice(0, 30), by: 'Downloads sweep',
-        file: { name }, pdfType: kind === 'REPORT' ? 'KINETIC' : 'CCC', make,
+        file: { name }, pdfType: 'CCC', make,
       })
       res.json({ ok: true, kind, name, shop: data?.shop || '', vehicle: data?.vehicle || '', ro: data?.ro_number || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length, scrubId: data?._scrubId || '' })
     } catch (e) { res.status(500).json({ error: e.message, name }) }

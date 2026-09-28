@@ -212,9 +212,13 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
             const { detectPdfKind } = await import('./claude.js')
             let kind = 'OTHER', make = ''
             try { ({ kind, make } = await detectPdfKind(buf.toString('base64'))) } catch { kind = 'OTHER' }
-            if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) {
+            // Estimates only (Mark: "scrub every CCC estimate"). Our own
+            // Absolute ADAS reports are never scrubbed — the first info@ pass
+            // ingested three of them as if they were cars. Kinetic reports are
+            // the benchmark set, not library content.
+            if (!['CCC', 'ESTIMATE'].includes(kind)) {
               out.skipped++; st.skipped = (st.skipped || 0) + 1
-              out.filed.push({ name: a.attachmentName, kind, result: 'not an estimate or report — skipped' })
+              out.filed.push({ name: a.attachmentName, kind, result: kind === 'ABSOLUTE' ? 'our own report — skipped' : 'not an estimate — skipped' })
               continue
             }
             const type = kind
@@ -231,12 +235,12 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
               source: `mail:${key}`,
               by: `mailbox ${key}`,
               file: { name: a.attachmentName || 'attachment.pdf' },
-              pdfType: kind === 'REPORT' ? 'KINETIC' : 'CCC',   // ESTIMATE (Mitchell/Audatex) → the CCC scrubber too
+              pdfType: 'CCC',   // ESTIMATE (Mitchell/Audatex) → the CCC scrubber too
               make,
             })
             out.scrubbed++; st.scrubbed = (st.scrubbed || 0) + 1
             out.filed.push({
-              name: a.attachmentName, type,
+              name: a.attachmentName, kind,
               shop: data?.shop || '', vehicle: data?.vehicle || '',
               ro: data?.ro_number || '', scrubId: data?._scrubId || '',
               required: (data?.calibrations || []).filter(c => c.enabled !== false).length,
