@@ -96,9 +96,9 @@ export async function seriesPostFor(req, dateStr) {
   const meta = await getVal(req, META_KEY)
   if (!meta || !meta.active || !meta.start_date) return null
   const idx = daysBetween(meta.start_date, dateStr)
-  if (idx < 0 || idx >= (meta.count || 0)) return null
+  if (idx < 0) return null
   const posts = await readChunkedArray(req, POSTS_KEY)
-  return posts.find(p => Number(p.day) === idx + 1) || posts[idx] || null
+  return posts.find(p => Number(p.day) === idx + 1) || null     // by day number only; auto-drafted days may leave gaps
 }
 
 /**
@@ -175,7 +175,21 @@ export async function enqueueTodaysSeries(req, { dateStr = ptDateStr(), dry = fa
   if (await isMarketingPaused(req, 'social')) return { skipped: true, reason: 'marketing_paused (social)' }
   const done = (await getVal(req, DONE_KEY)) || {}
   if (done[dateStr]) return { skipped: true, reason: 'already queued', ids: done[dateStr].ids }
-  const post = await seriesPostFor(req, dateStr)
+  let post = await seriesPostFor(req, dateStr)
+  if (!post && !dry) {
+    // 📚 Ongoing: past the hand-written posts, draft today's from the fact bank.
+    const meta = await getVal(req, META_KEY)
+    if (meta && meta.active && meta.ongoing !== false && daysBetween(meta.start_date, dateStr) >= 0) {
+      const { draftNextSeriesPost, rerunSeedPost } = await import('./guideSeriesDrafter.js')
+      try { await draftNextSeriesPost(req, { dateStr }) }
+      catch (e) {
+        console.warn('[series] auto-draft failed:', e.message)
+        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⚠️ Estimator series could not draft today's post (${e.message}). Rerunning a season-one post instead.`).catch(() => {})
+        await rerunSeedPost(req, { dateStr }).catch(() => {})
+      }
+      post = await seriesPostFor(req, dateStr)
+    }
+  }
   if (!post) return { skipped: true, reason: `no series post for ${dateStr}` }
 
   const ids = []

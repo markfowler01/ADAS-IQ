@@ -2836,10 +2836,19 @@ captureCalcRouter.all('/series/images', requireCronSecretFlex, async (req, res) 
     res.json(key ? await generateHighlightImage(req, { day, key, segment: getSegment(req) }) : await generateSeriesImage(req, { day, segment: getSegment(req) }))
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
+captureCalcRouter.all('/series/draft-next', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { draftNextSeriesPost } = await import('../services/guideSeriesDrafter.js')
+    const { ptDateStr } = await import('../services/guideSeries.js')
+    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : ptDateStr()
+    res.json(await draftNextSeriesPost(req, { dateStr, dry: req.query.dry === '1' }))
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
 captureCalcRouter.all('/series/status', requireCronSecretFlex, async (req, res) => {
   try {
     const { seriesStatus, setSeriesActive } = await import('../services/guideSeries.js')
     if (req.query.active === '0' || req.query.active === '1') await setSeriesActive(req, req.query.active === '1')
+    if (req.query.ongoing === '0' || req.query.ongoing === '1') { const { getVal, setVal } = await import('../services/vanDatastore.js'); const m = (await getVal(req, 'guide_series_meta')) || {}; await setVal(req, 'guide_series_meta', { ...m, ongoing: req.query.ongoing === '1' }) }
     res.json({ ok: true, ...(await seriesStatus(req)) })
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
