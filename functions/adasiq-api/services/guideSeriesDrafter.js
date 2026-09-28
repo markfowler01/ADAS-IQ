@@ -13,10 +13,10 @@ import catalyst from 'zcatalyst-sdk-node'
 import { getVal, setVal } from './vanDatastore.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from './cliq.js'
 
-const CHECKLIST = 'absoluteadas.com/checklist'
-const GUIDE = 'absoluteadas.com/estimator-guide'
-const TAIL = `Download the one-page checklist for your estimating desk, free, no signup: ${CHECKLIST}\n\nFull guide, line picker, and five short lessons by email: ${GUIDE}\n\nNot sure on a car? Text the van. 1-844-FIX-ADAS.`
-const IG_TAIL = `Download the checklist, free: ${CHECKLIST} (link in bio)\nFive short lessons by email on the guide page.\nText the van 1-844-FIX-ADAS`
+const CHECKLIST = 'https://absoluteadas.com/checklist'      // full https so LinkedIn and Facebook make it tappable
+const GUIDE = 'https://absoluteadas.com/estimator-guide'
+const TAIL = `Download the one-page checklist for your estimating desk, free, no signup:\n${CHECKLIST}\n\nFull guide, line picker, and five short lessons by email:\n${GUIDE}\n\nNot sure on a car? Text the van. 1-844-FIX-ADAS.`
+const IG_TAIL = `Download the checklist, free. Link in bio, or type absoluteadas.com/checklist\nFive short lessons by email on the guide page.\nText the van 1-844-FIX-ADAS`
 const USED_KEY = 'guide_series_topics_used'   // { [topic_key]: last_used_date }
 const REPEAT_DAYS = 45
 
