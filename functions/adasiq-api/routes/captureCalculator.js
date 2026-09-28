@@ -2750,6 +2750,40 @@ ${draftHtml}
 </body></html>`)
 })
 
+// ── ESTIMATOR MAGIC LANTERN (five lessons, one every three days) ────────────
+// Public opt-in from the guide page (form-encoded; JSON would preflight).
+// See services/estimatorLantern.js.
+captureCalcRouter.post('/lantern/enroll', express.urlencoded({ extended: false, limit: '8kb' }), express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const { enroll } = await import('../services/estimatorLantern.js')
+    const b = req.body || {}
+    res.json(await enroll(req, { email: b.email, name: b.name, shop: b.shop, source: b.source }))
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.all('/lantern/unsub', express.urlencoded({ extended: false, limit: '2kb' }), async (req, res) => {
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const id = String(req.query.id || req.body?.id || ''); const sig = String(req.query.sig || req.body?.sig || '')
+  const page = inner => res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimator lessons</title><style>body{font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#f5f5f5;margin:0;padding:32px 20px;max-width:520px;margin:0 auto;line-height:1.5}h1{font-size:20px}h1 span{color:#CD4419}button{margin-top:14px;padding:12px 18px;border:0;border-radius:8px;background:#CD4419;color:#fff;font-size:16px;font-weight:700}a{color:#CD4419}</style></head><body><h1>Absolute <span>ADAS</span></h1>${inner}</body></html>`)
+  try {
+    const { unsubscribe } = await import('../services/estimatorLantern.js')
+    if (req.method === 'GET') return page(`<p>Stop the five estimator lessons?</p><form method="POST"><input type="hidden" name="id" value="${esc(id)}"><input type="hidden" name="sig" value="${esc(sig)}"><button type="submit">Yes, stop them</button></form><p style="color:#9ca3af;font-size:14px;margin-top:18px">Changed your mind? Just close this page. The guide stays free at <a href="https://absoluteadas.com/estimator-guide/">absoluteadas.com/estimator-guide</a>.</p>`)
+    const r = await unsubscribe(req, { id, sig })
+    return page(r.ok ? `<p>Done. No more lessons to ${esc(r.email)}.</p><p style="color:#9ca3af;font-size:14px">The guide and the checklist stay free at <a href="https://absoluteadas.com/estimator-guide/">absoluteadas.com/estimator-guide</a>.</p>` : `<p>That link did not check out. Reply to any lesson with the word stop and I will take you off by hand.</p>`)
+  } catch (e) { return page(`<p>Something broke on our side. Reply to any lesson with the word stop and I will take you off by hand.</p>`) }
+})
+captureCalcRouter.all('/lantern/run', requireCronSecretFlex, async (req, res) => {
+  try { const { runEstimatorLantern } = await import('../services/estimatorLantern.js'); res.json({ ok: true, ...(await runEstimatorLantern(req, { dry: req.query.dry === '1' })) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.get('/lantern/status', requireCronSecretFlex, async (req, res) => {
+  try { const { lanternStatus } = await import('../services/estimatorLantern.js'); res.json({ ok: true, ...(await lanternStatus(req)) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.get('/lantern/demo', requireCronSecretFlex, async (req, res) => {
+  try { const { sendLessonDemo } = await import('../services/estimatorLantern.js'); res.json({ ok: true, ...(await sendLessonDemo({ to: String(req.query.to || ''), n: Number(req.query.n) || 1 })) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 // ── CLICK COUNTER for the short links (absoluteadas.com/checklist, /guide) ──
 // A 1x1 gif the redirect pages load before sending the visitor on. Counts per
 // day per source in VanKV (one row per month). Approximate by design.
@@ -4313,6 +4347,16 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     } catch (e) {
       console.warn('[safety-net series]', e.message)
       out.skipped.push({ check: 'series', reason: e.message })
+    }
+    // 🎓 Estimator Magic Lantern: send whatever lesson is due (one every three days per signup).
+    try {
+      const { runEstimatorLantern } = await import('../services/estimatorLantern.js')
+      const l = await runEstimatorLantern(req, {})
+      if (l.sent) out.actions.push({ action: 'lantern_sent', sent: l.sent, failed: l.failed })
+      else out.skipped.push({ check: 'lantern', reason: l.reason || 'nothing due' })
+    } catch (e) {
+      console.warn('[safety-net lantern]', e.message)
+      out.skipped.push({ check: 'lantern', reason: e.message })
     }
 
     // ─── 1. RETRY PENDING BROADCAST — two failure modes handled ──────────
