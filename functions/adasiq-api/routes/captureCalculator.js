@@ -1659,8 +1659,8 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     {
       // 📚 While the estimator-guide series is running it IS the daily post.
       // The series queues its own three channel drafts (services/guideSeries.js).
-      const { seriesPostFor, ptDateStr } = await import('../services/guideSeries.js')
-      if (!req.query.force_unified && await seriesPostFor(req, ptDateStr())) return res.json({ ok: true, skipped: true, reason: 'estimator_series_day' })
+      const { isSeriesWindow, ptDateStr } = await import('../services/guideSeries.js')
+      if (!req.query.force_unified && await isSeriesWindow(req, ptDateStr())) return res.json({ ok: true, skipped: true, reason: 'estimator_series_window' })
     }
     const segment = getSegment(req)
     const todayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
