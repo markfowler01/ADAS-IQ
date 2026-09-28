@@ -410,4 +410,39 @@ router.post('/photos-reconcile', async (req, res) => {
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 
+// 📥 Scrub every PDF in a mailbox — backfill + ongoing (Mark 2026-09-28).
+// Call repeatedly: each call scrubs one PDF and advances the cursor.
+router.post('/mail-scrub', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const M = await import('../services/mailboxScrub.js')
+    res.json(await M.runMailboxScrub(req, {
+      inbox: String(req.query.inbox || 'ar@absoluteadas.com'),
+      max: Math.min(Number(req.query.max) || 1, 5),
+      dry: req.query.dry === '1',
+    }))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// GET /mail-scrub/status — can we read it, and how far has the backfill got?
+router.get('/mail-scrub/status', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const M = await import('../services/mailboxScrub.js')
+    const inbox = String(req.query.inbox || 'ar@absoluteadas.com')
+    res.json({ ...(await M.mailboxReachable(req, inbox)), progress: await M.mailboxScrubStatus(req) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+router.post('/mail-scrub/reset', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const M = await import('../services/mailboxScrub.js')
+    res.json(await M.resetMailboxScrub(req, String(req.query.inbox || 'ar@absoluteadas.com')))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export default router

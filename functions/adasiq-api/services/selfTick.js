@@ -29,6 +29,12 @@ const TICKS = {
   // Drains one queued OEM PDF at a time — a Claude read is ~17s and the
   // gateway kills a request at 30s, so they can only go one per invocation.
   position_import: { minutes: 4, path: '/api/crm-sync-cron/position-statements/import-next', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
+  // 📥 Scrub PDFs out of the AR mailbox, backfill and ongoing (Mark
+  // 2026-09-28). One PDF per call for the same reason as position_import:
+  // an Opus scrub outruns the 30s gateway even though the function keeps
+  // going. The route no-ops cheaply while the mailbox is unreadable, so
+  // leaving this on costs nothing until ar@ is aliased.
+  mail_scrub: { minutes: 3, path: '/api/crm-sync-cron/mail-scrub?inbox=ar@absoluteadas.com', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
 }
 
 /** Claim the window in Cache. Returns false when someone already claimed it. */
