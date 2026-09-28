@@ -2,6 +2,7 @@ import express from 'express'
 import multer from 'multer'
 import { extractFromPdf } from '../services/claude.js'
 import { crossReferenceRules, saveCalibrationAsRule } from '../services/calibrationRulesService.js'
+import { saveScrub } from '../services/scrubStore.js'
 
 const router = express.Router()
 
@@ -169,7 +170,7 @@ const RIVIAN_BASE_ITEMS = [
 // Shared scrub (2026-09-24): the upload screen AND the email intake run the
 // same extractor + rules DB + Rivian base lines + auto-learn, so a CCC
 // estimate that arrives by email is scrubbed exactly like one Kat uploads.
-export async function scrubPdfBuffer(req, buffer, { learn = true } = {}) {
+export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by = '', source = 'upload', file = {}, keep = true } = {}) {
   // 📋 Hand the scrubber what the manufacturers actually publish, so a
   // required/not-required call is grounded in the OEM's own words and the
   // justification can cite it by name (Mark 2026-09-24).
@@ -239,6 +240,15 @@ export async function scrubPdfBuffer(req, buffer, { learn = true } = {}) {
       console.log(`[extract] Auto-learned ${data.calibrations.length} calibration(s) for ${data.year} ${data.make} ${data.model}`)
     })
   }
+
+  // 🔬 Keep it (Mark 2026-09-28: "every job that is scrubbed saved and
+  // searchable"). Every scrub lands in AdasScrubs regardless of where it was
+  // started — upload screen, email queue, or the Scrub button on a card.
+  // Demo payloads are not real work, so they are not filed. saveScrub never
+  // throws, so the library can never fail the scrub Kat is waiting on.
+  if (keep && !data._demo) {
+    data._scrubId = (await saveScrub(req, { jobId, data, source, by, file })).id || ''
+  }
   return data
 }
 
@@ -272,7 +282,11 @@ router.post('/', (req, res, next) => {
   }
 
   try {
-    const data = await scrubPdfBuffer(req, req.file.buffer)
+    const data = await scrubPdfBuffer(req, req.file.buffer, {
+      source: 'upload',
+      by: req.user?.name || req.user?.email || '',
+      file: { name: req.file.originalname || '' },
+    })
 
     res.json(data)
   } catch (err) {

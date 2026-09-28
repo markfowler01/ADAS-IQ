@@ -307,7 +307,7 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 4, inboxOn
 const QKEY = 'email2job_scrub_queue'
 async function queueScrub(req, item) { const { row, value } = await cfgRead(req, QKEY, []); const q = (Array.isArray(value) ? value : []).filter(x => x.job !== item.job); q.push({ ...item, at: new Date().toISOString(), tries: 0 }); await cfgWrite(req, QKEY, row, q.slice(-40)) }
 // Put a card back on the scrub queue from the newest PDF in its WorkDrive folder.
-export async function requeueScrub(req, jobId) {
+export async function requeueScrub(req, jobId, { source = 'requeue', by = '' } = {}) {
   const jobsMod = await import('../routes/jobs.js')
   const job = (await jobsMod.readJobsPublic(req)).find(j => String(j.id) === String(jobId))
   if (!job) throw new Error('card not found')
@@ -319,7 +319,7 @@ export async function requeueScrub(req, jobId) {
   const pdfs = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '')).sort((a, b) => Number(b.created || 0) - Number(a.created || 0))
     .sort((a, b) => Number(/kinetic|post.?scan|invoice|report/i.test(a.name || '')) - Number(/kinetic|post.?scan|invoice|report/i.test(b.name || '')))
   if (!pdfs.length) throw new Error('no PDF in the folder')
-  await queueScrub(req, { job: String(job.id), file: pdfs[0].id, name: pdfs[0].name })
+  await queueScrub(req, { job: String(job.id), file: pdfs[0].id, name: pdfs[0].name, source, by })
   return { job: job.id, file: pdfs[0].id, name: pdfs[0].name }
 }
 // Take our scrub off a card (calibrations + note) — the estimate stays in the folder.
@@ -360,7 +360,7 @@ export async function runScrubQueue(req, { max = 1 } = {}) {
       let buffer; try { ({ buffer } = await downloadFile(item.file, await getAccessToken())) } catch (e) { throw new Error(`download: ${e.message}`) }
       if (!buffer || buffer.length < 512) throw new Error(`download: ${buffer?.length || 0} bytes`)
       const { scrubPdfBuffer } = await import('../routes/extract.js')
-      let data; try { data = await scrubPdfBuffer(req, buffer, { learn: false }) } catch (e) { throw new Error(`scrub: ${String(e.message).slice(0, 300)}`) }
+      let data; try { data = await scrubPdfBuffer(req, buffer, { learn: false, jobId: item.job, source: item.source || 'email', by: item.by || '', file: { id: item.file, name: item.name || '' } }) } catch (e) { throw new Error(`scrub: ${String(e.message).slice(0, 300)}`) }
       const cals = (data.calibrations || []).filter(c => c.enabled !== false)
       const names = cals.map(c => c.calibration_name).filter(Boolean)
       const patch = { ...job, calibrations: JSON.stringify(cals) }

@@ -6,7 +6,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { IntegrationPills } from './books/Integrations.jsx'
 import { familyFor } from '../lib/insurerFamilies.js'
-import JobIdPill, { cardFrame, isRequestJob, ScrubChip } from './JobIdPill'
+import JobIdPill, { cardFrame, isRequestJob, ScrubChip, scrubState } from './JobIdPill'
+import ScrubButton from './ScrubButton'
 import { TakePhotosControl } from './JobPhotos'
 import CollectPanel from './CollectPanel.jsx'
 import EstimatePill from './EstimatePill.jsx'
@@ -328,7 +329,7 @@ export default function MobileJobCard({
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><ScrubChip job={job} /><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1 items-center"><ScrubChip job={job} /><ScrubButton job={job} done={!!scrubState(job)?.done} compact onDone={() => window.dispatchEvent(new CustomEvent('adas:jobs-refresh'))} /><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
       {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} /></p>}
       {isTeslaJob(job) && (
         <p className="mb-1">

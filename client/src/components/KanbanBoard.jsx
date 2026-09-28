@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { IntegrationPills } from './books/Integrations.jsx'
 import JobIdPill, { cardFrame, isRequestJob, isQuoteRequest, ScrubChip, scrubState } from './JobIdPill'
+import ScrubButton from './ScrubButton'
 import { TakePhotosControl, JobPhotosSheet, photoProgress } from './JobPhotos'
 import CollectPanel from './CollectPanel.jsx'
 import BuildJobModal from './BuildJobModal.jsx'
@@ -836,7 +837,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           >{insurerPricingBadge(job).label}</span>
         </p>
       )}
-      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><ScrubChip job={job} /><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
+      {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1 items-center"><ScrubChip job={job} /><ScrubButton job={job} done={!!scrubState(job)?.done} compact onDone={() => window.dispatchEvent(new CustomEvent('adas:jobs-refresh'))} /><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
       {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
@@ -1508,6 +1509,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
     onManualInvoice(data)
   }
   useEffect(() => { const fn = () => fetchJobs(); window.addEventListener('adas:jobs-refresh', fn); return () => window.removeEventListener('adas:jobs-refresh', fn) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // 🔬 Toasts raised from a card (the Scrub button) land in the board's toast.
+  useEffect(() => { const fn = e => showToast(String(e.detail || '')); window.addEventListener('adas:toast', fn); return () => window.removeEventListener('adas:toast', fn) }, []) // eslint-disable-line react-hooks/exhaustive-deps
   // 📎 Open the stored CCC scrub on the review screen — no re-upload (2026-09-24).
   useEffect(() => {
     const fn = async e => {

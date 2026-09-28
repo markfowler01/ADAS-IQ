@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit'
 import authRouter, { verifyToken } from './routes/auth.js'
 import demoRouter from './routes/demo.js'
 import extractRouter from './routes/extract.js'
+import scrubsRouter from './routes/scrubs.js'
 import { cleanDescriptionsRouter } from './routes/cleanDescriptions.js'
 import { techTodosRouter } from './routes/techTodos.js'
 import { pushRouter } from './routes/push.js'
@@ -256,6 +257,7 @@ app.get('/debug/cache', requireAuth, async (req, res) => {
 app.use('/api', async (req, res, next) => { try { const { loadFamilies } = await import('./services/insurerFamilies.js'); await loadFamilies(req) } catch {} next() })
 app.use('/api/insurers', requireAuth, insurersRouter)
 app.use('/api/extract', requireAuth, extractLimiter, extractRouter)
+app.use('/api/scrubs', requireAuth, scrubsRouter)
 app.use('/api/clean-descriptions', requireAuth, extractLimiter, cleanDescriptionsRouter)
 app.use('/api/extract-ro-image', requireAuth, extractLimiter, extractRoImageRouter)
 app.use('/api/extract-vin-image', requireAuth, extractLimiter, extractVinImageRouter)
