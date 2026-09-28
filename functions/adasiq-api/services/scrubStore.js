@@ -172,11 +172,20 @@ function shape(r) {
   }
 }
 
-/** One scrub with its full payload (justifications and all). */
+/**
+ * One scrub with its full payload (justifications and all).
+ *
+ * The id stays a STRING. A Catalyst ROWID (45874000000606283) is bigger than
+ * JavaScript's safe integer range, so Number(id) silently rounds it to
+ * ...280 and the row is never found — which is exactly what happened the
+ * first time this screen went live (2026-09-28).
+ */
 export async function getScrub(req, id) {
+  const rowId = String(id || '').trim()
+  if (!/^\d{1,25}$/.test(rowId)) return null
   try {
     const rows = await ds(req).zcql().executeZCQLQuery(
-      `SELECT * FROM ${TABLE} WHERE ROWID = ${Number(id)} LIMIT 1`)
+      `SELECT * FROM ${TABLE} WHERE ROWID = ${rowId} LIMIT 1`)
     const r = (rows || []).map(x => x[TABLE] || x)[0]
     if (!r) return null
     let payload = null
