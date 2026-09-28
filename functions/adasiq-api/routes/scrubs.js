@@ -74,6 +74,48 @@ router.get('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 📄 The Absolute ADAS report for this scrub, straight off the library
+// (Mark 2026-09-28: "I want to be able to download a PDF the Absolute ADAS
+// report directly from here"). Built from the stored payload, so it works
+// for a scrub that never reached a job card or an invoice.
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const s = await getScrub(req, req.params.id)
+    if (!s) return res.status(404).json({ error: 'not found' })
+    const p = s.payload || {}
+    const cals = Array.isArray(p.calibrations) && p.calibrations.length
+      ? p.calibrations
+      : (s.sensors || []).map(x => ({ calibration_name: x.n, cal_type: x.t, trigger: x.g, line_references: x.l, enabled: !!x.r, justification: '' }))
+    if (!cals.length) return res.status(400).json({ error: 'this scrub has no calibrations to report' })
+
+    const { generateADASIQPdf } = await import('../services/pdf.js')
+    const buffer = await generateADASIQPdf({
+      shop: s.shop || p.shop || '',
+      ro_number: s.ro || p.ro_number || '',
+      insurer: s.insurer || p.insurer || '',
+      vin: s.vin || p.vin || '',
+      vehicle: s.vehicle || p.vehicle || '',
+      year: s.year || p.year || '',
+      make: s.make || p.make || '',
+      model: s.model || p.model || '',
+      claim: s.claim || p.claim || '',
+      calibrations: cals,
+      document_links: Array.isArray(p.document_links) ? p.document_links : [],
+      technician: s.by || '',
+      folder_share_url: '',
+    })
+    const safe = [s.year, s.make, s.model].filter(Boolean).join(' ').replace(/[^A-Za-z0-9 _-]/g, '').trim()
+    const name = `Absolute ADAS_${s.ro || safe || 'report'}${s.vin ? `_${s.vin}` : ''}.pdf`
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`)
+    res.setHeader('Content-Length', buffer.length)
+    res.end(buffer)
+  } catch (e) {
+    console.error('[scrubs] pdf failed:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 router.get('/:id', async (req, res) => {
   const s = await getScrub(req, req.params.id)
   if (!s) return res.status(404).json({ error: 'not found' })

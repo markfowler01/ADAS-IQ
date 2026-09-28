@@ -1,21 +1,23 @@
-// 🔬 Scrub Library (Mark 2026-09-28: "every job that is scrubbed saved,
-// searchable, much like the Kinetic app" → then "how do I look at all these
-// scrubs?").
+// 🔬 Scrub Library (Mark 2026-09-28).
 //
-// Every scrub we have ever run, newest first, searchable across shop, VIN,
-// RO, claim, insurer and sensor name. Card layout like the rest of the app.
-// Open one to see each sensor's Required / Not Required verdict with the
-// estimate lines it cited and the justification that backs it — that text is
-// what gets quoted back at an insurer who says no.
+// Laid out like the Kinetic ID report list he works in every day, because
+// that shape is already proven for this job — but with the vehicle and RO
+// leading, since that is what he actually looks for ("make model with RO
+// number at the far left, the most usable data").
+//
+// Opening one shows the same Calibration Identification Report structure —
+// Repair / Vehicle header, a summary, then every sensor with its verdict,
+// triggers and line numbers — in Absolute ADAS colours, matching the PDF the
+// button downloads so the screen and the document read as one thing.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
 const ORANGE = '#CD4419'
-const BLUE = '#1d4ed8'
+const INK = '#1a1a1a'
 
 const SOURCE_LABEL = {
-  button: '🔬 Scrub button', upload: '📄 Upload screen', email: '📧 Email intake',
-  equote: '📧 Email intake', requeue: '🔄 Re-scrub', 'report-only': '📎 Reports only',
+  button: '🔬 Scrub button', upload: '📄 Upload', email: '📧 Email', equote: '📧 Email',
+  requeue: '🔄 Re-scrub', 'report-only': '📎 Reports only',
 }
 const sourceLabel = s => SOURCE_LABEL[s] || (String(s || '').startsWith('mail:') ? `📥 ${String(s).slice(5)}` : s || '—')
 
@@ -23,24 +25,29 @@ const when = iso => {
   if (!iso) return ''
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+const shortWhen = iso => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
 export default function ScrubLibraryScreen() {
-  // Hooks first, always — this screen has early returns below (React #310).
   const [q, setQ] = useState('')
   const [rows, setRows] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
-  const [open, setOpen] = useState(null)      // the expanded scrub (full payload)
+  const [open, setOpen] = useState(null)
   const [openBusy, setOpenBusy] = useState(false)
   const timer = useRef(null)
 
   const load = async (search = '') => {
     setLoading(true); setErr('')
     try {
-      const r = await apiFetch(`${API_BASE}/api/scrubs?limit=80${search ? `&q=${encodeURIComponent(search)}` : ''}`)
+      const r = await apiFetch(`${API_BASE}/api/scrubs?limit=100${search ? `&q=${encodeURIComponent(search)}` : ''}`)
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       setRows(Array.isArray(d.scrubs) ? d.scrubs : [])
@@ -49,8 +56,6 @@ export default function ScrubLibraryScreen() {
   }
 
   useEffect(() => { load(''); apiFetch(`${API_BASE}/api/scrubs/stats`).then(r => r.json()).then(setStats).catch(() => {}) }, [])
-
-  // Debounce the search so typing does not fire a request per keystroke.
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => load(q.trim()), 350)
@@ -67,169 +72,302 @@ export default function ScrubLibraryScreen() {
     finally { setOpenBusy(false) }
   }
 
-  const counts = useMemo(() => ({
-    shown: rows.length,
-    required: rows.reduce((n, r) => n + (Number(r.requiredCount) || 0), 0),
-  }), [rows])
+  if (open || openBusy) {
+    return openBusy
+      ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
+      : <ScrubReport s={open} onBack={() => setOpen(null)} />
+  }
 
   return (
-    <div className="p-4 max-w-5xl mx-auto">
-      <div className="mb-3">
-        <h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>🔬 Scrub Library</h1>
-        <p className="text-xs mt-0.5" style={{ color: '#777' }}>
-          Every estimate we have scrubbed. Search a shop, VIN, RO, claim, insurer or a sensor name.
-        </p>
+    <div className="p-4 max-w-6xl mx-auto">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: INK }}>Scrubs</h1>
+          <p className="text-xs mt-0.5" style={{ color: '#888' }}>
+            {loading ? 'Loading…' : `${rows.length} shown`}{stats?.total ? ` · ${stats.total} in the library` : ''}
+          </p>
+        </div>
+        <input
+          value={q}
+          onChange={e => setQ(e.target.value)}
+          placeholder="Search vehicle, RO, VIN, claim, shop, sensor…"
+          className="rounded-lg px-3 py-2 text-sm"
+          style={{ border: '1.5px solid #ddd', outline: 'none', minWidth: 280 }}
+        />
       </div>
 
-      <input
-        value={q}
-        onChange={e => setQ(e.target.value)}
-        placeholder="Search — Gerber, 2022 Mercedes, front radar, RO 3111218046…"
-        className="w-full rounded-xl px-3 py-2.5 text-sm mb-3"
-        style={{ border: '1.5px solid #ddd', outline: 'none' }}
-      />
-
-      <p className="text-xs mb-3" style={{ color: '#777' }}>
-        {loading ? 'Loading…' : `${counts.shown} scrub${counts.shown === 1 ? '' : 's'} shown`}
-        {stats?.total ? ` · ${stats.total} in the library` : ''}
-        {counts.shown ? ` · ${counts.required} calibration${counts.required === 1 ? '' : 's'} called for` : ''}
-      </p>
-
       {err && (
-        <div className="rounded-xl p-3 mb-3 text-sm" style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1.5px solid #fecaca' }}>
-          {err}
-        </div>
+        <div className="rounded-xl p-3 mb-3 text-sm" style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1.5px solid #fecaca' }}>{err}</div>
       )}
 
       {!loading && !rows.length && !err && (
-        <div className="rounded-xl p-6 text-center text-sm" style={{ backgroundColor: '#f5f3f0', color: '#777' }}>
+        <div className="rounded-xl p-8 text-center text-sm" style={{ backgroundColor: '#f5f3f0', color: '#777' }}>
           {q ? `Nothing matches "${q}".` : 'No scrubs yet. Press 🔬 Scrub estimate on a job card to run the first one.'}
         </div>
       )}
 
-      <div className="grid gap-2">
+      {/* Desktop table */}
+      {!!rows.length && (
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #eee' }}>
+                <th className="text-left font-bold py-2 pl-2" style={{ color: INK, width: 44 }}></th>
+                <th className="text-left font-bold py-2" style={{ color: INK }}>Vehicle · RO</th>
+                <th className="text-left font-bold py-2" style={{ color: INK }}>VIN</th>
+                <th className="text-left font-bold py-2" style={{ color: INK }}>Claim</th>
+                <th className="text-left font-bold py-2" style={{ color: INK }}>Shop</th>
+                <th className="text-left font-bold py-2" style={{ color: INK }}>Updated</th>
+                <th style={{ width: 40 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(s => (
+                <tr
+                  key={s.id}
+                  onClick={() => openScrub(s)}
+                  className="cursor-pointer hover:bg-gray-50"
+                  style={{ borderBottom: '1px solid #f0f0f0' }}
+                >
+                  <td className="py-2.5 pl-2">
+                    <span
+                      className="inline-flex items-center justify-center text-[11px] font-bold rounded-full"
+                      style={{ width: 24, height: 24, backgroundColor: s.requiredCount ? ORANGE : '#e5e5e5', color: s.requiredCount ? '#fff' : '#888' }}
+                      title={`${s.requiredCount} required of ${s.sensorCount} sensors`}
+                    >{s.requiredCount}</span>
+                  </td>
+                  <td className="py-2.5 pr-3">
+                    <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
+                    <div className="text-xs font-mono" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}</div>
+                  </td>
+                  <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.vin || '—'}</td>
+                  <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
+                  <td className="py-2.5 pr-3 text-xs" style={{ color: '#555' }}>{s.shop || '—'}</td>
+                  <td className="py-2.5 pr-3 text-xs" style={{ color: '#888' }}>{shortWhen(s.at)}</td>
+                  <td className="py-2.5 text-right pr-2" style={{ color: ORANGE }}>→</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Phone cards */}
+      <div className="md:hidden grid gap-2">
         {rows.map(s => (
-          <button
-            key={s.id}
-            onClick={() => openScrub(s)}
-            className="text-left rounded-xl p-3 w-full"
-            style={{ backgroundColor: '#fff', border: `2px solid ${s.requiredCount ? ORANGE : '#e5e5e5'}` }}
-          >
+          <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full"
+            style={{ backgroundColor: '#fff', border: `2px solid ${s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="text-sm font-bold truncate" style={{ color: '#1a1a1a' }}>
-                  {s.vehicle || 'Vehicle not read'}
-                </div>
-                <div className="text-xs truncate" style={{ color: '#666' }}>
-                  {s.shop || 'Shop not read'}{s.ro ? ` · RO ${s.ro}` : ''}{s.insurer ? ` · 🏦 ${s.insurer}` : ''}
-                </div>
+                <div className="text-sm font-bold truncate" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
+                <div className="text-xs font-mono" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}</div>
               </div>
-              <span
-                className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
-                style={s.requiredCount
-                  ? { backgroundColor: ORANGE, color: '#fff' }
-                  : { backgroundColor: '#f5f3f0', color: '#777' }}
-              >
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+                style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
                 {s.requiredCount} of {s.sensorCount}
               </span>
             </div>
-
-            {s.requiredNames && (
-              <div className="text-xs mt-1.5" style={{ color: BLUE }}>🔧 {s.requiredNames}</div>
-            )}
-
-            <div className="text-[10px] mt-1.5 flex flex-wrap gap-x-2" style={{ color: '#999' }}>
-              <span>{sourceLabel(s.source)}</span>
-              {s.by && <span>· {s.by}</span>}
-              {s.at && <span>· {when(s.at)}</span>}
-              {s.vin && <span className="font-mono">· {s.vin}</span>}
-              {Array.isArray(s.reports) && s.reports.length > 0 && <span>· 📎 {s.reports.length} report{s.reports.length === 1 ? '' : 's'}</span>}
-            </div>
+            <div className="text-[11px] mt-1" style={{ color: '#666' }}>{s.shop || '—'}</div>
+            <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}>{s.vin || '—'}</div>
+            <div className="text-[10px] mt-0.5" style={{ color: '#999' }}>{shortWhen(s.at)}</div>
           </button>
         ))}
       </div>
-
-      {(open || openBusy) && (
-        <div
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-          onClick={() => !openBusy && setOpen(null)}
-        >
-          <div
-            className="rounded-2xl w-full max-w-2xl overflow-y-auto"
-            style={{ backgroundColor: '#fff', maxHeight: '85vh' }}
-            onClick={e => e.stopPropagation()}
-          >
-            {openBusy && <p className="p-6 text-sm text-center" style={{ color: '#777' }}>Opening…</p>}
-            {open && !openBusy && <ScrubDetail s={open} onClose={() => setOpen(null)} />}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
 
-function ScrubDetail({ s, onClose }) {
-  const cals = Array.isArray(s.payload?.calibrations) ? s.payload.calibrations : []
-  // Fall back to the compact per-sensor list when the full payload is missing.
-  const list = cals.length ? cals.map(c => ({
-    name: c.sensor || c.calibration_name || '',
-    type: c.cal_type || '',
-    required: c.enabled === true,
-    lines: c.line_references || '',
-    trigger: c.trigger || '',
-    why: c.justification || '',
-  })) : (s.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' }))
+// ── One scrub, as a Calibration Identification Report ────────────────────────
+function ScrubReport({ s, onBack }) {
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const [pdfErr, setPdfErr] = useState('')
+  const [expanded, setExpanded] = useState({})
+
+  const p = s.payload || {}
+  const list = useMemo(() => {
+    const cals = Array.isArray(p.calibrations) ? p.calibrations : []
+    return cals.length
+      ? cals.map(c => ({
+        name: c.sensor || c.calibration_name || '', type: c.cal_type || '',
+        required: c.enabled === true, lines: c.line_references || '',
+        trigger: c.trigger || '', why: c.justification || '',
+      }))
+      : (s.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' }))
+  }, [s]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const required = list.filter(c => c.required)
+
+  const downloadPdf = async () => {
+    setPdfBusy(true); setPdfErr('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/pdf`)
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        throw new Error(d.error || `HTTP ${r.status}`)
+      }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Absolute ADAS_${s.ro || [s.year, s.make, s.model].filter(Boolean).join(' ') || 'report'}.pdf`
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 2000)
+    } catch (e) { setPdfErr(e.message || 'Could not build the PDF.') }
+    finally { setPdfBusy(false) }
+  }
+
+  const Fact = ({ k, v }) => (
+    <div className="text-sm leading-relaxed">
+      <span className="font-bold" style={{ color: INK }}>{k}: </span>
+      <span style={{ color: '#444' }}>{v || 'None'}</span>
+    </div>
+  )
 
   return (
-    <div className="p-4">
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-bold" style={{ color: '#1a1a1a' }}>{s.vehicle || 'Vehicle not read'}</h2>
-          <p className="text-xs" style={{ color: '#666' }}>
-            {s.shop || 'Shop not read'}{s.ro ? ` · RO ${s.ro}` : ''}{s.claim ? ` · claim ${s.claim}` : ''}
-          </p>
-          <p className="text-xs" style={{ color: '#999' }}>
-            {s.insurer ? `🏦 ${s.insurer} · ` : ''}{sourceLabel(s.source)}{s.by ? ` · ${s.by}` : ''}{s.at ? ` · ${when(s.at)}` : ''}
-          </p>
-          {s.vin && <p className="text-xs font-mono" style={{ color: '#999' }}>VIN {s.vin}</p>}
-        </div>
-        <button onClick={onClose} className="text-sm font-bold px-2 py-1 rounded" style={{ color: '#777' }}>✕</button>
-      </div>
+    <div className="p-4 max-w-6xl mx-auto">
+      <div className="grid gap-4" style={{ gridTemplateColumns: 'minmax(0, 1fr)' }}>
+        <div className="flex flex-col lg:flex-row gap-5">
 
-      {s._error && (
-        <div className="rounded-lg p-2 mb-3 text-sm" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{s._error}</div>
-      )}
+          {/* Left rail */}
+          <div className="lg:w-72 shrink-0">
+            <h1 className="text-2xl font-bold leading-tight" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</h1>
+            {s.ro && <p className="text-sm font-mono font-bold mt-1" style={{ color: ORANGE }}>RO {s.ro}</p>}
+            <p className="text-sm mt-3" style={{ color: '#444' }}><span className="font-bold">VIN:</span> <span className="font-mono">{s.vin || '—'}</span></p>
+            <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Updated:</span> {when(s.at) || '—'}</p>
+            <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">By:</span> {s.by || sourceLabel(s.source)}</p>
 
-      {Array.isArray(s.reports) && s.reports.length > 0 && (
-        <div className="rounded-lg p-2 mb-3 text-xs" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>
-          📎 Went out with the invoice: {s.reports.map(r => r.name).join(', ')}
-        </div>
-      )}
+            <button
+              onClick={downloadPdf}
+              disabled={pdfBusy || !list.length}
+              className="mt-4 w-full rounded-lg px-3 py-2.5 text-sm font-bold"
+              style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: list.length ? 1 : 0.5 }}
+            >{pdfBusy ? 'Building…' : '📄 Absolute ADAS report ↓'}</button>
 
-      {!list.length && <p className="text-sm" style={{ color: '#777' }}>No sensors recorded on this scrub.</p>}
+            <button onClick={onBack} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold"
+              style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd' }}>← All scrubs</button>
 
-      <div className="grid gap-1.5">
-        {list.map((c, i) => (
-          <div
-            key={i}
-            className="rounded-lg p-2.5"
-            style={{ backgroundColor: c.required ? '#fff7ed' : '#fafafa', border: `1.5px solid ${c.required ? ORANGE : '#eee'}` }}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{c.name}</span>
-              <span
-                className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap"
-                style={c.required ? { backgroundColor: ORANGE, color: '#fff' } : { backgroundColor: '#eee', color: '#777' }}
-              >{c.required ? 'REQUIRED' : 'not required'}</span>
-            </div>
-            <div className="text-[11px] mt-0.5" style={{ color: '#777' }}>
-              {[c.type, c.trigger, c.lines ? `lines ${c.lines}` : ''].filter(Boolean).join(' · ')}
-            </div>
-            {c.why && <p className="text-xs mt-1" style={{ color: '#444' }}>{c.why}</p>}
+            {pdfErr && <p className="text-xs mt-2" style={{ color: '#b91c1c' }}>{pdfErr}</p>}
+            {s._error && <p className="text-xs mt-2" style={{ color: '#b91c1c' }}>{s._error}</p>}
           </div>
-        ))}
+
+          {/* The report */}
+          <div className="flex-1 min-w-0 rounded-2xl overflow-hidden" style={{ border: '1.5px solid #e5e5e5', backgroundColor: '#fff' }}>
+            {/* Masthead — matches the downloaded PDF so screen and document read as one */}
+            <div className="px-5 py-4 flex flex-wrap items-center justify-between gap-2" style={{ backgroundColor: ORANGE }}>
+              <div>
+                <div className="text-xl font-bold" style={{ color: '#fff' }}>Absolute ADAS</div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.85)' }}>ADAS Calibration &amp; Diagnostic Report</div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-bold" style={{ color: '#fff' }}>Calibration Identification Report</div>
+                <div className="text-xs" style={{ color: 'rgba(255,255,255,0.85)' }}>{when(s.at)}</div>
+              </div>
+            </div>
+
+            <div className="p-5">
+              <div className="grid sm:grid-cols-2 gap-5 mb-5">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider pb-1 mb-1.5" style={{ color: ORANGE, borderBottom: `2px solid ${ORANGE}` }}>Repair</div>
+                  <Fact k="Customer" v={s.shop} />
+                  <Fact k="Claim" v={[s.claim, s.insurer ? `(${s.insurer})` : ''].filter(Boolean).join(' ')} />
+                  <Fact k="Repair Order" v={s.ro} />
+                </div>
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wider pb-1 mb-1.5" style={{ color: ORANGE, borderBottom: `2px solid ${ORANGE}` }}>Vehicle</div>
+                  <Fact k="Vehicle" v={s.vehicle} />
+                  <Fact k="Trim" v={p.trim || p.model || s.model} />
+                  <Fact k="VIN" v={s.vin} />
+                  <Fact k="Point of impact" v={p.point_of_impact} />
+                </div>
+              </div>
+
+              <h3 className="text-lg font-bold mb-2" style={{ color: INK }}>Summary</h3>
+              <div className="grid sm:grid-cols-2 gap-3 mb-5">
+                <div className="rounded-lg px-3 py-2.5 flex items-center justify-between" style={{ backgroundColor: '#fff7ed', borderLeft: `4px solid ${ORANGE}` }}>
+                  <span className="text-sm font-bold" style={{ color: INK }}>Required Operations</span>
+                  <span className="text-xl font-bold" style={{ color: ORANGE }}>{required.length}</span>
+                </div>
+                <div className="rounded-lg px-3 py-2.5" style={{ backgroundColor: '#f5f3f0' }}>
+                  <div className="text-xs font-bold mb-0.5" style={{ color: '#555' }}>Sensors checked</div>
+                  <div className="text-sm" style={{ color: '#444' }}>{list.length} on this vehicle{p.estimate_version ? ` · ${p.estimate_version}` : ''}</div>
+                </div>
+              </div>
+
+              {s.oemRefs && (
+                <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
+                  <div className="font-bold mb-1" style={{ color: INK }}>References</div>
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{String(s.oemRefs).slice(0, 1200)}</div>
+                </div>
+              )}
+
+              {Array.isArray(s.reports) && s.reports.length > 0 && (
+                <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>
+                  📎 Went out with the invoice: {s.reports.map(r => r.name).join(', ')}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-lg font-bold" style={{ color: INK }}>Operations</h3>
+                <div className="text-xs flex gap-3" style={{ color: '#777' }}>
+                  <span><span style={{ color: ORANGE }}>●</span> Required</span>
+                  <span><span style={{ color: '#bbb' }}>●</span> Not required</span>
+                </div>
+              </div>
+
+              {!list.length && <p className="text-sm" style={{ color: '#777' }}>No sensors recorded on this scrub.</p>}
+
+              {!!list.length && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ backgroundColor: ORANGE }}>
+                        <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Sensor</th>
+                        <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Repair triggers</th>
+                        <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Lines</th>
+                        <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Type</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {list.map((c, i) => (
+                        <FragmentRow key={i} c={c} i={i} expanded={!!expanded[i]} onToggle={() => setExpanded(e => ({ ...e, [i]: !e[i] }))} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+  )
+}
+
+function FragmentRow({ c, i, expanded, onToggle }) {
+  return (
+    <>
+      <tr
+        onClick={c.why ? onToggle : undefined}
+        style={{ backgroundColor: i % 2 ? '#fafafa' : '#fff', borderBottom: '1px solid #f0f0f0', cursor: c.why ? 'pointer' : 'default' }}
+      >
+        <td className="py-2.5 px-3 font-bold" style={{ color: c.required ? INK : '#999' }}>
+          <span style={{ color: c.required ? ORANGE : '#ccc', marginRight: 6 }}>●</span>
+          {c.why ? <span style={{ color: '#bbb', marginRight: 4 }}>{expanded ? '⌄' : '›'}</span> : null}
+          {c.name}
+        </td>
+        <td className="py-2.5 px-3" style={{ color: c.required ? '#444' : '#aaa' }}>{c.trigger || '—'}</td>
+        <td className="py-2.5 px-3 font-mono text-xs" style={{ color: c.required ? '#444' : '#aaa' }}>{c.lines || '—'}</td>
+        <td className="py-2.5 px-3" style={{ color: c.required ? '#444' : '#aaa' }}>
+          {c.required
+            ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: ORANGE, color: '#fff' }}>{c.type || 'Required'}</span>
+            : <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#eee', color: '#888' }}>not required</span>}
+        </td>
+      </tr>
+      {expanded && c.why && (
+        <tr style={{ backgroundColor: '#fff7ed' }}>
+          <td colSpan={4} className="px-3 py-2.5 text-xs" style={{ color: '#444', borderBottom: '1px solid #f0f0f0' }}>{c.why}</td>
+        </tr>
+      )}
+    </>
   )
 }
