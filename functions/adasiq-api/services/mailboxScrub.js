@@ -123,10 +123,17 @@ async function pageMessages(token, accountId, start, limit) {
  * because a scrub can outrun the gateway. Everything else (paging, listing
  * attachments, the done bookkeeping) is cheap and runs to the budget.
  */
-export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max = 1, budgetMs = 22000, dry = false } = {}) {
+export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max = 1, budgetMs = 22000, dry = false, match = '', via = '' } = {}) {
   const t0 = Date.now()
+  // `via` lets us harvest one correspondent's mail out of a mailbox we CAN
+  // read. ar@ is not a mailbox the token can open, but ar@'s mail is copied
+  // into mark@ — so inbox=mark@&via=ar@ gets the AR paperwork today without
+  // waiting on a Zoho admin change (Mark 2026-09-28).
   const key = normEmail(inbox)
-  const out = { inbox: key, scanned: 0, found: 0, scrubbed: 0, skipped: 0, filed: [], done: false, dry }
+  const need = String(via || match || '').toLowerCase().trim()
+  const hits = m => !need || [m.fromAddress, m.toAddress, m.sender, m.subject]
+    .some(v => String(v || '').toLowerCase().includes(need))
+  const out = { inbox: key, via: need || null, scanned: 0, found: 0, scrubbed: 0, skipped: 0, filed: [], done: false, dry }
 
   const mb = await resolveMailbox(req, key)
   if (!mb.accountId) {
@@ -136,15 +143,18 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
     return out
   }
 
+  // A filtered run and a full run must not share a cursor, or one would skip
+  // what the other already walked past.
+  const ckey = need ? `${key}|${need}` : key
   const { row, value } = await cfgRead(req, CURSOR, {})
   const all = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {}
-  const st = all[key] || { start: 1, done: [], scanned: 0, scrubbed: 0, skipped: 0 }
+  const st = all[ckey] || { start: 1, done: [], scanned: 0, scrubbed: 0, skipped: 0 }
   const doneSet = new Set(Array.isArray(st.done) ? st.done : [])
 
   const save = async () => {
     st.done = [...doneSet].slice(-DONE_KEEP)
     st.at = nowIso()
-    all[key] = st
+    all[ckey] = st
     if (!dry) await cfgWrite(req, CURSOR, row, all)
   }
 
@@ -158,6 +168,7 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
         out.scanned++; st.scanned = (st.scanned || 0) + 1
         st.start++                                  // advance past this message whatever happens
         if (m.hasAttachment === false) continue
+        if (!hits(m)) continue                     // not the correspondent we are harvesting
 
         const id = String(m.messageId || m.msgId || '')
         const folderId = String(m.folderId || '')
