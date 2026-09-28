@@ -104,7 +104,7 @@ export function renderLesson(L, { firstName, id }) {
 <div style="border:1px solid #e8e4e0;border-top:none;padding:20px;border-radius:0 0 10px 10px">
 <p style="margin:0 0 14px">${esc(hi)}</p>
 ${L.paras.map(p => `<p style="margin:0 0 14px">${linkify(p)}</p>`).join('')}
-${L.n === 1 ? '<p style="margin:18px 0 0"><a href="https://absoluteadas.com/checklist" style="display:inline-block;background:#CD4419;color:#fff;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:8px">Download the checklist (PDF)</a></p>' : ''}
+${L.n === 1 ? '<p style="margin:18px 0 0"><a href="https://absoluteadas.com/checklist?src=lesson1" style="display:inline-block;background:#CD4419;color:#fff;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:8px">Download the checklist (PDF)</a></p>' : ''}
 ${L.n === 5 ? '<p style="margin:18px 0 0"><a href="sms:18443492327" style="display:inline-block;background:#CD4419;color:#fff;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:8px">Text the van</a></p>' : ''}
 <p style="margin:18px 0 0;white-space:pre-line">Mark\nAbsolute ADAS · 1-844-FIX-ADAS</p>
 <p style="color:#666;font-size:12px;margin-top:22px">You asked for these five lessons at absoluteadas.com/estimator-guide. <a href="${unsub}" style="color:#666">Stop them any time.</a><br>${esc(MAILING_ADDRESS)}</p>

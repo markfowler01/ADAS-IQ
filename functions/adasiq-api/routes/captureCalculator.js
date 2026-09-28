@@ -2801,6 +2801,14 @@ captureCalcRouter.get('/hit', async (req, res) => {
   res.set({ 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, private', 'Access-Control-Allow-Origin': '*' })
   res.end(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'))
 })
+captureCalcRouter.get('/campaign/report', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { campaignNumbers, formatCampaignCard, maybeDailyCampaignReport } = await import('../services/campaignReport.js')
+    if (req.query.send === '1') return res.json({ ok: true, ...(await maybeDailyCampaignReport(req, { hourPt: 23, force: true })) })
+    const n = await campaignNumbers(req, { dateStr: /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : undefined })
+    res.json({ ok: true, card: formatCampaignCard(n), numbers: n })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
 captureCalcRouter.get('/hits', requireCronSecretFlex, async (req, res) => {
   try {
     const { getVal } = await import('../services/vanDatastore.js')
@@ -4357,6 +4365,12 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
       console.warn('[safety-net series]', e.message)
       out.skipped.push({ check: 'series', reason: e.message })
     }
+    // 📊 Estimator campaign card to Mark once a day at 5 PM PT.
+    try {
+      const { maybeDailyCampaignReport } = await import('../services/campaignReport.js')
+      const c = await maybeDailyCampaignReport(req, { hourPt })
+      if (c.sent) out.actions.push({ action: 'campaign_report' }); else out.skipped.push({ check: 'campaign_report', reason: c.reason })
+    } catch (e) { out.skipped.push({ check: 'campaign_report', reason: e.message }) }
     // 🎓 Estimator Magic Lantern: send whatever lesson is due (one every three days per signup).
     try {
       const { runEstimatorLantern } = await import('../services/estimatorLantern.js')

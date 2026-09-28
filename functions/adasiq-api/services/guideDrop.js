@@ -62,7 +62,7 @@ ${paras.map((p, i) => {
     if (i === paras.length - 1) return `<p style="margin:18px 0 0;white-space:pre-line">${esc(p)}</p>`
     return `<p style="margin:0 0 14px">${esc(p).replace(GUIDE_URL, `<a href="${GUIDE_URL}" style="color:#CD4419;font-weight:700">absoluteadas.com/estimator-guide</a>`)}</p>`
   }).join('')}
-<p style="margin:22px 0 0"><a href="https://absoluteadas.com/checklist" style="display:inline-block;background:#CD4419;color:#fff;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:8px;margin-right:10px">Download the checklist (PDF)</a><a href="${GUIDE_URL}" style="display:inline-block;background:#1e1e1e;color:#fff;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:8px;border:1px solid #444">Open the guide</a></p>
+<p style="margin:22px 0 0"><a href="https://absoluteadas.com/checklist?src=email" style="display:inline-block;background:#CD4419;color:#fff;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:8px;margin-right:10px">Download the checklist (PDF)</a><a href="${GUIDE_URL}" style="display:inline-block;background:#1e1e1e;color:#fff;text-decoration:none;font-weight:800;padding:12px 18px;border-radius:8px;border:1px solid #444">Open the guide</a></p>
 <p style="color:#666;font-size:12px;margin-top:22px">Attached: the one-page calibration checklist (PDF). Print it, tape it by the desk.</p>
 </div></div>`
   return { subject, text, html }
