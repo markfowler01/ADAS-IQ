@@ -289,6 +289,11 @@ export async function extractFromPdf(pdfBuffer, { oemRefs = '', refsFor = null }
     throw new Error(`Claude returned invalid JSON: ${cleaned.slice(0, 200)}`)
   }
 
+  // Tag it like the CCC branch does, so the scrub library can tell one of
+  // our own reads of a Kinetic report from a real Absolute ADAS scrub of a
+  // CCC estimate (Mark 2026-09-28).
+  parsed._pdfType = pdfType || 'KINETIC'
+  if (detectedMake && !parsed.make) parsed.make = detectedMake
   return parsed
 }
 

@@ -108,7 +108,7 @@ async function readPage(req, offset, cols) {
   return (rows || []).map(r => r[TABLE] || r)
 }
 
-const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search'
+const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_report_at'
 
 /**
  * Search the library. `q` is matched in JS against the prepared haystack,
@@ -166,6 +166,9 @@ function shape(r) {
     requiredCount: Number(r.scrub_required_count || 0),
     requiredNames: r.scrub_required_names || '',
     sensors,
+    reports: (() => { try { return JSON.parse(r.scrub_reports || '[]') } catch { return [] } })(),
+    reportName: r.scrub_report_name || '',
+    reportAt: r.scrub_report_at || '',
   }
 }
 
@@ -182,6 +185,63 @@ export async function getScrub(req, id) {
   } catch (e) {
     console.warn('[scrubs] get failed:', e.message)
     return null
+  }
+}
+
+/**
+ * 📎 Record the report PDFs that came out of a job (Mark 2026-09-28: the
+ * Kinetic report and the Absolute ADAS report should land in the datastore
+ * too). Called after Bill it files / attaches them, so the library row shows
+ * which paperwork actually went to the insurer, not just what we recommended.
+ *
+ * Attaches to the newest scrub for the card. When a job has no scrub row yet
+ * (an old card, or one built by hand) it writes a stub row so the report is
+ * still on the record. Never throws.
+ */
+export async function linkReports(req, jobId, files = [], job = {}) {
+  try {
+    const id = String(jobId || '').replace(/'/g, '')
+    if (!id || !files.length) return { ok: false }
+    const kindOf = n => /absolute.?adas/i.test(n) ? 'absolute' : /kinetic/i.test(n) ? 'kinetic' : /post.?scan|postscan/i.test(n) ? 'postscan' : 'other'
+    const reports = files.filter(f => f?.name).map(f => ({
+      kind: kindOf(f.name), name: String(f.name).slice(0, 255), id: String(f.id || ''), size: Number(f.size || 0),
+    }))
+    const ours = reports.find(r => r.kind === 'absolute')
+    const patch = {
+      scrub_reports: JSON.stringify(reports).slice(0, CHUNK),
+      scrub_report_name: str(ours?.name || reports[0]?.name, 255),
+      scrub_report_at: nowIso(),
+    }
+
+    const rows = await ds(req).zcql().executeZCQLQuery(
+      `SELECT ROWID FROM ${TABLE} WHERE scrub_job_id = '${id}' ORDER BY CREATEDTIME DESC LIMIT 1`)
+    const rowId = String((rows || []).map(r => r[TABLE] || r)[0]?.ROWID || '')
+
+    if (rowId) {
+      await ds(req).datastore().table(TABLE).updateRow({ ROWID: rowId, ...patch })
+      console.log(`[scrubs] linked ${reports.length} report(s) to scrub ${rowId}`)
+      return { ok: true, id: rowId, reports }
+    }
+    // No scrub on this card — keep the paperwork anyway.
+    const stub = await ds(req).datastore().table(TABLE).insertRow({
+      scrub_job_id: id,
+      scrub_shop: str(job?.shop_name, 200),
+      scrub_vehicle: str(job?.vehicle || [job?.year, job?.make, job?.model].filter(Boolean).join(' '), 200),
+      scrub_year: str(job?.year, 8), scrub_make: str(job?.make, 60), scrub_model: str(job?.model, 120),
+      scrub_vin: str(job?.vin, 32).toUpperCase(),
+      scrub_ro: str(job?.invoice_number || job?.quote_number, 60),
+      scrub_insurer: str(job?.insurer, 120),
+      scrub_source: 'report-only', scrub_status: 'report-only', scrub_at: nowIso(),
+      scrub_search: [job?.shop_name, job?.vehicle, job?.vin, job?.invoice_number, job?.quote_number, ...reports.map(r => r.name)]
+        .filter(Boolean).join(' ').toLowerCase().slice(0, CHUNK),
+      ...patch,
+    })
+    const sid = String(stub?.ROWID || stub?.[0]?.ROWID || '')
+    console.log(`[scrubs] no scrub on card ${id} — filed a report-only row ${sid}`)
+    return { ok: true, id: sid, reports, stub: true }
+  } catch (e) {
+    console.warn('[scrubs] linkReports failed:', e.message)
+    return { ok: false, error: e.message }
   }
 }
 

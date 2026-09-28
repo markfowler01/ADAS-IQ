@@ -96,5 +96,12 @@ export async function attachJobReports(req, token, job, targets) {
     }
   }
   console.log(`[report-attach] ${job.shop_name || job.id}: attached ${out.attached.join(', ') || 'nothing'}${out.errors.length ? ' · errors: ' + out.errors.join(' | ') : ''}`)
+  // 🔬 Put the paperwork on the record too (Mark 2026-09-28). The scrub says
+  // what we recommended; this says which reports actually went out with the
+  // invoice. Best effort — it can never fail billing.
+  try {
+    const { linkReports } = await import('./scrubStore.js')
+    await linkReports(req, job.id, files.map(f => ({ id: f.id, name: f.name, size: f.size })), job)
+  } catch (e) { console.warn('[report-attach] scrub library link failed:', e.message) }
   return out
 }
