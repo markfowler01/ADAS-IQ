@@ -2750,6 +2750,35 @@ ${draftHtml}
 </body></html>`)
 })
 
+// ── CLICK COUNTER for the short links (absoluteadas.com/checklist, /guide) ──
+// A 1x1 gif the redirect pages load before sending the visitor on. Counts per
+// day per source in VanKV (one row per month). Approximate by design.
+captureCalcRouter.get('/hit', async (req, res) => {
+  const src = String(req.query.src || 'unknown').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || 'unknown'
+  try {
+    const { getVal, setVal } = await import('../services/vanDatastore.js')
+    const day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
+    const key = `link_hits_${day.slice(0, 7)}`
+    const cur = (await getVal(req, key)) || {}
+    cur[day] = cur[day] || {}
+    cur[day][src] = (cur[day][src] || 0) + 1
+    await setVal(req, key, cur)
+  } catch (e) { console.warn('[hit]', e.message) }
+  res.set({ 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, private', 'Access-Control-Allow-Origin': '*' })
+  res.end(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64'))
+})
+captureCalcRouter.get('/hits', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { getVal } = await import('../services/vanDatastore.js')
+    const now = new Date(); const ym = now.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }).slice(0, 7)
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 15).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }).slice(0, 7)
+    const cur = (await getVal(req, `link_hits_${ym}`)) || {}
+    const totals = {}
+    for (const d of Object.values(cur)) for (const [s, n] of Object.entries(d)) totals[s] = (totals[s] || 0) + n
+    res.json({ ok: true, month: ym, totals, by_day: cur, previous_month: (await getVal(req, `link_hits_${prev}`)) || {} })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 // ── ESTIMATOR GUIDE SERIES (30 days of posts from the guide) ────────────────
 captureCalcRouter.post('/series/import', requireCronSecretFlex, express.json({ limit: '512kb' }), async (req, res) => {
   try {
