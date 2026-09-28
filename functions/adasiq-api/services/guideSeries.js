@@ -20,10 +20,12 @@ const DONE_KEY = 'guide_series_done'     // { [date]: { ids, at } }
 // Three posts per chunk keeps every row under ~9.5K.
 const CHUNK = 3
 const PUBLIC_BASE = process.env.API_PUBLIC_BASE || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+// Its own slots, clear of the unified daily post (9 / 11:30 / 12), the 6:30 van
+// post and the 3 PM ad. Mark 2026-09-27: "this is a new post, do not stop any other posts."
 const SCHEDULE = [
-  { channel: 'linkedin_personal',  hour: 9,  minute: 0,  field: 'body', label: 'LinkedIn 9:00' },
-  { channel: 'instagram_business', hour: 11, minute: 30, field: 'ig',   label: 'Instagram 11:30' },
-  { channel: 'facebook_page',      hour: 12, minute: 0,  field: 'body', label: 'Facebook 12:00' },
+  { channel: 'linkedin_personal',  hour: 10, minute: 30, field: 'body', label: 'LinkedIn 10:30' },
+  { channel: 'instagram_business', hour: 13, minute: 0,  field: 'ig',   label: 'Instagram 1:00' },
+  { channel: 'facebook_page',      hour: 13, minute: 30, field: 'body', label: 'Facebook 1:30' },
 ]
 
 export function ptDateStr(d = new Date()) { return d.toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }) }
@@ -197,7 +199,7 @@ export async function enqueueTodaysSeries(req, { dateStr = ptDateStr(), dry = fa
     await setVal(req, DONE_KEY, done)
     const kills = ids.map((i, k) => `${SCHEDULE[k].label}: ${buildSignedActionUrl(PUBLIC_BASE, i.id, 'kill')}`).join('\n')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `📚 *Estimator series, day ${post.day} of 30 queued for today*\n"${post.headline}"\nLinkedIn 9:00 · Instagram 11:30 · Facebook 12:00 PT · card: ${post.image_url}\n\nKill one if you need to:\n${kills}`).catch(() => {})
+      `📚 *Estimator series, day ${post.day} of 30 queued for today*\n"${post.headline}"\nLinkedIn 10:30 · Instagram 1:00 · Facebook 1:30 PT · card: ${post.image_url}\n\nKill one if you need to:\n${kills}`).catch(() => {})
   }
   return { queued: !dry, dry, date: dateStr, day: post.day, headline: post.headline, ids }
 }

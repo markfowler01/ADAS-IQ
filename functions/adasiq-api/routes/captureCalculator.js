@@ -1656,12 +1656,9 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
       const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
       if (await isMarketingPaused(req, 'social')) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
     }
-    {
-      // 📚 While the estimator-guide series is running it IS the daily post.
-      // The series queues its own three channel drafts (services/guideSeries.js).
-      const { isSeriesWindow, ptDateStr } = await import('../services/guideSeries.js')
-      if (!req.query.force_unified && await isSeriesWindow(req, ptDateStr())) return res.json({ ok: true, skipped: true, reason: 'estimator_series_window' })
-    }
+    // 📚 The estimator-guide series (services/guideSeries.js) is ADDITIONAL to
+    // this daily post, on its own times. Mark 2026-09-27: "do not stop any
+    // other posts." Nothing here stands down for it.
     const segment = getSegment(req)
     const todayPT = new Date().toLocaleString('en-US', { weekday: 'short', timeZone: 'America/Los_Angeles' })
     const dayName = String(req.query.dayName || todayPT)
