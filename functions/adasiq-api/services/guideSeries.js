@@ -73,7 +73,20 @@ export async function seriesStatus(req) {
   const done = (await getVal(req, DONE_KEY)) || {}
   const today = ptDateStr()
   const post = meta ? await seriesPostFor(req, today) : null
-  return { meta, today, today_post: post ? { day: post.day, headline: post.headline } : null, queued_days: Object.keys(done).sort() }
+  return { meta, today, today_post: post ? { day: post.day, headline: post.headline } : null, unified_drafter_paused_today: meta ? await isSeriesWindow(req, today) : false, queued_days: Object.keys(done).sort() }
+}
+
+/**
+ * True while the series owns the daily slot: from the day before start_date
+ * (Mark posts the LinkedIn document by hand that day, 2026-09-27: "just use the
+ * new pics") through end_date. The unified daily drafter stands down in this window.
+ */
+export async function isSeriesWindow(req, dateStr = ptDateStr()) {
+  const meta = await getVal(req, META_KEY)
+  if (!meta || !meta.active || !meta.start_date) return false
+  const from = daysBetween(meta.start_date, dateStr)          // -1 on the day before start
+  const end = meta.end_date || addDays(meta.start_date, (meta.count || 1) - 1)
+  return from >= -1 && daysBetween(dateStr, end) >= 0
 }
 
 /** The post for a PT date, or null when the series is inactive or the date is outside it. */
