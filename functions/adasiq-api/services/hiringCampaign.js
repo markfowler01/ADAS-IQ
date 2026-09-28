@@ -24,7 +24,9 @@ const IG_TAIL = 'Apply at absoluteadas.com/careers (type it in). Six questions l
 
 const P = (headline, body) => ({ headline, body: `${body.trim()}\n\n${TAIL}`, ig: `${body.trim()}\n\n${IG_TAIL}` })
 export const POSTS = [
-  P('Now hiring ADAS calibration technicians. No ADAS experience needed.',
+  // Headlines stay under ~55 characters: the locked masthead fits two lines,
+  // and a third line runs into the byline (seen on the first preview 2026-09-28).
+  P('Now hiring ADAS techs. No ADAS experience needed.',
     `Absolute ADAS is hiring technicians in Western Washington, Bellingham to Olympia.
 
 You do not need ADAS calibration experience. We teach that in weeks. What we cannot teach is how you think through an electrical problem, so that is what we hire for.
@@ -48,7 +50,7 @@ You hear back at every step. That is how we operate.`),
 You see exactly what the job is. I see how you work. No surprises on either side.
 
 If you have ever taken a job that was not what the ad said, this one is built so that cannot happen.`),
-  P('Fully loaded van. Autel scanners. OEM software. You show up and calibrate.',
+  P('Fully loaded van. Autel scanners. OEM software.',
     `Every Absolute ADAS tech runs a company van with everything on it. Autel scanners, MA600 target frames, seventeen plus OEM software subscriptions.
 
 No buying your own tools for this job. No waiting on a bay. You run your route and go home when the work is done.`),
@@ -56,7 +58,7 @@ No buying your own tools for this job. No waiting on a bay. You run your route a
     `Mobile means the day is yours to run. Shops from Bellingham to Olympia, cars ready when you get there, the van set up the way you like it.
 
 Self-motivated techs love it. If you need someone standing over you, it is not for you. If you do not, it might be the best job you have had.`),
-  P('Get in now and grow with us. Market lead, trainer, partner.',
+  P('Get in early. Market lead, trainer, partner.',
     `Absolute ADAS is scaling across the Pacific Northwest. The people who join now are the people who lead the next markets.
 
 Market lead. Trainer. Partner. This is not a dead-end gig. We are building something bigger than one van, and we want techs who want to build it with us.`),
@@ -72,7 +74,7 @@ If that sounds like you, keep reading. If it sounds like a lot, it is, and it is
     `Not a full tech yet? We have an apprentice path.
 
 You ride with our techs, learn the procedures, learn the paperwork, and earn while you do it. Bring automotive experience, a clean record, and the will to learn. We teach the rest.`),
-  P('Also hiring: key and module programming, dispatch and shop support.',
+  P('Also hiring: programming and dispatch.',
     `Not everything at Absolute ADAS happens in a van. We are hiring for key and module programming, and for dispatch and shop support.
 
 If you are organized, comfortable with technology, and want to be part of a team that gets cars delivered, apply and pick your role.`),
