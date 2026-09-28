@@ -21,6 +21,20 @@ const SOURCE_LABEL = {
 }
 const sourceLabel = s => SOURCE_LABEL[s] || (String(s || '').startsWith('mail:') ? `📥 ${String(s).slice(5)}` : s || '—')
 
+// Where this car is on the money path. Grey until it turns into paperwork.
+const STAGE = {
+  scrubbed: { label: 'scrubbed', bg: '#f5f3f0', fg: '#777' },
+  quoted:   { label: 'quoted',   bg: '#eff6ff', fg: '#1e40af' },
+  job:      { label: 'on the board', bg: '#fff7ed', fg: '#b45309' },
+  invoiced: { label: 'invoiced', bg: '#dcfce7', fg: '#166534' },
+  paid:     { label: 'paid',     bg: '#166534', fg: '#fff' },
+}
+function StagePill({ s }) {
+  const st = STAGE[s.stage] || STAGE.scrubbed
+  const detail = s.invoiceNumber ? ` ${s.invoiceNumber}` : s.quoteNumber ? ` ${s.quoteNumber}` : ''
+  return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: st.bg, color: st.fg }}>{st.label}{detail}</span>
+}
+
 const when = iso => {
   if (!iso) return ''
   const d = new Date(iso)
@@ -138,7 +152,7 @@ export default function ScrubLibraryScreen() {
                   </td>
                   <td className="py-2.5 pr-3">
                     <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                    <div className="text-xs font-mono" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}</div>
+                    <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /></div>
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.vin || '—'}</td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
@@ -160,7 +174,7 @@ export default function ScrubLibraryScreen() {
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-sm font-bold truncate" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                <div className="text-xs font-mono" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}</div>
+                <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /></div>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                 style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
@@ -235,6 +249,9 @@ function ScrubReport({ s, onBack }) {
             <p className="text-sm mt-3" style={{ color: '#444' }}><span className="font-bold">VIN:</span> <span className="font-mono">{s.vin || '—'}</span></p>
             <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Updated:</span> {when(s.at) || '—'}</p>
             <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">By:</span> {s.by || sourceLabel(s.source)}</p>
+            <p className="text-sm mt-1 flex items-center gap-2" style={{ color: '#444' }}><span className="font-bold">Stage:</span> <StagePill s={s} /></p>
+            {s.quoteNumber && <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Quote:</span> {s.quoteNumber}</p>}
+            {s.invoiceNumber && <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Invoice:</span> {s.invoiceNumber}</p>}
 
             <button
               onClick={downloadPdf}

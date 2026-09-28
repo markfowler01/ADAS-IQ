@@ -264,6 +264,8 @@ async function billEstimator(req, res, job, p, dry) {
     const token = await getAccessToken()
     const att = await attachJobReports(req, token, job, [{ kind: 'invoices', id: out.id }]).catch(e => ({ attached: [], errors: [e.message] }))
     p.attached = att.attached; p.attach_errors = att.errors
+    // 🔬 The scrub that started this car now knows it became an invoice.
+    try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, job.id, 'invoiced', { invoiceNumber: out.number, invoiceId: out.id, quoteNumber: p.estimate?.number || '' }) } catch { /* bookkeeping only */ }
     const e2 = await emailInvoice(token, out.id, emails)
     if (e2) await postToCliqChannel(DISPATCH_CHANNEL, `⚠️ Bill it · ${p.shop_name} ${out.number}: invoice created from estimate ${p.estimate.number} but email failed (${e2}) — send from Books by hand.`).catch(() => {})
     const onSite = p.customer_type === 'retail' || String(req.body?.pay_mode || '') === 'on_site'
@@ -397,6 +399,8 @@ router.post('/:id/bill', async (req, res) => {
       // 📎 Kinetic report from the job folder rides along on both documents (Mark 2026-09-24).
       const att = await attachJobReports(req, token, job, [{ kind: 'estimates', id: p.estimate_id }, { kind: 'invoices', id: inv.invoice_id }]).catch(e => ({ attached: [], errors: [e.message] }))
       p.attached = att.attached; p.attach_errors = att.errors
+      // 🔬 The scrub that started this car now knows it became an invoice.
+      try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, job.id, 'invoiced', { invoiceNumber: inv.invoice_number, invoiceId: inv.invoice_id, quoteNumber: p.estimate_number, quoteId: p.estimate_id }) } catch { /* bookkeeping only */ }
       // 3. Insurance invoice = the estimate, emailed as-is. 4. Cost invoice emailed.
       const e1 = await emailEstimate(token, p.estimate_id, emails)
       const e2 = await emailInvoice(token, inv.invoice_id, emails)

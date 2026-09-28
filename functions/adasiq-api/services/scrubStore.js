@@ -44,7 +44,7 @@ const sensorName = c => String(c?.sensor || c?.calibration_name || '').trim()
  * One scrub → one row. Never throws: a library write must not be able to
  * fail the scrub the tech is waiting on.
  */
-export async function saveScrub(req, { jobId, data, source = 'button', by = '', file = {}, status = 'ok', error = '' } = {}) {
+export async function saveScrub(req, { jobId, data, source = 'button', by = '', file = {}, status = 'ok', error = '', sourceSystem = '', sourceRef = '' } = {}) {
   try {
     const cals = Array.isArray(data?.calibrations) ? data.calibrations : []
     const required = cals.filter(isRequired)
@@ -73,6 +73,15 @@ export async function saveScrub(req, { jobId, data, source = 'button', by = '', 
       scrub_insurer: str(data?.insurer, 120),
       scrub_pdf_type: str(data?._pdfType || 'CCC', 20),
       scrub_source: str(source, 30),
+      // 🔧 Lifecycle plumbing (Mark 2026-09-28, for the CCC integration and the
+      // "quote on pre-scan, invoice on exit" dream): every scrub starts at
+      // 'scrubbed' and setScrubStage moves it to quoted → job → invoiced → paid.
+      // source_system says which door it came in; source_ref is the upstream
+      // record id, so a CCC estimate id lands here the day that feed exists.
+      scrub_stage: 'scrubbed',
+      scrub_stage_at: nowIso(),
+      scrub_source_system: str(sourceSystem || (String(source).startsWith('mail:') ? 'email' : source), 30),
+      scrub_source_ref: str(sourceRef, 120),
       scrub_by: str(by, 120),
       scrub_status: str(status, 20),
       scrub_at: nowIso(),
@@ -108,7 +117,7 @@ async function readPage(req, offset, cols) {
   return (rows || []).map(r => r[TABLE] || r)
 }
 
-const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_report_at'
+const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_report_at, scrub_stage, scrub_stage_at, scrub_quote_number, scrub_invoice_number, scrub_source_system, scrub_source_ref'
 
 /**
  * Search the library. `q` is matched in JS against the prepared haystack,
@@ -169,6 +178,12 @@ function shape(r) {
     reports: (() => { try { return JSON.parse(r.scrub_reports || '[]') } catch { return [] } })(),
     reportName: r.scrub_report_name || '',
     reportAt: r.scrub_report_at || '',
+    stage: r.scrub_stage || 'scrubbed',
+    stageAt: r.scrub_stage_at || '',
+    quoteNumber: r.scrub_quote_number || '',
+    invoiceNumber: r.scrub_invoice_number || '',
+    sourceSystem: r.scrub_source_system || '',
+    sourceRef: r.scrub_source_ref || '',
   }
 }
 
@@ -250,6 +265,41 @@ export async function linkReports(req, jobId, files = [], job = {}) {
     return { ok: true, id: sid, reports, stub: true }
   } catch (e) {
     console.warn('[scrubs] linkReports failed:', e.message)
+    return { ok: false, error: e.message }
+  }
+}
+
+const STAGES = ['scrubbed', 'quoted', 'job', 'invoiced', 'paid']
+
+/**
+ * Move a card's newest scrub along the money path and record what it turned
+ * into. Stages only move forward: a re-scrub of an invoiced car must not
+ * drag the record back to "scrubbed". Never throws — billing must not be
+ * able to fail on bookkeeping.
+ */
+export async function setScrubStage(req, jobId, stage, { quoteNumber = '', quoteId = '', invoiceNumber = '', invoiceId = '', sourceRef = '' } = {}) {
+  try {
+    const id = String(jobId || '').replace(/'/g, '')
+    const want = STAGES.indexOf(String(stage || '').toLowerCase())
+    if (!id || want < 0) return { ok: false }
+    const rows = await ds(req).zcql().executeZCQLQuery(
+      `SELECT ROWID, scrub_stage FROM ${TABLE} WHERE scrub_job_id = '${id}' ORDER BY CREATEDTIME DESC LIMIT 1`)
+    const r = (rows || []).map(x => x[TABLE] || x)[0]
+    if (!r?.ROWID) return { ok: false, reason: 'no scrub on this card' }
+    const have = STAGES.indexOf(String(r.scrub_stage || 'scrubbed').toLowerCase())
+    const patch = { ROWID: String(r.ROWID) }
+    if (want > have) { patch.scrub_stage = STAGES[want]; patch.scrub_stage_at = nowIso() }
+    if (quoteNumber) patch.scrub_quote_number = str(quoteNumber, 60)
+    if (quoteId) patch.scrub_quote_id = str(quoteId, 64)
+    if (invoiceNumber) patch.scrub_invoice_number = str(invoiceNumber, 60)
+    if (invoiceId) patch.scrub_invoice_id = str(invoiceId, 64)
+    if (sourceRef) patch.scrub_source_ref = str(sourceRef, 120)
+    if (Object.keys(patch).length === 1) return { ok: true, unchanged: true }
+    await ds(req).datastore().table(TABLE).updateRow(patch)
+    console.log(`[scrubs] card ${id} → ${patch.scrub_stage || STAGES[have]}${invoiceNumber ? ` · invoice ${invoiceNumber}` : ''}${quoteNumber ? ` · quote ${quoteNumber}` : ''}`)
+    return { ok: true, id: String(r.ROWID), stage: patch.scrub_stage || STAGES[have] }
+  } catch (e) {
+    console.warn('[scrubs] setScrubStage failed:', e.message)
     return { ok: false, error: e.message }
   }
 }
