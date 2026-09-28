@@ -174,6 +174,45 @@ export async function detectPdfMeta(base64Pdf) {
 }
 
 /**
+ * What IS this PDF? (Mark 2026-09-28, for the mailbox harvest.)
+ *
+ * detectPdfMeta above is deliberately binary — CCC or else KINETIC — because
+ * on the upload screen Kat only ever hands us one of those two. Point it at a
+ * mailbox and that becomes wrong: a payment remittance, a bank notice or one
+ * of our own invoices all come back "KINETIC" and get parsed as if they were
+ * calibration reports. This one is allowed to say "none of the above", so the
+ * harvest can skip what it should never have spent an Opus call on.
+ *
+ * Kept separate on purpose: the scrub path's detector is benchmarked and must
+ * not be disturbed.
+ */
+export async function detectPdfKind(base64Pdf) {
+  const message = await getClient().messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 40,
+    messages: [{ role: 'user', content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } },
+      { type: 'text', text: [
+        'Classify this PDF. Reply with exactly two values separated by a pipe and nothing else.',
+        '(1) one of:',
+        'CCC = a CCC ONE collision repair estimate',
+        'ESTIMATE = a collision repair estimate in any other format (Mitchell, Audatex, a shop\'s own)',
+        'REPORT = an ADAS calibration or diagnostic scan report (Kinetic ID, post-scan, pre-scan, health report)',
+        'INVOICE = an invoice, bill, statement, remittance advice or payment confirmation',
+        'OTHER = anything else',
+        '(2) the vehicle manufacturer in full (Toyota, Mercedes-Benz, Ford), or UNKNOWN.',
+        'Example: CCC|Mercedes-Benz',
+      ].join('\n') },
+    ] }],
+  })
+  const raw = (message.content?.[0]?.text || '').trim()
+  const [t, m] = raw.split('|').map(x => String(x || '').trim())
+  const k = String(t).toUpperCase()
+  const kind = ['CCC', 'ESTIMATE', 'REPORT', 'INVOICE', 'OTHER'].find(x => k.includes(x)) || 'OTHER'
+  return { kind, make: /unknown/i.test(m || '') ? '' : (m || ''), raw }
+}
+
+/**
  * Extract calibration data from a CCC ONE estimate PDF.
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON matching Kinetic extractor format

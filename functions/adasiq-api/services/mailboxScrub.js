@@ -30,6 +30,7 @@ const CURSOR = 'mailscrub_cursor'          // { inbox: { start, done: [hash], at
 const MAX_PDF_BYTES = 12 * 1024 * 1024
 const PAGE = 50
 const DONE_KEEP = 600                      // ~9 chars each, comfortably inside the 10k row
+const OURS_RE = /@(absoluteadas|adas-iq)\.com$/i   // our own sends
 
 const ds = req => catalyst.initialize(req, { type: 'advancedio' })
 const normEmail = e => String(e || '').toLowerCase().replace(/^.*<|>.*$/g, '').trim()
@@ -123,7 +124,7 @@ async function pageMessages(token, accountId, start, limit) {
  * because a scrub can outrun the gateway. Everything else (paging, listing
  * attachments, the done bookkeeping) is cheap and runs to the budget.
  */
-export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max = 1, budgetMs = 22000, dry = false, match = '', via = '' } = {}) {
+export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max = 1, budgetMs = 22000, dry = false, match = '', via = '', includeOwn = false } = {}) {
   const t0 = Date.now()
   // `via` lets us harvest one correspondent's mail out of a mailbox we CAN
   // read. ar@ is not a mailbox the token can open, but ar@'s mail is copied
@@ -169,6 +170,10 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
         st.start++                                  // advance past this message whatever happens
         if (m.hasAttachment === false) continue
         if (!hits(m)) continue                     // not the correspondent we are harvesting
+        // ar@ is an OUTGOING address (Mark 2026-09-28: "it's supposed to be
+        // for outgoing, but some companies respond back to invoices"). Our own
+        // sends are the invoices we mailed; the value is in what came back.
+        if (!includeOwn && OURS_RE.test(normEmail(m.fromAddress || m.sender || ''))) continue
 
         const id = String(m.messageId || m.msgId || '')
         const folderId = String(m.folderId || '')
@@ -180,7 +185,10 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
 
         for (const a of pdfs) {
           if (out.scrubbed >= max) break
-          const h = hash(`${id}:${a.attachmentId}`)
+          // Dedupe on the FILE, not the message. Our invoice emails send the
+          // same PDF twice (insurance + cost copy) and shops reply quoting it,
+          // so a message-scoped key scrubbed one estimate four times.
+          const h = hash(`${String(a.attachmentName || '').toLowerCase()}:${a.attachmentSize || 0}`)
           if (doneSet.has(h)) continue
           out.found++
           doneSet.add(h)                            // stamp BEFORE the work — a gateway kill must not loop
@@ -193,14 +201,19 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
 
             // An AR mailbox is mostly remittances and statements. Only an
             // estimate or a calibration report is worth an Opus scrub.
-            const { detectPdfMeta } = await import('./claude.js')
-            let type = 'UNKNOWN'
-            try { ({ type } = await detectPdfMeta(buf.toString('base64'))) } catch { type = 'UNKNOWN' }
-            if (!['CCC', 'KINETIC'].includes(String(type).toUpperCase())) {
+            // detectPdfMeta is binary (CCC, else KINETIC) so it can never say
+            // "this is a bank notice". detectPdfKind can, which is the whole
+            // point here — an AR mailbox is mostly paperwork we should not
+            // spend an Opus call on.
+            const { detectPdfKind } = await import('./claude.js')
+            let kind = 'OTHER'
+            try { ({ kind } = await detectPdfKind(buf.toString('base64'))) } catch { kind = 'OTHER' }
+            if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) {
               out.skipped++; st.skipped = (st.skipped || 0) + 1
-              out.filed.push({ name: a.attachmentName, type, result: 'not an estimate or report — skipped' })
+              out.filed.push({ name: a.attachmentName, kind, result: 'not an estimate or report — skipped' })
               continue
             }
+            const type = kind
 
             const { scrubPdfBuffer } = await import('../routes/extract.js')
             const data = await scrubPdfBuffer(req, buf, {

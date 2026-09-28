@@ -421,6 +421,7 @@ router.post('/mail-scrub', async (req, res) => {
       inbox: String(req.query.inbox || 'ar@absoluteadas.com'),
       max: Math.min(Number(req.query.max) || 1, 5),
       via: String(req.query.via || ''),
+      includeOwn: req.query.includeOwn === '1',
       dry: req.query.dry === '1',
     }))
   } catch (e) { res.status(500).json({ error: e.message }) }
