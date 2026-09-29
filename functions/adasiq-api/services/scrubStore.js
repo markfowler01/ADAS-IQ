@@ -439,6 +439,30 @@ export async function scrubsForJob(req, jobId) {
   }
 }
 
+/**
+ * Remove exact duplicate scrubs — same file name, VIN and source — keeping the
+ * newest. Overlapping sweep passes wrote 26 of these on 2026-09-28. Edited
+ * rows and benchmark rows are never touched.
+ */
+export async function dedupeScrubs(req, { dry = false } = {}) {
+  const { scrubs } = await listScrubs(req, { limit: 5000, maxScan: 10000 })
+  const groups = new Map()
+  for (const s of scrubs) {
+    if (!s.fileName || s.status === 'edited' || String(s.source).startsWith('benchmark')) continue
+    const k = `${s.fileName.toLowerCase()}|${s.vin}|${s.source}`
+    ;(groups.get(k) || groups.set(k, []).get(k)).push(s)
+  }
+  const drop = []
+  for (const list of groups.values()) {
+    if (list.length < 2) continue
+    list.sort((a, b) => String(b.at).localeCompare(String(a.at)))   // newest first
+    drop.push(...list.slice(1))
+  }
+  if (!dry) for (const d of drop) { try { await ds(req).datastore().table(TABLE).deleteRow(d.id) } catch (e) { console.warn('[scrubs] dedupe delete failed:', d.id, e.message) } }
+  console.log(`[scrubs] dedupe: ${drop.length} duplicate row(s) ${dry ? 'would be' : ''} removed`)
+  return { removed: drop.length, dry, files: [...new Set(drop.map(d => d.fileName))].slice(0, 40) }
+}
+
 /** Headline counts for the library screen. */
 export async function scrubStats(req) {
   try {

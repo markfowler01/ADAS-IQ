@@ -136,6 +136,15 @@ export async function runMailboxScrub(req, { inbox = 'ar@absoluteadas.com', max 
     .some(v => String(v || '').toLowerCase().includes(need))
   const out = { inbox: key, via: need || null, scanned: 0, found: 0, scrubbed: 0, skipped: 0, filed: [], done: false, dry }
 
+  // One pass per mailbox at a time. The gateway cuts a pass at 30s but it
+  // keeps running; a loop that fires the next pass 3s later read the same
+  // cursor and scrubbed the same PDF again (26 duplicate rows, 2026-09-28).
+  try {
+    const seg = catalyst.initialize(req).cache().segment(); const lk = `mailscrub_${key.replace(/[^a-z0-9]/g, '_')}`
+    let last = null; try { last = await seg.getValue(lk) } catch { last = null }
+    if (last && Date.now() - Number(last) < 90000) { out.skipped_lock = 'a pass is already running for this mailbox'; return out }
+    try { await seg.update(lk, String(Date.now()), 1) } catch { await seg.put(lk, String(Date.now()), 1) }
+  } catch { /* no cache = no lock */ }
   const mb = await resolveMailbox(req, key)
   if (!mb.accountId) {
     out.error = `the mail token cannot see ${key}`

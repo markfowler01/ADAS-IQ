@@ -576,4 +576,11 @@ router.post('/scrub-by-ro', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message, ro }) }
 })
 
+// 🧹 Remove exact duplicate scrubs (same file + VIN + source), newest kept. ?dry=1 to preview.
+router.post('/scrubs-dedupe', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { dedupeScrubs } = await import('../services/scrubStore.js'); res.json(await dedupeScrubs(req, { dry: req.query.dry === '1' })) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export default router
