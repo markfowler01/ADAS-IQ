@@ -17,8 +17,12 @@ import Anthropic from '@anthropic-ai/sdk'
 
 const client = () => new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-// Makes whose statements require radar aiming after ANY front bumper removal.
-const AIM_AFTER_BUMPER = /honda|acura|nissan|infiniti|hyundai|kia|genesis|mercedes|bmw|mini/i
+// Makes whose statements require radar aiming after ANY front bumper removal
+// AND whose front radar is standard on 2018+. BMW/MINI are deliberately not
+// here: the radar is optional on many models (a base i3 has none) and the
+// scrub lists a not-required radar row either way, so the guard cannot tell
+// 'no radar' from 'radar untouched'. BMW stays a judgment call in the prompt.
+const AIM_AFTER_BUMPER = /honda|acura|nissan|infiniti|hyundai|kia|genesis|mercedes/i
 // Makes that always carry a surround-view camera in the inventory (2019+ or 2022+ Hyundai/Kia).
 const ALWAYS_AVC = /mercedes|bmw|audi|porsche|volvo|land rover|range rover|genesis|lexus/i
 const AVC_KIA = /hyundai|kia/i
@@ -37,7 +41,7 @@ export async function triggerLines(base64Pdf) {
 
 Categories:
 - windshield: windshield / w/shield / w/s / windscreen / glass (front glass only), replaced OR removed-and-installed OR sublet
-- front_bumper: front bumper cover / fascia / front bumper assembly, replaced OR removed-and-installed
+- front_bumper: ONLY the front bumper cover / fascia / bumper assembly line itself, replaced OR removed-and-installed — not brackets, grilles, absorbers, lamps, trim or add-for lines (one or two line numbers at most)
 - rear_bumper: rear bumper cover / fascia, replaced OR removed-and-installed
 - alignment: wheel alignment (labor or sublet), "align", "4 wheel", "steering system reset"
 - battery: battery disconnect / D&R / remove and install battery / hybrid battery
@@ -104,7 +108,7 @@ export async function guardScrub(data, base64Pdf) {
   // 2. Front bumper off on a make that aims after any bumper removal → front radar (+ front side radar row if present).
   const fb = lines(hits.front_bumper), rs = lines(hits.radar_sensor)
   if ((fb.length && AIM_AFTER_BUMPER.test(make)) || rs.length) {
-    const ref = rs.length ? [...new Set(rs)] : [...new Set(fb)]
+    const ref = (rs.length ? [...new Set(rs)] : [...new Set(fb)]).slice(0, 6)
     require(cals, /^front radar|front radar|distance sensor|distronic|acc radar|pre.?collision radar/, 'Front Radar', 'Static',
       rs.length ? `Radar sensor named on line${rs.length > 1 ? 's' : ''} ${rs.join(', ')}${fb.length ? '; front bumper R&I/Repl line ' + fb.join(', ') : ''}` : `Front bumper R&I/Repl (line${fb.length > 1 ? 's' : ''} ${fb.join(', ')}) — ${make} requires radar aiming after any front bumper removal`, ref,
       `Front Radar calibration required per ${per(make, rs.length ? 'the radar sensor itself is on the estimate' : 'radar aiming is required after any front bumper removal on this make')} (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
