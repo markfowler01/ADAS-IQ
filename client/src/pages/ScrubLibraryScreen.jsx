@@ -191,9 +191,9 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
           <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full"
             style={{ backgroundColor: '#fff', border: `2px solid ${s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-sm font-bold truncate" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /></div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-bold leading-snug" style={{ color: INK, overflowWrap: 'anywhere' }}>{s.vehicle || 'Vehicle not read'}</div>
+                <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /></div>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                 style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
