@@ -1139,7 +1139,9 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
   )
 }
 
-function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNavigate }) {
+// Exported so the Scrub Library can reuse the exact same review → send flow
+// (same /shop-quotes/preview lines, same Quote PDF attached by /shop-quotes/send).
+export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNavigate }) {
   const [phase, setPhase] = useState('idle')  // idle | loading | review | sending | sent | error
   const [preview, setPreview] = useState(null)
   const [msg, setMsg] = useState('')

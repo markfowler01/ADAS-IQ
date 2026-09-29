@@ -12,6 +12,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar'
+// The SAME blue "Send Quote to Shop" button the jobs page uses — line review, then
+// /shop-quotes/send attaches the Quote PDF. Reused, not copied (Mark 2026-09-29).
+import { SendQuoteButton } from '../components/ToggleBoard'
 
 const ORANGE = '#CD4419'
 const INK = '#1a1a1a'
@@ -142,7 +145,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         {nav}
         {openBusy
           ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
-          : <ScrubReport s={open} onBack={closeScrub} />}
+          : <ScrubReport s={open} onBack={closeScrub} onNavigate={onNavigate} />}
       </div>
     )
   }
@@ -289,7 +292,7 @@ const fromLine = l => ({
   ...(l.added ? { _added: true, _by: l.by } : {}), ...(l.edited ? { _edited: true, _by: l.by } : {}),
 })
 
-function ScrubReport({ s: initial, onBack }) {
+function ScrubReport({ s: initial, onBack, onNavigate }) {
   const [s, setS] = useState(initial)
   const [cardBusy, setCardBusy] = useState(false)
   const [cardMsg, setCardMsg] = useState('')
@@ -299,6 +302,9 @@ function ScrubReport({ s: initial, onBack }) {
   const [invMsg, setInvMsg] = useState('')
   const [qBusy, setQBusy] = useState(false)
   const [qMsg, setQMsg] = useState('')
+  // The Books estimate id once a quote is built (or already stamped on the
+  // scrub) — this is what unlocks the shared Send-Quote review/send button.
+  const [quoteId, setQuoteId] = useState(initial.quoteId || '')
   const [expanded, setExpanded] = useState({})
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState([])
@@ -406,15 +412,17 @@ function ScrubReport({ s: initial, onBack }) {
     finally { setInvBusy(false) }
   }
 
-  // 📝 Quote straight off the scrub (Mark 2026-09-29): a real Books estimate
-  // through POST /api/create-invoice — the same maker the jobs page uses — so
-  // the shop gets the normal quote email and it lands in Quotes Out. Then the
-  // number is stamped on the scrub (stage "quoted"); invoicing comes after.
+  // 📝 Quote straight off the scrub (Mark 2026-09-29). Two steps, same as the
+  // jobs page: (1) build the real Books estimate through POST /api/create-invoice
+  // — that's where the shop's CRM billing rules (Cal ID / PCSI / Post-Scan) get
+  // applied to the lines; (2) the SAME blue "Send Quote to Shop" button opens the
+  // line-by-line review and /shop-quotes/send attaches the Quote PDF. Nothing
+  // is emailed until Mark has seen every line.
   const createQuote = async () => {
     const cals = required
     if (!cals.length) { setQMsg('No required calibrations on this scrub to quote.'); return }
     const who = s.shop || 'this shop'
-    if (!window.confirm(`Create a Books quote for ${who}?\n\n${[s.year, s.make, s.model].filter(Boolean).join(' ')}${s.ro ? ` · RO ${s.ro}` : ''}\n${cals.length} calibration${cals.length > 1 ? 's' : ''}: ${cals.map(c => c.name).join(', ')}`)) return
+    if (!window.confirm(`Build a Books quote for ${who}?\n\n${[s.year, s.make, s.model].filter(Boolean).join(' ')}${s.ro ? ` · RO ${s.ro}` : ''}\n${cals.length} calibration${cals.length > 1 ? 's' : ''}: ${cals.map(c => c.name).join(', ')}\n\nYou review every line before anything is sent.`)) return
     setQBusy(true); setQMsg('')
     try {
       const r = await apiFetch(`${API_BASE}/api/create-invoice`, {
@@ -429,8 +437,10 @@ function ScrubReport({ s: initial, onBack }) {
       })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      const num = d.estimate_number || d.quoteNumber || d.quote_number || ''
+      const num = d.quoteNumber || d.estimate_number || d.quote_number || ''
       const qid = d.quoteId || d.estimate_id || ''
+      if (!qid) throw new Error('Books did not return an estimate id — nothing was sent.')
+      setQuoteId(qid)
       // Bookkeeping only — a failed stamp must never look like a failed quote.
       try {
         const st = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/invoice`, {
@@ -440,8 +450,8 @@ function ScrubReport({ s: initial, onBack }) {
         const sd = await st.json().catch(() => ({}))
         if (sd.scrub) setS(sd.scrub)
       } catch { /* quote exists; the badge catches up on reload */ }
-      setQMsg(`✓ Quote ${num || 'created'} for ${who}.`)
-    } catch (e) { setQMsg(e.message || 'Could not create the quote.') }
+      setQMsg(`✓ Quote ${num || 'built'} — review the lines and send it below.`)
+    } catch (e) { setQMsg(e.message || 'Could not build the quote.') }
     finally { setQBusy(false) }
   }
 
@@ -546,13 +556,30 @@ function ScrubReport({ s: initial, onBack }) {
             style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: (shown.length || hasStoredReport) && !editing ? 1 : 0.5 }}
           >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report that went out ↓' : '📄 Absolute ADAS report ↓'}</button>
 
-          {/* 📝 Quote first, the way the jobs page does — a real Books estimate. */}
-          {s.quoteNumber && !s.invoiceNumber
-            ? <div className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold text-center" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>📝 Quoted · {s.quoteNumber}</div>
-            : !s.invoiceNumber && <button onClick={createQuote} disabled={qBusy || invBusy || editing || !required.length}
+          {/* 📝 Quote: build the Books estimate, then hand off to the SAME blue
+              Send-Quote button the jobs page uses (line review → /shop-quotes/send
+              with the Quote PDF). A previously-quoted scrub goes straight to send. */}
+          {(() => {
+            if (s.invoiceNumber) return null
+            const qid = quoteId || s.quoteId || ''
+            if (qid) return (
+              <div className="mt-2 flex flex-col gap-1.5">
+                {s.quoteNumber && <div className="text-xs font-semibold text-center" style={{ color: '#1e40af' }}>📝 Quote {s.quoteNumber} is built — review the lines and send:</div>}
+                <SendQuoteButton
+                  result={{ quoteId: qid, quoteNumber: s.quoteNumber || '' }}
+                  job={{ shop: s.shop || '', year: s.year || '', make: s.make || '', model: s.model || '', vin: s.vin || '', ro_number: s.ro || '', claim: s.claim || '', insurer: s.insurer || '' }}
+                  lineCount={required.length}
+                  selectedCustomer={{ name: s.shop || '' }}
+                  onNavigate={onNavigate} />
+              </div>
+            )
+            return (
+              <button onClick={createQuote} disabled={qBusy || invBusy || editing || !required.length}
                 className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
                 style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1e40af', color: qBusy ? '#777' : '#fff', opacity: required.length && !editing ? 1 : 0.5 }}
-              >{qBusy ? 'Creating…' : `📝 Create quote${required.length ? ` (${required.length} line${required.length > 1 ? 's' : ''})` : ''}`}</button>}
+              >{qBusy ? 'Building quote…' : `📝 Build quote${required.length ? ` (${required.length} line${required.length > 1 ? 's' : ''})` : ''}`}</button>
+            )
+          })()}
           {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}
 
           {/* 💸 Bill it straight from here — no download / re-upload round trip. */}

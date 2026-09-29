@@ -153,7 +153,7 @@ async function readPage(req, offset, cols) {
 // columns are not allowed" — took the whole list down on 2026-09-28 when the
 // 31st was added). Keep this at 28: what the list and the card need, nothing
 // the detail view can fetch with SELECT * instead.
-const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_stage, scrub_quote_number, scrub_invoice_number, scrub_source_system, scrub_file_id, scrub_file_name'
+const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_stage, scrub_quote_number, scrub_quote_id, scrub_invoice_number, scrub_source_system, scrub_file_id, scrub_file_name'
 
 /**
  * Search the library. `q` is matched in JS against the prepared haystack,
@@ -217,6 +217,7 @@ function shape(r) {
     stage: r.scrub_stage || 'scrubbed',
     stageAt: r.scrub_stage_at || '',
     quoteNumber: r.scrub_quote_number || '',
+    quoteId: r.scrub_quote_id || '',
     invoiceNumber: r.scrub_invoice_number || '',
     sourceSystem: r.scrub_source_system || '',
     sourceRef: r.scrub_source_ref || '',
