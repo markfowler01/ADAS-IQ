@@ -323,11 +323,21 @@ router.post('/', (req, res, next) => {
   }
 
   try {
+    // Our own Absolute ADAS report may be re-read here (Kat rebuilds a job
+    // from it), but it is not a scrub of anything and must not enter the
+    // library as one (a Sienna report landed as a 4-calibration "scrub" on
+    // 2026-09-29). Classify first; file only real estimates and reports.
+    let kind = ''
+    try { const { detectPdfKind } = await import('../services/claude.js'); ({ kind } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = '' }
+    const ours = kind === 'ABSOLUTE'
     const data = await scrubPdfBuffer(req, req.file.buffer, {
       source: 'upload',
       by: req.user?.name || req.user?.email || '',
       file: { name: req.file.originalname || '' },
+      keep: !ours,
+      ...(kind === 'REPORT' ? { pdfType: 'KINETIC' } : kind === 'CCC' || kind === 'ESTIMATE' ? { pdfType: 'CCC' } : {}),
     })
+    if (ours) data._ourReport = true
 
     res.json(data)
   } catch (err) {

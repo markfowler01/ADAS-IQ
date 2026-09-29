@@ -317,8 +317,9 @@ export async function requeueScrub(req, jobId, { source = 'requeue', by = '' } =
   if (!folderId) throw new Error('no folder for this card')
   // Prefer the CCC estimate over Kinetic reports / post-scans / invoices that share the folder.
   const pdfs = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '')).sort((a, b) => Number(b.created || 0) - Number(a.created || 0))
-    .sort((a, b) => Number(/kinetic|post.?scan|invoice|report/i.test(a.name || '')) - Number(/kinetic|post.?scan|invoice|report/i.test(b.name || '')))
+    .sort((a, b) => Number(/kinetic|post.?scan|invoice|report|absolute.?adas|adas-iq/i.test(a.name || '')) - Number(/kinetic|post.?scan|invoice|report|absolute.?adas|adas-iq/i.test(b.name || '')))
   if (!pdfs.length) throw new Error('no PDF in the folder')
+  if (/absolute.?adas|adas-iq-report/i.test(pdfs[0].name || '') && pdfs.every(f => /absolute.?adas|adas-iq-report|kinetic|post.?scan|invoice/i.test(f.name || ''))) throw new Error('no estimate in the folder — only our own report, a Kinetic report, a scan or an invoice')
   await queueScrub(req, { job: String(job.id), file: pdfs[0].id, name: pdfs[0].name, source, by })
   return { job: job.id, file: pdfs[0].id, name: pdfs[0].name }
 }
@@ -359,6 +360,8 @@ export async function runScrubQueue(req, { max = 1 } = {}) {
       const { getAccessToken } = await import('./zoho.js'); const { downloadFile } = await import('./workdrive.js')
       let buffer; try { ({ buffer } = await downloadFile(item.file, await getAccessToken())) } catch (e) { throw new Error(`download: ${e.message}`) }
       if (!buffer || buffer.length < 512) throw new Error(`download: ${buffer?.length || 0} bytes`)
+      // Never scrub our own report as if it were an estimate.
+      try { const { detectPdfKind } = await import('./claude.js'); const { kind } = await detectPdfKind(buffer.toString('base64')); if (kind === 'ABSOLUTE') throw new Error('that PDF is our own Absolute ADAS report, not an estimate') } catch (e) { if (/our own/.test(e.message)) throw e }
       const { scrubPdfBuffer } = await import('../routes/extract.js')
       let data; try { data = await scrubPdfBuffer(req, buffer, { learn: false, jobId: item.job, source: item.source || 'email', by: item.by || '', file: { id: item.file, name: item.name || '' } }) } catch (e) { throw new Error(`scrub: ${String(e.message).slice(0, 300)}`) }
       const cals = (data.calibrations || []).filter(c => c.enabled !== false)
