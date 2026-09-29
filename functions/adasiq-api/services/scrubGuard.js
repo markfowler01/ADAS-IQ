@@ -40,7 +40,7 @@ export async function triggerLines(base64Pdf) {
       { type: 'text', text: `This is a collision repair estimate. Go through EVERY numbered line on every page, including supplements and sublet lines. For each category below, list the line numbers whose OPERATION or DESCRIPTION matches. Read the operation column carefully: "Repl" / "R&R" = replace, "R&I" = remove and install, "Rpr" = repair, "Blnd" = blend, "Sublet" = outside work.
 
 Categories:
-- windshield: windshield / w/shield / w/s / windscreen / glass (front glass only), replaced OR removed-and-installed OR sublet
+- windshield: the FRONT windshield only — "windshield", "w/shield", "w/s", "windscreen" — replaced OR removed-and-installed OR sublet. NEVER liftgate glass, back glass, rear window, quarter glass, door glass, mirror glass, sunroof, washer, wiper or molding lines (a rear-hit Odyssey's liftgate glass was counted as a windshield, 2026-09-28)
 - front_bumper: ONLY the front bumper cover / fascia / bumper assembly line itself, replaced OR removed-and-installed — not brackets, grilles, absorbers, lamps, trim or add-for lines (one or two line numbers at most)
 - rear_bumper: rear bumper cover / fascia, replaced OR removed-and-installed
 - alignment: wheel alignment (labor or sublet), "align", "4 wheel", "steering system reset"
