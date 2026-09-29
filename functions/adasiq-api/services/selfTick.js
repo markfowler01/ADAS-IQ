@@ -42,18 +42,35 @@ const TICKS = {
   mail_scrub: { minutes: 15, path: '/api/crm-sync-cron/mail-scrub?inbox=mark@absoluteadas.com&via=ar@absoluteadas.com&depth=400', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
 }
 
-/** Claim the window in Cache. Returns false when someone already claimed it. */
+/**
+ * Claim the window. Returns false when someone already claimed it.
+ *
+ * Cache entries expire (max 48h on Catalyst), and the old 1-hour expiry meant
+ * any tick longer than an hour fired hourly — the "weekly" source finder ran
+ * every hour the board was open (2026-09-28). Windows up to 48h keep the
+ * stamp in Cache with a matching expiry; longer windows keep it in AppConfig.
+ */
 async function claim(req, key, minutes) {
+  const stamp = `tick_${key}`
+  const now = String(Date.now())
   try {
-    const seg = catalyst.initialize(req).cache().segment()
-    const stamp = `tick_${key}`
-    let last = null
-    try { last = await seg.getValue(stamp) } catch { last = null }
-    if (last && Date.now() - Number(last) < minutes * 60000) return false
-    const now = String(Date.now())
-    try { await seg.update(stamp, now, 1) } catch { await seg.put(stamp, now, 1) }
+    if (minutes <= 48 * 60) {
+      const seg = catalyst.initialize(req).cache().segment()
+      let last = null
+      try { last = await seg.getValue(stamp) } catch { last = null }
+      if (last && Date.now() - Number(last) < minutes * 60000) return false
+      const hours = Math.min(48, Math.max(1, Math.ceil(minutes / 60)))
+      try { await seg.update(stamp, now, hours) } catch { await seg.put(stamp, now, hours) }
+      return true
+    }
+    const zcql = catalyst.initialize(req, { type: 'advancedio' }).zcql()
+    const rows = await zcql.executeZCQLQuery(`SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${stamp}' ORDER BY MODIFIEDTIME DESC LIMIT 1`)
+    const r = rows?.[0]?.AppConfig
+    if (r && Date.now() - Number(r.config_value || 0) < minutes * 60000) return false
+    const t = catalyst.initialize(req, { type: 'advancedio' }).datastore().table('AppConfig')
+    if (r) await t.updateRow({ ROWID: String(r.ROWID), config_key: stamp, config_value: now }); else await t.insertRow({ config_key: stamp, config_value: now })
     return true
-  } catch { return false }   // no Cache = no tick; never break the request
+  } catch { return false }   // no Cache / no table = no tick; never break the request
 }
 
 /**
