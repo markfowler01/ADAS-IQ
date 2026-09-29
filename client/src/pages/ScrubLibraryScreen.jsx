@@ -295,6 +295,8 @@ function ScrubReport({ s: initial, onBack }) {
   const [cardMsg, setCardMsg] = useState('')
   const [pdfBusy, setPdfBusy] = useState(false)
   const [pdfErr, setPdfErr] = useState('')
+  const [invBusy, setInvBusy] = useState(false)
+  const [invMsg, setInvMsg] = useState('')
   const [expanded, setExpanded] = useState({})
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState([])
@@ -358,6 +360,47 @@ function ScrubReport({ s: initial, onBack }) {
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000)
     } catch (e) { setPdfErr(e.message || 'Could not build the PDF.') }
     finally { setPdfBusy(false) }
+  }
+
+  // 💸 Invoice straight off the scrub (Mark 2026-09-29) — no more downloading
+  // the report and re-uploading it on the jobs page. Same endpoint the jobs
+  // page uses, so the invoice comes out identical; then we stamp the number
+  // back on the scrub so the green "invoiced" badge lights up.
+  const createInvoice = async () => {
+    const cals = required
+    if (!cals.length) { setInvMsg('No required calibrations on this scrub to bill.'); return }
+    const who = s.shop || 'this shop'
+    if (!window.confirm(`Create an invoice for ${who}?\n\n${[s.year, s.make, s.model].filter(Boolean).join(' ')}${s.ro ? ` · RO ${s.ro}` : ''}\n${cals.length} calibration${cals.length > 1 ? 's' : ''}: ${cals.map(c => c.name).join(', ')}`)) return
+    setInvBusy(true); setInvMsg('')
+    try {
+      const payload = {
+        shop: s.shop || '', ro_number: s.ro || '', insurer: s.insurer || '', claim: s.claim || '',
+        vin: s.vin || '', vehicle: [s.year, s.make, s.model].filter(Boolean).join(' '),
+        year: s.year || '', make: s.make || '', model: s.model || '',
+        calibrations: cals.map(c => ({ calibration_name: c.name, cal_type: c.type || 'Static', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '' })),
+        // The rule-out matrix is the proof of a full inspection — same as the
+        // jobs page sends, and what backs the Absolute Promise on a denial.
+        ruled_out: shown.filter(c => !c.required).map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '' })),
+        scrub_id: s.id,
+      }
+      const r = await apiFetch(`${API_BASE}/api/books/from-extract`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      const num = d.invoice_number || d.invoiceNumber || d.number || ''
+      // Bookkeeping only — never let a failed stamp look like a failed invoice.
+      try {
+        const st = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/invoice`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ invoiceNumber: num, invoiceId: d.invoice_id || d.id || '' }),
+        })
+        const sd = await st.json().catch(() => ({}))
+        if (sd.scrub) setS(sd.scrub)
+      } catch { /* invoice is made; the badge can catch up on reload */ }
+      setInvMsg(`✓ Invoice ${num || 'created'} for ${who}.`)
+    } catch (e) { setInvMsg(e.message || 'Could not create the invoice.') }
+    finally { setInvBusy(false) }
   }
 
   const loadFromCard = async () => {
@@ -460,6 +503,15 @@ function ScrubReport({ s: initial, onBack }) {
             className="mt-4 w-full rounded-lg px-3 py-3 text-sm font-bold"
             style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: (shown.length || hasStoredReport) && !editing ? 1 : 0.5 }}
           >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report that went out ↓' : '📄 Absolute ADAS report ↓'}</button>
+
+          {/* 💸 Bill it straight from here — no download / re-upload round trip. */}
+          {s.invoiceNumber
+            ? <div className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold text-center" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>💸 Invoiced · {s.invoiceNumber}</div>
+            : <button onClick={createInvoice} disabled={invBusy || editing || !required.length}
+                className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
+                style={{ backgroundColor: invBusy ? '#f5f3f0' : '#166534', color: invBusy ? '#777' : '#fff', opacity: required.length && !editing ? 1 : 0.5 }}
+              >{invBusy ? 'Creating…' : `💸 Create invoice${required.length ? ` (${required.length} line${required.length > 1 ? 's' : ''})` : ''}`}</button>}
+          {invMsg && <p className="text-xs mt-2" style={{ color: invMsg.startsWith('✓') ? '#166534' : '#b91c1c' }}>{invMsg}</p>}
 
           {!editing
             ? <button onClick={startEdit} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd' }}>✏️ Edit calibration lines</button>

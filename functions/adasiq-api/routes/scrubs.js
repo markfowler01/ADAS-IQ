@@ -18,7 +18,7 @@
 import express from 'express'
 import multer from 'multer'
 import { requeueScrub, runScrubQueue, scrubQueue } from '../services/emailToJob.js'
-import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, alldataLinksFor, saveAlldataLink } from '../services/scrubStore.js'
+import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, alldataLinksFor, saveAlldataLink, setScrubStageById } from '../services/scrubStore.js'
 
 const router = express.Router()
 const who = req => req.user?.name || req.user?.email || 'staff'
@@ -170,6 +170,23 @@ router.put('/:id/calibrations', async (req, res) => {
   try {
     const r = await updateScrubCalibrations(req, req.params.id, req.body?.calibrations, { by: who(req) })
     if (!r.ok) return res.status(400).json(r)
+    res.json({ ...r, scrub: await getScrub(req, req.params.id) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// 💸 Record the invoice the 💸 Create invoice button just made, so the scrub
+// shows its green "invoiced" badge and the number it went out under. The
+// invoice itself is created by POST /api/books/from-extract — the same path
+// the jobs page uses — so there is exactly one place money gets made. This
+// only does the bookkeeping, and by design it never fails the billing: if the
+// stamp does not take, the invoice still exists.
+router.post('/:id/invoice', express.json(), async (req, res) => {
+  try {
+    const { invoiceNumber = '', invoiceId = '', quoteNumber = '', quoteId = '' } = req.body || {}
+    if (!invoiceNumber && !invoiceId) return res.status(400).json({ error: 'invoiceNumber or invoiceId required' })
+    const before = await getScrub(req, req.params.id)
+    if (!before) return res.status(404).json({ error: 'not found' })
+    const r = await setScrubStageById(req, req.params.id, 'invoiced', { invoiceNumber, invoiceId, quoteNumber, quoteId })
     res.json({ ...r, scrub: await getScrub(req, req.params.id) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })

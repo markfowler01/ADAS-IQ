@@ -40,7 +40,8 @@ export async function triggerLines(base64Pdf) {
       { type: 'text', text: `This is a collision repair estimate. Go through EVERY numbered line on every page, including supplements and sublet lines. For each category below, list the line numbers whose OPERATION or DESCRIPTION matches. Read the operation column carefully: "Repl" / "R&R" = replace, "R&I" = remove and install, "Rpr" = repair, "Blnd" = blend, "Sublet" = outside work.
 
 Categories:
-- windshield: the FRONT windshield only — "windshield", "w/shield", "w/s", "windscreen" — replaced OR removed-and-installed OR sublet. NEVER liftgate glass, back glass, rear window, quarter glass, door glass, mirror glass, sunroof, washer, wiper or molding lines (a rear-hit Odyssey's liftgate glass was counted as a windshield, 2026-09-28)
+- windshield: the FRONT windshield only — "windshield", "w/shield", "w/s", "windscreen" — and ONLY when the GLASS ITSELF IS REMOVED FROM THE CAR: operation Repl / R&R / R&I, or a glass sublet. The operation column decides this, not the word "windshield". NEVER liftgate glass, back glass, rear window, quarter glass, door glass, mirror glass, sunroof, washer, wiper or molding lines (a rear-hit Odyssey's liftgate glass was counted as a windshield, 2026-09-28)
+- windshield_excluded: windshield lines that are NOT a removal, and never justify a calibration — masking or protecting the glass for refinish ("mask windshield", "mask & protect", "cover", "tape", "plastic", typically 0.2–0.5 hrs), chip or rock-chip repair, glass polish or denib, tint, urethane/molding-only lines, cowl, wipers, and "Add for" lines. If the glass stays in the car, it belongs HERE, not in windshield (a masked windshield at 0.3 hrs was billed as a camera calibration, 2026-09-29)
 - front_bumper: ONLY the front bumper cover / fascia / bumper assembly line itself, replaced OR removed-and-installed — not brackets, grilles, absorbers, lamps, trim or add-for lines (one or two line numbers at most)
 - rear_bumper: rear bumper cover / fascia, replaced OR removed-and-installed
 - alignment: wheel alignment (labor or sublet), "align", "4 wheel", "steering system reset"
@@ -52,7 +53,7 @@ Categories:
 - camera: any line naming a camera (front, rear, side, surround, 360)
 - headlamp: headlamp / headlight assembly replaced or removed-and-installed
 
-Return ONLY JSON: {"windshield":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
+Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
     ] }],
   })
   const raw = (msg.content || []).map(b => b.text || '').join('').trim()
@@ -99,7 +100,16 @@ export async function guardScrub(data, base64Pdf) {
   const per = (m, s) => `${m || 'OEM'} OEM position statement and ALLDATA ADAS procedure${s ? ' — ' + s : ''}`
 
   // 1. Windshield replaced → the camera, always (2015+).
-  const ws = lines(hits.windshield)
+  // Masking/protecting the glass for refinish (0.3 hrs) is NOT a removal — the
+  // glass never leaves the car and the camera is never disturbed. This rule is
+  // the only one that may ADD a sensor, so a stray "mask windshield" line used
+  // to manufacture a whole calibration on its own (Mark, 2026-09-29). Anything
+  // the categoriser parked in windshield_excluded can never reach it.
+  const wsExcluded = new Set(lines(hits.windshield_excluded))
+  const ws = lines(hits.windshield).filter(l => !wsExcluded.has(l))
+  if (wsExcluded.size) {
+    out.ignored = [...wsExcluded].map(l => `windshield line ${l}: masking / non-removal — glass stays in the car, no calibration`)
+  }
   if (ws.length && (!year || year >= 2015)) {
     require(cals, /windshield|front camera|lane depart|forward camera/, 'Front Windshield Camera', 'Static/Dynamic',
       `Windshield replaced / R&I (line${ws.length > 1 ? 's' : ''} ${ws.join(', ')}) — if equipped, confirm at pre-scan`, ws,

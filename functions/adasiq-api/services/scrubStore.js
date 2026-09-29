@@ -414,6 +414,40 @@ export async function setScrubStage(req, jobId, stage, { quoteNumber = '', quote
   }
 }
 
+/**
+ * Same as setScrubStage, but addressed by the scrub's own ROWID instead of the
+ * job card. The 💸 Create invoice button on the Scrub Library works straight
+ * off a scrub — an uploaded or emailed estimate often has no job card at all,
+ * and setScrubStage would quietly no-op on those. Stages still only move
+ * forward, and this never throws: billing must not fail on bookkeeping.
+ */
+export async function setScrubStageById(req, scrubId, stage, { quoteNumber = '', quoteId = '', invoiceNumber = '', invoiceId = '', sourceRef = '' } = {}) {
+  try {
+    const id = String(scrubId || '').replace(/'/g, '')
+    const want = STAGES.indexOf(String(stage || '').toLowerCase())
+    if (!id || want < 0) return { ok: false }
+    const rows = await ds(req).zcql().executeZCQLQuery(
+      `SELECT ROWID, scrub_stage FROM ${TABLE} WHERE ROWID = '${id}' LIMIT 1`)
+    const r = (rows || []).map(x => x[TABLE] || x)[0]
+    if (!r?.ROWID) return { ok: false, reason: 'no such scrub' }
+    const have = STAGES.indexOf(String(r.scrub_stage || 'scrubbed').toLowerCase())
+    const patch = { ROWID: String(r.ROWID) }
+    if (want > have) { patch.scrub_stage = STAGES[want]; patch.scrub_stage_at = nowIso() }
+    if (quoteNumber) patch.scrub_quote_number = str(quoteNumber, 60)
+    if (quoteId) patch.scrub_quote_id = str(quoteId, 64)
+    if (invoiceNumber) patch.scrub_invoice_number = str(invoiceNumber, 60)
+    if (invoiceId) patch.scrub_invoice_id = str(invoiceId, 64)
+    if (sourceRef) patch.scrub_source_ref = str(sourceRef, 120)
+    if (Object.keys(patch).length === 1) return { ok: true, unchanged: true }
+    await ds(req).datastore().table(TABLE).updateRow(patch)
+    console.log(`[scrubs] scrub ${id} → ${patch.scrub_stage || STAGES[have]}${invoiceNumber ? ` · invoice ${invoiceNumber}` : ''}`)
+    return { ok: true, id: String(r.ROWID), stage: patch.scrub_stage || STAGES[have] }
+  } catch (e) {
+    console.warn('[scrubs] setScrubStageById failed:', e.message)
+    return { ok: false, error: e.message }
+  }
+}
+
 /** Is this file already in the library? (cross-source dedupe: the same
  * estimate is often both an email attachment and a Downloads file.) */
 export async function hasScrubForFile(req, name) {
