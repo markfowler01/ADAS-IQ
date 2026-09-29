@@ -534,6 +534,7 @@ router.get('/scrubs-export', async (req, res) => {
       id: s.id, vin: s.vin, ro: s.ro, shop: s.shop, vehicle: s.vehicle, make: s.make, year: s.year, source: s.source, status: s.status, file: s.fileName || '', at: s.at,
       required: (s.sensors || []).filter(x => x.r).map(x => x.n),
       not_required: (s.sensors || []).filter(x => !x.r).map(x => x.n),
+      detail: (s.sensors || []).map(x => ({ n: x.n, r: !!x.r, l: x.l || '', g: x.g || '' })),
     }))
     res.json({ count: rows.length, rows })
   } catch (e) { res.status(500).json({ error: e.message }) }
