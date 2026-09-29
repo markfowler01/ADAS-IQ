@@ -222,7 +222,7 @@ export async function importPdf(req, item) {
  * onceADay:true makes repeat calls in the same PT day no-ops (the schedulers
  * are unreliable, so several things call this).
  */
-export async function scanPositionStatements(req, { dry = false, onceADay = false, maxImports = 4 } = {}) {
+export async function scanPositionStatements(req, { dry = false, onceADay = false, maxImports = 4, baseline = false } = {}) {
   const out = { checked: 0, relevant: 0, new: 0, imported: [], flagged: [], errors: [], dry }
   let dayRow = null
   if (onceADay) {
@@ -251,7 +251,23 @@ export async function scanPositionStatements(req, { dry = false, onceADay = fals
   // here on); everything judged since lives in AdasStatementSeen.
   const { seenHashes, markSeen, bumpNewCount } = await import('./statementSources.js')
   const tableSeen = await seenHashes(req, fresh.map(i => urlHash(i.url)))
-  const news = fresh.filter(i => !known.has(normUrl(i.url)) && !known.has(normUrl(i.filename || '')) && !seen.has(urlHash(i.url)) && !tableSeen.has(urlHash(i.url)))
+  const unseen = fresh.filter(i => !known.has(normUrl(i.url)) && !known.has(normUrl(i.filename || '')) && !seen.has(urlHash(i.url)) && !tableSeen.has(urlHash(i.url)))
+  // A source read for the first time carries its whole back-catalogue. That
+  // is baseline, not news — record it as seen and say so once, exactly as
+  // the hubs were handled on 2026-09-24. `baseline` forces the same for
+  // everything in this pass (used once after the registry went from 2
+  // sources to 40-odd that had already been read).
+  const catalogue = unseen.filter(i => i.first || baseline)
+  const news = unseen.filter(i => !(i.first || baseline))
+  if (catalogue.length) {
+    out.baselined = catalogue.length
+    const bySrc = {}; for (const i of catalogue) bySrc[i.source_key] = (bySrc[i.source_key] || 0) + 1
+    out.baselined_sources = bySrc
+    if (!dry) {
+      const { markSeen: mark } = await import('./statementSources.js'); await mark(req, catalogue, 'baseline')
+      await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🔭 *Watch armed on ${Object.keys(bySrc).length} more source${Object.keys(bySrc).length === 1 ? '' : 's'}* — ${catalogue.length} existing documents catalogued as the starting point. You only hear about what appears after today.`).catch(() => {})
+    }
+  }
   out.new = news.length
   if (firstRun) {
     out.baseline = true

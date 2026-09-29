@@ -364,7 +364,7 @@ router.post('/sms-media-backup', async (req, res) => {
 router.post('/position-statements', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
-  try { const { scanPositionStatements } = await import('../services/positionStatements.js'); res.json(await scanPositionStatements(req, { dry: req.query.dry === '1', onceADay: req.query.once === '1' })) }
+  try { const { scanPositionStatements } = await import('../services/positionStatements.js'); res.json(await scanPositionStatements(req, { dry: req.query.dry === '1', onceADay: req.query.once === '1', baseline: req.query.baseline === '1' })) }
   catch (err) { res.status(500).json({ ok: false, error: err.message }) }
 })
 // POST /api/crm-sync-cron/position-statements/import-next — read one queued PDF into the library.

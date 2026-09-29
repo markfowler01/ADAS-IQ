@@ -175,7 +175,10 @@ export async function checkSources(req, { parsers = {}, max = 15, budgetMs = 200
   let sources = (await listSources(req, { enabledOnly: true })).sort((a, b) => String(a.lastChecked).localeCompare(String(b.lastChecked)))
   if (only) sources = sources.filter(s => s.key === only)
   const items = [], errors = [], checked = []
+  const ptDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date())
+  const readToday = s => String(s.lastChecked || '').slice(0, 10) >= ptDay   // ISO stamp vs PT day: close enough for a daily cycle
   for (const s of sources.slice(0, max)) {
+    const first = !s.lastChecked                    // never read before → its catalogue is baseline, not news
     if (Date.now() - t0 > budgetMs) break
     try {
       let list
@@ -184,10 +187,10 @@ export async function checkSources(req, { parsers = {}, max = 15, budgetMs = 200
         const r = await axios.get(s.url, { headers: UA, timeout: 15000, maxRedirects: 5, responseType: 'text', maxContentLength: 3 * 1024 * 1024 })
         list = genericItems(String(r.data || ''), s)
       }
-      const relevant = list.filter(i => RELEVANT.test(i.title) || i.is_pdf)
+      const relevant = list.filter(i => RELEVANT.test(i.title) || i.is_pdf).map(i => ({ ...i, first }))
       const h = pageHash(list)
       items.push(...relevant)
-      checked.push({ key: s.key, items: list.length, relevant: relevant.length, changed: h !== s.lastHash })
+      checked.push({ key: s.key, items: list.length, relevant: relevant.length, changed: h !== s.lastHash, first })
       await stampSource(req, s, { src_last_checked: nowIso(), src_last_status: `ok · ${list.length} links, ${relevant.length} relevant${h === s.lastHash ? ' · unchanged' : ''}`, src_last_hash: h, src_fail_count: 0, src_items_total: list.length, src_items_relevant: relevant.length })
     } catch (e) {
       const fails = s.failCount + 1
@@ -199,7 +202,9 @@ export async function checkSources(req, { parsers = {}, max = 15, budgetMs = 200
     }
   }
   const byUrl = new Map(); for (const i of items) if (i.url && !byUrl.has(i.url)) byUrl.set(i.url, i)
-  return { items: [...byUrl.values()], errors, checked, due: Math.max(0, sources.length - checked.length), ms: Date.now() - t0 }
+  const readKeys = new Set(checked.map(c => c.key))
+  const due = sources.filter(s => !readKeys.has(s.key) && !readToday(s)).length
+  return { items: [...byUrl.values()], errors, checked, due, ms: Date.now() - t0 }
 }
 
 export async function bumpNewCount(req, key, n) {
