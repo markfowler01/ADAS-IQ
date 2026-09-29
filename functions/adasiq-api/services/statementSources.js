@@ -99,6 +99,10 @@ export async function addSource(req, s, { by = 'staff', foundBy = '', verifyNote
   const key = s.key || keyFor(s.name, s.url)
   const have = await getSource(req, key)
   if (have) return { ok: true, existed: true, source: have }
+  // Same page under a different name is still the same page (two discovery
+  // runs overlapped on 2026-09-28 and added a few twice).
+  const dupe = (await listSources(req)).find(x => normUrl(x.url) === normUrl(s.url))
+  if (dupe) return { ok: true, existed: true, source: dupe }
   const row = {
     src_key: key, src_name: str(s.name, 200), src_url: str(s.url, 255), src_base: str(s.base || (() => { try { return new URL(s.url).origin } catch { return '' } })(), 200),
     src_kind: str(s.kind || 'other', 30), src_oem: str(s.oem, 60), src_enabled: enabled ? 'true' : 'false', src_parser: str(s.parser || 'generic', 20),
@@ -221,6 +225,15 @@ export async function markSeen(req, items, verdict = 'judged') {
   }
 }
 
+/** Remove exact-URL duplicates, keeping the oldest row. Safe to run any time. */
+export async function dedupeSources(req) {
+  const all = await listSources(req)            // CREATEDTIME ASC, so the first is the oldest
+  const keep = new Map(), drop = []
+  for (const s of all) { const n = normUrl(s.url); if (keep.has(n)) drop.push(s); else keep.set(n, s) }
+  for (const d of drop) { try { await ds(req).datastore().table(SRC).deleteRow(d.id) } catch (e) { console.warn('[sources] dedupe delete failed:', d.key, e.message) } }
+  return { kept: keep.size, removed: drop.map(d => `${d.key} · ${d.url}`) }
+}
+
 // ── Seed ────────────────────────────────────────────────────────────────────
 /** Put the built-in list in the registry (verifying each non-hub page first). Safe to run again. */
 export async function seedSources(req, { verify = true } = {}) {
@@ -243,6 +256,14 @@ export async function seedSources(req, { verify = true } = {}) {
  * tagged "discovery bot"; Mark gets one message listing them.
  */
 export async function discoverSources(req, { maxAdds = 15, dry = false } = {}) {
+  // One run at a time. The weekly ticker and a manual run collided on
+  // 2026-09-28 and both added the same pages; the lock lives 15 minutes.
+  try {
+    const seg = catalyst.initialize(req).cache().segment()
+    let last = null; try { last = await seg.getValue('discover_lock') } catch { last = null }
+    if (last && Date.now() - Number(last) < 15 * 60000) return { skipped: 'a discovery run is already in progress', dry }
+    try { await seg.update('discover_lock', String(Date.now()), 1) } catch { await seg.put('discover_lock', String(Date.now()), 1) }
+  } catch { /* no cache = no lock; carry on */ }
   const have = await listSources(req)
   const haveDomains = new Set(have.map(s => domainOf(s.url)).filter(Boolean))
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -251,6 +272,8 @@ export async function discoverSources(req, { maxAdds = 15, dry = false } = {}) {
 We already watch these domains, do NOT return them: ${[...haveDomains].sort().join(', ')}.
 
 Search the web and return up to 20 NEW candidate pages. Prefer, in this order: (1) manufacturer collision-repair or technical-information pages that are PUBLIC (no login), (2) industry bodies and aggregators that republish OEM statements, (3) trade news sites with a dedicated OEM-position-statement or ADAS section, (4) calibration tool makers that host OEM statement libraries. Skip pages that need a login. Skip our own site (absoluteadas.com) and Kinetic.
+
+We want pages that LIST the documents themselves — an index, library, archive or category page with links to the PDFs or bulletins — not articles or blog posts that merely talk about position statements. An article titled "how to find OEM position statements" is NOT a source. If a site has both a homepage and a dedicated position-statement page, give the dedicated page.
 
 Return ONLY a JSON array, no prose, each item: {"name": "...", "url": "https://...", "kind": "oem|industry|news|tool", "oem": "brand or empty", "why": "one sentence on what the page publishes"}. URLs must be the specific page that lists the documents, not a homepage, whenever one exists.`
   const msg = await client.messages.create({

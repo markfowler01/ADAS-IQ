@@ -511,6 +511,10 @@ router.post('/position-statements/sources/check', async (req, res) => {
     res.json({ checked: r.checked, due: r.due, items: r.items.length, errors: r.errors, ms: r.ms, sample: r.items.slice(0, 12).map(i => ({ src: i.source_key, title: i.title, published: i.published, pdf: i.is_pdf })) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+router.post('/position-statements/sources/dedupe', async (req, res) => {
+  if (!srcOk(req, res)) return
+  try { const S = await import('../services/statementSources.js'); res.json(await S.dedupeSources(req)) } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.post('/position-statements/sources/discover', async (req, res) => {
   if (!srcOk(req, res)) return
   try { const S = await import('../services/statementSources.js'); res.json(await S.discoverSources(req, { dry: req.query.dry === '1', maxAdds: Math.min(Number(req.query.max) || 15, 30) })) } catch (e) { res.status(500).json({ error: e.message }) }
