@@ -47,7 +47,7 @@ function hash(s) {
 async function cfgRead(req, key, fb) {
   try {
     const rows = await ds(req).zcql().executeZCQLQuery(
-      `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 1`)
+      `SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key}' ORDER BY MODIFIEDTIME DESC LIMIT 1`)   // racing first passes once left 4 rows; the newest is the truth
     const r = rows?.[0]?.AppConfig
     if (!r) return { row: null, value: fb }
     try { return { row: String(r.ROWID), value: JSON.parse(r.config_value) } }

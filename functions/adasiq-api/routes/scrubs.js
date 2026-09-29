@@ -17,7 +17,7 @@
 // instead of the request dying with nothing saved.
 import express from 'express'
 import { requeueScrub, runScrubQueue, scrubQueue } from '../services/emailToJob.js'
-import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard } from '../services/scrubStore.js'
+import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations } from '../services/scrubStore.js'
 
 const router = express.Router()
 const who = req => req.user?.name || req.user?.email || 'staff'
@@ -136,6 +136,33 @@ router.post('/:id/from-card', async (req, res) => {
     const r = await refreshFromCard(req, req.params.id)
     if (!r.ok) return res.status(400).json(r)
     res.json({ ...r, scrub: await getScrub(req, req.params.id) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// ✏️ Save hand-edited calibration lines (added / toggled / rewritten).
+router.put('/:id/calibrations', async (req, res) => {
+  try {
+    const r = await updateScrubCalibrations(req, req.params.id, req.body?.calibrations, { by: who(req) })
+    if (!r.ok) return res.status(400).json(r)
+    res.json({ ...r, scrub: await getScrub(req, req.params.id) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// 📎 The source estimate PDF, so the estimator can read the CCC lines while
+// adding a calibration. Only scrubs that came from a filed PDF have one.
+router.get('/:id/estimate', async (req, res) => {
+  try {
+    const s = await getScrub(req, req.params.id)
+    if (!s) return res.status(404).json({ error: 'not found' })
+    if (!s.fileId) return res.status(404).json({ error: 'no filed estimate on this scrub' })
+    const { getAccessToken } = await import('../services/zoho.js')
+    const { downloadFile } = await import('../services/workdrive.js')
+    const { buffer } = await downloadFile(s.fileId, await getAccessToken())
+    if (!buffer || buffer.length < 512) return res.status(502).json({ error: 'could not read the estimate from WorkDrive' })
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="${String(s.fileName || 'estimate.pdf').replace(/"/g, '')}"`)
+    res.setHeader('Content-Length', buffer.length)
+    res.end(buffer)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 

@@ -149,7 +149,7 @@ async function readPage(req, offset, cols) {
   return (rows || []).map(r => r[TABLE] || r)
 }
 
-const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_report_at, scrub_stage, scrub_stage_at, scrub_quote_number, scrub_invoice_number, scrub_source_system, scrub_source_ref'
+const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_report_at, scrub_stage, scrub_stage_at, scrub_quote_number, scrub_invoice_number, scrub_source_system, scrub_source_ref, scrub_file_id, scrub_file_name'
 
 /**
  * Search the library. `q` is matched in JS against the prepared haystack,
@@ -216,6 +216,8 @@ function shape(r) {
     invoiceNumber: r.scrub_invoice_number || '',
     sourceSystem: r.scrub_source_system || '',
     sourceRef: r.scrub_source_ref || '',
+    fileId: r.scrub_file_id || '',
+    fileName: r.scrub_file_name || '',
   }
 }
 
@@ -338,6 +340,39 @@ export async function refreshFromCard(req, scrubId) {
   await ds(req).datastore().table(TABLE).updateRow(patch)
   console.log(`[scrubs] ${s.id} reloaded from card ${s.jobId}: ${patch.scrub_required_count}/${cals.length} required`)
   return { ok: true, id: s.id, sensors: cals.length, required: patch.scrub_required_count }
+}
+
+/**
+ * ✏️ Save a hand-edited calibration list (Mark 2026-09-28: "sometimes the
+ * scrubber is wrong and we need to manually add calibration lines before
+ * the report is created"). Replaces the sensor list and payload; keeps the
+ * row's identity, stage and links. Each line carries who added or changed
+ * it, so the report can show which calls were the scrubber's and which
+ * were the estimator's.
+ */
+export async function updateScrubCalibrations(req, scrubId, cals, { by = '' } = {}) {
+  const s = await getScrub(req, scrubId)
+  if (!s) return { ok: false, error: 'not found' }
+  const clean = (Array.isArray(cals) ? cals : []).filter(c => c && (c.calibration_name || c.sensor)).map(c => ({
+    calibration_name: str(c.calibration_name || c.sensor, 120),
+    cal_type: str(c.cal_type, 40), trigger: str(c.trigger, 300), line_references: str(c.line_references, 120),
+    justification: str(c.justification, 1500), enabled: c.enabled !== false,
+    ...(c._added ? { _added: true, _by: str(c._by || by, 80) } : {}),
+    ...(c._edited ? { _edited: true, _by: str(c._by || by, 80) } : {}),
+  }))
+  if (!clean.length) return { ok: false, error: 'at least one calibration line is required' }
+  const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const payload = { ...p, calibrations: clean, _edited_by: by || 'staff', _edited_at: nowIso() }
+  const patch = {
+    ROWID: s.id,
+    scrub_status: 'edited',
+    ...calColumns(clean, [s.shop, s.vehicle, s.vin, s.ro, s.claim, s.insurer]),
+    ...chunkPayload(JSON.stringify(payload)),
+  }
+  delete patch._overflow
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  console.log(`[scrubs] ${s.id} edited by ${by || 'staff'}: ${patch.scrub_required_count}/${clean.length} required`)
+  return { ok: true, id: s.id, sensors: clean.length, required: patch.scrub_required_count }
 }
 
 const STAGES = ['scrubbed', 'quoted', 'job', 'invoiced', 'paid']
