@@ -53,7 +53,7 @@ const shortWhen = iso => {
   return d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNavigate }) {
+export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNavigate, onExtracted }) {
   const nav = <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
   const [q, setQ] = useState('')
   const [rows, setRows] = useState([])
@@ -145,7 +145,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         {nav}
         {openBusy
           ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
-          : <ScrubReport s={open} onBack={closeScrub} onNavigate={onNavigate} />}
+          : <ScrubReport s={open} onBack={closeScrub} onNavigate={onNavigate} onExtracted={onExtracted} />}
       </div>
     )
   }
@@ -292,7 +292,7 @@ const fromLine = l => ({
   ...(l.added ? { _added: true, _by: l.by } : {}), ...(l.edited ? { _edited: true, _by: l.by } : {}),
 })
 
-function ScrubReport({ s: initial, onBack, onNavigate }) {
+function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
   const [s, setS] = useState(initial)
   const [cardBusy, setCardBusy] = useState(false)
   const [cardMsg, setCardMsg] = useState('')
@@ -412,46 +412,45 @@ function ScrubReport({ s: initial, onBack, onNavigate }) {
     finally { setInvBusy(false) }
   }
 
-  // 📝 Quote straight off the scrub (Mark 2026-09-29). Two steps, same as the
-  // jobs page: (1) build the real Books estimate through POST /api/create-invoice
-  // — that's where the shop's CRM billing rules (Cal ID / PCSI / Post-Scan) get
-  // applied to the lines; (2) the SAME blue "Send Quote to Shop" button opens the
-  // line-by-line review and /shop-quotes/send attaches the Quote PDF. Nothing
-  // is emailed until Mark has seen every line.
-  const createQuote = async () => {
-    const cals = required
-    if (!cals.length) { setQMsg('No required calibrations on this scrub to quote.'); return }
-    const who = s.shop || 'this shop'
-    if (!window.confirm(`Build a Books quote for ${who}?\n\n${[s.year, s.make, s.model].filter(Boolean).join(' ')}${s.ro ? ` · RO ${s.ro}` : ''}\n${cals.length} calibration${cals.length > 1 ? 's' : ''}: ${cals.map(c => c.name).join(', ')}\n\nYou review every line before anything is sent.`)) return
+  // 📝 Build quote (Mark 2026-09-29: "I expected a screen to pop up so I can
+  // build the estimate"). This opens the SAME estimate screen the jobs page
+  // shows after a report upload — customer picker (auto-matched by shop name),
+  // every calibration line with its toggle, then Build → the Send-Quote review.
+  // We hand the scrub to App's own handleExtracted(jobData, pdfFile), exactly
+  // as UploadScreen does, so nothing about that flow is duplicated here.
+  // _requestId = the scrub's job card, so ToggleBoard PATCHes that card
+  // instead of spawning a second one (one-card lifecycle).
+  const openBuilder = async () => {
+    if (!onExtracted) { setQMsg('The estimate screen is not available from here.'); return }
+    if (!list.length) { setQMsg('Nothing to quote — this scrub has no calibration lines.'); return }
     setQBusy(true); setQMsg('')
     try {
-      const r = await apiFetch(`${API_BASE}/api/create-invoice`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shop: s.shop || '', customerName: s.shop || '', ro_number: s.ro || '', insurer: s.insurer || '', claim: s.claim || '',
-          vin: s.vin || '', vehicle: [s.year, s.make, s.model].filter(Boolean).join(' '),
-          year: s.year || '', make: s.make || '', model: s.model || '',
-          calibrations: cals.map(c => ({ calibration_name: c.name, cal_type: c.type || 'Static', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: true })),
-          notes: s.ro ? `RO ${s.ro} — quoted from the Scrub Library` : 'Quoted from the Scrub Library',
-        }),
-      })
-      const d = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      const num = d.quoteNumber || d.estimate_number || d.quote_number || ''
-      const qid = d.quoteId || d.estimate_id || ''
-      if (!qid) throw new Error('Books did not return an estimate id — nothing was sent.')
-      setQuoteId(qid)
-      // Bookkeeping only — a failed stamp must never look like a failed quote.
-      try {
-        const st = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/invoice`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ quoteNumber: num, quoteId: qid, stage: 'quoted' }),
-        })
-        const sd = await st.json().catch(() => ({}))
-        if (sd.scrub) setS(sd.scrub)
-      } catch { /* quote exists; the badge catches up on reload */ }
-      setQMsg(`✓ Quote ${num || 'built'} — review the lines and send it below.`)
-    } catch (e) { setQMsg(e.message || 'Could not build the quote.') }
+      const jobData = {
+        shop: s.shop || '', ro_number: s.ro || '', insurer: s.insurer || '', claim: s.claim || '',
+        vin: s.vin || '', vehicle: [s.year, s.make, s.model].filter(Boolean).join(' '),
+        year: s.year || '', make: s.make || '', model: s.model || '',
+        calibrations: list.map(l => ({
+          calibration_name: l.name, enabled: l.required === true, cal_type: l.type || '',
+          trigger: l.trigger || '', line_references: l.lines || '', justification: l.why || '',
+        })),
+        document_links: Array.isArray(p.document_links) ? p.document_links : [],
+        _requestId: s.jobId || null,
+        _scrubId: s.id,
+      }
+      // The filed CCC estimate rides along as the PDF, same as an upload would,
+      // so it attaches to the Books quote / WorkDrive folder. Missing file = no PDF.
+      let file = null
+      if (s.fileId) {
+        try {
+          const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/estimate`)
+          if (r.ok) {
+            const blob = await r.blob()
+            file = new File([blob], s.fileName || `CCC-${s.ro || 'estimate'}.pdf`, { type: 'application/pdf' })
+          }
+        } catch { /* fine — the builder works without the PDF */ }
+      }
+      onExtracted(jobData, file)
+    } catch (e) { setQMsg(e.message || 'Could not open the estimate screen.') }
     finally { setQBusy(false) }
   }
 
@@ -574,10 +573,11 @@ function ScrubReport({ s: initial, onBack, onNavigate }) {
               </div>
             )
             return (
-              <button onClick={createQuote} disabled={qBusy || invBusy || editing || !required.length}
+              <button onClick={openBuilder} disabled={qBusy || invBusy || editing || !list.length || !onExtracted}
                 className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
-                style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1e40af', color: qBusy ? '#777' : '#fff', opacity: required.length && !editing ? 1 : 0.5 }}
-              >{qBusy ? 'Building quote…' : `📝 Build quote${required.length ? ` (${required.length} line${required.length > 1 ? 's' : ''})` : ''}`}</button>
+                style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1e40af', color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
+                title="Opens the estimate screen pre-filled from this scrub — pick the customer, check the lines, build, then send"
+              >{qBusy ? 'Opening the estimate…' : `📝 Build quote${required.length ? ` (${required.length} required)` : ''}`}</button>
             )
           })()}
           {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}

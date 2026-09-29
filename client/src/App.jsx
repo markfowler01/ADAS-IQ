@@ -409,7 +409,7 @@ function MainApp() {
         <TipsScreen {...navProps} />
       )}
       {screen === 'scrubs' && (
-        <ScrubLibraryScreen {...navProps} />
+        <ScrubLibraryScreen {...navProps} onExtracted={handleExtracted} />
       )}
       {screen === 'recruit' && (
         <RecruitingScreen {...navProps} />
