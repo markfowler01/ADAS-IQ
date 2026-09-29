@@ -257,9 +257,40 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   // Demo payloads are not real work, so they are not filed. saveScrub never
   // throws, so the library can never fail the scrub Kat is waiting on.
   if (keep && !data._demo) {
-    data._scrubId = (await saveScrub(req, { jobId, data, source, by, file })).id || ''
+    // 📎 The estimate itself travels with the scrub (Mark 2026-09-29: "on every
+    // scrub save the estimate and attach it so the technician on his phone can
+    // click and look at the CCC estimate"). A scrub from the email queue or a
+    // job folder already has a WorkDrive file; everything else — upload
+    // screen, Scrub button, Downloads — is filed into the Scrub Library folder
+    // now. Never blocks the scrub: a failed upload just leaves the link off.
+    let filed = file || {}
+    if (!filed.id && buffer?.length) {
+      try { filed = await fileEstimateCopy(req, buffer, { name: filed.name, data }) } catch (e) { console.warn('[extract] estimate copy not filed:', e.message) }
+    }
+    data._scrubId = (await saveScrub(req, { jobId, data, source, by, file: filed })).id || ''
+    data._estimateFileId = filed.id || ''
   }
   return data
+}
+
+// One WorkDrive folder for estimates that have no job folder yet. Found once
+// per instance, created on first use under the same parent as job folders.
+let _scrubFolderId = ''
+async function fileEstimateCopy(req, buffer, { name = '', data = {} } = {}) {
+  const { getAccessToken } = await import('../services/zoho.js')
+  const { listChildren, createFolderUnder, uploadFileToFolder, JOB_PARENT_FOLDER_ID } = await import('../services/workdrive.js')
+  const token = await getAccessToken()
+  if (!_scrubFolderId) {
+    const kids = await listChildren(JOB_PARENT_FOLDER_ID, token, { folders: true }).catch(() => [])
+    const have = (kids || []).find(f => /^scrub library$/i.test(f.name || ''))
+    _scrubFolderId = have?.id || (await createFolderUnder(JOB_PARENT_FOLDER_ID, 'Scrub Library', token))?.folderId || ''
+    if (!_scrubFolderId) throw new Error('no Scrub Library folder')
+  }
+  const base = String(name || '').replace(/\.pdf$/i, '').replace(/[^\w .()&-]+/g, ' ').trim()
+  const label = [data.year, data.make, data.model].filter(Boolean).join(' ').slice(0, 50)
+  const fname = `${data.ro_number ? 'RO ' + data.ro_number + ' - ' : ''}${label || base || 'estimate'}${base && label ? ' - ' + base : ''}.pdf`.slice(0, 120)
+  const { fileId } = await uploadFileToFolder(_scrubFolderId, fname, buffer, token)
+  return { id: fileId, name: fname }
 }
 
 router.post('/', (req, res, next) => {

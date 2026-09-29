@@ -583,4 +583,29 @@ router.post('/scrubs-dedupe', async (req, res) => {
   try { const { dedupeScrubs } = await import('../services/scrubStore.js'); res.json(await dedupeScrubs(req, { dry: req.query.dry === '1' })) } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 📎 Backfill: file an estimate PDF for a scrub that has none (multipart file=, id=). Cron secret.
+const attachUpload = (await import('multer')).default({ storage: (await import('multer')).default.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } }).single('file')
+router.post('/scrubs/attach-file', (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  attachUpload(req, res, async err => {
+    if (err) return res.status(400).json({ error: err.message })
+    const id = String(req.body?.id || ''); if (!req.file || !id) return res.status(400).json({ error: 'file and id required' })
+    try {
+      const { getScrub, setScrubFile } = await import('../services/scrubStore.js')
+      const s = await getScrub(req, id); if (!s) return res.status(404).json({ error: 'no such scrub' })
+      if (s.fileId) return res.json({ skipped: 'already has a file', id })
+      const { getAccessToken } = await import('../services/zoho.js'); const { listChildren, createFolderUnder, uploadFileToFolder, JOB_PARENT_FOLDER_ID } = await import('../services/workdrive.js')
+      const token = await getAccessToken()
+      const kids = await listChildren(JOB_PARENT_FOLDER_ID, token, { folders: true }).catch(() => [])
+      const folder = (kids || []).find(f => /^scrub library$/i.test(f.name || ''))?.id || (await createFolderUnder(JOB_PARENT_FOLDER_ID, 'Scrub Library', token))?.folderId
+      const label = [s.year, s.make, s.model].filter(Boolean).join(' ').slice(0, 50)
+      const fname = `${s.ro ? 'RO ' + s.ro + ' - ' : ''}${label || 'estimate'} - ${String(req.file.originalname || 'estimate.pdf').replace(/[^\w .()&-]+/g, ' ').trim()}`.slice(0, 120)
+      const { fileId } = await uploadFileToFolder(folder, fname, req.file.buffer, token)
+      await setScrubFile(req, id, { id: fileId, name: fname })
+      res.json({ ok: true, id, file: fname })
+    } catch (e) { res.status(500).json({ error: e.message, id }) }
+  })
+})
+
 export default router

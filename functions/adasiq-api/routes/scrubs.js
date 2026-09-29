@@ -17,7 +17,7 @@
 // instead of the request dying with nothing saved.
 import express from 'express'
 import { requeueScrub, runScrubQueue, scrubQueue } from '../services/emailToJob.js'
-import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations } from '../services/scrubStore.js'
+import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, alldataLinksFor, saveAlldataLink } from '../services/scrubStore.js'
 
 const router = express.Router()
 const who = req => req.user?.name || req.user?.email || 'staff'
@@ -163,6 +163,23 @@ router.get('/:id/estimate', async (req, res) => {
     res.setHeader('Content-Disposition', `inline; filename="${String(s.fileName || 'estimate.pdf').replace(/"/g, '')}"`)
     res.setHeader('Content-Length', buffer.length)
     res.end(buffer)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// 📚 ALLDATA quick reference for this car: known deep links, or nothing (the
+// report then copies the VIN and opens the vehicle selector).
+router.get('/:id/alldata', async (req, res) => {
+  try {
+    const s = await getScrub(req, req.params.id); if (!s) return res.status(404).json({ error: 'not found' })
+    res.json(await alldataLinksFor(req, { year: s.year, make: s.make, model: s.model }))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/alldata', express.json(), async (req, res) => {
+  try {
+    const s = await getScrub(req, req.params.id); if (!s) return res.status(404).json({ error: 'not found' })
+    const r = await saveAlldataLink(req, { year: s.year, make: s.make, model: s.model, url: req.body?.url, label: req.body?.label, ro: s.ro, by: who(req) })
+    if (!r.ok) return res.status(400).json(r)
+    res.json({ ...r, ...(await alldataLinksFor(req, { year: s.year, make: s.make, model: s.model })) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 

@@ -11,6 +11,7 @@
 // button downloads so the screen and the document read as one thing.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import Navbar from '../components/Navbar'
 
 const ORANGE = '#CD4419'
 const INK = '#1a1a1a'
@@ -49,7 +50,8 @@ const shortWhen = iso => {
   return d.toLocaleString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-export default function ScrubLibraryScreen() {
+export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNavigate }) {
+  const nav = <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
   const [q, setQ] = useState('')
   const [rows, setRows] = useState([])
   const [stats, setStats] = useState(null)
@@ -77,8 +79,17 @@ export default function ScrubLibraryScreen() {
     return () => clearTimeout(timer.current)
   }, [q]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Opening a report pushes a history entry, so the browser back button and
+  // the phone's back gesture return to the list instead of leaving the app
+  // (Mark 2026-09-29: "there's no way to go back"). Closing pops it.
+  useEffect(() => {
+    const onPop = () => { setOpen(null); setOpenBusy(false) }
+    window.addEventListener('popstate', onPop); return () => window.removeEventListener('popstate', onPop)
+  }, [])
+  const closeScrub = () => { setOpen(null); if (window.history.state?.scrub) window.history.back() }
   const openScrub = async row => {
     setOpenBusy(true)
+    try { window.history.pushState({ scrub: row.id }, '') } catch { /* fine */ }
     try {
       const r = await apiFetch(`${API_BASE}/api/scrubs/${row.id}`)
       const d = await r.json().catch(() => ({}))
@@ -88,12 +99,19 @@ export default function ScrubLibraryScreen() {
   }
 
   if (open || openBusy) {
-    return openBusy
-      ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
-      : <ScrubReport s={open} onBack={() => setOpen(null)} />
+    return (
+      <div className="min-h-screen" style={{ backgroundColor: '#fff' }}>
+        {nav}
+        {openBusy
+          ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
+          : <ScrubReport s={open} onBack={closeScrub} />}
+      </div>
+    )
   }
 
   return (
+    <div className="min-h-screen" style={{ backgroundColor: '#fff' }}>
+    {nav}
     <div className="p-4 max-w-6xl mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
@@ -106,8 +124,8 @@ export default function ScrubLibraryScreen() {
           value={q}
           onChange={e => setQ(e.target.value)}
           placeholder="Search vehicle, RO, VIN, claim, shop, sensor…"
-          className="rounded-lg px-3 py-2 text-sm"
-          style={{ border: '1.5px solid #ddd', outline: 'none', minWidth: 280 }}
+          className="rounded-lg px-3 py-2.5 text-sm w-full sm:w-auto"
+          style={{ border: '1.5px solid #ddd', outline: 'none', minWidth: 0 }}
         />
       </div>
 
@@ -189,6 +207,7 @@ export default function ScrubLibraryScreen() {
         ))}
       </div>
     </div>
+    </div>
   )
 }
 
@@ -228,6 +247,35 @@ function ScrubReport({ s: initial, onBack }) {
   const [estUrl, setEstUrl] = useState('')      // two-tap open (never window.open after an await — iOS PWA rule)
   const [estBusy, setEstBusy] = useState(false)
   const [add, setAdd] = useState({ name: '', type: 'Static', lines: '', reason: '', why: '', busy: false })
+  // 📚 ALLDATA quick reference: known deep links for this year/make/model, else VIN + selector.
+  const [alldata, setAlldata] = useState({ links: [], match: 'loading' })
+  const [pasteUrl, setPasteUrl] = useState('')
+  const [pasteBusy, setPasteBusy] = useState(false)
+  const [pasteMsg, setPasteMsg] = useState('')
+  const [vinCopied, setVinCopied] = useState(false)
+  useEffect(() => {
+    let live = true
+    apiFetch(`${API_BASE}/api/scrubs/${s.id}/alldata`).then(r => r.json()).then(d => { if (live) setAlldata(d && Array.isArray(d.links) ? d : { links: [], match: 'none' }) }).catch(() => { if (live) setAlldata({ links: [], match: 'none' }) })
+    return () => { live = false }
+  }, [s.id])
+  const ALLDATA_HOME = 'https://my.alldata.com/repair/'
+  const quickRef = alldata.links.find(l => /quick reference|adas systems|locations/i.test(l.label)) || alldata.links[0]
+  // No deep link for this car: copy the VIN first (synchronously, so the tab
+  // still opens on iOS), then the tech pastes it into ALLDATA's vehicle box.
+  const openAlldataWithVin = () => {
+    try { navigator.clipboard?.writeText(s.vin || '') } catch { /* fine */ }
+    setVinCopied(true); setTimeout(() => setVinCopied(false), 4000)
+  }
+  const savePaste = async () => {
+    setPasteBusy(true); setPasteMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/alldata`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: pasteUrl.trim() }) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setAlldata({ links: d.links || [], match: d.match || 'exact' }); setPasteUrl(''); setPasteMsg('Saved — one tap for the next ' + [s.year, s.make, s.model].filter(Boolean).join(' ') + '.')
+    } catch (e) { setPasteMsg(e.message || 'Could not save that link.') }
+    finally { setPasteBusy(false) }
+  }
 
   const p = s.payload || {}
   const list = useMemo(() => {
@@ -336,6 +384,8 @@ function ScrubReport({ s: initial, onBack }) {
 
   return (
     <div className="p-4 max-w-6xl mx-auto">
+      <button onClick={onBack} className="mb-3 rounded-xl px-4 py-3 text-base font-bold inline-flex items-center gap-2"
+        style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd', minHeight: 48 }}>← Scrubs</button>
       <div className="flex flex-col lg:flex-row gap-5">
 
         {/* Left rail */}
@@ -350,7 +400,7 @@ function ScrubReport({ s: initial, onBack }) {
           {s.status === 'edited' && <p className="text-xs mt-1" style={{ color: '#b45309' }}>✏️ Lines edited by hand{p._edited_by ? ` · ${p._edited_by}` : ''}</p>}
 
           <button onClick={downloadPdf} disabled={pdfBusy || editing || (!shown.length && !hasStoredReport)}
-            className="mt-4 w-full rounded-lg px-3 py-2.5 text-sm font-bold"
+            className="mt-4 w-full rounded-lg px-3 py-3 text-sm font-bold"
             style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: (shown.length || hasStoredReport) && !editing ? 1 : 0.5 }}
           >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report that went out ↓' : '📄 Absolute ADAS report ↓'}</button>
 
@@ -362,8 +412,9 @@ function ScrubReport({ s: initial, onBack }) {
               </div>}
 
           {s.fileId && (estUrl
-            ? <a href={estUrl} target="_blank" rel="noreferrer" className="mt-2 block text-center w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#eff6ff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>📎 Open the estimate (tap again)</a>
-            : <button onClick={fetchEstimate} disabled={estBusy} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#fff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>{estBusy ? 'Fetching…' : '📎 Open the CCC estimate'}</button>)}
+            ? <a href={estUrl} target="_blank" rel="noreferrer" className="mt-2 block text-center w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#eff6ff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>📎 Open the CCC estimate (tap again)</a>
+            : <button onClick={fetchEstimate} disabled={estBusy} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>{estBusy ? 'Fetching…' : '📎 Open the CCC estimate'}</button>)}
+          {!s.fileId && <p className="text-xs mt-2" style={{ color: '#999' }}>No estimate file is stored for this scrub yet.</p>}
 
           {!list.length && s.jobId && !cardGone && !editing && (
             <button onClick={loadFromCard} disabled={cardBusy} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#fff', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>
@@ -427,6 +478,30 @@ function ScrubReport({ s: initial, onBack }) {
                 {[...(p._guard.flipped || []), ...(p._guard.added || [])].map((g, i) => <div key={i}>• {g}</div>)}
               </div>
             ) : null}
+            {/* 📚 ADAS Systems, Locations, and Calibrations — ALLDATA quick reference (Mark 2026-09-29) */}
+            {!editing && (
+              <div className="rounded-lg px-3 py-3 mb-5" style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e5e5e5' }}>
+                <div className="text-sm font-bold mb-1" style={{ color: INK }}>ADAS Systems, Locations, and Calibrations</div>
+                <div className="text-xs mb-2" style={{ color: '#666' }}>ALLDATA's quick reference for this vehicle: every ADAS component, where it sits, and the calibration it needs.</div>
+                {alldata.match === 'loading' ? <div className="text-xs" style={{ color: '#999' }}>Looking up this car…</div> : quickRef ? (
+                  <>
+                    <a href={quickRef.url} target="_blank" rel="noreferrer" className="block text-center w-full rounded-xl px-4 py-3 text-base font-bold" style={{ backgroundColor: ORANGE, color: '#fff', minHeight: 48 }}>📚 Open in ALLDATA</a>
+                    <div className="text-[11px] mt-1.5" style={{ color: '#777' }}>{alldata.match === 'exact' ? `Saved page for this ${[s.year, s.make, s.model].filter(Boolean).join(' ')}` : `Closest saved page: ${quickRef.for || 'same year and make'} — check the vehicle in ALLDATA's header`}{alldata.links.length > 1 ? ` · ${alldata.links.length - 1} more ALLDATA page${alldata.links.length > 2 ? 's' : ''} for this car below` : ''}</div>
+                    {alldata.links.length > 1 && <div className="mt-1 flex flex-wrap gap-1.5">{alldata.links.slice(1, 6).map((l, i) => <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold px-2 py-1 rounded" style={{ backgroundColor: '#fff', color: '#1e40af', border: '1px solid #93c5fd' }}>{l.label.slice(0, 40)}</a>)}</div>}
+                  </>
+                ) : (
+                  <>
+                    <a href={ALLDATA_HOME} target="_blank" rel="noreferrer" onClick={openAlldataWithVin} className="block text-center w-full rounded-xl px-4 py-3 text-base font-bold" style={{ backgroundColor: ORANGE, color: '#fff', minHeight: 48 }}>📚 Copy VIN + open ALLDATA</a>
+                    <div className="text-[11px] mt-1.5" style={{ color: vinCopied ? '#166534' : '#777' }}>{vinCopied ? `VIN ${s.vin} copied — paste it into ALLDATA's vehicle box, then open ADAS Quick Reference.` : `No saved ALLDATA page for this ${[s.year, s.make, s.model].filter(Boolean).join(' ')} yet. The button copies the VIN; paste it into ALLDATA's vehicle box.`}</div>
+                  </>
+                )}
+                <div className="mt-3 flex gap-2">
+                  <input value={pasteUrl} onChange={e => setPasteUrl(e.target.value)} placeholder="Paste this car's ALLDATA page link here to save it for next time" className="flex-1 min-w-0 rounded-lg px-3 py-2.5 text-xs" style={{ border: '1.5px solid #ddd' }} />
+                  <button onClick={savePaste} disabled={pasteBusy || !pasteUrl.trim()} className="rounded-lg px-3 py-2.5 text-xs font-bold whitespace-nowrap" style={{ backgroundColor: '#fff', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>{pasteBusy ? 'Saving…' : 'Save link'}</button>
+                </div>
+                {pasteMsg && <div className="text-[11px] mt-1" style={{ color: pasteMsg.startsWith('Saved') ? '#166534' : '#b91c1c' }}>{pasteMsg}</div>}
+              </div>
+            )}
             {s.oemRefs && !editing && (
               <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
                 <div className="font-bold mb-1" style={{ color: INK }}>References</div>

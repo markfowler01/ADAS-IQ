@@ -463,6 +463,60 @@ export async function dedupeScrubs(req, { dry = false } = {}) {
   return { removed: drop.length, dry, files: [...new Set(drop.map(d => d.fileName))].slice(0, 40) }
 }
 
+// ── ALLDATA quick reference (Mark 2026-09-29) ─────────────────────────────
+// ALLDATA's pages are reached by its own internal ids, never by VIN. The
+// KineticLinks table holds ~390 ALLDATA deep links Kinetic already resolved,
+// keyed by year-make-model; a tech can paste more. Match the car on the
+// report against those; when nothing matches, the report copies the VIN and
+// opens ALLDATA's vehicle selector instead.
+const LINKS = 'KineticLinks'
+const slug = v => String(v || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+export const vehicleKey = (year, make, model) => slug(`${year || ''} ${make || ''} ${model || ''}`)
+
+export async function alldataLinksFor(req, { year = '', make = '', model = '' } = {}) {
+  const y = String(year || '').slice(0, 4), mk = slug(make), md = slug(model)
+  if (!y || !mk) return { links: [], match: 'none' }
+  try {
+    // ZCQL LIKE does not match on this datastore, so pull the year+make and filter in JS.
+    const rows = await ds(req).zcql().executeZCQLQuery(
+      `SELECT ROWID, vehicle_key, vehicle_model, label, url, calibration_name, ro_numbers, category FROM ${LINKS} WHERE vehicle_year = '${q(y)}' AND category = 'alldata' LIMIT 300`)
+    const all = (rows || []).map(r => r[LINKS] || r).filter(r => String(r.vehicle_key || '').startsWith(`${y}-${mk}`) && /alldata\.com/i.test(r.url || ''))
+    if (!all.length) return { links: [], match: 'none' }
+    const exactKey = vehicleKey(y, make, model)
+    let picked = all.filter(r => r.vehicle_key === exactKey), match = 'exact'
+    if (!picked.length) { const first = md.split('-')[0]; picked = all.filter(r => slug(r.vehicle_model).startsWith(first)); match = 'model' }
+    if (!picked.length) { picked = all; match = 'make-year' }
+    // Quick-reference pages first, then whatever else Kinetic cited for the car.
+    const rank = r => /quick reference|adas systems|locations/i.test(r.label || '') ? 0 : /adas|calibrat/i.test(`${r.label} ${r.calibration_name}`) ? 1 : 2
+    const seen = new Set(); const links = []
+    for (const r of picked.sort((a, b) => rank(a) - rank(b))) { const k = normUrlLoose(r.url); if (seen.has(k)) continue; seen.add(k); links.push({ label: r.label || 'ALLDATA reference', url: r.url, calibration: r.calibration_name || '', for: r.vehicle_model || '' }) }
+    return { links: links.slice(0, 12), match, key: exactKey }
+  } catch (e) { console.warn('[scrubs] alldata lookup failed:', e.message); return { links: [], match: 'error', error: e.message } }
+}
+const normUrlLoose = u => String(u || '').toLowerCase().replace(/[\s%]+/g, '').replace(/\/+$/, '')
+
+/** A tech pasted the ALLDATA page for this car → it becomes a one-tap link for the next same car. */
+export async function saveAlldataLink(req, { year, make, model, url, label = 'ADAS Quick Reference', ro = '', by = '' } = {}) {
+  const u = String(url || '').trim()
+  if (!/^https:\/\/(my\.)?alldata\.com\//i.test(u)) return { ok: false, error: 'that is not an ALLDATA page link' }
+  const key = vehicleKey(year, make, model); if (!key || !String(year || '').trim()) return { ok: false, error: 'the report has no year / make / model to file it under' }
+  const now = nowIso()
+  await ds(req).datastore().table(LINKS).insertRow({
+    vehicle_year: String(year).slice(0, 4), vehicle_make: str(make, 60), vehicle_model: str(model, 120), vehicle_key: key,
+    label: str(label, 120), url: u.slice(0, 500), host: 'my.alldata.com', category: 'alldata', calibration_name: 'ADAS Systems, Locations, and Calibrations',
+    ro_numbers: str(ro, 60), first_seen_at: now, last_seen_at: now, seen_count: 1,
+  })
+  console.log(`[scrubs] ALLDATA link saved for ${key} by ${by || 'tech'}`)
+  return { ok: true, key }
+}
+
+/** Record the WorkDrive copy of a scrub's estimate PDF on its row. */
+export async function setScrubFile(req, scrubId, { id, name }) {
+  const rowId = String(scrubId || '').trim(); if (!/^\d{1,25}$/.test(rowId) || !id) return { ok: false }
+  await ds(req).datastore().table(TABLE).updateRow({ ROWID: rowId, scrub_file_id: str(id, 80), scrub_file_name: str(name, 255) })
+  return { ok: true }
+}
+
 /** Headline counts for the library screen. */
 export async function scrubStats(req) {
   try {
