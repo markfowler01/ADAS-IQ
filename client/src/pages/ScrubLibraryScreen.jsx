@@ -22,6 +22,19 @@ const SOURCE_LABEL = {
 const sourceLabel = s => SOURCE_LABEL[s] || (String(s || '').startsWith('mail:') ? `📥 ${String(s).slice(5)}` : s || '—')
 const statusNote = s => s.status === 'from-card' ? 'from card' : s.status === 'report-only' ? 'not scrubbed' : ''
 
+// Where this car is on the money path. Grey until it turns into paperwork.
+const STAGE = {
+  scrubbed: { label: 'scrubbed', bg: '#f5f3f0', fg: '#777' },
+  quoted:   { label: 'quoted',   bg: '#eff6ff', fg: '#1e40af' },
+  job:      { label: 'on the board', bg: '#fff7ed', fg: '#b45309' },
+  invoiced: { label: 'invoiced', bg: '#dcfce7', fg: '#166534' },
+  paid:     { label: 'paid',     bg: '#166534', fg: '#fff' },
+}
+function StagePill({ s }) {
+  const st = STAGE[s.stage] || STAGE.scrubbed
+  const detail = s.invoiceNumber ? ` ${s.invoiceNumber}` : s.quoteNumber ? ` ${s.quoteNumber}` : ''
+  return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: st.bg, color: st.fg }}>{st.label}{detail}</span>
+}
 
 const when = iso => {
   if (!iso) return ''
@@ -140,7 +153,7 @@ export default function ScrubLibraryScreen() {
                   </td>
                   <td className="py-2.5 pr-3">
                     <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                    <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
+                    <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.vin || '—'}</td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
@@ -162,7 +175,7 @@ export default function ScrubLibraryScreen() {
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-sm font-bold truncate" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                <div className="text-xs font-mono" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}</div>
+                <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /></div>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                 style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
@@ -225,7 +238,7 @@ function ScrubReport({ s: initial, onBack }) {
   const required = shown.filter(c => c.required)
 
   const neverScrubbed = !list.length && ['report-only', 'from-card'].includes(s.status)
-  const cardGone = neverScrubbed && !s.jobId   // no card to reload from
+  const cardGone = neverScrubbed && s.stage === 'invoiced'
   const hasStoredReport = (s.reports || []).some(r => r.kind === 'absolute' && r.id)
   const vehicle = { year: s.year, make: s.make, model: s.model }
 
@@ -332,12 +345,14 @@ function ScrubReport({ s: initial, onBack }) {
           <p className="text-sm mt-3" style={{ color: '#444' }}><span className="font-bold">VIN:</span> <span className="font-mono">{s.vin || '—'}</span></p>
           <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Updated:</span> {when(s.at) || '—'}</p>
           <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">By:</span> {s.by || sourceLabel(s.source)}</p>
+          <p className="text-sm mt-1 flex items-center gap-2" style={{ color: '#444' }}><span className="font-bold">Stage:</span> <StagePill s={s} /></p>
+          {s.quoteNumber && s.quoteNumber !== s.invoiceNumber && <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Quote:</span> {s.quoteNumber}</p>}
           {s.status === 'edited' && <p className="text-xs mt-1" style={{ color: '#b45309' }}>✏️ Lines edited by hand{p._edited_by ? ` · ${p._edited_by}` : ''}</p>}
 
           <button onClick={downloadPdf} disabled={pdfBusy || editing || (!shown.length && !hasStoredReport)}
             className="mt-4 w-full rounded-lg px-3 py-2.5 text-sm font-bold"
             style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: (shown.length || hasStoredReport) && !editing ? 1 : 0.5 }}
-          >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report on file ↓' : '📄 Absolute ADAS report ↓'}</button>
+          >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report that went out ↓' : '📄 Absolute ADAS report ↓'}</button>
 
           {!editing
             ? <button onClick={startEdit} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd' }}>✏️ Edit calibration lines</button>
@@ -419,7 +434,7 @@ function ScrubReport({ s: initial, onBack }) {
               </div>
             )}
             {Array.isArray(s.reports) && s.reports.length > 0 && !editing && (
-              <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>📎 Reports on file for this car: {s.reports.map(r => r.name).join(', ')}</div>
+              <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>📎 Went out with the invoice: {s.reports.map(r => r.name).join(', ')}</div>
             )}
 
             <div className="flex items-center justify-between mb-2">
@@ -434,9 +449,9 @@ function ScrubReport({ s: initial, onBack }) {
             {!shown.length && !editing && (
               <p className="text-sm" style={{ color: '#777' }}>
                 {cardGone
-                  ? 'This car has its reports on file but no scrub was ever run and its job card is gone, so the sensor list cannot be rebuilt here. The report on file is on the button to the left, or add lines by hand with ✏️ Edit.'
+                  ? 'This car was billed before the library learned to read the job card, and the card was removed after billing, as designed. The sensor list cannot be rebuilt here, but the report that went out with the invoice is on the button to the left. You can also add lines by hand with ✏️ Edit.'
                   : neverScrubbed
-                    ? 'No scrub was ever run on this car. The calibrations live on the job card — load them with the button on the left, or press Scrub estimate on the card to run a real scrub.'
+                    ? 'This car was billed with its reports attached, but no scrub was ever run on it. The calibrations live on the job card — load them with the button on the left, or press Scrub estimate on the card to run a real scrub.'
                     : 'No sensors recorded on this scrub. Add them by hand with ✏️ Edit calibration lines.'}
               </p>
             )}
