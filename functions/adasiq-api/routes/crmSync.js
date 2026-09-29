@@ -478,4 +478,42 @@ router.post('/scrub-file', (req, res) => {
   })
 })
 
+// 🔭 Source registry + discovery bot (Mark 2026-09-28). All cron-secret.
+const srcOk = (req, res) => { const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'; if (String(req.headers['x-cron-secret'] || '').trim() !== secret) { res.status(401).json({ error: 'Unauthorized' }); return false } return true }
+router.get('/position-statements/sources', async (req, res) => {
+  if (!srcOk(req, res)) return
+  try { const S = await import('../services/statementSources.js'); const list = await S.listSources(req); res.json({ count: list.length, enabled: list.filter(s => s.enabled).length, sources: list }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/position-statements/sources/seed', async (req, res) => {
+  if (!srcOk(req, res)) return
+  try { const S = await import('../services/statementSources.js'); res.json(await S.seedSources(req, { verify: req.query.verify !== '0' })) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/position-statements/sources/add', express.json(), async (req, res) => {
+  if (!srcOk(req, res)) return
+  try {
+    const S = await import('../services/statementSources.js'); const b = req.body || {}
+    if (!/^https?:/i.test(String(b.url || ''))) return res.status(400).json({ error: 'url required' })
+    const v = await S.verifySource(b.url)
+    const r = await S.addSource(req, { name: b.name || '', url: v.finalUrl || b.url, kind: b.kind || 'other', oem: b.oem || '', why: b.why || '' }, { by: String(b.by || 'Mark'), verifyNote: v.note, enabled: v.ok || b.force === true })
+    res.json({ ...r, verify: v })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/position-statements/sources/toggle', async (req, res) => {
+  if (!srcOk(req, res)) return
+  try { const S = await import('../services/statementSources.js'); res.json(await S.setSourceEnabled(req, String(req.query.key || ''), req.query.on === '1', String(req.query.by || 'Mark'))) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/position-statements/sources/check', async (req, res) => {
+  if (!srcOk(req, res)) return
+  try {
+    const S = await import('../services/statementSources.js'); const P = await import('../services/positionStatements.js')
+    const r = await S.checkSources(req, { parsers: { icar: P.fetchIcar, oem1stop: P.fetchOem1stop }, max: Math.min(Number(req.query.max) || 20, 60), only: String(req.query.key || '') })
+    res.json({ checked: r.checked, due: r.due, items: r.items.length, errors: r.errors, ms: r.ms, sample: r.items.slice(0, 12).map(i => ({ src: i.source_key, title: i.title, published: i.published, pdf: i.is_pdf })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/position-statements/sources/discover', async (req, res) => {
+  if (!srcOk(req, res)) return
+  try { const S = await import('../services/statementSources.js'); res.json(await S.discoverSources(req, { dry: req.query.dry === '1', maxAdds: Math.min(Number(req.query.max) || 15, 30) })) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export default router

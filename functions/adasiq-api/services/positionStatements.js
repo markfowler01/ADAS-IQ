@@ -84,7 +84,7 @@ async function cfgSet(req, key, row, value) {
 }
 
 // ── Sources ──────────────────────────────────────────────────────────────────
-async function fetchIcar(src) {
+export async function fetchIcar(src) {
   const { data: html } = await axios.get(src.url, { headers: UA, timeout: 25000 })
   const out = []
   // <a href="/crn-2465.html">Title</a> … nearby date text
@@ -101,7 +101,7 @@ async function fetchIcar(src) {
   }
   return out
 }
-async function fetchOem1stop(src) {
+export async function fetchOem1stop(src) {
   const { data: html } = await axios.get(src.url, { headers: UA, timeout: 25000 })
   const out = []
   const re = /<a[^>]+href="([^"]+\.pdf)"[^>]*>([\s\S]{0,200}?)<\/a>/gi
@@ -119,16 +119,15 @@ async function fetchOem1stop(src) {
   return out
 }
 
-export async function fetchAllSources() {
-  const found = [], errors = []
-  for (const src of SOURCES) {
-    try { found.push(...(src.key === 'icar' ? await fetchIcar(src) : await fetchOem1stop(src))) }
-    catch (e) { errors.push(`${src.name}: ${e.message}`); console.warn(`[pos-stmt] ${src.name} failed:`, e.message) }
-  }
-  // de-dupe by url, keep the first title we saw
-  const byUrl = new Map()
-  for (const f of found) if (f.url && !byUrl.has(f.url)) byUrl.set(f.url, f)
-  return { items: [...byUrl.values()], errors }
+export async function fetchAllSources(req) {
+  // 🔭 Sources are rows in AdasStatementSources now (Mark 2026-09-28: "search
+  // like 50 or 60 or 100 sources"), read oldest-checked first within the
+  // gateway budget. The two hubs keep their hand parsers; everything else
+  // goes through the generic reader. `due` > 0 means not every source fit in
+  // this pass, so the caller must not stamp the day yet.
+  const { checkSources } = await import('./statementSources.js')
+  const r = await checkSources(req, { parsers: { icar: fetchIcar, oem1stop: fetchOem1stop }, max: 20, budgetMs: 19000 })
+  return { items: r.items, errors: r.errors, checked: r.checked, due: r.due }
 }
 
 // ── What we already know ─────────────────────────────────────────────────────
@@ -231,10 +230,13 @@ export async function scanPositionStatements(req, { dry = false, onceADay = fals
     if (String(value) === ptDay()) { out.skipped = 'already ran today'; return out }
     dayRow = { row }   // stamped at the END, so a run the gateway kills retries
   }
-  const stampDay = async () => { if (onceADay && !dry) await cfgSet(req, RUN_KEY, dayRow.row, ptDay()).catch(() => {}) }
-  const { items, errors } = await fetchAllSources()
+  // Stamp the day only once every enabled source has been read; with more
+  // sources than fit one pass, the 6-hour ticker comes back for the rest.
+  const stampDay = async () => { if (onceADay && !dry && !out.sources_due) await cfgSet(req, RUN_KEY, dayRow.row, ptDay()).catch(() => {}) }
+  const { items, errors, checked: srcChecked = [], due = 0 } = await fetchAllSources(req)
   out.errors.push(...errors)
   out.checked = items.length
+  out.sources = srcChecked.length; out.sources_due = due
   const known = await knownUrls(req)
   const { row: seenRow, value: seenVal } = await cfg(req, SEEN_KEY, [])
   const seen = new Set(Array.isArray(seenVal) ? seenVal : [])
@@ -245,7 +247,11 @@ export async function scanPositionStatements(req, { dry = false, onceADay = fals
   // and tell Mark the watch is armed, rather than crying "393 new documents".
   // The back-catalogue is imported on demand with backfillPositionStatements().
   const firstRun = !seen.size
-  const news = fresh.filter(i => !known.has(normUrl(i.url)) && !known.has(normUrl(i.filename || '')) && !seen.has(urlHash(i.url)))
+  // The AppConfig list is the 2026-09-24 baseline (capped, read-only from
+  // here on); everything judged since lives in AdasStatementSeen.
+  const { seenHashes, markSeen, bumpNewCount } = await import('./statementSources.js')
+  const tableSeen = await seenHashes(req, fresh.map(i => urlHash(i.url)))
+  const news = fresh.filter(i => !known.has(normUrl(i.url)) && !known.has(normUrl(i.filename || '')) && !seen.has(urlHash(i.url)) && !tableSeen.has(urlHash(i.url)))
   out.new = news.length
   if (firstRun) {
     out.baseline = true
@@ -266,11 +272,14 @@ export async function scanPositionStatements(req, { dry = false, onceADay = fals
   const queue = Array.isArray(qVal) ? qVal : []
   for (const item of news) {
     if (dry) { out.flagged.push({ ...item, oem: oemFrom(item.title), type: typeFrom(item.title) }); continue }
-    seen.add(urlHash(item.url))
     out.flagged.push({ ...item, oem: oemFrom(item.title), type: typeFrom(item.title) })
     if (item.is_pdf && queue.length < maxImports) queue.push({ url: item.url, title: item.title, filename: item.filename || '', published: item.published || '' })
   }
-  if (!dry) await cfgSet(req, SEEN_KEY, seenRow, [...seen].slice(-600))
+  if (!dry) {
+    await markSeen(req, news, 'flagged')
+    const perSource = {}; for (const i of news) perSource[i.source_key] = (perSource[i.source_key] || 0) + 1
+    for (const [k, n] of Object.entries(perSource)) await bumpNewCount(req, k, n).catch(() => {})
+  }
   await announce(req, out)
   return out
 }
@@ -306,7 +315,7 @@ export async function backfillPositionStatements(req, { limit = 5, oem = '' } = 
   const BUDGET_MS = 7000
   const want = Math.min(Math.max(Number(limit) || 5, 1), 40)
   const out = { imported: [], failed: [], requested: want, oem }
-  const { items, errors } = await fetchAllSources()
+  const { items, errors } = await fetchAllSources(req)
   const known = await knownUrls(req)
   let pool = items.filter(i => i.is_pdf && RELEVANT.test(i.title) && !known.has(normUrl(i.url)))
   if (oem) pool = pool.filter(i => new RegExp(oem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(i.title))

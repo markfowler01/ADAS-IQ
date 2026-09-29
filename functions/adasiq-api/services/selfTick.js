@@ -36,6 +36,9 @@ const TICKS = {
   // added as an alias on the app's Zoho account.
   // One PDF per call for the same reason as position_import: an Opus scrub
   // outruns the 30s gateway even though the function keeps running.
+  // 🔭 Source finder — once a week, looks for new places that publish OEM
+  // position statements and adds the ones that check out (Mark 2026-09-28).
+  source_finder: { minutes: 7 * 24 * 60, path: '/api/crm-sync-cron/position-statements/sources/discover', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   mail_scrub: { minutes: 15, path: '/api/crm-sync-cron/mail-scrub?inbox=mark@absoluteadas.com&via=ar@absoluteadas.com&depth=400', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
 }
 

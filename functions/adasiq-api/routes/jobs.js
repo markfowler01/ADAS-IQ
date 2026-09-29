@@ -470,7 +470,7 @@ router.get('/', async (req, res) => {
     // intake, because GitHub drops most of its scheduled runs (2026-09-24).
     try {
       const { maybeSelfTick } = await import('../services/selfTick.js')
-      for (const t of ['email_intake', 'mail_scrub', 'position_import', 'position_statements']) if (await maybeSelfTick(req, t)) break
+      for (const t of ['email_intake', 'mail_scrub', 'position_import', 'position_statements', 'source_finder']) if (await maybeSelfTick(req, t)) break
     } catch { /* never block the board */ }
     res.json(jobs)
   } catch (err) {
