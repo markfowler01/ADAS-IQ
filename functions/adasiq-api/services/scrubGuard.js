@@ -44,7 +44,7 @@ Categories:
 - seat_airbag: front passenger seat, seat cushion / track, seat belt, pretensioner, airbag, air bag, SRS
 - liftgate: liftgate / tailgate / trunk lid / decklid replaced or removed-and-installed
 - mirror: exterior mirror (left or right) replaced or removed-and-installed
-- radar_sensor: any line naming a radar / distance sensor / millimeter wave sensor / "add for" radar
+- radar_sensor: a line naming a RADAR: "radar", "millimeter wave", "distronic", "ACC sensor", "adaptive cruise sensor". NOT park distance / parking / PDC / ultrasonic / proximity sensors — those are never radar
 - camera: any line naming a camera (front, rear, side, surround, 360)
 - headlamp: headlamp / headlight assembly replaced or removed-and-installed
 
@@ -59,7 +59,11 @@ const name = c => String(c?.sensor || c?.calibration_name || '').toLowerCase()
 const has = (cals, re) => cals.find(c => re.test(name(c)))
 const lines = arr => (Array.isArray(arr) ? arr : []).map(String).filter(Boolean)
 
-function require(cals, re, label, calType, trigger, lineRefs, why, out) {
+// `mayAdd`: only the windshield camera may be added when the scrub left it
+// out. Everything else is flip-only — the scrub decides what the car HAS, the
+// guard only decides a listed sensor's verdict. Without this the guard put a
+// front radar and a surround-view camera on a base BMW i3 (2026-09-28).
+function require(cals, re, label, calType, trigger, lineRefs, why, out, mayAdd = false) {
   const row = has(cals, re)
   if (row) {
     if (row.enabled === true) return
@@ -68,9 +72,11 @@ function require(cals, re, label, calType, trigger, lineRefs, why, out) {
     row.justification = why
     row._guard = 'flipped'
     out.flipped.push(`${label} ← ${lineRefs.join(', ')}`)
-  } else {
+  } else if (mayAdd) {
     cals.push({ calibration_name: label, cal_type: calType, trigger, line_references: lineRefs.join(', '), justification: why, enabled: true, _guard: 'added' })
     out.added.push(`${label} ← ${lineRefs.join(', ')}`)
+  } else {
+    out.skipped = out.skipped || []; out.skipped.push(`${label}: not in the scrub's inventory — left alone`)
   }
 }
 
@@ -93,12 +99,12 @@ export async function guardScrub(data, base64Pdf) {
   if (ws.length && (!year || year >= 2015)) {
     require(cals, /windshield|front camera|lane depart|forward camera/, 'Front Windshield Camera', 'Static/Dynamic',
       `Windshield replaced / R&I (line${ws.length > 1 ? 's' : ''} ${ws.join(', ')}) — if equipped, confirm at pre-scan`, ws,
-      `Front Windshield Camera calibration required per ${per(make)} following windshield replacement or removal (line${ws.length > 1 ? 's' : ''} ${ws.join(', ')}). The forward camera is bonded to or mounted against the glass and must be re-aimed whenever the windshield is disturbed. Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
+      `Front Windshield Camera calibration required per ${per(make)} following windshield replacement or removal (line${ws.length > 1 ? 's' : ''} ${ws.join(', ')}). The forward camera is bonded to or mounted against the glass and must be re-aimed whenever the windshield is disturbed. Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out, true)
   }
   // 2. Front bumper off on a make that aims after any bumper removal → front radar (+ front side radar row if present).
   const fb = lines(hits.front_bumper), rs = lines(hits.radar_sensor)
   if ((fb.length && AIM_AFTER_BUMPER.test(make)) || rs.length) {
-    const ref = [...new Set([...fb, ...rs])]
+    const ref = rs.length ? [...new Set(rs)] : [...new Set(fb)]
     require(cals, /^front radar|front radar|distance sensor|distronic|acc radar|pre.?collision radar/, 'Front Radar', 'Static',
       rs.length ? `Radar sensor named on line${rs.length > 1 ? 's' : ''} ${rs.join(', ')}${fb.length ? '; front bumper R&I/Repl line ' + fb.join(', ') : ''}` : `Front bumper R&I/Repl (line${fb.length > 1 ? 's' : ''} ${fb.join(', ')}) — ${make} requires radar aiming after any front bumper removal`, ref,
       `Front Radar calibration required per ${per(make, rs.length ? 'the radar sensor itself is on the estimate' : 'radar aiming is required after any front bumper removal on this make')} (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
@@ -108,7 +114,7 @@ export async function guardScrub(data, base64Pdf) {
   // 3. Surround-view makes: bumper / mirror / liftgate / camera line → Around View Camera, and never absent from the list.
   const mir = lines(hits.mirror), lg = lines(hits.liftgate), cam = lines(hits.camera), rb = lines(hits.rear_bumper)
   const avcMake = ALWAYS_AVC.test(make) && (!year || year >= 2019) || (AVC_KIA.test(make) && year >= 2022)
-  const avcTrig = [...new Set([...fb, ...mir, ...lg, ...rb, ...cam])]
+  const avcTrig = [...new Set([...mir, ...lg, ...cam, ...fb.slice(0, 3), ...rb.slice(0, 3)])]
   if (avcMake && avcTrig.length) {
     require(cals, /around view|surround|360|bird/, 'Around View Camera', 'Static',
       `Surround-view camera location disturbed (line${avcTrig.length > 1 ? 's' : ''} ${avcTrig.join(', ')}) — if equipped, confirm at pre-scan`, avcTrig,
