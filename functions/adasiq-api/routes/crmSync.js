@@ -463,7 +463,10 @@ router.post('/scrub-file', (req, res) => {
     const name = String(req.body?.name || req.file.originalname || 'file.pdf').slice(0, 255)
     try {
       const { hasScrubForFile } = await import('../services/scrubStore.js')
-      if (await hasScrubForFile(req, name)) return res.json({ skipped: 'already in the library', name })
+      // force=1 re-scrubs a file that is already in the library (benchmark
+      // after a prompt change); the row lands under the source given, e.g.
+      // "benchmark-v2", so the scorer can compare versions side by side.
+      if (req.body?.force !== '1' && await hasScrubForFile(req, name)) return res.json({ skipped: 'already in the library', name })
       const { detectPdfKind } = await import('../services/claude.js')
       let kind = 'OTHER', make = ''
       try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = 'OTHER' }
