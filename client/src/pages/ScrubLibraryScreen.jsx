@@ -60,6 +60,37 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   const [open, setOpen] = useState(null)
   const [openBusy, setOpenBusy] = useState(false)
   const timer = useRef(null)
+  const fileRef = useRef(null)
+  const [up, setUp] = useState({ busy: false, msg: '', name: '' })
+
+  // ⬆️ Upload a report (Mark 2026-09-29). The scrub runs past the gateway's
+  // 30s window more often than not, so a cut response is not a failure: we
+  // poll the list for the file name for up to three minutes and open it.
+  const pickFile = () => fileRef.current?.click()
+  const onFile = async e => {
+    const f = e.target.files?.[0]; e.target.value = ''
+    if (!f) return
+    const name = f.name
+    setUp({ busy: true, msg: `Scrubbing ${name} — about a minute…`, name })
+    const fd = new FormData(); fd.append('file', f, name)
+    let refused = ''
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/upload`, { method: 'POST', body: fd })
+      if (r.status === 400) { const d = await r.json().catch(() => ({})); refused = d.error || 'Not accepted.' }
+    } catch { /* gateway cut — the scrub is still running */ }
+    if (refused) { setUp({ busy: false, msg: refused, name: '' }); return }
+    const t0 = Date.now()
+    while (Date.now() - t0 < 180000) {
+      await new Promise(res => setTimeout(res, 8000))
+      try {
+        const r = await apiFetch(`${API_BASE}/api/scrubs?limit=30`)
+        const d = await r.json().catch(() => ({}))
+        const hit = (d.scrubs || []).find(x => x.fileName === name || (x.fileName || '').endsWith(name))
+        if (hit) { setRows(d.scrubs || []); setUp({ busy: false, msg: '', name: '' }); openScrub(hit); return }
+      } catch { /* keep polling */ }
+    }
+    setUp({ busy: false, msg: `${name} is taking longer than usual — pull to refresh in a minute.`, name: '' })
+  }
 
   const load = async (search = '') => {
     setLoading(true); setErr('')
@@ -120,6 +151,11 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
             {loading ? 'Loading…' : `${rows.length} shown`}{stats?.total ? ` · ${stats.total} in the library` : ''}
           </p>
         </div>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={pickFile} disabled={up.busy} className="rounded-lg px-4 py-2.5 text-sm font-bold whitespace-nowrap" style={{ backgroundColor: ORANGE, color: '#fff', minHeight: 44, opacity: up.busy ? 0.6 : 1 }}>{up.busy ? '⏳ Scrubbing…' : '⬆️ Upload report'}</button>
+          <input ref={fileRef} type="file" accept="application/pdf,.pdf" onChange={onFile} style={{ display: 'none' }} />
+        </div>
+        {up.msg && <div className="w-full text-xs rounded-lg px-3 py-2" style={{ backgroundColor: up.busy ? '#eff6ff' : '#fef2f2', color: up.busy ? '#1e40af' : '#b91c1c' }}>{up.msg}</div>}
         <input
           value={q}
           onChange={e => setQ(e.target.value)}

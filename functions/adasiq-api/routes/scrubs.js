@@ -16,6 +16,7 @@
 // does not we return queued:true and the 15-minute ticker finishes the job
 // instead of the request dying with nothing saved.
 import express from 'express'
+import multer from 'multer'
 import { requeueScrub, runScrubQueue, scrubQueue } from '../services/emailToJob.js'
 import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, alldataLinksFor, saveAlldataLink } from '../services/scrubStore.js'
 
@@ -50,6 +51,31 @@ router.get('/job/:id/pending', async (req, res) => {
     const q = await scrubQueue(req)
     res.json({ pending: q.some(x => String(x.job) === String(req.params.id)) })
   } catch { res.json({ pending: false }) }
+})
+
+// ── Upload a report straight into the library (Mark 2026-09-29) ─────────────
+// A CCC or other-format estimate is scrubbed; a Kinetic / scan report is read
+// as a report; our own Absolute ADAS report is refused. A scrub usually
+// outruns the ~30s gateway, so the client polls the list for the file name
+// rather than waiting on this response.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } }).single('file')
+router.post('/upload', (req, res) => {
+  upload(req, res, async err => {
+    if (err) return res.status(400).json({ error: err.message })
+    if (!req.file || req.file.buffer.length < 512) return res.status(400).json({ error: 'No usable PDF.' })
+    const name = String(req.file.originalname || 'estimate.pdf').slice(0, 255)
+    try {
+      const { detectPdfKind } = await import('../services/claude.js')
+      let kind = 'OTHER', make = ''
+      try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = 'OTHER' }
+      if (kind === 'ABSOLUTE') return res.status(400).json({ error: 'That is one of our own Absolute ADAS reports — upload the shop\'s estimate instead.', kind })
+      if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) return res.status(400).json({ error: `That does not look like an estimate or a calibration report (read as ${kind.toLowerCase()}).`, kind })
+      const { scrubPdfBuffer } = await import('./extract.js')
+      const data = await scrubPdfBuffer(req, req.file.buffer, { learn: true, source: 'upload', by: who(req), file: { name }, pdfType: kind === 'REPORT' ? 'KINETIC' : 'CCC', make })
+      const scrubs = await scrubsForJob(req, '').catch(() => [])
+      res.json({ ok: true, kind, name, scrubId: data?._scrubId || '', vehicle: data?.vehicle || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length })
+    } catch (e) { res.status(500).json({ error: e.message, name }) }
+  })
 })
 
 // ── The library ─────────────────────────────────────────────────────────────
