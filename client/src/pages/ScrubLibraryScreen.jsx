@@ -67,9 +67,16 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   // 30s window more often than not, so a cut response is not a failure: we
   // poll the list for the file name for up to three minutes and open it.
   const pickFile = () => fileRef.current?.click()
-  const onFile = async e => {
-    const f = e.target.files?.[0]; e.target.value = ''
-    if (!f) return
+  const [dragOver, setDragOver] = useState(false)
+  const onFile = async e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) await uploadReport(f) }
+  const onDrop = async e => {
+    e.preventDefault(); setDragOver(false)
+    const f = [...(e.dataTransfer?.files || [])].find(x => /pdf$/i.test(x.name) || x.type === 'application/pdf')
+    if (!f) { setUp({ busy: false, msg: 'Drop a PDF estimate.', name: '' }); return }
+    if (up.busy) return
+    await uploadReport(f)
+  }
+  const uploadReport = async f => {
     const name = f.name
     setUp({ busy: true, msg: `Scrubbing ${name} — about a minute…`, name })
     const fd = new FormData(); fd.append('file', f, name)
@@ -163,6 +170,20 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
           className="rounded-lg px-3 py-2.5 text-sm w-full sm:w-auto"
           style={{ border: '1.5px solid #ddd', outline: 'none', minWidth: 0 }}
         />
+      </div>
+
+      {/* 📥 Drop box (Mark 2026-09-29: "a box that I can drop an estimate into"). Tap on a phone. */}
+      <div
+        onDragOver={e => { e.preventDefault(); if (!dragOver) setDragOver(true) }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        onClick={() => !up.busy && pickFile()}
+        role="button"
+        className="rounded-xl mb-4 px-4 py-5 text-center cursor-pointer select-none"
+        style={{ border: `2px dashed ${dragOver ? ORANGE : '#cfcfcf'}`, backgroundColor: dragOver ? '#fff5f0' : up.busy ? '#eff6ff' : '#fafafa', color: up.busy ? '#1e40af' : '#555' }}
+      >
+        <div className="text-sm font-bold" style={{ color: dragOver ? ORANGE : INK }}>{up.busy ? '⏳ Scrubbing…' : dragOver ? 'Drop it' : '📥 Drop an estimate here'}</div>
+        <div className="text-xs mt-1">{up.busy ? up.msg : 'Drag a CCC estimate PDF onto this box, or tap to choose one. It is scrubbed and filed in the library.'}</div>
       </div>
 
       {err && (
