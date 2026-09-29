@@ -520,4 +520,23 @@ router.post('/position-statements/sources/discover', async (req, res) => {
   try { const S = await import('../services/statementSources.js'); res.json(await S.discoverSources(req, { dry: req.query.dry === '1', maxAdds: Math.min(Number(req.query.max) || 15, 30) })) } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🧪 Compact export of the scrub library for the Kinetic benchmark (Mark
+// 2026-09-28: "work on this scrubber tonight and get it working better").
+// One row per scrub with just the verdicts — scored locally against the
+// Kinetic reports, never in the browser. Cron secret.
+router.get('/scrubs-export', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { listScrubs } = await import('../services/scrubStore.js')
+    const { scrubs } = await listScrubs(req, { limit: 2000, maxScan: 4000 })
+    const rows = scrubs.map(s => ({
+      id: s.id, vin: s.vin, ro: s.ro, shop: s.shop, vehicle: s.vehicle, make: s.make, year: s.year, source: s.source, status: s.status, file: s.fileName || '', at: s.at,
+      required: (s.sensors || []).filter(x => x.r).map(x => x.n),
+      not_required: (s.sensors || []).filter(x => !x.r).map(x => x.n),
+    }))
+    res.json({ count: rows.length, rows })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export default router
