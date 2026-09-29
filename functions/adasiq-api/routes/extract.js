@@ -182,6 +182,16 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   } catch { oemRefs = '' }
   const data = await extractFromPdf(buffer, { oemRefs, refsFor, pdfType, make })
 
+  // 🛡️ Hard rules in code under the judgment call (benchmark night 2026-09-28):
+  // a replaced windshield means the camera, a front bumper off a Mercedes
+  // means the radar. The scrub varied run to run on exactly these; the guard
+  // does not. Only on estimates (never on a Kinetic report read), and it can
+  // only add or flip to required — never remove.
+  if (String(data?._pdfType || '').toUpperCase() === 'CCC' && !data._demo) {
+    try { const { guardScrub } = await import('../services/scrubGuard.js'); await guardScrub(data, buffer.toString('base64')) }
+    catch (e) { console.warn('[extract] guard skipped:', e.message) }
+  }
+
   // Fallback: if no RO number found, use last 8 digits of VIN
   if (!data.ro_number && data.vin && data.vin.length >= 8) {
     const vinLast8 = data.vin.slice(-8)
