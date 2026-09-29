@@ -297,6 +297,8 @@ function ScrubReport({ s: initial, onBack }) {
   const [pdfErr, setPdfErr] = useState('')
   const [invBusy, setInvBusy] = useState(false)
   const [invMsg, setInvMsg] = useState('')
+  const [qBusy, setQBusy] = useState(false)
+  const [qMsg, setQMsg] = useState('')
   const [expanded, setExpanded] = useState({})
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState([])
@@ -388,12 +390,13 @@ function ScrubReport({ s: initial, onBack }) {
       })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      const num = d.invoice_number || d.invoiceNumber || d.number || ''
+      // from-extract returns { ok, invoice: { invoice_number, id, ... } } — the number is nested.
+      const num = d.invoice?.invoice_number || d.invoice_number || d.invoiceNumber || d.number || ''
       // Bookkeeping only — never let a failed stamp look like a failed invoice.
       try {
         const st = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/invoice`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceNumber: num, invoiceId: d.invoice_id || d.id || '' }),
+          body: JSON.stringify({ invoiceNumber: num, invoiceId: d.invoice?.id || d.invoice?.invoice_id || d.invoice_id || d.id || '', stage: 'invoiced' }),
         })
         const sd = await st.json().catch(() => ({}))
         if (sd.scrub) setS(sd.scrub)
@@ -401,6 +404,45 @@ function ScrubReport({ s: initial, onBack }) {
       setInvMsg(`✓ Invoice ${num || 'created'} for ${who}.`)
     } catch (e) { setInvMsg(e.message || 'Could not create the invoice.') }
     finally { setInvBusy(false) }
+  }
+
+  // 📝 Quote straight off the scrub (Mark 2026-09-29): a real Books estimate
+  // through POST /api/create-invoice — the same maker the jobs page uses — so
+  // the shop gets the normal quote email and it lands in Quotes Out. Then the
+  // number is stamped on the scrub (stage "quoted"); invoicing comes after.
+  const createQuote = async () => {
+    const cals = required
+    if (!cals.length) { setQMsg('No required calibrations on this scrub to quote.'); return }
+    const who = s.shop || 'this shop'
+    if (!window.confirm(`Create a Books quote for ${who}?\n\n${[s.year, s.make, s.model].filter(Boolean).join(' ')}${s.ro ? ` · RO ${s.ro}` : ''}\n${cals.length} calibration${cals.length > 1 ? 's' : ''}: ${cals.map(c => c.name).join(', ')}`)) return
+    setQBusy(true); setQMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/create-invoice`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shop: s.shop || '', customerName: s.shop || '', ro_number: s.ro || '', insurer: s.insurer || '', claim: s.claim || '',
+          vin: s.vin || '', vehicle: [s.year, s.make, s.model].filter(Boolean).join(' '),
+          year: s.year || '', make: s.make || '', model: s.model || '',
+          calibrations: cals.map(c => ({ calibration_name: c.name, cal_type: c.type || 'Static', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: true })),
+          notes: s.ro ? `RO ${s.ro} — quoted from the Scrub Library` : 'Quoted from the Scrub Library',
+        }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      const num = d.estimate_number || d.quoteNumber || d.quote_number || ''
+      const qid = d.quoteId || d.estimate_id || ''
+      // Bookkeeping only — a failed stamp must never look like a failed quote.
+      try {
+        const st = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/invoice`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quoteNumber: num, quoteId: qid, stage: 'quoted' }),
+        })
+        const sd = await st.json().catch(() => ({}))
+        if (sd.scrub) setS(sd.scrub)
+      } catch { /* quote exists; the badge catches up on reload */ }
+      setQMsg(`✓ Quote ${num || 'created'} for ${who}.`)
+    } catch (e) { setQMsg(e.message || 'Could not create the quote.') }
+    finally { setQBusy(false) }
   }
 
   const loadFromCard = async () => {
@@ -503,6 +545,15 @@ function ScrubReport({ s: initial, onBack }) {
             className="mt-4 w-full rounded-lg px-3 py-3 text-sm font-bold"
             style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: (shown.length || hasStoredReport) && !editing ? 1 : 0.5 }}
           >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report that went out ↓' : '📄 Absolute ADAS report ↓'}</button>
+
+          {/* 📝 Quote first, the way the jobs page does — a real Books estimate. */}
+          {s.quoteNumber && !s.invoiceNumber
+            ? <div className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold text-center" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>📝 Quoted · {s.quoteNumber}</div>
+            : !s.invoiceNumber && <button onClick={createQuote} disabled={qBusy || invBusy || editing || !required.length}
+                className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
+                style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1e40af', color: qBusy ? '#777' : '#fff', opacity: required.length && !editing ? 1 : 0.5 }}
+              >{qBusy ? 'Creating…' : `📝 Create quote${required.length ? ` (${required.length} line${required.length > 1 ? 's' : ''})` : ''}`}</button>}
+          {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}
 
           {/* 💸 Bill it straight from here — no download / re-upload round trip. */}
           {s.invoiceNumber

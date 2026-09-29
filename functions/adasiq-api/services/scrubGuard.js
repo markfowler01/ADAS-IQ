@@ -99,6 +99,45 @@ export async function guardScrub(data, base64Pdf) {
   const make = String(data.make || ''), year = Number(data.year || 0)
   const per = (m, s) => `${m || 'OEM'} OEM position statement and ALLDATA ADAS procedure${s ? ' — ' + s : ''}`
 
+  // 0. Normalise the inventory before any rule fires (Mark, 2026-09-29).
+  //    a) Blind spot is ONE calibration for the whole system, billed once —
+  //       never a Left row and a Right row (a pair double-billed an Audi).
+  //       Merge: required if either side was; sides and line refs kept in
+  //       the trigger. The single name is in KINETIC_ALIASES → blind spot item.
+  const isBsm = c => /blind.?spot|rear.*radar/i.test(name(c)) && !/front/i.test(name(c))
+  const sideOf = c => /left/i.test(name(c)) ? 'left' : /right/i.test(name(c)) ? 'right' : ''
+  const bsmRows = cals.filter(isBsm)
+  if (bsmRows.length > 1) {
+    const on = bsmRows.filter(c => c.enabled === true)
+    const sides = [...new Set((on.length ? on : bsmRows).map(sideOf).filter(Boolean))]
+    const sideNote = sides.length === 2 ? 'both sides' : sides.length === 1 ? `${sides[0]} side` : ''
+    const keep = on[0] || bsmRows[0]
+    const refs = [...new Set(bsmRows.flatMap(c => String(c.line_references || '').split(/,\s*/)).filter(Boolean))]
+    keep.calibration_name = 'Rear Blind Spot Radar Calibration'
+    if (keep.sensor) keep.sensor = 'Rear Blind Spot Radar'
+    keep.enabled = on.length > 0
+    keep.line_references = refs.join(', ')
+    keep.trigger = [keep.trigger || '', sideNote ? `(${sideNote} — one calibration covers both radars)` : ''].filter(Boolean).join(' ')
+    for (const c of bsmRows) if (c !== keep) cals.splice(cals.indexOf(c), 1)
+    out.merged = [`Rear Blind Spot Radar ← ${bsmRows.length} rows${sideNote ? ' (' + sideNote + ')' : ''}`]
+  } else if (bsmRows.length === 1 && sideOf(bsmRows[0])) {
+    const c = bsmRows[0], side = sideOf(c)
+    c.calibration_name = 'Rear Blind Spot Radar Calibration'
+    if (c.sensor) c.sensor = 'Rear Blind Spot Radar'
+    c.trigger = [c.trigger || '', `(${side} side — one calibration covers both radars)`].filter(Boolean).join(' ')
+  }
+  //    b) Toyota / Lexus have no front side radars. Drop the row before
+  //       rule 2 can flip it on (a Toyota scrub carried one, 2026-09-29).
+  if (/toyota|lexus/i.test(make)) {
+    for (let i = cals.length - 1; i >= 0; i--) {
+      if (/front side radar|front corner radar|front cross/i.test(name(cals[i]))) {
+        out.dropped = out.dropped || []
+        out.dropped.push(`${cals[i].calibration_name || name(cals[i])}: Toyota/Lexus have no front side radar`)
+        cals.splice(i, 1)
+      }
+    }
+  }
+
   // 1. Windshield replaced → the camera, always (2015+).
   // Masking/protecting the glass for refinish (0.3 hrs) is NOT a removal — the
   // glass never leaves the car and the camera is never disturbed. This rule is

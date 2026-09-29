@@ -182,11 +182,13 @@ router.put('/:id/calibrations', async (req, res) => {
 // stamp does not take, the invoice still exists.
 router.post('/:id/invoice', express.json(), async (req, res) => {
   try {
-    const { invoiceNumber = '', invoiceId = '', quoteNumber = '', quoteId = '' } = req.body || {}
-    if (!invoiceNumber && !invoiceId) return res.status(400).json({ error: 'invoiceNumber or invoiceId required' })
+    const { invoiceNumber = '', invoiceId = '', quoteNumber = '', quoteId = '', stage = '' } = req.body || {}
+    if (!invoiceNumber && !invoiceId && !quoteNumber && !quoteId) return res.status(400).json({ error: 'a quote or invoice number/id is required' })
     const before = await getScrub(req, req.params.id)
     if (!before) return res.status(404).json({ error: 'not found' })
-    const r = await setScrubStageById(req, req.params.id, 'invoiced', { invoiceNumber, invoiceId, quoteNumber, quoteId })
+    // A quote moves the scrub to "quoted", an invoice to "invoiced"; stages only move forward.
+    const want = ['quoted', 'invoiced'].includes(stage) ? stage : ((invoiceNumber || invoiceId) ? 'invoiced' : 'quoted')
+    const r = await setScrubStageById(req, req.params.id, want, { invoiceNumber, invoiceId, quoteNumber, quoteId })
     res.json({ ...r, scrub: await getScrub(req, req.params.id) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })

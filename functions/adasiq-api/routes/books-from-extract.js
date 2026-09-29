@@ -188,6 +188,20 @@ router.post('/from-extract', async (req, res) => {
     const shop = matchShop(payload, shops)
     const rules = shop?.billing_rules || null
 
+    // Blind spot is ONE billable calibration however many radar rows the scrub
+    // carried — a Left + Right pair double-billed an Audi (Mark, 2026-09-29).
+    // Merge any rear blind spot rows into a single line before pricing. The
+    // merged name is in KINETIC_ALIASES, so it lands on the blind spot item.
+    const bsmName = c => String(c.calibration_name || c.name || c.description || c.item_name || '')
+    const isBsm = c => /blind.?spot|rear.*radar/i.test(bsmName(c)) && !/front/i.test(bsmName(c))
+    const bsmRows = payload.calibrations.filter(isBsm)
+    if (bsmRows.length > 1) {
+      const sides = [...new Set(bsmRows.map(c => /left/i.test(bsmName(c)) ? 'left' : /right/i.test(bsmName(c)) ? 'right' : '').filter(Boolean))]
+      const one = { ...bsmRows[0], calibration_name: 'Rear Blind Spot Radar Calibration', name: undefined, description: undefined, item_name: undefined,
+        trigger: [bsmRows[0].trigger || '', sides.length ? `(${sides.length === 2 ? 'both sides' : sides[0] + ' side'} — one calibration covers both radars)` : ''].filter(Boolean).join(' ') }
+      payload.calibrations = [...payload.calibrations.filter(c => !isBsm(c)), one]
+    }
+
     // Build line items from calibrations — match to catalog where possible
     const lineItems = payload.calibrations.map((cal, idx) => {
       const calName = cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${idx + 1}`
