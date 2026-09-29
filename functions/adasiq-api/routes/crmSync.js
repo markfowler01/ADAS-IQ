@@ -543,4 +543,37 @@ router.get('/scrubs-export', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🧪 Scrub the CCC estimate sitting in a car's WorkDrive folder, found by RO
+// (benchmark 2026-09-28: 19 Kinetic cars whose estimates never touched
+// Downloads — they came in through Secure Share and live only in the job
+// folder). No job card needed: the folder resolver searches by RO, then by
+// shop + vehicle. ?ro=&shop=&vehicle=&source=&force=1
+router.post('/scrub-by-ro', async (req, res) => {
+  const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
+  if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
+  const ro = String(req.query.ro || '').trim(); if (!ro) return res.status(400).json({ error: 'ro required' })
+  try {
+    const jobsMod = await import('./jobs.js'); const { getAccessToken } = await import('../services/zoho.js'); const { listChildren, downloadFile } = await import('../services/workdrive.js')
+    const wdToken = await getAccessToken()
+    const stub = { quote_number: ro, shop_name: String(req.query.shop || ''), vehicle: String(req.query.vehicle || '') }
+    const folderId = await jobsMod.resolveJobFolderPublic(req, stub, wdToken, { noCreate: true })
+    if (!folderId) return res.json({ ro, skipped: 'no WorkDrive folder found for this RO' })
+    const pdfs = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || ''))
+      .sort((a, b) => Number(b.created || 0) - Number(a.created || 0))
+      .sort((a, b) => Number(/kinetic|absolute|post.?scan|pre.?scan|invoice|report|estimate-sent/i.test(a.name || '')) - Number(/kinetic|absolute|post.?scan|pre.?scan|invoice|report|estimate-sent/i.test(b.name || '')))
+    if (!pdfs.length) return res.json({ ro, folderId, skipped: 'no PDF in the folder' })
+    const { detectPdfKind } = await import('../services/claude.js'); const { hasScrubForFile } = await import('../services/scrubStore.js'); const { scrubPdfBuffer } = await import('./extract.js')
+    const tried = []
+    for (const f of pdfs.slice(0, 4)) {
+      if (req.query.force !== '1' && await hasScrubForFile(req, f.name)) { tried.push(`${f.name}: already in the library`); continue }
+      const { buffer } = await downloadFile(f.id, wdToken); if (!buffer || buffer.length < 512) { tried.push(`${f.name}: empty`); continue }
+      let kind = 'OTHER', make = ''; try { ({ kind, make } = await detectPdfKind(buffer.toString('base64'))) } catch { kind = 'OTHER' }
+      if (!['CCC', 'ESTIMATE'].includes(kind)) { tried.push(`${f.name}: ${kind}`); continue }
+      const data = await scrubPdfBuffer(req, buffer, { learn: false, source: String(req.query.source || 'folder').slice(0, 30), by: 'folder by RO', file: { id: f.id, name: f.name }, pdfType: 'CCC', make })
+      return res.json({ ok: true, ro, file: f.name, kind, shop: data?.shop || '', vehicle: data?.vehicle || '', vin: data?.vin || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length, scrubId: data?._scrubId || '', tried })
+    }
+    res.json({ ro, folderId, skipped: 'no estimate among the PDFs', tried })
+  } catch (e) { res.status(500).json({ error: e.message, ro }) }
+})
+
 export default router
