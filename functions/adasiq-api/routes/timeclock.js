@@ -303,8 +303,44 @@ function computeBreakMinutes(breaks) {
   }, 0)
 }
 
+// 🍔 Daily lunch, 12–1 PT, every weekday, for everyone (Mark 2026-09-29).
+// Applied whenever a shift's minutes are computed, so clock-out, edits and
+// edit approvals all agree. The lunch is written onto the entry as a break
+// {type:'lunch', auto:true} so the Hours tab and the time card show it and
+// so it is never counted twice. If the person already logged their own break
+// overlapping the noon hour (the 🍔 Lunch Break button), that break stands
+// and no automatic one is added. Keyed-in hours (Joyce) are totals, not
+// clock times, and are not touched.
+const LUNCH_START_MIN = 12 * 60, LUNCH_END_MIN = 13 * 60, LUNCH_MIN_OVERLAP = 30
+function ptMinutesOfDay(iso) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso))
+  const get = t => parts.find(p => p.type === t)?.value || ''
+  return { minutes: (Number(get('hour')) % 24) * 60 + Number(get('minute')), weekday: get('weekday') }
+}
+export function applyAutoLunch(entry) {
+  if (!entry?.clock_in || !entry?.clock_out) return false
+  entry.breaks = entry.breaks || []
+  if (entry.breaks.some(b => b.auto)) return false                       // already applied
+  const inPT = ptMinutesOfDay(entry.clock_in)
+  if (inPT.weekday === 'Sat' || inPT.weekday === 'Sun') return false      // weekdays only
+  const clockIn = new Date(entry.clock_in).getTime(), clockOut = new Date(entry.clock_out).getTime()
+  const noon = clockIn + (LUNCH_START_MIN - inPT.minutes) * 60000        // 12:00 PT on the clock-in day
+  const one = noon + 60 * 60000
+  const start = Math.max(clockIn, noon), end = Math.min(clockOut, one)
+  if (end - start < LUNCH_MIN_OVERLAP * 60000) return false               // shift does not really cover the lunch hour
+  // Their own break already covers the noon hour → theirs stands.
+  const own = entry.breaks.filter(b => b.start && b.end && !b.auto).reduce((m, b) => {
+    const s = Math.max(new Date(b.start).getTime(), noon), e = Math.min(new Date(b.end).getTime(), one)
+    return m + Math.max(0, e - s)
+  }, 0)
+  if (own >= LUNCH_MIN_OVERLAP * 60000) return false
+  entry.breaks.push({ start: new Date(start).toISOString(), end: new Date(end).toISOString(), type: 'lunch', auto: true, note: 'Daily lunch 12–1 (automatic, weekdays)' })
+  return true
+}
+
 function computeEntryMinutes(entry) {
   if (!entry.clock_in || !entry.clock_out) return 0
+  applyAutoLunch(entry)
   const total = (new Date(entry.clock_out) - new Date(entry.clock_in)) / 60000
   const breakMin = computeBreakMinutes(entry.breaks)
   return Math.max(0, Math.round(total - breakMin))

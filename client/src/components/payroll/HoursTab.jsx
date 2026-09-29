@@ -113,7 +113,8 @@ export default function HoursTab({ user }) {
         {msg && <span className="text-sm font-semibold" style={{ color: msg.startsWith('✓') ? COLORS.success : COLORS.danger }}>{msg}</span>}
       </div>
 
-      {err && <Card><div className="text-sm" style={{ color: COLORS.danger }}>{err}</div></Card>}
+      {err && <Card>
+        <div className="text-xs mb-2" style={{ color: COLORS.textMuted }}>🍔 A one-hour lunch, 12–1, is deducted automatically on every weekday shift that covers it. A lunch someone logs themselves on the time clock counts instead.</div><div className="text-sm" style={{ color: COLORS.danger }}>{err}</div></Card>}
       {loading && !data && <div className="text-sm py-8 text-center" style={{ color: COLORS.textMuted }}>Adding up the clock…</div>}
 
       {period && (
