@@ -63,9 +63,15 @@ for vin, k in K.items():
 tp = sum(len(p["tp"]) for p in pairs); fp = sum(len(p["fp"]) for p in pairs); fn = sum(len(p["fn"]) for p in pairs)
 prec = tp / (tp + fp) if tp + fp else 0; rec = tp / (tp + fn) if tp + fn else 0
 exact = sum(1 for p in pairs if not p["fp"] and not p["fn"])
+# Headlamp both ways: Kinetic only scores a REPLACED module, we also call
+# LED/adaptive R&I (module initialization) — a known, defensible disagreement.
+tp2 = sum(len([x for x in p["tp"] if x != "Headlamp Aim"]) for p in pairs); fp2 = sum(len([x for x in p["fp"] if x != "Headlamp Aim"]) for p in pairs); fn2 = sum(len([x for x in p["fn"] if x != "Headlamp Aim"]) for p in pairs)
+prec2 = tp2 / (tp2 + fp2) if tp2 + fp2 else 0; rec2 = tp2 / (tp2 + fn2) if tp2 + fn2 else 0
+exact2 = sum(1 for p in pairs if not [x for x in p["fp"] if x != "Headlamp Aim"] and not [x for x in p["fn"] if x != "Headlamp Aim"])
 
 print(f"BENCHMARK: {len(pairs)} cars paired (Kinetic cars with no scrub of ours: {unmatched}, parse-warned skipped: {sum(1 for k in K.values() if k.get('parse_warning'))})")
 print(f"required-set precision {prec:.0%}  recall {rec:.0%}  · exact match on {exact}/{len(pairs)} cars  · TP {tp} FP {fp} FN {fn}")
+print(f"  without headlamp:  precision {prec2:.0%}  recall {rec2:.0%}  · exact {exact2}/{len(pairs)}  (Kinetic scores only a replaced module; we also call LED/adaptive R&I initialization)")
 print()
 fpc, fnc = Counter(), Counter()
 for p in pairs: fpc.update(p["fp"]); fnc.update(p["fn"])
