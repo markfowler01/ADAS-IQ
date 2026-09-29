@@ -15,6 +15,9 @@
 
 export const CASH_MAX_OUT_OF_POCKET = 700
 export const CASH_CAP_LINE_NAME = '💵 Cash cap — $700 max'
+// Hard rule (Mark 2026-09-29): every cash job's cost invoice is 15% off —
+// never the shop's own %. Change the number here, nowhere else.
+export const CASH_DISCOUNT_PCT = 15
 
 const CASH_MARKERS = /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i
 
@@ -37,6 +40,16 @@ export function isCashInsurerOrBlank(insurer) {
 
 export function cashCustomerLabel(job) {
   return isCashCustomer(job) ? 'Cash Customer' : ''
+}
+
+// A cash job for billing: told-$X on the card, a Cash/customer-pay insurer
+// (Swap to Cash writes 'Cash' onto the estimate), or a cash-cap line.
+// A retail person is never one — they bill standard + tax as before.
+export function isCashJob(job, { insurer, lines } = {}) {
+  if (!job || job.customer?.kind === 'retail') return false
+  if (String(job.cash_quoted || '').trim()) return true
+  if (isCashCustomer({ insurer: insurer || job.insurer })) return true
+  return (lines || []).some(l => /cash cap/i.test(String(l?.name || '')))
 }
 
 // Given priced lines ({ rate, quantity }), return the cap decision:

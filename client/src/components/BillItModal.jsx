@@ -201,11 +201,11 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={{ backgroundColor: '#dcfce7', border: '2px solid #15803d' }}>
                 <div>
                   <div className="font-extrabold text-base" style={{ color: '#14532d' }}>💵 CUSTOMER PAY — the customer was told ${p.cash_quoted}</div>
-                  <div className="text-sm" style={{ color: '#166534' }}>Insurance column is {fmt(insTotal)}. Bill as cash: {insTotal > Number(p.cash_quoted) ? `add the cap line so both documents total $${p.cash_quoted}` : 'already at or under the quoted number'}. Discount should be 0% for cash.</div>
+                  <div className="text-sm" style={{ color: '#166534' }}>Insurance column is {fmt(insTotal)}. Bill as cash: {insTotal > Number(p.cash_quoted) ? `add the cap line so both documents total $${p.cash_quoted}` : 'already at or under the quoted number'}. Cost invoice is {pct}% off — the cash-job rule.</div>
                 </div>
                 {insTotal > Number(p.cash_quoted) && !lines.some(l => /cash cap/i.test(l.name)) && (
-                  <button type="button" onClick={() => { setLines(ls => [...ls, { name: `Cash cap — $${p.cash_quoted} max`, description: 'Customer pay — priced at the number the customer was told', rate: -r2(insTotal - Number(p.cash_quoted)), quantity: 1, product_type: 'service', is_part: false, never_discount: true, _added: true, _edited: true }]); setPct(0) }}
-                    className="rounded-xl px-4 font-extrabold text-white" style={{ minHeight: 44, backgroundColor: GREEN }}>Match ${p.cash_quoted} + 0%</button>
+                  <button type="button" onClick={() => { setLines(ls => [...ls, { name: `Cash cap — $${p.cash_quoted} max`, description: 'Customer pay — priced at the number the customer was told', rate: -r2(insTotal - Number(p.cash_quoted)), quantity: 1, product_type: 'service', is_part: false, never_discount: true, _added: true, _edited: true }]) }}
+                    className="rounded-xl px-4 font-extrabold text-white" style={{ minHeight: 44, backgroundColor: GREEN }}>Match ${p.cash_quoted}</button>
                 )}
               </div>
             )}
@@ -273,7 +273,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                     <div className="rounded-lg px-3 py-2 mt-2 text-sm" style={{ backgroundColor: under ? '#fef2f2' : '#fff7ed', border: `1.5px solid ${under ? '#fecaca' : '#fdba74'}`, color: under ? '#991b1b' : '#9a3412' }}>
                       <b>🤝 Tech agreed {fmt(agreed)}{p.agreed_price.with ? ` with ${p.agreed_price.with}` : ''}</b>{p.agreed_price.note ? ` — ${p.agreed_price.note}` : ''}{p.agreed_price.by ? <span className="text-xs" style={{ opacity: .8 }}> · {p.agreed_price.by}</span> : null}
                       <div className="text-xs mt-1">{matched ? '✓ The invoice matches.' : `Invoice is ${fmt(grand)}${isRetail ? ' incl. tax' : ''}.`}{under ? ` ⚠ Under the $350 floor for ${cals} calibration${cals === 1 ? '' : 's'} — your call.` : ''}</div>
-                      {!matched && eligible > 0 && !isRetail && <button type="button" onClick={() => setPct(needPct)} className="text-xs font-bold rounded-full px-3 py-1 mt-1.5 text-white" style={{ backgroundColor: under ? '#b91c1c' : '#b45309' }}>Match {fmt(agreed)} → set discount to {needPct}%</button>}
+                      {!matched && eligible > 0 && !isRetail && !p.cash_job && <button type="button" onClick={() => setPct(needPct)} className="text-xs font-bold rounded-full px-3 py-1 mt-1.5 text-white" style={{ backgroundColor: under ? '#b91c1c' : '#b45309' }}>Match {fmt(agreed)} → set discount to {needPct}%</button>}
                     </div>
                   )
                 })()}
@@ -285,7 +285,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: single ? '#f0fdf4' : '#eff6ff', color: single ? GREEN : '#1d4ed8' }}>
                   <span>{single ? `💸 Invoice${p.estimate_number ? ` · RO ${p.estimate_number}` : ''}` : `🏦 Insurance invoice · estimate ${p.estimate_number}`}</span>
                   {single
-                    ? <span className="flex items-center gap-1 text-sm">discount <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-16 text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #86efac' }} />%</span>
+                    ? <span className="flex items-center gap-1 text-sm">discount {p.cash_job ? <span className="text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #15803d', backgroundColor: '#dcfce7', color: '#14532d' }} title="Hard rule: every cash job is 15% off">💵 Cash job · {pct}</span> : <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-16 text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #86efac' }} />}%</span>
                     : <span className="text-xs font-semibold text-right" style={{ color: edited ? ORANGE : '#3b82f6' }}>{edited ? '✏️ edited — Books estimate will be updated' : 'tap a price or qty to edit'}</span>}
                 </div>
                 {rows.map((l, i) => (
@@ -327,9 +327,9 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               {/* RIGHT — cost invoice, mirrors the left (dual mode only) */}
               {!single && <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bbf7d0' }}>
                 <div className="px-4 py-3 text-base font-bold flex items-center justify-between" style={{ backgroundColor: '#f0fdf4', color: GREEN }}>
-                  <span>💸 Cost invoice · {p.customer_type ? p.customer_type.replace(/_/g, ' ') : 'shop'} discount</span>
+                  <span>💸 Cost invoice · {p.cash_job ? 'cash job — 15% rule' : `${p.customer_type ? p.customer_type.replace(/_/g, ' ') : 'shop'} discount`}</span>
                   <span className="flex items-center gap-1">
-                    <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-20 text-lg font-bold rounded-md px-2 py-1 text-right" style={{ border: '2px solid #86efac' }} />%
+                    {p.cash_job ? <span className="text-lg font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #15803d', backgroundColor: '#dcfce7', color: '#14532d' }} title="Hard rule: every cash job is 15% off">💵 Cash job · {pct}</span> : <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-20 text-lg font-bold rounded-md px-2 py-1 text-right" style={{ border: '2px solid #86efac' }} />}%
                   </span>
                 </div>
                 {rows.map((l, i) => (
@@ -345,7 +345,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>{single ? 'Send the invoice to' : 'Send both to'}</label>
               <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="shop@email.com, second@email.com" className="w-full rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
               <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact.{single ? (payMode === 'net_terms' ? ' Net terms — they pay the link.' : ' Collect on site after — check, cash, or the card QR on the job card.') : ` Saves the shop ${fmt(insTotal - costTotal)}. Rule on file: ${p.rule}.`}</div>
-              {(!p.has_discount || Number(p.discount_pct) !== Number(pct)) && Number(pct) >= 0 && (
+              {!p.cash_job && (!p.has_discount || Number(p.discount_pct) !== Number(pct)) && Number(pct) >= 0 && (
                 <div className="text-sm mt-1 font-semibold" style={{ color: '#92400e' }}>🧠 {p.has_discount ? `${p.shop_name} is on file at ${p.discount_pct}% — sending at ${pct}% updates the shop to ${pct}%.` : `No discount on file for ${p.shop_name} — ${pct}% will be remembered for next time.`}</div>
               )}
               {p.templates && (

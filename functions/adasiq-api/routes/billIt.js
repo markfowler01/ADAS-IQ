@@ -23,6 +23,7 @@ import axios from 'axios'
 import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, discountEligible, invoiceCustomFields, createCostInvoice, createSingleInvoice, retailTax, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
 import catalyst from 'zcatalyst-sdk-node'
 import { attachJobReports } from '../services/reportAttach.js'
+import { isCashJob, CASH_DISCOUNT_PCT } from '../services/cashPricing.js'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
@@ -80,8 +81,8 @@ async function buildDualPreview(req, job, brPicked) {
   const rule = await big3.readBig3(req, shopName)
   const shop = rule.shop_id ? await big3.findShopByName(req, shopName) : null
   const br = brPicked || (shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {})
-  const cashJob = !!String(job.cash_quoted || '').trim()
-  const pct = cashJob ? 0 : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null)
+  const cashJob = isCashJob(job, { insurer: (est.custom_fields || []).find(c => c.label === 'Insurer')?.value, lines: est.line_items })
+  const pct = cashJob ? CASH_DISCOUNT_PCT : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null)
   const customerType = cashJob ? 'cash' : (br.customer_type || '')
   const byName = new Map((catalog.allItems || []).map(it => [String(it.name).toLowerCase().trim(), it]))
   const byId = new Map((catalog.allItems || []).map(it => [String(it.item_id), it]))
@@ -124,8 +125,8 @@ async function buildDualPreview(req, job, brPicked) {
   const warnings = []
   if (existing) warnings.push(`Invoice ${existing.invoice_number} already exists in Books (${existing.status}) — billed by hand? The button will not create a second one.`)
   if (job.invoiced || job.billed_via_app) warnings.push(`This card is already marked invoiced${job.billed_via_app ? ` (via app ${job.billed_via_app})` : ''}.`)
-  if (pct == null) warnings.push(`No cost-invoice discount on file for ${shopName} — set the customer type / % on the CRM Billing tab. Preview shows 0%.`)
-  if (cashJob) warnings.push(`💵 Customer pay — told $${job.cash_quoted}. Quote already capped at that number; discount is 0%.`)
+  if (pct == null && !cashJob) warnings.push(`No cost-invoice discount on file for ${shopName} — set the customer type / % on the CRM Billing tab. Preview shows 0%.`)
+  if (cashJob) warnings.push(`💵 Cash job — cost invoice is ${CASH_DISCOUNT_PCT}% off (hard rule), not the shop's own %.${job.cash_quoted ? ` Customer was told $${job.cash_quoted}.` : ''}`)
   if (!emails.length) warnings.push('No email on the Books contact — add one in Books or type it below.')
   if (!tpl.estimate) warnings.push('No estimate PDF template named "Absolute List invoice" in Books — the button will not send until it exists.')
   if (!tpl.invoice) warnings.push('No invoice PDF template named "Absolute ADAS vrs 1" (or "Retail…") in Books — the button will not send until it exists.')
@@ -133,7 +134,7 @@ async function buildDualPreview(req, job, brPicked) {
   if (alreadyConverted) warnings.push('Books says this estimate was already converted to an invoice (by hand?) — the button will not bill it again.')
   return {
     ok: true, mode: 'dual', job_id: job.id, shop_name: shopName, estimate_id: est.estimate_id, estimate_number: est.estimate_number, estimate_status: est.status,
-    customer_id: est.customer_id, customer_type: customerType, discount_pct: pct ?? 0, has_discount: pct != null, emails,
+    customer_id: est.customer_id, customer_type: customerType, discount_pct: pct ?? 0, has_discount: pct != null, emails, cash_job: cashJob,
     cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''),
     lines: discounted, insurance_total: insuranceTotal, cost_total: costTotal, saved: r2(insuranceTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
@@ -154,7 +155,8 @@ async function buildSinglePreview(req, job, shop, br) {
   const cashJob = !!String(job.cash_quoted || '').trim()
   const customerType = cashJob ? 'cash' : (br.customer_type || '')
   const typeDef = big3.CUSTOMER_TYPES[customerType] || null
-  const pct = cashJob ? 0 : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : (typeDef?.discount ?? null))
+  const cashRule = isCashJob(job)
+  const pct = cashRule ? CASH_DISCOUNT_PCT : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : (typeDef?.discount ?? null))
   const payMode = br.pay_mode || typeDef?.pay || 'on_site'
   const catalog = await getItemCatalogForAudit().catch(() => ({ allItems: [] }))
   const byName = new Map((catalog.allItems || []).map(it => [String(it.name).toLowerCase().trim(), it]))
@@ -223,7 +225,7 @@ async function buildSinglePreview(req, job, shop, br) {
   if (!tpl.invoice) warnings.push('No invoice PDF template in Books — the button will not send until it exists.')
   return {
     ok: true, mode: 'single', job_id: job.id, shop_name: customerName, estimate_id: null, estimate_number: ro || '', customer_id: customerId,
-    customer_type: customerType, customer_types: big3.CUSTOMER_TYPES, pay_mode: payMode, discount_pct: pct ?? 0, has_discount: pct != null, has_type: !!br.customer_type, retail_person: retailJob, emails,
+    customer_type: customerType, customer_types: big3.CUSTOMER_TYPES, pay_mode: payMode, discount_pct: pct ?? 0, has_discount: pct != null, cash_job: cashRule, has_type: !!br.customer_type, retail_person: retailJob, emails,
     cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''), agreed_price: job.agreed_price || null,
     lines: discounted, insurance_total: listTotal, list_total: listTotal, cost_total: costTotal, tax, grand_total: grand, saved: r2(listTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
@@ -339,7 +341,7 @@ router.post('/:id/bill', async (req, res) => {
     if (p.already_converted) return res.status(409).json({ error: `Already billed — Books shows estimate ${p.estimate_number} converted to an invoice.`, preview: pub(p) })
     if (!p.templates.estimate || !p.templates.invoice) return res.status(400).json({ error: 'PDF template missing in Books — see the warning above. Nothing sent.', preview: pub(p) })
     const by = req.user?.name || req.user?.email || 'staff'
-    const pct = Number(req.body?.discount_pct ?? p.discount_pct) || 0
+    const pct = p.cash_job ? CASH_DISCOUNT_PCT : (Number(req.body?.discount_pct ?? p.discount_pct) || 0)
     const token = await getAccessToken()
 
     // 1. Make the Books estimate match what Kat approved on the left side:
@@ -374,8 +376,8 @@ router.post('/:id/bill', async (req, res) => {
     // when Kat flips a switch and leaves "remember" on.
     // Remember the discount too (Mark 2026-09-11: "if I set their discount to
     // 25% I want it to remember this") — whenever it differs from the file.
-    const learnPct = !dry && (!p.has_discount || Number(p.discount_pct) !== pct)
-    const learnType = !dry && p.saved_type !== 'body_shop'   // picked the Collision pill → remembered
+    const learnPct = !dry && !p.cash_job && (!p.has_discount || Number(p.discount_pct) !== pct)
+    const learnType = !dry && !p.cash_job && p.saved_type !== 'body_shop'   // picked the Collision pill → remembered
     const saveRules = !p.big3?.insurer_rule && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
     if (!dry && (saveRules || learnPct || learnType)) {
       try {
@@ -444,7 +446,7 @@ async function billSingle(req, res, job, p, dry) {
   const big3 = await import('../services/big3.js')
   // The type can be picked right on the modal the first time; remembered on the shop.
   const ctype = big3.CUSTOMER_TYPES[req.body?.customer_type] ? req.body.customer_type : p.customer_type
-  const pct = Number(req.body?.discount_pct ?? p.discount_pct) || 0
+  const pct = p.cash_job ? CASH_DISCOUNT_PCT : (Number(req.body?.discount_pct ?? p.discount_pct) || 0)
   const pay = big3.PAY_MODES[req.body?.pay_mode] ? req.body.pay_mode : p.pay_mode
   const edited = Array.isArray(req.body?.lines) ? linesFromEdit(p, req.body.lines) : null
   if (edited) { if (!edited.length) return res.status(400).json({ error: 'Nothing to bill.' }); p.lines = edited }
@@ -454,7 +456,7 @@ async function billSingle(req, res, job, p, dry) {
   if (p.tax) p.tax.amount = r2(p.cost_total * p.tax.pct / 100)
   p.grand_total = r2(p.cost_total + (p.tax?.amount || 0))
   // Learn: type / % / pay for the shop (never for a cash job — that's the card, not the shop).
-  if (!dry && ctype !== 'cash' && ctype && !p.retail_person && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== (p.saved_type || p.customer_type))) {
+  if (!dry && ctype !== 'cash' && !p.cash_job && ctype && !p.retail_person && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== (p.saved_type || p.customer_type))) {
     try { const rules = big3.withDefaults(p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
   }
   let inv = null
