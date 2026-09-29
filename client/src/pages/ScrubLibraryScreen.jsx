@@ -205,7 +205,7 @@ const toLine = c => ({
   name: c.sensor || c.calibration_name || '', type: c.cal_type || '',
   required: c.enabled === true, lines: c.line_references || '',
   trigger: c.trigger || '', why: c.justification || '',
-  added: !!c._added, edited: !!c._edited, by: c._by || '',
+  added: !!c._added, edited: !!c._edited, by: c._by || '', guard: c._guard || '',
 })
 const fromLine = l => ({
   calibration_name: l.name, cal_type: l.type || null, trigger: l.trigger || null,
@@ -421,6 +421,12 @@ function ScrubReport({ s: initial, onBack }) {
               </div>
             </div>
 
+            {(p._guard?.flipped?.length || p._guard?.added?.length) ? (
+              <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#ecfdf5', color: '#065f46' }}>
+                <div className="font-bold mb-0.5">🛡️ Hard rules enforced on this scrub</div>
+                {[...(p._guard.flipped || []), ...(p._guard.added || [])].map((g, i) => <div key={i}>• {g}</div>)}
+              </div>
+            ) : null}
             {s.oemRefs && !editing && (
               <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
                 <div className="font-bold mb-1" style={{ color: INK }}>References</div>
@@ -529,6 +535,7 @@ function LineRow({ c, i, editing, expanded, onToggle, onFlip, onPatch, onRewrite
           </span>
           {c.added && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fff7ed', color: '#b45309' }}>added{c.by ? ` · ${c.by}` : ''}</span>}
           {!c.added && c.edited && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#f5f3f0', color: '#777' }}>edited</span>}
+          {c.guard && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#ecfdf5', color: '#065f46' }} title="Enforced by the guard: a hard rule in code, not the model's judgment">🛡️ rule</span>}
         </td>
         <td className="py-2.5 px-3" style={{ color: dim ? '#aaa' : '#444' }}>
           {editing ? <input value={c.trigger} onChange={e => onPatch({ trigger: e.target.value })} placeholder="repair that disturbs it" style={cell} /> : (c.trigger || '—')}
