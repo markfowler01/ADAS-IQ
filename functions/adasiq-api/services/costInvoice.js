@@ -28,7 +28,11 @@ export const NO_DISCOUNT = /calibration identification report|^sfp?\s*[-\s].*pos
 // Books says goods AND the name doesn't read like work we did.
 export const LOOKS_LIKE_SERVICE = /scan|calibrat|inspection|labor|set-?up|program|diagnos|report|snapshot|aim|alignment|ride|remove|install|r&i|r & i/i
 export const isPart = l => l.product_type === 'goods' && !LOOKS_LIKE_SERVICE.test(l.name || '')
-export const discountEligible = l => (Number(l.amount) || 0) > 0 && !isPart(l) && !NO_DISCOUNT.test(l.name || '')
+// The negative "Cash cap — $700 max" line is part of the discounted work, so
+// it takes the % too — otherwise the cost invoice discounts list prices and
+// subtracts the cap at full size (Mark 2026-09-29: $700 capped at 25% came out $362.75).
+export const CASH_CAP_LINE = /cash cap/i
+export const discountEligible = l => ((Number(l.amount) || 0) > 0 || ((Number(l.amount) || 0) < 0 && CASH_CAP_LINE.test(l.name || ''))) && !isPart(l) && !NO_DISCOUNT.test(l.name || '')
 
 // ── Standard notes / terms (what Kat's invoices carry) ──────────────────
 // Override without a deploy: AppConfig rows BILL_IT_NOTES / BILL_IT_TERMS.

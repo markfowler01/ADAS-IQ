@@ -20,7 +20,7 @@ import { readJobsPublic, updateJobPublic } from './jobs.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 
 import axios from 'axios'
-import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, invoiceCustomFields, createCostInvoice, createSingleInvoice, retailTax, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
+import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, discountEligible, invoiceCustomFields, createCostInvoice, createSingleInvoice, retailTax, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
 import catalyst from 'zcatalyst-sdk-node'
 import { attachJobReports } from '../services/reportAttach.js'
 const router = express.Router()
@@ -106,7 +106,7 @@ async function buildDualPreview(req, job, brPicked) {
   const discounted = lines.map(li => {
     const amount = r2(li.rate * li.quantity)
     const part = isPart(li)
-    const eligible = pct != null && pct > 0 && amount > 0 && !part && !NO_DISCOUNT.test(li.name || '')
+    const eligible = pct != null && pct > 0 && discountEligible({ ...li, amount })
     const disc = eligible ? pct : 0
     const cost = r2(amount * (1 - disc / 100))
     return { ...li, amount, big3_key: big3KeyFor(li.name), is_part: part, never_discount: NO_DISCOUNT.test(li.name || ''), discount_pct: disc, cost_amount: cost, why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
@@ -181,7 +181,7 @@ async function buildSinglePreview(req, job, shop, br) {
   ]
   const discounted = lines.map(li => {
     const amount = r2(li.rate * li.quantity); const part = isPart(li)
-    const eligible = pct != null && pct > 0 && amount > 0 && !part && !NO_DISCOUNT.test(li.name || '')
+    const eligible = pct != null && pct > 0 && discountEligible({ ...li, amount })
     const disc = eligible ? pct : 0
     return { ...li, amount, big3_key: big3KeyFor(li.name), is_part: part, never_discount: NO_DISCOUNT.test(li.name || ''), discount_pct: disc, cost_amount: r2(amount * (1 - disc / 100)), why: !eligible && amount > 0 && pct ? (part ? 'part — no discount' : NO_DISCOUNT.test(li.name || '') ? 'never discounted' : '') : '' }
   })

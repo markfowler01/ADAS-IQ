@@ -117,7 +117,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   // Both columns derive from the same edited line set.
   const rows = lines.map(l => {
     const amount = r2((Number(l.rate) || 0) * (Number(l.quantity) || 0))
-    const eligible = amount > 0 && !l.is_part && !l.never_discount
+    // The negative cash-cap line takes the % too, so 25% off a $700 cap job is 25% off $700.
+    const eligible = (amount > 0 && !l.is_part && !l.never_discount) || (amount < 0 && /cash cap/i.test(l.name || ''))
     const d = eligible && pct > 0 ? pct : 0
     const why = amount > 0 && !eligible ? (l.is_part ? 'part — no discount' : 'never discounted') : ''
     return { ...l, amount, d, why, cost: r2(amount * (1 - d / 100)) }
