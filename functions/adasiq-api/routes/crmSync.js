@@ -997,6 +997,54 @@ router.get('/shops/types', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 📨 Test copies of every welcome version to one address (Mark only, no Kat).
+router.post('/welcome/test', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const to = String(req.body?.to || 'mark@absoluteadas.com').toLowerCase()
+    if (!/@absoluteadas\.com$/.test(to)) return res.status(400).json({ error: 'test copies go to an absoluteadas.com address only' })
+    const { welcomeCopy } = await import('../services/shopWelcome.js')
+    const { sendBroadcast } = await import('../services/brewResend.js')
+    const fs = (await import('node:fs')).default, path = (await import('node:path')).default, { fileURLToPath } = await import('node:url')
+    const pdfPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'absolute-adas-pricing-sheet.pdf')
+    const label = { body_shop: 'Collision', dealer: 'Dealer', repair_shop: 'Auto repair', retail: 'Retail' }
+    const sent = []
+    for (const type of ['body_shop', 'dealer', 'repair_shop', 'retail']) {
+      const c = welcomeCopy({ firstName: 'Mark', type })
+      let attachments; if (c.pdf) { try { attachments = [{ filename: 'Absolute ADAS pricing sheet.pdf', content: fs.readFileSync(pdfPath).toString('base64') }] } catch {} }
+      await sendBroadcast({ recipients: [to], subject: `[TEST · ${label[type]}] ${c.subject}`, html: c.html, text: c.text, attachments, fromEmail: process.env.WELCOME_FROM_EMAIL || 'brew@absoluteadas.com', fromName: 'Mark Fowler · Absolute ADAS', replyTo: 'mark@absoluteadas.com' })
+      sent.push(label[type])
+    }
+    res.json({ ok: true, to, sent })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 🏷 Set customer types in bulk by shop name (silent, no welcome email). Body: { set: [{ name, type }] }, ?dry=1
+router.post('/shops/set-types', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const dry = req.query.dry === '1'
+  try {
+    const b3 = await import('../services/big3.js')
+    const { getAllShops } = await import('./shops.js')
+    const shops = await getAllShops(req)
+    const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const out = []
+    for (const { name, type } of req.body?.set || []) {
+      const shop = shops.find(s => key(s.shop_name) === key(name))
+      if (!shop) { out.push({ name, error: 'not found' }); continue }
+      if (!b3.CUSTOMER_TYPES[type]) { out.push({ name, error: `bad type ${type}` }); continue }
+      const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
+      if (br.customer_type) { out.push({ name, skipped: `already ${br.customer_type}` }); continue }
+      const def = b3.CUSTOMER_TYPES[type]
+      const pct = def.discount ?? (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null)
+      if (dry) { out.push({ name: shop.shop_name, would: type, discount: pct, pay: def.pay }); continue }
+      await b3.saveBig3(req, shop.shop_name, b3.normalizeRules(br.big3) || b3.DEFAULT_RULES, 'Mark (bulk types 2026-09-30)', { shop, customer_type: type, discount_pct: pct, pay_mode: def.pay, silent: true })
+      out.push({ name: shop.shop_name, set: type })
+    }
+    try { b3.invalidateBig3Map && b3.invalidateBig3Map() } catch {}
+    res.json({ dry, done: out.filter(o => o.set || o.would).length, out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
