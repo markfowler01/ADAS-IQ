@@ -947,17 +947,23 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
-      <div className="rounded-2xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto"
-        style={{ backgroundColor: 'white' }} onClick={e => e.stopPropagation()}>
-        <h3 className="font-bold text-base mb-0.5" style={{ color: '#1a1a1a' }}>
-          Review pricing before creating
-        </h3>
-        <p className="text-xs mb-2" style={{ color: '#888' }}>
-          {insurer ? `${insurer} — ` : ''}priced on the {preview.insurer_pool === 'standard' ? 'standard' : preview.insurer_pool.toUpperCase()} schedule
-        </p>
-        <div className="flex flex-wrap gap-1.5 mb-3">
+    // 🎨 Same frame as the Bill it window (Mark 2026-09-30: "the review screen
+    // to look like the Bill it window") — bottom sheet on a phone, wide card
+    // on a desktop, header strip, scrolling body, button bar pinned below.
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center"
+      style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white w-full rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '96vh', maxWidth: 'min(900px, 98vw)' }}>
+        <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid #ebebeb' }}>
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🧾 Create job · review before anything is created</div>
+            <div className="font-bold text-xl truncate" style={{ color: '#1a1a1a' }}>{shopName || 'Pick the customer'}</div>
+          </div>
+          <button onClick={onClose} disabled={busy} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
+        </div>
+        <div className="px-5 py-4 overflow-y-auto space-y-3">
+        <div className="rounded-xl p-3" style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e0dbd6' }}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>🏦 Price schedule</span>
           {[
             { id: null,    label: 'Auto' },
             { id: 'STD',   label: 'Standard' },
@@ -968,21 +974,23 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             { id: 'GEICO', label: 'GEICO' },
           ].map(pl => (
             <button key={pl.label} disabled={busy} onClick={() => onPool(pl.id)}
-              className="text-[10px] font-bold px-2 py-1 rounded-lg"
+              className="text-xs font-bold rounded-full px-3 py-1.5"
               style={poolOverride === pl.id
                 ? { backgroundColor: '#1a1a1a', color: 'white' }
-                : { backgroundColor: '#f5f3f0', color: '#888' }}>
+                : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>
               {pl.label}
             </button>
           ))}
         </div>
+        <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>{insurer ? `${insurer} — ` : ''}priced on the {preview.insurer_pool === 'standard' ? 'standard' : preview.insurer_pool.toUpperCase()} schedule.</div>
+        </div>
         {/* 🧾 Big 3 rule for this shop (Mark 2026-09-10) */}
         {big3 && (
-          <div className="rounded-xl p-3 mb-2" style={big3.source === 'unset' && !(big3.rules && ['cal_id','pcsi','post_scan'].every(k => big3.rules[k]))
+          <div className="rounded-xl p-3" style={big3.source === 'unset' && !(big3.rules && ['cal_id','pcsi','post_scan'].every(k => big3.rules[k]))
             ? { backgroundColor: '#fffbeb', border: '1.5px solid #fde68a' }
             : { backgroundColor: '#f0fdf4', border: '1.5px solid #bbf7d0' }}>
             <div className="flex items-center justify-between mb-1.5">
-              <div className="text-[11px] font-bold" style={{ color: '#1a1a1a' }}>🧾 Big 3 for {shopName || big3.shop_name || 'this shop'}</div>
+              <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🧾 Big 3 for {shopName || big3.shop_name || 'this shop'}</div>
               <div className="text-[10px]" style={{ color: '#888' }}>
                 {big3.source === 'insurer' ? `🏦 ${big3.insurer_rule} rule — Cal ID off · Snapshot off · PCSI + Post-Scan included` : big3.source === 'shop' ? `shop rule${big3.set_by ? ` · ${big3.set_by}` : ''}${big3.set_at ? ` ${String(big3.set_at).slice(5, 10)}` : ''}` : big3.source === 'modal' ? 'edited here' : 'default — confirm once, it\'s remembered'}
               </div>
@@ -994,20 +1002,24 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             </label>}
           </div>
         )}
-        <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1px solid #eee' }}>
+        <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bfdbfe' }}>
+          <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+            <span>🏦 Insurance estimate{insurer ? ` · ${insurer}` : ''}</span>
+            <span className="text-xs font-semibold text-right" style={{ color: effective.some(l => l._edited) ? ORANGE : '#3b82f6' }}>{effective.some(l => l._edited) ? '✏️ edited' : 'tap a price to edit'}</span>
+          </div>
           {effective.map((li, i) => (
-            <div key={li._key} className="px-3 py-2 text-sm"
-              style={{ borderTop: i ? '1px solid #f0f0f0' : 'none', backgroundColor: li.needs_price ? '#fef2f2' : 'white' }}>
+            <div key={li._key} className="px-3 py-2 text-base"
+              style={{ borderTop: '1px solid #f1f5f9', backgroundColor: li.needs_price ? '#fef2f2' : li._added ? '#f0fdf4' : 'white' }}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="font-semibold truncate" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>
+                  <div className="truncate" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>
                     {li.name}{li._edited ? ' ✎' : ''}
                   </div>
                   {li.quantity > 1 && <div className="text-xs" style={{ color: '#888' }}>× {li.quantity}</div>}
                 </div>
                 <button onClick={() => li._editable && setEditOpen(editOpen === li._key ? null : li._key)}
-                  className="font-bold whitespace-nowrap"
-                  style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af'), textDecoration: li._editable ? 'underline dotted' : 'none' }}>
+                  className="tabular-nums font-semibold whitespace-nowrap"
+                  style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af'), textDecoration: li._editable ? 'underline dotted' : 'none', minWidth: 84, textAlign: 'right' }}>
                   {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
                 </button>
               </div>
@@ -1082,16 +1094,16 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
               )}
             </div>
           ))}
-          <div className="flex justify-between px-3 py-2.5 text-sm font-extrabold"
-            style={{ borderTop: '2px solid #e5e5e5', backgroundColor: '#fafaf9' }}>
-            <span>TOTAL</span><span>${Number(total).toFixed(2)}</span>
+          <div className="flex justify-between px-4 py-3 text-xl font-extrabold"
+            style={{ borderTop: '2px solid #e2e8f0', color: '#1a1a1a', marginTop: 'auto' }}>
+            <span>Total</span><span className="tabular-nums">${Number(total).toFixed(2)}</span>
           </div>
         </div>
-        <div className="mb-3">
+        <div>
           <button onClick={() => { setAddOpen(o => !o); setSwapSearch('') }}
-            className="text-xs font-bold px-3 py-1.5 rounded-lg"
-            style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
-            + Add item
+            className="w-full text-left rounded-lg px-3 py-2 text-base"
+            style={{ border: '1px dashed #93c5fd', color: '#1d4ed8', backgroundColor: '#f8fafc' }}>
+            ＋ Add an item from the price list…
           </button>
           {addOpen && (
             <div className="mt-1.5 rounded-lg overflow-hidden" style={{ border: '1px solid #e5e7eb' }}>
@@ -1115,8 +1127,8 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
           )}
         </div>
         {isCashPool && (
-          <div className="rounded-lg px-3 py-2 mb-3 text-xs font-semibold"
-            style={{ backgroundColor: '#dcfce7', color: '#166534' }}>
+          <div className="rounded-xl p-3 text-sm font-semibold"
+            style={{ backgroundColor: '#dcfce7', border: '2px solid #15803d', color: '#14532d' }}>
             {capAdj < 0 ? (
               <div className="flex justify-between items-center">
                 <span>💵 Cash cap — $700 max</span>
@@ -1128,19 +1140,20 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
           </div>
         )}
         {flagged.length > 0 && (
-          <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
-            style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
+          <p className="text-sm font-semibold rounded-xl p-3"
+            style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
             ⚠ {flagged.length} unmatched line{flagged.length > 1 ? 's' : ''} — no price found. It will land on the invoice at $0 flagged for pricing.
           </p>
         )}
-        <div className="flex gap-2">
+        </div>
+        <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}>
           <button onClick={onClose} disabled={busy}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-            style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
+            className="flex-1 rounded-xl py-3.5 text-base font-semibold"
+            style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
           <button onClick={confirm} disabled={busy}
-            className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white"
-            style={{ backgroundColor: ORANGE }}>
-            {busy ? 'Creating…' : `Create job — $${Number(finalTotal).toFixed(2)} →`}
+            className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white"
+            style={{ backgroundColor: ORANGE, opacity: busy ? .45 : 1 }}>
+            {busy ? 'Creating…' : `🧾 Create job — $${Number(finalTotal).toFixed(2)}`}
           </button>
         </div>
       </div>
@@ -1213,50 +1226,54 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
         <p className="text-xs font-semibold text-center" style={{ color: '#b91c1c' }}>{msg} — tap to retry</p>
       )}
       {phase !== 'idle' && phase !== 'error' && preview && (phase === 'review' || phase === 'sending') && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }} onClick={() => setPhase('idle')}>
-          <div className="rounded-2xl p-5 w-full max-w-md max-h-[85vh] overflow-y-auto"
-            style={{ backgroundColor: 'white' }} onClick={e => e.stopPropagation()}>
-            <h3 className="font-bold text-base mb-0.5" style={{ color: '#1a1a1a' }}>
-              Quote {preview.estimate_number} — review before sending
-            </h3>
-            <p className="text-xs mb-3" style={{ color: '#888' }}>
-              To: {preview.sent_to?.length ? preview.sent_to.join(', ') : '⚠ no email on file'}
-            </p>
-            <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #eee' }}>
-              {preview.line_items.map((li, i) => (
-                <div key={i} className="flex items-start justify-between gap-3 px-3 py-2 text-sm"
-                  style={{ borderTop: i ? '1px solid #f0f0f0' : 'none', backgroundColor: li.needs_price ? '#fef2f2' : 'white' }}>
-                  <div className="min-w-0">
-                    <div className="font-semibold truncate" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>
-                      {li.name}
-                    </div>
-                    {li.quantity > 1 && <div className="text-xs" style={{ color: '#888' }}>× {li.quantity}</div>}
-                  </div>
-                  <div className="font-bold whitespace-nowrap" style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af') }}>
-                    {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
-                  </div>
+        // 🎨 Same frame as the Bill it window (Mark 2026-09-30: "update the quote
+        // screen to look more like the review screen").
+        <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onMouseDown={e => { if (e.target === e.currentTarget && phase !== 'sending') setPhase('idle') }}>
+          <div className="bg-white w-full rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '96vh', maxWidth: 'min(900px, 98vw)' }}>
+            <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid #ebebeb' }}>
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>📤 Send quote · review before anything is sent</div>
+                <div className="font-bold text-xl truncate" style={{ color: '#1a1a1a' }}>{selectedCustomer?.name || job?.shop || 'Quote'}{preview.estimate_number ? ` · ${preview.estimate_number}` : ''}</div>
+              </div>
+              <button onClick={() => setPhase('idle')} disabled={phase === 'sending'} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
+            </div>
+            <div className="px-5 py-4 overflow-y-auto space-y-3">
+              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bfdbfe' }}>
+                <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+                  <span>📝 Quote {preview.estimate_number}</span>
+                  <span className="text-xs font-semibold" style={{ color: '#3b82f6' }}>every line the shop will see</span>
                 </div>
-              ))}
-              <div className="flex justify-between px-3 py-2.5 text-sm font-extrabold"
-                style={{ borderTop: '2px solid #e5e5e5', backgroundColor: '#fafaf9' }}>
-                <span>TOTAL</span><span>${Number(preview.total).toFixed(2)}</span>
+                {preview.line_items.map((li, i) => (
+                  <div key={i} className="flex items-center justify-between gap-3 px-4 py-2 text-base"
+                    style={{ borderTop: '1px solid #f1f5f9', minHeight: 45, backgroundColor: li.needs_price ? '#fef2f2' : 'white' }}>
+                    <span className="min-w-0" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>{li.name}{li.quantity > 1 ? ` ×${li.quantity}` : ''}</span>
+                    <span className="flex-shrink-0 tabular-nums font-semibold" style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af') }}>
+                      {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: '2px solid #e2e8f0', color: '#1a1a1a' }}>
+                  <span>Total</span><span className="tabular-nums">${Number(preview.total).toFixed(2)}</span>
+                </div>
+              </div>
+              {zeroLines.length > 0 && (
+                <p className="text-sm font-semibold rounded-xl p-3" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
+                  ⚠ {zeroLines.length} unmatched line{zeroLines.length > 1 ? 's' : ''} — no price found in Books. Fix before sending or the shop sees $0.
+                </p>
+              )}
+              <div>
+                <div className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Send the quote to</div>
+                <div className="rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', color: preview.sent_to?.length ? '#1a1a1a' : '#b91c1c' }}>{preview.sent_to?.length ? preview.sent_to.join(', ') : '⚠ no email on file for this shop'}</div>
+                <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact. The Quote PDF is attached.</div>
               </div>
             </div>
-            {zeroLines.length > 0 && (
-              <p className="text-xs font-semibold rounded-lg px-3 py-2 mb-3"
-                style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
-                ⚠ {zeroLines.length} unmatched line{zeroLines.length > 1 ? 's' : ''} — no price found in Books. Fix before sending or the shop sees $0.
-              </p>
-            )}
-            <div className="flex gap-2">
+            <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}>
               <button onClick={() => setPhase('idle')} disabled={phase === 'sending'}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-                style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Cancel</button>
+                className="flex-1 rounded-xl py-3.5 text-base font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
               <button onClick={send} disabled={phase === 'sending' || !preview.sent_to?.length}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold text-white disabled:opacity-60"
-                style={{ backgroundColor: '#1d4ed8' }}>
-                {phase === 'sending' ? 'Sending…' : `Send ${preview.line_items.length} lines →`}
+                className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: '#1d4ed8', opacity: phase === 'sending' || !preview.sent_to?.length ? .45 : 1 }}>
+                {phase === 'sending' ? 'Sending…' : `📤 Send quote — $${Number(preview.total).toFixed(2)}`}
               </button>
             </div>
           </div>
