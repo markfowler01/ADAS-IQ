@@ -1185,6 +1185,14 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               title="Open Kinetic"
             >Kinetic</a>
             <a
+              href="https://portal.1sourceadas.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: '#15803d', color: 'white' }}
+              title="Open 1Source ADAS"
+            >1Source</a>
+            <a
               href="https://dh.identifix.com/Default/LogOnIdentifix?sessionTerminated=True"
               target="_blank"
               rel="noopener noreferrer"
