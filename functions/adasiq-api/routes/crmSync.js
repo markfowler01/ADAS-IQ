@@ -527,6 +527,52 @@ router.post('/position-statements/sources/discover', async (req, res) => {
 // 2026-09-28: "work on this scrubber tonight and get it working better").
 // One row per scrub with just the verdicts — scored locally against the
 // Kinetic reports, never in the browser. Cron secret.
+// 📂 WorkDrive helpers for bulk collection jobs run from the Mac (Mark
+// 2026-09-30: "add in every CCC PDF … in this folder"). list → names + ids
+// (folder=scrub-library resolves the estimate archive), file → raw bytes,
+// upload → drop a file into any folder. Cron secret only.
+const wdAuth = req => String(req.headers['x-cron-secret'] || '').trim() === (process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026')
+async function wdFolder(token, id) {
+  if (id !== 'scrub-library') return id
+  const { listChildren, JOB_PARENT_FOLDER_ID } = await import('../services/workdrive.js')
+  const kids = await listChildren(JOB_PARENT_FOLDER_ID, token, { folders: true })
+  return kids.find(k => k.name === 'Scrub Library')?.id || ''
+}
+router.get('/wd/list', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { listChildren } = await import('../services/workdrive.js')
+    const folder = await wdFolder(token, String(req.query.folder || ''))
+    if (!folder) return res.status(404).json({ error: 'folder not found' })
+    const files = await listChildren(folder, token, { folders: false, max: 5000 })
+    res.json({ folder, count: files.length, files: files.map(f => ({ id: f.id, name: f.name, size: f.size })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/wd/file', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { downloadFile } = await import('../services/workdrive.js')
+    const { buffer, contentType } = await downloadFile(String(req.query.id || ''), token)
+    res.set('Content-Type', contentType || 'application/pdf').send(buffer)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/wd/upload', (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  scrubFileUpload(req, res, async err => {
+    if (err) return res.status(400).json({ error: err.message })
+    if (!req.file) return res.status(400).json({ error: 'no file' })
+    try {
+      const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+      const { uploadFileToFolder } = await import('../services/workdrive.js')
+      const name = String(req.body?.name || req.file.originalname || 'file.pdf').slice(0, 250)
+      const r = await uploadFileToFolder(String(req.query.to || ''), name, req.file.buffer, token)
+      res.json({ ok: true, name, id: r?.fileId || r?.id || null })
+    } catch (e) { res.status(500).json({ error: e.message }) }
+  })
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
