@@ -377,9 +377,9 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
       )}
 
       {/* Phone cards */}
-      <div className="md:hidden grid gap-2">
+      <div className="md:hidden grid grid-cols-1 gap-2">   {/* grid-cols-1 = minmax(0,1fr): one long card can't widen the page */}
         {rows.map(s => (
-          <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full"
+          <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full min-w-0 overflow-hidden"
             style={{ backgroundColor: '#fff', border: `2px solid ${s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
