@@ -965,6 +965,16 @@ router.get('/books/items-search', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+router.get('/books/catalog-debug', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { getItemCatalogForAudit } = await import('../services/zoho.js')
+    const { allItems } = await getItemCatalogForAudit()
+    const q = String(req.query.q || '').toLowerCase()
+    res.json({ total: allItems.length, matches: allItems.filter(i => i.name.toLowerCase().includes(q)).slice(0, 10).map(i => i.name), last: allItems.slice(-3).map(i => i.name) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
