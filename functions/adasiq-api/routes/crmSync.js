@@ -660,6 +660,21 @@ router.post('/scrubs/mark-invoiced', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🔎 Debug: raw job rows by VIN / invoice / quote number (any status, deleted-from-board too).
+router.get('/jobs/find', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const q = v => String(v || '').replace(/'/g, "''")
+    const w = []
+    if (req.query.vin) w.push(`vin = '${q(req.query.vin)}'`)
+    if (req.query.invoice) w.push(`invoice_number = '${q(req.query.invoice)}'`)
+    if (req.query.quote) w.push(`quote_number = '${q(req.query.quote)}'`)
+    if (!w.length) return res.status(400).json({ error: 'vin | invoice | quote' })
+    const rows = await catalyst.initialize(req).zcql().executeZCQLQuery(`SELECT ROWID, CREATEDTIME, MODIFIEDTIME, shop_name, vehicle, vin, status, quote_number, invoice_number, folder_url, report_url FROM Jobs WHERE ${w.join(' OR ')} LIMIT 50`)
+    res.json(rows.map(r => r.Jobs || r))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
