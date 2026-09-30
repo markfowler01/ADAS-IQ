@@ -94,7 +94,7 @@ router.get('/', async (req, res) => {
       make: req.query.make || '',
       shop: req.query.shop || '',
       sensor: req.query.sensor || '',
-      limit: Math.min(Number(req.query.limit) || 60, 200),
+      limit: Math.min(Number(req.query.limit) || 60, 1000),   // the library groups by shop + archive client-side
     })
     res.json(r)
   } catch (e) { res.status(500).json({ error: e.message }) }
@@ -104,6 +104,38 @@ router.get('/', async (req, res) => {
 // (Mark 2026-09-28: "I want to be able to download a PDF the Absolute ADAS
 // report directly from here"). Built from the stored payload, so it works
 // for a scrub that never reached a job card or an invoice.
+// 🚶 Lot walks (Mark 2026-09-30). Anyone signed in (techs walk lots).
+const walker = req => req.user?.techName || (req.user?.name || '').split(' ')[0] || req.user?.email || 'tech'
+router.get('/walks', async (req, res) => {
+  try { const { recentWalks } = await import('../services/scrubStore.js'); res.json({ walks: await recentWalks(req, String(req.query.shop || ''), Number(req.query.limit) || 10) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/walks', express.json(), async (req, res) => {
+  try {
+    const shop = String(req.body?.shop || '').trim(); if (!shop) return res.status(400).json({ error: 'shop required' })
+    const { startWalk } = await import('../services/scrubStore.js'); res.json({ walk: await startWalk(req, { shop, by: walker(req) }) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/walks/:wid/mark', express.json(), async (req, res) => {
+  try { const { markWalkCar } = await import('../services/scrubStore.js'); res.json(await markWalkCar(req, req.params.wid, { scrubId: String(req.body?.scrubId || ''), status: String(req.body?.status || ''), note: req.body?.note || '', label: req.body?.label || '', by: walker(req) })) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+router.post('/walks/:wid/found', express.json(), async (req, res) => {
+  try { const { addFoundCar } = await import('../services/scrubStore.js'); res.json(await addFoundCar(req, req.params.wid, { ...req.body, by: walker(req) })) }
+  catch (e) { res.status(400).json({ error: e.message }) }
+})
+router.post('/walks/:wid/finish', express.json(), async (req, res) => {
+  try {
+    const { finishWalk, WALK_STATUSES } = await import('../services/scrubStore.js')
+    const w = await finishWalk(req, req.params.wid)
+    const lines = w.items.filter(i => i.status !== 'here').map(i => `• ${WALK_STATUSES[i.status]}: ${i.label || 'car'}${i.note ? ` — ${i.note}` : ''}`)
+    const msg = `🚶 *Lot walk · ${w.shop}* by ${w.by}: ${w.summary}${lines.length ? '\n' + lines.join('\n') : ''}`
+    try { const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js'); await postToCliqChannel(DISPATCH_CHANNEL, msg) } catch {}
+    try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'lot_walk', title: `🚶 Lot walk · ${w.shop}: ${w.summary}`, body: lines.join('\n') || 'Every car on the lot.', skipCliq: true, skipTechChannel: true }) } catch {}
+    res.json({ walk: w })
+  } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
 router.get('/:id/pdf', async (req, res) => {
   try {
     const s = await getScrub(req, req.params.id)

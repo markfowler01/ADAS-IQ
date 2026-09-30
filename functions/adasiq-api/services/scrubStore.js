@@ -181,7 +181,7 @@ async function readPage(req, offset, cols) {
 // columns are not allowed" — took the whole list down on 2026-09-28 when the
 // 31st was added). Keep this at 28: what the list and the card need, nothing
 // the detail view can fetch with SELECT * instead.
-const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_stage, scrub_quote_number, scrub_quote_id, scrub_invoice_number, scrub_source_system, scrub_file_id, scrub_file_name'
+const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, scrub_make, scrub_model, scrub_vin, scrub_ro, scrub_claim, scrub_insurer, scrub_source, scrub_by, scrub_status, scrub_at, scrub_sensor_count, scrub_required_count, scrub_required_names, scrub_sensors, scrub_search, scrub_reports, scrub_report_name, scrub_stage, scrub_quote_number, scrub_quote_id, scrub_invoice_number, scrub_source_system, scrub_file_id, scrub_file_name, scrub_seen'   // 30 = ZCQL's max — add nothing more here
 
 /**
  * Search the library. `q` is matched in JS against the prepared haystack,
@@ -251,6 +251,7 @@ function shape(r) {
     sourceRef: r.scrub_source_ref || '',
     fileId: r.scrub_file_id || '',
     fileName: r.scrub_file_name || '',
+    seen: (() => { try { return r.scrub_seen ? JSON.parse(r.scrub_seen) : null } catch { return null } })(),
   }
 }
 
@@ -612,4 +613,61 @@ export async function scrubStats(req) {
     const total = Number(Object.values(first[TABLE] || first)[0] || 0)
     return { total }
   } catch { return { total: 0 } }
+}
+
+
+// ── 🚶 Lot walks (Mark 2026-09-30) ─────────────────────────────────────────
+// A tech walks a shop's lot and marks each car: on the lot / not ready / not
+// here, or adds a car they found. The walk is saved in AdasLotWalks; each
+// car keeps its latest result in scrub_seen {s, at, by, w, n}.
+const WALKS = 'AdasLotWalks'
+export const WALK_STATUSES = { here: 'On the lot', not_ready: 'Not ready', gone: 'Not here', found: 'Found on walk' }
+
+export async function startWalk(req, { shop, by }) {
+  const row = await ds(req).datastore().table(WALKS).insertRow({ walk_shop: str(shop, 200), walk_by: str(by, 100), walk_started: nowIso(), walk_items: '[]' })
+  return { id: String(row.ROWID), shop, by, started: row.walk_started, items: [] }
+}
+async function getWalkRow(req, id) {
+  const rowId = String(id || '').trim(); if (!/^\d{1,25}$/.test(rowId)) return null
+  const rows = await ds(req).zcql().executeZCQLQuery(`SELECT * FROM ${WALKS} WHERE ROWID = '${rowId}' LIMIT 1`)
+  return rows[0]?.[WALKS] || null
+}
+const walkOut = r => r && ({ id: String(r.ROWID), shop: r.walk_shop || '', by: r.walk_by || '', started: r.walk_started || '', finished: r.walk_finished || '', summary: r.walk_summary || '', items: (() => { try { return JSON.parse(r.walk_items || '[]') } catch { return [] } })() })
+export async function getWalk(req, id) { return walkOut(await getWalkRow(req, id)) }
+
+/** Mark one car on a walk. Replaces that car's earlier mark on the same walk. */
+export async function markWalkCar(req, walkId, { scrubId, status, note = '', by = '', label = '' }) {
+  if (!WALK_STATUSES[status]) throw new Error('status must be here, not_ready, gone or found')
+  const w = await getWalkRow(req, walkId); if (!w) throw new Error('walk not found')
+  const items = walkOut(w).items.filter(i => String(i.scrubId) !== String(scrubId))
+  const at = nowIso()
+  items.push({ scrubId: String(scrubId), status, note: str(note, 200), label: str(label, 120), at })
+  await ds(req).datastore().table(WALKS).updateRow({ ROWID: String(w.ROWID), walk_items: JSON.stringify(items).slice(0, CHUNK) })
+  const seen = JSON.stringify({ s: status, at, by: str(by, 40), w: String(w.ROWID), n: str(note, 80) }).slice(0, 255)
+  await ds(req).datastore().table(TABLE).updateRow({ ROWID: String(scrubId), scrub_seen: seen })
+  return { ok: true, items }
+}
+
+/** A car on the lot that isn't in the library yet → a stub scrub for that shop. */
+export async function addFoundCar(req, walkId, { shop, vin = '', vehicle = '', ro = '', note = '', by = '' }) {
+  const v = String(vin || '').toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, '')
+  const saved = await saveScrub(req, { data: { shop, vin: v.length === 17 ? v : '', vehicle: vehicle || (v && v.length < 17 ? `VIN …${v}` : ''), ro_number: ro, calibrations: [], _pdfType: 'WALK' }, source: 'lot-walk', by, status: 'found' })
+  const id = String(saved?.id || saved?.ROWID || saved || '')
+  if (id && /^\d+$/.test(id)) await markWalkCar(req, walkId, { scrubId: id, status: 'found', note: [note, v && v.length < 17 ? `VIN ends ${v}` : ''].filter(Boolean).join(' · '), by, label: vehicle || v })
+  return { ok: !!id, id }
+}
+
+export async function finishWalk(req, walkId) {
+  const w = await getWalkRow(req, walkId); if (!w) throw new Error('walk not found')
+  const items = walkOut(w).items
+  const n = k => items.filter(i => i.status === k).length
+  const summary = [`${n('here')} on the lot`, n('not_ready') ? `${n('not_ready')} not ready` : '', n('gone') ? `${n('gone')} not here` : '', n('found') ? `${n('found')} new` : ''].filter(Boolean).join(', ')
+  await ds(req).datastore().table(WALKS).updateRow({ ROWID: String(w.ROWID), walk_finished: nowIso(), walk_summary: str(summary, 250) })
+  return { ...walkOut(w), finished: nowIso(), summary }
+}
+
+export async function recentWalks(req, shop = '', limit = 10) {
+  const where = shop ? ` WHERE walk_shop = '${String(shop).replace(/'/g, "''")}'` : ''
+  const rows = await ds(req).zcql().executeZCQLQuery(`SELECT * FROM ${WALKS}${where} ORDER BY CREATEDTIME DESC LIMIT ${Math.min(Number(limit) || 10, 50)}`)
+  return rows.map(r => walkOut(r[WALKS] || r))
 }
