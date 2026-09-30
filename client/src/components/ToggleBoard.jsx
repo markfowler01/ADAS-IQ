@@ -23,13 +23,18 @@ const ORANGE = '#CD4419'
 const CASH_GREEN = '#15803d'
 const CASH_CAP = 700
 
-// Mirrors services/cashPricing.js isCashInsurerOrBlank — the Kinetic
-// upload rule (Mark 2026-09-08): blank insurer OR cash → cash job.
-function isCashInsurerOrBlank(insurer) {
+// Cash only when someone says so (Mark 2026-09-30: "it should only be cash if
+// the technician requests it or we toggle it on — the default is retail,
+// unless the insurance company name says cash or customer pay"). A blank
+// insurer is retail now, not cash (was the 2026-09-08 Kinetic-upload rule).
+function isCashInsurer(insurer) {
   const s = String(insurer || '').trim()
-  if (!s) return true
+  if (!s) return false
   return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(s) || /\b(cash|customer pay|self pay)\b/i.test(s)
 }
+const isBlankOrCash = insurer => !String(insurer || '').trim() || isCashInsurer(insurer)
+// Tech said "customer pay" on the card (cash_quoted = the $ the customer was told).
+const techSaidCash = jd => !!String(jd?.cash_quoted || jd?._request?.cash_quoted || '').trim()
 
 // Rear blind spot is ONE line on every make and model (Mark 2026-09-30: "we
 // only have one item for the rear Blindspot Calibration"). Older scrubs and
@@ -84,8 +89,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // 💵 Swap to Cash (Mark 2026-09-08): one button. On → insurer "Cash",
   // CP schedule, $700 cap. Pre-pressed when the report's insurer is blank
   // or says cash. Kat taps it to flip either way.
-  const [cashMode, setCashMode] = useState(() => isCashInsurerOrBlank(jobData?.insurer))
-  const [poolOverride, setPoolOverride] = useState(() => (isCashInsurerOrBlank(jobData?.insurer) ? 'CP' : null))    // review-modal schedule pick
+  const startCash = isCashInsurer(jobData?.insurer) || techSaidCash(jobData)
+  const [cashMode, setCashMode] = useState(startCash)
+  const [poolOverride, setPoolOverride] = useState(() => (startCash ? 'CP' : null))    // review-modal schedule pick
   const [learned, setLearned] = useState(null)   // unknown insurer → which list (saved to the insurer-family table)
   // 🧾 Big 3 rule (Mark 2026-09-10): null = use the shop's saved rule;
   // an object = Kat's edit in the modal (remembered on create by default).
@@ -98,8 +104,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // priced on CP with the $700 cap). A blank / "Cash" insurer or the shop's
   // remembered CP schedule would each flip it back, so off = standard
   // pricing, explicitly, unless the estimate names a real insurer.
-  const insurerOut = cashMode ? 'Cash' : (isCashInsurerOrBlank(jobData?.insurer) ? '' : (jobData?.insurer || ''))
-  const offPool = () => (isCashInsurerOrBlank(jobData?.insurer) ? 'STD' : null)
+  const insurerOut = cashMode ? 'Cash' : (isBlankOrCash(jobData?.insurer) ? '' : (jobData?.insurer || ''))
+  const offPool = () => (isBlankOrCash(jobData?.insurer) ? 'STD' : null)
   const notCashDefault = p => (!cashMode && p === 'CP' ? offPool() : p)
   function toggleCash() {
     const next = !cashMode
@@ -654,7 +660,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             {cashMode ? 'CASH JOB — CP pricing · $700 max' : 'Swap to Cash'}
             <span className="block text-xs font-medium" style={{ opacity: 0.85 }}>
               {cashMode
-                ? (isCashInsurerOrBlank(jobData?.insurer) ? 'Report had no insurer — tap to undo if it\'s an insurance job' : 'Tap to undo')
+                ? (techSaidCash(jobData) ? 'Tech marked this customer pay — tap to undo' : 'Tap to undo')
                 : 'Customer paying out of pocket? Tap: CP schedule + $700 cap.'}
             </span>
           </span>

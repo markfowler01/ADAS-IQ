@@ -1871,8 +1871,8 @@ async function writePcsiStory(req, job) {
 function relayCustomerPay(req, merged, prev) {
   const q = String(req.body.cash_quoted || '').trim()
   if (!q || String(prev?.cash_quoted || '') === q) return
-  const { isCashInsurerOrBlank } = _cash
-  if (!isCashInsurerOrBlank(merged.insurer)) merged.insurer = 'Customer Pay'
+  // Blank counts too — a blank insurer is retail now, so the card has to say it (2026-09-30).
+  if (!_cash.isCashCustomer(merged)) merged.insurer = 'Customer Pay'
   const who = req.user?.techName || req.user?.name || req.user?.email || 'tech'
   const line = `💵 *CUSTOMER PAY · told $${q}* — ${merged.shop_name || 'Job'} · ${merged.vehicle || ''}${merged.quote_number ? ` · ${merged.quote_number}` : ''}\nby ${who} at Ready to Invoice — bill as cash, max $${q}.`
   postToCliqChannel(DISPATCH_CHANNEL, line).catch(() => {})
