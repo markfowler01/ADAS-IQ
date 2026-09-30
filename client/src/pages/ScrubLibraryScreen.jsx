@@ -211,10 +211,12 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
     if (!walk || busy) return
     setBusy(`${s.id}:${status}`)
     try {
-      const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/mark`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scrubId: s.id, status, note: notes[s.id] || '', label: [s.vehicle, s.ro && `RO ${s.ro}`].filter(Boolean).join(' · ') }) })
-      const d = await r.json(); if (!r.ok) throw new Error(d.error)
+      for (const id of (s._ids || [s.id])) {
+        const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/mark`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scrubId: id, status, note: notes[s.id] || '', label: [s.vehicle, s.ro && `RO ${s.ro}`].filter(Boolean).join(' · ') }) })
+        const d = await r.json(); if (!r.ok) throw new Error(d.error)
+        onSeen(id, { s: status, at: new Date().toISOString(), by: user?.techName || (user?.name || '').split(' ')[0] || '', n: notes[s.id] || '' })
+      }
       setMarks(m => ({ ...m, [s.id]: status }))
-      onSeen(s.id, { s: status, at: new Date().toISOString(), by: user?.techName || (user?.name || '').split(' ')[0] || '', n: notes[s.id] || '' })
     } catch (e) { setErr(e.message || 'Could not save that.') } finally { setBusy('') }
   }
   const addFound = async () => {
@@ -234,7 +236,13 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
     try { const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/finish`, { method: 'POST' }); const d = await r.json(); if (!r.ok) throw new Error(d.error); setDone(d.walk) }
     catch (e) { setErr(e.message) } finally { setBusy('') }
   }
-  const all = [...cars, ...found.filter(x => !cars.some(c => c.id === x.id))]
+  // One card per car: a car scrubbed 5 times is still one car on the lot.
+  // Newest scrub is the card; a tap marks every scrub of that car.
+  const carKey = c => (String(c.vin || '').length === 17 ? c.vin : '') || (c.ro ? `ro:${c.ro}` : `id:${c.id}`)
+  const sibs = new Map()
+  for (const c of [...cars].sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))) { const k = carKey(c); sibs.set(k, [...(sibs.get(k) || []), c]) }
+  const uniq = [...sibs.values()].map(list => ({ ...list[0], _ids: list.map(x => x.id) }))
+  const all = [...uniq, ...found.filter(x => !uniq.some(c => c._ids.includes(x.id)))]
   const left = all.filter(s => !marks[s.id]).length
   const inp = { border: '1.5px solid #ddd', outline: 'none', backgroundColor: '#fff' }
   if (done) return (
