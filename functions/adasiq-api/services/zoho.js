@@ -428,7 +428,12 @@ export const KINETIC_ALIASES = {
 }
 
 export function aliasFor(calName) {
-  return KINETIC_ALIASES[String(calName || '').trim().toLowerCase()] || null
+  const key = String(calName || '').trim().toLowerCase()
+  // Rear blind spot is ONE item for every make and model (Mark 2026-09-30) —
+  // "Rear Blind Spot Radar — Left", "… Right Calibration", "BSM radar LH" all
+  // price as the single blind spot item; the side lives in the description.
+  if (/blind.?spot|\bbsm\b|\bblis\b/.test(key) && !/front/.test(key)) return KINETIC_ALIASES['rear blind spot radar']
+  return KINETIC_ALIASES[key] || null
 }
 
 function exactInPool(calName, candidateItems) {
@@ -482,8 +487,12 @@ function findBestMatch(calName, exactMap, allItems, insurerPrefix = null, itemMa
   // 0. Item Map — deterministic, Mark-owned, wins over every guess.
   if (itemMap) {
     const key = String(calName || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
-    const mapped = resolveMappedItem(itemMap[key], allItems, insurerPrefix)
-    if (mapped) return mapped
+    // Any blind spot wording (a side, "Calibration", BSM) uses the one mapped blind spot item.
+    const bsm = /blind ?spot|\bbsm\b|\bblis\b/.test(key) && !/front/.test(key)
+    for (const k of bsm ? [key, 'rear blind spot radar', 'blind spot radar'] : [key]) {
+      const mapped = resolveMappedItem(itemMap[k], allItems, insurerPrefix)
+      if (mapped) return mapped
+    }
   }
 
   const insurerPool = filterItemsByInsurer(allItems, insurerPrefix)

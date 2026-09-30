@@ -31,9 +31,34 @@ function isCashInsurerOrBlank(insurer) {
   return /^(cash|customer pay|cp|self.?pay|owner.?pay|out of pocket|oop)$/i.test(s) || /\b(cash|customer pay|self pay)\b/i.test(s)
 }
 
+// Rear blind spot is ONE line on every make and model (Mark 2026-09-30: "we
+// only have one item for the rear Blindspot Calibration"). Older scrubs and
+// Kinetic reports split it Left / Right; fold those into one line, on if
+// either side was, with the side(s) kept in the description.
+function mergeBlindSpot(cals = []) {
+  const nm = c => String(c.calibration_name || c.sensor || '')
+  const isBsm = c => /blind.?spot|\bbsm\b|\bblis\b/i.test(nm(c)) && !/front/i.test(nm(c))
+  const rows = cals.filter(isBsm)
+  if (!rows.length) return cals
+  const sideOf = c => /\bleft\b|\blh\b/i.test(nm(c)) ? 'left' : /\bright\b|\brh\b/i.test(nm(c)) ? 'right' : ''
+  const on = rows.filter(c => c.enabled)
+  const sides = [...new Set((on.length ? on : rows).map(sideOf).filter(Boolean))]
+  if (rows.length === 1 && !sides.length) return cals
+  const keep = { ...(on[0] || rows[0]) }
+  keep.calibration_name = 'Rear Blind Spot Radar Calibration'
+  keep.enabled = on.length > 0
+  keep.line_references = [...new Set(rows.flatMap(c => String(c.line_references || '').split(/,\s*/)).filter(Boolean))].join(', ')
+  const note = sides.length === 2 ? 'both sides' : sides.length ? `${sides[0]} side` : ''
+  if (note && !String(keep.trigger || '').includes(note)) keep.trigger = [keep.trigger || '', `(${note})`].filter(Boolean).join(' ')
+  const first = cals.indexOf(rows[0])
+  const out = cals.filter(c => !isBsm(c))
+  out.splice(first, 0, keep)
+  return out
+}
+
 export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout, currentScreen, onNavigate }) {
   const [calibrations, setCalibrations] = useState(() => {
-    const extracted = jobData.calibrations.map((c, i) => ({ ...c, _id: i }))
+    const extracted = mergeBlindSpot(jobData.calibrations).map((c, i) => ({ ...c, _id: i }))
     const nextId = extracted.length
     return [
       ...extracted,
