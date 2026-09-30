@@ -112,10 +112,8 @@ export default function ReviewCompact(props) {
           <span className="font-extrabold text-lg leading-tight truncate" style={{ color: '#1a1a1a' }}>{vehicle || 'Vehicle'}</span>
           {jobData.ro_number && <span className="text-xs font-mono flex-shrink-0" style={{ color: '#888' }}>RO {jobData.ro_number}</span>}
         </div>
-        <div className="text-[11px] flex items-center gap-2 min-w-0" style={{ color: '#888' }}>
-          <span className="truncate">{src} · {jobData.shop || 'Shop not read'}{jobData.vin ? ` · …${String(jobData.vin).slice(-6)}` : ''}</span>
-          {jobData.vin && <span className="flex-shrink-0"><VinCheck vin={jobData.vin} expect={veh} /></span>}
-        </div>
+        <div className="text-[11px] truncate" style={{ color: '#888' }}>{src} · {jobData.shop || 'Shop not read'}{jobData.vin ? ` · VIN …${String(jobData.vin).slice(-6)}` : ''}</div>
+        {jobData.vin && <div className="text-[11px] mt-0.5 truncate"><VinCheck vin={jobData.vin} expect={veh} /></div>}
       </div>
 
       {/* 2 · Who pays + schedule + cash, in one block */}
