@@ -40,6 +40,51 @@ function StagePill({ s }) {
   return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: st.bg, color: st.fg }}>{st.label}{detail}</span>
 }
 
+// One tap copies the VIN (Mark 2026-09-30). Inside a clickable row it stops
+// the tap from opening the scrub. Clipboard write is synchronous with the tap
+// (iOS PWA rule: no clipboard after an await).
+function CopyVin({ vin, className = '', style = {} }) {
+  const [ok, setOk] = useState(false)
+  if (!vin) return <span className={className} style={style}>—</span>
+  const copy = e => {
+    e.stopPropagation(); e.preventDefault()
+    try { navigator.clipboard?.writeText(vin) } catch { /* fine */ }
+    setOk(true); setTimeout(() => setOk(false), 1500)
+  }
+  return (
+    <span role="button" tabIndex={0} onClick={copy} onKeyDown={e => e.key === 'Enter' && copy(e)} title="Tap to copy the VIN"
+      className={`cursor-pointer rounded px-1 -mx-1 hover:bg-orange-50 ${className}`} style={{ ...style, ...(ok ? { color: '#166534' } : {}) }}>
+      {ok ? '✓ copied' : vin}{!ok && <span className="ml-1 opacity-40">⧉</span>}
+    </span>
+  )
+}
+
+// Rear blind spot is ONE line on every make/model (Mark 2026-09-30). Scrubs
+// saved before the rule, and Kinetic uploads, carry Left / Right rows — fold
+// them for display (the server folds on every new save). Works on the list's
+// sensors ({n,r,l,g}) and the detail's lines ({name,required,lines,trigger}).
+function foldBsm(items, k = { name: 'n', req: 'r', lines: 'l', trig: 'g' }) {
+  if (!Array.isArray(items)) return items
+  const isBsm = x => /blind.?spot|\bbsm\b|\bblis\b/i.test(String(x[k.name] || '')) && !/front/i.test(String(x[k.name] || ''))
+  const rows = items.filter(isBsm)
+  if (rows.length < 2 && !(rows[0] && /\b(left|right)\b/i.test(rows[0][k.name]))) return items
+  const side = x => /\bleft\b/i.test(x[k.name]) ? 'left' : /\bright\b/i.test(x[k.name]) ? 'right' : ''
+  const on = rows.filter(x => x[k.req])
+  const sides = [...new Set((on.length ? on : rows).map(side).filter(Boolean))]
+  const note = sides.length === 2 ? 'both sides' : sides.length ? `${sides[0]} side` : ''
+  const keep = { ...(on[0] || rows[0]), [k.name]: 'Rear Blind Spot Radar', [k.req]: on.length > 0,
+    [k.lines]: [...new Set(rows.flatMap(x => String(x[k.lines] || '').split(/,\s*/)).filter(Boolean))].join(', ') }
+  if (note) keep[k.trig] = [keep[k.trig] || '', `(${note})`].filter(Boolean).join(' ')
+  const out = items.filter(x => !isBsm(x)); out.splice(items.indexOf(rows[0]), 0, keep)
+  return out
+}
+function normScrub(s) {
+  if (!s || !Array.isArray(s.sensors) || !s.sensors.length) return s
+  const sensors = foldBsm(s.sensors)
+  if (sensors === s.sensors) return s
+  return { ...s, sensors, requiredCount: sensors.filter(x => x.r).length, sensorCount: sensors.length }
+}
+
 // One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
 function CalPills({ s }) {
   const names = (s.sensors || []).filter(x => x.r).map(x => x.n)
@@ -103,7 +148,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         const r = await apiFetch(`${API_BASE}/api/scrubs?limit=30`)
         const d = await r.json().catch(() => ({}))
         const hit = (d.scrubs || []).find(x => x.fileName === name || (x.fileName || '').endsWith(name))
-        if (hit) { setRows(d.scrubs || []); setUp({ busy: false, msg: '', name: '' }); openScrub(hit); return }
+        if (hit) { setRows((d.scrubs || []).map(normScrub)); setUp({ busy: false, msg: '', name: '' }); openScrub(hit); return }
       } catch { /* keep polling */ }
     }
     setUp({ busy: false, msg: `${name} is taking longer than usual — pull to refresh in a minute.`, name: '' })
@@ -115,7 +160,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
       const r = await apiFetch(`${API_BASE}/api/scrubs?limit=100${search ? `&q=${encodeURIComponent(search)}` : ''}`)
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      setRows(Array.isArray(d.scrubs) ? d.scrubs : [])
+      setRows(Array.isArray(d.scrubs) ? d.scrubs.map(normScrub) : [])
     } catch (e) { setErr(e.message || 'Could not load the library.'); setRows([]) }
     finally { setLoading(false) }
   }
@@ -240,7 +285,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                     <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
                     <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
                   </td>
-                  <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.vin || '—'}</td>
+                  <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}><CopyVin vin={s.vin} /></td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
                   <td className="py-2.5 pr-3 text-xs" style={{ color: '#555' }}>{s.shop || '—'}</td>
                   <td className="py-2.5 pr-3 text-xs" style={{ color: '#888' }}>{shortWhen(s.at)}</td>
@@ -268,7 +313,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
               </span>
             </div>
             <div className="text-[11px] mt-1" style={{ color: '#666' }}>{s.shop || '—'}</div>
-            <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}>{s.vin || '—'}</div>
+            <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}><CopyVin vin={s.vin} /></div>
             <div className="text-[10px] mt-0.5" style={{ color: '#999' }}>{shortWhen(s.at)}</div>
           </button>
         ))}
@@ -352,7 +397,7 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
   const p = s.payload || {}
   const list = useMemo(() => {
     const cals = Array.isArray(p.calibrations) ? p.calibrations : []
-    return cals.length ? cals.map(toLine) : (s.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' }))
+    return foldBsm(cals.length ? cals.map(toLine) : (s.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' })), { name: 'name', req: 'required', lines: 'lines', trig: 'trigger' })
   }, [s]) // eslint-disable-line react-hooks/exhaustive-deps
   const shown = editing ? draft : list
   const required = shown.filter(c => c.required)
@@ -506,7 +551,7 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
         <div className="lg:w-72 shrink-0">
           <h1 className="text-2xl font-bold leading-tight" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</h1>
           {s.ro && <p className="text-sm font-mono font-bold mt-1" style={{ color: ORANGE }}>RO {s.ro}</p>}
-          <p className="text-sm mt-3" style={{ color: '#444' }}><span className="font-bold">VIN:</span> <span className="font-mono">{s.vin || '—'}</span></p>
+          <p className="text-sm mt-3" style={{ color: '#444' }}><span className="font-bold">VIN:</span> <CopyVin vin={s.vin} className="font-mono" /></p>
           <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Updated:</span> {when(s.at) || '—'}</p>
           <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">By:</span> {s.by || sourceLabel(s.source)}</p>
           <p className="text-sm mt-1 flex items-center gap-2" style={{ color: '#444' }}><span className="font-bold">Stage:</span> <StagePill s={s} /></p>
@@ -609,7 +654,7 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
                 <div className="text-xs font-bold uppercase tracking-wider pb-1 mb-1.5" style={{ color: ORANGE, borderBottom: `2px solid ${ORANGE}` }}>Vehicle</div>
                 <Fact k="Vehicle" v={s.vehicle} />
                 <Fact k="Trim" v={p.trim || p.model || s.model} />
-                <Fact k="VIN" v={s.vin} />
+                <div className="text-sm leading-relaxed"><span className="font-bold" style={{ color: INK }}>VIN: </span><CopyVin vin={s.vin} style={{ color: '#444' }} /></div>
                 <Fact k="Point of impact" v={p.point_of_impact} />
               </div>
             </div>

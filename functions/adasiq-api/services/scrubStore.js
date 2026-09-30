@@ -57,6 +57,7 @@ export function cardCalibrations(job) {
 
 /** The sensor / count / search columns for a set of calibrations. */
 function calColumns(cals, extraSearch = []) {
+  cals = mergeBlindSpot(cals)
   const required = cals.filter(isRequired)
   const sensors = cals.map(c => ({ n: sensorName(c), t: str(c.cal_type, 40), r: isRequired(c), l: str(c.line_references, 80), g: str(c.trigger, 120) }))
   return {
@@ -72,13 +73,40 @@ function calColumns(cals, extraSearch = []) {
 const isRequired = c => c?.enabled === true || /^required$/i.test(String(c?.verdict || ''))
 const sensorName = c => String(c?.sensor || c?.calibration_name || '').trim()
 
+// Rear blind spot is ONE line for every make and model (Mark 2026-09-30).
+// Kinetic reports and pre-rule scrubs split it Left / Right; fold them into
+// one "Rear Blind Spot Radar" row — required if either side was, sides and
+// line refs kept in the trigger. Applied on every save, so no source skips it.
+export function mergeBlindSpot(cals = []) {
+  const nm = c => sensorName(c)
+  const isBsm = c => /blind.?spot|\bbsm\b|\bblis\b/i.test(nm(c)) && !/front/i.test(nm(c))
+  const rows = cals.filter(isBsm)
+  if (!rows.length) return cals
+  const sideOf = c => /\bleft\b|\blh\b/i.test(nm(c)) ? 'left' : /\bright\b|\brh\b/i.test(nm(c)) ? 'right' : ''
+  const on = rows.filter(isRequired)
+  const sides = [...new Set((on.length ? on : rows).map(sideOf).filter(Boolean))]
+  if (rows.length === 1 && !sides.length) return cals
+  const keep = { ...(on[0] || rows[0]) }
+  if (keep.sensor) keep.sensor = 'Rear Blind Spot Radar'
+  keep.calibration_name = keep.calibration_name && /calibration/i.test(keep.calibration_name) ? 'Rear Blind Spot Radar Calibration' : 'Rear Blind Spot Radar'
+  if (!on.length) keep.enabled = rows[0].enabled; else if ('enabled' in keep || 'required' in keep) { if ('enabled' in keep) keep.enabled = true; if ('required' in keep) keep.required = true }
+  keep.line_references = [...new Set(rows.flatMap(c => String(c.line_references || '').split(/,\s*/)).filter(Boolean))].join(', ')
+  const note = sides.length === 2 ? 'both sides' : sides.length ? `${sides[0]} side` : ''
+  if (note && !String(keep.trigger || '').includes(note)) keep.trigger = [keep.trigger || '', `(${note})`].filter(Boolean).join(' ')
+  const first = cals.indexOf(rows[0])
+  const out = cals.filter(c => !isBsm(c))
+  out.splice(first, 0, keep)
+  return out
+}
+
 /**
  * One scrub → one row. Never throws: a library write must not be able to
  * fail the scrub the tech is waiting on.
  */
 export async function saveScrub(req, { jobId, data, source = 'button', by = '', file = {}, status = 'ok', error = '', sourceSystem = '', sourceRef = '' } = {}) {
   try {
-    const cals = Array.isArray(data?.calibrations) ? data.calibrations : []
+    const cals = mergeBlindSpot(Array.isArray(data?.calibrations) ? data.calibrations : [])
+    if (data && Array.isArray(data.calibrations)) data.calibrations = cals   // payload + report match the list
     const required = cals.filter(isRequired)
     // Compact per-sensor verdicts — this is what the library screen lists and
     // what a search matches on. Justifications ride in the payload.
