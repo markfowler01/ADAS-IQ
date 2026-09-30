@@ -94,11 +94,17 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // 💵 Cash cap on the main screen (Mark 2026-09-14): 700 (default) | 350 | 0 = no cap
   const [cashCap, setCashCap] = useState(700)   // { rules, source, set_by } from the pricer — shown on the main screen
   const [big3Save, setBig3Save] = useState(true)
-  const insurerOut = cashMode ? 'Cash' : (jobData?.insurer || '')
+  // Cash OFF has to stick (Mark 2026-09-30: toggled it off, the review still
+  // priced on CP with the $700 cap). A blank / "Cash" insurer or the shop's
+  // remembered CP schedule would each flip it back, so off = standard
+  // pricing, explicitly, unless the estimate names a real insurer.
+  const insurerOut = cashMode ? 'Cash' : (isCashInsurerOrBlank(jobData?.insurer) ? '' : (jobData?.insurer || ''))
+  const offPool = () => (isCashInsurerOrBlank(jobData?.insurer) ? 'STD' : null)
+  const notCashDefault = p => (!cashMode && p === 'CP' ? offPool() : p)
   function toggleCash() {
     const next = !cashMode
     setCashMode(next)
-    setPoolOverride(next ? 'CP' : null)
+    setPoolOverride(next ? 'CP' : offPool())
   }
   const [rowPrices, setRowPrices] = useState(null)          // name(lower) → {rate, needs_price}; _fixed_total
   const [creatingJob, setCreatingJob] = useState(false)
@@ -195,6 +201,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             shop_name: selectedCustomer?.name || jobData.shop || '',
             pool_override: poolOverride || null,
             cash_cap: cashCap,
+          cash: cashMode,
             big3_rules: big3Rules,
             calibrations: all,
           }),
@@ -225,7 +232,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         priceMap._fixed_total = fixedTotal
         setRowPrices(priceMap)
         if (d.big3) setBig3Info(d.big3)
-        if (d.shop_default_pool) setPoolOverride(prev => prev ?? d.shop_default_pool)
+        if (d.shop_default_pool) setPoolOverride(prev => prev ?? notCashDefault(d.shop_default_pool))
       } catch { /* prices are a bonus, never a blocker */ }
     })()
     return () => { dead = true }
@@ -260,6 +267,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           shop_name: selectedCustomer?.name || jobData.shop || '',
           pool_override: pool || null,
           cash_cap: cashCap,
+          cash: cashMode,
           big3_rules: rules || null,
           calibrations: selected.map(({ _id, ...rest }) => rest),
         }),
@@ -267,7 +275,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `Server error ${r.status}`)
       // Shop default schedule applied server-side → highlight its chip
-      if (!pool && d.shop_default_pool) setPoolOverride(d.shop_default_pool)
+      if (!pool && d.shop_default_pool) setPoolOverride(notCashDefault(d.shop_default_pool))
       setPricePreview(d)
     } catch (e) {
       setInvoiceError(e.message)
@@ -344,6 +352,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         added_items: addedItems && addedItems.length ? addedItems : null,
         pool_override: poolOverride || null,
             cash_cap: cashCap,
+          cash: cashMode,
         big3_rules: big3Rules || pricePreview?.big3?.rules || null,
         big3_save: big3Save,
       }

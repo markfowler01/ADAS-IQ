@@ -114,6 +114,8 @@ router.post('/preview', async (req, res) => {
         const { readShopPools } = await import('../services/tierMap.js')
         const pools = await readShopPools(req)
         shopDefault = pools[req.body.customer_id] || null
+        // Cash switched off on the page → a remembered CP schedule doesn't apply.
+        if (shopDefault === 'CP' && req.body?.cash === false) shopDefault = null
         if (shopDefault) poolOverride = shopDefault
       } catch { /* auto-detect */ }
     }
@@ -211,7 +213,11 @@ router.post('/', async (req, res) => {
     }
 
     // Remember this shop's schedule when it was explicitly picked (fix #3)
-    if (req.body.pool_override && customerId) {
+    // Cash is a per-job choice, not the shop's schedule (Mark 2026-09-30: one
+    // cash job made the shop price every later job on CP with the cap), so
+    // the cash switch's CP / its off-state STD are never remembered.
+    const fromCashSwitch = typeof req.body.cash === 'boolean' && ['CP', 'STD'].includes(String(req.body.pool_override).toUpperCase())
+    if (req.body.pool_override && customerId && !fromCashSwitch) {
       try {
         const { saveShopPool } = await import('../services/tierMap.js')
         await saveShopPool(req, customerId, req.body.pool_override)
