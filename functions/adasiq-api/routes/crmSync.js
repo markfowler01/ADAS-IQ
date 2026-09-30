@@ -826,6 +826,19 @@ router.post('/books/fix-doc', express.json({ limit: '30mb' }), async (req, res) 
       const r = await axios.put(`${API}/${kind}/${id}`, { custom_fields: b.fields }, { headers: H, params, timeout: 20000, validateStatus: s => s < 500 })
       if (r.data?.code === 0) out.fields = true; else out.errors.push(`fields: ${r.data?.message}`)
     }
+    // Build our Absolute ADAS report from a scrub, with only the billed lines required.
+    if (b.scrubReport?.id) {
+      const { getScrub } = await import('../services/scrubStore.js')
+      const sc = await getScrub(req, b.scrubReport.id)
+      if (!sc) out.errors.push('scrub not found')
+      else {
+        const p = sc.payload || {}, only = (b.scrubReport.only || []).map(x => String(x).toLowerCase())
+        const cals = (p.calibrations || []).map(c => ({ ...c, enabled: only.length ? only.some(o => String(c.calibration_name || c.sensor || '').toLowerCase().includes(o)) : c.enabled }))
+        const { generateADASIQPdf } = await import('../services/pdf.js')
+        const buf = await generateADASIQPdf({ shop: sc.shop || p.shop || '', ro_number: sc.ro || p.ro_number || '', insurer: sc.insurer || p.insurer || '', vin: sc.vin || p.vin || '', vehicle: sc.vehicle || p.vehicle || '', year: sc.year || '', make: sc.make || '', model: sc.model || '', claim: sc.claim || p.claim || '', calibrations: cals, document_links: Array.isArray(p.document_links) ? p.document_links : [], technician: '', folder_share_url: '' })
+        b.attach = [...(b.attach || []), { name: `Absolute ADAS_${sc.ro || 'report'}${sc.vin ? `_${sc.vin}` : ''}.pdf`, base64: Buffer.from(buf).toString('base64') }]
+      }
+    }
     for (const a of b.attach || []) {
       const buffer = Buffer.from(a.base64, 'base64')
       if (b.vin) { const chk = await verifyReportForJob({ vin: b.vin, invoice_number: b.ro || '' }, a.name, buffer); if (!chk.ok) { out.errors.push(`🔒 refused ${a.name}: ${chk.why}`); continue } }
