@@ -183,7 +183,7 @@ router.put('/:id/calibrations', async (req, res) => {
 // 🧾 The review screen created a job from this scrub → link it (one card per scrub).
 router.post('/:id/job', express.json(), async (req, res) => {
   try {
-    const r = await linkScrubJob(req, req.params.id, { jobId: String(req.body?.jobId || ''), quoteNumber: String(req.body?.quoteNumber || ''), quoteId: String(req.body?.quoteId || '') })
+    const r = await linkScrubJob(req, req.params.id, { jobId: String(req.body?.jobId || ''), quoteNumber: String(req.body?.quoteNumber || ''), quoteId: String(req.body?.quoteId || ''), stage: String(req.body?.stage || 'job') })
     if (!r.ok) return res.status(400).json(r)
     res.json({ ...r, scrub: await getScrub(req, req.params.id) })
   } catch (e) { res.status(500).json({ error: e.message }) }

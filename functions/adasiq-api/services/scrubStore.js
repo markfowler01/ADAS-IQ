@@ -408,7 +408,7 @@ export async function updateScrubCalibrations(req, scrubId, cals, { by = '' } = 
   return { ok: true, id: s.id, sensors: clean.length, required: patch.scrub_required_count }
 }
 
-const STAGES = ['scrubbed', 'quoted', 'job', 'invoiced', 'paid']
+const STAGES = ['scrubbed', 'requested', 'quoted', 'job', 'invoiced', 'paid']   // requested = a tech asked for the job from the scrub (2026-09-30)
 
 /**
  * Move a card's newest scrub along the money path and record what it turned
@@ -587,9 +587,9 @@ export async function setScrubFile(req, scrubId, { id, name }) {
  * screen's Books estimate rides along. Stages only move forward, except that
  * a stale 'invoiced' stamp from the retired Invoice-now shortcut is cleared.
  */
-export async function linkScrubJob(req, scrubId, { jobId = '', quoteNumber = '', quoteId = '' } = {}) {
+export async function linkScrubJob(req, scrubId, { jobId = '', quoteNumber = '', quoteId = '', stage = 'job' } = {}) {
   const rowId = String(scrubId || '').trim(); if (!/^\d{1,25}$/.test(rowId) || !jobId) return { ok: false, error: 'scrub id and job id required' }
-  const patch = { ROWID: rowId, scrub_job_id: str(jobId, 64), scrub_stage: 'job', scrub_stage_at: nowIso() }
+  const patch = { ROWID: rowId, scrub_job_id: str(jobId, 64), scrub_stage: stage === 'requested' ? 'requested' : 'job', scrub_stage_at: nowIso() }
   if (quoteNumber) patch.scrub_quote_number = str(quoteNumber, 60)
   if (quoteId) patch.scrub_quote_id = str(quoteId, 64)
   await ds(req).datastore().table(TABLE).updateRow(patch)

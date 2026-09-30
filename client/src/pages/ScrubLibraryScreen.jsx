@@ -30,6 +30,7 @@ const statusNote = s => s.status === 'from-card' ? 'from card' : s.status === 'r
 const STAGE = {
   scrubbed: { label: 'scrubbed', bg: '#f5f3f0', fg: '#777' },
   quoted:   { label: 'quoted',   bg: '#eff6ff', fg: '#1e40af' },
+  requested: { label: 'job requested', bg: '#fef3c7', fg: '#92400e' },
   job:      { label: 'on the board', bg: '#fff7ed', fg: '#b45309' },
   invoiced: { label: 'invoiced', bg: '#dcfce7', fg: '#166534' },
   paid:     { label: 'paid',     bg: '#166534', fg: '#fff' },
@@ -197,7 +198,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         {nav}
         {openBusy
           ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
-          : <ScrubReport s={open} onBack={closeScrub} onNavigate={onNavigate} onExtracted={onExtracted} />}
+          : <ScrubReport s={open} user={user} onBack={closeScrub} onNavigate={onNavigate} onExtracted={onExtracted} />}
       </div>
     )
   }
@@ -344,8 +345,10 @@ const fromLine = l => ({
   ...(l.added ? { _added: true, _by: l.by } : {}), ...(l.edited ? { _edited: true, _by: l.by } : {}),
 })
 
-function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
+function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   const [s, setS] = useState(initial)
+  const [reqBusy, setReqBusy] = useState(false)
+  const [reqMsg, setReqMsg] = useState('')
   const [cardBusy, setCardBusy] = useState(false)
   const [cardMsg, setCardMsg] = useState('')
   const [pdfBusy, setPdfBusy] = useState(false)
@@ -401,6 +404,45 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
   }, [s]) // eslint-disable-line react-hooks/exhaustive-deps
   const shown = editing ? draft : list
   const required = shown.filter(c => c.required)
+
+  // 📋 Request Job (Mark 2026-09-30): a tech on the scrub taps one button and
+  // the car lands in the board's Job Requested column with everything the
+  // scrub knows — shop, car, VIN, RO, claim, insurer, every calibration line,
+  // and the estimate link — so Kat only has to price and dispatch it. Same
+  // POST the board's "+ Request Job" uses, so Kat's alert fires the same way.
+  async function requestJob() {
+    if (reqBusy || s.jobId) return
+    setReqBusy(true); setReqMsg('')
+    try {
+      const cals = list.map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: !!c.required }))
+      const req = cals.filter(c => c.enabled).map(c => c.calibration_name)
+      const notes = [
+        `📋 Requested from the scrub${s.ro ? ` · RO ${s.ro}` : ''}${s.claim ? ` · claim ${s.claim}` : ''}${s.insurer ? ` · ${s.insurer}` : ''}`,
+        req.length ? `Required: ${req.join(', ')}` : 'Scrub found nothing required — check before dispatch',
+        s.fileId ? `CCC estimate: https://workdrive.zoho.com/file/${s.fileId}` : '',
+      ].filter(Boolean).join('\n')
+      const payload = {
+        shop_name: s.shop || '', customer: s.shop ? { kind: 'shop', name: s.shop } : undefined,
+        year: s.year || '', make: s.make || '', model: s.model || '',
+        vehicle: [s.year, s.make, s.model].filter(Boolean).join(' ') || s.vehicle || '',
+        vin: s.vin || '', insurer: s.insurer || '', quote_number: s.ro || '', ro_number: s.ro || '',
+        technician: user?.techName || (user?.role === 'technician' ? (user?.name || '').split(' ')[0] : '') || '',
+        notes, status: 'job_requested', via_request: true, request_type: 'job',
+        calibrations: JSON.stringify(cals),
+      }
+      const r = await apiFetch(`${API_BASE}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      const jobId = String(d.id || d.job?.id || '')
+      if (jobId) {
+        const l = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId, stage: 'requested' }) })
+        const ld = await l.json().catch(() => ({}))
+        if (ld.scrub) setS(normScrub(ld.scrub)); else setS(x => ({ ...x, jobId, stage: 'requested' }))
+      }
+      setReqMsg('✓ On the board in Job Requested — Kat has it.')
+    } catch (e) { setReqMsg(e.message || 'Could not request the job.') }
+    finally { setReqBusy(false) }
+  }
 
   const neverScrubbed = !list.length && ['report-only', 'from-card'].includes(s.status)
   const cardGone = neverScrubbed && s.stage === 'invoiced'
@@ -589,6 +631,16 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
             )
           })()}
           {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}
+
+          {/* 📋 Request Job — techs hand the car to Kat with the scrub attached */}
+          {!s.jobId
+            ? <button onClick={requestJob} disabled={reqBusy || editing}
+                className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
+                style={{ backgroundColor: reqBusy ? '#f5f3f0' : '#fef3c7', color: reqBusy ? '#777' : '#92400e', border: '1.5px solid #fcd34d' }}
+                title="Puts this car in the Job Requested column with every scrub detail — Kat prices and dispatches it"
+              >{reqBusy ? 'Requesting…' : '📋 Request Job'}</button>
+            : s.stage === 'requested' && <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #fcd34d' }}>📋 Job requested — open the board →</button>}
+          {reqMsg && <p className="text-xs mt-1" style={{ color: reqMsg.startsWith('✓') ? '#166534' : '#b91c1c' }}>{reqMsg}</p>}
 
           {/* 🧾 Create Job (Mark 2026-09-30): the retired "Create invoice" shortcut
               skipped Bill it and made a single, wrong invoice. This opens the SAME
