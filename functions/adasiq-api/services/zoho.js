@@ -427,6 +427,18 @@ export const KINETIC_ALIASES = {
   'steering angle sensor':   'steering angle sensor calibration',
 }
 
+// 💉 Collision pricing for programming (Mark 2026-09-30): body shops bill
+// "Module Programming and Reflash - <Make>" and the Security / Gateway fees
+// on their "(Collision)" twins at +30%; repair shops, dealers and retail keep
+// the originals. An insurer's own item (GEICO -, SF -, AS -) is never swapped.
+const PROG_TWIN_RE = /^(Module Programming and Reflash - .+|Security Access and Authorization Fee|Gateway Access Fee)$/i
+export function collisionTwin(item, allItems) {
+  const nm = String(item?.matchedName || item?.name || '').trim()
+  if (!nm || !PROG_TWIN_RE.test(nm) || /\(collision\)$/i.test(nm)) return null
+  const want = `${nm} (Collision)`.toLowerCase()
+  return (allItems || []).find(i => String(i.name).trim().toLowerCase() === want) || null
+}
+
 export function aliasFor(calName) {
   const key = String(calName || '').trim().toLowerCase()
   // Rear blind spot is ONE item for every make and model (Mark 2026-09-30) —
@@ -556,6 +568,7 @@ export async function listSalespersons() {
  * Returns { quoteId, quoteNumber, quoteUrl }
  */
 export async function createDraftQuote({
+  collision = false,   // body shop → programming on the (Collision) twins
   customerId,
   customerName,
   salespersonId,
@@ -674,7 +687,8 @@ export async function createDraftQuote({
   }
 
   function buildLineItem(name, description, quantity = 1) {
-    const direct = resolveOverrideOrTier(name)
+    let direct = resolveOverrideOrTier(name)
+    if (direct && collision) { const tw = collisionTwin(direct.it, allItems); if (tw) { console.log(`[zoho] 💉 collision: "${direct.it.name}" → "${tw.name}" $${tw.rate}`); direct = { ...direct, it: tw } } }
     if (direct) {
       console.log(`[zoho] ✓ "${name}" → "${direct.it.name}" (${direct.source}, rate $${direct.it.rate})`)
       if (!direct.it.rate) zeroPriceItems.push(direct.it.name)
@@ -686,7 +700,8 @@ export async function createDraftQuote({
       }
       return li
     }
-    const match = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
+    let match = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
+    if (match && collision) { const tw = collisionTwin(match, allItems); if (tw) { console.log(`[zoho] 💉 collision: "${match.matchedName}" → "${tw.name}" $${tw.rate}`); match = { ...match, item_id: tw.item_id, matchedName: tw.name, rate: tw.rate } } }
     if (match) {
       console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)}, rate $${match.rate})`)
       if (!match.rate || match.rate === 0) {
@@ -1362,7 +1377,7 @@ export function paidAlternativeFor(allItems, insurerPrefix, fixedName) {
   return pick ? { name: pick.name, rate: Number(pick.rate) || 0, item_id: pick.item_id } : null
 }
 
-export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride, big3Rules = null, cashCapLimit = null }) {
+export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride, big3Rules = null, cashCapLimit = null, collision = false }) {
   const token = await getAccessToken()
   let itemMap = null
   if (req) {
@@ -1416,7 +1431,8 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
     // learned tier beats the matcher (same order as creation)
     if (!isFixed && tierKeyFn && make) {
       const learned = tierMap[tierKeyFn(previewPoolKey, make, name)]
-      const it = learned ? itemByNamePrev.get(String(learned).toLowerCase().trim()) : null
+      let it = learned ? itemByNamePrev.get(String(learned).toLowerCase().trim()) : null
+      if (it && collision) it = collisionTwin(it, allItems) || it
       if (it) {
         const rate = Number(it.rate) || 0
         lines.push({
@@ -1455,7 +1471,8 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
         return
       }
     }
-    const m = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
+    let m = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
+    if (m && collision && !isFixed) { const tw = collisionTwin(m, allItems); if (tw) m = { ...m, item_id: tw.item_id, matchedName: tw.name, rate: tw.rate, collision: true } }
     if (m) {
       const rate = Number(m.rate) || 0
       const included = isFixed && rate === 0

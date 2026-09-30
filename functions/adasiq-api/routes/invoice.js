@@ -127,7 +127,13 @@ router.post('/preview', async (req, res) => {
     // Insurer rule (State Farm / Allstate / Liberty / GEICO families) overrides the shop rule; Kat's edit in the modal wins over both.
     const effB3 = effectiveBig3(saved.rules, req.body?.insurer || '')
     const big3Rules = fromModal || (effB3.insurer_rule ? effB3.rules : saved.rules) || null
+    // 💉 Body shops price programming on the (Collision) +30% items. No type
+    // set = collision, same default as dual billing (billingModeFor).
+    const { customerTypeFor } = await import('../services/big3.js')
+    const ctype = shopName ? await customerTypeFor(req, shopName) : ''
+    const collision = !['repair_shop', 'dealer', 'retail'].includes(ctype) && req.body?.cash !== true
     const out = await previewInvoiceLines({
+      collision,
       insurer: req.body?.insurer || '',
       make: req.body?.make || '',
       calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
@@ -137,7 +143,7 @@ router.post('/preview', async (req, res) => {
       req,
     })
     const { withDefaults } = await import('../services/big3.js')
-    res.json({ ...out, shop_default_pool: shopDefault, big3: { rules: withDefaults(big3Rules), insurer_rule: fromModal ? null : effB3.insurer_rule, source: fromModal ? 'modal' : effB3.insurer_rule ? 'insurer' : (saved.rules ? 'shop' : 'unset'), shop_name: saved.shop_name || shopName, set_by: saved.set_by || '', set_at: saved.set_at || '' } })
+    res.json({ ...out, collision, customer_type: ctype, shop_default_pool: shopDefault, big3: { rules: withDefaults(big3Rules), insurer_rule: fromModal ? null : effB3.insurer_rule, source: fromModal ? 'modal' : effB3.insurer_rule ? 'insurer' : (saved.rules ? 'shop' : 'unset'), shop_name: saved.shop_name || shopName, set_by: saved.set_by || '', set_at: saved.set_at || '' } })
   } catch (e) {
     console.error('[invoice preview]', e.message)
     res.status(500).json({ error: e.message })
@@ -174,7 +180,10 @@ router.post('/', async (req, res) => {
     }
     if (!b3.normalizeRules(req.body.big3_rules) && insurerB3.insurer_rule) big3Rules = b3.effectiveBig3(big3Rules, insurer).rules
 
+    const { customerTypeFor: ctFor } = await import('../services/big3.js')
+    const ctypeCreate = await ctFor(req, customerName || shop || '')
     const result = await createDraftQuote({
+      collision: !['repair_shop', 'dealer', 'retail'].includes(ctypeCreate) && String(insurer || '').toLowerCase() !== 'cash',
       cashCapLimit: req.body?.cash_cap == null ? null : Number(req.body.cash_cap),
       customerId: customerId || null,
       customerName: customerName || null,

@@ -89,6 +89,11 @@ function parseBR(shop) {
   return typeof br === 'object' ? br : {}
 }
 
+/** The shop's customer type from its CRM billing answers ('' when not set). */
+export async function customerTypeFor(req, shopName) {
+  try { const shop = await findShopByName(req, shopName); return shop ? String(parseBR(shop).customer_type || '') : '' } catch { return '' }
+}
+
 export async function readBig3(req, shopName) {
   const shop = await findShopByName(req, shopName)
   if (!shop) return { rules: null, shop_id: null, shop_name: shopName || '', set_by: '', set_at: '' }

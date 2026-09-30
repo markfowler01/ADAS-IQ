@@ -975,6 +975,17 @@ router.get('/books/catalog-debug', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🧪 Price-only check (no Books writes): the same lines as a repair shop vs a body shop.
+router.get('/books/price-test', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { previewInvoiceLines } = await import('../services/zoho.js')
+    const cals = String(req.query.lines || 'Module Programming and Reflash - Ford,Security Access and Authorization Fee').split(',').map(n => ({ calibration_name: n.trim(), quantity: 1 }))
+    const run = async collision => (await previewInvoiceLines({ insurer: String(req.query.insurer || ''), make: String(req.query.make || 'Ford'), calibrations: cals, req, collision, big3Rules: { cal_id: 'off', pcsi: 'off', post_scan: 'off', snapshot: 'off' } })).lines.map(l => `${l.name} $${l.rate}`)
+    res.json({ repair_shop: await run(false), body_shop: await run(true) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })

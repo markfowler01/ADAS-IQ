@@ -159,6 +159,7 @@ async function buildSinglePreview(req, job, shop, br) {
   const pct = cashRule ? CASH_DISCOUNT_PCT : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : (typeDef?.discount ?? null))
   const payMode = br.pay_mode || typeDef?.pay || 'on_site'
   const catalog = await getItemCatalogForAudit().catch(() => ({ allItems: [] }))
+  const zohoMod = await import('../services/zoho.js')
   const byName = new Map((catalog.allItems || []).map(it => [String(it.name).toLowerCase().trim(), it]))
   const byId = new Map((catalog.allItems || []).map(it => [String(it.item_id), it]))
   let cals = []; try { cals = JSON.parse(job.calibrations || '[]') } catch { cals = [] }
@@ -170,11 +171,12 @@ async function buildSinglePreview(req, job, shop, br) {
     const { previewInvoiceLines } = await import('../services/zoho.js')
     // A retail person bills the STANDARD list ($450 a static) + tax, no discount
     // (Mark 2026-09-22: "standard price at 450"). Only a cash-quoted shop job uses the CP schedule.
-    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (retailJob ? '' : (job.insurer || '')), make: job.make || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : (retailJob ? 'STD' : null), big3Rules: effB3.rules })
+    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (retailJob ? '' : (job.insurer || '')), make: job.make || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : (retailJob ? 'STD' : null), big3Rules: effB3.rules, collision: customerType === 'body_shop' })
   }
   let extras = []; try { extras = job.extra_items ? JSON.parse(job.extra_items) : [] } catch { extras = [] }
   const extraLines = (Array.isArray(extras) ? extras : []).map(x => {
-    const it = x.item_id ? byId.get(String(x.item_id)) : byName.get(String(x.name || '').toLowerCase().trim())
+    let it = x.item_id ? byId.get(String(x.item_id)) : byName.get(String(x.name || '').toLowerCase().trim())
+    if (it && customerType === 'body_shop' && x.rate == null) { const { collisionTwin } = zohoMod; it = collisionTwin(it, catalog.allItems) || it }
     return { item_id: it?.item_id || null, name: it?.name || x.name || 'Extra', description: x.note || '', rate: x.rate != null ? Number(x.rate) : Number(it?.rate) || 0, quantity: Number(x.quantity) || 1, product_type: it?.product_type || 'service', _extra: true }
   })
   const lines = [
