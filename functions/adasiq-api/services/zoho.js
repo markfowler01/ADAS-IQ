@@ -293,7 +293,7 @@ async function fetchItemCatalog(token) {
     const items = res.data?.items || []
     allItems = allItems.concat(items
       .filter((i) => String(i.status || 'active').toLowerCase() === 'active')
-      .map((i) => ({ item_id: i.item_id, name: i.name, rate: i.rate || 0, product_type: i.product_type || 'service' })))
+      .map((i) => ({ item_id: i.item_id, name: i.name, rate: i.rate || 0, product_type: i.product_type || 'service', sku: i.sku || '', description: i.description || '' })))
     hasMore = res.data?.page_context?.has_more_page === true
     page++
   }

@@ -918,6 +918,38 @@ router.post('/books/resend', express.json(), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// 💉 Collision copies of the programming items (Mark 2026-09-30): every
+// "Module Programming and Reflash - <Make>" + the Security Access and Gateway
+// fees gets a "(Collision)" twin at exactly +30%. Repair shops keep the
+// originals; body shops price on the twins (zoho.js collisionVariant).
+// ?dry=1 lists what would be created. Idempotent by exact name.
+const PROG_RE = /^Module Programming and Reflash - |^Security Access and Authorization Fee$|^Gateway Access Fee$/i
+router.all('/books/collision-items', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const t0 = Date.now(), dry = req.query.dry === '1'
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken, getItemCatalogForAudit } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { allItems } = await getItemCatalogForAudit()
+    const names = new Set(allItems.map(i => String(i.name).trim().toLowerCase()))
+    const base = allItems.filter(i => PROG_RE.test(String(i.name).trim()) && !/\(collision\)\s*$/i.test(i.name))
+    const plan = base.map(i => ({ from: i.name, rate: Number(i.rate), sku: i.sku || '', name: `${String(i.name).trim()} (Collision)`, new_rate: Math.round(Number(i.rate) * 1.3 * 100) / 100, exists: names.has(`${String(i.name).trim()} (collision)`) }))
+      .sort((a, b) => a.rate - b.rate || a.from.localeCompare(b.from))
+    if (dry) return res.json({ dry: true, base: plan.length, to_create: plan.filter(p => !p.exists).length, plan })
+    const created = [], errors = []
+    for (const p of plan.filter(p => !p.exists)) {
+      if (Date.now() - t0 > 24000) break
+      const src = allItems.find(i => i.name === p.from) || {}
+      const desc = `${String(src.description || '').trim()}${src.description ? '\n' : ''}COLLISION (body shop) price = standard + 30%.`.slice(0, 2000)
+      const r = await axios.post('https://www.zohoapis.com/books/v3/items', { name: p.name.slice(0, 100), rate: p.new_rate, description: desc, product_type: 'service', ...(p.sku ? { sku: `${p.sku}-C`.slice(0, 40) } : {}) },
+        { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000, validateStatus: s => s < 500 })
+      if (r.data?.code === 0) created.push({ name: p.name, rate: p.new_rate, id: r.data.item?.item_id }); else errors.push(`${p.name}: ${r.data?.message}`)
+    }
+    try { const { invalidateItemCache } = await import('../services/zoho.js'); invalidateItemCache && invalidateItemCache() } catch {}
+    res.json({ created: created.length, remaining: plan.filter(p => !p.exists).length - created.length, errors, sample: created.slice(0, 5) })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
