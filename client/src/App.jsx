@@ -342,8 +342,8 @@ function MainApp() {
           {...navProps}
         />
       )}
+      {/* key: a new car = a fresh screen, so nothing (folder, prices, customer) carries over from the last one (2026-09-30) */}
       {screen === 'review' && (
-        {/* key: a new car = a fresh screen, so nothing (folder, prices, customer) carries over from the last one (2026-09-30) */}
         <ToggleBoard key={[jobData?._scrubId, jobData?.vin, jobData?.ro_number, pdfFile?.name].join('|')} jobData={jobData} pdfFile={pdfFile} onReset={handleReset} {...navProps} />
       )}
       {screen === 'audit' && (
