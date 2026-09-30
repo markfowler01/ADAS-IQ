@@ -749,7 +749,7 @@ router.all('/books/attach-verify', async (req, res) => {
     const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default
     const API = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, org = process.env.ZOHO_ORGANIZATION_ID
     const since = new Date(Date.now() - (Number(req.query.days) || 2) * 864e5).toISOString().slice(0, 10)
-    const VIN = t => [...new Set((String(t || '').toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/g) || []).filter(v => /\d/.test(v) && /[A-Z]/.test(v)))]
+    const VIN = t => [...new Set((String(t || '').toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/g) || []).filter(v => /\d/.test(v) && /[A-Z]/.test(v)))]
     const bad = []; let checked = 0, files = 0
     for (const kind of ['invoices', 'estimates']) {
       const r = await axios.get(`${API}/${kind}`, { headers: H, params: { organization_id: org, date_start: since, per_page: 200 }, timeout: 20000 })

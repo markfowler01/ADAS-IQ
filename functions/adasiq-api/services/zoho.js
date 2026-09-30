@@ -1095,7 +1095,23 @@ export async function createDraftQuote({
   let workdriveResult = null
   try {
     const roDigits = (String(finalRO).match(/\d{4,}/) || [String(finalRO)])[0]
+    // 🔒 The passed-in folder must be THIS car's (2026-09-30: a Ford's job was
+    // handed the Audi built just before it, so the Ford's invoice linked the
+    // Audi's folder and carried the Audi's reports). Its name has to carry
+    // this RO, the VIN's last 6, or the model — otherwise it is ignored.
+    let knownOk = !!known_folder_id
     if (known_folder_id) {
+      try {
+        const axios = (await import('axios')).default
+        const f = await axios.get(`https://workdrive.zoho.com/api/v1/files/${known_folder_id}`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, timeout: 15000 })
+        const fname = String(f.data?.data?.attributes?.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+        const N = x => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+        const keys = [roDigits, N(vin).slice(-6), ...String(model || '').split(/\s+/).map(N).filter(w => w.length >= 3)].filter(k => k && k.length >= 3)
+        knownOk = !fname || keys.some(k => fname.includes(k))
+        if (!knownOk) console.warn(`[workdrive] REFUSED passed-in folder "${f.data?.data?.attributes?.name}" — it is not this car (RO ${roDigits}, ${year} ${make} ${model})`)
+      } catch (e) { console.warn('[workdrive] could not read the passed-in folder name (kept):', e.message) }
+    }
+    if (known_folder_id && knownOk) {
       let share = known_folder_url && known_folder_url.includes('zohoexternal.com') ? known_folder_url : ''
       if (!share) {
         try { share = await createShareLink(known_folder_id, `Job ${roDigits}`.slice(0, 50), token) } catch {}

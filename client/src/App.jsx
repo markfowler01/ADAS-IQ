@@ -343,7 +343,8 @@ function MainApp() {
         />
       )}
       {screen === 'review' && (
-        <ToggleBoard jobData={jobData} pdfFile={pdfFile} onReset={handleReset} {...navProps} />
+        {/* key: a new car = a fresh screen, so nothing (folder, prices, customer) carries over from the last one (2026-09-30) */}
+        <ToggleBoard key={[jobData?._scrubId, jobData?.vin, jobData?.ro_number, pdfFile?.name].join('|')} jobData={jobData} pdfFile={pdfFile} onReset={handleReset} {...navProps} />
       )}
       {screen === 'audit' && (
         <AuditScreen onBack={() => setScreen('upload')} {...navProps} />
