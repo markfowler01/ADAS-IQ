@@ -74,10 +74,30 @@ function chip(doc, x, y, text, bgColor, textColor) {
  * @param {Object} jobData - { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links }
  * @returns {Promise<Buffer>}
  */
-export function generateADASIQPdf(jobData) {
+// 🔗 ALLDATA on every report (Mark 2026-09-30): the car's saved ALLDATA ADAS
+// Quick Reference page when we have one (Scrub Library → ALLDATA box), else
+// ALLDATA's front door with the VIN printed beside it. Every caller gets it —
+// the lookup happens here, using the request the server is handling.
+const ALLDATA_HOME = 'https://my.alldata.com/'
+export async function generateADASIQPdf(jobData = {}) {
+  let alldata = jobData.alldata_url ? { url: jobData.alldata_url, exact: true } : null
+  if (!alldata) {
+    try {
+      const req = globalThis.__catalystReq
+      if (req && jobData.year && jobData.make) {
+        const { alldataLinksFor } = await import('./scrubStore.js')
+        const r = await alldataLinksFor(req, { year: jobData.year, make: jobData.make, model: jobData.model })
+        if (r?.links?.[0]?.url) alldata = { url: r.links[0].url, exact: r.match === 'exact' || r.match === 'model' }
+      }
+    } catch { /* the generic link below is fine */ }
+  }
+  return buildPdf({ ...jobData, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
+}
+
+function buildPdf(jobData) {
   return new Promise((resolve, reject) => {
     const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links,
-      technician, folder_share_url, qr_png } = jobData
+      technician, folder_share_url, qr_png, _alldata } = jobData
     const performedBy = technician || 'Absolute ADAS'
 
     const required = (calibrations || []).filter(c => c.enabled)
@@ -297,6 +317,24 @@ export function generateADASIQPdf(jobData) {
           .text('› ' + (link.label || link.url), MARGIN + 8, y, { link: link.url, underline: true, width: CONTENT_W - 16 })
         y += 16
       })
+    }
+
+    // ── ALLDATA · ADAS QUICK REFERENCE ──────────────────────────────────────
+    if (_alldata?.url) {
+      const blockH = 50
+      if (y + blockH + 16 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      y += 6
+      doc.roundedRect(MARGIN, y, CONTENT_W, blockH, 8).fill('#fff7ed')
+      doc.roundedRect(MARGIN, y, 4, blockH, 2).fill(ORANGE)
+      doc.font('Helvetica-Bold').fontSize(9.5).fillColor('#9a3412')
+        .text('ALLDATA · ADAS SYSTEMS, LOCATIONS & CALIBRATIONS', MARGIN + 16, y + 10)
+      const carName = [year, make, model].filter(Boolean).join(' ') || vehicle || 'this vehicle'
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(ORANGE)
+        .text(_alldata.exact ? `Open the ALLDATA ADAS Quick Reference for the ${carName} »` : 'Open ALLDATA and enter the VIN for the ADAS Quick Reference »', MARGIN + 16, y + 25,
+          { link: _alldata.url, underline: true, width: CONTENT_W - 32, lineBreak: false })
+      doc.font('Helvetica').fontSize(7.5).fillColor('#9a3412')
+        .text(`${vin ? `VIN ${vin} · ` : ''}ALLDATA subscription required`, MARGIN + 16, y + 38, { width: CONTENT_W - 32, lineBreak: false })
+      y += blockH + 10
     }
 
     // ── PROOF & DOCUMENTATION (Mark 2026-08-29: WorkDrive external link
