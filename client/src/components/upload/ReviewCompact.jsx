@@ -165,7 +165,7 @@ export default function ReviewCompact(props) {
       <div className="rounded-2xl bg-white overflow-hidden" style={{ border: '1.5px solid #e8e4e0' }}>
         <div className="flex items-center gap-1.5 p-2">
           <span className="text-base flex-shrink-0" title="Dispatch">🚐</span>
-          {[['need_dispatch', '📋 Dispatch'], ['jaden', 'Jayden'], ['mark', 'Mark']].map(([id, l]) => <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy} className="flex-1 text-xs font-bold rounded-lg py-2" style={dispatch === id ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
+          {[['need_dispatch', 'Dispatch'], ['jaden', 'Jayden'], ['mark', 'Mark']].map(([id, l]) => <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy} className="flex-1 text-xs font-bold rounded-lg py-2" style={dispatch === id ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
           <input type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className="text-xs rounded-lg px-1.5 py-1.5 flex-shrink-0" style={{ ...inp, width: 118, borderColor: jobDate === todayPT() ? '#e0dbd6' : '#e8710a' }} />
         </div>
         <button type="button" onClick={() => setOpenFold(openFold === 'sp' ? null : 'sp')} className="w-full flex items-center justify-between px-3 py-1.5 text-[11px]" style={{ borderTop: '1px solid #f1f5f9', color: '#888' }}>
