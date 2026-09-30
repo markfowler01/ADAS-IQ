@@ -31,6 +31,19 @@ const Panel = ({ title, right, tone = 'neutral', children }) => {
   )
   }
 
+// Tap-to-open row: label left, one-line summary right. Module level so the
+// line picker inside it doesn't remount on every parent render.
+const Fold = ({ id, icon, label, summary, openFold, setOpenFold, children }) => (
+  <div style={{ borderTop: '1px solid #e2e8f0' }}>
+    <button type="button" onClick={() => setOpenFold(openFold === id ? null : id)} className="w-full flex items-center gap-2 px-3 text-left" style={{ minHeight: 40, backgroundColor: openFold === id ? '#f8fafc' : 'white' }}>
+      <span className="text-xs font-bold flex-shrink-0" style={{ color: '#555' }}>{icon} {label}</span>
+      <span className="flex-1 min-w-0 text-[11px] truncate text-right" style={{ color: '#888' }}>{summary}</span>
+      <span className="text-xs flex-shrink-0" style={{ color: '#aaa' }}>{openFold === id ? '▾' : '▸'}</span>
+    </button>
+    {openFold === id && <div style={{ backgroundColor: '#f8fafc' }}>{children}</div>}
+  </div>
+)
+
 export default function ReviewCompact(props) {
   const {
     jobData, cashMode, toggleCash, calibrations, rowPrices, toggleCal, updateCalField, addManual,
@@ -42,6 +55,8 @@ export default function ReviewCompact(props) {
   } = props
   const [showNotRequired, setShowNotRequired] = useState(false)
   const [editing, setEditing] = useState(null)   // _id whose justification is open
+  const [openFold, setOpenFold] = useState(null) // 'fees' | 'add' | 'sp'
+  const [spName, setSpName] = useState('')
   const vehicle = [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' ')
   const isService = c => c.calibration_name === 'Diagnostic 1' || c.calibration_name === 'Mechanical'
   const required = calibrations.filter(c => c.enabled && !isService(c))
@@ -78,97 +93,89 @@ export default function ReviewCompact(props) {
       </div>
     )
   }
-  // 🧭 Flow rebuilt (Mark 2026-09-30: "it does not flow well"). Decisions go
-  // top to bottom in the order they change the price: the car → who pays and
-  // on what schedule → every priced line (calibrations, Big 4 shop fees,
-  // add-ons) → dispatch → one real total. Bill it's visual language: rounded
-  // panels, one coloured header per panel, prices right-aligned.
+  // 🧭 One screen (Mark 2026-09-30: "make this all on one page so you don't
+  // have to scroll"). Same pricing order — car → who pays → lines → dispatch —
+  // but everything that's usually left alone (Big 4 fees, add-ons,
+  // salesperson) folds to a one-line summary you tap to open. The sticky
+  // footer carries the total, so there's no second total in the page.
   const fromScrub = !!jobData._scrubId || String(jobData._pdfType || '').toUpperCase() === 'CCC'
   const src = fromScrub ? 'Absolute ADAS scrub' : 'Kinetic report'
   const fixedLines = (rowPrices?._fixed_lines || [])
+  const feeTotal = fixedLines.reduce((a, l) => a + (Number(l.amount) || 0), 0)
+  const rules = big3Rules || { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
+  const onServices = services.filter(c => c.enabled)
   return (
-    <div className="max-w-2xl mx-auto px-4 py-4 flex flex-col gap-3">
-      {/* 1 · The car */}
-      <div className="rounded-2xl p-4 bg-white" style={{ border: '1.5px solid #e8e4e0' }}>
-        <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>📄 {src} · build the job</div>
-        <div className="font-extrabold text-xl leading-tight" style={{ color: '#1a1a1a' }}>{vehicle || 'Vehicle'}</div>
-        <div className="text-sm" style={{ color: '#666' }}>{jobData.shop || 'Shop not read'}{jobData.ro_number ? ` · RO ${jobData.ro_number}` : ''}{jobData.claim ? ` · claim ${jobData.claim}` : ''}</div>
-        {jobData.vin && <div className="text-[11px] font-mono mt-1 flex items-center gap-2 flex-wrap" style={{ color: '#888' }}>{jobData.vin} <VinCheck vin={jobData.vin} expect={veh} /></div>}
-        {jobData._demo && <Notice>🧪 <b>Demo mode</b> — sample data.</Notice>}
+    <div className="max-w-2xl mx-auto px-3 py-2 flex flex-col gap-2">
+      {/* 1 · The car — two lines */}
+      <div className="px-1">
+        <div className="flex items-baseline gap-2 min-w-0">
+          <span className="font-extrabold text-lg leading-tight truncate" style={{ color: '#1a1a1a' }}>{vehicle || 'Vehicle'}</span>
+          {jobData.ro_number && <span className="text-xs font-mono flex-shrink-0" style={{ color: '#888' }}>RO {jobData.ro_number}</span>}
+        </div>
+        <div className="text-[11px] flex items-center gap-2 min-w-0" style={{ color: '#888' }}>
+          <span className="truncate">{src} · {jobData.shop || 'Shop not read'}{jobData.vin ? ` · …${String(jobData.vin).slice(-6)}` : ''}</span>
+          {jobData.vin && <span className="flex-shrink-0"><VinCheck vin={jobData.vin} expect={veh} /></span>}
+        </div>
       </div>
 
-      {/* 2 · Who pays, and on what schedule — set before the lines, because it prices them */}
+      {/* 2 · Who pays + schedule + cash, in one block */}
       <Panel title="🏢 Customer and pricing" tone={selectedCustomer ? 'green' : 'amber'} right={selectedCustomer?.name ? <BillingPill shopName={selectedCustomer.name} /> : null}>
-        <div className="p-3 flex flex-col gap-2.5">
+        <div className="p-2.5 flex flex-col gap-2">
           <CustomerPicker shopName={jobData.shop} onSelect={setSelectedCustomer} />
-          {!selectedCustomer && <div className="text-xs font-semibold" style={{ color: '#92400e' }}>Pick the Zoho customer first — it sets the discount and the price list. Or ➕ Create new customer in the list.</div>}
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>Price schedule</span>
+          <div className="flex items-center gap-1.5 flex-wrap">
             <PoolPill pool={pool} poolOverride={poolOverride} onPool={onPool} disabled={busy} />
+            <button type="button" onClick={toggleCash} className="text-xs font-bold rounded-full px-3 py-1.5" style={cashMode ? { backgroundColor: GREEN, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>💵 Cash {cashMode ? 'on' : 'off'}</button>
+            {cashMode && [[700, '$700'], [350, '$350'], [0, 'No cap']].map(([v, l]) => <button key={v} type="button" onClick={() => setCashCap(v)} className="text-xs font-bold rounded-full px-2 py-1" style={cashCap === v ? { backgroundColor: '#166534', color: 'white' } : { backgroundColor: 'white', color: '#166534', border: '1px solid #86efac' }}>{l}</button>)}
           </div>
-          <div className="flex items-center justify-between gap-2 rounded-xl px-3 py-2" style={{ backgroundColor: cashMode ? '#f0fdf4' : '#fafaf9', border: `1.5px solid ${cashMode ? '#86efac' : '#e7e5e4'}` }}>
-            <div className="text-sm" style={{ color: cashMode ? '#166534' : '#555' }}><b>💵 {cashMode ? 'Cash job' : 'Customer paying out of pocket?'}</b>{cashMode && <span className="ml-1">{[[700, '$700 max'], [350, '$350 max'], [0, 'No cap']].map(([v, l]) => <button key={v} type="button" onClick={() => setCashCap(v)} className="text-xs font-bold rounded-full px-2 py-0.5 ml-1" style={cashCap === v ? { backgroundColor: GREEN, color: 'white' } : { backgroundColor: 'white', color: '#166534', border: '1px solid #86efac' }}>{l}</button>)}</span>}</div>
-            <div className="flex gap-1"><button type="button" onClick={() => cashMode && toggleCash()} className="text-xs font-bold rounded-full px-3 py-1.5" style={!cashMode ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>No</button><button type="button" onClick={() => !cashMode && toggleCash()} className="text-xs font-bold rounded-full px-3 py-1.5" style={cashMode ? { backgroundColor: GREEN, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>Yes</button></div>
-          </div>
-          {cashMode && selectedCustomer && <div className="text-xs rounded-lg px-3 py-2" style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>⚠ Cash overrides {selectedCustomer.name}'s usual terms: CP prices, the cap above, and the 15% cash rule on the cost invoice. Switch Cash off if the shop is paying.</div>}
+          {cashMode && selectedCustomer && <div className="text-[11px]" style={{ color: '#92400e' }}>⚠ Cash overrides {selectedCustomer.name}'s terms (CP prices, cap, 15% cash rule). Turn Cash off if the shop pays.</div>}
         </div>
       </Panel>
 
-      {/* 3 · Every priced line */}
-      <Panel title={`🎯 What the ${fromScrub ? 'scrub' : 'Kinetic report'} found`} tone="blue" right={<span className="text-xs" style={{ color: '#1d4ed8' }}>{required.length} on · {notRequired.length} not required</span>}>
-        {required.length === 0 && <div className="px-4 py-3 text-sm" style={{ color: '#888' }}>Nothing switched on — turn on what this repair needs, or add below.</div>}
+      {/* 3 · Every priced line; the usually-untouched parts fold */}
+      <Panel title={`🎯 What the ${fromScrub ? 'scrub' : 'report'} found`} tone="blue" right={<span className="text-xs" style={{ color: '#1d4ed8' }}>{required.length} on</span>}>
+        {required.length === 0 && <div className="px-4 py-2.5 text-sm" style={{ color: '#888' }}>Nothing on — switch one on or add a line.</div>}
         {required.map(cal => <Row key={cal._id} cal={cal} />)}
-        {notRequired.length > 0 && <button type="button" onClick={() => setShowNotRequired(o => !o)} className="w-full text-left px-4 py-2 text-xs font-semibold" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#fafaf9', color: '#666' }}>{showNotRequired ? '▾' : '▸'} {notRequired.length} not required for this repair · {showNotRequired ? 'hide' : 'show'}</button>}
+        {notRequired.length > 0 && <button type="button" onClick={() => setShowNotRequired(o => !o)} className="w-full text-left px-3 py-1.5 text-[11px] font-semibold" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#fafaf9', color: '#666' }}>{showNotRequired ? '▾' : '▸'} {notRequired.length} not required · {showNotRequired ? 'hide' : 'show'}</button>}
         {showNotRequired && notRequired.map(cal => <Row key={cal._id} cal={cal} />)}
-        {fellBack.length > 0 && <div className="mx-3 my-2 rounded-lg px-2.5 py-2 text-[11px]" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}><b>⚠ {fellBack.length} line{fellBack.length === 1 ? '' : 's'} didn't match a {PRICE_NAMES[fellBack[0].pool_fallback] || fellBack[0].pool_fallback} item</b> — billing our standard rate. Pick the tier at Create job.</div>}
+        {fellBack.length > 0 && <div className="mx-3 my-1.5 rounded-lg px-2.5 py-1.5 text-[11px]" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}><b>⚠ {fellBack.length} line{fellBack.length === 1 ? '' : 's'} had no {PRICE_NAMES[fellBack[0].pool_fallback] || fellBack[0].pool_fallback} item</b> — standard rate.</div>}
 
-        {/* Big 4 shop fees, as priced lines with their switches */}
-        <div className="px-4 py-2 flex items-center justify-between gap-2" style={{ borderTop: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
-          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>🧾 Shop fees · Big 4</span>
-          <span className="text-[11px]" style={{ color: '#888' }}>{big3Info?.source === 'shop' ? `${shopName || 'shop'} rule` : big3Info?.source === 'modal' ? 'edited here' : 'default'}</span>
-        </div>
-        <div className="px-3 py-2"><Big3Picker rules={big3Rules || { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }} onChange={onBig3} compact /></div>
-        {fixedLines.filter(l => l.amount).map((l, i) => (
-          <div key={i} className="flex items-center justify-between gap-3 px-4 text-sm" style={{ borderTop: '1px solid #f1f5f9', minHeight: 40 }}>
-            <span style={{ color: '#1a1a1a' }}>{l.name}</span><span className="tabular-nums font-semibold" style={{ color: '#1a1a1a' }}>{fmt(l.amount)}</span>
-          </div>
-        ))}
-        <label className="flex items-center gap-2 text-[11px] px-4 py-2" style={{ color: '#555', borderTop: '1px solid #f1f5f9' }}><input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember these fees for {shopName || 'this shop'}</label>
+        <Fold openFold={openFold} setOpenFold={setOpenFold} id="fees" icon="🧾" label="Shop fees" summary={`${feeTotal ? fmt(feeTotal) + ' · ' : ''}${describeRules(rules)}`}>
+          <div className="px-3 py-2"><Big3Picker rules={rules} onChange={onBig3} compact /></div>
+          {fixedLines.filter(l => l.amount).map((l, i) => (
+            <div key={i} className="flex justify-between gap-3 px-3 py-1 text-xs"><span style={{ color: '#1a1a1a' }}>{l.name}</span><span className="tabular-nums font-semibold">{fmt(l.amount)}</span></div>
+          ))}
+          <label className="flex items-center gap-2 text-[11px] px-3 py-2" style={{ color: '#555' }}><input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'}</label>
+        </Fold>
 
-        {/* Add-ons: diagnostic, mechanical, programming, anything from Books */}
-        <div className="px-4 py-2 flex items-center justify-between" style={{ borderTop: '1px solid #e2e8f0', backgroundColor: '#f8fafc' }}>
-          <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>＋ Add-ons</span>
-        </div>
-        {services.map(cal => (
-          <div key={cal._id} style={{ borderTop: '1px solid #f1f5f9', backgroundColor: 'white' }}>
-            <div className="flex items-center gap-2.5 px-3" style={{ minHeight: 44 }}>
-              <button type="button" onClick={() => toggleCal(cal._id)} className="w-10 h-6 rounded-full flex-shrink-0 relative" style={{ backgroundColor: cal.enabled ? GREEN : '#d6d3d1' }}><span className="absolute top-0.5 w-5 h-5 rounded-full bg-white" style={{ left: cal.enabled ? 18 : 2 }} /></button>
-              <span className="flex-1 text-sm font-semibold" style={{ color: cal.enabled ? '#1a1a1a' : '#999' }}>{cal.calibration_name}</span>
-              {cal.enabled && <div className="flex items-center gap-1"><button type="button" onClick={() => updateCalField(cal._id, 'quantity', Math.max(1, (cal.quantity || 1) - 1))} className="w-6 h-6 rounded-md font-bold text-sm" style={{ backgroundColor: '#f0eeec', color: '#555' }}>−</button><span className="w-5 text-center text-sm font-semibold">{cal.quantity || 1}</span><button type="button" onClick={() => updateCalField(cal._id, 'quantity', (cal.quantity || 1) + 1)} className="w-6 h-6 rounded-md font-bold text-sm" style={{ backgroundColor: '#f0eeec', color: '#555' }}>+</button></div>}
-              {priceOf(cal) && <span className="text-sm tabular-nums font-semibold" style={{ color: cal.enabled ? '#1a1a1a' : '#aaa', minWidth: 56, textAlign: 'right' }}>${Number(priceOf(cal).rate).toFixed(0)}</span>}
+        <Fold openFold={openFold} setOpenFold={setOpenFold} id="add" icon="＋" label="Add a line" summary={onServices.length ? onServices.map(c => c.calibration_name).join(', ') : 'diagnostic, mechanical, programming, any Books item'}>
+          {services.map(cal => (
+            <div key={cal._id}>
+              <div className="flex items-center gap-2.5 px-3" style={{ minHeight: 40 }}>
+                <button type="button" onClick={() => toggleCal(cal._id)} className="w-10 h-6 rounded-full flex-shrink-0 relative" style={{ backgroundColor: cal.enabled ? GREEN : '#d6d3d1' }}><span className="absolute top-0.5 w-5 h-5 rounded-full bg-white" style={{ left: cal.enabled ? 18 : 2 }} /></button>
+                <span className="flex-1 text-sm font-semibold" style={{ color: cal.enabled ? '#1a1a1a' : '#999' }}>{cal.calibration_name}</span>
+                {cal.enabled && <div className="flex items-center gap-1"><button type="button" onClick={() => updateCalField(cal._id, 'quantity', Math.max(1, (cal.quantity || 1) - 1))} className="w-6 h-6 rounded-md font-bold text-sm" style={{ backgroundColor: '#f0eeec', color: '#555' }}>−</button><span className="w-5 text-center text-sm font-semibold">{cal.quantity || 1}</span><button type="button" onClick={() => updateCalField(cal._id, 'quantity', (cal.quantity || 1) + 1)} className="w-6 h-6 rounded-md font-bold text-sm" style={{ backgroundColor: '#f0eeec', color: '#555' }}>+</button></div>}
+                {priceOf(cal) && <span className="text-sm tabular-nums font-semibold" style={{ color: cal.enabled ? '#1a1a1a' : '#aaa', minWidth: 48, textAlign: 'right' }}>${Number(priceOf(cal).rate).toFixed(0)}</span>}
+              </div>
+              {cal.enabled && <div className="px-3 pb-2"><input value={cal.description || ''} onChange={e => updateCalField(cal._id, 'description', e.target.value)} placeholder={cal.calibration_name === 'Diagnostic 1' ? 'What was diagnosed…' : 'What was done / replaced…'} className="w-full text-xs rounded-lg px-2.5 py-1.5" style={inp} /></div>}
             </div>
-            {cal.enabled && <div className="px-3 pb-2.5"><input value={cal.description || ''} onChange={e => updateCalField(cal._id, 'description', e.target.value)} placeholder={cal.calibration_name === 'Diagnostic 1' ? 'What was diagnosed…' : 'What was done / replaced…'} className="w-full text-xs rounded-lg px-2.5 py-1.5" style={inp} /></div>}
-          </div>
-        ))}
-        <div className="p-3" style={{ borderTop: '1px solid #f1f5f9' }}>
-          <LinePicker onAdd={addFromPicker} jobMake={jobData.make || ''} existingNames={existingNames} initialTab="calibration" />
-        </div>
-        <div className="flex justify-between px-4 py-3 text-lg font-extrabold" style={{ borderTop: '2px solid #e2e8f0', color: '#1a1a1a' }}>
-          <span>Total{listTotal != null && cashMode && cashCap > 0 && listTotal > cashCap ? <span className="text-xs font-semibold ml-2" style={{ color: GREEN }}>list {fmt(listTotal)} · capped</span> : null}</span>
-          <span className="tabular-nums">{liveTotal != null ? fmt(liveTotal) : '—'}</span>
-        </div>
+          ))}
+          <div className="p-2.5"><LinePicker onAdd={addFromPicker} jobMake={jobData.make || ''} existingNames={existingNames} initialTab="calibration" /></div>
+        </Fold>
       </Panel>
 
-      {/* 4 · Dispatch — scheduling, kept apart from pricing */}
-      <Panel title="🚐 Dispatch">
-        <div className="p-3 flex flex-col gap-2.5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div><div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Goes to</div><div className="flex gap-1">{[['need_dispatch', '📋 Dispatch'], ['jaden', 'Jayden'], ['mark', 'Mark']].map(([id, l]) => <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy} className="flex-1 text-sm font-bold rounded-lg py-2" style={dispatch === id ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}</div></div>
-            <div><div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Job date</div><input type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className="w-full text-sm rounded-lg px-2 py-2" style={{ ...inp, borderColor: jobDate === todayPT() ? '#e0dbd6' : '#e8710a' }} /></div>
-          </div>
-          <SalespersonPicker onSelect={setSelectedSalesperson} />
+      {/* 4 · Dispatch — one row; salesperson folds (defaults to Mark) */}
+      <div className="rounded-2xl bg-white overflow-hidden" style={{ border: '1.5px solid #e8e4e0' }}>
+        <div className="flex items-center gap-1.5 p-2">
+          <span className="text-base flex-shrink-0" title="Dispatch">🚐</span>
+          {[['need_dispatch', '📋 Dispatch'], ['jaden', 'Jayden'], ['mark', 'Mark']].map(([id, l]) => <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy} className="flex-1 text-xs font-bold rounded-lg py-2" style={dispatch === id ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
+          <input type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className="text-xs rounded-lg px-1.5 py-1.5 flex-shrink-0" style={{ ...inp, width: 118, borderColor: jobDate === todayPT() ? '#e0dbd6' : '#e8710a' }} />
         </div>
-      </Panel>
+        <button type="button" onClick={() => setOpenFold(openFold === 'sp' ? null : 'sp')} className="w-full flex items-center justify-between px-3 py-1.5 text-[11px]" style={{ borderTop: '1px solid #f1f5f9', color: '#888' }}>
+          <span>👤 Salesperson · <b style={{ color: '#555' }}>{spName || '—'}</b></span><span>{openFold === 'sp' ? '▾' : '▸'}</span>
+        </button>
+        {/* kept mounted so its Mark default still fires; only the view folds */}
+        <div className="px-2 pb-2" style={{ display: openFold === 'sp' ? 'block' : 'none' }}><SalespersonPicker onSelect={sp => { setSpName(sp?.name || ''); setSelectedSalesperson(sp) }} /></div>
+      </div>
 
       {invoiceError && <Notice tone="red">{invoiceError}</Notice>}
       {kanbanWarning && <Notice>⚠️ {kanbanWarning}</Notice>}
