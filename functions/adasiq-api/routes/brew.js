@@ -123,8 +123,10 @@ async function fetchAndTrim() {
     const tb = b.pubDate ? new Date(b.pubDate).getTime() : 0
     return tb - ta
   })
-  // Keep top 35 — covers Mon's 96h lookback comfortably.
-  const slim = sorted.slice(0, 35).map(trimItem)
+  // Keep top 50 (was 35; raised 2026-09-30 when seven more sources were added
+  // so they add to the pool instead of pushing the collision feeds out).
+  // ~600 bytes per trimmed item, well under the cache value cap.
+  const slim = sorted.slice(0, 50).map(trimItem)
   return { items: slim, status, fetched: items.length, kept: slim.length }
 }
 

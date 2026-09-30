@@ -16,6 +16,22 @@ const FETCH_TIMEOUT = 20000
 //   ✗ FenderBender — site moved to Nuxt/SPA, no public RSS; would need headless browser
 //   ✗ I-CAR (rts.i-car.com) — no public RSS or news index
 //   ✗ ABRN — domain dead, content folded into FenderBender's parent CMS
+//
+// Added 2026-09-30 (Mark: "here are some more sources for the adas brew newsletter"):
+//   ✓ ADAS & Autonomous Vehicle International, Auto Tech News → direct RSS
+//   ✓ Transport Topics → site-wide RSS, ADAS keyword filter
+//   ✓ Reuters, Autobody News, EE Times, I-CAR → Google News search RSS
+//     (Reuters has no public RSS; Autobody News is an SPA; the EE Times tag
+//      feed hangs; I-CAR has no news index)
+//   ✗ ADAS Network → no feed and nothing current in search, skipped
+//
+// Brew keeps only the 35 newest items before the editor picks five, so every
+// added feed carries `max` (newest N kept) and general-news feeds carry
+// `match` (title or summary must hit it). The original five stay uncapped.
+const ADAS_MATCH = /\b(ADAS|driver[- ]assist\w*|collision[- ](avoidance|mitigation|warning)|emergency braking|AEB|lane[- ](keep\w*|departure|centering)|blind[- ]spot|adaptive cruise|cameras?|radars?|lidars?|sensors?|calibrat\w*|windshield|self[- ]driving|autonomous|autopilot|super ?cruise|blue ?cruise|NHTSA|recall\w*|FMVSS)\b/i
+const REPAIR_MATCH = /\b(ADAS|calibrat\w*|cameras?|radars?|sensors?|scans?|position statement|bumper|windshield|glass|repair|collision)\b/i
+const gnews = q => `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`
+
 export const SOURCES = [
   {
     id: 'repairer_driven_news',
@@ -46,6 +62,59 @@ export const SOURCES = [
     label: 'NHTSA Recalls',
     type: 'fn',
     fn: 'nhtsaRecentRecalls',
+  },
+  {
+    id: 'autobody_news',
+    label: 'Autobody News',
+    type: 'rss',
+    url: gnews('site:autobodynews.com when:3d'),
+    max: 5,
+  },
+  {
+    id: 'adas_av_international',
+    label: 'ADAS & Autonomous Vehicle International',
+    type: 'rss',
+    url: 'https://www.autonomousvehicleinternational.com/news/adas/feed',
+    max: 3,
+  },
+  {
+    id: 'reuters_autos',
+    label: 'Reuters',
+    type: 'rss',
+    url: gnews('site:reuters.com ("driver assistance" OR ADAS OR "emergency braking" OR "self-driving" OR NHTSA OR recall) when:3d'),
+    match: ADAS_MATCH,
+    max: 4,
+  },
+  {
+    id: 'auto_tech_news',
+    label: 'Auto Tech News',
+    type: 'rss',
+    url: 'https://auto-tech-news.com/tag/adas-technology-news/feed/',
+    max: 3,
+  },
+  {
+    id: 'transport_topics',
+    label: 'Transport Topics',
+    type: 'rss',
+    url: 'https://www.ttnews.com/rss.xml',
+    match: ADAS_MATCH,
+    max: 3,
+  },
+  {
+    id: 'eetimes_adas',
+    label: 'EE Times',
+    type: 'rss',
+    url: gnews('site:eetimes.com (ADAS OR "driver assistance" OR automotive radar OR automotive camera) when:14d'),
+    match: /\b(ADAS|automotive|vehicles?|driver|radars?|lidars?|cameras?|sensors?)\b/i,
+    max: 2,
+  },
+  {
+    id: 'icar',
+    label: 'I-CAR',
+    type: 'rss',
+    url: gnews('site:i-car.com when:14d'),
+    match: REPAIR_MATCH,
+    max: 3,
   },
 ]
 
@@ -221,6 +290,32 @@ const FUNCTIONS = {
   nhtsaRecentRecalls,
 }
 
+function stripPublisher(t) {
+  const i = t.lastIndexOf(' - ')
+  return i > 20 && t.length - i <= 64 ? t.slice(0, i).trim() : t
+}
+
+// Google News titles end in " - Publisher"; strip it and drop its link-list
+// summary. Then apply the source's keyword filter and newest-N cap.
+function shapeItems(items, source) {
+  let out = items
+  if (/news\.google\.com/.test(source.url || '')) {
+    out = out.map(it => ({
+      ...it,
+      title: stripPublisher(it.title),
+      summary: '',
+    }))
+  }
+  if (source.match) out = out.filter(it => source.match.test(`${it.title} ${it.summary}`))
+  if (source.max) {
+    out = out
+      .slice()
+      .sort((a, b) => (b.pubDate ? Date.parse(b.pubDate) : 0) - (a.pubDate ? Date.parse(a.pubDate) : 0))
+      .slice(0, source.max)
+  }
+  return out
+}
+
 // ─── Public API ─────────────────────────────────────────────────────────────
 export async function fetchSource(source) {
   if (source.type === 'fn') {
@@ -244,7 +339,7 @@ export async function fetchSource(source) {
   }
   const body = String(res.data || '')
   if (source.type === 'rss') {
-    return { items: parseRSS(body, source.label), error: null }
+    return { items: shapeItems(parseRSS(body, source.label), source), error: null }
   }
   return { items: [], error: `unknown source type: ${source.type}` }
 }
