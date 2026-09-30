@@ -9,7 +9,7 @@ import CalibrationLine from './CalibrationLine.jsx'
 import LinePicker from './LinePicker.jsx'
 import CustomerPicker from '../CustomerPicker'
 import { API_BASE, apiFetch } from '../../utils/api.js'
-import { Big3Picker, describeRules, BillingPill } from '../books/Big3Rules.jsx'
+import { Big3Picker, describeRules, BillingPill, useBig3Map, shopKeyOf } from '../books/Big3Rules.jsx'
 import { VinCheck } from '../ui/VinDecode.jsx'
 import { Notice, fmt, ORANGE, GREEN } from '../ui/ReviewKit.jsx'
 
@@ -58,6 +58,15 @@ export default function ReviewCompact(props) {
   const [showNotRequired, setShowNotRequired] = useState(false)
   const [editing, setEditing] = useState(null)   // _id whose justification is open
   const [openFold, setOpenFold] = useState(null) // 'fees' | 'add'
+  // Big 4 follows the customer type (Mark 2026-09-30): collision shops get the
+  // four switches right under the customer; auto repair shops get none.
+  const big3Map = useBig3Map()
+  const ctype = selectedCustomer?.name ? big3Map[shopKeyOf(selectedCustomer.name)]?.billing?.customer_type || '' : ''
+  const noBig4 = ctype === 'repair_shop'
+  const ALL_OFF = { cal_id: 'off', pcsi: 'off', post_scan: 'off', snapshot: 'off' }
+  useEffect(() => {
+    if (noBig4) { onBig3(ALL_OFF); setBig3Save(false) }
+  }, [noBig4, selectedCustomer?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   // Salesperson = whoever the job is dispatched to (Mark 2026-09-30: "I don't
   // want there to be two items to select"). Jayden → Jayden's Zoho
   // salesperson; Mark or the Dispatch queue → Mark Fowler.
@@ -141,6 +150,13 @@ export default function ReviewCompact(props) {
             {cashMode && [[700, '$700'], [350, '$350'], [0, 'No cap']].map(([v, l]) => <button key={v} type="button" onClick={() => setCashCap(v)} className="text-xs font-bold rounded-full px-2 py-1" style={cashCap === v ? { backgroundColor: '#166534', color: 'white' } : { backgroundColor: 'white', color: '#166534', border: '1px solid #86efac' }}>{l}</button>)}
           </div>
           {cashMode && selectedCustomer && <div className="text-[11px]" style={{ color: '#92400e' }}>⚠ Cash overrides {selectedCustomer.name}'s terms (CP prices, cap, 15% cash rule). Turn Cash off if the shop pays.</div>}
+          {selectedCustomer && (noBig4
+            ? <div className="text-[11px] rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>🔧 Auto repair shop — no Big 4 fees on this job.</div>
+            : <div className="rounded-xl px-2.5 py-2" style={{ backgroundColor: '#fafaf9', border: '1px solid #ece8e4' }}>
+                <div className="flex items-center justify-between mb-1.5"><span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#555' }}>🧾 Big 4{feeTotal ? ` · ${fmt(feeTotal)}` : ''}</span><span className="text-[10px]" style={{ color: '#888' }}>{big3Info?.source === 'shop' ? 'shop rule' : big3Info?.source === 'insurer' ? 'insurer rule' : big3Info?.source === 'modal' ? 'edited here' : 'default'}</span></div>
+                <Big3Picker rules={rules} onChange={onBig3} compact />
+                <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}><input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'}</label>
+              </div>)}
         </div>
       </Panel>
 
@@ -152,13 +168,6 @@ export default function ReviewCompact(props) {
         {showNotRequired && notRequired.map(cal => <Row key={cal._id} cal={cal} />)}
         {fellBack.length > 0 && <div className="mx-3 my-1.5 rounded-lg px-2.5 py-1.5 text-[11px]" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}><b>⚠ {fellBack.length} line{fellBack.length === 1 ? '' : 's'} had no {PRICE_NAMES[fellBack[0].pool_fallback] || fellBack[0].pool_fallback} item</b> — standard rate.</div>}
 
-        <Fold openFold={openFold} setOpenFold={setOpenFold} id="fees" icon="🧾" label="Shop fees" summary={`${feeTotal ? fmt(feeTotal) + ' · ' : ''}${describeRules(rules)}`}>
-          <div className="px-3 py-2"><Big3Picker rules={rules} onChange={onBig3} compact /></div>
-          {fixedLines.filter(l => l.amount).map((l, i) => (
-            <div key={i} className="flex justify-between gap-3 px-3 py-1 text-xs"><span style={{ color: '#1a1a1a' }}>{l.name}</span><span className="tabular-nums font-semibold">{fmt(l.amount)}</span></div>
-          ))}
-          <label className="flex items-center gap-2 text-[11px] px-3 py-2" style={{ color: '#555' }}><input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'}</label>
-        </Fold>
 
         <Fold openFold={openFold} setOpenFold={setOpenFold} id="add" icon="＋" label="Add a line" summary={onServices.length ? onServices.map(c => c.calibration_name).join(', ') : 'diagnostic, mechanical, programming, any Books item'}>
           {services.map(cal => (

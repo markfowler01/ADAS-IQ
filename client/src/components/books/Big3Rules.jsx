@@ -9,8 +9,8 @@ import { API_BASE, apiFetch } from '../../utils/api.js'
 const ORANGE = '#CD4419'
 export const BIG3 = [
   { key: 'cal_id',    label: 'Cal ID report', modes: ['charge', 'included', 'off'] },
-  { key: 'pcsi',      label: 'Post Collision Safety Inspection' },
-  { key: 'post_scan', label: 'Post-Scan' },
+  { key: 'pcsi',      label: 'Post Collision Safety Inspection', modes: ['charge', 'included', 'off'] },   // Off: Mark 2026-09-30
+  { key: 'post_scan', label: 'Post-Scan', modes: ['charge', 'included', 'off'] },
   // Big FOUR (Mark 2026-09-10): Snapshot replaces Post-Scan when charged —
   // the shop does its own post-scan but lets us do a snapshot.
   { key: 'snapshot',  label: 'Calibration Snapshot', modes: ['charge', 'off'], hint: 'Charge = replaces Post-Scan' },
@@ -124,7 +124,7 @@ export function DrpBadge({ shopName, size = 'xs' }) {
 
 // ── Rule map for card badges (one fetch per session, 5-min refresh) ─────
 let _map = null, _mapAt = 0, _mapPromise = null
-const shopKeyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+export const shopKeyOf = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 export function useBig3Map() {
   const [map, setMap] = useState(_map || {})
   useEffect(() => {

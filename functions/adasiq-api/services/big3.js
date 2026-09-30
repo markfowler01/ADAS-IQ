@@ -24,8 +24,8 @@ import { familyFor } from './insurerFamilies.js'
 export const BIG3 = [
   // cal_id can be OFF (left off the invoice) — insurer rules use it (2026-09-16).
   { key: 'cal_id',    base: 'Calibration Identification Report (included)',        paid: 'Calibration Identification Report',        label: 'Cal ID report', modes: ['charge', 'included', 'off'] },
-  { key: 'pcsi',      base: 'Post Collision Safety Inspection 1 (included)', paid: 'Post Collision Safety Inspection 1',        label: 'Post Collision Safety Inspection' },
-  { key: 'post_scan', base: 'Post-Scan (included)',                          paid: 'Post-Scan', paidFallback: 'Post-Calibration Scan', label: 'Post-Scan' },
+  { key: 'pcsi',      base: 'Post Collision Safety Inspection 1 (included)', paid: 'Post Collision Safety Inspection 1',        label: 'Post Collision Safety Inspection', modes: ['charge', 'included', 'off'] },
+  { key: 'post_scan', base: 'Post-Scan (included)',                          paid: 'Post-Scan', paidFallback: 'Post-Calibration Scan', label: 'Post-Scan', modes: ['charge', 'included', 'off'] },
   { key: 'snapshot',  base: null,                                            paid: 'Calibration Snapshot', label: 'Calibration Snapshot', modes: ['charge', 'off'] },
 ]
 export const MODES = { charge: 'Charge', included: 'Included', off: 'Off' }
@@ -93,6 +93,9 @@ export async function readBig3(req, shopName) {
   const shop = await findShopByName(req, shopName)
   if (!shop) return { rules: null, shop_id: null, shop_name: shopName || '', set_by: '', set_at: '' }
   const br = parseBR(shop)
+  // Auto repair shops never carry the Big 4 (Mark 2026-09-30) — whatever was
+  // saved, every fee is off, so Bill it can't add them back.
+  if (br.customer_type === 'repair_shop') return { rules: { cal_id: 'off', pcsi: 'off', post_scan: 'off', snapshot: 'off' }, shop_id: shop.id, shop_name: shop.shop_name, set_by: 'repair shop — no Big 4', set_at: '', customer_type: 'repair_shop' }
   return { rules: normalizeRules(br.big3), shop_id: shop.id, shop_name: shop.shop_name, set_by: br.big3_set_by || '', set_at: br.big3_set_at || '' }
 }
 
