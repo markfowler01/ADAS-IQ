@@ -18,7 +18,7 @@
 import express from 'express'
 import multer from 'multer'
 import { requeueScrub, runScrubQueue, scrubQueue } from '../services/emailToJob.js'
-import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, alldataLinksFor, saveAlldataLink, setScrubStageById } from '../services/scrubStore.js'
+import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, alldataLinksFor, saveAlldataLink, setScrubStageById, linkScrubJob, clearScrubInvoice } from '../services/scrubStore.js'
 
 const router = express.Router()
 const who = req => req.user?.name || req.user?.email || 'staff'
@@ -180,6 +180,20 @@ router.put('/:id/calibrations', async (req, res) => {
 // the jobs page uses — so there is exactly one place money gets made. This
 // only does the bookkeeping, and by design it never fails the billing: if the
 // stamp does not take, the invoice still exists.
+// 🧾 The review screen created a job from this scrub → link it (one card per scrub).
+router.post('/:id/job', express.json(), async (req, res) => {
+  try {
+    const r = await linkScrubJob(req, req.params.id, { jobId: String(req.body?.jobId || ''), quoteNumber: String(req.body?.quoteNumber || ''), quoteId: String(req.body?.quoteId || '') })
+    if (!r.ok) return res.status(400).json(r)
+    res.json({ ...r, scrub: await getScrub(req, req.params.id) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// Owner-only: clear an invoice stamp left by the retired Invoice-now shortcut.
+router.post('/:id/clear-invoice', async (req, res) => {
+  if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Owner / Kat only' })
+  try { await clearScrubInvoice(req, req.params.id); res.json({ ok: true, scrub: await getScrub(req, req.params.id) }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.post('/:id/invoice', express.json(), async (req, res) => {
   try {
     const { invoiceNumber = '', invoiceId = '', quoteNumber = '', quoteId = '', stage = '' } = req.body || {}

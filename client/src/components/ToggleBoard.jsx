@@ -394,6 +394,15 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           throw new Error(serverMsg)
         }
         console.log('[kanban] Auto-ticket created OK')
+        // 🧾 Came from the Scrub Library → link the scrub to its new card so
+        // the report shows "Job created" and a second press cannot duplicate it.
+        if (jobData?._scrubId) {
+          try {
+            const created = await jobRes.clone().json().catch(() => ({}))
+            const jid = created?.id || created?.job?.id || requestId || ''
+            if (jid) await apiFetch(`${API_BASE}/api/scrubs/${jobData._scrubId}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: String(jid), quoteNumber: data.quoteNumber || '', quoteId: data.quoteId || '' }) })
+          } catch { /* the job is made; the link can be fixed by hand */ }
+        }
       } catch (autoErr) {
         console.error('[kanban] Auto-ticket failed:', autoErr.message)
         setKanbanWarning(`⚠️ Zoho quote saved, but the Kanban card was NOT created. Reason: ${autoErr.message}. Add it manually on the Job Board.`)

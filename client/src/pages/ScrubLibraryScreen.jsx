@@ -298,8 +298,6 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
   const [cardMsg, setCardMsg] = useState('')
   const [pdfBusy, setPdfBusy] = useState(false)
   const [pdfErr, setPdfErr] = useState('')
-  const [invBusy, setInvBusy] = useState(false)
-  const [invMsg, setInvMsg] = useState('')
   const [qBusy, setQBusy] = useState(false)
   const [qMsg, setQMsg] = useState('')
   // The Books estimate id once a quote is built (or already stamped on the
@@ -368,48 +366,6 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000)
     } catch (e) { setPdfErr(e.message || 'Could not build the PDF.') }
     finally { setPdfBusy(false) }
-  }
-
-  // 💸 Invoice straight off the scrub (Mark 2026-09-29) — no more downloading
-  // the report and re-uploading it on the jobs page. Same endpoint the jobs
-  // page uses, so the invoice comes out identical; then we stamp the number
-  // back on the scrub so the green "invoiced" badge lights up.
-  const createInvoice = async () => {
-    const cals = required
-    if (!cals.length) { setInvMsg('No required calibrations on this scrub to bill.'); return }
-    const who = s.shop || 'this shop'
-    if (!window.confirm(`Create an invoice for ${who}?\n\n${[s.year, s.make, s.model].filter(Boolean).join(' ')}${s.ro ? ` · RO ${s.ro}` : ''}\n${cals.length} calibration${cals.length > 1 ? 's' : ''}: ${cals.map(c => c.name).join(', ')}`)) return
-    setInvBusy(true); setInvMsg('')
-    try {
-      const payload = {
-        shop: s.shop || '', ro_number: s.ro || '', insurer: s.insurer || '', claim: s.claim || '',
-        vin: s.vin || '', vehicle: [s.year, s.make, s.model].filter(Boolean).join(' '),
-        year: s.year || '', make: s.make || '', model: s.model || '',
-        calibrations: cals.map(c => ({ calibration_name: c.name, cal_type: c.type || 'Static', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '' })),
-        // The rule-out matrix is the proof of a full inspection — same as the
-        // jobs page sends, and what backs the Absolute Promise on a denial.
-        ruled_out: shown.filter(c => !c.required).map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '' })),
-        scrub_id: s.id,
-      }
-      const r = await apiFetch(`${API_BASE}/api/books/from-extract`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      })
-      const d = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      // from-extract returns { ok, invoice: { invoice_number, id, ... } } — the number is nested.
-      const num = d.invoice?.invoice_number || d.invoice_number || d.invoiceNumber || d.number || ''
-      // Bookkeeping only — never let a failed stamp look like a failed invoice.
-      try {
-        const st = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/invoice`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ invoiceNumber: num, invoiceId: d.invoice?.id || d.invoice?.invoice_id || d.invoice_id || d.id || '', stage: 'invoiced' }),
-        })
-        const sd = await st.json().catch(() => ({}))
-        if (sd.scrub) setS(sd.scrub)
-      } catch { /* invoice is made; the badge can catch up on reload */ }
-      setInvMsg(`✓ Invoice ${num || 'created'} for ${who}.`)
-    } catch (e) { setInvMsg(e.message || 'Could not create the invoice.') }
-    finally { setInvBusy(false) }
   }
 
   // 📝 Build quote (Mark 2026-09-29: "I expected a screen to pop up so I can
@@ -573,7 +529,7 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
               </div>
             )
             return (
-              <button onClick={openBuilder} disabled={qBusy || invBusy || editing || !list.length || !onExtracted}
+              <button onClick={openBuilder} disabled={qBusy || editing || !list.length || !onExtracted}
                 className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
                 style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1e40af', color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
                 title="Opens the estimate screen pre-filled from this scrub — pick the customer, check the lines, build, then send"
@@ -582,14 +538,18 @@ function ScrubReport({ s: initial, onBack, onNavigate, onExtracted }) {
           })()}
           {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}
 
-          {/* 💸 Bill it straight from here — no download / re-upload round trip. */}
-          {s.invoiceNumber
-            ? <div className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold text-center" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>💸 Invoiced · {s.invoiceNumber}</div>
-            : <button onClick={createInvoice} disabled={invBusy || editing || !required.length}
+          {/* 🧾 Create Job (Mark 2026-09-30): the retired "Create invoice" shortcut
+              skipped Bill it and made a single, wrong invoice. This opens the SAME
+              review screen an upload opens; its Create job builds the Books estimate
+              and puts the card on the board, and Bill it (both invoices) runs from
+              Ready to Invoice exactly like every other job. */}
+          {s.jobId && s.stage === 'job'
+            ? <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fff7ed', color: '#b45309', border: '1.5px solid #fcd34d' }}>🧾 Job created{s.quoteNumber ? ` · ${s.quoteNumber}` : ''} — open the board →</button>
+            : <button onClick={openBuilder} disabled={qBusy || editing || !list.length || !onExtracted}
                 className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
-                style={{ backgroundColor: invBusy ? '#f5f3f0' : '#166534', color: invBusy ? '#777' : '#fff', opacity: required.length && !editing ? 1 : 0.5 }}
-              >{invBusy ? 'Creating…' : `💸 Create invoice${required.length ? ` (${required.length} line${required.length > 1 ? 's' : ''})` : ''}`}</button>}
-          {invMsg && <p className="text-xs mt-2" style={{ color: invMsg.startsWith('✓') ? '#166534' : '#b91c1c' }}>{invMsg}</p>}
+                style={{ backgroundColor: qBusy ? '#f5f3f0' : ORANGE, color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
+                title="Opens the same review screen as an uploaded report: pick the customer, check the lines, Create job → the card goes on the board"
+              >{qBusy ? 'Opening…' : `🧾 Create Job${required.length ? ` (${required.length} required)` : ''}`}</button>}
 
           {!editing
             ? <button onClick={startEdit} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd' }}>✏️ Edit calibration lines</button>

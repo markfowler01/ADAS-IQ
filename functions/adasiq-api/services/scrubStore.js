@@ -552,6 +552,29 @@ export async function setScrubFile(req, scrubId, { id, name }) {
   return { ok: true }
 }
 
+/**
+ * Link a scrub to the job card created from it (Mark 2026-09-30: Create Job
+ * from the scrub runs the normal review → job → board process). Sets the
+ * card id and moves the stage to 'job'; a quote number from the review
+ * screen's Books estimate rides along. Stages only move forward, except that
+ * a stale 'invoiced' stamp from the retired Invoice-now shortcut is cleared.
+ */
+export async function linkScrubJob(req, scrubId, { jobId = '', quoteNumber = '', quoteId = '' } = {}) {
+  const rowId = String(scrubId || '').trim(); if (!/^\d{1,25}$/.test(rowId) || !jobId) return { ok: false, error: 'scrub id and job id required' }
+  const patch = { ROWID: rowId, scrub_job_id: str(jobId, 64), scrub_stage: 'job', scrub_stage_at: nowIso() }
+  if (quoteNumber) patch.scrub_quote_number = str(quoteNumber, 60)
+  if (quoteId) patch.scrub_quote_id = str(quoteId, 64)
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  return { ok: true }
+}
+
+/** Clear a scrub's invoice stamp (used to void the retired shortcut's invoice). */
+export async function clearScrubInvoice(req, scrubId) {
+  const rowId = String(scrubId || '').trim(); if (!/^\d{1,25}$/.test(rowId)) return { ok: false }
+  await ds(req).datastore().table(TABLE).updateRow({ ROWID: rowId, scrub_invoice_number: '', scrub_invoice_id: '', scrub_stage: 'scrubbed', scrub_stage_at: nowIso() })
+  return { ok: true }
+}
+
 /** Headline counts for the library screen. */
 export async function scrubStats(req) {
   try {
