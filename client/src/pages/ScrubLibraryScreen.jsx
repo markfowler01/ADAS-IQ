@@ -161,6 +161,16 @@ function RowRequest({ s, user, onDone, full = false }) {
   )
 }
 
+// RO on the list rows. Invoiced / paid = the RO itself gets a green
+// highlighter with a $ instead of a separate "invoiced …" tag (Mark
+// 2026-09-30: "instead of crowding this area"); other stages keep their pill.
+function RoTag({ s }) {
+  const billed = ['invoiced', 'paid'].includes(s.stage)
+  const ro = s.ro ? `RO ${s.ro}` : 'no RO'
+  if (!billed) return <>{ro}<StagePill s={s} /></>
+  return <span className="font-bold px-1.5 py-0.5 rounded whitespace-nowrap" title={`${s.stage === 'paid' ? 'Paid' : 'Invoiced'}${s.invoiceNumber ? ` · ${s.invoiceNumber}` : ''}`} style={{ backgroundColor: s.stage === 'paid' ? '#86efac' : '#bbf7d0', color: '#14532d' }}>$ {ro}</span>
+}
+
 // One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
 function CalPills({ s }) {
   const names = (s.sensors || []).filter(x => x.r).map(x => x.n)
@@ -361,7 +371,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                   </td>
                   <td className="py-2.5 pr-3">
                     <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                    <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
+                    <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}><CopyVin vin={s.vin} /></td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
@@ -384,7 +394,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-bold leading-snug" style={{ color: INK, overflowWrap: 'anywhere' }}>{s.vehicle || 'Vehicle not read'}</div>
-                <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /><CalPills s={s} /></div>
+                <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} /></div>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                 style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
