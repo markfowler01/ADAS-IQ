@@ -573,6 +573,43 @@ router.post('/wd/upload', (req, res) => {
   })
 })
 
+// 📧 Mail side of the same collection job: every message with an attachment in
+// a mailbox (all folders, via search), then one attachment's bytes.
+// ?inbox=info@absoluteadas.com&start=1&limit=50
+router.get('/mail/pdfs', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { resolveMailbox } = await import('../services/mailboxScrub.js')
+    const { getMessageAttachments } = await import('../services/mail.js')
+    const mb = await resolveMailbox(req, String(req.query.inbox || 'info@absoluteadas.com'))
+    if (!mb.accountId) return res.status(404).json({ error: 'mailbox not visible to the mail token', accounts: mb.accounts })
+    const axios = (await import('axios')).default
+    const start = Math.max(1, Number(req.query.start) || 1), limit = Math.min(100, Number(req.query.limit) || 50)
+    const r = await axios.get(`https://mail.zoho.com/api/accounts/${mb.accountId}/messages/search`, {
+      headers: { Authorization: `Zoho-oauthtoken ${mb.token}`, Accept: 'application/json' },
+      params: { searchKey: 'has:attachment', start, limit }, timeout: 20000,
+    })
+    const msgs = r.data?.data || []
+    const out = []
+    for (const m of msgs) {
+      let atts = []
+      try { atts = await getMessageAttachments(mb.token, mb.accountId, String(m.folderId || ''), String(m.messageId || '')) } catch { continue }
+      for (const a of atts || []) if (/\.pdf$/i.test(a.attachmentName || '')) out.push({ folder: String(m.folderId || ''), msg: String(m.messageId || ''), att: String(a.attachmentId || ''), name: a.attachmentName, size: Number(a.attachmentSize || 0), from: m.fromAddress || '', subject: m.subject || '', date: m.receivedTime || m.sentDateInGMT || '' })
+    }
+    res.json({ start, messages: msgs.length, pdfs: out })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.data?.moreInfo || e.message }) }
+})
+router.get('/mail/att', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { resolveMailbox } = await import('../services/mailboxScrub.js')
+    const { downloadAccountAttachment } = await import('../services/mail.js')
+    const mb = await resolveMailbox(req, String(req.query.inbox || 'info@absoluteadas.com'))
+    const buf = await downloadAccountAttachment(mb.token, mb.accountId, String(req.query.folder), String(req.query.msg), String(req.query.att))
+    res.set('Content-Type', 'application/pdf').send(Buffer.isBuffer(buf) ? buf : Buffer.from(buf?.buffer || buf))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
@@ -580,7 +617,7 @@ router.get('/scrubs-export', async (req, res) => {
     const { listScrubs } = await import('../services/scrubStore.js')
     const { scrubs } = await listScrubs(req, { limit: 2000, maxScan: 4000 })
     const rows = scrubs.map(s => ({
-      id: s.id, vin: s.vin, ro: s.ro, shop: s.shop, vehicle: s.vehicle, make: s.make, year: s.year, source: s.source, status: s.status, file: s.fileName || '', at: s.at,
+      id: s.id, vin: s.vin, ro: s.ro, shop: s.shop, vehicle: s.vehicle, make: s.make, year: s.year, source: s.source, status: s.status, file: s.fileName || '', fileId: s.fileId || '', at: s.at,
       required: (s.sensors || []).filter(x => x.r).map(x => x.n),
       not_required: (s.sensors || []).filter(x => !x.r).map(x => x.n),
       detail: (s.sensors || []).map(x => ({ n: x.n, r: !!x.r, l: x.l || '', g: x.g || '' })),
