@@ -34,6 +34,7 @@ import CRMScreen from './components/CRMScreen'
 import SmsLog from './pages/SmsLog'
 import TipsScreen from './pages/TipsScreen'
 import ScrubLibraryScreen from './pages/ScrubLibraryScreen'
+import CccSettingsScreen from './pages/CccSettingsScreen'
 import RecruitingScreen from './pages/RecruitingScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
@@ -409,6 +410,7 @@ function MainApp() {
       {screen === 'tips' && (
         <TipsScreen {...navProps} />
       )}
+      {screen === 'ccc' && <CccSettingsScreen {...navProps} />}
       {screen === 'scrubs' && (
         <ScrubLibraryScreen {...navProps} onExtracted={handleExtracted} />
       )}

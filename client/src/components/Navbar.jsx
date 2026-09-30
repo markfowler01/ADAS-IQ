@@ -55,6 +55,7 @@ const MORE_GROUPS = [
   ]},
   { label: 'Admin', links: [
     { id: 'ops',         label: 'Ops', ownerOnly: true , icon: '🛠' },
+    { id: 'ccc',         label: 'CCC Secure Share', ownerOnly: true , icon: '📥' },
     { id: 'scaling',     label: 'Scaling', ownerOnly: true , icon: '📊' },
     { id: 'branding',    label: 'Branding', ownerOnly: true , icon: '🎨' },
     { id: 'zoho-import', label: 'Import from Zoho', ownerOnly: true , icon: '⬇️' },
