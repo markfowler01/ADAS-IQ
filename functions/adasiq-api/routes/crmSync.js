@@ -950,6 +950,21 @@ router.all('/books/collision-items', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+router.get('/books/items-search', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const out = []
+    for (let page = 1; page <= 5; page++) {
+      const r = await axios.get('https://www.zohoapis.com/books/v3/items', { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID, name_contains: String(req.query.q || ''), per_page: 200, page }, timeout: 20000 })
+      out.push(...(r.data?.items || []).map(i => ({ id: i.item_id, name: i.name, rate: i.rate, status: i.status, sku: i.sku })))
+      if (!r.data?.page_context?.has_more_page) break
+    }
+    res.json({ count: out.length, items: out })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
