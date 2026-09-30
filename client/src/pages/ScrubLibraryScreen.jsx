@@ -171,6 +171,11 @@ function RoTag({ s }) {
   return <span className="font-bold px-1.5 py-0.5 rounded whitespace-nowrap" title={`${s.stage === 'paid' ? 'Paid' : 'Invoiced'}${s.invoiceNumber ? ` · ${s.invoiceNumber}` : ''}`} style={{ backgroundColor: s.stage === 'paid' ? '#86efac' : '#bbf7d0', color: '#14532d' }}>$ {ro}</span>
 }
 
+// 📝 Quote already sent → blue border on the list (Mark 2026-09-30). Billed cars
+// don't need it (their RO is the green $ highlight).
+const QUOTE_BLUE = '#2563eb'
+const quoteSent = s => !['invoiced', 'paid'].includes(s.stage) && (s.stage === 'quoted' || !!s.quoteNumber)
+
 // One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
 function CalPills({ s }) {
   const names = (s.sensors || []).filter(x => x.r).map(x => x.n)
@@ -360,7 +365,8 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                   key={s.id}
                   onClick={() => openScrub(s)}
                   className="cursor-pointer hover:bg-gray-50"
-                  style={{ borderBottom: '1px solid #f0f0f0' }}
+                  title={quoteSent(s) ? `Quote sent${s.quoteNumber ? ` · ${s.quoteNumber}` : ''}` : undefined}
+                  style={{ borderBottom: '1px solid #f0f0f0', ...(quoteSent(s) ? { outline: `2px solid ${QUOTE_BLUE}`, outlineOffset: -2, backgroundColor: '#f5f9ff' } : {}) }}
                 >
                   <td className="py-2.5 pl-2">
                     <span
@@ -390,7 +396,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
       <div className="md:hidden grid grid-cols-1 gap-2">   {/* grid-cols-1 = minmax(0,1fr): one long card can't widen the page */}
         {rows.map(s => (
           <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full min-w-0 overflow-hidden"
-            style={{ backgroundColor: '#fff', border: `2px solid ${s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
+            style={{ backgroundColor: quoteSent(s) ? '#f5f9ff' : '#fff', border: `2px solid ${quoteSent(s) ? QUOTE_BLUE : s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-bold leading-snug" style={{ color: INK, overflowWrap: 'anywhere' }}>{s.vehicle || 'Vehicle not read'}</div>
