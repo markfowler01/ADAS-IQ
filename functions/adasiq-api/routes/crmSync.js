@@ -875,6 +875,49 @@ router.post('/books/fix-doc', express.json({ limit: '30mb' }), async (req, res) 
   } catch (e) { out.errors.push(e.response?.data?.message || e.message); res.status(500).json(out) }
 })
 
+// 🧹 Move misfiled files into a car's own new folder and point its job card
+// there (2026-09-30: the Audi's reports sat in the Ford's folder). Body:
+// { files: [fileId], folderName, jobId }
+router.post('/wd/rehome', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { createJobFolder, moveFile, createShareLink } = await import('../services/workdrive.js')
+    const b = req.body || {}
+    const c = await createJobFolder(String(b.folderName || 'Rehomed').slice(0, 80), token)
+    if (!c?.folderId) return res.status(500).json({ error: 'could not create the folder' })
+    const moved = []
+    for (const f of b.files || []) { try { await moveFile(f, c.folderId, token); moved.push(f) } catch (e) { moved.push(`${f}: ${e.message}`) } }
+    const link = await createShareLink(c.folderId, String(b.folderName || ''), token).catch(() => '')
+    const url = typeof link === 'string' ? link : (link?.shareLink || '')
+    let job = null
+    if (b.jobId && url) {
+      const { readJobsPublic, updateJobPublic } = await import('./jobs.js')
+      const cur = (await readJobsPublic(req)).find(j => String(j.id) === String(b.jobId))
+      if (cur) job = await updateJobPublic(req, cur.id, { ...cur, folder_url: url })
+    }
+    res.json({ folder: c.folderId, link: url, moved, job_updated: !!job })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// Send a Books invoice/estimate to the customer's billing contacts (same list Bill it uses).
+router.post('/books/resend', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const kind = req.body?.kind === 'estimates' ? 'estimates' : 'invoices', id = String(req.body?.id || '')
+    const API = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, params = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const d = (await axios.get(`${API}/${kind}/${id}`, { headers: H, params, timeout: 15000 })).data
+    const doc = d.invoice || d.estimate
+    const c = (await axios.get(`${API}/contacts/${doc.customer_id}`, { headers: H, params, timeout: 15000 })).data?.contact || {}
+    const emails = [...new Set([c.email, ...(c.contact_persons || []).filter(p => p.is_primary_contact || p.email).map(p => p.email)].filter(e => /.+@.+\..+/.test(e || '')).map(e => e.toLowerCase()))]
+    if (req.query.dry === '1') return res.json({ number: doc.invoice_number || doc.estimate_number, customer: doc.customer_name, would_send_to: emails, documents: (doc.documents || []).map(x => x.file_name) })
+    if (!emails.length) return res.status(400).json({ error: 'no email on the customer' })
+    const r = await axios.post(`${API}/${kind}/${id}/email`, { to_mail_ids: emails }, { headers: H, params, timeout: 30000, validateStatus: s => s < 500 })
+    res.json({ ok: r.data?.code === 0, message: r.data?.message, sent_to: emails })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
