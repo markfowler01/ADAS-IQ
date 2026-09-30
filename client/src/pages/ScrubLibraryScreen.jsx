@@ -174,7 +174,9 @@ function RoTag({ s }) {
 // 📝 Quote already sent → blue border on the list (Mark 2026-09-30). Billed cars
 // don't need it (their RO is the green $ highlight).
 const QUOTE_BLUE = '#2563eb'
-const quoteSent = s => !['invoiced', 'paid'].includes(s.stage) && (s.stage === 'quoted' || !!s.quoteNumber)
+// Only a quote actually SENT (stage 'quoted' — set by Send Quote). A job's Books
+// estimate number alone isn't a sent quote; once it's a job it shows "on the board".
+const quoteSent = s => s.stage === 'quoted'
 
 // One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
 function CalPills({ s }) {
