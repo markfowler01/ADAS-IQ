@@ -933,7 +933,7 @@ router.all('/books/collision-items', async (req, res) => {
     const { allItems } = await getItemCatalogForAudit()
     const names = new Set(allItems.map(i => String(i.name).trim().toLowerCase()))
     const base = allItems.filter(i => PROG_RE.test(String(i.name).trim()) && !/\(collision\)\s*$/i.test(i.name))
-    const plan = base.map(i => ({ from: i.name, rate: Number(i.rate), sku: i.sku || '', name: `${String(i.name).trim()} (Collision)`, new_rate: Math.round(Number(i.rate) * 1.3 * 100) / 100, exists: names.has(`${String(i.name).trim()} (collision)`) }))
+    const plan = base.map(i => ({ from: i.name, rate: Number(i.rate), sku: i.sku || '', name: `${String(i.name).trim()} (Collision)`, new_rate: Math.round(Number(i.rate) * 1.3 * 100) / 100, exists: names.has(`${String(i.name).trim()} (collision)`.toLowerCase()) }))
       .sort((a, b) => a.rate - b.rate || a.from.localeCompare(b.from))
     if (dry) return res.json({ dry: true, base: plan.length, to_create: plan.filter(p => !p.exists).length, plan })
     const created = [], errors = []
