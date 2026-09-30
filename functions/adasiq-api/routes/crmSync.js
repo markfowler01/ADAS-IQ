@@ -711,6 +711,30 @@ router.get('/books/attach-audit', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Read-only helpers for the attachment audit: a Books doc's VINs + documents, and one document's bytes.
+router.get('/books/doc-info', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const kind = req.query.kind === 'estimates' ? 'estimates' : 'invoices'
+    const r = await axios.get(`https://www.zohoapis.com/books/v3/${kind}/${req.query.id}`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000 })
+    const doc = r.data?.invoice || r.data?.estimate || {}
+    const txt = JSON.stringify(doc)
+    res.json({ number: doc.invoice_number || doc.estimate_number, customer: doc.customer_name, reference: doc.reference_number, vins: [...new Set(txt.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/g) || [])].filter(v => /\d/.test(v) && /[A-Z]/.test(v)), notes: String(doc.notes || '').slice(0, 300), lines: (doc.line_items || []).map(l => String(l.description || l.name || '').slice(0, 120)).slice(0, 6), documents: (doc.documents || []).map(d => ({ id: d.document_id, name: d.file_name })) })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+router.get('/books/doc-file', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const kind = req.query.kind === 'estimates' ? 'estimates' : 'invoices'
+    const r = await axios.get(`https://www.zohoapis.com/books/v3/${kind}/${req.query.id}/documents/${req.query.doc}`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, responseType: 'arraybuffer', timeout: 30000 })
+    res.set('Content-Type', 'application/pdf').send(Buffer.from(r.data))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
