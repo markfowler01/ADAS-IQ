@@ -166,7 +166,7 @@ export default function ReviewCompact(props) {
             <div><div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Goes to</div><div className="flex gap-1">{[['need_dispatch', '📋 Dispatch'], ['jaden', 'Jayden'], ['mark', 'Mark']].map(([id, l]) => <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy} className="flex-1 text-sm font-bold rounded-lg py-2" style={dispatch === id ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}</div></div>
             <div><div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Job date</div><input type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className="w-full text-sm rounded-lg px-2 py-2" style={{ ...inp, borderColor: jobDate === todayPT() ? '#e0dbd6' : '#e8710a' }} /></div>
           </div>
-          <div><div className="text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Salesperson</div><SalespersonPicker onSelect={setSelectedSalesperson} /></div>
+          <SalespersonPicker onSelect={setSelectedSalesperson} />
         </div>
       </Panel>
 
