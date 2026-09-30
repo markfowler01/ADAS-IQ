@@ -36,6 +36,17 @@ export function belongsToJob(job) {
   return name => { const n = N(name); return list.some(id => n.includes(id)) }
 }
 
+/** A file name that carries a 17-char VIN that isn't this job's = another car's report. */
+export function namesOtherCar(job) {
+  const mine = String(job.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  return name => {
+    const vins = (String(name || '').toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/g) || []).filter(v => /\d/.test(v) && /[A-Z]/.test(v))
+    if (!vins.length) return false
+    if (mine.length !== 17) return true      // job has no VIN: can't prove a VIN-named report is ours → don't send it
+    return !vins.includes(mine)
+  }
+}
+
 /** The calibration report PDFs in a job's folder (Kinetic first, newest first). */
 export async function findJobReportPdfs(req, job) {
   const { getAccessToken } = await import('./zoho.js')
@@ -44,10 +55,17 @@ export async function findJobReportPdfs(req, job) {
   const wdToken = await getAccessToken()
   const folderId = await resolveJobFolderPublic(req, job, wdToken, { noCreate: true, exact: true })
   if (!folderId) return []
-  const mine = belongsToJob(job)
+  // The folder is now resolved EXACTLY (its own link or a folder that starts
+  // with this RO), so its files are this car's — except any that name a
+  // different VIN, which are never attached. (Kinetic files are named by
+  // claim, which jobs don't store, so "must name this car" would drop them.)
+  const otherCar = namesOtherCar(job)
   const all = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '') && REPORT_RE.test(f.name || '') && !NOT_RE.test(f.name || '') && (f.size || 0) <= MAX_BYTES)
-  const files = all.filter(f => mine(f.name))
-  const foreign = all.filter(f => !mine(f.name))
+  const foreign = all.filter(f => otherCar(f.name))
+  // A folder holding another car's report is contaminated — then a Kinetic
+  // file named only by claim can't be trusted either; it must name this car.
+  const mine = belongsToJob(job)
+  const files = all.filter(f => !otherCar(f.name) && (!foreign.length || !/kinetic/i.test(f.name) || mine(f.name)))
   if (foreign.length) console.warn(`[report-attach] ${job.shop_name || job.id}: skipped ${foreign.length} report(s) that don't name this car: ${foreign.map(f => f.name).join(', ')}`)
   const rank = n => /absolute.?adas/i.test(n) ? 0 : /kinetic/i.test(n) ? 1 : 2   // 2 = post-scan / other scan report
   files.sort((a, b) => (rank(a.name) - rank(b.name)) || (Number(b.created || 0) - Number(a.created || 0)))
