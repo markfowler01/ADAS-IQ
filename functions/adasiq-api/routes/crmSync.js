@@ -675,6 +675,42 @@ router.get('/jobs/find', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🔎 Audit: Books invoices/estimates whose attached reports don't name that
+// car (2026-09-30: an Audi's reports went out on invoice ABS 20656). Read-only.
+// ?days=10&kind=invoices|estimates
+router.get('/books/attach-audit', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const t0 = Date.now()
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { belongsToJob } = await import('../services/reportAttach.js')
+    const kind = req.query.kind === 'estimates' ? 'estimates' : 'invoices'
+    const since = new Date(Date.now() - (Number(req.query.days) || 10) * 864e5).toISOString().slice(0, 10)
+    const API = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, org = process.env.ZOHO_ORGANIZATION_ID
+    const list = []
+    for (let page = 1; page <= 10; page++) {
+      const r = await axios.get(`${API}/${kind}`, { headers: H, params: { organization_id: org, date_start: since, per_page: 200, page }, timeout: 20000 })
+      const docs = r.data?.[kind] || []; list.push(...docs); if (!r.data?.page_context?.has_more_page) break
+    }
+    const bad = [], checked = []
+    for (const d of list) {
+      if (Date.now() - t0 > 25000) break
+      const id = d.invoice_id || d.estimate_id
+      const r = await axios.get(`${API}/${kind}/${id}`, { headers: H, params: { organization_id: org }, timeout: 15000 }).catch(() => null)
+      const doc = r?.data?.invoice || r?.data?.estimate || {}
+      const names = (doc.documents || []).map(x => x.file_name || x.document_name || '').filter(n => /\.pdf$/i.test(n))
+      if (!names.length) continue
+      const vinField = (doc.custom_fields || []).map(c => String(c.value || '')).find(v => /^[A-HJ-NPR-Z0-9]{17}$/i.test(v)) || ''
+      const mine = belongsToJob({ invoice_number: doc.invoice_number || doc.estimate_number, ro_number: doc.reference_number, vin: vinField })
+      const foreign = names.filter(n => /kinetic|absolute.?adas|post.?scan|report/i.test(n) && !mine(n))
+      checked.push(doc.invoice_number || doc.estimate_number)
+      if (foreign.length) bad.push({ number: doc.invoice_number || doc.estimate_number, id, customer: doc.customer_name, reference: doc.reference_number, status: doc.status, foreign, all: names })
+    }
+    res.json({ kind, since, total: list.length, with_reports: checked.length, suspect: bad.length, bad })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })

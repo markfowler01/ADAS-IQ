@@ -16,15 +16,39 @@ const MAX_BYTES = 9 * 1024 * 1024
 const REPORT_RE = /kinetic|absolute.?adas|calibration.?(id|identification)?.?report|adas.?report|cal.?report|post.?scan|postscan|scan.?report|health.?report|diagnostic.?report|\btwf\b/i
 const NOT_RE = /pre.?scan|invoice|estimate|supplement|photo|receipt|quote|pricing/i
 
+/**
+ * Does a report file name belong to THIS job? (2026-09-30: an Audi's reports
+ * went out on a Ford's invoice.) Our reports are named with RO + VIN, Kinetic's
+ * with the claim number — so the name must carry this job's RO, VIN (or its
+ * last 6+) or claim. A file that names nothing of this car is never attached.
+ */
+export function belongsToJob(job) {
+  const N = x => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  const ids = new Set()
+  for (const r of [job.invoice_number, job.quote_number, job.ro_number]) {
+    const n = N(r); if (n.length >= 4) ids.add(n)
+    const tail = String(r || '').toUpperCase().split(/[^A-Z0-9]+/).filter(t => t.length >= 4)   // "ABS 20656" → 20656
+    for (const t of tail) if (!/^(ABS|EABCR|PABR|GCGB|SB|T)$/.test(t)) ids.add(t.replace(/\d$/, m => m))
+  }
+  const vin = N(job.vin); if (vin.length === 17) { ids.add(vin); ids.add(vin.slice(-8)); ids.add(vin.slice(-6)) }
+  const claim = N(job.claim_number || job.claim); if (claim.length >= 5) ids.add(claim)
+  const list = [...ids].filter(x => x.length >= 4)
+  return name => { const n = N(name); return list.some(id => n.includes(id)) }
+}
+
 /** The calibration report PDFs in a job's folder (Kinetic first, newest first). */
 export async function findJobReportPdfs(req, job) {
   const { getAccessToken } = await import('./zoho.js')
   const { listChildren } = await import('./workdrive.js')
   const { resolveJobFolderPublic } = await import('../routes/jobs.js')
   const wdToken = await getAccessToken()
-  const folderId = await resolveJobFolderPublic(req, job, wdToken, { noCreate: true })
+  const folderId = await resolveJobFolderPublic(req, job, wdToken, { noCreate: true, exact: true })
   if (!folderId) return []
-  const files = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '') && REPORT_RE.test(f.name || '') && !NOT_RE.test(f.name || '') && (f.size || 0) <= MAX_BYTES)
+  const mine = belongsToJob(job)
+  const all = (await listChildren(folderId, wdToken, { folders: false })).filter(f => /\.pdf$/i.test(f.name || '') && REPORT_RE.test(f.name || '') && !NOT_RE.test(f.name || '') && (f.size || 0) <= MAX_BYTES)
+  const files = all.filter(f => mine(f.name))
+  const foreign = all.filter(f => !mine(f.name))
+  if (foreign.length) console.warn(`[report-attach] ${job.shop_name || job.id}: skipped ${foreign.length} report(s) that don't name this car: ${foreign.map(f => f.name).join(', ')}`)
   const rank = n => /absolute.?adas/i.test(n) ? 0 : /kinetic/i.test(n) ? 1 : 2   // 2 = post-scan / other scan report
   files.sort((a, b) => (rank(a.name) - rank(b.name)) || (Number(b.created || 0) - Number(a.created || 0)))
   // One of each kind, newest wins.

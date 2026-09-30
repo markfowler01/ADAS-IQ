@@ -1435,7 +1435,7 @@ router.post('/:id/photos', upload.array('photos', 20), async (req, res) => {
 // Resolve (or CREATE) the job's WorkDrive folder id. Tries every RO
 // form, then shop+vehicle, then makes the folder — an upload from the
 // field must never dead-end on "folder not found" (Mark 2026-08-30).
-async function resolveJobFolder(req, job, wdToken, { noCreate = false } = {}) {
+async function resolveJobFolder(req, job, wdToken, { noCreate = false, exact = false } = {}) {
   if (job.folder_url) {
     const m = job.folder_url.match(/workdrive\.zoho\.com\/(?:folder|home[^ ]*?\/folders)\/([a-z0-9]+)/i)
     if (m) return m[1]
@@ -1449,8 +1449,12 @@ async function resolveJobFolder(req, job, wdToken, { noCreate = false } = {}) {
     })
   for (const ro of candidates) {
     const found = await findFolderByRO(ro, wdToken).catch(() => null)
-    if (found?.folderId) return found.folderId
+    // exact = attaching paperwork to an invoice (2026-09-30: a 2-digit-off
+    // "fuzzy" RO match put an Audi's reports on a Ford's invoice). Only a
+    // folder that really starts with this RO counts; no shop/vehicle guess.
+    if (found?.folderId && (!exact || !found.fuzzyMatch)) return found.folderId
   }
+  if (exact) return null
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const byShop = await findFolderByShopVehicle(job.shop_name, vehicle, wdToken).catch(() => null)
   if (byShop?.folderId) return byShop.folderId
