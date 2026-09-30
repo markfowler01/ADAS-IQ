@@ -117,8 +117,18 @@ router.post('/walks', express.json(), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.post('/walks/:wid/mark', express.json(), async (req, res) => {
-  try { const { markWalkCar } = await import('../services/scrubStore.js'); res.json(await markWalkCar(req, req.params.wid, { scrubId: String(req.body?.scrubId || ''), status: String(req.body?.status || ''), note: req.body?.note || '', label: req.body?.label || '', by: walker(req) })) }
+  try { const { markWalkCar } = await import('../services/scrubStore.js'); res.json(await markWalkCar(req, req.params.wid, { scrubId: String(req.body?.scrubId || ''), status: String(req.body?.status || ''), note: req.body?.note || '', label: req.body?.label || '', stage: req.body?.stage || '', due: req.body?.due || '', shop: req.body?.shop || '', siblings: Array.isArray(req.body?.siblings) ? req.body.siblings : [], techKey: req.user?.techName || '', by: walker(req) })) }
   catch (e) { res.status(400).json({ error: e.message }) }
+})
+// 🚗 Live Day follow-up on a car: Ready / Still not ready (new day) / Gone.
+router.post('/seen', express.json(), async (req, res) => {
+  try {
+    const { setSeen } = await import('../services/scrubStore.js')
+    const ids = (Array.isArray(req.body?.scrubIds) ? req.body.scrubIds : []).map(String).filter(x => /^\d+$/.test(x)).slice(0, 10)
+    const s = String(req.body?.status || ''); if (!['here', 'not_ready', 'gone'].includes(s) || !ids.length) return res.status(400).json({ error: 'status + scrubIds required' })
+    for (const id of ids) await setSeen(req, id, { s, by: walker(req), st: req.body?.stage || '', d: req.body?.due || '', n: req.body?.note || '' })
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.post('/walks/:wid/found', express.json(), async (req, res) => {
   try { const { addFoundCar } = await import('../services/scrubStore.js'); res.json(await addFoundCar(req, req.params.wid, { ...req.body, by: walker(req) })) }

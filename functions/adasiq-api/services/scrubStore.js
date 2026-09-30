@@ -636,15 +636,18 @@ const walkOut = r => r && ({ id: String(r.ROWID), shop: r.walk_shop || '', by: r
 export async function getWalk(req, id) { return walkOut(await getWalkRow(req, id)) }
 
 /** Mark one car on a walk. Replaces that car's earlier mark on the same walk. */
-export async function markWalkCar(req, walkId, { scrubId, status, note = '', by = '', label = '' }) {
+export async function markWalkCar(req, walkId, { scrubId, status, note = '', by = '', label = '', stage = '', due = '', shop = '', siblings = [], techKey = '' }) {
   if (!WALK_STATUSES[status]) throw new Error('status must be here, not_ready, gone or found')
   const w = await getWalkRow(req, walkId); if (!w) throw new Error('walk not found')
   const items = walkOut(w).items.filter(i => String(i.scrubId) !== String(scrubId))
   const at = nowIso()
-  items.push({ scrubId: String(scrubId), status, note: str(note, 200), label: str(label, 120), at })
+  items.push({ scrubId: String(scrubId), status, note: str(note, 200), label: str(label, 120), at, ...(stage ? { stage: str(stage, 40) } : {}), ...(due ? { due: str(due, 10) } : {}) })
   await ds(req).datastore().table(WALKS).updateRow({ ROWID: String(w.ROWID), walk_items: JSON.stringify(items).slice(0, CHUNK) })
-  const seen = JSON.stringify({ s: status, at, by: str(by, 40), w: String(w.ROWID), n: str(note, 80) }).slice(0, 255)
-  await ds(req).datastore().table(TABLE).updateRow({ ROWID: String(scrubId), scrub_seen: seen })
+  await setSeen(req, scrubId, { s: status, at, by, w: String(w.ROWID), n: note, st: stage, d: due })
+  // ⏳ Not ready + a check-back day → a To-Do on the walker's Live Day card, hidden until that day.
+  if (status === 'not_ready' && due && (techKey || by)) {
+    try { const { addTechTodo } = await import('../routes/techTodos.js'); await addTechTodo(req, techKey || by, { text: `🚗 Check on ${label || 'car'}${shop ? ` · ${shop}` : ''}${stage ? ` (was: ${stage})` : ''}`, due, kind: 'walk_check', scrubIds: [String(scrubId), ...siblings.map(String)], shop, stage, car: label }) } catch { /* fine */ }
+  }
   return { ok: true, items }
 }
 
@@ -673,4 +676,10 @@ export async function recentWalks(req, shop = '', limit = 10) {
   const where = shop ? ` WHERE walk_shop = '${String(shop).replace(/'/g, "''")}'` : ''
   const rows = await ds(req).zcql().executeZCQLQuery(`SELECT * FROM ${WALKS}${where} ORDER BY CREATEDTIME DESC LIMIT ${Math.min(Number(limit) || 10, 50)}`)
   return rows.map(r => walkOut(r[WALKS] || r))
+}
+
+/** The car's latest seen state (walks and Live Day follow-ups). */
+export async function setSeen(req, scrubId, { s, at = nowIso(), by = '', w = '', n = '', st = '', d = '' }) {
+  const seen = JSON.stringify({ s, at, by: str(by, 30), ...(w ? { w } : {}), ...(n ? { n: str(n, 60) } : {}), ...(st ? { st: str(st, 30) } : {}), ...(d ? { d: str(d, 10) } : {}) }).slice(0, 255)
+  await ds(req).datastore().table(TABLE).updateRow({ ROWID: String(scrubId), scrub_seen: seen })
 }

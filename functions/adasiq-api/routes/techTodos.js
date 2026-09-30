@@ -58,9 +58,13 @@ router.post('/', async (req, res) => {
         text:       String(t?.text || '').trim().slice(0, 300),
         done:       !!t?.done,
         created_at: String(t?.created_at || new Date().toISOString()),
+        // 🚗 Lot-walk follow-ups (2026-09-30): hidden until `due` (YYYY-MM-DD, Pacific),
+        // then a "check on this car" task with Ready / Still not ready / Gone.
+        ...(t?.due ? { due: String(t.due).slice(0, 10) } : {}),
+        ...(t?.kind ? { kind: String(t.kind).slice(0, 20), scrubIds: (Array.isArray(t.scrubIds) ? t.scrubIds : []).map(String).slice(0, 10), shop: String(t.shop || '').slice(0, 120), stage: String(t.stage || '').slice(0, 40), car: String(t.car || '').slice(0, 160) } : {}),
       }))
       .filter(t => t.text)
-      .slice(0, 50)
+      .slice(0, 80)
 
     const app = catalyst.initialize(req, { type: 'advancedio' })
     const key = todoKey(tech)
@@ -83,3 +87,25 @@ router.post('/', async (req, res) => {
 })
 
 export { router as techTodosRouter }
+
+/**
+ * Server-side add (lot walks). One open follow-up per car per tech: a newer one
+ * replaces the older. Never throws.
+ */
+export async function addTechTodo(req, tech, item) {
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const key = todoKey(tech)
+    const rows = await app.zcql().executeZCQLQuery(`SELECT ROWID, config_value FROM ${TABLE} WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`)
+    const ex = rows?.[0]?.[TABLE] || null
+    let list = []; try { list = JSON.parse(ex?.config_value || '[]') } catch { list = [] }
+    const ids = new Set((item.scrubIds || []).map(String))
+    list = list.filter(t => !(t.kind === item.kind && !t.done && (t.scrubIds || []).some(x => ids.has(String(x)))))
+    list.push({ id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, done: false, created_at: new Date().toISOString(), ...item })
+    list = list.slice(-80)
+    const table = app.datastore().table(TABLE)
+    if (ex?.ROWID) await table.updateRow({ ROWID: String(ex.ROWID), config_key: key, config_value: JSON.stringify(list) })
+    else await table.insertRow({ config_key: key, config_value: JSON.stringify(list) })
+    return true
+  } catch (e) { console.warn('[tech-todos] add failed:', e.message); return false }
+}
