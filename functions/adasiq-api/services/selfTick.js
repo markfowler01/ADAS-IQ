@@ -40,6 +40,8 @@ const TICKS = {
   // position statements and adds the ones that check out (Mark 2026-09-28).
   source_finder: { minutes: 7 * 24 * 60, path: '/api/crm-sync-cron/position-statements/sources/discover', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   // 🔒 Wrong-car report check on recent Books invoices/estimates (2026-09-30).
+  // 🧱 Scrub piles: start a parallel worker per ready estimate (2026-09-30).
+  scrub_dispatch: { minutes: 2, path: '/api/crm-sync-cron/scrub-dispatch', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   // 🔄 Scrub Library stages from Books — quotes sent (blue) + invoiced (green $), daily.
   scrub_stages: { minutes: 24 * 60, path: '/api/crm-sync-cron/scrubs/mark-quoted', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   scrub_invoiced: { minutes: 24 * 60, path: '/api/crm-sync-cron/scrubs/mark-invoiced', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },

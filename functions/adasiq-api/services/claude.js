@@ -1,8 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk'
 
 // Always read key fresh from env so dotenv override is respected
+import { tracked } from './spend.js'
 function getClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  return tracked(new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }))   // 💵 cost counted (spend.js)
 }
 
 const SYSTEM_PROMPT = `You are ADAS IQ. You read Kinetic calibration identification report PDFs and extract all calibration systems listed -- both required and not required.
@@ -239,7 +240,8 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '' } = {}) {
     model: 'claude-opus-4-7',  // best model + adaptive thinking: this is a judgment task (Kinetic benchmark 2026-09-24)
     max_tokens: 16000,
     thinking: { type: 'adaptive' },
-    system: CCC_SYSTEM_PROMPT,
+    // ⚡ Cached: the rulebook is the same every scrub — faster start, ~10% of the input price on a hit (2026-09-30).
+    system: [{ type: 'text', text: CCC_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
     messages: [{
       role: 'user',
       content: [

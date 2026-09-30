@@ -180,7 +180,16 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
     oemRefs = await oemReferenceBlock(req, {})
     refsFor = make => oemReferenceBlock(req, { make })   // called once the make is known
   } catch { oemRefs = '' }
+  // ⚡ The guard's line-by-line read doesn't depend on the main read — start it
+  // now so both run at once (was one after the other). Skipped for Kinetic reports.
+  const t0 = Date.now()
+  let hitsPromise = null
+  if (!/kinetic|report/i.test(pdfType || '')) {
+    const { triggerLines } = await import('../services/scrubGuard.js')
+    hitsPromise = triggerLines(buffer.toString('base64')); hitsPromise.catch(() => {})
+  }
   const data = await extractFromPdf(buffer, { oemRefs, refsFor, pdfType, make })
+  console.log(`[scrub ⏱] main read ${Math.round((Date.now() - t0) / 1000)}s`)
 
   // 🛡️ Hard rules in code under the judgment call (benchmark night 2026-09-28):
   // a replaced windshield means the camera, a front bumper off a Mercedes
@@ -188,7 +197,7 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   // does not. Only on estimates (never on a Kinetic report read), and it can
   // only add or flip to required — never remove.
   if (String(data?._pdfType || '').toUpperCase() === 'CCC' && !data._demo) {
-    try { const { guardScrub } = await import('../services/scrubGuard.js'); await guardScrub(data, buffer.toString('base64')) }
+    try { const { guardScrub } = await import('../services/scrubGuard.js'); await guardScrub(data, buffer.toString('base64'), { hitsPromise }); console.log(`[scrub ⏱] + guard ${Math.round((Date.now() - t0) / 1000)}s`) }
     catch (e) { console.warn('[extract] guard skipped:', e.message) }
   }
 
@@ -270,6 +279,8 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
     data._scrubId = (await saveScrub(req, { jobId, data, source, by, file: filed })).id || ''
     data._estimateFileId = filed.id || ''
   }
+  console.log(`[scrub ⏱] total ${Math.round((Date.now() - t0) / 1000)}s`)
+  try { const { flush } = await import('../services/spend.js'); await flush(req) } catch { /* never block */ }
   return data
 }
 

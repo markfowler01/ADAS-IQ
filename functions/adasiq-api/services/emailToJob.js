@@ -305,7 +305,21 @@ export async function sweepEmailToJob(req, { dry = false, maxPerRun = 4, inboxOn
 
 // ── Stage B: the scrub queue ─────────────────────────────────────────────────
 const QKEY = 'email2job_scrub_queue'
-async function queueScrub(req, item) { const { row, value } = await cfgRead(req, QKEY, []); const q = (Array.isArray(value) ? value : []).filter(x => x.job !== item.job); q.push({ ...item, at: new Date().toISOString(), tries: 0 }); await cfgWrite(req, QKEY, row, q.slice(-40)) }
+// 📥 Now a table row per estimate (services/scrubQueue.js) — the old AppConfig
+// list was capped at 40 and silently dropped the oldest (2026-09-30).
+async function queueScrub(req, item) { const { enqueue } = await import('./scrubQueue.js'); return enqueue(req, { job: item.job, file: item.file, name: item.name, source: item.source || 'email', by: item.by || '', priority: item.priority || 1 }) }
+// One-time move of anything still sitting in the old list.
+async function migrateLegacyQueue(req) {
+  try {
+    const { row, value } = await cfgRead(req, QKEY, [])
+    const old = Array.isArray(value) ? value : []
+    if (!row || !old.length) return 0
+    for (const it of old) await queueScrub(req, it)
+    await cfgWrite(req, QKEY, row, [])
+    console.log(`[scrub queue] moved ${old.length} item(s) from the old AppConfig list`)
+    return old.length
+  } catch (e) { console.warn('[scrub queue] legacy move failed:', e.message); return 0 }
+}
 // Put a card back on the scrub queue from the newest PDF in its WorkDrive folder.
 export async function requeueScrub(req, jobId, { source = 'requeue', by = '' } = {}) {
   const jobsMod = await import('../routes/jobs.js')
@@ -333,7 +347,7 @@ export async function unscrubCard(req, jobId) {
   try { const { row } = await cfgRead(req, `scrub_${job.id}`, null); if (row) await catalyst.initialize(req, { type: 'advancedio' }).datastore().table('AppConfig').deleteRow(row) } catch { /* fine */ }
   return { job: upd.id, vehicle: upd.vehicle, notes: upd.notes.slice(0, 200) }
 }
-export async function scrubQueue(req) { const { value } = await cfgRead(req, QKEY, []); return Array.isArray(value) ? value : [] }
+export async function scrubQueue(req) { const { queueStats } = await import('./scrubQueue.js'); return queueStats(req) }
 
 // Trim the extraction so it fits an AppConfig row (~10k chars).
 function compactScrub(data) {
@@ -344,18 +358,20 @@ function compactScrub(data) {
   return s.slice(0, 9800)
 }
 
-export async function runScrubQueue(req, { max = 1 } = {}) {
+export async function runScrubQueue(req, { max = 1, worker = '' } = {}) {
   const out = { ran: 0, ok: 0, failed: 0, items: [] }
-  const { row, value } = await cfgRead(req, QKEY, []); let q = Array.isArray(value) ? value : []
+  const SQ = await import('./scrubQueue.js')
+  await migrateLegacyQueue(req)
   const jobsMod = await import('../routes/jobs.js')
   const { createNotification } = await import('../routes/notifications.js')
-  for (const item of q.slice()) {
-    if (out.ran >= max) break
+  const me = worker || `w${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  while (out.ran < max) {
+    const item = await SQ.claimNext(req, me)
+    if (!item) break
     out.ran++
-    item.tries = (item.tries || 0) + 1
-    await cfgWrite(req, QKEY, row, q)   // stamp the try first so a gateway kill can't loop forever
+    const t0 = Date.now()
     const job = (await jobsMod.readJobsPublic(req)).find(j => String(j.id) === item.job)
-    if (!job) { q = q.filter(x => x !== item); out.items.push({ job: item.job, result: 'card gone' }); continue }
+    if (!job) { await SQ.markDone(req, item, 0); out.items.push({ job: item.job, result: 'card gone' }); continue }
     try {
       const { getAccessToken } = await import('./zoho.js'); const { downloadFile } = await import('./workdrive.js')
       let buffer; try { ({ buffer } = await downloadFile(item.file, await getAccessToken())) } catch (e) { throw new Error(`download: ${e.message}`) }
@@ -376,25 +392,27 @@ export async function runScrubQueue(req, { max = 1 } = {}) {
       patch.notes = `📎 CCC estimate scrubbed · ${names.length} calibration${names.length === 1 ? '' : 's'}${names.length ? ': ' + names.join(', ') : ' found'}${data.claim ? ` · claim ${data.claim}` : ''}\n${String(job.notes || '').replace(/ · scrubbing…/, '')}`.slice(0, 9000)
       const upd = await jobsMod.updateJobPublic(req, job.id, patch)
       const { row: srow } = await cfgRead(req, `scrub_${job.id}`, null); await cfgWrite(req, `scrub_${job.id}`, srow, compactScrub({ ...data, _job: job.id, _file: item.file, _at: new Date().toISOString() }))
-      q = q.filter(x => x !== item); out.ok++
-      out.items.push({ job: job.id, result: 'ok', calibrations: names })
+      await SQ.markDone(req, item, Date.now() - t0); out.ok++
+      out.items.push({ job: job.id, result: 'ok', calibrations: names, seconds: Math.round((Date.now() - t0) / 1000) })
       const isQuote = ['quote', 'equote'].includes(String(upd.request_type || '').toLowerCase())
       await postToCliqChannel(DISPATCH_CHANNEL, `📎 *Estimate scrubbed* · ${upd.shop_name}${upd.vehicle ? ` · ${upd.vehicle}` : ''}${upd.quote_number ? ` · RO ${upd.quote_number}` : ''}${upd.insurer ? ` · 🏦 ${upd.insurer}` : ''}\n${names.length ? `🔧 ${names.join(', ')}` : '🔧 No calibrations found on this estimate'}\n${isQuote ? 'On the Quotes Requested column — open the card → 📎 Open scrub to price it.' : 'On Job Requested — open the card → 📎 Open scrub to build the job.'}`).catch(() => {})
       await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `📎 Scrubbed: ${upd.shop_name} · ${names.length} calibration${names.length === 1 ? '' : 's'}`, body: `${upd.vehicle || 'Vehicle ?'}${upd.quote_number ? ` · RO ${upd.quote_number}` : ''}${names.length ? ` · ${names.join(', ')}` : ''}`.slice(0, 300), jobId: upd.id, job: upd, skipCliq: true, skipTechChannel: true }).catch(() => {})
     } catch (e) {
-      console.warn(`[email intake] scrub failed for ${item.job} (try ${item.tries}):`, e.message)
-      out.items.push({ job: item.job, result: `failed: ${e.message}`, tries: item.tries })
-      if (item.tries >= 2) {
-        q = q.filter(x => x !== item); out.failed++
+      const fate = await SQ.markFailed(req, item, e)
+      console.warn(`[scrub queue] ${item.job} failed (${fate}, try ${item.tries + 1}):`, e.message)
+      out.items.push({ job: item.job, result: `failed: ${e.message}`, fate })
+      if (fate === 'dead') {
+        out.failed++
+        try { await postToCliqChannel(DISPATCH_CHANNEL, `🧑‍🔧 *Scrub needs a human* · ${job.shop_name || ''}${job.vehicle ? ` · ${job.vehicle}` : ''} — tried ${MAX_TRIES_LABEL}. The estimate is in the job folder; open it by hand. (${String(e.message).slice(0, 120)})`) } catch { /* fine */ }
         try { await jobsMod.updateJobPublic(req, job.id, { ...job, notes: `📎 CCC estimate attached — scrub failed, open the PDF in the folder.\n${String(job.notes || '').replace(/ · scrubbing…/, '')}`.slice(0, 9000) }) } catch { /* fine */ }
         await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'job_requested', title: `📎 Scrub failed: ${job.shop_name}`, body: `${job.vehicle || 'Vehicle ?'} — the estimate is in the job folder, open it by hand.`, jobId: job.id, job, skipCliq: true, skipTechChannel: true }).catch(() => {})
       }
     }
   }
-  await cfgWrite(req, QKEY, row, q)
-  out.left = q.length
+  try { out.queue = await SQ.queueStats(req) } catch { /* fine */ }
   return out
 }
+const MAX_TRIES_LABEL = '3 times'
 
 // Zoho Mail incoming webhook → sweep now (one inbox when the payload names it).
 export async function handleZohoMailWebhook(req, payload) {

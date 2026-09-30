@@ -15,7 +15,8 @@
 // makes the report safer, never thinner.
 import Anthropic from '@anthropic-ai/sdk'
 
-const client = () => new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+import { tracked } from './spend.js'
+const client = () => tracked(new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }))
 
 // Makes whose statements require radar aiming after ANY front bumper removal
 // AND whose front radar is standard on 2018+. BMW/MINI are deliberately not
@@ -89,11 +90,11 @@ function require(cals, re, label, calType, trigger, lineRefs, why, out, mayAdd =
  * Enforce the hard rules on a finished scrub. Mutates data.calibrations.
  * Returns what it changed so the report can say "guard: …".
  */
-export async function guardScrub(data, base64Pdf) {
+export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
   const out = { flipped: [], added: [], hits: {} }
   if (!data || !Array.isArray(data.calibrations)) return out
   let hits = {}
-  try { hits = await triggerLines(base64Pdf) } catch (e) { out.error = e.message; return out }
+  try { hits = await (hitsPromise || triggerLines(base64Pdf)) } catch (e) { out.error = e.message; return out }   // ⚡ usually already running beside the main read
   out.hits = hits
   const cals = data.calibrations
   const make = String(data.make || ''), year = Number(data.year || 0)

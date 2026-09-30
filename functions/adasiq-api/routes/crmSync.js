@@ -1093,6 +1093,37 @@ router.all('/scrubs/sync-stages', async (req, res) => {
   res.json(out)
 })
 
+// 🧱 Scrub piles (Mark 2026-09-30: no maximum). The dispatcher reclaims dead
+// workers, counts what's ready, and starts one worker per ready estimate, in
+// parallel. Each worker claims one row, scrubs it, marks it done. Workers keep
+// running after the gateway's 30s cut (Catalyst finishes the invocation), so
+// the dispatcher only waits long enough for each call to be sent.
+router.all('/scrub-dispatch', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const SQ = await import('../services/scrubQueue.js')
+    const reclaimed = await SQ.reclaimStale(req)
+    const stats = await SQ.queueStats(req)
+    const n = stats.ready
+    const base = `${req.protocol}://${req.get('host')}${req.baseUrl}`
+    const axios = (await import('axios')).default
+    const fire = i => axios.post(`${base}/scrub-worker?w=d${Date.now().toString(36)}${i}`, {}, { headers: { 'x-cron-secret': req.headers['x-cron-secret'] }, timeout: 2500 }).catch(() => null)
+    await Promise.all(Array.from({ length: n }, (_, i) => fire(i)))
+    if (stats.dead) { try { const { maybeAlertDead } = await import('../services/scrubQueue.js'); maybeAlertDead && await maybeAlertDead(req, stats.dead) } catch {} }
+    res.json({ started: n, reclaimed, ...stats })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.all('/scrub-worker', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { runScrubQueue } = await import('../services/emailToJob.js'); res.json(await runScrubQueue(req, { max: 1, worker: String(req.query.w || '') })) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/scrub-queue', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const SQ = await import('../services/scrubQueue.js'); res.json({ stats: await SQ.queueStats(req), needs_a_human: await SQ.listDead(req, 20) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
