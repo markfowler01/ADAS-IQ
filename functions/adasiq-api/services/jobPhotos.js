@@ -49,11 +49,15 @@ export function milesOf(v) {
   return Number.isFinite(n) ? n : null
 }
 
-export function photoProgress(job) {
+// Repair-shop and retail jobs (Mark 2026-09-30): no test drive, so no cluster
+// shots and no mileage rule — { noCluster: true } drops both odometer slots.
+export const CLUSTER_KEYS = ['odo_before', 'odo_after']
+export function photoProgress(job, { noCluster = false } = {}) {
   const slots = parseSlots(job?.photo_slots)
   const missing = []
   let filled = 0
-  for (const s of SLOTS) {
+  const list = noCluster ? SLOTS.filter(s => !CLUSTER_KEYS.includes(s.key)) : SLOTS
+  for (const s of list) {
     const ok = s.multi ? (slots.setup || []).length > 0 : !!slots[s.key]?.fileId
     if (ok) filled++
     else missing.push(s.key)
@@ -61,11 +65,11 @@ export function photoProgress(job) {
   const before = milesOf(job?.odo_before)
   const after = milesOf(job?.odo_after)
   const delta = before != null && after != null ? Math.round((after - before) * 10) / 10 : null
-  const milesOk = delta != null && delta > MIN_TEST_DRIVE_MILES
+  const milesOk = noCluster || (delta != null && delta > MIN_TEST_DRIVE_MILES)
   const problems = [...missing]
   if (!missing.includes('odo_before') && !missing.includes('odo_after') && !milesOk) problems.push('miles')
   return {
-    filled, total: SLOTS.length, missing, setupCount: (slots.setup || []).length,
+    filled, total: list.length, no_cluster: noCluster, missing, setupCount: (slots.setup || []).length,
     miles: { before, after, delta, ok: milesOk, min: MIN_TEST_DRIVE_MILES },
     complete: missing.length === 0 && milesOk,
     problems,

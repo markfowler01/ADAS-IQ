@@ -649,7 +649,7 @@ router.put('/:id', async (req, res) => {
       let cur = null
       try { cur = rowToJob(await getTable(req).getRow(req.params.id)) } catch {}
       const merged = { ...(cur || {}), ...req.body }
-      const prog = photoProgress(merged)
+      const prog = photoProgress(merged, { noCluster: !(await safetyGateApplies(req, merged)) })
       // Mark 2026-09-17: "we need to get the car invoiced so we can get a
       // check" — photos NEVER block the handoff to Kat. An incomplete set
       // becomes a debt the app chases (red card + 6pm owed list) instead
@@ -769,7 +769,7 @@ router.patch('/:id', async (req, res) => {
     if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') {
       const { photoProgress, gateApplies, describeMissing } = await import('../services/jobPhotos.js')
       if (gateApplies(merged)) {
-        const prog = photoProgress(merged)
+        const prog = photoProgress(merged, { noCluster: !(await safetyGateApplies(req, merged)) })
         if (!prog.complete) await markPending(merged, prog, req)   // debt, not a block (2026-09-17)
       }
       if (await tireGate(req, res, merged)) return
@@ -1535,8 +1535,9 @@ export async function reconcilePhotosFromFolder(req, job, { notify = true } = {}
   const unlabeled = files.filter(f => !claimed.has(String(f.id)) && !known.has(String(f.id)))
   slots._folder_id = folderId
   const probe = { ...job, photo_slots: JSON.stringify(slots) }
-  const prog = photoProgress(probe)
-  const fullSet = prog.missing.length === 0 || files.length >= SLOTS.length
+  const noCluster = !(await safetyGateApplies(req, job))
+  const prog = photoProgress(probe, { noCluster })
+  const fullSet = prog.missing.length === 0 || files.length >= (noCluster ? SLOTS.length - 2 : SLOTS.length)
   let cleared = false
   if (slots._pending && fullSet) {
     cleared = true
@@ -1772,14 +1773,15 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
     // eight slots are filled, or a short test drive would keep the card on
     // the owed list forever (Mark 2026-09-18).
     const after = parsePhotoSlots(updated.photo_slots)
-    if (after._pending && photoProgress(updated).missing.length === 0) {
+    const noCluster = !(await safetyGateApplies(req, updated))
+    if (after._pending && photoProgress(updated, { noCluster }).missing.length === 0) {
       const by = after._pending.by; delete after._pending
       updated = await updateJob(req, job.id, { ...updated, photo_slots: JSON.stringify(after) })
       // Awaited: Catalyst freezes the function once the response goes out.
       await postToCliqChannel(DISPATCH_CHANNEL, `✅ *All photos in* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — the set from ${by}'s phone finished uploading. Good to invoice.`).catch(e => console.log('[photo-slot] cliq failed:', e.message))
     }
     console.log(`[photo-slot] job ${job.id} ← ${name}${miles != null ? ` (${miles} mi)` : ''}${ai ? ` [ai ${ai.slot} ${ai.confidence}]` : ''}`)
-    res.json({ ok: true, slot: slotKey, miles, vin: vinInfo, name, fileId, moved_to: movedTo || undefined, job: updated, progress: photoProgress(updated) })
+    res.json({ ok: true, slot: slotKey, miles, vin: vinInfo, name, fileId, moved_to: movedTo || undefined, job: updated, progress: photoProgress(updated, { noCluster }) })
   } catch (err) {
     console.error('[photo-slot]', err.message)
     res.status(500).json({ error: err.message })
@@ -1922,7 +1924,7 @@ router.delete('/:id/photo-slot/:slot', async (req, res) => {
       } catch (err) { console.log(`[photo-slot] trash failed for ${e.fileId}:`, err.message) }
     }
     console.log(`[photo-slot] job ${job.id} − ${slotKey}${wantId ? ' ' + wantId : ''} (${removed.length} file${removed.length === 1 ? '' : 's'})`)
-    res.json({ ok: true, slot: slotKey, removed: removed.length, job: updated, progress: photoProgress(updated) })
+    res.json({ ok: true, slot: slotKey, removed: removed.length, job: updated, progress: photoProgress(updated, { noCluster: !(await safetyGateApplies(req, updated)) }) })
   } catch (err) {
     console.error('[photo-slot delete]', err.message)
     res.status(500).json({ error: err.message })
@@ -1951,7 +1953,7 @@ router.get('/:id/photo-progress', async (req, res) => {
     const row = await getTable(req).getRow(req.params.id)
     if (!row) return res.status(404).json({ error: 'Job not found' })
     const job = rowToJob(row)
-    res.json({ ok: true, progress: photoProgress(job), gate: gateApplies(job), slots: SLOTS, photo_slots: job.photo_slots, odo_before: job.odo_before, odo_after: job.odo_after })
+    res.json({ ok: true, progress: photoProgress(job, { noCluster: !(await safetyGateApplies(req, job)) }), gate: gateApplies(job), slots: SLOTS, photo_slots: job.photo_slots, odo_before: job.odo_before, odo_after: job.odo_after })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 

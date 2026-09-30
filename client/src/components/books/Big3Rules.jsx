@@ -137,6 +137,8 @@ export function useBig3Map() {
   return map
 }
 export function invalidateBig3Map() { _map = null; _mapAt = 0 }
+// Sync read of the cached map for plain functions (no hook) — empty until a hook has loaded it.
+export const big3MapNow = () => _map || {}
 
 // "🧾 We bill: PCSI · Post-Scan" on a job card (visible-badge rule).
 export function Big3Badge({ shopName, size = 'xs' }) {

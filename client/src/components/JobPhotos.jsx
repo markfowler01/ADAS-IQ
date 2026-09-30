@@ -9,6 +9,7 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
+import { useBig3Map, big3MapNow, shopKeyOf } from './books/Big3Rules.jsx'
 
 const ORANGE = '#CD4419'
 const GREEN = '#15803d'
@@ -39,20 +40,32 @@ export function parseSlots(raw) {
 }
 const milesOf = v => { const n = parseFloat(String(v ?? '').replace(/[^\d.]/g, '')); return Number.isFinite(n) ? n : null }
 
-export function photoProgress(job) {
+// Repair-shop and retail jobs (Mark 2026-09-30): no test drive → no cluster
+// shots, no mileage rule, no tire pressures. Same rule as the server's
+// safetyGateApplies / ReadyChecks.
+const CLUSTER_KEYS = ['odo_before', 'odo_after']
+export function noClusterFor(job, map = big3MapNow()) {
+  if (!job) return false
+  if (job.customer?.kind === 'retail') return true
+  const t = map?.[shopKeyOf(job.shop_name)]?.billing?.customer_type
+  return t === 'repair_shop' || t === 'retail'
+}
+export const slotsFor = noCluster => (noCluster ? SLOTS.filter(s => !CLUSTER_KEYS.includes(s.key)) : SLOTS)
+export function photoProgress(job, { noCluster = noClusterFor(job) } = {}) {
   const slots = parseSlots(job?.photo_slots)
   const missing = []
   let filled = 0
-  for (const s of SLOTS) {
+  const list = slotsFor(noCluster)
+  for (const s of list) {
     const ok = s.multi ? (slots.setup || []).length > 0 : !!slots[s.key]?.fileId
     if (ok) filled++; else missing.push(s.key)
   }
   const before = milesOf(job?.odo_before), after = milesOf(job?.odo_after)
   const delta = before != null && after != null ? Math.round((after - before) * 10) / 10 : null
-  const milesOk = delta != null && delta > MIN_MILES
+  const milesOk = noCluster || (delta != null && delta > MIN_MILES)
   const problems = [...missing]
   if (!missing.includes('odo_before') && !missing.includes('odo_after') && !milesOk) problems.push('miles')
-  return { filled, total: SLOTS.length, missing, setupCount: (slots.setup || []).length, miles: { before, after, delta, ok: milesOk }, complete: missing.length === 0 && milesOk, problems, slots }
+  return { filled, total: list.length, noCluster, missing, setupCount: (slots.setup || []).length, miles: { before, after, delta, ok: milesOk }, complete: missing.length === 0 && milesOk, problems, slots }
 }
 
 // Every job, every button (Mark 2026-09-10). Kept as a function so the
@@ -450,7 +463,10 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
     claim(); listeners.add(claim)
     return () => listeners.delete(claim)
   }, [job.id])
-  const prog = photoProgress(job)
+  const big3Map = useBig3Map()
+  const noCluster = noClusterFor(job, big3Map)
+  const SHOW = slotsFor(noCluster)
+  const prog = photoProgress(job, { noCluster })
   const isOwner = isOwnerUser(user)
 
   // Fold finished uploads back into the job so the checklist ticks live.
@@ -581,7 +597,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
     } catch { /* keep the edit box, tech can retry */ }
   }
 
-  const cur = SLOTS.find(s => s.key === current) || SLOTS.find(s => s.key === 'setup')
+  const cur = SHOW.find(s => s.key === current) || SHOW.find(s => s.key === 'setup')
   const pending = items.filter(i => i.status === 'queued' || i.status === 'uploading' || i.status === 'preparing').length
   const needsSlot = items.filter(i => i.status === 'needs_slot')
   const failed = items.filter(i => i.status === 'failed' || i.status === 'paused')
@@ -619,13 +635,13 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
           <button type="button" onClick={() => shoot(current)}
             className="w-full rounded-2xl py-5 px-4 text-left text-white mb-3"
             style={{ backgroundColor: ORANGE, boxShadow: '0 6px 18px rgba(205,68,25,.3)' }}>
-            <div className="text-[13px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap to shoot · {cur.n} of {SLOTS.length}</div>
+            <div className="text-[13px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>📸 Tap to shoot · {SHOW.indexOf(cur) + 1} of {SHOW.length}</div>
             <div className="text-2xl font-extrabold leading-tight mt-0.5">{cur.label}</div>
             <div className="text-sm mt-1" style={{ opacity: .9 }}>{cur.hint}</div>
           </button>
         ) : (
           <div className="rounded-2xl py-4 px-4 mb-3 text-center font-extrabold text-lg" style={{ backgroundColor: '#dcfce7', color: GREEN }}>
-            ✓ All 8 in — nice{prog.miles.delta != null ? ` · test drive ${prog.miles.delta} mi` : ''}{tiresDone ? ` · 🛞 ${tire.front}/${tire.rear} psi` : ' · 🛞 tires next'}
+            ✓ All {SHOW.length} in — nice{!noCluster && prog.miles.delta != null ? ` · test drive ${prog.miles.delta} mi` : ''}{noCluster ? '' : ` · 🛞 ${tiresDone ? `${tire.front}/${tire.rear}` : '36/36 default'} psi`}
           </div>
         )}
 
@@ -656,7 +672,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
             <div className="flex-1 min-w-0">
               <div className="text-xs font-bold" style={{ color: '#1a1a1a' }}>Which shot is this?</div>
               <div className="flex flex-wrap gap-1 mt-1">
-                {SLOTS.map(s => (
+                {SHOW.map(s => (
                   <button key={s.key} type="button" onClick={() => resolveNeedsSlot(item, s.key)}
                     className="text-[12px] font-bold rounded-full px-2 py-0.5"
                     style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>{s.short}</button>
@@ -676,13 +692,13 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
 
         {/* Checklist */}
         <div className="rounded-xl overflow-hidden mb-3" style={{ border: '1px solid #ebe7e3' }}>
-          {SLOTS.map(s => {
+          {SHOW.map(s => {
             const filled = s.multi ? prog.setupCount > 0 : !!prog.slots[s.key]?.fileId
             const local = items.find(i => i.slot === s.key && ['done', 'uploading', 'queued', 'preparing', 'paused'].includes(i.status))
             const isCur = current === s.key
             return (
               <Fragment key={s.key}>
-              {s.key === 'lf' && (
+              {s.key === 'lf' && !noCluster && (
                 <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid #f1ede9', backgroundColor: tiresDone ? 'white' : '#fff7ed' }}>
                   <span className="w-9 h-9 rounded-lg flex items-center justify-center text-base" style={{ backgroundColor: tiresDone ? '#dcfce7' : '#f5f3f0', color: tiresDone ? GREEN : '#bbb' }}>{tiresDone ? '✓' : '🛞'}</span>
                   <div className="flex-1 min-w-0">
@@ -767,18 +783,20 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
               ))}
             </div>
           )}
-          <div className="px-3 py-2 text-xs font-bold" style={{ borderTop: '1px solid #f1ede9', backgroundColor: prog.miles.ok ? '#dcfce7' : '#fff', color: prog.miles.ok ? GREEN : (prog.miles.delta != null ? RED : '#888') }}>
+          {noCluster
+            ? <div className="px-3 py-2 text-xs font-bold" style={{ borderTop: '1px solid #f1ede9', backgroundColor: '#f0f9ff', color: '#0369a1' }}>🔧 Repair-shop job — no cluster shots, test drive or tire check needed.</div>
+            : <div className="px-3 py-2 text-xs font-bold" style={{ borderTop: '1px solid #f1ede9', backgroundColor: prog.miles.ok ? '#dcfce7' : '#fff', color: prog.miles.ok ? GREEN : (prog.miles.delta != null ? RED : '#888') }}>
             🚗 Test drive: {prog.miles.delta == null ? 'need both odometer shots' : `${prog.miles.delta} mi ${prog.miles.ok ? '✓' : `— need more than ${MIN_MILES}`}`}
-          </div>
+          </div>}
         </div>
 
         {mode === 'gate' && (
           <div className="flex flex-col gap-2">
-            <button type="button" disabled={!tiresDone} onClick={() => onComplete && onComplete(job, undefined, pendingPayload)}
+            {/* Tires no longer block here (2026-09-30): they default to 36/36 on the Ready checks. */}
+            <button type="button" onClick={() => onComplete && onComplete(job, undefined, pendingPayload)}
               className="w-full rounded-xl py-3 text-sm font-bold text-white"
-              style={{ backgroundColor: '#7e22ce', opacity: tiresDone ? 1 : .45 }}>
-              {!tiresDone ? '🛞 Set the tire pressures first'
-                : prog.complete ? '🟢 Continue → Ready to Invoice'
+              style={{ backgroundColor: '#7e22ce' }}>
+              {prog.complete ? '🟢 Continue → Ready to Invoice'
                 : coveredByPhone ? `🟢 Continue → Ready to Invoice (${onPhone.length} photo${onPhone.length === 1 ? '' : 's'} still uploading — fine)`
                 : `🟢 Continue → Ready to Invoice (${prog.missing.length} photo${prog.missing.length === 1 ? '' : 's'} still owed)`}
             </button>
@@ -821,7 +839,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
             onClick={e => { e.stopPropagation(); setChooseFor(null) }}>
             <div className="bg-white w-full sm:max-w-xs rounded-t-2xl sm:rounded-2xl p-4" onClick={e => e.stopPropagation()}>
               <div className="text-[12px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>
-                {slot ? `${slot.n} of ${SLOTS.length}` : 'Photo'}
+                {slot ? `${Math.max(1, SHOW.indexOf(slot) + 1)} of ${SHOW.length}` : 'Photo'}
               </div>
               <div className="font-extrabold text-lg mb-3" style={{ color: '#1a1a1a' }}>{slot?.label || 'Add a photo'}</div>
               <button type="button" onClick={() => { setChooseFor(null); setTimeout(() => camRef.current?.click(), 0) }}
