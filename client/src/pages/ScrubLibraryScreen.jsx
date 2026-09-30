@@ -40,6 +40,13 @@ function StagePill({ s }) {
   return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap" style={{ backgroundColor: st.bg, color: st.fg }}>{st.label}{detail}</span>
 }
 
+// One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
+function CalPills({ s }) {
+  const names = (s.sensors || []).filter(x => x.r).map(x => x.n)
+  const list = names.length ? names : String(s.requiredNames || '').split(/\s*[,|;]\s*/).filter(Boolean)
+  return list.map(n => <span key={n} className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: '#fff1ec', color: '#b4380f', border: '1px solid #f6c3b1' }}>{String(n).replace(/\s*calibration$/i, '')}</span>)
+}
+
 const when = iso => {
   if (!iso) return ''
   const d = new Date(iso)
@@ -231,7 +238,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                   </td>
                   <td className="py-2.5 pr-3">
                     <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                    <div className="text-xs font-mono flex items-center gap-2" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
+                    <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
                   </td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.vin || '—'}</td>
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
@@ -253,7 +260,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-bold leading-snug" style={{ color: INK, overflowWrap: 'anywhere' }}>{s.vehicle || 'Vehicle not read'}</div>
-                <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /></div>
+                <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}<StagePill s={s} /><CalPills s={s} /></div>
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
                 style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
