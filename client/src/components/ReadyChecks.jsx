@@ -26,12 +26,14 @@ export function useSafetyChecksApply(job) { const map = useBig3Map(); return saf
 const GREEN = '#15803d'
 const ORANGE = '#CD4419'
 
-export const DEFAULT_CHECKS = { cash: 'no', belts: false, airbags: false, windshieldOk: false }
+// Belts, airbags and tires start checked (Mark 2026-09-30) — the tech taps to
+// UN-check if something's wrong. Tires default 36/36 unless set in the photo checklist.
+export const DEFAULT_CHECKS = { cash: 'no', belts: true, airbags: true, windshieldOk: false }
 const parseTires = t => { const m = /(\d+)F\/(\d+)R/.exec(String(t || '')); return m ? { front: Number(m[1]), rear: Number(m[2]) } : null }
+const tiresOf = job => parseTires(job?.tires_set) || { front: 36, rear: 36, _default: true }
 
 export function readyChecksValid(v, job, safety = true) {
   if (safety && (!v.belts || !v.airbags)) return false
-  if (safety && !parseTires(job?.tires_set)) return false          // set in the photo checklist
   if (v.cash === 'yes') return false                       // picked "yes" but no number yet
   if (needsWindshieldCheck(job) && !v.windshieldOk) return false
   return true
@@ -40,7 +42,6 @@ export function readyChecksMissing(v, job, safety = true) {
   const out = []
   if (safety && !v.belts) out.push('check the seat belts')
   if (safety && !v.airbags) out.push('inspect the airbag system')
-  if (safety && !parseTires(job?.tires_set)) out.push('set the tire pressures in the photo checklist')
   if (v.cash === 'yes') out.push('pick $350 or $700')
   if (needsWindshieldCheck(job) && !v.windshieldOk) out.push('confirm the windshield check')
   return out
@@ -105,9 +106,9 @@ export default function ReadyChecks({ job, value, onChange, compact = false }) {
       </div>}
 
       {/* 🛞 Tires — shown for reference; set in the photo checklist */}
-      {safety && <div className="rounded-xl px-3 py-2 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: parseTires(job?.tires_set) ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${parseTires(job?.tires_set) ? '#86efac' : '#fdba74'}`, color: parseTires(job?.tires_set) ? GREEN : '#9a3412' }}>
-        <span className="text-xl">{parseTires(job?.tires_set) ? '☑' : '☐'}</span> 🛞 Tire pressures {parseTires(job?.tires_set) ? `${parseTires(job.tires_set).front}/${parseTires(job.tires_set).rear} psi · set` : '— set them in the photo checklist'}
-      </div>}
+      {safety && (() => { const t = tiresOf(job); return <div className="rounded-xl px-3 py-2 text-sm font-bold flex items-center gap-2" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', color: GREEN }}>
+        <span className="text-xl">☑</span> 🛞 Tire pressures {t.front}/{t.rear} psi{t._default ? <span className="font-normal text-xs" style={{ color: '#555' }}> · default — change in the photo checklist</span> : ' · set'}
+      </div> })()}
 
       {/* 🪟 Windshield */}
       {windshield && (
