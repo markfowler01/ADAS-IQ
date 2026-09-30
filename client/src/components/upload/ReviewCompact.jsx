@@ -19,11 +19,13 @@ const inp = { border: '1.5px solid #e0dbd6', outline: 'none', backgroundColor: '
 
 // Bill it-style panel. Module level on purpose: defined inside the component it
 // would be a new type every render and remount the customer picker mid-typing.
-const Panel = ({ title, right, tone = 'neutral', children }) => {
+const Panel = ({ title, right, tone = 'neutral', clip = true, children }) => {
   const t = tone === 'blue' ? { br: '#bfdbfe', bg: '#eff6ff', fg: '#1d4ed8' } : tone === 'green' ? { br: '#bbf7d0', bg: '#f0fdf4', fg: GREEN } : tone === 'amber' ? { br: '#fde68a', bg: '#fffbeb', fg: '#92400e' } : { br: '#e8e4e0', bg: '#fafaf9', fg: '#1a1a1a' }
   return (
-    <div className="rounded-2xl overflow-hidden bg-white" style={{ border: `1.5px solid ${t.br}` }}>
-      <div className="px-4 py-2.5 flex items-center justify-between gap-2" style={{ backgroundColor: t.bg }}>
+    // clip={false} for panels holding a dropdown (the customer list opens below
+    // its box — overflow-hidden cut it off, 2026-09-30).
+    <div className={`rounded-2xl bg-white ${clip ? 'overflow-hidden' : 'relative z-30'}`} style={{ border: `1.5px solid ${t.br}` }}>
+      <div className="px-4 py-2.5 flex items-center justify-between gap-2 rounded-t-2xl" style={{ backgroundColor: t.bg }}>
         <span className="text-sm font-bold" style={{ color: t.fg }}>{title}</span>{right}
       </div>
       {children}
@@ -130,7 +132,7 @@ export default function ReviewCompact(props) {
       </div>
 
       {/* 2 · Who pays + schedule + cash, in one block */}
-      <Panel title="🏢 Customer and pricing" tone={selectedCustomer ? 'green' : 'amber'} right={selectedCustomer?.name ? <BillingPill shopName={selectedCustomer.name} /> : null}>
+      <Panel clip={false} title="🏢 Customer and pricing" tone={selectedCustomer ? 'green' : 'amber'} right={selectedCustomer?.name ? <BillingPill shopName={selectedCustomer.name} /> : null}>
         <div className="p-2.5 flex flex-col gap-2">
           <CustomerPicker shopName={jobData.shop} onSelect={setSelectedCustomer} />
           <div className="flex items-center gap-1.5 flex-wrap">
