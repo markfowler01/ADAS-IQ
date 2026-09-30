@@ -1045,6 +1045,54 @@ router.post('/shops/set-types', express.json(), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 📝 Mark scrubs "quote sent" from Books estimates that went out (status sent /
+// viewed, not yet accepted, declined or invoiced). Same exact RO / VIN matching
+// as mark-invoiced. Stage only moves forward, so it never undoes a job or an
+// invoice. ?dry=1 = counts only. (Mark 2026-09-30: blue border on quoted cars.)
+router.all('/scrubs/mark-quoted', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const t0 = Date.now(), dry = req.query.dry === '1'
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { listScrubs, setScrubStageById } = await import('../services/scrubStore.js')
+    const API = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, params = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const since = new Date(Date.now() - (Number(req.query.days) || 120) * 864e5).toISOString().slice(0, 10)
+    const ests = []
+    for (let page = 1; page <= 10; page++) {
+      const r = await axios.get(`${API}/estimates`, { headers: H, params: { ...params, date_start: since, per_page: 200, page }, timeout: 20000 })
+      ests.push(...(r.data?.estimates || [])); if (!r.data?.page_context?.has_more_page) break
+    }
+    const sent = ests.filter(e => ['sent', 'viewed', 'expired'].includes(String(e.status).toLowerCase()))
+    const toks = x => String(x || '').toUpperCase().split(/[^A-Z0-9]+/).filter(t => t.length >= 5)
+    const N = x => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    const { scrubs } = await listScrubs(req, { limit: 3000, maxScan: 5000 })
+    const matches = []
+    for (const s of scrubs) {
+      if (!['scrubbed', 'quote_requested', 'requested', ''].includes(s.stage || '')) continue
+      const ro = N(s.ro), vin6 = N(s.vin).slice(-6)
+      const e = sent.find(e => (ro.length >= 5 && (toks(e.reference_number).includes(ro) || toks(e.estimate_number).includes(ro))) || (vin6.length === 6 && toks(e.estimate_number).some(t => t.endsWith(vin6))))
+      if (e) matches.push({ id: s.id, ro: s.ro, vehicle: s.vehicle, quote: e.estimate_number, status: e.status })
+    }
+    if (dry) return res.json({ dry: true, sent_quotes: sent.length, to_mark: matches.length, sample: matches.slice(0, 12) })
+    let marked = 0
+    for (const m of matches) { if (Date.now() - t0 > 24000) break; await setScrubStageById(req, m.id, 'quoted', { quoteNumber: m.quote }); marked++ }
+    res.json({ sent_quotes: sent.length, to_mark: matches.length, marked, remaining: matches.length - marked })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+// 🔄 Daily: keep the Scrub Library's stages current from Books (quotes sent, invoices).
+router.all('/scrubs/sync-stages', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const base = `${req.protocol}://${req.get('host')}${req.baseUrl}`
+  const axios = (await import('axios')).default
+  const H = { 'x-cron-secret': req.headers['x-cron-secret'] }
+  const out = {}
+  for (const p of ['scrubs/mark-quoted', 'scrubs/mark-invoiced']) {
+    try { out[p] = (await axios.post(`${base}/${p}`, {}, { headers: H, timeout: 28000 })).data } catch (e) { out[p] = { error: e.message } }
+  }
+  res.json(out)
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
