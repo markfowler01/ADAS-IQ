@@ -434,7 +434,15 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   // ── Active / Archive + shop grouping (Mark 2026-09-30) ──
   const billed = s => ['invoiced', 'paid'].includes(s.stage)
   const tabRows = rows.filter(s => (tab === 'archive' ? billed(s) : !billed(s)))
-  const shopName = s => (s.shop || '').trim() || 'No shop'
+  // One shop, many spellings ("…LLC", "…Llc", "Avon Body Shop, Llc") → one group,
+  // shown under its most common spelling.
+  const shopKey = s => String(s.shop || '').toLowerCase().replace(/[.,&']/g, ' ').replace(/\b(llc|inc|co|corp|corporation|ltd|the)\b/g, ' ').replace(/[^a-z0-9]+/g, '') || 'noshop'
+  const shopLabel = (() => {
+    const m = new Map()
+    for (const s of rows) { const k = shopKey(s); const n = (s.shop || '').trim() || 'No shop'; const c = m.get(k) || {}; c[n] = (c[n] || 0) + 1; m.set(k, c) }
+    const out = new Map(); for (const [k, c] of m) out.set(k, Object.entries(c).sort((a, b) => b[1] - a[1])[0][0]); return out
+  })()
+  const shopName = s => shopLabel.get(shopKey(s)) || 'No shop'
   const shops = (() => {
     const m = new Map()
     for (const s of tabRows) { const k = shopName(s); const e = m.get(k) || { name: k, n: 0, last: '' }; e.n++; if ((s.at || '') > e.last) e.last = s.at || ''; m.set(k, e) }
