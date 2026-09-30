@@ -30,7 +30,8 @@ const statusNote = s => s.status === 'from-card' ? 'from card' : s.status === 'r
 const STAGE = {
   scrubbed: { label: 'scrubbed', bg: '#f5f3f0', fg: '#777' },
   quoted:   { label: 'quoted',   bg: '#eff6ff', fg: '#1e40af' },
-  requested: { label: 'job requested', bg: '#fef3c7', fg: '#92400e' },
+  quote_requested: { label: 'quote requested', bg: '#dbeafe', fg: '#1d4ed8' },
+  requested: { label: 'job requested', bg: '#ffedd5', fg: '#c2410c' },
   job:      { label: 'on the board', bg: '#fff7ed', fg: '#b45309' },
   invoiced: { label: 'invoiced', bg: '#dcfce7', fg: '#166534' },
   paid:     { label: 'paid',     bg: '#166534', fg: '#fff' },
@@ -91,7 +92,8 @@ function normScrub(s) {
 // scrub knows (shop, car, VIN, RO, claim, insurer, every calibration line,
 // the estimate link) and marks the scrub "job requested". Same POST as the
 // board's "+ Request Job", so Kat's alert fires the same way.
-async function requestJobFor(scrub, user) {
+async function requestJobFor(scrub, user, kind = 'job') {
+  const quote = kind === 'quote'
   let full = scrub
   if (!Array.isArray(scrub?.payload?.calibrations)) {
     const r = await apiFetch(`${API_BASE}/api/scrubs/${scrub.id}`)
@@ -104,7 +106,7 @@ async function requestJobFor(scrub, user) {
   const cals = list.map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: !!c.required }))
   const req = cals.filter(c => c.enabled).map(c => c.calibration_name)
   const notes = [
-    `📋 Requested from the scrub${full.ro ? ` · RO ${full.ro}` : ''}${full.claim ? ` · claim ${full.claim}` : ''}${full.insurer ? ` · ${full.insurer}` : ''}`,
+    `${quote ? '📝 Quote requested' : '📋 Job requested'} from the scrub${full.ro ? ` · RO ${full.ro}` : ''}${full.claim ? ` · claim ${full.claim}` : ''}${full.insurer ? ` · ${full.insurer}` : ''}`,
     req.length ? `Required: ${req.join(', ')}` : 'Scrub found nothing required — check before dispatch',
     full.fileId ? `CCC estimate: https://workdrive.zoho.com/file/${full.fileId}` : '',
   ].filter(Boolean).join('\n')
@@ -114,38 +116,47 @@ async function requestJobFor(scrub, user) {
     vehicle: [full.year, full.make, full.model].filter(Boolean).join(' ') || full.vehicle || '',
     vin: full.vin || '', insurer: full.insurer || '', quote_number: full.ro || '', ro_number: full.ro || '',
     technician: user?.techName || (user?.role === 'technician' ? (user?.name || '').split(' ')[0] : '') || '',
-    notes, status: 'job_requested', via_request: true, request_type: 'job',
+    notes, status: 'job_requested', via_request: true, request_type: quote ? 'quote' : 'job',   // quote → board's Quotes Requested column
     calibrations: JSON.stringify(cals),
   }
   const r = await apiFetch(`${API_BASE}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
   const d = await r.json().catch(() => ({}))
   if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
   const jobId = String(d.id || d.job?.id || '')
-  let next = { ...full, jobId, stage: 'requested' }
+  const stage = quote ? 'quote_requested' : 'requested'
+  let next = { ...full, jobId, stage }
   if (jobId) {
-    const l = await apiFetch(`${API_BASE}/api/scrubs/${full.id}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId, stage: 'requested' }) })
+    const l = await apiFetch(`${API_BASE}/api/scrubs/${full.id}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId, stage }) })
     const ld = await l.json().catch(() => ({}))
     if (ld.scrub) next = ld.scrub
   }
   return normScrub(next)
 }
 
-// The list's compact version: one tap per car, right on the row.
+// Quote (blue, left) + Job (orange, right) — one tap each, right on the row
+// (Mark 2026-09-30: "50-50 … quote on the left in blue, job in orange").
+// full = the phone card's full-width 50/50 bar.
+const REQ_STYLE = { quote: { bg: '#1d4ed8', label: '📝 Quote' }, job: { bg: '#CD4419', label: '📋 Job' } }
 function RowRequest({ s, user, onDone, full = false }) {
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   if (s.jobId) return null
-  const go = async e => {
+  const go = kind => async e => {
     e.stopPropagation(); e.preventDefault()
     if (busy) return
-    setBusy(true); setErr('')
-    try { onDone(await requestJobFor(s, user)) } catch (x) { setErr(x.message || 'failed') } finally { setBusy(false) }
+    setBusy(kind); setErr('')
+    try { onDone(await requestJobFor(s, user, kind)) } catch (x) { setErr(x.message || 'failed') } finally { setBusy('') }
   }
   return (
-    <span role="button" tabIndex={0} onClick={go} onKeyDown={e => e.key === 'Enter' && go(e)} title={err || 'Put this car in Job Requested with every scrub detail — Kat prices and dispatches it'}
-      className={`inline-flex items-center justify-center font-bold rounded-lg whitespace-nowrap cursor-pointer ${full ? 'w-full text-xs py-2 mt-2' : 'text-[11px] px-2 py-1'}`}
-      style={{ backgroundColor: err ? '#fef2f2' : '#fef3c7', color: err ? '#b91c1c' : '#92400e', border: `1.5px solid ${err ? '#fecaca' : '#fcd34d'}`, opacity: busy ? .6 : 1 }}>
-      {busy ? 'Requesting…' : err ? '⚠ Retry request' : '📋 Request Job'}
+    <span className={`flex gap-1.5 ${full ? 'w-full mt-2' : ''}`} title={err || ''}>
+      {['quote', 'job'].map(k => (
+        <span key={k} role="button" tabIndex={0} onClick={go(k)} onKeyDown={e => e.key === 'Enter' && go(k)(e)}
+          title={k === 'quote' ? 'Send to Quotes Requested with every scrub detail — Kat drafts the estimate' : 'Send to Job Requested with every scrub detail — Kat prices and dispatches it'}
+          className={`inline-flex items-center justify-center font-bold rounded-lg whitespace-nowrap cursor-pointer text-white ${full ? 'flex-1 text-sm py-2.5' : 'text-[11px] px-2 py-1'}`}
+          style={{ backgroundColor: err ? '#b91c1c' : REQ_STYLE[k].bg, opacity: busy && busy !== k ? .4 : busy ? .7 : 1 }}>
+          {busy === k ? '…' : err ? '⚠ Retry' : `${REQ_STYLE[k].label}${full ? ' request' : ''}`}
+        </span>
+      ))}
     </span>
   )
 }
@@ -415,7 +426,7 @@ const fromLine = l => ({
 
 function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   const [s, setS] = useState(initial)
-  const [reqBusy, setReqBusy] = useState(false)
+  const [reqBusy, setReqBusy] = useState('')
   const [reqMsg, setReqMsg] = useState('')
   const [cardBusy, setCardBusy] = useState(false)
   const [cardMsg, setCardMsg] = useState('')
@@ -478,12 +489,12 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   // scrub knows — shop, car, VIN, RO, claim, insurer, every calibration line,
   // and the estimate link — so Kat only has to price and dispatch it. Same
   // POST the board's "+ Request Job" uses, so Kat's alert fires the same way.
-  async function requestJob() {
+  async function requestJob(kind = 'job') {
     if (reqBusy || s.jobId) return
-    setReqBusy(true); setReqMsg('')
-    try { setS(await requestJobFor(s, user)); setReqMsg('✓ On the board in Job Requested — Kat has it.') }
-    catch (e) { setReqMsg(e.message || 'Could not request the job.') }
-    finally { setReqBusy(false) }
+    setReqBusy(kind); setReqMsg('')
+    try { setS(await requestJobFor(s, user, kind)); setReqMsg(kind === 'quote' ? '✓ On the board in Quotes Requested — Kat has it.' : '✓ On the board in Job Requested — Kat has it.') }
+    catch (e) { setReqMsg(e.message || 'Could not send the request.') }
+    finally { setReqBusy('') }
   }
 
   const neverScrubbed = !list.length && ['report-only', 'from-card'].includes(s.status)
@@ -674,15 +685,31 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
           })()}
           {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}
 
-          {/* 📋 Request Job — techs hand the car to Kat with the scrub attached */}
+          {/* 📝 Quote / 📋 Job request — techs hand the car to Kat with the scrub attached */}
           {!s.jobId
-            ? <button onClick={requestJob} disabled={reqBusy || editing}
-                className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
-                style={{ backgroundColor: reqBusy ? '#f5f3f0' : '#fef3c7', color: reqBusy ? '#777' : '#92400e', border: '1.5px solid #fcd34d' }}
-                title="Puts this car in the Job Requested column with every scrub detail — Kat prices and dispatches it"
-              >{reqBusy ? 'Requesting…' : '📋 Request Job'}</button>
-            : s.stage === 'requested' && <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1.5px solid #fcd34d' }}>📋 Job requested — open the board →</button>}
+            ? <div className="mt-2 hidden md:flex gap-2">
+                {['quote', 'job'].map(k => (
+                  <button key={k} onClick={() => requestJob(k)} disabled={!!reqBusy || editing}
+                    className="flex-1 rounded-lg px-3 py-3 text-sm font-bold text-white"
+                    style={{ backgroundColor: REQ_STYLE[k].bg, opacity: reqBusy && reqBusy !== k ? .45 : reqBusy ? .7 : 1 }}
+                    title={k === 'quote' ? 'Quotes Requested column — Kat drafts the estimate' : 'Job Requested column — Kat prices and dispatches it'}
+                  >{reqBusy === k ? 'Requesting…' : `${REQ_STYLE[k].label} request`}</button>
+                ))}
+              </div>
+            : ['requested', 'quote_requested'].includes(s.stage) && <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={s.stage === 'quote_requested' ? { backgroundColor: '#dbeafe', color: '#1d4ed8', border: '1.5px solid #93c5fd' } : { backgroundColor: '#ffedd5', color: '#c2410c', border: '1.5px solid #fdba74' }}>{s.stage === 'quote_requested' ? '📝 Quote requested' : '📋 Job requested'} — open the board →</button>}
           {reqMsg && <p className="text-xs mt-1" style={{ color: reqMsg.startsWith('✓') ? '#166534' : '#b91c1c' }}>{reqMsg}</p>}
+          {/* 📱 Phone: Quote | Job pinned to the bottom of the screen, 50/50 */}
+          {!s.jobId && (
+            <div className="md:hidden fixed left-0 right-0 bottom-0 z-40 flex gap-2 p-2" style={{ backgroundColor: 'rgba(255,255,255,.96)', borderTop: '1px solid #eee', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}>
+              {['quote', 'job'].map(k => (
+                <button key={k} onClick={() => requestJob(k)} disabled={!!reqBusy || editing}
+                  className="flex-1 rounded-xl py-3.5 text-base font-bold text-white"
+                  style={{ backgroundColor: REQ_STYLE[k].bg, opacity: reqBusy && reqBusy !== k ? .45 : reqBusy ? .7 : 1 }}
+                >{reqBusy === k ? 'Requesting…' : `${REQ_STYLE[k].label} request`}</button>
+              ))}
+            </div>
+          )}
+          {!s.jobId && <div className="md:hidden" style={{ height: 72 }} />}
 
           {/* 🧾 Create Job (Mark 2026-09-30): the retired "Create invoice" shortcut
               skipped Bill it and made a single, wrong invoice. This opens the SAME
