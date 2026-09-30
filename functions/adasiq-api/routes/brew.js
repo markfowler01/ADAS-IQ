@@ -100,7 +100,8 @@ async function recordIssueSent(segment, issueNumber, info) {
 function trimItem(it) {
   return {
     title: String(it.title || '').slice(0, 160),
-    link: String(it.link || '').slice(0, 200),
+    // 500, not 200: Google News article links run 220 to 350 characters and a cut link is a dead link.
+    link: String(it.link || '').slice(0, 500),
     pubDate: it.pubDate || null,
     summary: String(it.summary || '').slice(0, 180),
     source: String(it.source || '').slice(0, 40),
@@ -134,12 +135,33 @@ async function fetchAndTrim() {
 async function runFetch(req) {
   const { items, status, fetched, kept } = await fetchAndTrim()
   const segment = getSegment(req)
-  await cacheSet(segment, 'brew_feed_items', {
+  const cached = await cacheFeedItems(segment, {
     fetched_at: new Date().toISOString(),
     items,
     status: trimStatusForCache(status),
   })
-  return { fetched, kept, sources: status, items }
+  return { fetched, kept, cached, sources: status, items }
+}
+
+// The cached copy only feeds /preview; the daily /run fetches fresh and never
+// reads it. Catalyst caps a cache value (the 50-item list hit it 2026-09-30),
+// so shrink the copy until it fits rather than failing the fetch.
+async function cacheFeedItems(segment, payload) {
+  const attempts = [
+    payload.items,
+    payload.items.map(it => ({ ...it, summary: String(it.summary || '').slice(0, 60) })),
+    payload.items.slice(0, 35).map(it => ({ ...it, summary: '' })),
+  ]
+  for (const items of attempts) {
+    try {
+      await cacheSet(segment, 'brew_feed_items', { ...payload, items })
+      return items.length
+    } catch (e) {
+      if (!/max length/i.test(e.message || '')) throw e
+    }
+  }
+  console.warn('[brew fetch] feed list too large to cache; /preview will fetch fresh')
+  return 0
 }
 
 async function buildIssue(req, preFetched = null) {
