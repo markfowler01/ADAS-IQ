@@ -86,6 +86,70 @@ function normScrub(s) {
   return { ...s, sensors, requiredCount: sensors.filter(x => x.r).length, sensorCount: sensors.length }
 }
 
+// 📋 Request Job (Mark 2026-09-30) — shared by the list rows and the scrub
+// page. Puts the car in the board's Job Requested column with everything the
+// scrub knows (shop, car, VIN, RO, claim, insurer, every calibration line,
+// the estimate link) and marks the scrub "job requested". Same POST as the
+// board's "+ Request Job", so Kat's alert fires the same way.
+async function requestJobFor(scrub, user) {
+  let full = scrub
+  if (!Array.isArray(scrub?.payload?.calibrations)) {
+    const r = await apiFetch(`${API_BASE}/api/scrubs/${scrub.id}`)
+    if (r.ok) full = { ...scrub, ...(await r.json()) }
+  }
+  const raw = Array.isArray(full.payload?.calibrations) && full.payload.calibrations.length
+    ? full.payload.calibrations.map(toLine)
+    : (full.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' }))
+  const list = foldBsm(raw, { name: 'name', req: 'required', lines: 'lines', trig: 'trigger' })
+  const cals = list.map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: !!c.required }))
+  const req = cals.filter(c => c.enabled).map(c => c.calibration_name)
+  const notes = [
+    `📋 Requested from the scrub${full.ro ? ` · RO ${full.ro}` : ''}${full.claim ? ` · claim ${full.claim}` : ''}${full.insurer ? ` · ${full.insurer}` : ''}`,
+    req.length ? `Required: ${req.join(', ')}` : 'Scrub found nothing required — check before dispatch',
+    full.fileId ? `CCC estimate: https://workdrive.zoho.com/file/${full.fileId}` : '',
+  ].filter(Boolean).join('\n')
+  const payload = {
+    shop_name: full.shop || '', customer: full.shop ? { kind: 'shop', name: full.shop } : undefined,
+    year: full.year || '', make: full.make || '', model: full.model || '',
+    vehicle: [full.year, full.make, full.model].filter(Boolean).join(' ') || full.vehicle || '',
+    vin: full.vin || '', insurer: full.insurer || '', quote_number: full.ro || '', ro_number: full.ro || '',
+    technician: user?.techName || (user?.role === 'technician' ? (user?.name || '').split(' ')[0] : '') || '',
+    notes, status: 'job_requested', via_request: true, request_type: 'job',
+    calibrations: JSON.stringify(cals),
+  }
+  const r = await apiFetch(`${API_BASE}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+  const d = await r.json().catch(() => ({}))
+  if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+  const jobId = String(d.id || d.job?.id || '')
+  let next = { ...full, jobId, stage: 'requested' }
+  if (jobId) {
+    const l = await apiFetch(`${API_BASE}/api/scrubs/${full.id}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId, stage: 'requested' }) })
+    const ld = await l.json().catch(() => ({}))
+    if (ld.scrub) next = ld.scrub
+  }
+  return normScrub(next)
+}
+
+// The list's compact version: one tap per car, right on the row.
+function RowRequest({ s, user, onDone, full = false }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  if (s.jobId) return null
+  const go = async e => {
+    e.stopPropagation(); e.preventDefault()
+    if (busy) return
+    setBusy(true); setErr('')
+    try { onDone(await requestJobFor(s, user)) } catch (x) { setErr(x.message || 'failed') } finally { setBusy(false) }
+  }
+  return (
+    <span role="button" tabIndex={0} onClick={go} onKeyDown={e => e.key === 'Enter' && go(e)} title={err || 'Put this car in Job Requested with every scrub detail — Kat prices and dispatches it'}
+      className={`inline-flex items-center justify-center font-bold rounded-lg whitespace-nowrap cursor-pointer ${full ? 'w-full text-xs py-2 mt-2' : 'text-[11px] px-2 py-1'}`}
+      style={{ backgroundColor: err ? '#fef2f2' : '#fef3c7', color: err ? '#b91c1c' : '#92400e', border: `1.5px solid ${err ? '#fecaca' : '#fcd34d'}`, opacity: busy ? .6 : 1 }}>
+      {busy ? 'Requesting…' : err ? '⚠ Retry request' : '📋 Request Job'}
+    </span>
+  )
+}
+
 // One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
 function CalPills({ s }) {
   const names = (s.sensors || []).filter(x => x.r).map(x => x.n)
@@ -181,6 +245,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
     window.addEventListener('popstate', onPop); return () => window.removeEventListener('popstate', onPop)
   }, [])
   const closeScrub = () => { setOpen(null); if (window.history.state?.scrub) window.history.back() }
+  const swapRow = next => setRows(rs => rs.map(r => (r.id === next.id ? { ...r, ...next } : r)))
   const openScrub = async row => {
     setOpenBusy(true)
     try { window.history.pushState({ scrub: row.id }, '') } catch { /* fine */ }
@@ -264,6 +329,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                 <th className="text-left font-bold py-2" style={{ color: INK }}>Claim</th>
                 <th className="text-left font-bold py-2" style={{ color: INK }}>Shop</th>
                 <th className="text-left font-bold py-2" style={{ color: INK }}>Updated</th>
+                <th className="text-left font-bold py-2" style={{ color: INK }}></th>
                 <th style={{ width: 40 }}></th>
               </tr>
             </thead>
@@ -290,6 +356,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                   <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
                   <td className="py-2.5 pr-3 text-xs" style={{ color: '#555' }}>{s.shop || '—'}</td>
                   <td className="py-2.5 pr-3 text-xs" style={{ color: '#888' }}>{shortWhen(s.at)}</td>
+                  <td className="py-2.5 pr-2"><RowRequest s={s} user={user} onDone={swapRow} /></td>
                   <td className="py-2.5 text-right pr-2" style={{ color: ORANGE }}>→</td>
                 </tr>
               ))}
@@ -316,6 +383,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
             <div className="text-[11px] mt-1" style={{ color: '#666' }}>{s.shop || '—'}</div>
             <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}><CopyVin vin={s.vin} /></div>
             <div className="text-[10px] mt-0.5" style={{ color: '#999' }}>{shortWhen(s.at)}</div>
+            <RowRequest s={s} user={user} onDone={swapRow} full />
           </button>
         ))}
       </div>
@@ -413,34 +481,8 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   async function requestJob() {
     if (reqBusy || s.jobId) return
     setReqBusy(true); setReqMsg('')
-    try {
-      const cals = list.map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: !!c.required }))
-      const req = cals.filter(c => c.enabled).map(c => c.calibration_name)
-      const notes = [
-        `📋 Requested from the scrub${s.ro ? ` · RO ${s.ro}` : ''}${s.claim ? ` · claim ${s.claim}` : ''}${s.insurer ? ` · ${s.insurer}` : ''}`,
-        req.length ? `Required: ${req.join(', ')}` : 'Scrub found nothing required — check before dispatch',
-        s.fileId ? `CCC estimate: https://workdrive.zoho.com/file/${s.fileId}` : '',
-      ].filter(Boolean).join('\n')
-      const payload = {
-        shop_name: s.shop || '', customer: s.shop ? { kind: 'shop', name: s.shop } : undefined,
-        year: s.year || '', make: s.make || '', model: s.model || '',
-        vehicle: [s.year, s.make, s.model].filter(Boolean).join(' ') || s.vehicle || '',
-        vin: s.vin || '', insurer: s.insurer || '', quote_number: s.ro || '', ro_number: s.ro || '',
-        technician: user?.techName || (user?.role === 'technician' ? (user?.name || '').split(' ')[0] : '') || '',
-        notes, status: 'job_requested', via_request: true, request_type: 'job',
-        calibrations: JSON.stringify(cals),
-      }
-      const r = await apiFetch(`${API_BASE}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      const d = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
-      const jobId = String(d.id || d.job?.id || '')
-      if (jobId) {
-        const l = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId, stage: 'requested' }) })
-        const ld = await l.json().catch(() => ({}))
-        if (ld.scrub) setS(normScrub(ld.scrub)); else setS(x => ({ ...x, jobId, stage: 'requested' }))
-      }
-      setReqMsg('✓ On the board in Job Requested — Kat has it.')
-    } catch (e) { setReqMsg(e.message || 'Could not request the job.') }
+    try { setS(await requestJobFor(s, user)); setReqMsg('✓ On the board in Job Requested — Kat has it.') }
+    catch (e) { setReqMsg(e.message || 'Could not request the job.') }
     finally { setReqBusy(false) }
   }
 
