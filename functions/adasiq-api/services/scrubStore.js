@@ -659,11 +659,14 @@ export async function addFoundCar(req, walkId, { shop, vin = '', vehicle = '', r
 
 export async function finishWalk(req, walkId) {
   const w = await getWalkRow(req, walkId); if (!w) throw new Error('walk not found')
-  const items = walkOut(w).items
+  // A car scrubbed several times is marked once per scrub — count it once.
+  const seenCar = new Map()
+  for (const i of walkOut(w).items) seenCar.set(i.label || i.scrubId, i)
+  const items = [...seenCar.values()]
   const n = k => items.filter(i => i.status === k).length
   const summary = [`${n('here')} on the lot`, n('not_ready') ? `${n('not_ready')} not ready` : '', n('gone') ? `${n('gone')} not here` : '', n('found') ? `${n('found')} new` : ''].filter(Boolean).join(', ')
   await ds(req).datastore().table(WALKS).updateRow({ ROWID: String(w.ROWID), walk_finished: nowIso(), walk_summary: str(summary, 250) })
-  return { ...walkOut(w), finished: nowIso(), summary }
+  return { ...walkOut(w), items, finished: nowIso(), summary }
 }
 
 export async function recentWalks(req, shop = '', limit = 10) {
