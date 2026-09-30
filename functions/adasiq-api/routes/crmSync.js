@@ -986,6 +986,17 @@ router.get('/books/price-test', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// Shops by customer type (read-only) — who still needs Collision / Repair / Dealer / Retail set.
+router.get('/shops/types', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const b3 = await import('../services/big3.js')
+    const { map = {}, missing = [] } = await b3.big3Map(req)
+    const counts = {}; for (const e of Object.values(map)) { const t = e.billing?.customer_type || 'none'; counts[t] = (counts[t] || 0) + 1 }
+    res.json({ typed_counts: counts, active_without_type: missing.filter(m => m.no_billing).map(m => m.shop_name).sort() })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
