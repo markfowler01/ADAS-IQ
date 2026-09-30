@@ -15,13 +15,14 @@ const PRIMARY_LINKS = [
   { id: 'dispatch-map', label: 'Map', icon: '🗺', adminOnly: true },
   { id: 'crm',     label: 'CRM', icon: '🏢', adminOnly: true },
   { id: 'sms',     label: 'Phone', icon: '💬', adminOnly: true },
-  { id: 'books',   label: 'Books', icon: '📗', adminOnly: true },
+  { id: 'scrubs',  label: 'Scrubs', mobileLabel: 'Scrub Library', icon: '🔬' },   // Mark 2026-09-30: scrubber in the header, Books moved to Finance; techs too
   { id: 'payroll', label: 'Payroll', icon: '💵', ownerOnly: true },   // Mark 2026-09-16: one click to the Hours tab (Mark + Kat)
 ]
 
 // Secondary nav — grouped by category in a spacious dropdown
 const MORE_GROUPS = [
   { label: 'Finance', links: [
+    { id: 'books',     label: 'Books', adminOnly: true , icon: '📗' },
     { id: 'quotes',    label: 'Quotes', adminOnly: true , icon: '📝' },
     { id: 'disputes',  label: 'Disputes', adminOnly: true , icon: '⚖️' },
     { id: 'manual',    label: 'Manual Invoice', adminOnly: true , icon: '🧾' },
@@ -47,7 +48,6 @@ const MORE_GROUPS = [
     { id: 'planner',   label: 'My Day Planner' , icon: '🗒' },
     { id: 'projects',  label: 'Projects' , icon: '📌' },
     { id: 'tips',      label: 'TSB Tips' , icon: '📖' },
-    { id: 'scrubs',    label: 'Scrub Library' , icon: '🔬' },
     { id: 'rules',     label: 'Calibration Rules' , icon: '⚙️' },
     { id: 'item-map',  label: 'Item Mapping', adminOnly: true , icon: '🔗' },
     { id: 'wd-cleanup', label: 'WorkDrive Cleanup', ownerOnly: true , icon: '🧹' },
@@ -82,7 +82,7 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
   const canSee = l => (l.ownerOnly ? isOwner : l.adminOnly ? isAdmin : true)
   // 👷 A technician sees fifteen links and uses five. The rest stay one tap
   // away behind "Everything else" (Mark 2026-09-25).
-  const TECH_EVERYDAY = ['live', 'kanban', 'timeclock', 'tips', 'mileage']
+  const TECH_EVERYDAY = ['live', 'kanban', 'scrubs', 'timeclock', 'tips', 'mileage']
   const isTech = user?.role === 'technician'
   const visiblePrimary = PRIMARY_LINKS.filter(canSee)
   const visibleAll = [...visiblePrimary, ...MORE_LINKS]
