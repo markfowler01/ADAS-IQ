@@ -140,7 +140,7 @@ const REQ_STYLE = { quote: { bg: '#1d4ed8', label: '📝 Quote' }, job: { bg: '#
 function RowRequest({ s, user, onDone, full = false }) {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
-  if (s.jobId) return null
+  if (s.jobId || ['invoiced', 'paid'].includes(s.stage)) return null   // already billed — nothing to request
   const go = kind => async e => {
     e.stopPropagation(); e.preventDefault()
     if (busy) return
@@ -696,7 +696,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
           {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}
 
           {/* 📝 Quote / 📋 Job request — techs hand the car to Kat with the scrub attached */}
-          {!s.jobId
+          {!s.jobId && !['invoiced', 'paid'].includes(s.stage)
             ? <div className="mt-2 hidden md:flex gap-2">
                 {['quote', 'job'].map(k => (
                   <button key={k} onClick={() => requestJob(k)} disabled={!!reqBusy || editing}
@@ -709,7 +709,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
             : ['requested', 'quote_requested'].includes(s.stage) && <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={s.stage === 'quote_requested' ? { backgroundColor: '#dbeafe', color: '#1d4ed8', border: '1.5px solid #93c5fd' } : { backgroundColor: '#ffedd5', color: '#c2410c', border: '1.5px solid #fdba74' }}>{s.stage === 'quote_requested' ? '📝 Quote requested' : '📋 Job requested'} — open the board →</button>}
           {reqMsg && <p className="text-xs mt-1" style={{ color: reqMsg.startsWith('✓') ? '#166534' : '#b91c1c' }}>{reqMsg}</p>}
           {/* 📱 Phone: Quote | Job pinned to the bottom of the screen, 50/50 */}
-          {!s.jobId && (
+          {!s.jobId && !['invoiced', 'paid'].includes(s.stage) && (
             <div className="md:hidden fixed left-0 right-0 bottom-0 z-40 flex gap-2 p-2" style={{ backgroundColor: 'rgba(255,255,255,.96)', borderTop: '1px solid #eee', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}>
               {['quote', 'job'].map(k => (
                 <button key={k} onClick={() => requestJob(k)} disabled={!!reqBusy || editing}
@@ -719,7 +719,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
               ))}
             </div>
           )}
-          {!s.jobId && <div className="md:hidden" style={{ height: 72 }} />}
+          {!s.jobId && !['invoiced', 'paid'].includes(s.stage) && <div className="md:hidden" style={{ height: 72 }} />}
 
           {/* 🧾 Create Job (Mark 2026-09-30): the retired "Create invoice" shortcut
               skipped Bill it and made a single, wrong invoice. This opens the SAME
