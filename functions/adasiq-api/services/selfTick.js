@@ -39,6 +39,8 @@ const TICKS = {
   // 🔭 Source finder — once a week, looks for new places that publish OEM
   // position statements and adds the ones that check out (Mark 2026-09-28).
   source_finder: { minutes: 7 * 24 * 60, path: '/api/crm-sync-cron/position-statements/sources/discover', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
+  // 🔒 Wrong-car report check on recent Books invoices/estimates (2026-09-30).
+  attach_verify: { minutes: 24 * 60, path: '/api/crm-sync-cron/books/attach-verify?days=2', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   mail_scrub: { minutes: 15, path: '/api/crm-sync-cron/mail-scrub?inbox=mark@absoluteadas.com&via=ar@absoluteadas.com&depth=400', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
 }
 

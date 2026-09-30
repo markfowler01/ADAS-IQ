@@ -735,6 +735,61 @@ router.get('/books/doc-file', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🔒 Daily attachment check (Mark 2026-09-30: "make it so this can never happen
+// again"). Reads every report PDF on recent Books invoices + estimates and
+// compares the VIN printed inside to the car on the document. Any mismatch →
+// #dispatch, once per document. Catches anything the Bill it gate missed,
+// including files attached by hand in Books. ?days=2&dry=1
+router.all('/books/attach-verify', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const t0 = Date.now(), dry = req.query.dry === '1'
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default
+    const API = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, org = process.env.ZOHO_ORGANIZATION_ID
+    const since = new Date(Date.now() - (Number(req.query.days) || 2) * 864e5).toISOString().slice(0, 10)
+    const VIN = t => [...new Set((String(t || '').toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/g) || []).filter(v => /\d/.test(v) && /[A-Z]/.test(v)))]
+    const bad = []; let checked = 0, files = 0
+    for (const kind of ['invoices', 'estimates']) {
+      const r = await axios.get(`${API}/${kind}`, { headers: H, params: { organization_id: org, date_start: since, per_page: 200 }, timeout: 20000 })
+      for (const d of r.data?.[kind] || []) {
+        if (Date.now() - t0 > 24000) break
+        const id = d.invoice_id || d.estimate_id
+        const full = (await axios.get(`${API}/${kind}/${id}`, { headers: H, params: { organization_id: org }, timeout: 15000 }).catch(() => null))?.data
+        const doc = full?.invoice || full?.estimate || {}
+        const pdfs = (doc.documents || []).filter(x => /\.pdf$/i.test(x.file_name || ''))
+        if (!pdfs.length) continue
+        checked++
+        const docVins = VIN(JSON.stringify({ ...doc, documents: undefined }))
+        for (const x of pdfs) {
+          files++
+          const b = await axios.get(`${API}/${kind}/${id}/documents/${x.document_id}`, { headers: H, params: { organization_id: org }, responseType: 'arraybuffer', timeout: 30000 }).catch(() => null)
+          if (!b) continue
+          let text = ''; try { text = (await pdf(Buffer.from(b.data), { max: 3 })).text } catch { text = '' }
+          const inside = VIN(text)
+          if (!inside.length) continue
+          if (docVins.length ? !inside.some(v => docVins.includes(v)) : true) {
+            bad.push({ kind: kind.slice(0, -1), number: doc.invoice_number || doc.estimate_number, customer: doc.customer_name, file: x.file_name, report_vin: inside[0], doc_vin: docVins[0] || 'none on the document', id })
+          }
+        }
+      }
+    }
+    let alerted = 0
+    if (!dry && bad.length) {
+      const seg = catalyst.initialize(req).cache().segment()
+      const fresh = []
+      for (const b of bad) { const k = `attachbad_${b.id}_${String(b.file).replace(/[^a-z0-9]/gi, '').slice(0, 40)}`; let seen = null; try { seen = await seg.getValue(k) } catch {}; if (!seen) { fresh.push(b); try { await seg.put(k, '1', 48) } catch {} } }
+      if (fresh.length) {
+        const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+        await postToCliqChannel(DISPATCH_CHANNEL, `🔒 *WRONG-CAR REPORT ON A BOOKS DOCUMENT* — pull it before it goes (again):\n` + fresh.map(b => `• ${b.kind} *${b.number}* (${b.customer}) has *${b.file}* — report VIN ${b.report_vin}, document VIN ${b.doc_vin}`).join('\n'))
+        alerted = fresh.length
+      }
+    }
+    res.json({ since, checked, files, mismatches: bad.length, alerted, bad })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })

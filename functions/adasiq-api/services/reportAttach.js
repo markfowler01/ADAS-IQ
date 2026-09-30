@@ -47,6 +47,28 @@ export function namesOtherCar(job) {
   }
 }
 
+/**
+ * 🔒 The last gate before a report leaves the building (Mark 2026-09-30:
+ * "make it so this can never happen again"). Opens the PDF and reads it:
+ *   • the job's VIN printed inside            → ok
+ *   • a VIN inside, but not the job's          → BLOCKED (another car)
+ *   • no readable VIN, name carries RO/VIN     → ok (scanned post-scans)
+ *   • job has no VIN                           → BLOCKED unless we built it
+ * Names and folders can lie; the VIN printed in the report can't.
+ */
+export async function verifyReportForJob(job, name, buffer, { generated = false } = {}) {
+  const jobVin = String(job.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  if (generated) return { ok: true, why: 'built from this job' }
+  if (jobVin.length !== 17) return { ok: false, why: 'the job has no VIN, so the report cannot be proven to be this car' }
+  let text = ''
+  try { const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default; text = (await pdf(buffer, { max: 4 })).text || '' } catch { text = '' }
+  const vins = [...new Set((text.toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/g) || []).filter(v => /\d/.test(v) && /[A-Z]/.test(v)))]
+  if (vins.includes(jobVin)) return { ok: true, why: 'VIN matches' }
+  if (vins.length) return { ok: false, why: `it is for a different car (VIN ${vins[0]})` }
+  if (belongsToJob(job)(name)) return { ok: true, why: 'no readable VIN; file name matches this car' }
+  return { ok: false, why: 'no VIN inside and the file name does not name this car' }
+}
+
 /** The calibration report PDFs in a job's folder (Kinetic first, newest first). */
 export async function findJobReportPdfs(req, job) {
   const { getAccessToken } = await import('./zoho.js')
@@ -90,7 +112,7 @@ async function ensureAbsoluteReport(req, job, files) {
   const folderId = files[0]?.folderId || await resolveJobFolderPublic(req, job, wdToken)
   let id = ''
   if (folderId) { try { ({ fileId: id } = await uploadFileToFolder(folderId, name, buffer, wdToken)); console.log(`[report-attach] generated + filed ${name}`) } catch (e) { console.warn('[report-attach] could not file the generated report:', e.message) } }
-  return [{ id, name, size: buffer.length, folderId, buffer }, ...files]
+  return [{ id, name, size: buffer.length, folderId, buffer, generated: true }, ...files]
 }
 
 /** File names already attached to a Books document (so a re-run never doubles up). */
@@ -129,8 +151,17 @@ export async function attachJobReports(req, token, job, targets) {
   if (!files.length) return out
   const have = new Map()
   for (const t of targets.filter(t => t && t.id)) have.set(`${t.kind}/${t.id}`, await existingAttachmentNames(token, t.kind, t.id))
+  const sent = []
   for (const f of files) {
     let buffer = f.buffer; if (!buffer) { try { buffer = await download(f.id) } catch (e) { out.errors.push(`${f.name}: download ${e.message}`); continue } }
+    const check = await verifyReportForJob(job, f.name, buffer, { generated: !!f.generated })
+    if (!check.ok) {
+      out.blocked = [...(out.blocked || []), `${f.name}: ${check.why}`]
+      out.errors.push(`🔒 NOT attached ${f.name} — ${check.why}`)
+      console.warn(`[report-attach] BLOCKED ${f.name} for ${job.shop_name || job.id} (${job.vin || 'no VIN'}): ${check.why}`)
+      continue
+    }
+    sent.push(f)
     for (const t of targets.filter(t => t && t.id)) {
       if (have.get(`${t.kind}/${t.id}`)?.has(f.name.toLowerCase())) { out.skipped = [...(out.skipped || []), `${f.name} already on ${t.kind}/${t.id}`]; continue }
       try { await attachToBooks(token, t.kind, t.id, { name: f.name, buffer }); if (!out.attached.includes(f.name)) out.attached.push(f.name) }
@@ -143,7 +174,7 @@ export async function attachJobReports(req, token, job, targets) {
   // invoice. Best effort — it can never fail billing.
   try {
     const { linkReports } = await import('./scrubStore.js')
-    await linkReports(req, job.id, files.map(f => ({ id: f.id, name: f.name, size: f.size })), job)
+    await linkReports(req, job.id, sent.map(f => ({ id: f.id, name: f.name, size: f.size })), job)
   } catch (e) { console.warn('[report-attach] scrub library link failed:', e.message) }
   return out
 }
