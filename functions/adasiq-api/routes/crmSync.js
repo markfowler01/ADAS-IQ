@@ -790,6 +790,60 @@ router.all('/books/attach-verify', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// 🧹 One-off repair of a Books document that went out with another car's
+// paperwork (2026-09-30, Mark approved). GET = where a string appears in it.
+// POST body: { kind, id, remove: [document_id], fields: [{ customfield_id, value }],
+//   attach: [{ name, base64 }], email: true } — email re-sends to the contacts
+// Books already has on the document.
+router.get('/books/find-in-doc', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const kind = req.query.kind === 'estimates' ? 'estimates' : 'invoices'
+    const r = await axios.get(`https://www.zohoapis.com/books/v3/${kind}/${req.query.id}`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000 })
+    const doc = r.data?.invoice || r.data?.estimate || {}
+    const needle = String(req.query.q || '').toLowerCase(), hits = []
+    const walk = (o, path) => { if (o && typeof o === 'object') { for (const [k, v] of Object.entries(o)) walk(v, `${path}.${k}`) } else if (String(o).toLowerCase().includes(needle)) hits.push({ path, value: String(o).slice(0, 300) }) }
+    walk(doc, kind)
+    res.json({ number: doc.invoice_number || doc.estimate_number, hits, custom_fields: (doc.custom_fields || []).map(c => ({ id: c.customfield_id, label: c.label, value: String(c.value || '').slice(0, 200) })), documents: (doc.documents || []).map(d => ({ id: d.document_id, name: d.file_name })) })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
+router.post('/books/fix-doc', express.json({ limit: '30mb' }), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const out = { removed: [], fields: false, attached: [], emailed: null, errors: [] }
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { attachToBooks, verifyReportForJob } = await import('../services/reportAttach.js')
+    const b = req.body || {}, kind = b.kind === 'estimates' ? 'estimates' : 'invoices', id = String(b.id || '')
+    const API = 'https://www.zohoapis.com/books/v3', H = { Authorization: `Zoho-oauthtoken ${token}` }, params = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    for (const d of b.remove || []) {
+      const r = await axios.delete(`${API}/${kind}/${id}/documents/${d}`, { headers: H, params, timeout: 15000, validateStatus: s => s < 500 })
+      if (r.data?.code === 0) out.removed.push(d); else out.errors.push(`remove ${d}: ${r.data?.message}`)
+    }
+    if (Array.isArray(b.fields) && b.fields.length) {
+      const r = await axios.put(`${API}/${kind}/${id}`, { custom_fields: b.fields }, { headers: H, params, timeout: 20000, validateStatus: s => s < 500 })
+      if (r.data?.code === 0) out.fields = true; else out.errors.push(`fields: ${r.data?.message}`)
+    }
+    for (const a of b.attach || []) {
+      const buffer = Buffer.from(a.base64, 'base64')
+      if (b.vin) { const chk = await verifyReportForJob({ vin: b.vin, invoice_number: b.ro || '' }, a.name, buffer); if (!chk.ok) { out.errors.push(`🔒 refused ${a.name}: ${chk.why}`); continue } }
+      try { await attachToBooks(token, kind, id, { name: a.name, buffer }); out.attached.push(a.name) } catch (e) { out.errors.push(`attach ${a.name}: ${e.message}`) }
+    }
+    if (b.email) {
+      const g = await axios.get(`${API}/${kind}/${id}/email`, { headers: H, params, timeout: 15000 })
+      const to = (g.data?.data?.to_contacts || []).filter(c => c.selected !== false).map(c => c.email).filter(Boolean)
+      if (!to.length) out.errors.push('email: no contacts on the document')
+      else {
+        const r = await axios.post(`${API}/${kind}/${id}/email`, { to_mail_ids: to, subject: g.data?.data?.subject, body: g.data?.data?.body }, { headers: H, params, timeout: 30000, validateStatus: s => s < 500 })
+        out.emailed = r.data?.code === 0 ? to : null; if (r.data?.code !== 0) out.errors.push(`email: ${r.data?.message}`)
+      }
+    }
+    res.json(out)
+  } catch (e) { out.errors.push(e.response?.data?.message || e.message); res.status(500).json(out) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
