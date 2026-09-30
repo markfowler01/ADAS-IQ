@@ -3,12 +3,12 @@
 // ReviewLayout — every handler and every piece of state still lives in
 // ToggleBoard; this only lays it out: what Kinetic found, add more, who
 // and when, one Create button. Justifications sit behind ✏️.
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { poolLabel, PoolPill } from './ReviewLayout.jsx'
 import CalibrationLine from './CalibrationLine.jsx'
 import LinePicker from './LinePicker.jsx'
 import CustomerPicker from '../CustomerPicker'
-import SalespersonPicker from '../SalespersonPicker'
+import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Big3Picker, describeRules, BillingPill } from '../books/Big3Rules.jsx'
 import { VinCheck } from '../ui/VinDecode.jsx'
 import { Notice, fmt, ORANGE, GREEN } from '../ui/ReviewKit.jsx'
@@ -56,6 +56,20 @@ export default function ReviewCompact(props) {
   const [showNotRequired, setShowNotRequired] = useState(false)
   const [editing, setEditing] = useState(null)   // _id whose justification is open
   const [openFold, setOpenFold] = useState(null) // 'fees' | 'add'
+  // Salesperson = whoever the job is dispatched to (Mark 2026-09-30: "I don't
+  // want there to be two items to select"). Jayden → Jayden's Zoho
+  // salesperson; Mark or the Dispatch queue → Mark Fowler.
+  const [spList, setSpList] = useState(null)
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/salespersons`).then(r => r.json()).then(d => setSpList(Array.isArray(d) ? d : [])).catch(() => setSpList([]))
+  }, [])
+  const salesperson = (() => {
+    if (!spList) return null
+    const want = dispatch === 'jaden' ? /jay?den/i : /mark fowler/i
+    const p = spList.find(x => want.test(x.name || ''))
+    return p ? { id: p.user_id, name: p.name } : null
+  })()
+  useEffect(() => { if (spList) setSelectedSalesperson(salesperson) }, [spList, salesperson?.id])
   const vehicle = [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' ')
   const isService = c => c.calibration_name === 'Diagnostic 1' || c.calibration_name === 'Mechanical'
   const required = calibrations.filter(c => c.enabled && !isService(c))
@@ -160,17 +174,14 @@ export default function ReviewCompact(props) {
         </Fold>
       </Panel>
 
-      {/* 4 · Dispatch — one row, salesperson under it (defaults to Mark) */}
+      {/* 4 · Dispatch — one row; the salesperson is whoever it's dispatched to */}
       <div className="rounded-2xl bg-white overflow-hidden" style={{ border: '1.5px solid #e8e4e0' }}>
         <div className="flex items-center gap-1.5 p-2">
           <span className="text-base flex-shrink-0" title="Dispatch">🚐</span>
           {[['need_dispatch', 'Dispatch'], ['jaden', 'Jayden'], ['mark', 'Mark']].map(([id, l]) => <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy} className="flex-1 text-xs font-bold rounded-lg py-2" style={dispatch === id ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
           <input type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className="text-xs rounded-lg px-1.5 py-1.5 flex-shrink-0" style={{ ...inp, width: 118, borderColor: jobDate === todayPT() ? '#e0dbd6' : '#e8710a' }} />
         </div>
-        <div className="flex items-center gap-2 px-2 pb-2">
-          <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: '#888' }}>👤 Salesperson</span>
-          <SalespersonPicker compact onSelect={setSelectedSalesperson} />
-        </div>
+        <div className="px-3 pb-2 text-[11px]" style={{ color: '#888' }}>👤 Salesperson: <b style={{ color: salesperson ? '#555' : RED }}>{salesperson?.name || (spList ? 'no Zoho salesperson for ' + (dispatch === 'jaden' ? 'Jayden' : 'Mark') : 'loading…')}</b> · follows who it's dispatched to</div>
       </div>
 
       {invoiceError && <Notice tone="red">{invoiceError}</Notice>}
