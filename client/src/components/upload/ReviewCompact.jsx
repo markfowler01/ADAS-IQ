@@ -55,8 +55,7 @@ export default function ReviewCompact(props) {
   } = props
   const [showNotRequired, setShowNotRequired] = useState(false)
   const [editing, setEditing] = useState(null)   // _id whose justification is open
-  const [openFold, setOpenFold] = useState(null) // 'fees' | 'add' | 'sp'
-  const [spName, setSpName] = useState('')
+  const [openFold, setOpenFold] = useState(null) // 'fees' | 'add'
   const vehicle = [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' ')
   const isService = c => c.calibration_name === 'Diagnostic 1' || c.calibration_name === 'Mechanical'
   const required = calibrations.filter(c => c.enabled && !isService(c))
@@ -161,18 +160,17 @@ export default function ReviewCompact(props) {
         </Fold>
       </Panel>
 
-      {/* 4 · Dispatch — one row; salesperson folds (defaults to Mark) */}
+      {/* 4 · Dispatch — one row, salesperson under it (defaults to Mark) */}
       <div className="rounded-2xl bg-white overflow-hidden" style={{ border: '1.5px solid #e8e4e0' }}>
         <div className="flex items-center gap-1.5 p-2">
           <span className="text-base flex-shrink-0" title="Dispatch">🚐</span>
           {[['need_dispatch', 'Dispatch'], ['jaden', 'Jayden'], ['mark', 'Mark']].map(([id, l]) => <button key={id} type="button" onClick={() => setDispatch(id)} disabled={busy} className="flex-1 text-xs font-bold rounded-lg py-2" style={dispatch === id ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}
           <input type="date" value={jobDate} onChange={e => setJobDate(e.target.value)} className="text-xs rounded-lg px-1.5 py-1.5 flex-shrink-0" style={{ ...inp, width: 118, borderColor: jobDate === todayPT() ? '#e0dbd6' : '#e8710a' }} />
         </div>
-        <button type="button" onClick={() => setOpenFold(openFold === 'sp' ? null : 'sp')} className="w-full flex items-center justify-between px-3 py-1.5 text-[11px]" style={{ borderTop: '1px solid #f1f5f9', color: '#888' }}>
-          <span>👤 Salesperson · <b style={{ color: '#555' }}>{spName || '—'}</b></span><span>{openFold === 'sp' ? '▾' : '▸'}</span>
-        </button>
-        {/* kept mounted so its Mark default still fires; only the view folds */}
-        <div className="px-2 pb-2" style={{ display: openFold === 'sp' ? 'block' : 'none' }}><SalespersonPicker onSelect={sp => { setSpName(sp?.name || ''); setSelectedSalesperson(sp) }} /></div>
+        <div className="flex items-center gap-2 px-2 pb-2">
+          <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: '#888' }}>👤 Salesperson</span>
+          <SalespersonPicker compact onSelect={setSelectedSalesperson} />
+        </div>
       </div>
 
       {invoiceError && <Notice tone="red">{invoiceError}</Notice>}

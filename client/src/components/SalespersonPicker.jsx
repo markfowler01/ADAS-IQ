@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 
 const ORANGE = '#CD4419'
 
-export default function SalespersonPicker({ onSelect }) {
+export default function SalespersonPicker({ onSelect, compact = false }) {
   const [salespersons, setSalespersons] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -62,6 +62,20 @@ export default function SalespersonPicker({ onSelect }) {
     setSelectedId(null)
     setSelectedName(null)
     onSelect(null)
+  }
+
+  // compact (build-the-job page): one native select, no label or card — the
+  // phone opens its own picker, which never hides behind the sticky footer.
+  if (compact) {
+    if (loading) return <span className="text-xs" style={{ color: '#aaa' }}>Loading…</span>
+    if (error) return <span className="text-xs" style={{ color: ORANGE }}>{error}</span>
+    return (
+      <select value={selectedId || ''} onChange={e => { const p = salespersons.find(x => String(x.user_id) === e.target.value); p ? handleSelect(p) : handleClear() }}
+        className="text-xs font-semibold rounded-lg px-2 py-1.5 min-w-0 flex-1" style={{ border: '1.5px solid #e0dbd6', backgroundColor: 'white', color: '#1a1a1a', outline: 'none' }}>
+        <option value="">— No salesperson</option>
+        {salespersons.map(x => <option key={x.user_id} value={x.user_id}>{x.name}</option>)}
+      </select>
+    )
   }
 
   return (
