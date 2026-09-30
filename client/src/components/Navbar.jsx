@@ -12,10 +12,10 @@ const PRIMARY_LINKS = [
   { id: 'schedule', label: 'Schedule', icon: '🗓', adminOnly: true },
   { id: 'today',   label: 'Today', icon: '☀️' },
   { id: 'kanban',  label: 'Jobs', icon: '🗂' },
+  { id: 'scrubs',  label: 'Scrubs', mobileLabel: 'Scrub Library', icon: '🔬' },   // Mark 2026-09-30: scrubber in the header, Books moved to Finance; techs too
   { id: 'dispatch-map', label: 'Map', icon: '🗺', adminOnly: true },
   { id: 'crm',     label: 'CRM', icon: '🏢', adminOnly: true },
   { id: 'sms',     label: 'Phone', icon: '💬', adminOnly: true },
-  { id: 'scrubs',  label: 'Scrubs', mobileLabel: 'Scrub Library', icon: '🔬' },   // Mark 2026-09-30: scrubber in the header, Books moved to Finance; techs too
   { id: 'payroll', label: 'Payroll', icon: '💵', ownerOnly: true },   // Mark 2026-09-16: one click to the Hours tab (Mark + Kat)
 ]
 

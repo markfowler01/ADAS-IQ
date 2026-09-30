@@ -23,10 +23,10 @@ const ORANGE = '#CD4419'
 const CASH_GREEN = '#15803d'
 const CASH_CAP = 700
 
-// Cash only when someone says so (Mark 2026-09-30: "it should only be cash if
-// the technician requests it or we toggle it on — the default is retail,
-// unless the insurance company name says cash or customer pay"). A blank
-// insurer is retail now, not cash (was the 2026-09-08 Kinetic-upload rule).
+// Cash starts ON when the insurer is blank or says cash / customer pay, or a
+// tech marked the card customer pay (Mark 2026-09-30, confirming the
+// 2026-09-08 rule: "a blank insurer is cash"). Any other insurer = retail /
+// that insurer's pricing until someone toggles Cash on.
 function isCashInsurer(insurer) {
   const s = String(insurer || '').trim()
   if (!s) return false
@@ -89,7 +89,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // 💵 Swap to Cash (Mark 2026-09-08): one button. On → insurer "Cash",
   // CP schedule, $700 cap. Pre-pressed when the report's insurer is blank
   // or says cash. Kat taps it to flip either way.
-  const startCash = isCashInsurer(jobData?.insurer) || techSaidCash(jobData)
+  const startCash = isBlankOrCash(jobData?.insurer) || techSaidCash(jobData)
   const [cashMode, setCashMode] = useState(startCash)
   const [poolOverride, setPoolOverride] = useState(() => (startCash ? 'CP' : null))    // review-modal schedule pick
   const [learned, setLearned] = useState(null)   // unknown insurer → which list (saved to the insurer-family table)
@@ -660,7 +660,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             {cashMode ? 'CASH JOB — CP pricing · $700 max' : 'Swap to Cash'}
             <span className="block text-xs font-medium" style={{ opacity: 0.85 }}>
               {cashMode
-                ? (techSaidCash(jobData) ? 'Tech marked this customer pay — tap to undo' : 'Tap to undo')
+                ? (techSaidCash(jobData) ? 'Tech marked this customer pay — tap to undo' : !String(jobData?.insurer || '').trim() ? 'Report had no insurer — tap to undo if it\'s an insurance job' : 'Tap to undo')
                 : 'Customer paying out of pocket? Tap: CP schedule + $700 cap.'}
             </span>
           </span>
