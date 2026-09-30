@@ -121,6 +121,14 @@ app.post('/api/portal/stripe-webhook',
   handleStripeWebhook
 )
 
+// 📥 CCC Secure Share webhook: raw XML body (the signature covers the raw text),
+// no login. Mounted before express.json so nothing touches the body first.
+app.all('/api/ccc/estimate', express.text({ type: () => true, limit: '25mb' }), async (req, res) => {
+  const { cccEstimateWebhook } = await import('./routes/ccc.js')
+  return cccEstimateWebhook(req, res)
+})
+app.all('/api/ccc', (req, res) => res.status(200).json({ ok: true, app: 'Absolute ADAS', webhook: 'POST /estimate' }))
+
 app.use(express.json({ limit: '25mb' }))
 // Accept text/plain bodies too — public forms on absoluteadas.com send JSON as
 // text/plain to dodge the CORS preflight that Catalyst's gateway swallows.

@@ -33,11 +33,11 @@ const SAS_AFTER_BATTERY = /toyota|lexus|honda|acura|subaru|nissan|infiniti|hyund
 const CAM_AFTER_ALIGN = /toyota|lexus|subaru|honda|acura|mazda|hyundai|kia|nissan|infiniti/i
 
 /** One Haiku read: which lines carry which trigger words. */
-export async function triggerLines(base64Pdf) {
+export async function triggerLines(base64Pdf, { text = '' } = {}) {
   const msg = await client().messages.create({
     model: 'claude-haiku-4-5', max_tokens: 1200,
     messages: [{ role: 'user', content: [
-      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } },
+      text ? { type: 'text', text: `ESTIMATE LINES:\n${text}` } : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } },
       { type: 'text', text: `This is a collision repair estimate. Go through EVERY numbered line on every page, including supplements and sublet lines. For each category below, list the line numbers whose OPERATION or DESCRIPTION matches. Read the operation column carefully: "Repl" / "R&R" = replace, "R&I" = remove and install, "Rpr" = repair, "Blnd" = blend, "Sublet" = outside work.
 
 Categories:

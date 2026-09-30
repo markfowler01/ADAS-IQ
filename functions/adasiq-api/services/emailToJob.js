@@ -370,6 +370,15 @@ export async function runScrubQueue(req, { max = 1, worker = '' } = {}) {
     if (!item) break
     out.ran++
     const t0 = Date.now()
+    // 📥 CCC Secure Share estimates have no card yet — scrub straight into the library.
+    if (item.source === 'ccc') {
+      try { const { scrubCccItem } = await import('./cccScrub.js'); const r = await scrubCccItem(req, item); await SQ.markDone(req, item, Date.now() - t0); out.ok++; out.items.push({ ccc: item.name, result: 'ok', ...r }) }
+      catch (e) {
+        const fate = await SQ.markFailed(req, item, e); out.items.push({ ccc: item.name, result: `failed: ${e.message}`, fate })
+        if (fate === 'dead') { out.failed++; try { await postToCliqChannel(DISPATCH_CHANNEL, `🧑‍🔧 *CCC estimate needs a human* · ${item.name} — scrub failed 3 times (${String(e.message).slice(0, 120)}). The XML is in WorkDrive → CCC Inbox.`) } catch { /* fine */ } }
+      }
+      continue
+    }
     const job = (await jobsMod.readJobsPublic(req)).find(j => String(j.id) === item.job)
     if (!job) { await SQ.markDone(req, item, 0); out.items.push({ job: item.job, result: 'card gone' }); continue }
     try {

@@ -32,6 +32,8 @@ async function query(req, sql) { return (await ds(req).zcql().executeZCQLQuery(s
  */
 export async function enqueue(req, { job = '', file = '', name = '', source = 'email', by = '', priority = 1, key = '' } = {}) {
   const k = str(key || file || `job:${job}`, 200)
+  // CCC keys are a hash of the exact message: seen once in ANY state = a re-delivery, skip it.
+  if (k.startsWith('ccc:')) { const any = await query(req, `SELECT ROWID FROM ${T} WHERE sj_key = '${q(k)}' LIMIT 1`); if (any.length) return { id: String(any[0].ROWID), existed: true } }
   const open = await query(req, `SELECT ROWID, sj_status FROM ${T} WHERE sj_key = '${q(k)}' AND sj_status = 'queued'`)
   const busy = open.length ? open : await query(req, `SELECT ROWID, sj_status FROM ${T} WHERE sj_key = '${q(k)}' AND sj_status = 'working'`)
   if (busy.length) return { id: String(busy[0].ROWID), existed: true }

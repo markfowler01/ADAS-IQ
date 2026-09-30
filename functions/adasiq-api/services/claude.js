@@ -233,8 +233,13 @@ export async function detectPdfKind(base64Pdf) {
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON matching Kinetic extractor format
  */
-export async function extractFromCccPdf(pdfBuffer, { oemRefs = '' } = {}) {
-  const base64Pdf = pdfBuffer.toString('base64')
+export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '' } = {}) {
+  // text = the estimate as structured lines (CCC Secure Share BMS data, 2026-09-30) —
+  // same rulebook, same checks, no page images to read (faster + cheaper).
+  const base64Pdf = text ? '' : pdfBuffer.toString('base64')
+  const estimateBlock = text
+    ? { type: 'text', text: `CCC ONE ESTIMATE (structured data from CCC Secure Share; each line: line number | operation | description | part type | labor hours | notes):\n\n${text}` }
+    : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } }
 
   const message = await getClient().messages.create({
     model: 'claude-opus-4-7',  // best model + adaptive thinking: this is a judgment task (Kinetic benchmark 2026-09-24)
@@ -245,10 +250,7 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '' } = {}) {
     messages: [{
       role: 'user',
       content: [
-        {
-          type: 'document',
-          source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf },
-        },
+        estimateBlock,
         {
           type: 'text',
           text: `Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations. Return raw JSON only.${oemRefs ? `
@@ -525,4 +527,9 @@ Return ONLY a JSON array of ${items.length} strings, same order, no markdown fen
     throw new Error(`Expected ${items.length} descriptions, got ${Array.isArray(arr) ? arr.length : typeof arr}`)
   }
   return arr.map(s => String(s))
+}
+
+/** CCC Secure Share: scrub an estimate given as structured text (see cccScrub.js). */
+export async function extractFromCccText(text, { oemRefs = '' } = {}) {
+  return extractFromCccPdf(null, { oemRefs, text })
 }
