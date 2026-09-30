@@ -178,6 +178,138 @@ const QUOTE_BLUE = '#2563eb'
 // estimate number alone isn't a sent quote; once it's a job it shows "on the board".
 const quoteSent = s => s.stage === 'quoted'
 
+// 👀 Last lot-walk result on a car (Mark 2026-09-30).
+const SEEN = {
+  here:      { label: 'On the lot', bg: '#dcfce7', fg: '#166534', icon: '✅' },
+  not_ready: { label: 'Not ready',  bg: '#fef3c7', fg: '#92400e', icon: '⏳' },
+  gone:      { label: 'Not here',   bg: '#fee2e2', fg: '#b91c1c', icon: '❌' },
+  found:     { label: 'Found on walk', bg: '#e0f2fe', fg: '#0369a1', icon: '🆕' },
+}
+function SeenChip({ s }) {
+  const v = s.seen; if (!v || !SEEN[v.s]) return null
+  const st = SEEN[v.s]
+  const when = v.at ? new Date(v.at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : ''
+  return <div className="mt-0.5"><span className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded" title={v.n || ''} style={{ backgroundColor: st.bg, color: st.fg }}>👀 {st.icon} {st.label}{when ? ` · ${when}` : ''}{v.by ? ` · ${v.by}` : ''}{v.n ? ` · ${v.n}` : ''}</span></div>
+}
+
+// 🚶 Lot walk: one shop's active cars as a big-button checklist; add cars found
+// on the lot; finish → summary to Kat + #dispatch. Phone first.
+function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
+  const [walk, setWalk] = useState(null)
+  const [err, setErr] = useState('')
+  const [marks, setMarks] = useState({})        // scrubId → status
+  const [notes, setNotes] = useState({})
+  const [busy, setBusy] = useState('')
+  const [found, setFound] = useState([])
+  const [f, setF] = useState({ open: false, vin: '', vehicle: '', ro: '', note: '' })
+  const [done, setDone] = useState(null)
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/scrubs/walks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop }) })
+      .then(r => r.json()).then(d => d.walk ? setWalk(d.walk) : setErr(d.error || 'Could not start the walk.')).catch(e => setErr(e.message))
+  }, [shop])
+  const mark = async (s, status) => {
+    if (!walk || busy) return
+    setBusy(`${s.id}:${status}`)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/mark`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scrubId: s.id, status, note: notes[s.id] || '', label: [s.vehicle, s.ro && `RO ${s.ro}`].filter(Boolean).join(' · ') }) })
+      const d = await r.json(); if (!r.ok) throw new Error(d.error)
+      setMarks(m => ({ ...m, [s.id]: status }))
+      onSeen(s.id, { s: status, at: new Date().toISOString(), by: user?.techName || (user?.name || '').split(' ')[0] || '', n: notes[s.id] || '' })
+    } catch (e) { setErr(e.message || 'Could not save that.') } finally { setBusy('') }
+  }
+  const addFound = async () => {
+    if (!walk || (!f.vin.trim() && !f.vehicle.trim())) return
+    setBusy('found')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/found`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop, vin: f.vin, vehicle: f.vehicle, ro: f.ro, note: f.note }) })
+      const d = await r.json(); if (!r.ok || !d.id) throw new Error(d.error || 'Could not add the car.')
+      const row = { id: d.id, shop, vin: f.vin.length === 17 ? f.vin.toUpperCase() : '', vehicle: f.vehicle || `VIN …${f.vin}`, ro: f.ro, stage: 'scrubbed', status: 'found', sensors: [], requiredCount: 0, sensorCount: 0, at: new Date().toISOString(), seen: { s: 'found', at: new Date().toISOString(), n: f.note } }
+      setFound(x => [...x, row]); onFound(row); setMarks(m => ({ ...m, [d.id]: 'found' }))
+      setF({ open: false, vin: '', vehicle: '', ro: '', note: '' })
+    } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  const finish = async () => {
+    if (!walk) return onClose()
+    setBusy('finish')
+    try { const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/finish`, { method: 'POST' }); const d = await r.json(); if (!r.ok) throw new Error(d.error); setDone(d.walk) }
+    catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  const all = [...cars, ...found.filter(x => !cars.some(c => c.id === x.id))]
+  const left = all.filter(s => !marks[s.id]).length
+  const inp = { border: '1.5px solid #ddd', outline: 'none', backgroundColor: '#fff' }
+  if (done) return (
+    <div className="p-4 max-w-xl mx-auto">
+      <div className="rounded-2xl p-5 text-center" style={{ backgroundColor: '#f0fdf4', border: '2px solid #86efac' }}>
+        <div className="text-3xl">🚶✅</div>
+        <div className="text-lg font-extrabold mt-1" style={{ color: '#166534' }}>Walk done · {shop}</div>
+        <div className="text-sm mt-1" style={{ color: '#166534' }}>{done.summary}</div>
+        <div className="text-xs mt-2" style={{ color: '#555' }}>Kat and #dispatch have the summary.</div>
+        <button onClick={onClose} className="mt-4 rounded-xl px-5 py-3 text-sm font-bold text-white" style={{ backgroundColor: INK }}>Back to Scrubs</button>
+      </div>
+    </div>
+  )
+  return (
+    <div className="p-3 max-w-xl mx-auto pb-28">
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <button onClick={onClose} className="rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>← Scrubs</button>
+        <div className="text-right min-w-0">
+          <div className="text-base font-extrabold truncate" style={{ color: INK }}>🚶 {shop}</div>
+          <div className="text-[11px]" style={{ color: '#888' }}>{all.length - left} of {all.length} checked</div>
+        </div>
+      </div>
+      {err && <div className="rounded-lg px-3 py-2 mb-2 text-sm" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>{err}</div>}
+      {!walk && !err && <div className="text-sm p-4 text-center" style={{ color: '#888' }}>Starting the walk…</div>}
+      {!all.length && walk && <div className="rounded-xl p-4 mb-2 text-sm text-center" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>No active cars for {shop}. Add what you find on the lot below.</div>}
+      <div className="grid gap-2">
+        {all.map(s => {
+          const m = marks[s.id]
+          return (
+            <div key={s.id} className="rounded-xl p-3" style={{ border: `2px solid ${m ? SEEN[m].fg : '#e5e5e5'}`, backgroundColor: m ? SEEN[m].bg : '#fff' }}>
+              <div className="text-sm font-bold leading-snug" style={{ color: INK }}>{s.vehicle || 'Vehicle'}</div>
+              <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap mt-0.5" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}{s.vin ? <span style={{ color: '#888' }}>…{String(s.vin).slice(-6)}</span> : null}<CalPills s={s} /></div>
+              <div className="grid grid-cols-3 gap-1.5 mt-2">
+                {['here', 'not_ready', 'gone'].map(k => (
+                  <button key={k} onClick={() => mark(s, k)} disabled={!walk || !!busy}
+                    className="rounded-lg py-2.5 text-xs font-bold" style={m === k ? { backgroundColor: SEEN[k].fg, color: '#fff' } : { backgroundColor: '#fff', color: SEEN[k].fg, border: `1.5px solid ${SEEN[k].fg}`, opacity: busy === `${s.id}:${k}` ? .5 : 1 }}>
+                    {SEEN[k].icon} {SEEN[k].label}
+                  </button>
+                ))}
+              </div>
+              <input value={notes[s.id] || ''} onChange={e => setNotes(n => ({ ...n, [s.id]: e.target.value }))} placeholder="Note (optional) — e.g. waiting on bumper"
+                className="w-full text-xs rounded-lg px-2.5 py-2 mt-1.5" style={inp} />
+              {m === 'here' && <RowRequest s={s} user={user} onDone={onRequest} full />}
+            </div>
+          )
+        })}
+      </div>
+      {/* ＋ Found a car */}
+      <div className="mt-3 rounded-xl p-3" style={{ border: '2px dashed #0369a1', backgroundColor: '#f0f9ff' }}>
+        {!f.open
+          ? <button onClick={() => setF(x => ({ ...x, open: true }))} className="w-full text-sm font-bold py-1" style={{ color: '#0369a1' }}>＋ Found a car that isn't listed</button>
+          : <div className="grid gap-1.5">
+              <div className="text-sm font-bold" style={{ color: '#0369a1' }}>🆕 Car found on the lot</div>
+              <input value={f.vin} onChange={e => setF(x => ({ ...x, vin: e.target.value.toUpperCase() }))} placeholder="VIN (full 17) or last 4–8" className="text-sm rounded-lg px-2.5 py-2 font-mono" style={inp} />
+              <input value={f.vehicle} onChange={e => setF(x => ({ ...x, vehicle: e.target.value }))} placeholder="Year make model (e.g. 2022 Honda CR-V)" className="text-sm rounded-lg px-2.5 py-2" style={inp} />
+              <input value={f.ro} onChange={e => setF(x => ({ ...x, ro: e.target.value }))} placeholder="RO (if you know it)" className="text-sm rounded-lg px-2.5 py-2" style={inp} />
+              <input value={f.note} onChange={e => setF(x => ({ ...x, note: e.target.value }))} placeholder="Note — what's going on with it" className="text-sm rounded-lg px-2.5 py-2" style={inp} />
+              <div className="flex gap-1.5">
+                <button onClick={() => setF({ open: false, vin: '', vehicle: '', ro: '', note: '' })} className="flex-1 rounded-lg py-2.5 text-sm font-bold" style={{ backgroundColor: '#fff', color: '#555', border: '1px solid #ddd' }}>Cancel</button>
+                <button onClick={addFound} disabled={busy === 'found' || (!f.vin.trim() && !f.vehicle.trim())} className="flex-1 rounded-lg py-2.5 text-sm font-bold text-white" style={{ backgroundColor: '#0369a1', opacity: (!f.vin.trim() && !f.vehicle.trim()) ? .5 : 1 }}>{busy === 'found' ? 'Adding…' : 'Add car'}</button>
+              </div>
+            </div>}
+      </div>
+      {/* Finish, pinned to the bottom */}
+      <div className="fixed left-0 right-0 bottom-0 z-40 p-2" style={{ backgroundColor: 'rgba(255,255,255,.96)', borderTop: '1px solid #eee', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}>
+        <div className="max-w-xl mx-auto">
+          <button onClick={finish} disabled={!walk || busy === 'finish'} className="w-full rounded-xl py-3.5 text-base font-bold text-white" style={{ backgroundColor: '#0f766e' }}>
+            {busy === 'finish' ? 'Finishing…' : left ? `Finish walk (${left} not checked)` : '✅ Finish walk'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
 function CalPills({ s }) {
   const names = (s.sensors || []).filter(x => x.r).map(x => x.n)
@@ -216,6 +348,9 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   // poll the list for the file name for up to three minutes and open it.
   const pickFile = () => fileRef.current?.click()
   const [dragOver, setDragOver] = useState(false)
+  const [tab, setTab] = useState('active')        // active | archive (invoiced + paid)
+  const [shopSel, setShopSel] = useState('')      // '' = all shops
+  const [walkShop, setWalkShop] = useState('')    // 🚶 a lot walk is open for this shop
   const onFile = async e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) await uploadReport(f) }
   const onDrop = async e => {
     e.preventDefault(); setDragOver(false)
@@ -250,7 +385,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   const load = async (search = '') => {
     setLoading(true); setErr('')
     try {
-      const r = await apiFetch(`${API_BASE}/api/scrubs?limit=100${search ? `&q=${encodeURIComponent(search)}` : ''}`)
+      const r = await apiFetch(`${API_BASE}/api/scrubs?limit=1000${search ? `&q=${encodeURIComponent(search)}` : ''}`)
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
       setRows(Array.isArray(d.scrubs) ? d.scrubs.map(normScrub) : [])
@@ -292,6 +427,30 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         {openBusy
           ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
           : <ScrubReport s={open} user={user} onBack={closeScrub} onNavigate={onNavigate} onExtracted={onExtracted} />}
+      </div>
+    )
+  }
+
+  // ── Active / Archive + shop grouping (Mark 2026-09-30) ──
+  const billed = s => ['invoiced', 'paid'].includes(s.stage)
+  const tabRows = rows.filter(s => (tab === 'archive' ? billed(s) : !billed(s)))
+  const shopName = s => (s.shop || '').trim() || 'No shop'
+  const shops = (() => {
+    const m = new Map()
+    for (const s of tabRows) { const k = shopName(s); const e = m.get(k) || { name: k, n: 0, last: '' }; e.n++; if ((s.at || '') > e.last) e.last = s.at || ''; m.set(k, e) }
+    return [...m.values()].sort((a, b) => b.last.localeCompare(a.last))
+  })()
+  const viewRows = shopSel ? tabRows.filter(s => shopName(s) === shopSel) : tabRows
+  const groups = shops.filter(g => !shopSel || g.name === shopSel).map(g => ({ ...g, rows: viewRows.filter(s => shopName(s) === g.name) })).filter(g => g.rows.length)
+  const addSeen = (id, seen) => setRows(rs => rs.map(r => (r.id === id ? { ...r, seen } : r)))
+
+  if (walkShop) {
+    return (
+      <div className="min-h-screen" style={{ backgroundColor: '#fff' }}>
+        {nav}
+        <LotWalk shop={walkShop} cars={rows.filter(s => !billed(s) && shopName(s) === walkShop)} user={user}
+          onSeen={addSeen} onFound={row => setRows(rs => [row, ...rs])} onRequest={swapRow}
+          onClose={() => setWalkShop('')} />
       </div>
     )
   }
@@ -339,83 +498,124 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         <div className="rounded-xl p-3 mb-3 text-sm" style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1.5px solid #fecaca' }}>{err}</div>
       )}
 
+      {/* Active / Archive + shop picker */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        {[['active', 'Active', rows.filter(s => !billed(s)).length], ['archive', '🗄 Archive', rows.filter(billed).length]].map(([k, l, n]) => (
+          <button key={k} onClick={() => { setTab(k); setShopSel('') }} className="rounded-lg px-3 py-2 text-sm font-bold"
+            style={tab === k ? { backgroundColor: INK, color: '#fff' } : { backgroundColor: '#f5f3f0', color: '#555' }}>{l} <span className="opacity-70">{n}</span></button>
+        ))}
+        {tab === 'archive' && <span className="text-xs" style={{ color: '#888' }}>Invoiced and paid cars</span>}
+      </div>
+      {shops.length > 1 && (
+        <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
+          <button onClick={() => setShopSel('')} className="rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap flex-shrink-0"
+            style={!shopSel ? { backgroundColor: ORANGE, color: '#fff' } : { backgroundColor: '#fff', color: '#555', border: '1px solid #e0dbd6' }}>All shops · {tabRows.length}</button>
+          {shops.map(g => (
+            <button key={g.name} onClick={() => setShopSel(shopSel === g.name ? '' : g.name)} className="rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap flex-shrink-0"
+              style={shopSel === g.name ? { backgroundColor: ORANGE, color: '#fff' } : { backgroundColor: '#fff', color: '#555', border: '1px solid #e0dbd6' }}>{g.name} · {g.n}</button>
+          ))}
+        </div>
+      )}
+
       {!loading && !rows.length && !err && (
         <div className="rounded-xl p-8 text-center text-sm" style={{ backgroundColor: '#f5f3f0', color: '#777' }}>
           {q ? `Nothing matches "${q}".` : 'No scrubs yet. Press 🔬 Scrub estimate on a job card to run the first one.'}
         </div>
       )}
 
-      {/* Desktop table */}
-      {!!rows.length && (
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid #eee' }}>
-                <th className="text-left font-bold py-2 pl-2" style={{ color: INK, width: 44 }}></th>
-                <th className="text-left font-bold py-2" style={{ color: INK }}>Vehicle · RO</th>
-                <th className="text-left font-bold py-2" style={{ color: INK }}>VIN</th>
-                <th className="text-left font-bold py-2" style={{ color: INK }}>Claim</th>
-                <th className="text-left font-bold py-2" style={{ color: INK }}>Shop</th>
-                <th className="text-left font-bold py-2" style={{ color: INK }}>Updated</th>
-                <th className="text-left font-bold py-2" style={{ color: INK }}></th>
-                <th style={{ width: 40 }}></th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(s => (
-                <tr
-                  key={s.id}
-                  onClick={() => openScrub(s)}
-                  className="cursor-pointer hover:bg-gray-50"
-                  title={quoteSent(s) ? `Quote sent${s.quoteNumber ? ` · ${s.quoteNumber}` : ''}` : undefined}
-                  style={{ borderBottom: '1px solid #f0f0f0', ...(quoteSent(s) ? { outline: `2px solid ${QUOTE_BLUE}`, outlineOffset: -2, backgroundColor: '#f5f9ff' } : {}) }}
-                >
-                  <td className="py-2.5 pl-2">
-                    <span
-                      className="inline-flex items-center justify-center text-[11px] font-bold rounded-full"
-                      style={{ width: 24, height: 24, backgroundColor: s.requiredCount ? ORANGE : '#e5e5e5', color: s.requiredCount ? '#fff' : '#888' }}
-                      title={`${s.requiredCount} required of ${s.sensorCount} sensors`}
-                    >{s.requiredCount}</span>
-                  </td>
-                  <td className="py-2.5 pr-3">
-                    <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
-                    <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
-                  </td>
-                  <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}><CopyVin vin={s.vin} /></td>
-                  <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
-                  <td className="py-2.5 pr-3 text-xs" style={{ color: '#555' }}>{s.shop || '—'}</td>
-                  <td className="py-2.5 pr-3 text-xs" style={{ color: '#888' }}>{shortWhen(s.at)}</td>
-                  <td className="py-2.5 pr-2"><RowRequest s={s} user={user} onDone={swapRow} /></td>
-                  <td className="py-2.5 text-right pr-2" style={{ color: ORANGE }}>→</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Phone cards */}
-      <div className="md:hidden grid grid-cols-1 gap-2">   {/* grid-cols-1 = minmax(0,1fr): one long card can't widen the page */}
-        {rows.map(s => (
-          <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full min-w-0 overflow-hidden"
-            style={{ backgroundColor: quoteSent(s) ? '#f5f9ff' : '#fff', border: `2px solid ${quoteSent(s) ? QUOTE_BLUE : s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold leading-snug" style={{ color: INK, overflowWrap: 'anywhere' }}>{s.vehicle || 'Vehicle not read'}</div>
-                <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} /></div>
-              </div>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
-                style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
-                {s.requiredCount} of {s.sensorCount}
-              </span>
+      {groups.map(g => (
+        <div key={g.name} className="mb-5">
+          {/* Shop header: counts + lot walk */}
+          <div className="flex items-center justify-between gap-2 mb-1.5 px-1 flex-wrap">
+            <div className="min-w-0">
+              <div className="text-base font-extrabold truncate" style={{ color: INK }}>{g.name}</div>
+              <div className="text-[11px]" style={{ color: '#888' }}>{[
+                [g.rows.filter(s => !s.stage || s.stage === 'scrubbed').length, 'scrubbed'],
+                [g.rows.filter(s => ['quote_requested', 'requested'].includes(s.stage)).length, 'requested'],
+                [g.rows.filter(s => s.stage === 'quoted').length, 'quote sent'],
+                [g.rows.filter(s => s.stage === 'job').length, 'on the board'],
+                [g.rows.filter(billed).length, 'invoiced'],
+              ].filter(([n]) => n).map(([n, l]) => `${n} ${l}`).join(' · ')}</div>
             </div>
-            <div className="text-[11px] mt-1" style={{ color: '#666' }}>{s.shop || '—'}</div>
-            <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}><CopyVin vin={s.vin} /></div>
-            <div className="text-[10px] mt-0.5" style={{ color: '#999' }}>{shortWhen(s.at)}</div>
-            <RowRequest s={s} user={user} onDone={swapRow} full />
-          </button>
-        ))}
-      </div>
+            {tab === 'active' && g.name !== 'No shop' && (
+              <button onClick={() => setWalkShop(g.name)} className="rounded-lg px-3 py-2 text-sm font-bold whitespace-nowrap" style={{ backgroundColor: '#0f766e', color: '#fff', minHeight: 40 }}>🚶 Lot walk</button>
+            )}
+          </div>
+      {/* Desktop table */}
+        {!!g.rows.length && (
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid #eee' }}>
+                  <th className="text-left font-bold py-2 pl-2" style={{ color: INK, width: 44 }}></th>
+                  <th className="text-left font-bold py-2" style={{ color: INK }}>Vehicle · RO</th>
+                  <th className="text-left font-bold py-2" style={{ color: INK }}>VIN</th>
+                  <th className="text-left font-bold py-2" style={{ color: INK }}>Claim</th>
+                  <th className="text-left font-bold py-2" style={{ color: INK }}>Shop</th>
+                  <th className="text-left font-bold py-2" style={{ color: INK }}>Updated</th>
+                  <th className="text-left font-bold py-2" style={{ color: INK }}></th>
+                  <th style={{ width: 40 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.rows.map(s => (
+                  <tr
+                    key={s.id}
+                    onClick={() => openScrub(s)}
+                    className="cursor-pointer hover:bg-gray-50"
+                    title={quoteSent(s) ? `Quote sent${s.quoteNumber ? ` · ${s.quoteNumber}` : ''}` : undefined}
+                    style={{ borderBottom: '1px solid #f0f0f0', ...(quoteSent(s) ? { outline: `2px solid ${QUOTE_BLUE}`, outlineOffset: -2, backgroundColor: '#f5f9ff' } : {}) }}
+                  >
+                    <td className="py-2.5 pl-2">
+                      <span
+                        className="inline-flex items-center justify-center text-[11px] font-bold rounded-full"
+                        style={{ width: 24, height: 24, backgroundColor: s.requiredCount ? ORANGE : '#e5e5e5', color: s.requiredCount ? '#fff' : '#888' }}
+                        title={`${s.requiredCount} required of ${s.sensorCount} sensors`}
+                      >{s.requiredCount}</span>
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
+                      <SeenChip s={s} />
+                      <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
+                    </td>
+                    <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}><CopyVin vin={s.vin} /></td>
+                    <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
+                    <td className="py-2.5 pr-3 text-xs" style={{ color: '#555' }}>{s.shop || '—'}</td>
+                    <td className="py-2.5 pr-3 text-xs" style={{ color: '#888' }}>{shortWhen(s.at)}</td>
+                    <td className="py-2.5 pr-2"><RowRequest s={s} user={user} onDone={swapRow} /></td>
+                    <td className="py-2.5 text-right pr-2" style={{ color: ORANGE }}>→</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+  
+        {/* Phone cards */}
+        <div className="md:hidden grid grid-cols-1 gap-2">   {/* grid-cols-1 = minmax(0,1fr): one long card can't widen the page */}
+          {g.rows.map(s => (
+            <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full min-w-0 overflow-hidden"
+              style={{ backgroundColor: quoteSent(s) ? '#f5f9ff' : '#fff', border: `2px solid ${quoteSent(s) ? QUOTE_BLUE : s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-bold leading-snug" style={{ color: INK, overflowWrap: 'anywhere' }}>{s.vehicle || 'Vehicle not read'}</div>
+                  <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} /></div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
+                  style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
+                  {s.requiredCount} of {s.sensorCount}
+                </span>
+              </div>
+              <SeenChip s={s} />
+              <div className="text-[11px] mt-1" style={{ color: '#666' }}>{s.shop || '—'}</div>
+              <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}><CopyVin vin={s.vin} /></div>
+              <div className="text-[10px] mt-0.5" style={{ color: '#999' }}>{shortWhen(s.at)}</div>
+              <RowRequest s={s} user={user} onDone={swapRow} full />
+            </button>
+          ))}
+        </div>
+          </div>
+      ))}
     </div>
     </div>
   )
