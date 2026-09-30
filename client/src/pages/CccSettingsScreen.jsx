@@ -11,7 +11,7 @@ const INK = '#1a1a1a', ORANGE = '#CD4419', GREEN = '#15803d'
 export default function CccSettingsScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [st, setSt] = useState(null)
   const [err, setErr] = useState('')
-  const [val, setVal] = useState({ sandbox: '', production: '' })
+  const [val, setVal] = useState({ sandbox: '', production: '' })   // _sandbox/_production = the user focused the box (blocks Chrome autofill until then)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   const [copied, setCopied] = useState(false)
@@ -54,10 +54,11 @@ export default function CccSettingsScreen({ user, onLogout, currentScreen, onNav
                   <span className="text-xs font-bold px-2 py-0.5 rounded-full" style={st[env] ? { backgroundColor: '#dcfce7', color: GREEN } : { backgroundColor: '#fef3c7', color: '#92400e' }}>{st[env] ? '✓ set' : 'not set'}</span>
                 </div>
                 <div className="flex gap-2">
-                  <input type="password" autoComplete="new-password" value={val[env]} onChange={e => setVal(v => ({ ...v, [env]: e.target.value }))} placeholder={st[env] ? 'Paste a new one to replace it' : 'Paste the secret key'}
+                  <input type="password" autoComplete="off" name={`ccc-webhook-key-${env}`} data-lpignore="true" data-1p-ignore="true" data-form-type="other" readOnly={!val[`_${env}`]} onFocus={e => { e.target.readOnly = false; setVal(v => ({ ...v, [`_${env}`]: true })) }} value={val[env]} onChange={e => setVal(v => ({ ...v, [env]: e.target.value }))} placeholder={st[env] ? 'Paste a new one to replace it' : 'Paste the secret key'}
                     className="flex-1 text-sm rounded-lg px-2.5 py-2" style={{ border: '1.5px solid #ddd', outline: 'none' }} />
                   <button onClick={() => save(env)} disabled={busy === env || val[env].trim().length < 16} className="rounded-lg px-3 py-2 text-sm font-bold text-white" style={{ backgroundColor: INK, opacity: val[env].trim().length < 16 ? .4 : 1 }}>{busy === env ? 'Saving…' : 'Save'}</button>
                 </div>
+                {val[env] && val[env].trim().length < 16 && <div className="text-xs mt-1" style={{ color: '#b91c1c' }}>That's only {val[env].trim().length} characters. Clear the box (Chrome may have auto-filled a saved password) and paste your 30+ character key.</div>}
               </div>
             ))}
             <div className="text-xs" style={{ color: '#888' }}>Saved on our server only. It's never shown again, here or anywhere. Use a different secret for production.</div>
