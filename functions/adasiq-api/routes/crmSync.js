@@ -610,6 +610,54 @@ router.get('/mail/att', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🧾 Mark scrubs whose car was invoiced (Mark 2026-09-30: "all jobs that are
+// invoiced that are in the scrub library — mark them invoiced"). A scrub is
+// invoiced when (1) its linked job card is invoiced, (2) an invoiced job has
+// the same 17-char VIN, or (3) an invoiced job or a Books invoice (not
+// void/draft) carries the same RO (5+ chars). Stage only moves forward.
+// ?dry=1 = counts + samples, no writes. Re-call until remaining = 0.
+router.post('/scrubs/mark-invoiced', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const t0 = Date.now(), dry = req.query.dry === '1'
+  try {
+    const { listScrubs, setScrubStageById } = await import('../services/scrubStore.js')
+    const { readJobsPublic } = await import('./jobs.js')
+    const { readAll } = await import('../services/zohoMirror.js')
+    const norm = x => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    const roOf = j => norm(j.quote_number) || norm((String(j.notes || '').match(/RO#?\s*([\w-]+)/i) || [])[1])
+    const { scrubs } = await listScrubs(req, { limit: 3000, maxScan: 5000 })
+    const jobs = await readJobsPublic(req)
+    const done = j => j.invoiced === true || !!String(j.invoice_number || '').trim() || j.status === 'complete'
+    const inv = jobs.filter(done)
+    const byId = new Map(jobs.map(j => [String(j.id), j]))
+    const byVin = new Map(inv.filter(j => norm(j.vin).length === 17).map(j => [norm(j.vin), j]))
+    const byRo = new Map(inv.filter(j => roOf(j).length >= 5).map(j => [roOf(j), j]))
+    let books = []
+    try { books = (await readAll(req, 'inv')).filter(b => !['void', 'draft'].includes(String(b.status).toLowerCase())) } catch { books = [] }
+    const matches = []
+    for (const s of scrubs) {
+      if (['invoiced', 'paid'].includes(s.stage)) continue
+      let hit = null, why = ''
+      const j = s.jobId && byId.get(String(s.jobId))
+      if (j && done(j)) { hit = j.invoice_number || 'invoiced'; why = 'job card' }
+      if (!hit && norm(s.vin).length === 17 && byVin.get(norm(s.vin))) { hit = byVin.get(norm(s.vin)).invoice_number || 'invoiced'; why = 'VIN' }
+      const ro = norm(s.ro)
+      if (!hit && ro.length >= 5 && byRo.get(ro)) { hit = byRo.get(ro).invoice_number || 'invoiced'; why = 'RO (job)' }
+      if (!hit && ro.length >= 5) { const b = books.find(b => norm(b.reference_number).includes(ro) || norm(b.invoice_number).includes(ro)); if (b) { hit = b.invoice_number; why = `RO (Books ${b.status})` } }
+      if (hit) matches.push({ id: s.id, ro: s.ro, vehicle: s.vehicle, vin: s.vin, stage: s.stage, invoice: hit, why })
+    }
+    const summary = { scrubs: scrubs.length, already: scrubs.filter(s => ['invoiced', 'paid'].includes(s.stage)).length, to_mark: matches.length, by: matches.reduce((a, m) => (a[m.why.split(' (')[0]] = (a[m.why.split(' (')[0]] || 0) + 1, a), {}), jobs_invoiced: inv.length, books_invoices: books.length }
+    if (dry) return res.json({ dry: true, ...summary, sample: matches.slice(0, 15) })
+    let marked = 0
+    for (const m of matches) {
+      if (Date.now() - t0 > 24000) break
+      await setScrubStageById(req, m.id, 'invoiced', { invoiceNumber: m.invoice === 'invoiced' ? '' : m.invoice })
+      marked++
+    }
+    res.json({ ...summary, marked, remaining: matches.length - marked })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrubs-export', async (req, res) => {
   const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
