@@ -1176,6 +1176,13 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               style={{ backgroundColor: '#1e40af', color: 'white' }}
               title="Open AllData"
             >AllData</a>
+            <button
+              type="button"
+              onClick={() => onNavigate && onNavigate('scrubs')}
+              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
+              style={{ backgroundColor: '#CD4419', color: 'white' }}
+              title="Open our Scrub Library (Mark 2026-09-30)"
+            >🔬 Scrubs</button>
             <a
               href="https://ops.kinetic.auto/id/"
               target="_blank"
