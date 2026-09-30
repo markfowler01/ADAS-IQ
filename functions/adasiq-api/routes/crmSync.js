@@ -822,6 +822,23 @@ router.post('/books/fix-doc', express.json({ limit: '30mb' }), async (req, res) 
       const r = await axios.delete(`${API}/${kind}/${id}/documents/${d}`, { headers: H, params, timeout: 15000, validateStatus: s => s < 500 })
       if (r.data?.code === 0) out.removed.push(d); else out.errors.push(`remove ${d}: ${r.data?.message}`)
     }
+    // The car's OWN folder for the "Scan Report and Documentation" link: exact
+    // RO match only, else a new folder; the verified reports are filed in it.
+    if (b.folder?.ro && b.folder?.field) {
+      const { findFolderByRO, createJobFolder, createShareLink, uploadFileToFolder } = await import('../services/workdrive.js')
+      let fid = ''
+      const hit = await findFolderByRO(String(b.folder.ro), token).catch(() => null)
+      if (hit?.folderId && !hit.fuzzyMatch) fid = hit.folderId
+      if (!fid) { const c = await createJobFolder(String(b.folder.name || b.folder.ro).slice(0, 80), token); fid = c?.folderId || '' }
+      if (fid) {
+        out.folder = fid
+        b._fileInto = fid
+        const link = await createShareLink(fid, `Job ${b.folder.ro}`.slice(0, 50), token).catch(() => '')
+        const url = typeof link === 'string' ? link : (link?.shareLink || link?.url || '')
+        if (url) b.fields = [...(b.fields || []).filter(f => f.customfield_id !== b.folder.field), { customfield_id: b.folder.field, value: url }]
+        out.folder_link = url
+      }
+    }
     if (Array.isArray(b.fields) && b.fields.length) {
       const r = await axios.put(`${API}/${kind}/${id}`, { custom_fields: b.fields }, { headers: H, params, timeout: 20000, validateStatus: s => s < 500 })
       if (r.data?.code === 0) out.fields = true; else out.errors.push(`fields: ${r.data?.message}`)
@@ -843,6 +860,7 @@ router.post('/books/fix-doc', express.json({ limit: '30mb' }), async (req, res) 
       const buffer = Buffer.from(a.base64, 'base64')
       if (b.vin) { const chk = await verifyReportForJob({ vin: b.vin, invoice_number: b.ro || '' }, a.name, buffer); if (!chk.ok) { out.errors.push(`🔒 refused ${a.name}: ${chk.why}`); continue } }
       try { await attachToBooks(token, kind, id, { name: a.name, buffer }); out.attached.push(a.name) } catch (e) { out.errors.push(`attach ${a.name}: ${e.message}`) }
+      if (b._fileInto && b.fileReports !== false) { try { const { uploadFileToFolder } = await import('../services/workdrive.js'); await uploadFileToFolder(b._fileInto, a.name, buffer, token) } catch (e) { out.errors.push(`file ${a.name} in folder: ${e.message}`) } }
     }
     if (b.email) {
       const g = await axios.get(`${API}/${kind}/${id}/email`, { headers: H, params, timeout: 15000 })
