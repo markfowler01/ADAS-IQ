@@ -185,8 +185,13 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             stepTwo[String(li.tier_rule.two_step_for).toLowerCase()] = { name: li.name, rate: li.rate }
             continue
           }
-          if (['calibration identification report', 'post collision safety inspection 1 (l-m)', 'post-scan (l-m)'].includes(key)) {
+          // Big 4 shop fees (Cal ID, PCSI, Post-Scan, Snapshot) come back flagged
+          // li.big3. Keep them as named, priced lines so the page can show them
+          // and the footer total counts every charged one — Snapshot used to be
+          // dropped here, so the page total undercounted (Mark 2026-09-30).
+          if (li.big3 || ['calibration identification report', 'post collision safety inspection 1 (l-m)', 'post-scan (l-m)'].includes(key)) {
             fixedTotal += li.amount || 0
+            ;(priceMap._fixed_lines = priceMap._fixed_lines || []).push({ name: li.name, amount: li.amount || 0, big3: li.big3 || '' })
           } else {
             priceMap[key] = { rate: li.rate, needs_price: !!li.needs_price, pool_fallback: li.pool_fallback || null, tier_rule: li.tier_rule || null }
           }
