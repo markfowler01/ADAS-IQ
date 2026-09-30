@@ -244,7 +244,7 @@ router.post('/:id/welcome', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/:id/welcome', async (req, res) => {
-  try { const { welcomeCopy } = await import('../services/shopWelcome.js'); const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); const br = shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {}; res.json({ ok: true, welcome: br.welcome || null, preview: welcomeCopy({ firstName: (shop?.people?.[0]?.name || shop?.contact_name || '').split(' ')[0] }) }) }
+  try { const { welcomeCopy } = await import('../services/shopWelcome.js'); const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); const br = shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {}; res.json({ ok: true, welcome: br.welcome || null, preview: welcomeCopy({ firstName: (shop?.people?.[0]?.name || shop?.contact_name || '').split(' ')[0], type: br.customer_type || '' }) }) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
 

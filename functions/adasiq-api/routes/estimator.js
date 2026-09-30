@@ -339,7 +339,10 @@ export async function findOrCreateRetail(req, { name, phone, email, source = 'Jo
   const hit = (ph && all.find(c => digits(c.phone) === ph)) || (em && all.find(c => String(c.email || '').toLowerCase() === em)) || all.find(c => c.name.trim().toLowerCase() === nm.toLowerCase())
   if (hit) return { customer: hit, created: false }
   const row = await tbl(req, T.retail).insertRow(retailToRow({ name: nm, phone: str(phone, 30), email: em, source, created_at: now(), updated_at: now() }))
-  return { customer: rowToRetail(row), created: true }
+  const customer = rowToRetail(row)
+  // 📨 First time we meet this person → the Retail welcome (2026-09-30). Only here, so it can't repeat.
+  if (em) { try { const { sendRetailWelcome } = await import('../services/shopWelcome.js'); await sendRetailWelcome(req, customer, { by: source }) } catch (e) { console.log('[welcome] retail hook failed:', e.message) } }
+  return { customer, created: true }
 }
 /** The person's Books contact — linked, found by name, or created (individual). Returns the contact_id. */
 export async function ensureRetailBooksContact(req, retailId) {
