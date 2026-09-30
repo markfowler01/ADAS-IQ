@@ -246,6 +246,10 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
             className="text-[11px] px-2 py-1 rounded-md font-semibold"
             style={{ backgroundColor: '#0e7490', color: 'white' }}
             title="Open Kinetic">Kinetic</a>
+          <a href="https://portal.1sourceadas.com/" target="_blank" rel="noopener noreferrer"
+            className="text-[11px] px-2 py-1 rounded-md font-semibold"
+            style={{ backgroundColor: '#15803d', color: 'white' }}
+            title="Open 1Source ADAS — our scrubber (Mark 2026-09-30)">1Source</a>
           <a href="https://dh.identifix.com/Default/LogOnIdentifix?sessionTerminated=True" target="_blank" rel="noopener noreferrer"
             className="text-[11px] px-2 py-1 rounded-md font-semibold"
             style={{ backgroundColor: '#7c2d12', color: 'white' }}
