@@ -643,7 +643,9 @@ router.post('/scrubs/mark-invoiced', async (req, res) => {
       if (!hit && norm(s.vin).length === 17 && byVin.get(norm(s.vin))) { hit = byVin.get(norm(s.vin)).invoice_number || 'invoiced'; why = 'VIN' }
       const ro = norm(s.ro)
       if (!hit && ro.length >= 5 && byRo.get(ro)) { hit = byRo.get(ro).invoice_number || 'invoiced'; why = 'RO (job)' }
-      if (!hit && ro.length >= 5) { const b = books.find(b => norm(b.reference_number).includes(ro) || norm(b.invoice_number).includes(ro)); if (b) { hit = b.invoice_number; why = `RO (Books ${b.status})` } }
+      // Whole-token match only — "10643" must not hit "210643" (dry run 2026-09-30).
+      const toks = x => String(x || '').toUpperCase().split(/[^A-Z0-9]+/).map(t => t.replace(/^RO/, '')).filter(Boolean)
+      if (!hit && ro.length >= 5) { const b = books.find(b => toks(b.reference_number).includes(ro) || toks(b.invoice_number).some(t => t === ro || t.replace(/\d$/, '') === ro)); if (b) { hit = b.invoice_number; why = `RO (Books ${b.status})` } }
       if (hit) matches.push({ id: s.id, ro: s.ro, vehicle: s.vehicle, vin: s.vin, stage: s.stage, invoice: hit, why })
     }
     const summary = { scrubs: scrubs.length, already: scrubs.filter(s => ['invoiced', 'paid'].includes(s.stage)).length, to_mark: matches.length, by: matches.reduce((a, m) => (a[m.why.split(' (')[0]] = (a[m.why.split(' (')[0]] || 0) + 1, a), {}), jobs_invoiced: inv.length, books_invoices: books.length }
