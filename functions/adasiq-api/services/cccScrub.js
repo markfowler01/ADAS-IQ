@@ -65,27 +65,59 @@ export async function scrubCccItem(req, item) {
   const e = parseBms(xml)
   if (!e.lines.length) throw new Error('no damage lines in the BMS message')
   const text = bmsToText(e)
-  let oemRefs = ''
-  try { const { oemReferenceBlock } = await import('./positionStatements.js'); oemRefs = await oemReferenceBlock(req, { make: e.make }) } catch { oemRefs = '' }
-  const { triggerLines, guardScrub } = await import('./scrubGuard.js')
   const t0 = Date.now()
-  const hitsPromise = triggerLines('', { text }); hitsPromise.catch(() => {})
-  const { extractFromCccText } = await import('./claude.js')
-  const data = await extractFromCccText(text, { oemRefs })
-  // CCC's own fields beat anything read back by the model.
-  Object.assign(data, { shop: e.shop || data.shop, ro_number: e.ro || data.ro_number, claim: e.claim || data.claim, insurer: e.insurer || data.insurer, vin: (e.vin.length === 17 ? e.vin : data.vin) || e.vin, year: e.year || data.year, make: e.make || data.make, model: e.model || data.model })
+  const meta = { shop: e.shop, ro_number: e.ro, claim: e.claim, insurer: e.insurer, vin: e.vin, year: e.year, make: e.make, model: e.model }
+  const { nothingToCalibrate, adasSignature, noAdasResult } = await import('./fastPath.js')
+  const sig = adasSignature(text)
+  const sigKey = e.documentId ? `ccc_sig_${String(e.documentId).replace(/[^A-Za-z0-9-]/g, '').slice(0, 60)}` : ''
+  const prev = sigKey ? await cfgRead(req, sigKey) : null
+  const fast = nothingToCalibrate(text)
+  let data, how = 'full'
+  if (fast.skip) {
+    // ⚡ No line touches anything ADAS lives on — no AI read needed.
+    data = noAdasResult(meta); how = 'fast: no ADAS lines'
+  } else if (prev?.value?.sig === sig && prev?.value?.scrubId) {
+    // ⚡ Supplement/re-save with the same ADAS lines as the last version — reuse it.
+    try {
+      const { getScrub } = await import('./scrubStore.js')
+      const old = await getScrub(req, prev.value.scrubId)
+      if (old?.payload?.calibrations) { data = { ...old.payload, ...meta, _reused: prev.value.scrubId }; how = 'reused: no ADAS change since last version' }
+    } catch { data = null }
+  }
+  if (!data) {
+    let oemRefs = ''
+    try { const { oemReferenceBlock } = await import('./positionStatements.js'); oemRefs = await oemReferenceBlock(req, { make: e.make }) } catch { oemRefs = '' }
+    const { triggerLines, guardScrub } = await import('./scrubGuard.js')
+    const hitsPromise = triggerLines('', { text }); hitsPromise.catch(() => {})
+    const { extractFromCccText } = await import('./claude.js')
+    data = await extractFromCccText(text, { oemRefs })
+    // CCC's own fields beat anything read back by the model.
+    Object.assign(data, { shop: e.shop || data.shop, ro_number: e.ro || data.ro_number, claim: e.claim || data.claim, insurer: e.insurer || data.insurer, vin: (e.vin.length === 17 ? e.vin : data.vin) || e.vin, year: e.year || data.year, make: e.make || data.make, model: e.model || data.model })
+    data._pdfType = 'CCC'
+    try { await guardScrub(data, '', { hitsPromise }) } catch (err) { console.warn('[ccc scrub] guard skipped:', err.message) }
+  }
   data.vehicle = [data.year, data.make, data.model].filter(Boolean).join(' ')
-  data._pdfType = 'CCC'
-  try { await guardScrub(data, '', { hitsPromise }) } catch (err) { console.warn('[ccc scrub] guard skipped:', err.message) }
   const { saveScrub } = await import('./scrubStore.js')
-  const saved = await saveScrub(req, { data, source: 'ccc', by: 'CCC Secure Share', sourceSystem: 'CCC', sourceRef: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, file: { id: item.file, name: item.name } })
+  const saved = await saveScrub(req, { data, source: 'ccc', by: 'CCC Secure Share', sourceSystem: 'CCC', sourceRef: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, file: { id: item.file, name: item.name }, status: how === 'full' ? 'ok' : how.split(':')[0] })
+  if (sigKey && saved?.id) { try { await cfgWrite(req, sigKey, prev?.row, { sig, scrubId: saved.id, ver: `${e.verCode || 'EM'}${e.version}`, at: new Date().toISOString() }) } catch { /* fine */ } }
   try { const { flush } = await import('./spend.js'); await flush(req) } catch { /* fine */ }
   const req_ = (data.calibrations || []).filter(c => c.enabled === true).map(c => c.calibration_name)
   const secs = Math.round((Date.now() - t0) / 1000)
-  console.log(`[ccc scrub] ${e.shop} · ${data.vehicle} · RO ${e.ro} · ${req_.length} required · ${secs}s`)
+  console.log(`[ccc scrub] ${e.shop} · ${data.vehicle} · RO ${e.ro} · ${req_.length} required · ${secs}s · ${how}`)
   try {
     const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js')
-    await postToCliqChannel(DISPATCH_CHANNEL, `📥 *CCC estimate scrubbed* · ${e.shop}${data.vehicle ? ` · ${data.vehicle}` : ''}${e.ro ? ` · RO ${e.ro}` : ''}${e.verCode === 'SV' ? ` · supplement ${e.version}` : ''}\n${req_.length ? `🔧 ${req_.join(', ')}` : '🔧 No calibrations required'} · in the Scrub Library`)
+    await postToCliqChannel(DISPATCH_CHANNEL, `📥 *CCC estimate scrubbed* · ${e.shop}${data.vehicle ? ` · ${data.vehicle}` : ''}${e.ro ? ` · RO ${e.ro}` : ''}${e.verCode === 'SV' ? ` · supplement ${e.version}` : ''}\n${req_.length ? `🔧 ${req_.join(', ')}` : '🔧 No calibrations required'}${how !== 'full' ? ` · ⚡ ${how}` : ''} · in the Scrub Library`)
   } catch { /* fine */ }
-  return { ok: true, scrubId: saved?.id || '', required: req_, seconds: secs, shop: e.shop, ro: e.ro }
+  return { ok: true, scrubId: saved?.id || '', required: req_, seconds: secs, shop: e.shop, ro: e.ro, how }
+}
+
+// Small AppConfig helpers (supplement fingerprints per CCC estimate).
+async function cfgRead(req, key) {
+  const catalyst = (await import('zcatalyst-sdk-node')).default
+  try { const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(`SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key}' ORDER BY MODIFIEDTIME DESC LIMIT 1`); const r = rows?.[0]?.AppConfig; if (!r) return null; let v = null; try { v = JSON.parse(r.config_value) } catch { v = null } return { row: String(r.ROWID), value: v } } catch { return null }
+}
+async function cfgWrite(req, key, row, value) {
+  const catalyst = (await import('zcatalyst-sdk-node')).default
+  const t = catalyst.initialize(req, { type: 'advancedio' }).datastore().table('AppConfig')
+  if (row) await t.updateRow({ ROWID: row, config_key: key, config_value: JSON.stringify(value) }); else await t.insertRow({ config_key: key, config_value: JSON.stringify(value) })
 }

@@ -42,6 +42,8 @@ const TICKS = {
   // 🔒 Wrong-car report check on recent Books invoices/estimates (2026-09-30).
   // 🧱 Scrub piles: start a parallel worker per ready estimate (2026-09-30).
   scrub_dispatch: { minutes: 2, path: '/api/crm-sync-cron/scrub-dispatch', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
+  // 🛟 Never lose one: CCC Inbox ↔ queue check + stuck/needs-a-human alarms.
+  scrub_safety: { minutes: 15, path: '/api/crm-sync-cron/scrub-safety', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   // 🔄 Scrub Library stages from Books — quotes sent (blue) + invoiced (green $), daily.
   scrub_stages: { minutes: 24 * 60, path: '/api/crm-sync-cron/scrubs/mark-quoted', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   scrub_invoiced: { minutes: 24 * 60, path: '/api/crm-sync-cron/scrubs/mark-invoiced', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },

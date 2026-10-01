@@ -1118,6 +1118,78 @@ router.all('/scrub-worker', async (req, res) => {
   try { const { runScrubQueue } = await import('../services/emailToJob.js'); res.json(await runScrubQueue(req, { max: 1, worker: String(req.query.w || '') })) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 🛟 Never lose one (Mark 2026-09-30). (1) Every estimate CCC delivered is a file
+// in WorkDrive → CCC Inbox; each must have a queue row — any that don't are
+// queued now. (2) Anything waiting > 30 min, or a "needs a human" row, posts
+// to #dispatch (once per item per day). Runs every 15 min from the ticker.
+router.all('/scrub-safety', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const out = { inbox: 0, missing: 0, requeued: [], stale: 0, dead: 0, alerted: 0 }
+  try {
+    const catalystApp = catalyst.initialize(req, { type: 'advancedio' })
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { listChildren, JOB_PARENT_FOLDER_ID } = await import('../services/workdrive.js')
+    const kids = await listChildren(JOB_PARENT_FOLDER_ID, token, { folders: true }).catch(() => [])
+    const inbox = kids.find(k => k.name === 'CCC Inbox')
+    const SQ = await import('../services/scrubQueue.js')
+    if (inbox) {
+      const files = await listChildren(inbox.id, token, { folders: false, max: 5000 })
+      out.inbox = files.length
+      const rows = []
+      for (let off = 0; off < 20000; off += 300) {
+        const page = await catalystApp.zcql().executeZCQLQuery(`SELECT sj_file FROM AdasScrubJobs WHERE sj_source = 'ccc' LIMIT 300 OFFSET ${off}`)
+        rows.push(...page.map(r => r.AdasScrubJobs?.sj_file)); if (page.length < 300) break
+      }
+      const have = new Set(rows.filter(Boolean))
+      for (const f of files.filter(f => /\.xml$/i.test(f.name) && !have.has(f.id))) {
+        out.missing++
+        const hash = (f.name.match(/([0-9a-f]{8})\.xml$/i) || [])[1] || f.id
+        await SQ.enqueue(req, { key: `ccc:file:${f.id}`, file: f.id, name: f.name, source: 'ccc', by: 'safety check', priority: 1 })
+        out.requeued.push(f.name)
+      }
+    }
+    const stats = await SQ.queueStats(req)
+    out.dead = stats.dead
+    const oldMin = stats.oldest_waiting ? (Date.now() - new Date(String(stats.oldest_waiting.since).replace(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}):\d+$/, '$1T$2-07:00')).getTime()) / 60000 : 0
+    out.stale = oldMin > 30 ? Math.round(oldMin) : 0
+    const msgs = []
+    if (out.missing) msgs.push(`🛟 Found ${out.missing} CCC estimate${out.missing === 1 ? '' : 's'} with no scrub — queued now: ${out.requeued.slice(0, 5).join(', ')}`)
+    if (out.stale) msgs.push(`⏰ A scrub has been waiting ${out.stale} min (${stats.oldest_waiting?.name || ''}). Scrubbers may be stuck.`)
+    if (stats.dead) msgs.push(`🧑‍🔧 ${stats.dead} estimate${stats.dead === 1 ? '' : 's'} need a human (failed 3 times).`)
+    if (msgs.length) {
+      const seg = catalyst.initialize(req).cache().segment()
+      const k = `scrub_safety_${new Date().toISOString().slice(0, 10)}_${msgs.join('|').replace(/[^a-z0-9]/gi, '').slice(0, 40)}`
+      let seen = null; try { seen = await seg.getValue(k) } catch {}
+      if (!seen || out.missing) {
+        try { const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js'); await postToCliqChannel(DISPATCH_CHANNEL, msgs.join('\n')); out.alerted = msgs.length } catch {}
+        try { await seg.put(k, '1', 24) } catch {}
+      }
+    }
+    if (stats.ready) { try { const axios = (await import('axios')).default; await axios.post(`${req.protocol}://${req.get('host')}${req.baseUrl}/scrub-dispatch`, {}, { headers: { 'x-cron-secret': req.headers['x-cron-secret'] }, timeout: 20000 }) } catch {} }
+    res.json({ ...out, queue: stats })
+  } catch (e) { res.status(500).json({ ...out, error: e.message }) }
+})
+
+// 🧪 Test-only: feed a BMS XML into the CCC pipeline exactly like the webhook
+// does after the signature check (save to CCC Inbox → queue). Cron secret.
+router.post('/ccc/test-enqueue', express.text({ type: () => true, limit: '10mb' }), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const raw = String(req.body || '')
+    const crypto = (await import('node:crypto')).default
+    const { parseBms } = await import('../services/cccScrub.js')
+    const e = parseBms(raw)
+    const hash = crypto.createHash('sha1').update(raw).digest('hex')
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { listChildren, uploadFileToFolder, JOB_PARENT_FOLDER_ID } = await import('../services/workdrive.js')
+    const inbox = (await listChildren(JOB_PARENT_FOLDER_ID, token, { folders: true })).find(k => k.name === 'CCC Inbox')
+    const name = `TEST ${e.ro} ${e.year} ${e.make} ${e.model} ${e.verCode}${e.version} ${hash.slice(0, 8)}.xml`
+    const up = await uploadFileToFolder(inbox.id, name, Buffer.from(raw, 'utf8'), token, 'application/xml')
+    const { enqueue } = await import('../services/scrubQueue.js')
+    res.json({ name, ...(await enqueue(req, { key: `ccc:${hash}`, file: up?.fileId || '', name, source: 'ccc', by: 'test', priority: 1 })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/scrub-queue', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try { const SQ = await import('../services/scrubQueue.js'); res.json({ stats: await SQ.queueStats(req), needs_a_human: await SQ.listDead(req, 20) }) }

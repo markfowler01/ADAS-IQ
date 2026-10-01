@@ -246,20 +246,18 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '' } =
     max_tokens: 16000,
     thinking: { type: 'adaptive' },
     // ⚡ Cached: the rulebook is the same every scrub — faster start, ~10% of the input price on a hit (2026-09-30).
-    system: [{ type: 'text', text: CCC_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+    system: [
+      { type: 'text', text: CCC_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+      // ⚡ The make's OEM library is the same for every car of that make — cached too (2026-09-30).
+      ...(oemRefs ? [{ type: 'text', text: `━━ ABSOLUTE ADAS OEM DOCUMENT LIBRARY ━━\nThese are the manufacturers' own published position statements we hold on file. When one of them covers this vehicle's make, it OUTRANKS your general knowledge: follow what it requires, and name it inside the justification (e.g. "per Ford's Collision Position Statement: ADAS Integrity and Repair Technical Imperatives (2026-05-01)"). If the library says nothing about this make, decide as usual and cite the OEM position statement generically.\n\n${oemRefs}\n━━ END LIBRARY ━━`, cache_control: { type: 'ephemeral' } }] : []),
+    ],
     messages: [{
       role: 'user',
       content: [
         estimateBlock,
         {
           type: 'text',
-          text: `Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations. Return raw JSON only.${oemRefs ? `
-
-━━ ABSOLUTE ADAS OEM DOCUMENT LIBRARY ━━
-These are the manufacturers' own published position statements we hold on file. When one of them covers this vehicle's make, it OUTRANKS your general knowledge: follow what it requires, and name it inside the justification (e.g. "per Ford's Collision Position Statement: ADAS Integrity and Repair Technical Imperatives (2026-05-01)"). If the library says nothing about this make, decide as usual and cite the OEM position statement generically.
-
-${oemRefs}
-━━ END LIBRARY ━━` : ''}`,
+          text: `Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations.${oemRefs ? ' Use the OEM document library in your instructions.' : ''} Return raw JSON only.`,
         },
       ],
     }],

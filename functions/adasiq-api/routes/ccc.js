@@ -93,6 +93,17 @@ export async function cccEstimateWebhook(req, res) {
     const { enqueue } = await import('../services/scrubQueue.js')
     const q = await enqueue(req, { key: `ccc:${hash}`, file: up?.fileId || '', name, source: 'ccc', by: e.shop || 'CCC', priority: 1 })
     console.log(`[ccc] ${req.query.trigger || '?'} · ${e.shop} · RO ${e.ro} · ${e.lines.length} lines · ${q.existed ? 'duplicate (already queued)' : 'queued'}`)
+    // ⚡ Start a scrubber now instead of waiting for the next dispatcher round.
+    // The request has to leave before we answer (Catalyst can freeze us after
+    // the response); the worker runs on its own invocation. If it doesn't get
+    // going, the 2-minute dispatcher picks the row up anyway — nothing is lost.
+    if (!q.existed) {
+      try {
+        const axios = (await import('axios')).default
+        const kick = axios.post(`${PUBLIC_BASE}/api/crm-sync-cron/scrub-worker?w=ccc${Date.now().toString(36)}`, {}, { headers: { 'x-cron-secret': process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' }, timeout: 20000 }).catch(() => null)
+        await Promise.race([kick, new Promise(r => setTimeout(r, 1500))])
+      } catch { /* the dispatcher has it */ }
+    }
     return res.status(200).json({ ok: true, queued: !q.existed })
   } catch (err) {
     console.error('[ccc] could not save the estimate — CCC will retry:', err.message)
