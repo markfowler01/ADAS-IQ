@@ -215,21 +215,66 @@ function CapacityBar({ tech }) {
 
 // Checkable to-do list on each tech card (Mark 2026-07-24). Everyone
 // can view; tapping the circle toggles done; ✕ removes; input adds.
+// 🚗 Lot-walk follow-ups (2026-09-30) ride in the same list with a `due` day:
+// hidden until that day, then shown at the top with Ready / Still not ready / Gone.
+const LW_STAGES = [['Waiting parts', 7], ['In body', 7], ['In paint', 2], ['Reassembly', 1], ['Waiting alignment', 1]]
+const LW_WHEN = [['Tomorrow', 1], ['2 days', 2], ['3 days', 3], ['1 week', 7], ['2 weeks', 14]]
+const ptYmd = (plus = 0) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date(Date.now() + plus * 864e5))
+function WalkCheck({ t, onAnswer }) {
+  const [still, setStill] = useState(false)
+  const [stage, setStage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const go = async (status, extra = {}) => {
+    if (busy) return; setBusy(true)
+    try { await onAnswer(t, status, extra) } finally { setBusy(false) }
+  }
+  return (
+    <div className="rounded-lg p-2" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fcd34d' }}>
+      <div className="text-sm font-bold" style={{ color: '#92400e' }}>{t.text}</div>
+      <div className="text-[11px]" style={{ color: '#a16207' }}>From a lot walk{t.stage ? ` · was ${t.stage}` : ''}{t.due ? ` · due ${t.due.slice(5)}` : ''}</div>
+      {!still ? (
+        <div className="grid grid-cols-3 gap-1 mt-1.5">
+          <button disabled={busy} onClick={() => go('here')} className="rounded-lg py-2 text-xs font-bold text-white" style={{ backgroundColor: '#15803d' }}>✅ Ready</button>
+          <button disabled={busy} onClick={() => setStill(true)} className="rounded-lg py-2 text-xs font-bold" style={{ backgroundColor: '#fff', color: '#92400e', border: '1.5px solid #f59e0b' }}>⏳ Not yet</button>
+          <button disabled={busy} onClick={() => go('gone')} className="rounded-lg py-2 text-xs font-bold" style={{ backgroundColor: '#fff', color: '#b91c1c', border: '1.5px solid #fca5a5' }}>❌ Gone</button>
+        </div>
+      ) : (
+        <div className="mt-1.5">
+          <div className="flex flex-wrap gap-1 mb-1">{LW_STAGES.map(([st]) => <button key={st} onClick={() => setStage(stage === st ? '' : st)} className="rounded-full px-2 py-1 text-[11px] font-bold" style={stage === st ? { backgroundColor: '#92400e', color: '#fff' } : { backgroundColor: '#fff', color: '#92400e', border: '1px solid #fcd34d' }}>{st}</button>)}</div>
+          <div className="flex flex-wrap gap-1">{LW_WHEN.map(([l, d]) => <button key={l} disabled={busy} onClick={() => go('not_ready', { stage, due: ptYmd(d) })} className="rounded-full px-2 py-1 text-[11px] font-bold" style={{ backgroundColor: '#fff', color: '#b45309', border: '1px solid #f59e0b' }}>{l}</button>)}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TodoSection({ techName, items, onSave }) {
   const [draft, setDraft] = useState('')
-  const list = Array.isArray(items) ? items : []
+  const all = Array.isArray(items) ? items : []
+  const today = ptYmd(0)
+  // Future check-ins stay out of sight until their day.
+  const list = all.filter(t => !t.due || t.due <= today)
+  const upcoming = all.filter(t => t.due && t.due > today && !t.done)
+  const due = list.filter(t => t.kind === 'walk_check' && !t.done)
+  async function answer(t, status, extra) {
+    try { await apiFetch(`${API_BASE}/api/scrubs/seen`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scrubIds: t.scrubIds || [], status, stage: extra.stage || '', due: extra.due || '' }) }) } catch { /* the To-Do still updates */ }
+    const next = all.map(x => x.id !== t.id ? x : status === 'not_ready'
+      ? { ...x, due: extra.due, stage: extra.stage || x.stage, text: x.text.replace(/ \(was: [^)]*\)$/, '') + (extra.stage || x.stage ? ` (was: ${extra.stage || x.stage})` : '') }
+      : { ...x, done: true, text: `${x.text} — ${status === 'here' ? '✅ ready: send the Quote/Job from Scrubs' : '❌ gone'}` })
+    onSave(techName, next)
+  }
 
   function toggle(id) {
-    onSave(techName, list.map(t => (t.id === id ? { ...t, done: !t.done } : t)))
+    onSave(techName, all.map(t => (t.id === id ? { ...t, done: !t.done } : t)))
   }
   function remove(id) {
-    onSave(techName, list.filter(t => t.id !== id))
+    onSave(techName, all.filter(t => t.id !== id))
   }
   function add() {
     const text = draft.trim()
     if (!text) return
     setDraft('')
-    onSave(techName, [...list, {
+    onSave(techName, [...all, {
       id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       text, done: false, created_at: new Date().toISOString(),
     }])
@@ -245,8 +290,10 @@ function TodoSection({ techName, items, onSave }) {
       {list.length === 0 && (
         <div className="text-xs mb-2" style={{ color: '#bbb' }}>Nothing on the list.</div>
       )}
+      {due.length > 0 && <div className="flex flex-col gap-1.5 mb-2">{due.map(t => <WalkCheck key={t.id} t={t} onAnswer={answer} />)}</div>}
+      {upcoming.length > 0 && <div className="text-[11px] mb-2" style={{ color: '#a16207' }}>📅 {upcoming.length} car{upcoming.length === 1 ? '' : 's'} to check later: {upcoming.slice(0, 3).map(t => `${t.car || 'car'} (${t.due.slice(5)})`).join(', ')}{upcoming.length > 3 ? '…' : ''}</div>}
       <div className="flex flex-col gap-1.5 mb-2">
-        {list.map(t => (
+        {list.filter(t => !(t.kind === 'walk_check' && !t.done)).map(t => (
           <div key={t.id} className="flex items-center gap-2">
             <button
               onClick={() => toggle(t.id)}

@@ -79,8 +79,8 @@ function chip(doc, x, y, text, bgColor, textColor) {
 // ALLDATA's front door with the VIN printed beside it. Every caller gets it —
 // the lookup happens here, using the request the server is handling.
 const ALLDATA_HOME = 'https://my.alldata.com/'
-// ⏸ Paused by Mark 2026-09-30 ("wait on alldata"). Flip to true to put the block back on every report.
-const ALLDATA_ON_REPORTS = false
+// Mark 2026-09-30: paused, then back on ("back to alldata"). false = no block on reports.
+const ALLDATA_ON_REPORTS = true
 export async function generateADASIQPdf(jobData = {}) {
   if (!ALLDATA_ON_REPORTS && !jobData.alldata_url) return buildPdf({ ...jobData, _alldata: null })
   let alldata = jobData.alldata_url ? { url: jobData.alldata_url, exact: true } : null

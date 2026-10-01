@@ -189,8 +189,15 @@ function SeenChip({ s }) {
   const v = s.seen; if (!v || !SEEN[v.s]) return null
   const st = SEEN[v.s]
   const when = v.at ? new Date(v.at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : ''
-  return <div className="mt-0.5"><span className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded" title={v.n || ''} style={{ backgroundColor: st.bg, color: st.fg }}>👀 {st.icon} {st.label}{when ? ` · ${when}` : ''}{v.by ? ` · ${v.by}` : ''}{v.n ? ` · ${v.n}` : ''}</span></div>
+  return <div className="mt-0.5"><span className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded" title={v.n || ''} style={{ backgroundColor: st.bg, color: st.fg }}>👀 {st.icon} {st.label}{v.st ? ` · ${v.st}` : ''}{v.d ? ` · check ${shortDay(v.d)}` : ''}{when ? ` · seen ${when}` : ''}{v.by ? ` · ${v.by}` : ''}{v.n ? ` · ${v.n}` : ''}</span></div>
 }
+
+// ⏳ Not ready → where it's at + when to check back (Mark 2026-09-30: techs guess
+// "two days, a week" — make it two taps). A stage pre-picks its usual wait.
+const WALK_STAGES = [['Waiting parts', 7], ['In body', 7], ['In paint', 2], ['Reassembly', 1], ['Waiting alignment', 1]]
+const WALK_WHEN = [['Tomorrow', 1], ['2 days', 2], ['3 days', 3], ['1 week', 7], ['2 weeks', 14]]
+const ptDate = (plusDays = 0) => { const d = new Date(Date.now() + plusDays * 864e5); return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(d) }
+const shortDay = ymd => { try { const [y, m, d] = ymd.split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) } catch { return ymd } }
 
 // 🚶 Lot walk: one shop's active cars as a big-button checklist; add cars found
 // on the lot; finish → summary to Kat + #dispatch. Phone first.
@@ -199,6 +206,8 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
   const [err, setErr] = useState('')
   const [marks, setMarks] = useState({})        // scrubId → status
   const [notes, setNotes] = useState({})
+  const [nr, setNr] = useState({})          // scrubId → { open, stage, days } for Not ready
+  const [dues, setDues] = useState({})      // scrubId → 'YYYY-MM-DD' chosen
   const [busy, setBusy] = useState('')
   const [found, setFound] = useState([])
   const [f, setF] = useState({ open: false, vin: '', vehicle: '', ro: '', note: '' })
@@ -207,16 +216,20 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
     apiFetch(`${API_BASE}/api/scrubs/walks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop }) })
       .then(r => r.json()).then(d => d.walk ? setWalk(d.walk) : setErr(d.error || 'Could not start the walk.')).catch(e => setErr(e.message))
   }, [shop])
-  const mark = async (s, status) => {
+  const mark = async (s, status, extra = {}) => {
     if (!walk || busy) return
+    if (status === 'not_ready' && !extra.due) { setNr(x => ({ ...x, [s.id]: { ...(x[s.id] || {}), open: true } })); return }   // ask where + when first
     setBusy(`${s.id}:${status}`)
     try {
-      for (const id of (s._ids || [s.id])) {
-        const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/mark`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scrubId: id, status, note: notes[s.id] || '', label: [s.vehicle, s.ro && `RO ${s.ro}`].filter(Boolean).join(' · ') }) })
+      const ids = s._ids || [s.id]
+      for (const [i, id] of ids.entries()) {
+        const body = { scrubId: id, status, note: notes[s.id] || '', label: [s.vehicle, s.ro && `RO ${s.ro}`].filter(Boolean).join(' · '), shop, stage: extra.stage || '', ...(i === 0 && extra.due ? { due: extra.due, siblings: ids.slice(1) } : {}) }
+        const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/mark`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         const d = await r.json(); if (!r.ok) throw new Error(d.error)
-        onSeen(id, { s: status, at: new Date().toISOString(), by: user?.techName || (user?.name || '').split(' ')[0] || '', n: notes[s.id] || '' })
+        onSeen(id, { s: status, at: new Date().toISOString(), by: user?.techName || (user?.name || '').split(' ')[0] || '', n: notes[s.id] || '', st: extra.stage || '', d: extra.due || '' })
       }
       setMarks(m => ({ ...m, [s.id]: status }))
+      if (extra.due) { setDues(x => ({ ...x, [s.id]: extra.due })); setNr(x => ({ ...x, [s.id]: { ...(x[s.id] || {}), open: false } })) }
     } catch (e) { setErr(e.message || 'Could not save that.') } finally { setBusy('') }
   }
   const addFound = async () => {
@@ -283,6 +296,28 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
                   </button>
                 ))}
               </div>
+              {nr[s.id]?.open && (
+                <div className="mt-2 rounded-lg p-2" style={{ backgroundColor: '#fffbeb', border: '1px solid #fcd34d' }}>
+                  <div className="text-[11px] font-bold mb-1" style={{ color: '#92400e' }}>Where's it at?</div>
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {WALK_STAGES.map(([st, days]) => (
+                      <button key={st} onClick={() => setNr(x => ({ ...x, [s.id]: { ...x[s.id], stage: x[s.id]?.stage === st ? '' : st, days } }))} className="rounded-full px-2.5 py-1.5 text-xs font-bold"
+                        style={nr[s.id]?.stage === st ? { backgroundColor: '#92400e', color: '#fff' } : { backgroundColor: '#fff', color: '#92400e', border: '1px solid #fcd34d' }}>{st}</button>
+                    ))}
+                  </div>
+                  <div className="text-[11px] font-bold mb-1" style={{ color: '#92400e' }}>Check back {nr[s.id]?.days ? <span className="font-normal">(usual for {nr[s.id].stage?.toLowerCase()}: highlighted)</span> : ''}</div>
+                  <div className="flex flex-wrap gap-1">
+                    {WALK_WHEN.map(([l, days]) => (
+                      <button key={l} disabled={!!busy} onClick={() => mark(s, 'not_ready', { stage: nr[s.id]?.stage || '', due: ptDate(days) })} className="rounded-full px-2.5 py-1.5 text-xs font-bold"
+                        style={nr[s.id]?.days === days ? { backgroundColor: '#b45309', color: '#fff' } : { backgroundColor: '#fff', color: '#b45309', border: '1px solid #f59e0b' }}>{l}</button>
+                    ))}
+                    <label className="rounded-full px-2.5 py-1.5 text-xs font-bold flex items-center gap-1" style={{ backgroundColor: '#fff', color: '#b45309', border: '1px solid #f59e0b' }}>📅
+                      <input type="date" min={ptDate(1)} onChange={e => e.target.value && mark(s, 'not_ready', { stage: nr[s.id]?.stage || '', due: e.target.value })} className="text-xs bg-transparent" style={{ width: 110, outline: 'none' }} />
+                    </label>
+                  </div>
+                </div>
+              )}
+              {m === 'not_ready' && dues[s.id] && !nr[s.id]?.open && <div className="text-xs font-bold mt-1.5" style={{ color: '#92400e' }}>⏳ {nr[s.id]?.stage ? `${nr[s.id].stage} · ` : ''}check back {shortDay(dues[s.id])} — it'll be on your Live Day To-Do</div>}
               <input value={notes[s.id] || ''} onChange={e => setNotes(n => ({ ...n, [s.id]: e.target.value }))} placeholder="Note (optional) — e.g. waiting on bumper"
                 className="w-full text-xs rounded-lg px-2.5 py-2 mt-1.5" style={inp} />
               {m === 'here' && <RowRequest s={s} user={user} onDone={onRequest} full />}
