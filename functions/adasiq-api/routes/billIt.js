@@ -65,10 +65,57 @@ async function buildPreview(req, job, pickType = '') {
     : brSaved
   const ctypeEarly = String(job.cash_quoted || '').trim() ? 'cash' : (brEarly.customer_type || '')
   const extra = { saved_type: brSaved.customer_type || '', can_dual: !!job.zoho_estimate_id, customer_types: big3mod.CUSTOMER_TYPES }
+  // 🧾 Collision = two invoices, always (Mark 2026-10-01). Two invoices are built
+  // from the job's Books estimate; a collision card without one (built by hand,
+  // or a link lost on a save) gets its estimate created right here from the
+  // card's calibrations, then bills like any other collision job.
+  if (!job.zoho_estimate_id && !isRetailJob && big3mod.billingModeFor(ctypeEarly) === 'dual') {
+    const made = await ensureCollisionEstimate(req, job, shopRow).catch(e => { console.warn('[bill-it] auto-estimate failed:', e.message); return { error: e.message } })
+    if (made?.id) { job = { ...job, zoho_estimate_id: made.id, quote_number: made.number }; extra.can_dual = true; extra.estimate_created = made.number }
+    else extra.estimate_missing = made?.error || 'No calibrations on the card yet. Add the work on the card, then Bill it makes both invoices.'
+  }
   if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return { ...(await buildSinglePreview(req, job, shopRow, brEarly)), ...extra }
   const dual = await buildDualPreview(req, job, brEarly)
   return { ...dual, ...extra }
 }
+// Create the Books estimate for a collision card that has none, from the card's
+// enabled calibrations (same createDraftQuote the quote screen uses), and save
+// the link on the card. One at a time per card (Cache lock) so two opens of the
+// modal can't make two estimates.
+async function ensureCollisionEstimate(req, job, shopRow) {
+  let cals = []
+  try { cals = (typeof job.calibrations === 'string' ? JSON.parse(job.calibrations || '[]') : (job.calibrations || [])).filter(c => c && c.enabled !== false) } catch { cals = [] }
+  if (!cals.length) return null
+  const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+  const k = `auto_est:${job.id}`
+  try { if (await seg.getValue(k)) return { error: 'The estimate is being created. Close and reopen Bill it in a few seconds.' }; await seg.put(k, '1', 1) } catch { /* no cache — carry on */ }
+  const token = await getAccessToken()
+  let customerId = shopRow?.zoho_contact_id || job.zoho_customer_id || ''
+  let customerName = shopRow?.shop_name || job.shop_name || ''
+  if (!customerId && customerName) {
+    const r = await axios.get(`${API}/contacts`, { headers: H(token), params: { ...org(), contact_name: customerName }, timeout: 15000, validateStatus: st => st < 500 }).catch(() => null)
+    const hit = (r?.data?.contacts || []).find(c => String(c.contact_name).toLowerCase() === customerName.toLowerCase())
+    if (hit) { customerId = hit.contact_id; customerName = hit.contact_name }
+  }
+  if (!customerId) return { error: `${customerName || 'This shop'} isn't linked to a Books customer yet. Link it on the CRM card (Billing tab), then Bill it again.` }
+  const b3 = await import('../services/big3.js')
+  const rules = b3.effectiveBig3((await b3.readBig3(req, customerName)).rules, job.insurer).rules
+  const { createDraftQuote } = await import('../services/zoho.js')
+  const ro = String(job.ro_number || job.quote_number || (job.vin ? String(job.vin).slice(-8) : '') || '').trim()
+  const est = await createDraftQuote({
+    collision: String(job.insurer || '').toLowerCase() !== 'cash', customerId, customerName, shop: job.shop_name, ro_number: ro,
+    vin: job.vin || '', vehicle: job.vehicle || '', year: job.year || '', make: job.make || '', model: job.model || '', insurer: job.insurer || '', claim: '',
+    calibrations: cals.map(c => ({ calibration_name: c.calibration_name || c.name, enabled: true, cal_type: c.cal_type || '', trigger: c.trigger || '', line_references: c.line_references || '', justification: c.justification || '' })),
+    notes: 'Created by Bill it: this collision card had no estimate.', big3Rules: rules, req,
+  })
+  const id = String(est?.quoteId || ''), number = est?.quoteNumber || ''
+  if (!id) return { error: 'Books did not return an estimate.' }
+  await updateJobPublic(req, job.id, { zoho_estimate_id: id, quote_number: number, quote_url: est.quoteUrl || '', ...(!job.folder_url && est.folderUrl ? { folder_url: est.folderUrl } : {}) })
+  console.log(`[bill-it] ${job.shop_name}: created estimate ${number} for card ${job.id} (collision, had none)`)
+  postToCliqChannel(DISPATCH_CHANNEL, `🧾 *Estimate ${number} created by Bill it* · ${job.shop_name} · ${job.vehicle || ''}. The collision card had no estimate, so two invoices can go out.`).catch(() => {})
+  return { id, number }
+}
+
 async function buildDualPreview(req, job, brPicked) {
   const token = await getAccessToken()
   const [est, catalog, big3] = await Promise.all([

@@ -662,6 +662,35 @@ router.post('/scrubs/mark-invoiced', async (req, res) => {
 })
 
 // 🔎 Debug: raw job rows by VIN / invoice / quote number (any status, deleted-from-board too).
+// 🔗 Re-link a job card to its Books estimate by number (2026-10-01: ORBITA X7's
+// card lost zoho_estimate_id on a later save). Restores estimate id, quote #,
+// insurer, Y/M/M from the estimate. ?dry=1 shows what it would write.
+router.all('/jobs/relink-estimate', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const H = { Authorization: `Zoho-oauthtoken ${token}` }, P = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const n = String(req.query.number || '')
+    const el = await axios.get('https://www.zohoapis.com/books/v3/estimates', { headers: H, params: { ...P, estimate_number: n }, timeout: 15000 })
+    const hit = (el.data?.estimates || []).find(e => e.estimate_number === n)
+    if (!hit) return res.status(404).json({ error: `estimate ${n} not found` })
+    const ed = await axios.get(`https://www.zohoapis.com/books/v3/estimates/${hit.estimate_id}`, { headers: H, params: P, timeout: 15000 })
+    const est = ed.data?.estimate || {}
+    const cf = l => (est.custom_fields || []).find(c => c.label === l)?.value || ''
+    const jobId = String(req.query.job || '')
+    const t = catalyst.initialize(req).datastore().table('Jobs')
+    const cur = await t.getRow(jobId)
+    const patch = { ROWID: jobId, zoho_estimate_id: String(est.estimate_id), quote_number: est.estimate_number }
+    if (!cur.insurer && cf('Insurer')) patch.insurer = cf('Insurer')
+    const ymm = [cf('Year'), cf('Make'), cf('Model')].filter(Boolean).join(' ')
+    if (ymm) { patch.vehicle = ymm; patch.make = cf('Make') || cur.make; patch.model = cf('Model') || cur.model }
+    if (req.query.dry === '1') return res.json({ dry: true, job: { id: jobId, shop: cur.shop_name, vin: cur.vin }, estimate: { id: est.estimate_id, number: est.estimate_number, customer: est.customer_name, total: est.total, status: est.status, vin: cf('VIN') }, patch })
+    if (cf('VIN') && cur.vin && cf('VIN') !== cur.vin) return res.status(409).json({ error: 'VIN on the estimate does not match the job', estimate_vin: cf('VIN'), job_vin: cur.vin })
+    await t.updateRow(patch)
+    res.json({ ok: true, patch })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
 router.get('/jobs/find', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {

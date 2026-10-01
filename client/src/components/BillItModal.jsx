@@ -210,6 +210,12 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 )}
               </div>
             )}
+            {p.estimate_created && (
+              <div className="rounded-xl p-3 text-sm font-semibold" style={{ backgroundColor: '#ecfdf5', border: '1.5px solid #6ee7b7', color: '#065f46' }}>🧾 This collision card had no estimate, so we created <b>{p.estimate_created}</b> in Books from the card. Both invoices are below.</div>
+            )}
+            {p.estimate_missing && (
+              <div className="rounded-xl p-3 text-sm font-semibold" style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fecaca', color: '#b91c1c' }}>🧾 Collision shops get two invoices, and that needs a Books estimate. {p.estimate_missing}</div>
+            )}
             {p.warnings.length > 0 && (
               <div className="rounded-xl p-3 text-sm space-y-1" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
                 {p.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}

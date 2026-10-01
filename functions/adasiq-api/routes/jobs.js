@@ -241,11 +241,36 @@ async function insertJob(req, jobData) {
   return rowToJob(inserted)
 }
 
+// Fields that link a card to Books / WorkDrive / the scrub. A save may change
+// them, but never blank one that is set (pass _clear: ['field'] to clear on purpose).
+const STICKY = ['zoho_estimate_id', 'quote_number', 'quote_url', 'folder_url', 'report_url', 'invoice_number', 'insurer', 'calibrations', 'vin']
+function protectLinks(stored, body, how) {
+  if (!stored || !body) return body || {}
+  const clear = new Set(Array.isArray(body._clear) ? body._clear : [])
+  const out = { ...body }; delete out._clear
+  const kept = []
+  for (const f of STICKY) {
+    if (!(f in out) || clear.has(f)) continue
+    const now = out[f], was = stored[f]
+    const blank = v => v == null || v === '' || v === '[]' || (Array.isArray(v) && !v.length)
+    if (blank(now) && !blank(was)) { delete out[f]; kept.push(f) }
+  }
+  if (kept.length) console.warn(`[jobs] ${how} ${stored.id || ''} ${stored.shop_name || ''}: kept ${kept.join(', ')} (the save sent them blank)`)
+  return out
+}
+
 async function updateJob(req, rowId, updates) {
   const table = getTable(req)
+  // 🛡️ Every save merges over the stored row (2026-10-01). jobToRow writes
+  // EVERY column, so a caller passing a partial job used to blank the rest —
+  // that's how ORBITA's X7 lost its estimate link. Now nothing a caller leaves
+  // out is touched, and the link fields can't be blanked (protectLinks).
+  let stored = null
+  try { stored = rowToJob(await table.getRow(String(rowId))) } catch { /* new/unknown row: write as given */ }
+  const full = stored ? { ...stored, ...protectLinks(stored, updates, 'save') } : updates
   // CRITICAL: keep ROWID as a string — these IDs exceed Number.MAX_SAFE_INTEGER,
   // so Number(rowId) silently loses precision and Catalyst can't find the row.
-  const row = { ROWID: rowId, ...jobToRow(updates) }
+  const row = { ROWID: rowId, ...jobToRow(full) }
   const updated = await table.updateRow(row)
   if (!updated) throw new Error('Update returned no data')
   return rowToJob(updated)
@@ -661,6 +686,12 @@ router.put('/:id', async (req, res) => {
       delete req.body.photos_pending
     }
 
+    // 🛡️ A PUT used to REPLACE the row with whatever the screen sent, so a
+    // partial or stale job object blanked every other column (2026-10-01:
+    // ORBITA's X7 lost its Books estimate link, quote #, insurer, calibrations
+    // and folder on a reassign, and could not be double-invoiced). Now the
+    // body is merged over the stored row, and the links that tie a card to
+    // Books / WorkDrive are never blanked by a save.
     const updated = await updateJob(req, req.params.id, req.body)
     if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') await writePcsiStory(req, updated)
     if (req.body.cash_quoted && String(cur?.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
@@ -760,7 +791,7 @@ router.patch('/:id', async (req, res) => {
       }
     }
 
-    const merged = { ...currentJob, ...req.body }
+    const merged = { ...currentJob, ...protectLinks(currentJob, req.body, 'PATCH') }   // updateJob guards again; this keeps the gates below honest
 
     // 📸 Photo gate (Mark 2026-09-08): a job can't go Ready to Invoice
     // until its photo set is complete and the test drive is over a mile.
