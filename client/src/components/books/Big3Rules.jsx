@@ -257,6 +257,7 @@ function NewShopChecklist({ shop }) {
 export default function Big3Rules({ shop }) {
   const [rules, setRules] = useState(null)
   const [meta, setMeta] = useState({ set_by: '', set_at: '' })
+  const [ctype, setCtype] = useState('')
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
@@ -265,7 +266,7 @@ export default function Big3Rules({ shop }) {
     let dead = false
     apiFetch(`${API_BASE}/api/shops/${shop.id}/big3`).then(r => r.json()).then(d => {
       if (dead || !d.ok) return
-      setRules(d.rules); setMeta({ set_by: d.set_by, set_at: d.set_at })
+      setRules(d.rules); setMeta({ set_by: d.set_by, set_at: d.set_at }); setCtype(d.customer_type || '')
     }).catch(() => {})
     return () => { dead = true }
   }, [shop?.id])
@@ -300,6 +301,11 @@ export default function Big3Rules({ shop }) {
       apiFetch(`${API_BASE}/api/shops/${shop.id}/big3`).then(r => r.json()).then(x => { if (x.ok) { setRules(x.rules); setMeta({ set_by: x.set_by, set_at: x.set_at }) } }).catch(() => {})
     } catch (e) { setMsg(`✗ Not saved: ${e.message} — try again, and tell Mark if it keeps happening`) } finally { setSaving(false) }
   }
+  // Big 4 is collision-shop only (Mark 2026-10-01) — repair shops, dealers and retail never carry it.
+  if (['repair_shop', 'dealer', 'retail'].includes(ctype)) return (<>
+    <BillingQuestions shop={shop} />
+    <div className="rounded-xl px-3 py-2 mb-3 text-xs" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Big 4 and Full Service are for collision shops only. This customer is {TYPE_SHORT[ctype] || ctype}, so they're off.</div>
+  </>)
   return (<>
     <BillingQuestions shop={shop} />
     <div className="rounded-xl p-4 mb-4" style={{ border: `1.5px solid ${complete ? '#bbf7d0' : '#fde68a'}`, backgroundColor: complete ? '#f0fdf4' : '#fffbeb' }}>
@@ -447,7 +453,16 @@ export function FullServiceRules({ shop }) {
     apiFetch(`${API_BASE}/api/shops/${shop.id}/full-service`).then(r => r.json()).then(x => { if (!dead && x.ok) setD(x) }).catch(() => {})
     return () => { dead = true }
   }, [shop?.id])
-  if (!d) return null
+  if (!d || !d.collision) return null   // collision shops only (Mark 2026-10-01)
+  const setOn = async on => {
+    if (busy) return
+    setBusy('on'); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/full-service`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) })
+      const x = await r.json(); if (!r.ok || !x.ok) throw new Error(x.error || 'Could not save')
+      setD(v => ({ ...v, ...x })); setMsg('Saved.')
+    } catch (e) { setMsg(e.message) } finally { setBusy('') }
+  }
   const pick = async (key, mode) => {
     if (busy) return
     setBusy(key); setMsg('')
@@ -459,11 +474,17 @@ export function FullServiceRules({ shop }) {
   }
   return (
     <div className="rounded-xl p-3 mb-3" style={{ border: '2px solid #0369a1', backgroundColor: '#f0f9ff' }}>
-      <div className="text-sm font-extrabold" style={{ color: '#0369a1' }}>🧰 Full Service</div>
-      <div className="text-[11px] mb-2" style={{ color: '#555' }}>Follow-up work some shops do themselves. The scrub always finds it; this decides who does it. Ask = shown as an offer 💰.</div>
-      <div className="grid gap-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-extrabold" style={{ color: '#0369a1' }}>🧰 Full Service</div>
+        <button onClick={() => setOn(!d.on)} disabled={!!busy} className="rounded-full px-3 py-1.5 text-xs font-extrabold"
+          style={d.on ? { backgroundColor: '#0369a1', color: '#fff' } : { backgroundColor: '#e5e7eb', color: '#4b5563' }}>{busy === 'on' ? '…' : d.on ? '● ON' : '○ OFF'}</button>
+      </div>
+      <div className="text-[11px] mb-2" style={{ color: '#555' }}>{d.on
+        ? 'Follow-up work we do for this shop. The scrub always finds it; this decides who does each item. Ask = shown as an offer 💰.'
+        : 'Off: the shop does its own follow-up work (manual headlamp aim, TPMS, programming, resets). It shows on our report as "performed by the repair facility" and is never quoted. Turn it on once it\'s agreed with the shop.'}</div>
+      {d.on && <div className="grid gap-1.5">
         {d.items.map(it => {
-          const m = d.rules?.[it.key] || 'ask'
+          const m = d.rules?.[it.key] || 'we'
           return (
             <div key={it.key} className="flex items-center justify-between gap-2 flex-wrap rounded-lg px-2 py-1.5" style={{ backgroundColor: '#fff', border: '1px solid #bae6fd' }}>
               <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{it.emoji} {it.label}{!d.set?.[it.key] && <span className="text-[10px] font-normal ml-1" style={{ color: '#999' }}>no rule yet</span>}</span>
@@ -476,7 +497,7 @@ export function FullServiceRules({ shop }) {
             </div>
           )
         })}
-      </div>
+      </div>}
       <div className="text-[10px] mt-1.5" style={{ color: '#888' }}>Electronic headlamps (adaptive / auto-leveling) are a calibration we always do, so they're not here.{d.set_by ? ` Last set by ${d.set_by}.` : ''}</div>
       {msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: msg === 'Saved.' ? '#166534' : '#b91c1c' }}>{msg}</div>}
     </div>

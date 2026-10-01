@@ -99,8 +99,8 @@ export async function generateADASIQPdf(jobData = {}) {
   try {
     const req = globalThis.__catalystReq
     const fs = await import('./fullService.js')
-    const rules = req && jobData.shop ? (await fs.readFullService(req, jobData.shop)).rules : null
-    cals = fs.tagRows((cals || []).map(c => ({ ...c })), rules)
+    const r = req && jobData.shop ? await fs.readFullService(req, jobData.shop) : null
+    cals = fs.tagRows((cals || []).map(c => ({ ...c })), r?.rules, { collision: r ? r.collision : true })
   } catch { /* untagged rows print as plain calibrations */ }
   return buildPdf({ ...jobData, calibrations: cals, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
 }

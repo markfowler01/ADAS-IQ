@@ -43,6 +43,7 @@ export const CUSTOMER_TYPES = {
 }
 export const PAY_MODES = { net_terms: 'Net terms — email the invoice', on_site: 'On site — tech collects (check or card QR)', either: 'Either' }
 export const billingModeFor = ctype => (CUSTOMER_TYPES[ctype]?.mode || 'dual')
+export const NON_COLLISION = new Set(['repair_shop', 'dealer', 'retail'])   // Big 4 + Full Service are collision-shop only
 export const BASE_TO_KEY = Object.fromEntries(BIG3.map(b => [b.base, b.key]))
 const LEGACY = { bill: 'charge', shop: 'included' }
 
@@ -100,7 +101,8 @@ export async function readBig3(req, shopName) {
   const br = parseBR(shop)
   // Auto repair shops never carry the Big 4 (Mark 2026-09-30) — whatever was
   // saved, every fee is off, so Bill it can't add them back.
-  if (br.customer_type === 'repair_shop') return { rules: { cal_id: 'off', pcsi: 'off', post_scan: 'off', snapshot: 'off' }, shop_id: shop.id, shop_name: shop.shop_name, set_by: 'repair shop — no Big 4', set_at: '', customer_type: 'repair_shop' }
+  // Mark 2026-10-01: "auto repair shops and retail do not need the big three or the full Service … Collision Shop only" — dealers too.
+  if (NON_COLLISION.has(br.customer_type)) return { rules: { cal_id: 'off', pcsi: 'off', post_scan: 'off', snapshot: 'off' }, shop_id: shop.id, shop_name: shop.shop_name, set_by: `${CUSTOMER_TYPES[br.customer_type]?.label || br.customer_type} — no Big 4`, set_at: '', customer_type: br.customer_type }
   return { rules: normalizeRules(br.big3), shop_id: shop.id, shop_name: shop.shop_name, set_by: br.big3_set_by || '', set_at: br.big3_set_at || '' }
 }
 

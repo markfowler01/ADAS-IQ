@@ -615,7 +615,7 @@ router.put('/:id/full-service', async (req, res) => {
   try {
     const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
     const fs = await import('../services/fullService.js')
-    const r = await fs.saveFullService(req, shop, req.body?.rules || req.body, req.user?.name || req.user?.email || '', { learnOnly: req.body?.learn === true })
+    const r = await fs.saveFullService(req, shop, req.body?.rules || {}, req.user?.name || req.user?.email || '', { learnOnly: req.body?.learn === true, on: typeof req.body?.on === 'boolean' ? req.body.on : null })
     res.json({ ok: true, ...r, ...fs.fsRulesOf(rowToShop(await getTable(req).getRow(String(req.params.id)))) })
   } catch (e) { console.error('[shops full-service PUT]', req.params.id, e.message); res.status(500).json({ error: e.message }) }
 })

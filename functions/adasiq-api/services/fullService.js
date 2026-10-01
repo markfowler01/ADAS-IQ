@@ -8,7 +8,12 @@
 //   we    → We do it: on the report and the quote, billed
 //   shop  → Shop does it: on the report as "Required · shop handles", never quoted
 //   ask   → Ask: shown as an offer ("💰 Offer"), the quoter decides
-// No rule yet = ask. The first choice someone makes for a shop becomes its rule.
+// Mark 2026-10-01 (v2): "default it off … for Collision shops only, then we'll
+// turn it on based on the discussions and negotiations". So:
+//   • collision shop (or type not set), Full Service OFF (default) → every item = shop
+//   • collision shop, Full Service ON → per-item rule, unset item = we
+//   • repair shop / dealer / retail → not Full Service at all: the rows are ordinary
+//     billable lines (untagged), no section, no toggle
 import { updateShop } from '../routes/shops.js'
 import { findShopByName } from './big3.js'
 import { postToCliqChannel, DISPATCH_CHANNEL } from './cliq.js'
@@ -22,7 +27,7 @@ export const FULL_SERVICE = [
   { key: 'resets',     emoji: '🪟', label: 'Battery-disconnect resets', match: /window|sunroof|moon ?roof|power (liftgate|tailgate|sliding door)|initiali[sz]ation after battery|battery.*reset|reset.*battery/i },
 ]
 export const FS_MODES = { we: 'We do it', shop: 'Shop does it', ask: 'Ask' }
-export const FS_DEFAULT = 'ask'
+export const FS_DEFAULT = 'we'   // per-item default once a shop is switched ON
 
 /** Which Full Service item a calibration row is, or null for a calibration. */
 export function fsKeyFor(name) {
@@ -39,12 +44,15 @@ export function normalizeFs(r) {
 
 const parseBR = shop => { const br = shop?.billing_rules; if (!br) return {}; if (typeof br === 'string') { try { return JSON.parse(br) || {} } catch { return {} } } return br }
 
-/** A shop's rules with every item filled (unset = ask) + which items were set. */
+/** A shop's effective rule for every item, plus the switch and what was set. */
 export function fsRulesOf(shop) {
   const br = parseBR(shop)
   const set = normalizeFs(br.full_service)
-  const rules = Object.fromEntries(FULL_SERVICE.map(f => [f.key, set[f.key] || FS_DEFAULT]))
-  return { rules, set, set_by: br.full_service_set_by || '', set_at: br.full_service_set_at || '' }
+  const ctype = String(br.customer_type || '')
+  const collision = !ctype || ctype === 'body_shop'
+  const on = collision && br.full_service_on === true
+  const rules = Object.fromEntries(FULL_SERVICE.map(f => [f.key, !collision ? 'we' : on ? (set[f.key] || FS_DEFAULT) : 'shop']))
+  return { rules, set, on, collision, customer_type: ctype, set_by: br.full_service_set_by || '', set_at: br.full_service_set_at || '' }
 }
 
 export async function readFullService(req, shopName) {
@@ -56,9 +64,15 @@ export async function readFullService(req, shopName) {
  * Save some or all items for a shop. learnOnly = only fill items that have no
  * rule yet (first choice wins; later deviations don't overwrite).
  */
-export async function saveFullService(req, shop, patch, by = '', { learnOnly = false, silent = false } = {}) {
+export async function saveFullService(req, shop, patch, by = '', { learnOnly = false, silent = false, on = null } = {}) {
   if (!shop) return { changed: false }
   const br = parseBR(shop)
+  if (typeof on === 'boolean' && on !== (br.full_service_on === true)) {
+    await updateShop(req, shop.id, { ...shop, billing_rules: { ...br, full_service_on: on, full_service_set_by: by || 'app', full_service_set_at: new Date().toISOString() } })
+    console.log(`[full-service] ${shop.shop_name}: switched ${on ? 'ON' : 'OFF'} by ${by || 'app'}`)
+    if (!silent) await postToCliqChannel(DISPATCH_CHANNEL, `🧰 *Full Service ${on ? 'ON' : 'OFF'} · ${shop.shop_name}*\nby ${by || 'app'}`).catch(() => {})
+    return { changed: true }
+  }
   const before = normalizeFs(br.full_service)
   const clean = normalizeFs(patch)
   const next = { ...before }
@@ -76,8 +90,9 @@ export async function saveFullService(req, shop, patch, by = '', { learnOnly = f
  * Tag each scrub row with its Full Service item and the shop's mode for it:
  * row._fs = { key, label, emoji, mode }. Calibrations are left untouched.
  */
-export function tagRows(cals, rules) {
+export function tagRows(cals, rules, { collision = true } = {}) {
   for (const c of Array.isArray(cals) ? cals : []) {
+    if (!collision) { delete c._fs; continue }   // non-collision customers: plain lines
     const key = fsKeyFor(c.calibration_name || c.name)
     if (!key) { delete c._fs; continue }
     const f = FULL_SERVICE.find(x => x.key === key)
