@@ -1107,7 +1107,7 @@ router.all('/scrub-dispatch', async (req, res) => {
     const n = stats.ready
     const base = `${req.protocol}://${req.get('host')}${req.baseUrl}`
     const axios = (await import('axios')).default
-    const fire = i => axios.post(`${base}/scrub-worker?w=d${Date.now().toString(36)}${i}`, {}, { headers: { 'x-cron-secret': req.headers['x-cron-secret'] }, timeout: 2500 }).catch(() => null)
+    const fire = i => axios.post(`${base}/scrub-worker?w=d${Date.now().toString(36)}${i}`, {}, { headers: { 'x-cron-secret': req.headers['x-cron-secret'] }, timeout: 20000 }).catch(() => null)   // 2.5s dropped cold starts (CCC test 2026-09-30); workers run past the gateway's 30s cut anyway
     await Promise.all(Array.from({ length: n }, (_, i) => fire(i)))
     if (stats.dead) { try { const { maybeAlertDead } = await import('../services/scrubQueue.js'); maybeAlertDead && await maybeAlertDead(req, stats.dead) } catch {} }
     res.json({ started: n, reclaimed, ...stats })
