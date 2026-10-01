@@ -629,6 +629,7 @@ export async function createDraftQuote({
   const baseFixedNames = [
     'Calibration Identification Report (included)',
     'Post Collision Safety Inspection 1 (included)',
+    'Pre-Scan (included)',   // Big 3 pre-scan (2026-10-01) — off unless the shop rule turns it on
     'Post-Scan (included)',
   ]
   const fixedNames = baseFixedNames.map(n => (fixedOverrides && fixedOverrides[n]) || n)

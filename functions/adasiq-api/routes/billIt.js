@@ -287,6 +287,7 @@ export function big3KeyFor(name) {
   if (/calibration identification report/.test(n)) return 'cal_id'
   if (/post collision safety inspection|\bpcsi\b/.test(n)) return 'pcsi'
   if (/calibration snapshot/.test(n)) return 'snapshot'
+  if (/\bpre[- ]?scan/.test(n) && !/post/.test(n)) return 'pre_scan'
   if (/post[- ]?(calibration )?scan/.test(n)) return 'post_scan'
   return null
 }
@@ -429,6 +430,8 @@ router.post('/:id/bill', async (req, res) => {
     ].filter(Boolean).join('\n')
     await postToCliqChannel(DISPATCH_CHANNEL, summary).catch(() => {})
     console.log(`[bill-it] ${dry ? 'DRY' : 'LIVE'} ${p.shop_name} ${p.estimate_number} ${pct}% by ${by}`)
+    // 📨 First invoice to a new collision shop → "Welcome to Absolute ADAS" (once, ever; Mark 2026-10-01).
+    if (!dry && inv && p._shop) { try { const { sendShopWelcome2 } = await import('../services/shopWelcome.js'); await Promise.race([sendShopWelcome2(req, p._shop, { by: req.user?.name || 'Bill it' }), new Promise(r => setTimeout(r, 8000))]) } catch { /* never blocks billing */ } }
     res.json({ ok: true, dry, invoice: inv ? { number: inv.invoice_number, id: inv.invoice_id, total: inv.total } : null, emails, estimate_updated: changedLines, attached: p.attached || [], preview: pub(p) })
   } catch (e) {
     console.error('[bill-it]', e.message)

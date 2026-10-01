@@ -26,10 +26,11 @@ const big3KeyFor = name => {
   if (/calibration identification report/.test(n)) return 'cal_id'
   if (/post collision safety inspection|\bpcsi\b/.test(n)) return 'pcsi'
   if (/calibration snapshot/.test(n)) return 'snapshot'
+  if (/\bpre[- ]?scan/.test(n) && !/post/.test(n)) return 'pre_scan'
   if (/post[- ]?(calibration )?scan/.test(n)) return 'post_scan'
   return null
 }
-const BIG3_ORDER = ['cal_id', 'pcsi', 'post_scan', 'snapshot']
+const BIG3_ORDER = ['cal_id', 'pcsi', 'pre_scan', 'post_scan', 'snapshot']
 // Rebuild the Big 4 lines from a rule: Charge → paid item, Included → "(included)" $0 item,
 // Off → none; Snapshot charge ⇒ no Post-Scan line at all (Mark: "no post scan with snapshot").
 function applyBig3(lines, rules, items) {
@@ -86,7 +87,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
         for (const key of BIG3_ORDER) {
           const hit = ls.filter(l => l.big3_key === key)
           if (hit.length) eff[key] = hit.some(l => Number(l.rate) > 0) ? 'charge' : 'included'
-          else if (key === 'post_scan' || key === 'snapshot' || key === 'cal_id') eff[key] = 'off'
+          else if (key === 'post_scan' || key === 'pre_scan' || key === 'snapshot' || key === 'cal_id') eff[key] = 'off'
         }
         if (eff.snapshot === 'charge') eff.post_scan = d.big3.rules.post_scan
         setRules(eff); setRulesTouched(false)
@@ -226,7 +227,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                   if (p.big3?.insurer_rule) return <div className="text-xs mt-2" style={{ color: '#92400e' }}>🏦 Insurer rule applied ({p.big3.insurer_rule}). Not saved as {p.shop_name}'s rule.</div>
                   if (!p.big3?.has_rule) return <div className="text-xs mt-2" style={{ color: '#92400e' }}>🧠 First invoice for {p.shop_name} — whatever you send will be remembered as this shop's rule.</div>
                   const saved = p.big3.rules || {}
-                  const labels = { cal_id: 'Cal ID report', pcsi: 'PCSI', post_scan: 'Post-Scan', snapshot: 'Calibration Snapshot' }
+                  const labels = { cal_id: 'Cal ID report', pcsi: 'PCSI', pre_scan: 'Pre-Scan', post_scan: 'Post-Scan', snapshot: 'Calibration Snapshot' }
                   const word = m => normalizeMode(m) === 'charge' ? 'charge for' : normalizeMode(m) === 'included' ? 'include (no charge)' : 'leave off'
                   const diffs = Object.keys(labels).filter(k => normalizeMode(rules[k]) !== normalizeMode(saved[k]))
                   if (!diffs.length) return null

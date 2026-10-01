@@ -10,6 +10,7 @@ const ORANGE = '#CD4419'
 export const BIG3 = [
   { key: 'cal_id',    label: 'Cal ID report', modes: ['charge', 'included', 'off'] },
   { key: 'pcsi',      label: 'Post Collision Safety Inspection', modes: ['charge', 'included', 'off'] },   // Off: Mark 2026-09-30
+  { key: 'pre_scan',  label: 'Pre-Scan', modes: ['charge', 'included', 'off'] },   // Mark 2026-10-01
   { key: 'post_scan', label: 'Post-Scan', modes: ['charge', 'included', 'off'] },
   // Big FOUR (Mark 2026-09-10): Snapshot replaces Post-Scan when charged —
   // the shop does its own post-scan but lets us do a snapshot.

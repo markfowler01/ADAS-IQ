@@ -63,7 +63,7 @@ export default function ReviewCompact(props) {
   const big3Map = useBig3Map()
   const ctype = selectedCustomer?.name ? big3Map[shopKeyOf(selectedCustomer.name)]?.billing?.customer_type || '' : ''
   const noBig4 = ctype === 'repair_shop'
-  const ALL_OFF = { cal_id: 'off', pcsi: 'off', post_scan: 'off', snapshot: 'off' }
+  const ALL_OFF = { cal_id: 'off', pcsi: 'off', pre_scan: 'off', post_scan: 'off', snapshot: 'off' }
   useEffect(() => {
     if (noBig4) { onBig3(ALL_OFF); setBig3Save(false) }
   }, [noBig4, selectedCustomer?.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -126,7 +126,7 @@ export default function ReviewCompact(props) {
   const src = fromScrub ? 'Absolute ADAS scrub' : 'Kinetic report'
   const fixedLines = (rowPrices?._fixed_lines || [])
   const feeTotal = fixedLines.reduce((a, l) => a + (Number(l.amount) || 0), 0)
-  const rules = big3Rules || { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
+  const rules = big3Rules || { cal_id: 'charge', pcsi: 'included', pre_scan: 'off', post_scan: 'included', snapshot: 'off' }
   const onServices = services.filter(c => c.enabled)
   return (
     <div className="max-w-2xl mx-auto px-3 py-2 flex flex-col gap-2">

@@ -244,7 +244,7 @@ export default function ReviewLayout({
                   <span className="text-[11px]" style={{ color: '#166534' }}>{big3Rules ? describeRules(big3Rules) : ''}</span>
                 </div>
                 <div className="mt-1">
-                  <Big3Picker rules={big3Rules || { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }} onChange={onBig3} compact />
+                  <Big3Picker rules={big3Rules || { cal_id: 'charge', pcsi: 'included', pre_scan: 'off', post_scan: 'included', snapshot: 'off' }} onChange={onBig3} compact />
                 </div>
                 <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}>
                   <input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'} (every invoice from now on)

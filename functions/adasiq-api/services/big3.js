@@ -25,12 +25,14 @@ export const BIG3 = [
   // cal_id can be OFF (left off the invoice) — insurer rules use it (2026-09-16).
   { key: 'cal_id',    base: 'Calibration Identification Report (included)',        paid: 'Calibration Identification Report',        label: 'Cal ID report', modes: ['charge', 'included', 'off'] },
   { key: 'pcsi',      base: 'Post Collision Safety Inspection 1 (included)', paid: 'Post Collision Safety Inspection 1',        label: 'Post Collision Safety Inspection', modes: ['charge', 'included', 'off'] },
+  // Pre-Scan joins (Mark 2026-10-01: "add pre-scans to the Big three"). Off until a shop says we do them.
+  { key: 'pre_scan',  base: 'Pre-Scan (included)',                           paid: 'Pre-Scan', label: 'Pre-Scan', modes: ['charge', 'included', 'off'] },
   { key: 'post_scan', base: 'Post-Scan (included)',                          paid: 'Post-Scan', paidFallback: 'Post-Calibration Scan', label: 'Post-Scan', modes: ['charge', 'included', 'off'] },
   { key: 'snapshot',  base: null,                                            paid: 'Calibration Snapshot', label: 'Calibration Snapshot', modes: ['charge', 'off'] },
 ]
 export const MODES = { charge: 'Charge', included: 'Included', off: 'Off' }
 // Until a shop has a rule: Cal ID charged (as today), PCSI + Post-Scan included, Snapshot off.
-export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
+export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', pre_scan: 'off', post_scan: 'included', snapshot: 'off' }
 // Customer types (Mark 2026-09-22, single-invoice billing). body_shop is
 // the collision shop (kept as the stored value from 2026-09-10).
 //   mode: dual = insurance invoice + cost invoice · single = one invoice
@@ -102,7 +104,7 @@ export async function readBig3(req, shopName) {
   // Auto repair shops never carry the Big 4 (Mark 2026-09-30) — whatever was
   // saved, every fee is off, so Bill it can't add them back.
   // Mark 2026-10-01: "auto repair shops and retail do not need the big three or the full Service … Collision Shop only" — dealers too.
-  if (NON_COLLISION.has(br.customer_type)) return { rules: { cal_id: 'off', pcsi: 'off', post_scan: 'off', snapshot: 'off' }, shop_id: shop.id, shop_name: shop.shop_name, set_by: `${CUSTOMER_TYPES[br.customer_type]?.label || br.customer_type} — no Big 4`, set_at: '', customer_type: br.customer_type }
+  if (NON_COLLISION.has(br.customer_type)) return { rules: { cal_id: 'off', pcsi: 'off', pre_scan: 'off', post_scan: 'off', snapshot: 'off' }, shop_id: shop.id, shop_name: shop.shop_name, set_by: `${CUSTOMER_TYPES[br.customer_type]?.label || br.customer_type} — no Big 4`, set_at: '', customer_type: br.customer_type }
   return { rules: normalizeRules(br.big3), shop_id: shop.id, shop_name: shop.shop_name, set_by: br.big3_set_by || '', set_at: br.big3_set_at || '' }
 }
 

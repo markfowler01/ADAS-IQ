@@ -999,6 +999,15 @@ router.get('/shops/types', async (req, res) => {
 })
 
 // 📨 Test copies of every welcome version to one address (Mark only, no Kat).
+// 📨 Test copy of email 2 ("Welcome to Absolute ADAS") to an absoluteadas.com inbox. The
+// questionnaire links point at a test token: the page works, nothing saves.
+router.post('/welcome2/test', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const to = String(req.body?.to || 'mark@absoluteadas.com').toLowerCase()
+  if (!/@absoluteadas\.com$/.test(to)) return res.status(400).json({ error: 'test copies go to an absoluteadas.com address only' })
+  const { sendShopWelcome2 } = await import('../services/shopWelcome.js')
+  res.json(await sendShopWelcome2(req, { id: 'test', shop_name: 'TEST' }, { testTo: to }))
+})
 router.post('/welcome/test', express.json(), async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {
