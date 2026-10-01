@@ -1083,7 +1083,7 @@ router.all('/scrubs/mark-quoted', async (req, res) => {
 // 🔄 Daily: keep the Scrub Library's stages current from Books (quotes sent, invoices).
 router.all('/scrubs/sync-stages', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
-  const base = `${req.protocol}://${req.get('host')}${req.baseUrl}`
+  const base = `${(process.env.API_PUBLIC_BASE || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api')}/api/crm-sync-cron`
   const axios = (await import('axios')).default
   const H = { 'x-cron-secret': req.headers['x-cron-secret'] }
   const out = {}
@@ -1105,7 +1105,7 @@ router.all('/scrub-dispatch', async (req, res) => {
     const reclaimed = await SQ.reclaimStale(req)
     const stats = await SQ.queueStats(req)
     const n = stats.ready
-    const base = `${req.protocol}://${req.get('host')}${req.baseUrl}`
+    const base = `${(process.env.API_PUBLIC_BASE || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api')}/api/crm-sync-cron`
     const axios = (await import('axios')).default
     const fire = i => axios.post(`${base}/scrub-worker?w=d${Date.now().toString(36)}${i}`, {}, { headers: { 'x-cron-secret': req.headers['x-cron-secret'] }, timeout: 20000 }).catch(() => null)   // 2.5s dropped cold starts (CCC test 2026-09-30); workers run past the gateway's 30s cut anyway
     await Promise.all(Array.from({ length: n }, (_, i) => fire(i)))
@@ -1165,7 +1165,7 @@ router.all('/scrub-safety', async (req, res) => {
         try { await seg.put(k, '1', 24) } catch {}
       }
     }
-    if (stats.ready) { try { const axios = (await import('axios')).default; await axios.post(`${req.protocol}://${req.get('host')}${req.baseUrl}/scrub-dispatch`, {}, { headers: { 'x-cron-secret': req.headers['x-cron-secret'] }, timeout: 20000 }) } catch {} }
+    if (stats.ready) { try { const axios = (await import('axios')).default; await axios.post(`${(process.env.API_PUBLIC_BASE || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api')}/api/crm-sync-cron/scrub-dispatch`, {}, { headers: { 'x-cron-secret': req.headers['x-cron-secret'] }, timeout: 20000 }) } catch {} }
     res.json({ ...out, queue: stats })
   } catch (e) { res.status(500).json({ ...out, error: e.message }) }
 })
