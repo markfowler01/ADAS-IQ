@@ -621,7 +621,12 @@ export async function scrubStats(req) {
 // here, or adds a car they found. The walk is saved in AdasLotWalks; each
 // car keeps its latest result in scrub_seen {s, at, by, w, n}.
 const WALKS = 'AdasLotWalks'
-export const WALK_STATUSES = { here: 'On the lot', not_ready: 'Not ready', gone: 'Not here', found: 'Found on walk' }
+export const WALK_STATUSES = { here: 'On site', not_ready: 'Not ready', estimate: 'Estimate only', gone: 'Not here', found: 'Found on walk' }
+// 🚗 On-site clock (Mark 2026-10-01: "most cars have about a two week lifespan
+// at a body shop"). The first time a car is seen on the lot, `on` = that time;
+// it carries through later marks while the car is still there and clears when
+// it's marked Not here or Estimate only (car not dropped off).
+export const ON_SITE = new Set(['here', 'not_ready', 'found'])
 
 export async function startWalk(req, { shop, by }) {
   const row = await ds(req).datastore().table(WALKS).insertRow({ walk_shop: str(shop, 200), walk_by: str(by, 100), walk_started: nowIso(), walk_items: '[]' })
@@ -637,18 +642,18 @@ export async function getWalk(req, id) { return walkOut(await getWalkRow(req, id
 
 /** Mark one car on a walk. Replaces that car's earlier mark on the same walk. */
 export async function markWalkCar(req, walkId, { scrubId, status, note = '', by = '', label = '', stage = '', due = '', shop = '', siblings = [], techKey = '' }) {
-  if (!WALK_STATUSES[status]) throw new Error('status must be here, not_ready, gone or found')
+  if (!WALK_STATUSES[status]) throw new Error('status must be here, not_ready, estimate, gone or found')
   const w = await getWalkRow(req, walkId); if (!w) throw new Error('walk not found')
   const items = walkOut(w).items.filter(i => String(i.scrubId) !== String(scrubId))
   const at = nowIso()
   items.push({ scrubId: String(scrubId), status, note: str(note, 200), label: str(label, 120), at, ...(stage ? { stage: str(stage, 40) } : {}), ...(due ? { due: str(due, 10) } : {}) })
   await ds(req).datastore().table(WALKS).updateRow({ ROWID: String(w.ROWID), walk_items: JSON.stringify(items).slice(0, CHUNK) })
-  await setSeen(req, scrubId, { s: status, at, by, w: String(w.ROWID), n: note, st: stage, d: due })
+  const seen = await setSeen(req, scrubId, { s: status, at, by, w: String(w.ROWID), n: note, st: stage, d: due })
   // ⏳ Not ready + a check-back day → a To-Do on the walker's Live Day card, hidden until that day.
   if (status === 'not_ready' && due && (techKey || by)) {
     try { const { addTechTodo } = await import('../routes/techTodos.js'); await addTechTodo(req, techKey || by, { text: `🚗 Check on ${label || 'car'}${shop ? ` · ${shop}` : ''}${stage ? ` (was: ${stage})` : ''}`, due, kind: 'walk_check', scrubIds: [String(scrubId), ...siblings.map(String)], shop, stage, car: label }) } catch { /* fine */ }
   }
-  return { ok: true, items }
+  return { ok: true, items, seen }
 }
 
 /** A car on the lot that isn't in the library yet → a stub scrub for that shop. */
@@ -667,7 +672,7 @@ export async function finishWalk(req, walkId) {
   for (const i of walkOut(w).items) seenCar.set(i.label || i.scrubId, i)
   const items = [...seenCar.values()]
   const n = k => items.filter(i => i.status === k).length
-  const summary = [`${n('here')} on the lot`, n('not_ready') ? `${n('not_ready')} not ready` : '', n('gone') ? `${n('gone')} not here` : '', n('found') ? `${n('found')} new` : ''].filter(Boolean).join(', ')
+  const summary = [`${n('here')} on site`, n('not_ready') ? `${n('not_ready')} not ready` : '', n('estimate') ? `${n('estimate')} estimate only` : '', n('gone') ? `${n('gone')} not here` : '', n('found') ? `${n('found')} new` : ''].filter(Boolean).join(', ')
   await ds(req).datastore().table(WALKS).updateRow({ ROWID: String(w.ROWID), walk_finished: nowIso(), walk_summary: str(summary, 250) })
   return { ...walkOut(w), items, finished: nowIso(), summary }
 }
@@ -680,6 +685,10 @@ export async function recentWalks(req, shop = '', limit = 10) {
 
 /** The car's latest seen state (walks and Live Day follow-ups). */
 export async function setSeen(req, scrubId, { s, at = nowIso(), by = '', w = '', n = '', st = '', d = '' }) {
-  const seen = JSON.stringify({ s, at, by: str(by, 30), ...(w ? { w } : {}), ...(n ? { n: str(n, 60) } : {}), ...(st ? { st: str(st, 30) } : {}), ...(d ? { d: str(d, 10) } : {}) }).slice(0, 255)
+  let prev = null
+  try { const r = await ds(req).zcql().executeZCQLQuery(`SELECT scrub_seen FROM ${TABLE} WHERE ROWID = '${String(scrubId).replace(/\D/g, '')}' LIMIT 1`); prev = JSON.parse(r[0]?.[TABLE]?.scrub_seen || 'null') } catch { /* first mark */ }
+  const on = ON_SITE.has(s) ? (prev?.on || at) : ''
+  const seen = JSON.stringify({ s, at, ...(on ? { on } : {}), by: str(by, 30), ...(w ? { w } : {}), ...(n ? { n: str(n, 50) } : {}), ...(st ? { st: str(st, 30) } : {}), ...(d ? { d: str(d, 10) } : {}) }).slice(0, 255)
   await ds(req).datastore().table(TABLE).updateRow({ ROWID: String(scrubId), scrub_seen: seen })
+  return JSON.parse(seen)
 }

@@ -125,9 +125,10 @@ router.post('/seen', express.json(), async (req, res) => {
   try {
     const { setSeen } = await import('../services/scrubStore.js')
     const ids = (Array.isArray(req.body?.scrubIds) ? req.body.scrubIds : []).map(String).filter(x => /^\d+$/.test(x)).slice(0, 10)
-    const s = String(req.body?.status || ''); if (!['here', 'not_ready', 'gone'].includes(s) || !ids.length) return res.status(400).json({ error: 'status + scrubIds required' })
-    for (const id of ids) await setSeen(req, id, { s, by: walker(req), st: req.body?.stage || '', d: req.body?.due || '', n: req.body?.note || '' })
-    res.json({ ok: true })
+    const s = String(req.body?.status || ''); if (!['here', 'not_ready', 'estimate', 'gone'].includes(s) || !ids.length) return res.status(400).json({ error: 'status + scrubIds required' })
+    let seen = null
+    for (const id of ids) seen = await setSeen(req, id, { s, by: walker(req), st: req.body?.stage || '', d: req.body?.due || '', n: req.body?.note || '' })
+    res.json({ ok: true, seen })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.post('/walks/:wid/found', express.json(), async (req, res) => {

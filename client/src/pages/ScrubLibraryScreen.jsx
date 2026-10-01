@@ -180,8 +180,9 @@ const quoteSent = s => s.stage === 'quoted'
 
 // 👀 Last lot-walk result on a car (Mark 2026-09-30).
 const SEEN = {
-  here:      { label: 'On the lot', bg: '#dcfce7', fg: '#166534', icon: '✅' },
+  here:      { label: 'On site', bg: '#dcfce7', fg: '#166534', icon: '✅' },
   not_ready: { label: 'Not ready',  bg: '#fef3c7', fg: '#92400e', icon: '⏳' },
+  estimate:  { label: 'Estimate only', bg: '#f3f4f6', fg: '#4b5563', icon: '📄' },
   gone:      { label: 'Not here',   bg: '#fee2e2', fg: '#b91c1c', icon: '❌' },
   found:     { label: 'Found on walk', bg: '#e0f2fe', fg: '#0369a1', icon: '🆕' },
 }
@@ -190,6 +191,35 @@ function SeenChip({ s }) {
   const st = SEEN[v.s]
   const when = v.at ? new Date(v.at).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles', month: 'short', day: 'numeric' }) : ''
   return <div className="mt-0.5"><span className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded" title={v.n || ''} style={{ backgroundColor: st.bg, color: st.fg }}>👀 {st.icon} {st.label}{v.st ? ` · ${v.st}` : ''}{v.d ? ` · check ${shortDay(v.d)}` : ''}{when ? ` · seen ${when}` : ''}{v.by ? ` · ${v.by}` : ''}{v.n ? ` · ${v.n}` : ''}</span></div>
+}
+
+// ⏱ Shop clock (Mark 2026-10-01: "most cars have about a two week lifespan at a
+// body shop"). Once a walk sees the car on the lot, it counts days ON SITE
+// toward ~14. Before that it counts days since the first estimate came in.
+// Stops counting once the car is invoiced or marked Not here.
+const SHOP_LIFE = 14
+const daysSince = iso => { const t = Date.parse(iso || ''); return Number.isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 864e5)) }
+const carKeyOf = c => (String(c.vin || '').length === 17 ? c.vin : '') || (c.ro ? `ro:${c.ro}` : `id:${c.id}`)
+function clockOf(s, first) {
+  if (['invoiced', 'paid'].includes(s.stage) || s.seen?.s === 'gone') return null
+  if (s.seen?.on && ['here', 'not_ready', 'found'].includes(s.seen.s)) { const d = daysSince(s.seen.on); return d == null ? null : { kind: 'onsite', d } }
+  const d = daysSince(first || s.at); return d == null ? null : { kind: 'estimate', d }
+}
+// Running out = on site 10+ days, or an estimate 12+ days old, and not on the board yet.
+const runningOut = (s, first) => { const c = clockOf(s, first); return !!c && s.stage !== 'job' && (c.kind === 'onsite' ? c.d >= 10 : c.d >= 12) }
+function ShopClock({ s, first }) {
+  const c = clockOf(s, first); if (!c) return null
+  const days = c.d === 0 ? 'today' : `${c.d}d`
+  let txt, bg, fg
+  if (c.kind === 'onsite') {
+    const left = SHOP_LIFE - c.d
+    txt = `🚗 On site ${days} · ${left > 0 ? `~${left}d left` : 'past 2 wks'}`
+    ;[bg, fg] = c.d >= 12 ? ['#dc2626', '#fff'] : c.d >= 8 ? ['#f59e0b', '#fff'] : ['#16a34a', '#fff']
+  } else {
+    txt = `⏱ ${c.d === 0 ? 'Estimate today' : `${days} since estimate`}`
+    ;[bg, fg] = c.d >= 14 ? ['#fee2e2', '#b91c1c'] : c.d >= 7 ? ['#fef3c7', '#92400e'] : ['#f1f5f9', '#475569']
+  }
+  return <span className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded-full whitespace-nowrap" title={c.kind === 'onsite' ? `On the lot since ${new Date(s.seen.on).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}. Cars usually leave the shop in about 2 weeks.` : 'Days since the first estimate for this car came in. A lot walk that sees it on site starts the on-site clock.'} style={{ backgroundColor: bg, color: fg }}>{txt}</span>
 }
 
 // ⏳ Not ready → where it's at + when to check back (Mark 2026-09-30: techs guess
@@ -226,7 +256,7 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
         const body = { scrubId: id, status, note: notes[s.id] || '', label: [s.vehicle, s.ro && `RO ${s.ro}`].filter(Boolean).join(' · '), shop, stage: extra.stage || '', ...(i === 0 && extra.due ? { due: extra.due, siblings: ids.slice(1) } : {}) }
         const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/mark`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         const d = await r.json(); if (!r.ok) throw new Error(d.error)
-        onSeen(id, { s: status, at: new Date().toISOString(), by: user?.techName || (user?.name || '').split(' ')[0] || '', n: notes[s.id] || '', st: extra.stage || '', d: extra.due || '' })
+        onSeen(id, d.seen || { s: status, at: new Date().toISOString(), by: user?.techName || (user?.name || '').split(' ')[0] || '', n: notes[s.id] || '', st: extra.stage || '', d: extra.due || '' })
       }
       setMarks(m => ({ ...m, [s.id]: status }))
       if (extra.due) { setDues(x => ({ ...x, [s.id]: extra.due })); setNr(x => ({ ...x, [s.id]: { ...(x[s.id] || {}), open: false } })) }
@@ -238,7 +268,7 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
     try {
       const r = await apiFetch(`${API_BASE}/api/scrubs/walks/${walk.id}/found`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop, vin: f.vin, vehicle: f.vehicle, ro: f.ro, note: f.note }) })
       const d = await r.json(); if (!r.ok || !d.id) throw new Error(d.error || 'Could not add the car.')
-      const row = { id: d.id, shop, vin: f.vin.length === 17 ? f.vin.toUpperCase() : '', vehicle: f.vehicle || `VIN …${f.vin}`, ro: f.ro, stage: 'scrubbed', status: 'found', sensors: [], requiredCount: 0, sensorCount: 0, at: new Date().toISOString(), seen: { s: 'found', at: new Date().toISOString(), n: f.note } }
+      const row = { id: d.id, shop, vin: f.vin.length === 17 ? f.vin.toUpperCase() : '', vehicle: f.vehicle || `VIN …${f.vin}`, ro: f.ro, stage: 'scrubbed', status: 'found', sensors: [], requiredCount: 0, sensorCount: 0, at: new Date().toISOString(), seen: { s: 'found', at: new Date().toISOString(), on: new Date().toISOString(), n: f.note } }
       setFound(x => [...x, row]); onFound(row); setMarks(m => ({ ...m, [d.id]: 'found' }))
       setF({ open: false, vin: '', vehicle: '', ro: '', note: '' })
     } catch (e) { setErr(e.message) } finally { setBusy('') }
@@ -251,10 +281,10 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
   }
   // One card per car: a car scrubbed 5 times is still one car on the lot.
   // Newest scrub is the card; a tap marks every scrub of that car.
-  const carKey = c => (String(c.vin || '').length === 17 ? c.vin : '') || (c.ro ? `ro:${c.ro}` : `id:${c.id}`)
+  const carKey = carKeyOf
   const sibs = new Map()
   for (const c of [...cars].sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')))) { const k = carKey(c); sibs.set(k, [...(sibs.get(k) || []), c]) }
-  const uniq = [...sibs.values()].map(list => ({ ...list[0], _ids: list.map(x => x.id) }))
+  const uniq = [...sibs.values()].map(list => ({ ...list[0], _ids: list.map(x => x.id), _first: list.map(x => x.at).filter(Boolean).sort()[0] || '' }))
   const all = [...uniq, ...found.filter(x => !uniq.some(c => c._ids.includes(x.id)))]
   const left = all.filter(s => !marks[s.id]).length
   const inp = { border: '1.5px solid #ddd', outline: 'none', backgroundColor: '#fff' }
@@ -288,8 +318,9 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
             <div key={s.id} className="rounded-xl p-3" style={{ border: `2px solid ${m ? SEEN[m].fg : '#e5e5e5'}`, backgroundColor: m ? SEEN[m].bg : '#fff' }}>
               <div className="text-sm font-bold leading-snug" style={{ color: INK }}>{s.vehicle || 'Vehicle'}</div>
               <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap mt-0.5" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}{s.vin ? <span style={{ color: '#888' }}>…{String(s.vin).slice(-6)}</span> : null}<CalPills s={s} /></div>
-              <div className="grid grid-cols-3 gap-1.5 mt-2">
-                {['here', 'not_ready', 'gone'].map(k => (
+              <div className="mt-1"><ShopClock s={s} first={s._first} /></div>
+              <div className="grid grid-cols-2 gap-1.5 mt-2">
+                {['here', 'not_ready', 'estimate', 'gone'].map(k => (
                   <button key={k} onClick={() => mark(s, k)} disabled={!walk || !!busy}
                     className="rounded-lg py-2.5 text-xs font-bold" style={m === k ? { backgroundColor: SEEN[k].fg, color: '#fff' } : { backgroundColor: '#fff', color: SEEN[k].fg, border: `1.5px solid ${SEEN[k].fg}`, opacity: busy === `${s.id}:${k}` ? .5 : 1 }}>
                     {SEEN[k].icon} {SEEN[k].label}
@@ -394,6 +425,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   const [tab, setTab] = useState('active')        // active | archive (invoiced + paid)
   const [shopSel, setShopSel] = useState('')      // '' = all shops
   const [walkShop, setWalkShop] = useState('')    // 🚶 a lot walk is open for this shop
+  const [hot, setHot] = useState(false)           // ⏰ only cars running out of shop time
   const onFile = async e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) await uploadReport(f) }
   const onDrop = async e => {
     e.preventDefault(); setDragOver(false)
@@ -476,7 +508,11 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
 
   // ── Active / Archive + shop grouping (Mark 2026-09-30) ──
   const billed = s => ['invoiced', 'paid'].includes(s.stage)
-  const tabRows = rows.filter(s => (tab === 'archive' ? billed(s) : !billed(s)))
+  // ⏱ First time each car showed up (supplements are new rows; the clock runs from the first).
+  const firstAt = (() => { const m = new Map(); for (const r of rows) { const k = carKeyOf(r); if (r.at && (!m.has(k) || r.at < m.get(k))) m.set(k, r.at) } return m })()
+  const first = s => firstAt.get(carKeyOf(s)) || s.at
+  const hotCount = rows.filter(s => !billed(s) && runningOut(s, first(s))).length
+  const tabRows = rows.filter(s => (tab === 'archive' ? billed(s) : !billed(s))).filter(s => !hot || tab === 'archive' || runningOut(s, first(s)))
   // One shop, many spellings ("…LLC", "…Llc", "Avon Body Shop, Llc") → one group,
   // shown under its most common spelling.
   const shopKey = s => String(s.shop || '').toLowerCase().replace(/[.,&']/g, ' ').replace(/\b(llc|inc|co|corp|corporation|ltd|the)\b/g, ' ').replace(/[^a-z0-9]+/g, '') || 'noshop'
@@ -555,6 +591,10 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
           <button key={k} onClick={() => { setTab(k); setShopSel('') }} className="rounded-lg px-3 py-2 text-sm font-bold"
             style={tab === k ? { backgroundColor: INK, color: '#fff' } : { backgroundColor: '#f5f3f0', color: '#555' }}>{l} <span className="opacity-70">{n}</span></button>
         ))}
+        {tab === 'active' && (hotCount > 0 || hot) && (
+          <button onClick={() => { setHot(h => !h); setShopSel('') }} className="rounded-lg px-3 py-2 text-sm font-bold" title="On site 10+ days or estimate 12+ days old, and not on the board yet"
+            style={hot ? { backgroundColor: '#dc2626', color: '#fff' } : { backgroundColor: '#fee2e2', color: '#b91c1c' }}>⏰ Running out <span className="opacity-80">{hotCount}</span></button>
+        )}
         {tab === 'archive' && <span className="text-xs" style={{ color: '#888' }}>Invoiced and paid cars</span>}
       </div>
       {shops.length > 1 && (
@@ -626,6 +666,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                     </td>
                     <td className="py-2.5 pr-3">
                       <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
+                      <div className="mt-0.5"><ShopClock s={s} first={first(s)} /></div>
                       <SeenChip s={s} />
                       <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
                     </td>
@@ -657,6 +698,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                   {s.requiredCount} of {s.sensorCount}
                 </span>
               </div>
+              <div className="mt-1"><ShopClock s={s} first={first(s)} /></div>
               <SeenChip s={s} />
               <div className="text-[11px] mt-1" style={{ color: '#666' }}>{s.shop || '—'}</div>
               <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}><CopyVin vin={s.vin} /></div>
