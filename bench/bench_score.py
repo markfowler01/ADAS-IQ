@@ -30,8 +30,12 @@ CANON = [
     (r"driver monitor", "Driver Monitor Camera"),
     (r"rear radar|rear aeb", "Rear Radar"),
 ]
+FULL_SERVICE = re.compile(r"tpms|tire pressure|programming|software update|coding|battery-disconnect|window|sunroof", re.I)
 def canon(n):
     t = str(n).lower()
+    # 🧰 Full Service items (2026-10-01) are not calibrations Kinetic scores; manual
+    # "Headlamp Aim" stays countable via the headlamp lines in the report.
+    if FULL_SERVICE.search(t): return None
     for pat, name in CANON:
         if re.search(pat, t): return name
     return None   # not a sensor Kinetic scores (Rivian base lines, PCSI, etc.)

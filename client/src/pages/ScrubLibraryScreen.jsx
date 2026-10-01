@@ -92,6 +92,37 @@ function normScrub(s) {
 // scrub knows (shop, car, VIN, RO, claim, insurer, every calibration line,
 // the estimate link) and marks the scrub "job requested". Same POST as the
 // board's "+ Request Job", so Kat's alert fires the same way.
+// 🧰 Full Service (Mark 2026-10-01): headlamp aim, TPMS, programming, resets.
+// The scrub always finds them; each shop's CRM rule decides what we do:
+// we = on the quote · shop = shop handles it, never quoted · ask = an offer.
+const FS_ITEMS = [
+  { key: 'headlamp', emoji: '💡', label: 'Headlamp aim (manual)', match: /^(?!.*(adaptive|level|swivel|afs|matrix|module|initiali|calibration|electronic)).*(headlamp|headlight)/i },   // electronic headlamps = a calibration we always do
+  { key: 'tpms', emoji: '🛞', label: 'TPMS relearn', match: /\btpms\b|tire pressure/i },
+  { key: 'programming', emoji: '🔑', label: 'Module programming', match: /programming|software update|module (setup|coding|config|replacement)|\bcoding\b/i },
+  { key: 'resets', emoji: '🪟', label: 'Battery-disconnect resets', match: /window|sunroof|moon ?roof|power (liftgate|tailgate|sliding door)|initiali[sz]ation after battery|battery.*reset|reset.*battery/i },
+]
+const FS_MODE = { we: { label: 'We do it', bg: '#CD4419' }, shop: { label: 'Shop does it', bg: '#78716c' }, ask: { label: 'Ask', bg: '#16a34a' } }
+const fsItemFor = name => FS_ITEMS.find(f => f.match.test(String(name || ''))) || null
+const _fsCache = new Map()
+async function fsRulesFor(shop, fresh = false) {
+  const k = String(shop || '').trim().toLowerCase(); if (!k) return { rules: {}, set: {} }
+  if (!fresh && _fsCache.has(k)) return _fsCache.get(k)
+  try { const r = await apiFetch(`${API_BASE}/api/shops/full-service-by-name?shop=${encodeURIComponent(shop)}`); const d = await r.json(); const v = { rules: d.rules || {}, set: d.set || {}, inCrm: !!d.shop_id }; _fsCache.set(k, v); return v }
+  catch { return { rules: {}, set: {} } }
+}
+const fsMode = (rules, key) => rules?.[key] || 'ask'
+/** Apply the shop's Full Service rules to outgoing calibration rows (quote / job request). */
+function applyFs(cals, rules) {
+  const offers = [], shopDoes = [], weDo = []
+  for (const c of cals) {
+    const f = fsItemFor(c.calibration_name); if (!f || !c.enabled) continue
+    const m = fsMode(rules, f.key)
+    if (m === 'we') weDo.push(`${f.emoji} ${c.calibration_name}`)
+    else { c.enabled = false; (m === 'shop' ? shopDoes : offers).push(`${f.emoji} ${c.calibration_name}`); c.justification = `${m === 'shop' ? 'Required · shop handles this (Full Service rule).' : '💰 Offer: required, and we can do it for the shop.'} ${c.justification || ''}`.trim() }
+  }
+  return [weDo.length ? `🧰 Full Service (we do it): ${weDo.join(', ')}` : '', offers.length ? `💰 Offer the shop: ${offers.join(', ')}` : '', shopDoes.length ? `🏪 Shop handles: ${shopDoes.join(', ')}` : ''].filter(Boolean)
+}
+
 async function requestJobFor(scrub, user, kind = 'job') {
   const quote = kind === 'quote'
   let full = scrub
@@ -104,10 +135,12 @@ async function requestJobFor(scrub, user, kind = 'job') {
     : (full.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' }))
   const list = foldBsm(raw, { name: 'name', req: 'required', lines: 'lines', trig: 'trigger' })
   const cals = list.map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: !!c.required }))
+  const fsNotes = applyFs(cals, (await fsRulesFor(full.shop)).rules)
   const req = cals.filter(c => c.enabled).map(c => c.calibration_name)
   const notes = [
     `${quote ? '📝 Quote requested' : '📋 Job requested'} from the scrub${full.ro ? ` · RO ${full.ro}` : ''}${full.claim ? ` · claim ${full.claim}` : ''}${full.insurer ? ` · ${full.insurer}` : ''}`,
     req.length ? `Required: ${req.join(', ')}` : 'Scrub found nothing required — check before dispatch',
+    ...fsNotes,
     full.fileId ? `CCC estimate: https://workdrive.zoho.com/file/${full.fileId}` : '',
   ].filter(Boolean).join('\n')
   const payload = {
@@ -839,14 +872,16 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
     if (!list.length) { setQMsg('Nothing to quote — this scrub has no calibration lines.'); return }
     setQBusy(true); setQMsg('')
     try {
+      const qCals = list.map(l => ({
+        calibration_name: l.name, enabled: l.required === true, cal_type: l.type || '',
+        trigger: l.trigger || '', line_references: l.lines || '', justification: l.why || '',
+      }))
+      applyFs(qCals, (await fsRulesFor(s.shop)).rules)   // 🧰 shop-handled + offers start OFF; flip an offer on to sell it
       const jobData = {
         shop: s.shop || '', ro_number: s.ro || '', insurer: s.insurer || '', claim: s.claim || '',
         vin: s.vin || '', vehicle: [s.year, s.make, s.model].filter(Boolean).join(' '),
         year: s.year || '', make: s.make || '', model: s.model || '',
-        calibrations: list.map(l => ({
-          calibration_name: l.name, enabled: l.required === true, cal_type: l.type || '',
-          trigger: l.trigger || '', line_references: l.lines || '', justification: l.why || '',
-        })),
+        calibrations: qCals,
         document_links: Array.isArray(p.document_links) ? p.document_links : [],
         _requestId: s.jobId || null,
         _scrubId: s.id,
@@ -1143,6 +1178,8 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
               <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>📎 Went out with the invoice: {s.reports.map(r => r.name).join(', ')}</div>
             )}
 
+            {!editing && <FullServiceCard shop={s.shop} rows={list} />}
+
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-lg font-bold" style={{ color: INK }}>Operations</h3>
               <div className="text-xs flex gap-3" style={{ color: '#777' }}>
@@ -1227,6 +1264,54 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   )
 }
 
+// 🧰 The Full Service items this car needs + the shop's rule for each, settable
+// right here (the first pick for a shop becomes its rule; it's also on the
+// CRM Billing tab).
+function FullServiceCard({ shop, rows }) {
+  const items = FS_ITEMS.map(f => ({ ...f, rows: (rows || []).filter(r => r.required && f.match.test(r.name)) })).filter(f => f.rows.length)
+  const [fs, setFs] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  useEffect(() => { if (shop && items.length) fsRulesFor(shop).then(setFs) }, [shop, items.length])
+  if (!items.length) return null
+  const pick = async (key, mode) => {
+    if (!shop || busy) return
+    setBusy(key); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/full-service-by-name`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop, rules: { [key]: mode } }) })
+      const d = await r.json(); if (!d.ok) throw new Error(d.error || 'Could not save')
+      setFs(await fsRulesFor(shop, true)); setMsg(`Saved for ${shop}.`)
+    } catch (e) { setMsg(e.message) } finally { setBusy('') }
+  }
+  return (
+    <div className="rounded-xl p-3 mb-4" style={{ border: '2px solid #0369a1', backgroundColor: '#f0f9ff' }}>
+      <div className="text-sm font-extrabold" style={{ color: '#0369a1' }}>🧰 Full Service on this car</div>
+      <div className="text-[11px] mb-2" style={{ color: '#555' }}>Required follow-up work. {shop ? `${shop}'s rule decides who does it` : 'No shop on this scrub'}; 💰 = offer it to the shop.</div>
+      <div className="grid gap-2">
+        {items.map(f => {
+          const m = fsMode(fs?.rules, f.key), isSet = !!fs?.set?.[f.key]
+          return (
+            <div key={f.key} className="rounded-lg p-2" style={{ backgroundColor: '#fff', border: '1px solid #bae6fd' }}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-sm font-bold" style={{ color: INK }}>{f.emoji} {f.label} {m === 'ask' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>💰 Offer</span>}{!isSet && <span className="text-[10px] ml-1" style={{ color: '#999' }}>no rule yet</span>}</div>
+                <div className="flex gap-1">
+                  {Object.entries(FS_MODE).map(([k, v]) => (
+                    <button key={k} onClick={() => pick(f.key, k)} disabled={!shop || !!busy || !fs?.inCrm} className="rounded-full px-2.5 py-1 text-[11px] font-bold"
+                      style={m === k ? { backgroundColor: v.bg, color: '#fff' } : { backgroundColor: '#fff', color: v.bg, border: `1px solid ${v.bg}`, opacity: busy === f.key ? .5 : 1 }}>{v.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="text-[11px] mt-1" style={{ color: '#666' }}>{f.rows.map(r => `${r.name}${r.lines ? ` (line ${r.lines})` : ''}`).join(' · ')}</div>
+            </div>
+          )
+        })}
+      </div>
+      {fs && !fs.inCrm && shop && <div className="text-[11px] mt-1.5" style={{ color: '#b45309' }}>{shop} isn't in the CRM yet. Add it there to save a rule.</div>}
+      {msg && <div className="text-[11px] mt-1.5 font-semibold" style={{ color: msg.startsWith('Saved') ? '#166534' : '#b91c1c' }}>{msg}</div>}
+    </div>
+  )
+}
+
 function LineRow({ c, i, editing, expanded, onToggle, onFlip, onPatch, onRewrite, aiBusy, onRemove }) {
   const dim = !c.required
   const cell = { border: '1.5px solid #ddd', borderRadius: 6, padding: '3px 6px', fontSize: 12, width: '100%' }
@@ -1242,6 +1327,7 @@ function LineRow({ c, i, editing, expanded, onToggle, onFlip, onPatch, onRewrite
           {c.added && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fff7ed', color: '#b45309' }}>added{c.by ? ` · ${c.by}` : ''}</span>}
           {!c.added && c.edited && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#f5f3f0', color: '#777' }}>edited</span>}
           {c.guard && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#ecfdf5', color: '#065f46' }} title="Enforced by the guard: a hard rule in code, not the model's judgment">🛡️ rule</span>}
+          {fsItemFor(c.name) && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }} title="Full Service item: the shop's CRM rule decides who does it">🧰 Full Service</span>}
         </td>
         <td className="py-2.5 px-3" style={{ color: dim ? '#aaa' : '#444' }}>
           {editing ? <input value={c.trigger} onChange={e => onPatch({ trigger: e.target.value })} placeholder="repair that disturbs it" style={cell} /> : (c.trigger || '—')}

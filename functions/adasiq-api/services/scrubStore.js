@@ -199,6 +199,7 @@ export async function listScrubs(req, { q = '', make = '', shop = '', sensor = '
       const page = await readPage(req, off, LIST_COLS)
       scanned += page.length
       for (const r of page) {
+        if (String(r.scrub_source || '').startsWith('benchmark')) continue   // accuracy test runs never show in the library
         const hay = String(r.scrub_search || '').toLowerCase()
         if (needle && !hay.includes(needle)) continue
         if (wantMake && String(r.scrub_make || '').toLowerCase() !== wantMake) continue

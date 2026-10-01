@@ -27,8 +27,14 @@ const AIM_AFTER_BUMPER = /toyota|lexus|honda|acura|nissan|infiniti|hyundai|kia|g
 // Makes that always carry a surround-view camera in the inventory (2019+ or 2022+ Hyundai/Kia).
 const ALWAYS_AVC = /mercedes|bmw|audi|porsche|volvo|land rover|range rover|genesis|lexus/i
 const AVC_KIA = /hyundai|kia/i
-// Makes whose statements require SAS zero-point after a battery disconnect.
-const SAS_AFTER_BATTERY = /toyota|lexus|honda|acura|subaru|nissan|infiniti|hyundai|kia|mazda|mitsubishi/i
+// Makes that need an SAS reset after a battery disconnect. Mark 2026-10-01:
+// "steering angle sensors need to be calibrated after any alignment and for
+// honda and subaru any battery disconnect" — only these two (Acura = Honda).
+const SAS_AFTER_BATTERY = /honda|acura|subaru/i
+// Honda/Acura: front passenger weight sensor output check after ANY collision,
+// deployed or not (Honda S/I "Front Passenger's Weight Sensor Output Check
+// After a Vehicle Collision"; Honda/Acura post-collision position statement).
+const SWS_ANY_COLLISION = /honda|acura/i
 // Makes whose statements require the camera after a wheel alignment.
 const CAM_AFTER_ALIGN = /toyota|lexus|subaru|honda|acura|mazda|hyundai|kia|nissan|infiniti/i
 
@@ -183,6 +189,19 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     require(cals, /steering angle|\bsas\b/, 'Steering Angle Sensor', 'Reset',
       al.length ? `Wheel alignment (line ${al.join(', ')})` : `Battery disconnect (line ${bat.join(', ')}) — zero-point after power loss on ${make}`, ref,
       `Steering Angle Sensor ${al.length ? 'calibration' : 'zero-point reset'} required per ${per(make)} following ${al.length ? 'wheel alignment' : 'battery disconnect'} (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
+  }
+  // 4a. 🧰 Full Service: any battery disconnect → the power-loss resets (windows, sunroof, liftgate…).
+  if (bat.length) {
+    require(cals, /battery.?disconnect reset|window|sunroof|moon ?roof/i, 'Battery-Disconnect Resets', 'Reset',
+      `Battery disconnect (line${bat.length > 1 ? 's' : ''} ${bat.join(', ')})`, bat,
+      `Power-loss initializations required per ${per(make)} after the battery disconnect (line${bat.length > 1 ? 's' : ''} ${bat.join(', ')}): power window auto up/down, sunroof, power liftgate / sliding door and memory settings must be re-initialized or they will not operate as designed.`, out, true)
+  }
+  // 4b. Honda/Acura collision → Seat Weight Sensor output check (any damage).
+  if (SWS_ANY_COLLISION.test(make)) {
+    const sa = lines(hits.seat_airbag)
+    require(cals, /seat weight|occupant|\bods\b|\bocs\b|passenger seat/, 'Seat Weight Sensor', 'Reset',
+      sa.length ? `Seat / SRS lines ${sa.join(', ')}; Honda requires the weight sensor check after any collision` : 'In collision: Honda requires the front passenger weight sensor output check after any collision, deployed or not', sa,
+      `Front Passenger Weight Sensor output check required per ${per(make, "Honda service information: 'Check the front passenger's weight sensor output after a vehicle collision, regardless if the airbags and seatbelt tensioners deployed or not'")}${sa.length ? ` (seat/SRS line${sa.length > 1 ? 's' : ''} ${sa.join(', ')}: initialization if the SRS unit, weight sensor, seat frame or rail was replaced or removed)` : ''}. Failure to check presents a safety liability and does not meet ${make} repair standards.`, out, true)
   }
   if (al.length && CAM_AFTER_ALIGN.test(make)) {
     require(cals, /windshield|front camera|lane depart|forward camera/, 'Front Windshield Camera', 'Static/Dynamic',

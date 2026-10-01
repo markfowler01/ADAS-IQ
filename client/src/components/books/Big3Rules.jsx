@@ -431,3 +431,54 @@ export function WelcomeEmailBox({ shop }) {
     </div>
   )
 }
+
+
+// 🧰 Full Service per shop (Mark 2026-10-01): the follow-up work some shops do
+// themselves — manual headlamp aim, TPMS relearn, module programming, battery-
+// disconnect resets. We do it = quoted · Shop does it = never quoted · Ask = offer.
+const FS_COLORS = { we: '#CD4419', shop: '#78716c', ask: '#16a34a' }
+export function FullServiceRules({ shop }) {
+  const [d, setD] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  useEffect(() => {
+    if (!shop?.id) return
+    let dead = false
+    apiFetch(`${API_BASE}/api/shops/${shop.id}/full-service`).then(r => r.json()).then(x => { if (!dead && x.ok) setD(x) }).catch(() => {})
+    return () => { dead = true }
+  }, [shop?.id])
+  if (!d) return null
+  const pick = async (key, mode) => {
+    if (busy) return
+    setBusy(key); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/full-service`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rules: { [key]: mode } }) })
+      const x = await r.json(); if (!r.ok || !x.ok) throw new Error(x.error || 'Could not save')
+      setD(v => ({ ...v, rules: x.rules, set: x.set, set_by: x.set_by, set_at: x.set_at })); setMsg('Saved.')
+    } catch (e) { setMsg(e.message) } finally { setBusy('') }
+  }
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ border: '2px solid #0369a1', backgroundColor: '#f0f9ff' }}>
+      <div className="text-sm font-extrabold" style={{ color: '#0369a1' }}>🧰 Full Service</div>
+      <div className="text-[11px] mb-2" style={{ color: '#555' }}>Follow-up work some shops do themselves. The scrub always finds it; this decides who does it. Ask = shown as an offer 💰.</div>
+      <div className="grid gap-1.5">
+        {d.items.map(it => {
+          const m = d.rules?.[it.key] || 'ask'
+          return (
+            <div key={it.key} className="flex items-center justify-between gap-2 flex-wrap rounded-lg px-2 py-1.5" style={{ backgroundColor: '#fff', border: '1px solid #bae6fd' }}>
+              <span className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{it.emoji} {it.label}{!d.set?.[it.key] && <span className="text-[10px] font-normal ml-1" style={{ color: '#999' }}>no rule yet</span>}</span>
+              <span className="flex gap-1">
+                {Object.entries(d.modes).map(([k, label]) => (
+                  <button key={k} onClick={() => pick(it.key, k)} disabled={!!busy} className="rounded-full px-2.5 py-1 text-[11px] font-bold"
+                    style={m === k ? { backgroundColor: FS_COLORS[k], color: '#fff' } : { backgroundColor: '#fff', color: FS_COLORS[k], border: `1px solid ${FS_COLORS[k]}`, opacity: busy === it.key ? .5 : 1 }}>{label}</button>
+                ))}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="text-[10px] mt-1.5" style={{ color: '#888' }}>Electronic headlamps (adaptive / auto-leveling) are a calibration we always do, so they're not here.{d.set_by ? ` Last set by ${d.set_by}.` : ''}</div>
+      {msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: msg === 'Saved.' ? '#166534' : '#b91c1c' }}>{msg}</div>}
+    </div>
+  )
+}

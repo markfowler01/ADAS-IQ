@@ -94,7 +94,15 @@ export async function generateADASIQPdf(jobData = {}) {
       }
     } catch { /* the generic link below is fine */ }
   }
-  return buildPdf({ ...jobData, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
+  // 🧰 Full Service rows follow the shop's CRM rule (We do it / Shop does it / Ask).
+  let cals = jobData.calibrations
+  try {
+    const req = globalThis.__catalystReq
+    const fs = await import('./fullService.js')
+    const rules = req && jobData.shop ? (await fs.readFullService(req, jobData.shop)).rules : null
+    cals = fs.tagRows((cals || []).map(c => ({ ...c })), rules)
+  } catch { /* untagged rows print as plain calibrations */ }
+  return buildPdf({ ...jobData, calibrations: cals, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
 }
 
 function buildPdf(jobData) {
@@ -103,8 +111,9 @@ function buildPdf(jobData) {
       technician, folder_share_url, qr_png, _alldata } = jobData
     const performedBy = technician || 'Absolute ADAS'
 
-    const required = (calibrations || []).filter(c => c.enabled)
-    const notReq   = (calibrations || []).filter(c => !c.enabled)
+    const required = (calibrations || []).filter(c => c.enabled && !c._fs)
+    const fullSvc  = (calibrations || []).filter(c => c.enabled && c._fs)   // 🧰 Full Service (headlamp aim, TPMS, programming, resets)
+    const notReq   = (calibrations || []).filter(c => !c.enabled && !c._fs)
 
     const doc = new PDFDocument({ margin: 0, size: 'LETTER', autoFirstPage: true })
     const chunks = []
@@ -175,7 +184,7 @@ function buildPdf(jobData) {
     y += 74
 
     // ── CALIBRATION CARD RENDERER ──────────────────────────────────────────
-    function drawCal(cal, isRequired) {
+    function drawCal(cal, isRequired, opt = {}) {
       const accentColor = isRequired ? ORANGE      : '#c8c4c0'
       const bgColor     = isRequired ? ORANGE_LIGHT : GRAY_LIGHT
       const borderColor = isRequired ? ORANGE_BORDER: GRAY_BORDER
@@ -199,9 +208,9 @@ function buildPdf(jobData) {
       doc.roundedRect(MARGIN, y, CONTENT_W, rowH, 6).stroke(borderColor).lineWidth(0.5)
       doc.roundedRect(MARGIN, y, 4, rowH, 2).fill(accentColor)
 
-      const pillText = isRequired ? 'REQUIRED' : 'NOT REQUIRED'
+      const pillText = opt.pill || (isRequired ? 'REQUIRED' : 'NOT REQUIRED')
       const pillW = doc.widthOfString(pillText, { fontSize: 7 }) + 16
-      pill(doc, MARGIN + CONTENT_W - pillW - 10, y + 10, pillText, pillBg, WHITE)
+      pill(doc, MARGIN + CONTENT_W - pillW - 10, y + 10, pillText, opt.pillBg || pillBg, WHITE)
 
       doc.font('Helvetica-Bold').fontSize(10.5).fillColor(nameColor)
         .text(cal.calibration_name || '—', MARGIN + 14, y + 12, { width: CONTENT_W - pillW - 32 })
@@ -210,7 +219,8 @@ function buildPdf(jobData) {
       const chipY = y + 32
       if (cal.cal_type)        chipX += chip(doc, chipX, chipY, cal.cal_type,        isRequired ? '#fde8de' : '#e8e5e2', isRequired ? ORANGE : '#999') + 5
       if (cal.trigger)         chipX += chip(doc, chipX, chipY, cal.trigger,         isRequired ? '#fff0eb' : '#e8e5e2', isRequired ? '#a33510' : '#999') + 5
-      if (cal.line_references) chip(doc, chipX, chipY, `Lines ${cal.line_references}`, '#e8e5e2', '#777')
+      if (cal.line_references) chipX += chip(doc, chipX, chipY, `Lines ${cal.line_references}`, '#e8e5e2', '#777') + 5
+      if (opt.who) chip(doc, chipX, chipY, opt.who, opt.whoBg || '#e0f2fe', opt.whoFg || '#0369a1')
 
       // Plain-language description ("third grader" style) — upright,
       // slightly larger, easy for an insurance adjuster to skim.
@@ -253,6 +263,23 @@ function buildPdf(jobData) {
         .text(`${required.length} calibration${required.length !== 1 ? 's' : ''} identified as required for this vehicle`, MARGIN + 175, y + 0.5)
       y += 18
       required.forEach(cal => drawCal(cal, true))
+    }
+
+    // ── 🧰 FULL SERVICE (Mark 2026-10-01) ────────────────────────────────
+    // Required follow-up work around the calibrations. Who performs it comes
+    // from the shop's CRM rule; "Ask" reads as an offer to the shop.
+    if (fullSvc.length > 0) {
+      if (y + 40 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#0369a1').text('FULL SERVICE', MARGIN, y)
+      doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID)
+        .text('Required follow-up operations for this repair (OEM procedures beyond the calibrations above)', MARGIN + 80, y + 0.5)
+      y += 18
+      fullSvc.forEach(cal => {
+        const m = cal._fs?.mode
+        if (m === 'shop') drawCal(cal, true, { pill: 'REQUIRED · SHOP', pillBg: '#78716c', who: 'Performed by the repair facility', whoBg: '#f5f5f4', whoFg: '#57534e' })
+        else if (m === 'we') drawCal(cal, true, { who: 'Performed by Absolute ADAS' })
+        else drawCal(cal, true, { who: 'Available from Absolute ADAS: ask your technician', whoBg: '#dcfce7', whoFg: '#166534' })
+      })
     }
 
     // ── SEATBELTS & POST-COLLISION SAFETY INSPECTION (Mark 2026-09-03:

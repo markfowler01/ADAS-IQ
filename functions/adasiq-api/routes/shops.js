@@ -414,6 +414,22 @@ router.post('/card-note', async (req, res) => {
 
 // GET /api/shops
 // Big 3: every shop's rule (card badges) + active shops without one.
+// Full Service by shop name (scrub screens only know the name on the estimate).
+router.get('/full-service-by-name', async (req, res) => {
+  try {
+    const fs = await import('../services/fullService.js')
+    res.json({ ok: true, ...(await fs.readFullService(req, String(req.query.shop || ''))), items: fs.FULL_SERVICE.map(({ key, emoji, label }) => ({ key, emoji, label })), modes: fs.FS_MODES })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/full-service-by-name', async (req, res) => {
+  try {
+    const fs = await import('../services/fullService.js'); const { findShopByName } = await import('../services/big3.js')
+    const shop = await findShopByName(req, String(req.body?.shop || ''))
+    if (!shop) return res.json({ ok: false, error: 'shop not in the CRM' })
+    const r = await fs.saveFullService(req, shop, req.body?.rules || {}, req.user?.name || req.user?.email || '', { learnOnly: req.body?.learn === true })
+    res.json({ ok: true, ...r })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/big3-map', async (req, res) => {
   try { const b3 = await import('../services/big3.js'); res.json({ ok: true, ...(await b3.big3Map(req)) }) }
   catch (e) { res.status(500).json({ error: e.message }) }
@@ -585,6 +601,23 @@ router.post('/:id/new-shop', async (req, res) => {
     const saved = await updateShop(req, shop.id, { ...shop, billing_rules: br })
     res.json({ ok: true, new_shop: saved.billing_rules?.new_shop || br.new_shop })
   } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// 🧰 Full Service per shop (Mark 2026-10-01): headlamp aim, TPMS, programming, resets — We do it / Shop does it / Ask.
+router.get('/:id/full-service', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    const fs = await import('../services/fullService.js')
+    res.json({ ok: true, ...fs.fsRulesOf(shop), items: fs.FULL_SERVICE.map(({ key, emoji, label }) => ({ key, emoji, label })), modes: fs.FS_MODES })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/:id/full-service', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    const fs = await import('../services/fullService.js')
+    const r = await fs.saveFullService(req, shop, req.body?.rules || req.body, req.user?.name || req.user?.email || '', { learnOnly: req.body?.learn === true })
+    res.json({ ok: true, ...r, ...fs.fsRulesOf(rowToShop(await getTable(req).getRow(String(req.params.id)))) })
+  } catch (e) { console.error('[shops full-service PUT]', req.params.id, e.message); res.status(500).json({ error: e.message }) }
 })
 
 // Big 3 rule on a CRM shop (Mark 2026-09-10) — read/set from the Billing tab.

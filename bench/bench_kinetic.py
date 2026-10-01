@@ -66,7 +66,8 @@ def parse(path):
     return out
 
 def main():
-    files = glob.glob(os.path.expanduser("~/Downloads/**/Kinetic_ID_*.pdf"), recursive=True)
+    src = os.environ.get("KINETIC_DIR")   # e.g. the WorkDrive "Kinetic Scrubs" archive (2026-10-01)
+    files = glob.glob(os.path.join(src, "*.pdf")) if src else glob.glob(os.path.expanduser("~/Downloads/**/Kinetic_ID_*.pdf"), recursive=True)
     byvin, dupes, bad = {}, 0, 0
     for f in sorted(files):
         try:
@@ -78,7 +79,7 @@ def main():
         # newest report per VIN wins (supplements)
         if k["vin"] in byvin:
             dupes += 1
-            if os.path.getmtime(f) < os.path.getmtime(os.path.expanduser("~/Downloads/" + byvin[k["vin"]]["file"])) if os.path.exists(os.path.expanduser("~/Downloads/" + byvin[k["vin"]]["file"])) else False:
+            if not src and (os.path.getmtime(f) < os.path.getmtime(os.path.expanduser("~/Downloads/" + byvin[k["vin"]]["file"])) if os.path.exists(os.path.expanduser("~/Downloads/" + byvin[k["vin"]]["file"])) else False):
                 continue
         byvin[k["vin"]] = k
     json.dump(byvin, open(OUT, "w"), indent=1)
