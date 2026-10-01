@@ -475,7 +475,7 @@ router.post('/scrub-file', (req, res) => {
       const data = await scrubPdfBuffer(req, req.file.buffer, {
         learn: false, source: String(req.body?.source || 'downloads').slice(0, 30), by: 'Downloads sweep',
         file: { name }, pdfType: 'CCC', make,
-        textMode: req.body?.mode === 'text', effort: ['low', 'medium', 'high'].includes(req.body?.effort) ? req.body.effort : '',
+        textMode: req.body?.mode !== 'pdf', effort: ['low', 'medium', 'high'].includes(req.body?.effort) ? req.body.effort : '',
       })
       res.json({ ok: true, kind, name, shop: data?.shop || '', vehicle: data?.vehicle || '', ro: data?.ro_number || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length, scrubId: data?._scrubId || '' })
     } catch (e) { res.status(500).json({ error: e.message, name }) }
