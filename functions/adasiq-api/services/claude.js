@@ -118,7 +118,13 @@ STEP 4b — MAKE-WIDE POSITION-STATEMENT RULES (these apply on top of the line r
 - BMW / MINI: front bumper cover R&I or Repl → Front Windshield Camera (KAFAS) REQUIRED in addition to the radars (BMW requires camera calibration after front-end repairs). LED/adaptive headlamp R&I or Repl → headlamp module initialization as in the headlamp rule.
 - Nissan / Infiniti: any FRONT collision (front bumper, hood, fender, front structural or airbag lines) → Seat Weight Sensor (occupant classification zero-point) REQUIRED, trigger "In Collision — Front (Nissan OCS zero-point reset)". Also after any airbag deployment.
 - Honda / Acura: rear bumper cover R&I or Repl → Rear Blind Spot Radar (both sides) REQUIRED; liftgate/tailgate Repl or rear camera R&I → Back Up Camera REQUIRED. Front bumper removal → Front Radar aiming REQUIRED.
+- Subaru (EyeSight): ANY collision repair on the estimate → Front Windshield Camera (EyeSight stereo camera) REQUIRED, trigger "In Collision (Subaru EyeSight)". Subaru requires EyeSight inspection/calibration after any collision regardless of impact location (Mark's estimator guide: "Subaru = any collision"; Kinetic applies it on every Subaru collision report).
 - Toyota / Lexus: wheel alignment → Front Windshield Camera + Steering Angle Sensor. (A battery disconnect alone does NOT trigger SAS on Toyota/Lexus — only on Honda/Acura and Subaru, Mark 2026-10-01.)
+
+STEP 4f — WHAT NEVER TRIGGERS FRONT RADAR (2026-10-01 benchmark: these produced false radar calls)
+- A windshield replacement alone never triggers Front Radar (the radar is behind the grille/bumper, not the glass).
+- A wheel alignment alone never triggers Front Radar.
+- Front Radar needs a front bumper / grille / emblem / radar / bracket / front structure operation, or a make-wide position-statement rule above.
 
 STEP 4e — FULL SERVICE ITEMS (Mark 2026-10-01)
 Beyond the sensors, list these OEM-required follow-up operations when — and ONLY when — a line on the estimate triggers them. List them as REQUIRED rows (enabled: true) with the trigger line numbers; never add a "not required" row for them. Use these exact calibration_name values:

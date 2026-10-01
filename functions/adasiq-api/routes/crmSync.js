@@ -469,8 +469,9 @@ router.post('/scrub-file', (req, res) => {
       if (req.body?.force !== '1' && await hasScrubForFile(req, name)) return res.json({ skipped: 'already in the library', name })
       const { detectPdfKind } = await import('../services/claude.js')
       let kind = 'OTHER', make = ''
-      try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = 'OTHER' }
-      if (!['CCC', 'ESTIMATE'].includes(kind)) return res.json({ skipped: kind, name })   // estimates only; ABSOLUTE = our own report
+      let detectErr = ''
+      try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch (e) { kind = 'OTHER'; detectErr = e.message }
+      if (!['CCC', 'ESTIMATE'].includes(kind)) return res.json({ skipped: kind, name, ...(detectErr ? { error: detectErr.slice(0, 200) } : {}) })   // the reason, e.g. API credit   // estimates only; ABSOLUTE = our own report
       const { scrubPdfBuffer } = await import('./extract.js')
       const data = await scrubPdfBuffer(req, req.file.buffer, {
         learn: false, source: String(req.body?.source || 'downloads').slice(0, 30), by: 'Downloads sweep',
@@ -680,7 +681,8 @@ router.all('/jobs/relink-estimate', async (req, res) => {
     const cf = l => (est.custom_fields || []).find(c => c.label === l)?.value || ''
     const jobId = String(req.query.job || '')
     const t = catalyst.initialize(req).datastore().table('Jobs')
-    const cur = await t.getRow(jobId)
+    const cur = await t.getRow(jobId).catch(() => null)
+    if (!cur) return res.status(404).json({ error: 'job not found (billed cards are removed after billing)' })
     const patch = { ROWID: jobId, zoho_estimate_id: String(est.estimate_id), quote_number: est.estimate_number }
     if (!cur.insurer && cf('Insurer')) patch.insurer = cf('Insurer')
     const ymm = [cf('Year'), cf('Make'), cf('Model')].filter(Boolean).join(' ')
