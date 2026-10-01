@@ -233,7 +233,7 @@ export async function detectPdfKind(base64Pdf) {
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON matching Kinetic extractor format
  */
-export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '' } = {}) {
+export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', effort = '' } = {}) {
   // text = the estimate as structured lines (CCC Secure Share BMS data, 2026-09-30) —
   // same rulebook, same checks, no page images to read (faster + cheaper).
   const base64Pdf = text ? '' : pdfBuffer.toString('base64')
@@ -245,6 +245,7 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '' } =
     model: 'claude-opus-4-7',  // best model + adaptive thinking: this is a judgment task (Kinetic benchmark 2026-09-24)
     max_tokens: 16000,
     thinking: { type: 'adaptive' },
+    ...(effort ? { output_config: { effort } } : {}),   // benchmark knob (2026-09-30): 'medium' = less thinking, faster
     // ⚡ Cached: the rulebook is the same every scrub — faster start, ~10% of the input price on a hit (2026-09-30).
     system: [
       { type: 'text', text: CCC_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
@@ -289,7 +290,7 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '' } =
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON from Claude
  */
-export async function extractFromPdf(pdfBuffer, { oemRefs = '', refsFor = null, pdfType: forcedType = '', make: forcedMake = '' } = {}) {
+export async function extractFromPdf(pdfBuffer, { oemRefs = '', refsFor = null, pdfType: forcedType = '', make: forcedMake = '', effort = '' } = {}) {
   const base64Pdf = pdfBuffer.toString('base64')
 
   // Auto-detect PDF type (and the make, so the OEM library can be narrowed).
@@ -318,7 +319,7 @@ export async function extractFromPdf(pdfBuffer, { oemRefs = '', refsFor = null, 
   if (pdfType === 'CCC') {
     // Narrow the library to this manufacturer now that we know it.
     if (refsFor && detectedMake) { try { oemRefs = (await refsFor(detectedMake)) || oemRefs } catch { /* keep the generic block */ } }
-    return extractFromCccPdf(pdfBuffer, { oemRefs })
+    return extractFromCccPdf(pdfBuffer, { oemRefs, effort })
   }
 
   // Kinetic extractor
@@ -528,6 +529,6 @@ Return ONLY a JSON array of ${items.length} strings, same order, no markdown fen
 }
 
 /** CCC Secure Share: scrub an estimate given as structured text (see cccScrub.js). */
-export async function extractFromCccText(text, { oemRefs = '' } = {}) {
-  return extractFromCccPdf(null, { oemRefs, text })
+export async function extractFromCccText(text, { oemRefs = '', effort = '' } = {}) {
+  return extractFromCccPdf(null, { oemRefs, text, effort })
 }

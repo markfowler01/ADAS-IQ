@@ -170,7 +170,7 @@ const RIVIAN_BASE_ITEMS = [
 // Shared scrub (2026-09-24): the upload screen AND the email intake run the
 // same extractor + rules DB + Rivian base lines + auto-learn, so a CCC
 // estimate that arrives by email is scrubbed exactly like one Kat uploads.
-export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by = '', source = 'upload', file = {}, keep = true, pdfType = '', make = '' } = {}) {
+export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by = '', source = 'upload', file = {}, keep = true, pdfType = '', make = '', textMode = false, effort = '' } = {}) {
   // 📋 Hand the scrubber what the manufacturers actually publish, so a
   // required/not-required call is grounded in the OEM's own words and the
   // justification can cite it by name (Mark 2026-09-24).
@@ -183,12 +183,27 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   // ⚡ The guard's line-by-line read doesn't depend on the main read — start it
   // now so both run at once (was one after the other). Skipped for Kinetic reports.
   const t0 = Date.now()
+  // 🧪 textMode (benchmark 2026-09-30): read the estimate's own text instead of
+  // page images — only when the PDF really has text; otherwise the normal read.
+  let estText = ''
+  if (textMode && !/kinetic|report/i.test(pdfType || '')) {
+    try { const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default; estText = ((await pdf(buffer)).text || '').trim() } catch { estText = '' }
+    if (estText.length < 800) estText = ''
+  }
   let hitsPromise = null
   if (!/kinetic|report/i.test(pdfType || '')) {
     const { triggerLines } = await import('../services/scrubGuard.js')
-    hitsPromise = triggerLines(buffer.toString('base64')); hitsPromise.catch(() => {})
+    hitsPromise = estText ? triggerLines('', { text: estText }) : triggerLines(buffer.toString('base64')); hitsPromise.catch(() => {})
   }
-  const data = await extractFromPdf(buffer, { oemRefs, refsFor, pdfType, make })
+  let data
+  if (estText) {
+    const { extractFromCccText } = await import('../services/claude.js')
+    let refs = oemRefs; try { if (refsFor && make) refs = (await refsFor(make)) || oemRefs } catch { /* generic */ }
+    data = await extractFromCccText(estText.slice(0, 120000), { oemRefs: refs, effort })
+    data._textMode = true
+  } else {
+    data = await extractFromPdf(buffer, { oemRefs, refsFor, pdfType, make, effort })
+  }
   console.log(`[scrub ⏱] main read ${Math.round((Date.now() - t0) / 1000)}s`)
 
   // 🛡️ Hard rules in code under the judgment call (benchmark night 2026-09-28):
