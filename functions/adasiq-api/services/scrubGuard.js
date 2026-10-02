@@ -394,6 +394,18 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     if (trig.length) require(cals, /^front radar|front radar|distance sensor|acc radar|adaptive cruise/i, 'Front Radar', 'Static',
       `${fb.length ? `Front bumper R&I/Repl (line ${fb.join(', ')}) — the ACC radar is mounted in the front bumper` : ''}${fb.length && al.length ? '; ' : ''}${al.length ? `wheel alignment (line ${al.join(', ')})` : ''}${!fb.length && !al.length ? `Radar named on line ${rs.join(', ')}` : ''}`, trig,
       `Adaptive cruise (front radar) calibration required ${cite}: the module is mounted in the front bumper and requires calibration when removed and installed or replaced, and after a wheel alignment (lines ${trig.join(', ')}). Failure to calibrate presents a safety liability and does not meet Stellantis repair standards.`, out)
+    // Equipment gate (2018 Compass Sport vs 1Source, 2026-10-02): base Stellantis trims
+    // have plain cruise and no radar. Required only when the VIN or the estimate shows
+    // adaptive cruise / forward collision / emergency braking, or a radar line is on it.
+    {
+      const fr = cals.find(c => /^front radar|front radar|distance sensor|acc radar|adaptive cruise/i.test(String(c.calibration_name || '')) && !/side|corner/i.test(String(c.calibration_name || '')))
+      const why = `${fr?.justification || ''} ${fr?.note || ''}`
+      const equipped = rs.length > 0 || /adaptive cruise|emergency braking|forward collision/i.test(String(data.vin_equipment || '')) || (/adaptive cruise|\bacc\b|forward collision|full.?speed|emergency brak/i.test(why) && !/not equipped|no adaptive|not listed|base trim|if equipped/i.test(why))
+      if (fr && fr.enabled === true && !equipped) {
+        Object.assign(fr, { enabled: false, line_references: '', _guard: 'if-equipped', justification: 'If equipped with adaptive cruise / forward collision warning (front radar in the front bumper), the radar calibration is required after this bumper work — confirm at pre-scan. The VIN and estimate options do not show adaptive cruise or forward collision braking, so it is not billed by default.' })
+        out.demoted = [...(out.demoted || []), 'Front Radar (Stellantis, no radar shown)']
+      }
+    }
     const notReq = (re, why) => { const c = cals.find(x => re.test(String(x.calibration_name || '')) && !/front/i.test(String(x.calibration_name || ''))); if (c && c.enabled === true) { Object.assign(c, { enabled: false, trigger: '', line_references: '', justification: why, _guard: 'demoted' }); out.demoted = [...(out.demoted || []), c.calibration_name] } }
     notReq(/blind.?spot|rear.*radar/i, 'Not required: ALLDATA lists no calibration for the Stellantis rear blind spot sensors (validate operation at post-scan, per the Stellantis Bumper/Fascia Repair with ADAS statement).')
     notReq(/park|ultrasonic|pdc/i, 'Not required: ALLDATA lists no calibration for the Stellantis park assist sensors.')
