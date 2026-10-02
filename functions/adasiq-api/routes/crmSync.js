@@ -1242,7 +1242,7 @@ router.get('/scrubs-export', async (req, res) => {
   if (String(req.headers['x-cron-secret'] || '').trim() !== secret) return res.status(401).json({ error: 'Unauthorized' })
   try {
     const { listScrubs } = await import('../services/scrubStore.js')
-    const { scrubs } = await listScrubs(req, { limit: 2000, maxScan: 4000 })
+    const { scrubs } = await listScrubs(req, { limit: 2000, maxScan: 4000, includeBench: true })   // the benchmark scorer needs its own test rows
     const rows = scrubs.map(s => ({
       id: s.id, vin: s.vin, ro: s.ro, shop: s.shop, vehicle: s.vehicle, make: s.make, year: s.year, source: s.source, status: s.status, file: s.fileName || '', fileId: s.fileId || '', at: s.at,
       required: (s.sensors || []).filter(x => x.r).map(x => x.n),
