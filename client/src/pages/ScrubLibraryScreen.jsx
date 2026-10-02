@@ -804,6 +804,15 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   const [pasteBusy, setPasteBusy] = useState(false)
   const [pasteMsg, setPasteMsg] = useState('')
   const [vinCopied, setVinCopied] = useState(false)
+  // ✨ "Why?" popups + the shop's online-report link (Mark 2026-10-02).
+  const [whyData, setWhyData] = useState(null)
+  const [whyOpen, setWhyOpen] = useState(null)
+  useEffect(() => {
+    let live = true
+    apiFetch(`${API_BASE}/api/scrubs/${s.id}/why`).then(r => r.ok ? r.json() : null).then(d => { if (live) setWhyData(d) }).catch(() => {})
+    return () => { live = false }
+  }, [s.id, s.at])
+  const whyFor = c => { const n = String(c.name || '').toLowerCase(); return (whyData?.rows || []).find(r => String(r.name).toLowerCase() === n) || null }
   useEffect(() => {
     let live = true
     apiFetch(`${API_BASE}/api/scrubs/${s.id}/alldata`).then(r => r.json()).then(d => { if (live) setAlldata(d && Array.isArray(d.links) ? d : { links: [], match: 'none' }) }).catch(() => { if (live) setAlldata({ links: [], match: 'none' }) })
@@ -1011,6 +1020,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
             className="mt-4 w-full rounded-lg px-3 py-3 text-sm font-bold"
             style={{ backgroundColor: pdfBusy ? '#f5f3f0' : ORANGE, color: pdfBusy ? '#777' : '#fff', opacity: (shown.length || hasStoredReport) && !editing ? 1 : 0.5 }}
           >{pdfBusy ? 'Building…' : (!list.length && hasStoredReport) ? '📄 Report that went out ↓' : '📄 Absolute ADAS report ↓'}</button>
+          {whyData?.url && <a href={whyData.url} target="_blank" rel="noreferrer" className="mt-2 block w-full rounded-lg px-3 py-2.5 text-sm font-bold text-center" style={{ backgroundColor: '#fff', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>🌐 Online report (shop view) ↗</a>}
 
           {/* 📝 Quote: build the Books estimate, then hand off to the SAME blue
               Send-Quote button the jobs page uses (line review → /shop-quotes/send
@@ -1226,12 +1236,28 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
                         onFlip={() => patchLine(i, { required: !c.required })}
                         onPatch={patch => patchLine(i, patch)}
                         onRewrite={() => rewriteLine(i)} aiBusy={aiBusy === i}
-                        onRemove={() => removeLine(i)} />
+                        onRemove={() => removeLine(i)}
+                        onWhy={editing ? null : () => setWhyOpen({ ...(whyFor(c) || {}), name: c.name, required: c.required, type: c.type, why: c.why })} />
+                    ))}
+                    {!editing && (whyData?.rows || []).filter(r => r.always).map((r, k) => (
+                      <tr key={`a${k}`} style={{ backgroundColor: '#fff', borderBottom: '1px solid #f0f0f0' }}>
+                        <td className="py-2.5 px-3 font-bold" style={{ color: INK }}><span style={{ color: ORANGE, marginRight: 6, fontSize: 16 }}>●</span>{r.name}<WhyBtn onClick={() => setWhyOpen(r)} /></td>
+                        <td className="py-2.5 px-3" style={{ color: '#444' }}>{r.trigger}</td>
+                        <td className="py-2.5 px-3 font-mono text-xs" style={{ color: '#444' }}>—</td>
+                        <td className="py-2.5 px-3"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: ORANGE, color: '#fff' }}>{r.type}</span></td>
+                      </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
+            {!editing && whyData?.docs?.length > 0 && (
+              <div className="rounded-lg p-3 mt-3" style={{ backgroundColor: '#f4f2f0', border: '1px solid #e0dbd6', borderLeft: `4px solid ${ORANGE}` }}>
+                <div className="text-sm font-bold mb-1" style={{ color: INK }}>Supporting OEM documents</div>
+                {whyData.docs.map(d => <div key={d.n} className="text-xs mt-1"><a href={d.href} target="_blank" rel="noreferrer" style={{ color: INK, textDecoration: 'underline' }}>Attachment {d.n} — {d.title}</a></div>)}
+              </div>
+            )}
+            {whyOpen && <WhyModal r={whyOpen} onClose={() => setWhyOpen(null)} />}
 
             {editing && (
               <div className="rounded-lg p-3 mt-4" style={{ backgroundColor: '#fff5f0', border: `1.5px solid ${ORANGE}` }}>
@@ -1325,7 +1351,32 @@ function FullServiceCard({ shop, rows }) {
   )
 }
 
-function LineRow({ c, i, editing, expanded, onToggle, onFlip, onPatch, onRewrite, aiBusy, onRemove }) {
+function WhyBtn({ onClick }) {
+  return <button onClick={e => { e.stopPropagation(); onClick() }} title="Why?" className="ml-2 rounded-full px-1.5 py-0.5 text-xs" style={{ backgroundColor: '#fdf3ef' }}>✨</button>
+}
+// ✨ Kinetic-style "Why is this required?" — Q / A / OEM reference + open-at-page.
+function WhyModal({ r, onClose }) {
+  const name = String(r.name || '').replace(/\s*calibration$/i, '')
+  const q = r.required === false ? `Why isn't a ${name} calibration required?` : `Why is a ${name}${r.type ? ` – ${r.type}` : ''} ${r.always ? '' : 'calibration '}required?`.replace(/\s+required/, ' required')
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 60, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} className="rounded-t-2xl sm:rounded-2xl sm:mb-10" style={{ background: '#fff', maxWidth: 620, width: '100%', maxHeight: '80vh', overflow: 'auto', padding: 18, position: 'relative' }}>
+        <button onClick={onClose} style={{ position: 'absolute', right: 12, top: 10, fontSize: 18, color: '#666' }}>✕</button>
+        <h3 className="font-bold pr-8" style={{ color: INK }}>Q: {q}</h3>
+        <p className="text-sm mt-2" style={{ color: '#333' }}><b>A:</b> {r.why || (r.required === false ? 'No operation on this estimate disturbs this sensor.' : 'Required by the vehicle manufacturer for this repair.')}</p>
+        {(r.refs || []).map(x => (
+          <div key={x.n} className="rounded-lg p-2.5 mt-2.5 text-xs" style={{ backgroundColor: '#f4f2f0', border: '1px solid #e0dbd6', borderLeft: `4px solid ${ORANGE}`, color: INK }}>
+            <b style={{ color: ORANGE }}>OEM Reference:</b> Attachment {x.n} — {x.title}{x.pages?.length ? `, see page${x.pages.length > 1 ? 's' : ''} ${x.pages.join(', ')}` : ''}
+            <div><a href={x.href} target="_blank" rel="noreferrer" className="inline-block mt-2 rounded-lg px-3 py-1.5 font-bold" style={{ backgroundColor: ORANGE, color: '#fff' }}>Open the OEM document{x.pages?.[0] ? ` at page ${x.pages[0]}` : ''} ↗</a></div>
+          </div>
+        ))}
+        {(r.named || []).map(t => <div key={t} className="rounded-lg p-2.5 mt-2.5 text-xs" style={{ backgroundColor: '#f4f2f0', borderLeft: `4px solid ${ORANGE}` }}><b style={{ color: ORANGE }}>OEM Reference:</b> {t}</div>)}
+      </div>
+    </div>
+  )
+}
+
+function LineRow({ c, i, editing, expanded, onToggle, onFlip, onPatch, onRewrite, aiBusy, onRemove, onWhy }) {
   const dim = !c.required
   const cell = { border: '1.5px solid #ddd', borderRadius: 6, padding: '3px 6px', fontSize: 12, width: '100%' }
   return (
@@ -1337,6 +1388,7 @@ function LineRow({ c, i, editing, expanded, onToggle, onFlip, onPatch, onRewrite
             {(c.why || editing) ? <span style={{ color: '#bbb', marginRight: 4 }}>{expanded ? '⌄' : '›'}</span> : null}
             {c.name}
           </span>
+          {onWhy && <WhyBtn onClick={onWhy} />}
           {c.added && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fff7ed', color: '#b45309' }}>added{c.by ? ` · ${c.by}` : ''}</span>}
           {!c.added && c.edited && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#f5f3f0', color: '#777' }}>edited</span>}
           {c.guard && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#ecfdf5', color: '#065f46' }} title="Enforced by the guard: a hard rule in code, not the model's judgment">🛡️ rule</span>}

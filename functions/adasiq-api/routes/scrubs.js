@@ -253,6 +253,20 @@ router.post('/:id/invoice', express.json(), async (req, res) => {
 
 // 📎 The source estimate PDF, so the estimator can read the CCC lines while
 // adding a calibration. Only scrubs that came from a filed PDF have one.
+// ✨ "Why?" for the in-app report: the online-report link + each row's OEM references
+// (same data the shop's online report shows; Mark 2026-10-02).
+router.get('/:id/why', async (req, res) => {
+  try {
+    const R = await import('../services/publicReport.js')
+    const data = await R.reportData(req, req.params.id)
+    if (!data) return res.status(404).json({ error: 'not found' })
+    const url = await R.reportUrl(req, req.params.id)
+    const rows = data.cals.map(c => ({ name: c.calibration_name || '', always: !!c._always, required: !!c.enabled, type: c.cal_type || '', trigger: c.trigger || '', why: c.justification || '',
+      refs: (c._refs || []).map(r => ({ ...r, href: `${url}/doc/${r.n}${r.pages?.[0] ? `#page=${r.pages[0]}` : ''}` })),
+      named: (c._citeTitles || []).filter(t => !(c._refs || []).some(r => r.title === t)) }))
+    res.json({ url, rows, docs: data.cited.map(d => ({ n: d.n, title: `${d.row.doc_oem ? d.row.doc_oem + ': ' : ''}${d.row.doc_title}`, href: `${url}/doc/${d.n}` })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/:id/estimate', async (req, res) => {
   try {
     const s = await getScrub(req, req.params.id)
