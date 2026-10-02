@@ -425,6 +425,13 @@ export const KINETIC_ALIASES = {
   'park distance sensor':    'parking assist calibration',
   'parking sensors':         'parking assist calibration',
   'steering angle sensor':   'steering angle sensor calibration',
+  // Rear camera = "Back Up Camera" on the scrub (Mark 2026-10-02); Books names it
+  // "Backup Camera Calibration (BC)" — "back up" vs "backup" defeated the fuzzy match.
+  'back up camera':          'Backup Camera Calibration (BC)',
+  'backup camera':           'Backup Camera Calibration (BC)',
+  'rear camera':             'Backup Camera Calibration (BC)',
+  'rear view camera':        'Backup Camera Calibration (BC)',
+  'rearview camera':         'Backup Camera Calibration (BC)',
 }
 
 // 💉 Collision pricing for programming (Mark 2026-09-30): body shops bill
@@ -445,6 +452,8 @@ export function aliasFor(calName) {
   // "Rear Blind Spot Radar — Left", "… Right Calibration", "BSM radar LH" all
   // price as the single blind spot item; the side lives in the description.
   if (/blind.?spot|\bbsm\b|\bblis\b/.test(key) && !/front/.test(key)) return KINETIC_ALIASES['rear blind spot radar']
+  // Back-up camera in any wording, never a surround/360 line.
+  if (/back ?up camera|rear ?view camera|^rear camera/.test(key) && !/around|surround|360|multi/.test(key)) return KINETIC_ALIASES['back up camera']
   return KINETIC_ALIASES[key] || null
 }
 

@@ -325,6 +325,28 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       `Liftgate / tailgate / trunk lid R&I or Repl (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')})`, ref,
       `Back Up Camera calibration required per ${per(make)} following liftgate, tailgate or trunk lid removal or replacement (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}); the camera is mounted in that panel and its aim is disturbed. Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
   }
+  // 6. 📷 Rear camera = "Back Up Camera" (Mark 2026-10-02: "the industry standard is
+  //    backup camera calibration, but in the description … if equipped with around
+  //    view, this is the around view calibration"). A surround-view line raised only
+  //    by rear work (liftgate / trunk / rear bumper / rear camera) becomes the Back Up
+  //    Camera line instead — one calibration, billed once.
+  {
+    const isAvc = c => /around view|surround|multi.?view|360|bird/i.test(String(c.calibration_name || ''))
+    const isBuc = c => /back ?up|rear view camera|rearview camera|rear camera|reverse camera/i.test(String(c.calibration_name || ''))
+    const avc = cals.find(isAvc), rear = new Set([...lg, ...rb])
+    const refs = r => String(r?.line_references || '').split(/[,\s]+/).filter(Boolean)
+    if (avc && avc.enabled === true && refs(avc).length && refs(avc).every(l => rear.has(l))) {
+      let buc = cals.find(isBuc)
+      if (!buc) { buc = { calibration_name: 'Back Up Camera', cal_type: avc.cal_type || 'Static' }; cals.push(buc) }
+      if (buc.enabled !== true) Object.assign(buc, { enabled: true, trigger: avc.trigger, line_references: avc.line_references, justification: avc.justification, _guard: 'from-surround' })
+      Object.assign(avc, { enabled: false, trigger: '', line_references: '', justification: 'Not a separate calibration: the rear camera work on this estimate is billed once as the Back Up Camera line (performed as the surround-view calibration on cars equipped with it).', _guard: 'merged' })
+      out.flipped.push('Around View (rear only) → Back Up Camera')
+    }
+    const buc = cals.find(isBuc)
+    if (buc && buc.enabled === true && avc && !/around view calibration/i.test(buc.justification || ''))
+      buc.justification = `${buc.justification || ''} If equipped with surround view (Around View / 360), this is performed as the Around View calibration.`.trim()
+  }
+
   // 7. 🚫 Front Radar from an alignment or windshield alone is a model error
   //    (benchmark 2026-10-02: 8 cars, prompt STEP 4f ignored). Demote it unless
   //    the estimate has a front bumper / radar line, its trigger names a front

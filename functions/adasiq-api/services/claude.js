@@ -78,7 +78,7 @@ Build the list of ADAS sensors from (a) the options/equipment section and (b) wh
 - "Front Radar" (ACC / pre-collision radar behind the grille or emblem or in the lower bumper)
 - "Front Side Radar" (front cross-traffic / front corner radars — Honda 2023+, Hyundai/Kia, Mercedes-Benz, BMW, Audi, VW, Ford, GM with FCTA). NEVER on Toyota or Lexus: Toyota does not fit front side radars — a Toyota's forward sensing is the single Front Radar plus the windshield camera. Do not list Front Side Radar on any Toyota/Lexus, whatever the trim (a Toyota scrub carried one, 2026-09-29)
 - "Rear Blind Spot Radar" (BSM/BLIS/RCTA radars — "Blind Spot Detection" in options). ONE row for the whole blind spot system — never a Left row and a Right row. The blind spot calibration is a single procedure that covers both radars and is billed once whether the work touched one side or both; say which side(s) drove it in the trigger text (two rows double-billed an Audi, 2026-09-29)
-- "Back Up Camera"
+- "Back Up Camera" — the industry-standard name for the REAR camera calibration on every car, including cars with a surround-view system. Rear-only work (liftgate / trunk / tailgate / rear bumper / rear camera) is listed ONCE as Back Up Camera with the sentence "If equipped with surround view (Around View / 360), this is performed as the Around View calibration." Never list both a Back Up Camera line and an Around View line for the same rear work (Mark 2026-10-02).
 - "Around View Camera" (only when options/knowledge show 360 / surround / panoramic / bird's-eye view — then also side cameras in the mirrors)
 - "Park Distance Sensor" (ultrasonic front/rear sensors)
 - "Steering Angle Sensor"
