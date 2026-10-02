@@ -51,6 +51,7 @@ Categories:
 - windshield_excluded: windshield lines that are NOT a removal, and never justify a calibration — masking or protecting the glass for refinish ("mask windshield", "mask & protect", "cover", "tape", "plastic", typically 0.2–0.5 hrs), chip or rock-chip repair, glass polish or denib, tint, urethane/molding-only lines, cowl, wipers, and "Add for" lines. If the glass stays in the car, it belongs HERE, not in windshield (a masked windshield at 0.3 hrs was billed as a camera calibration, 2026-09-29)
 - front_bumper: ONLY the front bumper cover / fascia / bumper assembly line itself, replaced OR removed-and-installed — not brackets, grilles, absorbers, lamps, trim or add-for lines (one or two line numbers at most)
 - rear_bumper: rear bumper cover / fascia, replaced OR removed-and-installed
+- rear_bumper_rpr: rear bumper cover / fascia REPAIRED (Rpr, body labor on the cover itself — not refinish or blend only)
 - alignment: wheel alignment (labor or sublet), "align", "4 wheel", "steering system reset"
 - battery: battery disconnect / D&R / remove and install battery / hybrid battery
 - seat_airbag: front passenger seat, seat cushion / track, seat belt, pretensioner, airbag, air bag, SRS
@@ -67,7 +68,7 @@ Categories:
 - srs_deploy: an air bag / airbag module or SRS seat-belt pretensioner REPLACED (a deployment)
 - b_pillar: B-pillar / center pillar — outer or inner panel repaired, replaced or sectioned, OR the B-pillar trim / applique removed or replaced
 
-Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...],"park_sensor":[...],"grille":[...],"front_door":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
+Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...],"park_sensor":[...],"grille":[...],"front_door":[...],"rear_bumper_rpr":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
     ] }],
   })
   const raw = (msg.content || []).map(b => b.text || '').join('').trim()
@@ -356,9 +357,10 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
   // 5i. Hyundai / Kia / Genesis (Mark 2026-10-02: "anytime the rear bumper is removed
   //     and installed, especially if it's replaced or repaired"): rear bumper R&I,
   //     replaced or repaired → rear blind spot radar calibration.
-  if (/hyundai|kia|genesis/i.test(make) && rb.length) require(cals, /blind.?spot|rear.*radar|\bbsd\b/i, 'Rear Blind Spot Radar', 'Static',
-    `Rear bumper removed/installed, replaced or repaired (line${rb.length > 1 ? 's' : ''} ${rb.join(', ')}) — the blind spot radars sit behind the rear bumper`, rb,
-    `Rear blind spot (BSD) radar calibration required per ${per(make)}: the rear bumper operation on line${rb.length > 1 ? 's' : ''} ${rb.join(', ')} disturbs the radars mounted behind it (ALLDATA: Blind Spot Detection unit, rear bumper, static calibration). Failure to calibrate presents a safety liability and does not meet ${make} repair standards.`, out)
+  const rbH = [...new Set([...rb, ...lines(hits.rear_bumper_rpr)])]
+  if (/hyundai|kia|genesis/i.test(make) && rbH.length) require(cals, /blind.?spot|rear.*radar|\bbsd\b/i, 'Rear Blind Spot Radar', 'Static',
+    `Rear bumper removed/installed, replaced or repaired (line${rbH.length > 1 ? 's' : ''} ${rbH.join(', ')}) — the blind spot radars sit behind the rear bumper`, rbH,
+    `Rear blind spot (BSD) radar calibration required per ${per(make)}: the rear bumper operation on line${rbH.length > 1 ? 's' : ''} ${rbH.join(', ')} disturbs the radars mounted behind it (ALLDATA: Blind Spot Detection unit, rear bumper, static calibration). Failure to calibrate presents a safety liability and does not meet ${make} repair standards.`, out)
   // 5c. Stellantis — Dodge, Chrysler, Jeep, Ram, Fiat, Alfa Romeo (ALLDATA ADAS
   //     Quick Reference: 2023 Ram ProMaster + 2018 Dodge Challenger, pasted by Mark
   //     2026-10-02; "All Stellantis"). The ACC radar lives in the FRONT BUMPER:
