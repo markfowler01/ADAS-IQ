@@ -203,8 +203,14 @@ function buildPdf(jobData) {
 
       const plainH = cal.plain_description
         ? doc.heightOfString(cal.plain_description || '', { width: CONTENT_W - 40, fontSize: 8.5 }) + 12 : 0
+      // 📝 Required rows read like Kinetic's note (Mark 2026-10-02): Q / A / OEM Reference.
+      const qa = isRequired && cal.justification
+      const qText = qa ? `Q: Why is a ${String(cal.calibration_name || '').replace(/\s*calibration$/i, '')}${cal.cal_type ? ` – ${cal.cal_type}` : ''} calibration required?` : ''
+      const refText = qa && Array.isArray(cal._refs) && cal._refs.length ? `OEM Reference: ${cal._refs.map(r => `Attachment ${r.n} — ${r.title}${r.pages.length ? `, see page${r.pages.length > 1 ? 's' : ''} ${r.pages.join(', ')}` : ''}`).join('; ')}` : ''
       const justH = cal.justification
-        ? doc.heightOfString(cal.justification || '', { width: CONTENT_W - 40, fontSize: 8 }) + 12 : 0
+        ? doc.heightOfString((qa ? 'A: ' : '') + (cal.justification || ''), { width: CONTENT_W - 40, fontSize: 8 }) + 12
+          + (qa ? doc.heightOfString(qText, { width: CONTENT_W - 40, fontSize: 8.5 }) + 4 : 0)
+          + (refText ? doc.heightOfString(refText, { width: CONTENT_W - 40, fontSize: 7.5 }) + 6 : 0) : 0
       const calLinks = Array.isArray(cal.links) ? cal.links.filter(l => l?.url) : []
       // 14px per link row, wrapped 2 per line — approximate
       const linksH   = calLinks.length > 0 ? Math.ceil(calLinks.length / 2) * 14 + 12 : 0
@@ -240,7 +246,16 @@ function buildPdf(jobData) {
           .text(cal.plain_description, MARGIN + 14, cursorY, { width: CONTENT_W - 30 })
         cursorY += doc.heightOfString(cal.plain_description, { width: CONTENT_W - 40, fontSize: 8.5 }) + 8
       }
-      if (cal.justification) {
+      if (cal.justification && qa) {
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(qText, MARGIN + 14, cursorY, { width: CONTENT_W - 30 })
+        cursorY += doc.heightOfString(qText, { width: CONTENT_W - 40, fontSize: 8.5 }) + 4
+        doc.font('Helvetica').fontSize(8).fillColor(GRAY_DARK).text(`A: ${cal.justification}`, MARGIN + 14, cursorY, { width: CONTENT_W - 30 })
+        cursorY += doc.heightOfString(`A: ${cal.justification}`, { width: CONTENT_W - 40, fontSize: 8 }) + 6
+        if (refText) {
+          doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#5b21b6').text(refText, MARGIN + 14, cursorY, { width: CONTENT_W - 30 })
+          cursorY += doc.heightOfString(refText, { width: CONTENT_W - 40, fontSize: 7.5 }) + 6
+        }
+      } else if (cal.justification) {
         doc.font('Helvetica-Oblique').fontSize(8).fillColor(textColor)
           .text(cal.justification, MARGIN + 14, cursorY, { width: CONTENT_W - 30 })
         cursorY += doc.heightOfString(cal.justification, { width: CONTENT_W - 40, fontSize: 8 }) + 6

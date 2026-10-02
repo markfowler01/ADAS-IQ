@@ -109,7 +109,25 @@ export async function fetchCited(req, docs, cals) {
   const ok = got.filter(Boolean)
   const renum = new Map(ok.map((d, i) => [d.n, i + 1]))
   for (const c of cals || []) if (Array.isArray(c._attach)) { c._attach = c._attach.map(n => renum.get(n)).filter(Boolean); if (!c._attach.length) delete c._attach }
-  return ok.map((d, i) => ({ ...d, n: i + 1 }))
+  const final = ok.map((d, i) => ({ ...d, n: i + 1 }))
+  // 📝 "Why is this required?" note (Mark 2026-10-02, Kinetic's Q&A popup): for each
+  // calibration, the attachment(s) it cites and the pages in them that talk about
+  // that sensor — "see pages 1, 6".
+  const pdfParse = (await import('pdf-parse/lib/pdf-parse.js')).default
+  for (const d of final) {
+    const pages = []
+    try { await pdfParse(d.bytes, { max: MAX_PAGES_PER_DOC, pagerender: pg => pg.getTextContent().then(t => { const txt = t.items.map(i => i.str).join(' '); pages.push(txt); return txt }) }) } catch { /* no page text (scan) */ }
+    d.pageTexts = pages
+  }
+  const KW = n => /camera|windshield|multipurpose/i.test(n) ? /camera|windshield|forward[- ]?view|lane/i : /side radar|corner|cross/i.test(n) ? /corner|side radar|cross.?traffic/i : /blind|rear.*radar|bsm|bsi|side obstacle/i.test(n) ? /blind|bsm|bsi|side (blind|obstacle)|rear radar/i : /radar|distance|millimeter/i.test(n) ? /radar|distance sensor|millimeter|cruise/i : /steering|sas|vsa/i.test(n) ? /steering angle|vsa|neutral position|alignment/i : /seat|occupant|ods|ocs/i.test(n) ? /seat|occupant|weight sensor/i : /park|sonar|ultrasonic/i.test(n) ? /park|sonar|ultrasonic/i : /around|surround|multi.?view/i.test(n) ? /surround|around view|multi.?view|360/i : /headl/i.test(n) ? /headl|aim/i : /program|module/i.test(n) ? /program|module|sps/i : null
+  for (const c of cals || []) {
+    if (!Array.isArray(c._attach)) continue
+    const re = KW(String(c.calibration_name || ''))
+    c._refs = c._attach.map(n => { const d = final.find(x => x.n === n); if (!d) return null
+      const pg = re ? (d.pageTexts || []).map((t, i) => (re.test(t) ? i + 1 : 0)).filter(Boolean).slice(0, 4) : []
+      return { n, title: `${d.row.doc_oem ? d.row.doc_oem + ': ' : ''}${d.row.doc_title}`, pages: pg } }).filter(Boolean)
+  }
+  return final
 }
 
 /** Report PDF + the cited documents' pages appended. Never throws: worst case the report alone. */
