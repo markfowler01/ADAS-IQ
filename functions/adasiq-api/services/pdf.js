@@ -310,6 +310,23 @@ function buildPdf(jobData) {
       y += pcsiH + 10
     }
 
+    // ── PRE- & POST-REPAIR DIAGNOSTIC SCANS (Mark 2026-10-02: "add pre and post
+    // scan to every report"). Every OEM's collision position statement requires
+    // both; who performs them follows the shop's Big 4 rule, the requirement doesn't.
+    {
+      const scanH = 58
+      if (y + scanH + 16 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      doc.roundedRect(MARGIN, y, CONTENT_W, scanH, 6).fill('#fff7ed')
+      doc.roundedRect(MARGIN, y, CONTENT_W, scanH, 6).strokeColor(ORANGE).lineWidth(1).stroke()
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#1a1a1a')
+        .text('Pre-Repair & Post-Repair Diagnostic Scans', MARGIN + 12, y + 9, { width: CONTENT_W - 160, lineBreak: false })
+      doc.font('Helvetica-Bold').fontSize(6.5).fillColor(ORANGE)
+        .text('REQUIRED — EVERY VEHICLE', MARGIN + CONTENT_W - 130, y + 10.5, { width: 120, align: 'right', lineBreak: false })
+      doc.font('Helvetica').fontSize(8).fillColor('#4b5563')
+        .text(`${make ? `${make}'s` : 'The manufacturer\'s'} collision position statement requires a pre-repair diagnostic scan to identify faults before repairs begin (warning lights are not a reliable indicator) and a post-repair diagnostic scan to confirm every system communicates with no new faults. Both are required operations for this repair.`, MARGIN + 12, y + 24, { width: CONTENT_W - 24 })
+      y += scanH + 10
+    }
+
     // ── NOT REQUIRED SECTION ───────────────────────────────────────────────
     if (notReq.length > 0) {
       if (y + 40 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
