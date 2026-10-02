@@ -62,3 +62,26 @@ export async function decodeVin(req, raw) {
   try { await app.datastore().table(TABLE).insertRow({ ev_vin: vin, ev_decoded_json: JSON.stringify(d).slice(0, 9900), ev_created_at: new Date().toISOString() }) } catch (e) { console.log('[vin] cache write failed:', e.message) }
   return { ok: true, vin, cached: false, ...d }
 }
+
+// 🔎 Equipment check for the scrubber (Mark 2026-10-02: "check the vin decoder and
+// see if the vehicle is equipped with radar and such"). NHTSA's ADAS fields are a
+// good YES and a poor NO: "Standard" is reliable, but blanks and "Optional" are
+// common even on equipped cars (2024 Transits decode blank). So the block tells
+// the scrubber: Standard = equipped; anything else = unknown, confirm at pre-scan.
+const EQUIP = [['acc', 'Adaptive cruise (front radar)'], ['aeb', 'Automatic emergency braking (front radar/camera)'], ['fcw', 'Forward collision warning'],
+  ['lane_keep', 'Lane keep (windshield camera)'], ['lane_departure', 'Lane departure warning (windshield camera)'], ['blind_spot', 'Blind spot (rear radars)'],
+  ['rear_cross', 'Rear cross-traffic'], ['park_assist', 'Park assist'], ['backup_cam', 'Backup camera']]
+export function findVinInText(text) {
+  for (const m of String(text || '').toUpperCase().matchAll(/\b[A-HJ-NPR-Z0-9]{17}\b/g)) if (validateVin(m[0]).ok) return m[0]
+  return ''
+}
+export async function vinEquipment(req, vin) {
+  if (!vin) return null
+  const d = await decodeVin(req, vin).catch(() => null)
+  if (!d?.ok) return null
+  const std = EQUIP.filter(([k]) => /standard/i.test(d.adas?.[k] || '')).map(([, l]) => l)
+  const opt = EQUIP.filter(([k]) => /optional/i.test(d.adas?.[k] || '')).map(([, l]) => l)
+  const summary = std.length ? `Standard per VIN: ${std.join('; ')}` : 'VIN decode lists no ADAS equipment as standard'
+  const block = `VIN DECODE (NHTSA, ${d.year} ${d.make} ${d.model}${d.trim ? ' ' + d.trim : ''}):\n- STANDARD on this VIN: ${std.join('; ') || 'none listed'}\n- Optional (may or may not be fitted): ${opt.join('; ') || 'none listed'}\nHow to use it: "Standard" means the system is fitted, so treat its sensor as equipped. Blank or "Optional" means the decode cannot tell; NEVER drop a calibration for that reason; keep the verdict from the repair lines and add the note "if equipped, confirm at pre-scan".`
+  return { vin, std, opt, summary, block }
+}

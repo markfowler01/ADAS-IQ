@@ -199,8 +199,11 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   if (estText) {
     const { extractFromCccText } = await import('../services/claude.js')
     let refs = oemRefs; try { if (refsFor && make) refs = (await refsFor(make)) || oemRefs } catch { /* generic */ }
-    data = await extractFromCccText(estText.slice(0, 120000), { oemRefs: refs, effort })
+    let equip = null
+    try { const V = await import('../services/estimator/vin.js'); equip = await V.vinEquipment(req, V.findVinInText(estText)) } catch { equip = null }
+    data = await extractFromCccText(`${equip ? equip.block + '\n\n' : ''}${estText.slice(0, 120000)}`, { oemRefs: refs, effort })
     data._textMode = true
+    if (equip) data.vin_equipment = equip.summary
   } else {
     data = await extractFromPdf(buffer, { oemRefs, refsFor, pdfType, make, effort })
   }

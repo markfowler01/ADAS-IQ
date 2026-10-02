@@ -102,13 +102,21 @@ export async function generateADASIQPdf(jobData = {}) {
     const r = req && jobData.shop ? await fs.readFullService(req, jobData.shop) : null
     cals = fs.tagRows((cals || []).map(c => ({ ...c })), r?.rules, { collision: r ? r.collision : true })
   } catch { /* untagged rows print as plain calibrations */ }
-  return buildPdf({ ...jobData, calibrations: cals, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
+  // 📎 The OEM documents the justifications cite → numbered attachments (Mark 2026-10-02).
+  let cited = []
+  try {
+    const req = globalThis.__catalystReq
+    if (req) { const A = await import('./oemAttach.js'); cited = await A.fetchCited(req, await A.citedDocs(req, cals), cals) }
+  } catch (e) { console.warn('[pdf] cited docs:', e.message); cited = [] }
+  const report = await buildPdf({ ...jobData, calibrations: cals, _cited: cited, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
+  if (!cited.length) return report
+  try { return await (await import('./oemAttach.js')).appendCitedDocs(globalThis.__catalystReq, report, cited) } catch { return report }
 }
 
 function buildPdf(jobData) {
   return new Promise((resolve, reject) => {
     const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links,
-      technician, folder_share_url, qr_png, _alldata } = jobData
+      technician, folder_share_url, qr_png, _alldata, _cited = [], vin_equipment } = jobData
     const performedBy = technician || 'Absolute ADAS'
 
     const required = (calibrations || []).filter(c => c.enabled && !c._fs)
@@ -151,7 +159,8 @@ function buildPdf(jobData) {
     doc.roundedRect(MARGIN, y, 4, 120, 2).fill(ORANGE)
     doc.font('Helvetica-Bold').fontSize(15).fillColor(DARK).text(vehicleStr, MARGIN + 16, y + 14, { width: CONTENT_W - 32 })
     if (vin) {
-      doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID).text(`VIN  ${vin}`, MARGIN + 16, y + 36)
+      doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID).text(`VIN  ${vin}`, MARGIN + 16, y + 36, { continued: !!vin_equipment })
+      if (vin_equipment) doc.font('Helvetica').fontSize(7).fillColor('#5b21b6').text(`   ·   ${String(vin_equipment).slice(0, 150)}`, { lineBreak: false })
     }
     const ruleY = y + (vin ? 52 : 44)
     doc.moveTo(MARGIN + 16, ruleY).lineTo(MARGIN + CONTENT_W - 16, ruleY)
@@ -220,7 +229,8 @@ function buildPdf(jobData) {
       if (cal.cal_type)        chipX += chip(doc, chipX, chipY, cal.cal_type,        isRequired ? '#fde8de' : '#e8e5e2', isRequired ? ORANGE : '#999') + 5
       if (cal.trigger)         chipX += chip(doc, chipX, chipY, cal.trigger,         isRequired ? '#fff0eb' : '#e8e5e2', isRequired ? '#a33510' : '#999') + 5
       if (cal.line_references) chipX += chip(doc, chipX, chipY, `Lines ${cal.line_references}`, '#e8e5e2', '#777') + 5
-      if (opt.who) chip(doc, chipX, chipY, opt.who, opt.whoBg || '#e0f2fe', opt.whoFg || '#0369a1')
+      if (opt.who) chipX += chip(doc, chipX, chipY, opt.who, opt.whoBg || '#e0f2fe', opt.whoFg || '#0369a1') + 5
+      if (isRequired && Array.isArray(cal._attach) && cal._attach.length) chip(doc, chipX, chipY, `OEM doc: Attachment ${cal._attach.join(', ')}`, '#ede9fe', '#5b21b6')
 
       // Plain-language description ("third grader" style) — upright,
       // slightly larger, easy for an insurance adjuster to skim.
@@ -399,6 +409,27 @@ function buildPdf(jobData) {
         MARGIN, y + 4, { width: CONTENT_W })
 
     footer(doc)
+
+    // 📎 SUPPORTING OEM DOCUMENTS — index page; the documents follow it.
+    if (_cited.length) {
+      doc.addPage(); contHeader(doc); y = 52
+      doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text('Supporting OEM Documents', MARGIN, y)
+      y += 20
+      doc.font('Helvetica').fontSize(9).fillColor(GRAY_DARK)
+        .text('The calibrations above are required by the vehicle manufacturer. Each document cited in a justification is attached behind this page, in order.', MARGIN, y, { width: CONTENT_W })
+      y += 30
+      for (const d of _cited) {
+        const r = d.row || {}
+        const h = 52
+        doc.roundedRect(MARGIN, y, CONTENT_W, h, 6).fill('#faf5ff')
+        doc.roundedRect(MARGIN, y, 4, h, 2).fill('#7c3aed')
+        doc.font('Helvetica-Bold').fontSize(8).fillColor('#5b21b6').text(`ATTACHMENT ${d.n}`, MARGIN + 14, y + 8)
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK).text(`${r.doc_oem ? r.doc_oem + ': ' : ''}${r.doc_title || ''}`, MARGIN + 14, y + 19, { width: CONTENT_W - 28, height: 13, ellipsis: true })
+        doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID).text(`Supports: ${[...new Set(d.cals)].join(', ')}${r.doc_published_date ? ` · Published ${r.doc_published_date}` : ''}`, MARGIN + 14, y + 35, { width: CONTENT_W - 28, height: 11, ellipsis: true })
+        y += h + 8
+      }
+      footer(doc)
+    }
     doc.end()
   })
 }

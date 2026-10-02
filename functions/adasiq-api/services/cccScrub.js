@@ -91,7 +91,10 @@ export async function scrubCccItem(req, item) {
     const { triggerLines, guardScrub } = await import('./scrubGuard.js')
     const hitsPromise = triggerLines('', { text }); hitsPromise.catch(() => {})
     const { extractFromCccText } = await import('./claude.js')
-    data = await extractFromCccText(text, { oemRefs })
+    let equip = null
+    try { equip = await (await import('./estimator/vin.js')).vinEquipment(req, e.vin && e.vin.length === 17 ? e.vin : '') } catch { equip = null }
+    data = await extractFromCccText(`${equip ? equip.block + '\n\n' : ''}${text}`, { oemRefs })
+    if (equip) data.vin_equipment = equip.summary
     // CCC's own fields beat anything read back by the model.
     Object.assign(data, { shop: e.shop || data.shop, ro_number: e.ro || data.ro_number, claim: e.claim || data.claim, insurer: e.insurer || data.insurer, vin: (e.vin.length === 17 ? e.vin : data.vin) || e.vin, year: e.year || data.year, make: e.make || data.make, model: e.model || data.model })
     data._pdfType = 'CCC'

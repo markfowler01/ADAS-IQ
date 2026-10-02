@@ -23,7 +23,7 @@ const client = () => tracked(new Anthropic({ apiKey: process.env.ANTHROPIC_API_K
 // here: the radar is optional on many models (a base i3 has none) and the
 // scrub lists a not-required radar row either way, so the guard cannot tell
 // 'no radar' from 'radar untouched'. BMW stays a judgment call in the prompt.
-const AIM_AFTER_BUMPER = /toyota|lexus|honda|acura|nissan|infiniti|hyundai|kia|genesis|mercedes/i   // Toyota added 2026-09-29 (Corolla miss)
+const AIM_AFTER_BUMPER = /toyota|lexus|honda|acura|nissan|infiniti|hyundai|kia|genesis|mercedes|ford|lincoln/i   // Ford/Lincoln added 2026-10-02 (ADAS Integrity statement May 2026: fascia R&I = ADAS-related repair)   // Toyota added 2026-09-29 (Corolla miss)
 // Makes that always carry a surround-view camera in the inventory (2019+ or 2022+ Hyundai/Kia).
 const ALWAYS_AVC = /mercedes|bmw|audi|porsche|volvo|land rover|range rover|genesis|lexus/i
 const AVC_KIA = /hyundai|kia/i
