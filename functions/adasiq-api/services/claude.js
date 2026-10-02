@@ -141,6 +141,8 @@ STEP 4f — WHAT NEVER TRIGGERS FRONT RADAR (2026-10-01 benchmark: these produce
 - A wheel alignment alone never triggers Front Radar.
 - Front Radar needs a front bumper / grille / emblem / radar / bracket / front structure operation, or a make-wide position-statement rule above.
 
+STEP 4g — FRONT SIDE (CORNER) RADARS (Mark 2026-10-02): only SOME cars have them. Add "equipped" to the Front Side Radar row: "yes" when the options block shows front cross-traffic / front corner radar / a driver-assistance package that includes them, a corner-radar line is on the estimate, or the trim has them as standard; otherwise "unknown". When equipped = "yes", front bumper cover R&I or Repl → REQUIRED. When "unknown", Not Required with the note "If equipped with front corner radars, calibration is required after the front bumper removal — confirm at pre-scan."
+
 STEP 4e — FULL SERVICE ITEMS (Mark 2026-10-01)
 Beyond the sensors, list these OEM-required follow-up operations when — and ONLY when — a line on the estimate triggers them. List them as REQUIRED rows (enabled: true) with the trigger line numbers; never add a "not required" row for them. Use these exact calibration_name values:
 - "TPMS Relearn" (cal_type "Reset"): a wheel, tire or TPMS sensor/valve is replaced, or wheels are swapped side to side. Not for a wheel R&I alone unless the make requires a relearn after any wheel removal (Toyota/Lexus without auto-learn, Honda/Acura indirect TPMS initialization after tire work).

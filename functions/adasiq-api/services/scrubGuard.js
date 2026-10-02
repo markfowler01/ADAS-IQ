@@ -419,6 +419,23 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       buc.justification = `${buc.justification || ''} If equipped with surround view (Around View / 360), this is performed as the Around View calibration.`.trim()
   }
 
+  // 6c. Front side (corner) radars (Mark 2026-10-02): only on select cars. Equipped
+  //     (scrub says so, a corner-radar line, or the row already cites the options) +
+  //     front bumper R&I/Repl → required. Not shown as equipped → "if equipped".
+  {
+    const fsr = cals.find(c => /front side radar|front corner|front cross/i.test(String(c.calibration_name || '')))
+    if (fsr && fb.length) {
+      const why = `${fsr.justification || ''} ${fsr.note || ''}`
+      const equipped = String(fsr.equipped || '').toLowerCase() === 'yes' || /corner radar|side radar|cross.?traffic/i.test(String(rs.map(String).join(' '))) || /\b(equipped|options? (show|list)|front cross.?traffic|driving assistance|driver assist)/i.test(why) && !/if equipped|not equipped|unknown/i.test(why)
+      if (equipped && fsr.enabled !== true) require(cals, /front side radar|front corner|front cross/i, 'Front Side Radar', 'Static', `Front bumper R&I/Repl (line${fb.length > 1 ? 's' : ''} ${fb.join(', ')}) — car has front corner radars`, fb,
+        `Front corner (side) radar calibration required per ${per(make)}: the front corner radars mount behind the front bumper, and the bumper removal or replacement on line${fb.length > 1 ? 's' : ''} ${fb.join(', ')} disturbs them. Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
+      if (!equipped && fsr.enabled === true) {
+        Object.assign(fsr, { enabled: false, line_references: '', _guard: 'if-equipped', justification: 'If equipped with front corner radars, calibration is required after the front bumper removal — confirm at pre-scan. The estimate options and VIN do not show them, so it is not billed by default.' })
+        out.demoted = [...(out.demoted || []), 'Front Side Radar (not shown as equipped)']
+      }
+    }
+  }
+
   // 6b. GM "any collision" front radar only when the car HAS adaptive cruise radar
   //     (Mark 2026-10-02: Kinetic's 6-of-62 = most Chevys have no radar). Kept when
   //     the VIN decode or the estimate's options show adaptive cruise, or a front
