@@ -233,7 +233,23 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       `Liftgate / tailgate / trunk lid R&I or Repl (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')})`, ref,
       `Back Up Camera calibration required per ${per(make)} following liftgate, tailgate or trunk lid removal or replacement (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}); the camera is mounted in that panel and its aim is disturbed. Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
   }
-  if (out.flipped.length || out.added.length) console.log(`[guard] ${make} ${data.year || ''}: flipped ${out.flipped.length}, added ${out.added.length} — ${[...out.flipped, ...out.added].join(' · ')}`)
+  // 7. 🚫 Front Radar from an alignment or windshield alone is a model error
+  //    (benchmark 2026-10-02: 8 cars, prompt STEP 4f ignored). Demote it unless
+  //    the estimate has a front bumper / radar line, its trigger names a front
+  //    part, or a make-wide collision rule (GM, Ford/Lincoln) applies.
+  {
+    const fr = cals.find(c => /^front radar|distance sensor|distronic|acc radar/i.test(String(c.calibration_name || '')) && !/side|corner/i.test(String(c.calibration_name || '')))
+    const trig = `${fr?.trigger || ''} ${fr?.justification || ''}`
+    const frontPart = /bumper|fascia|grille|grill|emblem|absorber|reinforc|impact bar|radiator support|core support|apron|rail|radar|distance sensor|bracket|structur|hood|in collision/i
+    const makeRule = /chevrolet|gmc|buick|cadillac|ford|lincoln/i.test(make)
+    if (fr && fr.enabled === true && !fb.length && !rs.length && !makeRule && !frontPart.test(fr.trigger || '') && /align|windshield|w\/s|glass/i.test(trig)) {
+      fr.enabled = false
+      fr.justification = `Not required: a wheel alignment or windshield replacement does not disturb the front radar (it sits behind the bumper/grille, not the glass), and no front bumper, grille or radar operation is on this estimate.`
+      fr.trigger = ''; fr.line_references = ''; fr._guard = 'demoted'
+      out.demoted = [...(out.demoted || []), 'Front Radar (alignment/windshield only)']
+    }
+  }
+  if (out.flipped.length || out.added.length) console.log(`[guard] ${make} ${data.year || ''}: flipped ${out.flipped.length}, added ${out.added.length}${out.demoted ? `, demoted ${out.demoted.length}` : ''} — ${[...out.flipped, ...out.added, ...(out.demoted || [])].join(' · ')}`)
   data._guard = { flipped: out.flipped, added: out.added }
   return out
 }
