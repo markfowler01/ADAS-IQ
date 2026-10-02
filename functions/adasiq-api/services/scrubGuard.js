@@ -306,6 +306,23 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       `Parking / back-up sensor removed, replaced or transferred (line${ps.length > 1 ? 's' : ''} ${ps.join(', ')})`, ps,
       `Parking and back-up sensor reset required per ALLDATA ADAS Quick Reference (Honda: Parking and Back-Up Sensors, R&R / R&I, static reset with scan tool) following sensor removal, replacement or transfer (line${ps.length > 1 ? 's' : ''} ${ps.join(', ')}).`, out, true)
   }
+  // 5g. Toyota/Lexus (ALLDATA 2024 RAV4: Rear Television Camera and Ultrasonic
+  //     Sensors — R&R / R&I, static; Mark 2026-10-02): back-up camera after the
+  //     decklid / liftgate / tailgate is adjusted, removed or replaced; park sensors
+  //     after the front or rear bumper is removed/installed or replaced.
+  if (/toyota|lexus/i.test(make)) {
+    const ps = lines(hits.park_sensor)
+    const camLines = [...new Set([...lg, ...cam])]
+    if (camLines.length) require(cals, /back ?up|rear view camera|rear camera|reverse camera|rear television/i, 'Back Up Camera', 'Static',
+      `Decklid / liftgate / tailgate adjusted, removed or replaced, or rear camera removed (line${camLines.length > 1 ? 's' : ''} ${camLines.join(', ')})`, camLines,
+      `Back-up (rear television) camera calibration required per ALLDATA ADAS Quick Reference (Toyota: Rear Television Camera on the decklid / liftgate / tailgate, R&R / R&I, static): the camera's panel was adjusted, removed or replaced (line${camLines.length > 1 ? 's' : ''} ${camLines.join(', ')}). Failure to calibrate presents a safety liability and does not meet Toyota repair standards.`, out, true)
+    const bump = [...new Set([...fb.slice(0, 3), ...rb.slice(0, 3)])]
+    const psRow = has(cals, /park|ultrasonic|pdc|clearance sonar|parking sensor/i)
+    const psTrig = [...new Set([...ps, ...(psRow ? bump : [])])]
+    if (psTrig.length) require(cals, /park|ultrasonic|pdc|clearance sonar|parking sensor/i, 'Park Distance Sensor', 'Static',
+      `Park sensors / bumper removed or replaced (line${psTrig.length > 1 ? 's' : ''} ${psTrig.join(', ')})`, psTrig,
+      `Ultrasonic (park) sensor calibration required per ALLDATA ADAS Quick Reference (Toyota: Ultrasonic Sensor, front and rear bumper, R&R / R&I, static): the bumper or sensor operation on line${psTrig.length > 1 ? 's' : ''} ${psTrig.join(', ')} removes the sensors.`, out, ps.length > 0)
+  }
   // 5c. Stellantis — Dodge, Chrysler, Jeep, Ram, Fiat, Alfa Romeo (ALLDATA ADAS
   //     Quick Reference: 2023 Ram ProMaster + 2018 Dodge Challenger, pasted by Mark
   //     2026-10-02; "All Stellantis"). The ACC radar lives in the FRONT BUMPER:
