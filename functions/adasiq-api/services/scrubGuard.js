@@ -251,6 +251,18 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
         `Tesla camera calibration required per ${per(make)}: ${what} carries one of the vehicle's Autopilot/surround cameras (trunk/liftgate rear camera, front fender repeater cameras, B-pillar cameras). Any repair, replacement, removal or adjustment of a panel holding a camera moves the camera and requires calibration. Failure to calibrate presents a safety liability and does not meet Tesla repair standards.`, out, true)
     }
   }
+  // 5c. Ram ProMaster (ALLDATA ADAS Quick Reference, 2023 ProMaster 2500, pasted by
+  //     Mark 2026-10-02): the ACC radar lives in the FRONT BUMPER — bumper R&I or
+  //     replacement moves it, and a wheel alignment also requires it. Rear blind
+  //     spot sensors: calibration NOT required.
+  if (/promaster/i.test(String(data.model || data.vehicle || ''))) {
+    const trig = [...new Set([...fb, ...rs, ...al])]
+    if (trig.length) require(cals, /^front radar|front radar|distance sensor|acc radar|adaptive cruise/i, 'Front Radar', 'Static/Dynamic',
+      `${fb.length ? `Front bumper R&I/Repl (line ${fb.join(', ')}) — the ACC radar is mounted in the front bumper` : ''}${fb.length && al.length ? '; ' : ''}${al.length ? `wheel alignment (line ${al.join(', ')})` : ''}${!fb.length && !al.length ? `Radar named on line ${rs.join(', ')}` : ''}`, trig,
+      `Adaptive cruise (front radar) calibration required per ALLDATA ADAS Quick Reference for the Ram ProMaster: the ACC module is mounted in the front bumper and requires calibration when removed and installed or replaced, and after a wheel alignment (lines ${trig.join(', ')}). Failure to calibrate presents a safety liability and does not meet Stellantis repair standards.`, out)
+    const bs = cals.find(c => /blind.?spot|rear.*radar/i.test(String(c.calibration_name || '')) && !/front/i.test(String(c.calibration_name || '')))
+    if (bs && bs.enabled === true && !rs.length) { bs.enabled = false; bs.justification = 'Not required: ALLDATA lists no calibration for the ProMaster rear blind spot sensors (validate operation at post-scan).'; bs.trigger = ''; bs.line_references = ''; bs._guard = 'demoted'; out.demoted = [...(out.demoted || []), 'Rear Blind Spot (ProMaster: not required)'] }
+  }
   // 5. Liftgate / rear camera line → Back Up Camera.
   if (lg.length || cam.some(l => true) && /rear|back/.test(JSON.stringify(cam))) {
     const ref = [...new Set([...lg])]
@@ -266,7 +278,7 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     const fr = cals.find(c => /^front radar|distance sensor|distronic|acc radar/i.test(String(c.calibration_name || '')) && !/side|corner/i.test(String(c.calibration_name || '')))
     const trig = `${fr?.trigger || ''} ${fr?.justification || ''}`
     const frontPart = /bumper|fascia|grille|grill|emblem|absorber|reinforc|impact bar|radiator support|core support|apron|rail|radar|distance sensor|bracket|structur|hood|in collision/i
-    const makeRule = /chevrolet|gmc|buick|cadillac|ford|lincoln/i.test(make)
+    const makeRule = /chevrolet|gmc|buick|cadillac|ford|lincoln/i.test(make) || /promaster/i.test(String(data.model || data.vehicle || ''))   // ProMaster: ALLDATA lists ACC calibration after alignment
     if (fr && fr.enabled === true && !fb.length && !rs.length && !makeRule && !frontPart.test(fr.trigger || '') && /align|windshield|w\/s|glass/i.test(trig)) {
       fr.enabled = false
       fr.justification = `Not required: a wheel alignment or windshield replacement does not disturb the front radar (it sits behind the bumper/grille, not the glass), and no front bumper, grille or radar operation is on this estimate.`
