@@ -207,6 +207,16 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       sa.length ? `Seat / SRS lines ${sa.join(', ')}; ${make} requires the weight sensor check after any collision` : `In collision: ${make} requires the front passenger weight sensor check after any collision, deployed or not`, sa,
       `${why}${sa.length ? ` (seat/SRS line${sa.length > 1 ? 's' : ''} ${sa.join(', ')}: initialization if the SRS unit, weight sensor, seat frame or rail was replaced or removed)` : ''}. Failure to check presents a safety liability and does not meet ${make} repair standards.`, out, true)
   }
+  // 4c. Toyota/Lexus seat weight (Mark 2026-10-02): required for OCS ECU/sensor
+  //     replacement or seat/SRS work (prompt rules). On every other Toyota
+  //     collision, flag the pre-scan check: Toyota requires the zero-point
+  //     calibration when the occupant sensors log a collision-detection code.
+  if (/toyota|lexus/i.test(make)) {
+    const NOTE = 'Check pre-scan for B1785, B1786, B1787 or B1788 (occupant classification sensor collision detection). If any is present, Toyota requires the seat weight zero-point calibration and sensitivity check.'
+    let sws = has(cals, /seat weight|occupant|\bocs\b/)
+    if (!sws) { sws = { calibration_name: 'Seat Weight Sensor', cal_type: 'Reset', trigger: '', line_references: '', justification: 'Not required by the repair lines — no front passenger seat, occupant sensor or SRS operation on this estimate.', enabled: false, _guard: 'listed' }; cals.push(sws) }
+    if (sws.enabled !== true && !/B178[5-8]/.test(`${sws.justification || ''} ${sws.note || ''}`)) sws.justification = [sws.justification, NOTE].filter(Boolean).join(' ')   // the report prints the justification
+  }
   if (al.length && CAM_AFTER_ALIGN.test(make)) {
     require(cals, /windshield|front camera|lane depart|forward camera/, 'Front Windshield Camera', 'Static/Dynamic',
       `Wheel alignment (line ${al.join(', ')}) — ${make} requires forward camera calibration after alignment`, al,
