@@ -323,6 +323,26 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       `Park sensors / bumper removed or replaced (line${psTrig.length > 1 ? 's' : ''} ${psTrig.join(', ')})`, psTrig,
       `Ultrasonic (park) sensor calibration required per ALLDATA ADAS Quick Reference (Toyota: Ultrasonic Sensor, front and rear bumper, R&R / R&I, static): the bumper or sensor operation on line${psTrig.length > 1 ? 's' : ''} ${psTrig.join(', ')} removes the sensors.`, out, ps.length > 0)
   }
+  // 5h. Subaru (ALLDATA 2024 Outback, Mark 2026-10-02): rear view camera R&R/R&I
+  //     (liftgate moved = camera moved) → back-up camera; sonar (park) sensors —
+  //     "installation height and angle must be checked if the bumper face, sonar
+  //     holder, and/or sonar sensor are replaced" → bumper cover REPLACED or sensor
+  //     replaced → park sensor check required (R&I of the bumper alone: not required).
+  if (/subaru/i.test(make)) {
+    const camLines = [...new Set([...lg, ...cam])]
+    if (camLines.length) require(cals, /back ?up|rear view camera|rear camera|reverse camera/i, 'Back Up Camera', 'Static',
+      `Liftgate / rear camera removed, replaced or adjusted (line${camLines.length > 1 ? 's' : ''} ${camLines.join(', ')})`, camLines,
+      `Rear view camera calibration required per ALLDATA ADAS Quick Reference (Subaru: Rear View Camera on the liftgate, R&R / R&I, static): the camera or its panel was moved (line${camLines.length > 1 ? 's' : ''} ${camLines.join(', ')}). Failure to calibrate presents a safety liability and does not meet Subaru repair standards.`, out, true)
+    const ps = lines(hits.park_sensor)
+    const psRow = has(cals, /park|ultrasonic|sonar|pdc|parking sensor/i)
+    const replacedBumper = psRow ? [...fb.slice(0, 2), ...rb.slice(0, 2)] : []
+    // fb/rb include R&I; the model's row text tells replaced vs R&I — only flip when the guard sees a sensor line, or the row's own trigger says replaced.
+    if (ps.length || (replacedBumper.length && /repl|replace/i.test(`${psRow?.trigger || ''} ${psRow?.justification || ''}`))) {
+      const ref = [...new Set([...ps, ...replacedBumper])]
+      require(cals, /park|ultrasonic|sonar|pdc|parking sensor/i, 'Park Distance Sensor', 'Static', `Bumper face / sonar sensor replaced (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')})`, ref,
+        `Sonar (park) sensor installation height and angle check required per ALLDATA ADAS Quick Reference (Subaru: "Installation height and angle must be checked if the bumper face, sonar holder, and/or sonar sensor are replaced") (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}).`, out, ps.length > 0)
+    }
+  }
   // 5c. Stellantis — Dodge, Chrysler, Jeep, Ram, Fiat, Alfa Romeo (ALLDATA ADAS
   //     Quick Reference: 2023 Ram ProMaster + 2018 Dodge Challenger, pasted by Mark
   //     2026-10-02; "All Stellantis"). The ACC radar lives in the FRONT BUMPER:
