@@ -30,6 +30,8 @@ import { resolvePhoneConfig } from '../services/phoneConfig.js'
 import { postToCliqChannel, SMS_TOLLFREE_CHANNEL, SMS_LOCAL_CHANNEL, DISPATCH_CHANNEL } from '../services/cliq.js'
 import { loadPhoneIndex, normPhone, contactLabel, findContactByPhone } from '../services/crmContacts.js'
 import { tryHandleCheckinReply } from './eveningCheckin.js'
+import { complete as completeCommit, listOpen as listOpenCommits } from '../services/commitments.js'
+import { sendSMS } from '../services/comms.js'
 
 const router = express.Router()
 
@@ -367,6 +369,29 @@ router.post('/', async (req, res) => {
     //     parse runs inline on Haiku because Catalyst can't fire-and-forget
     //     after responding and Twilio gives up around 15s.
     try {
+      // "done 3" / "done 3,5" / "3 done" — closing a commitment from a text.
+      // Checked BEFORE the evening check-in parser, which would otherwise read
+      // the same message as a day rating and swallow it.
+      const doneMatch = String(body || '').match(/\bdone\s*([\d,\s and]+)|\b([\d,\s]+)\s*done\b/i)
+      if (doneMatch) {
+        const nums = String(doneMatch[1] || doneMatch[2] || '').match(/\d+/g) || []
+        if (nums.length) {
+          const closed = [], missed = []
+          // Descending, so closing 2 does not renumber 5 out from under him.
+          for (const n of nums.map(Number).sort((x, y) => y - x)) {
+            const r = await completeCommit(req, { n }).catch(() => ({ ok: false }))
+            r.ok ? closed.push(r.closed) : missed.push(n)
+          }
+          if (closed.length) {
+            const left = (await listOpenCommits(req).catch(() => [])).length
+            const ack = `Closed ${closed.map(c => `"${c.text}"`).join(', ')}.` +
+              `${missed.length ? ` Could not find ${missed.join(', ')}.` : ''} ${left} still open.`
+            await sendSMS(req, { to: from, body: ack, category: 'commitment_done' }).catch(() => {})
+            return res.type('text/xml').send('<Response></Response>')
+          }
+        }
+      }
+
       const checkin = await tryHandleCheckinReply(req, { from, body })
       if (checkin?.handled) {
         console.log('[sms inbound] evening check-in recorded', checkin.date, checkin.rating)

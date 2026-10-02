@@ -22,6 +22,7 @@ import {
   getAllMailAccounts, getInboxFolderId,
 } from '../services/mail.js'
 import { extractCommitments } from '../services/commitmentExtractor.js'
+import { persist as persistCommits, listOpen, complete as completeCommit, migrateFromCache, dedupe as dedupeCommits } from '../services/commitments.js'
 import { proposeBig3 } from '../services/dayCoach.js'
 import { recordPlan, listDays, getDay, upsertDay } from '../services/dayLedger.js'
 import { readContext } from './coach.js'
@@ -302,6 +303,8 @@ async function getCalendarEvents(date = todayStr()) {
 
 const commitKey = c => `${c.person}|${c.text}`.toLowerCase().replace(/\s+/g, ' ').slice(0, 140)
 
+// Superseded by services/commitments.js (durable rows + a done path). Kept
+// only because /commitments/migrate reads the same cache key it wrote.
 async function persistCommitments(req, fresh) {
   try {
     const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
@@ -365,7 +368,7 @@ async function buildBriefing(req, { only, mode = 'morning' } = {}) {
     : []) || []
 
   const commitments = (on('persist')
-    ? (await timed('persist', withTimeout('persist', persistCommitments(req, fresh), 4000)))
+    ? (await timed('persist', withTimeout('persist', persistCommits(req, fresh, today), 6000)))
     : fresh) || fresh
 
   timings.total = Date.now() - t0
@@ -495,6 +498,13 @@ function formatFull(b, pace) {
   }
   L.push('')
   L.push(`Commitments: ${b.dueToday.length} due today, ${b.overdue.length} overdue, ${b.commitments.length} open.`)
+  // Numbered, because the number is the whole point: he texts "done 3" instead
+  // of typing the commitment back. Only the ones that need him today.
+  const actionable = [...b.overdue, ...b.dueToday].filter((c, i, a) => a.findIndex(x => x.key === c.key) === i)
+  for (const c of actionable.slice(0, 8)) {
+    L.push(`  ${c.n}. ${c.person}: ${c.text}${c.due && c.due < b.today ? ' (overdue)' : ''}`)
+  }
+  if (actionable.length) L.push('Reply "done 3" to close one.')
   if (b.dueToday.length) { L.push(''); L.push('Due today:'); b.dueToday.slice(0, 10).forEach(c => L.push(`- ${c.person}: ${c.text}`)) }
   if (b.overdue.length) { L.push(''); L.push('Overdue:'); b.overdue.slice(0, 10).forEach(c => L.push(`- ${c.person}: ${c.text} (was ${c.due})`)) }
   if (b.outbound.length) { L.push(''); L.push('Your promises:'); b.outbound.slice(0, 8).forEach(c => L.push(`- ${c.text}${c.due ? ` (by ${c.due})` : ''}`)) }
@@ -699,6 +709,24 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   }
   // Birthdays first — they are dated and they expire. Overdue contacts are a
   // standing condition and can wait behind them.
+  // Tap to close. A link, not a button or a form, so it works in Apple Mail,
+  // Gmail, Outlook and the Cliq preview without anything being installed.
+  const doneUrl = n => `${SELF_BASE}/api/briefing/done/${n}?k=${encodeURIComponent((process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim())}`
+  const commitHtml = (() => {
+    const act = [...(b.overdue || []), ...(b.dueToday || [])].filter((c, i, a) => a.findIndex(x => x.key === c.key) === i)
+    if (!act.length) return ''
+    return act.slice(0, 8).map(c => `
+      <tr>
+        <td style="padding:0 0 11px 0;font:400 15px/22px ${SANS};color:${INK};">
+          <strong style="font-weight:600;">${esc(c.person)}</strong> &mdash; ${esc(c.text)}
+          ${c.due && c.due < b.today ? `<span style="color:${ACCENT};"> overdue</span>` : ''}
+        </td>
+        <td style="padding:0 0 11px 14px;white-space:nowrap;vertical-align:top;">
+          <a href="${doneUrl(c.n)}" style="font:600 13px/22px ${SANS};color:${ACCENT};text-decoration:none;border:1px solid ${ACCENT};border-radius:4px;padding:3px 11px;">Done</a>
+        </td>
+      </tr>`).join('')
+  })()
+
   const crewHtml = crew && !crew.error ? [
     line(crew.late?.length ? `${crew.working} of ${crew.total} working.` : `All ${crew.total} working.`,
          crew.late?.length ? ACCENT : GOOD),
@@ -827,6 +855,7 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   ${holdHtml ? block('The Hold', holdHtml) : ''}
   ${recruitHtml ? block('Recruiting', recruitHtml) : ''}
   ${shopsHtml ? block('Shops', shopsHtml) : ''}
+  ${commitHtml ? block('Needs you', `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${commitHtml}</table>`) : ''}
   ${crewHtml ? block('The crew', crewHtml) : ''}
   ${prog ? block('Sales against goal', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
   ${block('Cash', cashHtml)}
@@ -1770,6 +1799,49 @@ router.get('/sent-today', async (req, res) => {
   try { res.json({ ok: true, date: ptDate(), sent: await alreadySentToday(req) }) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
+
+// Checking one off. GET on purpose: this has to work from a tap in an email
+// or a text on his phone, with no app and no login, so it cannot be a POST
+// from a form. The secret in the query is the same one the audio link uses.
+router.get('/done/:n', async (req, res) => {
+  const secret = (process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim()
+  if (String(req.query.k || '') !== secret && (req.headers['x-cron-secret'] || '') !== secret) {
+    return res.status(401).type('text/plain').send('Unauthorized')
+  }
+  try {
+    const out = await completeCommit(req, { n: req.params.n })
+    if (!out.ok) return res.status(404).type('text/html').send(page('Nothing to close', out.error))
+    res.type('html').send(page('Done', `${esc(out.closed.text)}<br><span style="opacity:.6">${esc(out.closed.person)}</span>`,
+      `${out.remaining} still open`))
+  } catch (e) { res.status(500).type('text/plain').send(e.message) }
+})
+
+router.get('/commitments', async (req, res) => {
+  try { res.json({ ok: true, open: await listOpen(req) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/commitments/dedupe', async (req, res) => {
+  // Defaults to a dry plan. Writing needs ?apply=1 on purpose.
+  try { res.json({ ok: true, ...(await dedupeCommits(req, { dry: req.query.apply !== '1' })) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/commitments/migrate', async (req, res) => {
+  try { res.json({ ok: true, ...(await migrateFromCache(req, ptDate())) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+// A confirmation page small enough to feel instant on a phone.
+function page(title, body, foot = '') {
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<body style="margin:0;background:#0d0d0d;color:#fff;font:400 17px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;">
+<div style="max-width:420px;text-align:center;">
+<div style="font:800 15px/1 -apple-system,sans-serif;letter-spacing:.16em;text-transform:uppercase;color:#CD4419;padding-bottom:18px;">${esc(title)}</div>
+<div style="font-size:19px;">${body}</div>
+${foot ? `<div style="padding-top:20px;opacity:.55;font-size:15px;">${esc(foot)}</div>` : ''}
+</div></body>`
+}
 
 router.get('/preview', async (req, res) => { const b = await buildBriefing(req); res.type('text/plain').send(formatFull(b)) })
 router.post('/send', async (req, res) => { res.json(await sendDailyBriefing(req)) })

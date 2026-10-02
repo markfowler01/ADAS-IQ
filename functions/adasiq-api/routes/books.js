@@ -226,6 +226,7 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
 
     // 5. Generate the PDF
     const pdfBuffer = await generateADASIQPdf({
+      _jobId:   job.id,
       shop:     job.shop_name || '',
       ro_number: roNum,
       insurer:  job.insurer || '',

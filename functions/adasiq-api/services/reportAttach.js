@@ -106,7 +106,7 @@ async function ensureAbsoluteReport(req, job, files) {
   const { generateADASIQPdf } = await import('./pdf.js')
   const { getAccessToken } = await import('./zoho.js'); const { uploadFileToFolder } = await import('./workdrive.js'); const { resolveJobFolderPublic } = await import('../routes/jobs.js')
   const ro = String(job.invoice_number || job.quote_number || '').trim()
-  const buffer = await generateADASIQPdf({ shop: job.shop_name || '', ro_number: ro, insurer: job.insurer || '', vin: job.vin || '', vehicle: job.vehicle || '', year: job.year || '', make: job.make || '', model: job.model || '', claim: job.claim_number || '', calibrations: cals, document_links: [], technician: job.technician || '', folder_share_url: job.folder_url || '' })
+  const buffer = await generateADASIQPdf({ _jobId: job.id, shop: job.shop_name || '', ro_number: ro, insurer: job.insurer || '', vin: job.vin || '', vehicle: job.vehicle || '', year: job.year || '', make: job.make || '', model: job.model || '', claim: job.claim_number || '', calibrations: cals, document_links: [], technician: job.technician || '', folder_share_url: job.folder_url || '' })
   const name = `Absolute ADAS_${ro || 'report'}${job.vin ? `_${job.vin}` : ''}.pdf`
   const wdToken = await getAccessToken()
   const folderId = files[0]?.folderId || await resolveJobFolderPublic(req, job, wdToken)

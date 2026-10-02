@@ -173,6 +173,7 @@ router.get('/:id/pdf', async (req, res) => {
 
     const { generateADASIQPdf } = await import('../services/pdf.js')
     const buffer = await generateADASIQPdf({
+      _scrubId: s.id,
       shop: s.shop || p.shop || '',
       ro_number: s.ro || p.ro_number || '',
       insurer: s.insurer || p.insurer || '',

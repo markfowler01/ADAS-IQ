@@ -108,7 +108,18 @@ export async function generateADASIQPdf(jobData = {}) {
     const req = globalThis.__catalystReq
     if (req) { const A = await import('./oemAttach.js'); cited = await A.fetchCited(req, await A.citedDocs(req, cals), cals) }
   } catch (e) { console.warn('[pdf] cited docs:', e.message); cited = [] }
-  const report = await buildPdf({ ...jobData, calibrations: cals, _cited: cited, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
+  // 🌐 Link + QR to the online report with the "Why?" popups (Mark 2026-10-02).
+  let reportLink = '', reportQr = null
+  try {
+    const req = globalThis.__catalystReq
+    let sid = jobData._scrubId || ''
+    if (!sid && jobData._jobId && req) { const { scrubsForJob } = await import('./scrubStore.js'); sid = (await scrubsForJob(req, jobData._jobId))?.[0]?.id || '' }
+    if (sid && req) {
+      reportLink = await (await import('./publicReport.js')).reportUrl(req, sid)
+      reportQr = await (await import('qrcode')).default.toBuffer(reportLink, { width: 256, margin: 1, color: { dark: '#9a3412', light: '#ffffff' } })
+    }
+  } catch (e) { console.warn('[pdf] report link:', e.message) }
+  const report = await buildPdf({ ...jobData, calibrations: cals, _cited: cited, _reportLink: reportLink, _reportQr: reportQr, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
   if (!cited.length) return report
   try { return await (await import('./oemAttach.js')).appendCitedDocs(globalThis.__catalystReq, report, cited) } catch { return report }
 }
@@ -116,7 +127,7 @@ export async function generateADASIQPdf(jobData = {}) {
 function buildPdf(jobData) {
   return new Promise((resolve, reject) => {
     const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links,
-      technician, folder_share_url, qr_png, _alldata, _cited = [], vin_equipment } = jobData
+      technician, folder_share_url, qr_png, _alldata, _cited = [], vin_equipment, _reportLink = '', _reportQr = null } = jobData
     const performedBy = technician || 'Absolute ADAS'
 
     const required = (calibrations || []).filter(c => c.enabled && !c._fs)
@@ -157,7 +168,13 @@ function buildPdf(jobData) {
     doc.roundedRect(MARGIN, y, CONTENT_W, 120, 8).fill(GRAY_LIGHT)
     doc.roundedRect(MARGIN, y, CONTENT_W, 120, 8).stroke(GRAY_BORDER).lineWidth(0.5)
     doc.roundedRect(MARGIN, y, 4, 120, 2).fill(ORANGE)
-    doc.font('Helvetica-Bold').fontSize(15).fillColor(DARK).text(vehicleStr, MARGIN + 16, y + 14, { width: CONTENT_W - 32 })
+    doc.font('Helvetica-Bold').fontSize(15).fillColor(DARK).text(vehicleStr, MARGIN + 16, y + 14, { width: CONTENT_W - (_reportQr ? 120 : 32) })
+    if (_reportQr) {   // 🌐 online report with the "Why?" explanations
+      doc.image(_reportQr, MARGIN + CONTENT_W - 66, y + 8, { fit: [54, 54], link: _reportLink })
+      doc.font('Helvetica-Bold').fontSize(6.5).fillColor(ORANGE).text('Online report', MARGIN + CONTENT_W - 140, y + 16, { width: 70, align: 'right', link: _reportLink, lineBreak: false })
+      doc.font('Helvetica').fontSize(6).fillColor(GRAY_MID).text('Tap any calibration', MARGIN + CONTENT_W - 140, y + 26, { width: 70, align: 'right', lineBreak: false })
+      doc.text('for the OEM "why"', MARGIN + CONTENT_W - 140, y + 34, { width: 70, align: 'right', lineBreak: false })
+    }
     if (vin) {
       doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID).text(`VIN  ${vin}`, MARGIN + 16, y + 36, { continued: !!vin_equipment })
       if (vin_equipment) doc.font('Helvetica').fontSize(7).fillColor('#5b21b6').text(`   ·   ${String(vin_equipment).slice(0, 150)}`, { lineBreak: false })

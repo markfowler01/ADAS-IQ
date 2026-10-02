@@ -26,6 +26,7 @@ import pipelineRouter, { pipelineCronRouter } from './routes/pipeline.js'   // C
 import recruitRouter, { publicRouter as recruitPublicRouter } from './routes/recruit.js'
 import { publicRouter as bookingPublicRouter } from './routes/booking.js'
 import shopAnswersPublicRouter from './routes/shopAnswersPublic.js'
+import publicReportRouter from './routes/publicReport.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
@@ -282,6 +283,7 @@ app.use('/api/cron/pipeline', pipelineCronRouter)
 app.use('/api/recruit', requireAuth, requireStaff, recruitRouter)
 // Public website intake form (absoluteadas.com/careers) — no auth, honeypot inside.
 app.use('/api/public/recruit', recruitPublicRouter)
+app.use('/api/public/report', publicReportRouter)   // 🌐 online report with "Why?" popups (signed per-scrub link)
 app.use('/api/public/shop-answers', shopAnswersPublicRouter)   // 📝 welcome questionnaire (signed per-shop link)
 app.use('/api/public/booking', bookingPublicRouter)  // website: book a calibration / Revenue Snapshot
 app.use('/api/public/tsb', tsbPublicRouter)  // token-checked photo streaming
