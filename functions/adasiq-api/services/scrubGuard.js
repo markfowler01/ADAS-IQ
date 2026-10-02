@@ -500,6 +500,37 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       out.demoted = [...(out.demoted || []), 'Front Radar (windshield only)']
     }
   }
+  // 8. 🔎 Equipment check on every sensor row (Mark 2026-10-02, "yes" to checking
+  //    equipment across all makes after the Altima / Compass over-calls). The scrub
+  //    marks each row equipped yes / no / unknown. A required row on a car that clearly
+  //    lacks the sensor → "if equipped, confirm at pre-scan" (not billed); unknown → stays
+  //    required with a confirm note. The VIN decode or the sensor's own estimate line wins.
+  {
+    const vinEq = String(data.vin_equipment || '')
+    const GATES = [
+      { re: /^front radar|distance sensor|acc radar|millimeter/i, vin: /adaptive cruise|emergency braking|forward collision/i, lines: rs, what: 'adaptive cruise / forward collision (front radar)' },
+      { re: /front side radar|front corner|front cross/i, vin: /$^/, lines: rs, what: 'front corner radars' },
+      { re: /blind.?spot|rear.*radar|\bbsd\b/i, vin: /blind spot|rear cross/i, lines: rs, what: 'blind spot monitoring' },
+      { re: /windshield|front camera|multipurpose|lane depart|forward camera/i, vin: /lane keep|lane departure|forward collision|emergency braking/i, lines: [...ws, ...cam], what: 'a forward-facing windshield camera' },
+      { re: /around view|surround|multi.?view|360|bird/i, vin: /$^/, lines: cam, what: 'a surround-view (360) camera system' },
+      { re: /park|ultrasonic|sonar|pdc|parking aid/i, vin: /park assist/i, lines: lines(hits.park_sensor), what: 'park sensors' },
+    ]
+    for (const c of cals) {
+      if (c.enabled !== true || c._fs) continue
+      const g = GATES.find(x => x.re.test(String(c.calibration_name || '')) && !(x.re === GATES[0].re && /side|corner/i.test(String(c.calibration_name || ''))))
+      if (!g) continue
+      const eq = String(c.equipped || '').toLowerCase()
+      const proven = g.vin.test(vinEq) || (g.lines || []).length > 0 || eq === 'yes'
+      if (proven) continue
+      if (eq === 'no') {
+        Object.assign(c, { enabled: false, line_references: '', _guard: 'if-equipped', justification: `If equipped with ${g.what}, this calibration is required after this repair — confirm at pre-scan. The VIN decode and estimate options show this trim without it, so it is not billed by default.` })
+        out.demoted = [...(out.demoted || []), `${c.calibration_name} (not equipped)`]
+      } else if (!/confirm (it is )?equipped|if equipped/i.test(c.justification || '')) {
+        c.justification = `${c.justification || ''} Confirm the vehicle is equipped with ${g.what} at pre-scan.`.trim()
+      }
+    }
+  }
+
   if (out.flipped.length || out.added.length) console.log(`[guard] ${make} ${data.year || ''}: flipped ${out.flipped.length}, added ${out.added.length}${out.demoted ? `, demoted ${out.demoted.length}` : ''} — ${[...out.flipped, ...out.added, ...(out.demoted || [])].join(' · ')}`)
   data._guard = { flipped: out.flipped, added: out.added }
   return out
