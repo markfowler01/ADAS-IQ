@@ -75,11 +75,38 @@ async function workdriveId(req, row, token) {
   } catch { /* look it up */ }
   const name = String(row.doc_source_url || '').replace(/^workdrive:/, '').split('/').pop()
   if (!name) return ''
+  // Walk the path first (Command Center → 01_Ops → OEM docs → <make> → file);
+  // WorkDrive's search doesn't index this team folder.
+  let walked = ''
+  try { walked = await walkPath(String(row.doc_source_url || '').replace(/^workdrive:/, ''), token) } catch (e) { console.warn('[oem-attach] walk:', e.message) }
+  if (walked) { try { await app.datastore().table('AppConfig').insertRow({ config_key: key, config_value: walked }) } catch { /* fine */ } return walked }
   const s = await axios.get('https://www.zohoapis.com/workdrive/api/v1/files/search', { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { search_str: name.replace(/\.pdf$/i, ''), search_scope: 'team', type: 'file' }, timeout: 15000 }).catch(() => null)
   const hit = (s?.data?.data || []).find(f => String(f.attributes?.name || '').toLowerCase() === name.toLowerCase())
   if (!hit?.id) return ''
   try { await app.datastore().table('AppConfig').insertRow({ config_key: key, config_value: String(hit.id) }) } catch { /* fine */ }
   return String(hit.id)
+}
+
+// "OEM docs/GM/file.pdf" → WorkDrive file id. The OEM docs folder sits in
+// Absolute ADAS Command Center → 01_Ops; the Command Center id is found from the
+// HR → Team folder (people.js) once and kept for the life of the instance.
+const PEOPLE_FOLDER_ID = 'mniqhb081c583db4e4b54ae1a007f31f84c1b'
+let _cc = ''
+async function walkPath(path, token) {
+  const H = { Authorization: `Zoho-oauthtoken ${token}` }
+  const parentOf = async id => (await axios.get(`https://workdrive.zoho.com/api/v1/files/${id}`, { headers: H, timeout: 15000 })).data?.data?.attributes?.parent_id || ''
+  if (!_cc) _cc = await parentOf(await parentOf(PEOPLE_FOLDER_ID))
+  if (!_cc) return ''
+  const { listChildren } = await import('./workdrive.js')
+  const norm2 = v => String(v || '').trim().toLowerCase()
+  let cur = _cc
+  for (const part of ['01_Ops', ...path.split('/').filter(Boolean)]) {
+    const kids = await listChildren(cur, token, { max: 1000 })
+    const hit = kids.find(k => norm2(k.name) === norm2(part)) || kids.find(k => norm2(k.name).replace(/\.pdf$/, '') === norm2(part).replace(/\.pdf$/, ''))
+    if (!hit) return ''
+    cur = hit.id
+  }
+  return cur
 }
 
 async function docBytes(req, row) {
