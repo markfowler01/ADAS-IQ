@@ -61,10 +61,11 @@ Categories:
 - headlamp: headlamp / headlight assembly replaced or removed-and-installed
 - fender: FRONT fender (left or right) replaced, removed-and-installed, repaired or adjusted — not the fender liner, molding or flare alone
 - structural: STRUCTURAL body repair lines: a welded / riveted / bonded unibody panel (quarter panel, rocker, pillar, rail, apron, floor pan, rear body panel, roof panel, wheelhouse) that is REPLACED or SECTIONED, or REPAIRED with more than 1.0 hour of body labor; a bumper reinforcement / impact bar repaired or replaced; a DOOR SHELL or door assembly REPLACED (new intrusion beam); a radiator / core support or bolt-on front bulkhead replaced; any frame/unibody pull or measure. NOT structural: refinish, blend, mask, buff, denib, trim or molding R&I, and panel repairs of 1.0 hour or less
+- park_sensor: a parking / back-up / ultrasonic / PDC / distance sensor (park assist) line: replaced, removed-and-installed, or transferred to a new bumper cover
 - srs_deploy: an air bag / airbag module or SRS seat-belt pretensioner REPLACED (a deployment)
 - b_pillar: B-pillar / center pillar — outer or inner panel repaired, replaced or sectioned, OR the B-pillar trim / applique removed or replaced
 
-Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
+Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...],"park_sensor":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
     ] }],
   })
   const raw = (msg.content || []).map(b => b.text || '').join('').trim()
@@ -269,6 +270,16 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       require(cals, /^front radar|millimeter|distance sensor|acc radar/i, 'Front Radar', 'Static', `Honda: ${why}`, ref, `Front Radar (millimeter wave) aiming required ${cite} (${why}). Failure to aim presents a safety liability and does not meet Honda repair standards.`, out)
       require(cals, /windshield|front camera|multipurpose|lane depart|forward camera/i, 'Front Windshield Camera', 'Static', `Honda: ${why}`, ref, `Multipurpose / windshield camera aiming required ${cite} (${why}). Failure to aim presents a safety liability and does not meet Honda repair standards.`, out)
     }
+  }
+  // 5e. Honda/Acura park sensors (ALLDATA ADAS Quick Reference, 2024 Pilot: "Parking
+  //     and Back-Up Sensors — R&R, R&I — Static — component reset may be
+  //     required"; Mark 2026-10-02: required for every shop). Sensor removed,
+  //     replaced or transferred → Park Distance Sensor reset REQUIRED.
+  if (/honda|acura/i.test(make)) {
+    const ps = lines(hits.park_sensor)
+    if (ps.length) require(cals, /park|ultrasonic|pdc|back.?up sensor|parking sensor/i, 'Park Distance Sensor', 'Reset',
+      `Parking / back-up sensor removed, replaced or transferred (line${ps.length > 1 ? 's' : ''} ${ps.join(', ')})`, ps,
+      `Parking and back-up sensor reset required per ALLDATA ADAS Quick Reference (Honda: Parking and Back-Up Sensors, R&R / R&I, static reset with scan tool) following sensor removal, replacement or transfer (line${ps.length > 1 ? 's' : ''} ${ps.join(', ')}).`, out, true)
   }
   // 5c. Ram ProMaster (ALLDATA ADAS Quick Reference, 2023 ProMaster 2500, pasted by
   //     Mark 2026-10-02): the ACC radar lives in the FRONT BUMPER — bumper R&I or
