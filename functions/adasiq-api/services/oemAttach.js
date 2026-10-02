@@ -22,7 +22,9 @@ async function library(req) {
   if (Date.now() - _lib.at < 10 * 60 * 1000 && _lib.rows.length) return _lib.rows
   const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(
     `SELECT ROWID, doc_oem, doc_title, doc_published_date, doc_source_url, doc_hosted_url, doc_filename FROM ${TABLE} LIMIT 300`)
-  _lib = { at: Date.now(), rows: (rows || []).map(r => r[TABLE] || r).filter(d => d.doc_title) }
+  // The same document filed twice (two file names, one title) attaches once.
+  const seen = new Set()
+  _lib = { at: Date.now(), rows: (rows || []).map(r => r[TABLE] || r).filter(d => d.doc_title).filter(d => { const k = `${norm(d.doc_title)}|${d.doc_published_date || ''}`; if (seen.has(k)) return false; seen.add(k); return true }) }
   return _lib.rows
 }
 
