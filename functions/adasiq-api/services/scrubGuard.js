@@ -36,7 +36,7 @@ const SAS_AFTER_BATTERY = /honda|acura|subaru/i
 // After a Vehicle Collision"; Honda/Acura post-collision position statement).
 const SWS_ANY_COLLISION = /honda|acura|mazda/i   // Mazda added 2026-10-02 (Mark: "every mazda in a collision")
 // Makes whose statements require the camera after a wheel alignment.
-const CAM_AFTER_ALIGN = /./   // Mark 2026-10-02: "yes every alignment" — windshield camera after any alignment, every make (when the car has one)
+const CAM_AFTER_ALIGN = /^(?!.*(honda|acura)).*/i   // every make after an alignment (Mark 2026-10-02) EXCEPT Honda/Acura: Honda's job aid + ALLDATA say camera/radar are NOT required after an alignment
 
 /** One Haiku read: which lines carry which trigger words. */
 export async function triggerLines(base64Pdf, { text = '' } = {}) {
@@ -190,9 +190,12 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
   const al = lines(hits.alignment), bat = lines(hits.battery)
   if (al.length || (bat.length && SAS_AFTER_BATTERY.test(make))) {
     const ref = [...new Set([...al, ...bat])]
-    require(cals, /steering angle|\bsas\b/, 'Steering Angle Sensor', 'Reset',
-      al.length ? `Wheel alignment (line ${al.join(', ')})` : `Battery disconnect (line ${bat.join(', ')}) — zero-point after power loss on ${make}`, ref,
-      `Steering Angle Sensor ${al.length ? 'calibration' : 'zero-point reset'} required per ${per(make)} following ${al.length ? 'wheel alignment' : 'battery disconnect'} (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
+    const hondaAlign = al.length && /honda|acura/i.test(make)
+    require(cals, /steering angle|\bsas\b|vsa/, 'Steering Angle Sensor', 'Reset',
+      al.length ? `Wheel alignment (line ${al.join(', ')})${hondaAlign ? ' — VSA sensor neutral position memorization' : ''}` : `Battery disconnect (line ${bat.join(', ')}) — zero-point after power loss on ${make}`, ref,
+      hondaAlign
+        ? `Steering angle / VSA sensor neutral position memorization required per Honda service information (Wheel Alignment procedure): "After adjusting the wheel alignment, do the VSA sensor neutral position memorization" (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to perform it presents a safety liability and does not meet Honda repair standards.`
+        : `Steering Angle Sensor ${al.length ? 'calibration' : 'zero-point reset'} required per ${per(make)} following ${al.length ? 'wheel alignment' : 'battery disconnect'} (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
   }
   // 4a. 🧰 Full Service: any battery disconnect → the power-loss resets (windows, sunroof, liftgate…).
   if (bat.length) {
