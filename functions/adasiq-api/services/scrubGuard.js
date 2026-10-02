@@ -353,6 +353,12 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
         `Sonar (park) sensor installation height and angle check required per ALLDATA ADAS Quick Reference (Subaru: "Installation height and angle must be checked if the bumper face, sonar holder, and/or sonar sensor are replaced") (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}).`, out, ps.length > 0)
     }
   }
+  // 5i. Hyundai / Kia / Genesis (Mark 2026-10-02: "anytime the rear bumper is removed
+  //     and installed, especially if it's replaced or repaired"): rear bumper R&I,
+  //     replaced or repaired → rear blind spot radar calibration.
+  if (/hyundai|kia|genesis/i.test(make) && rb.length) require(cals, /blind.?spot|rear.*radar|\bbsd\b/i, 'Rear Blind Spot Radar', 'Static',
+    `Rear bumper removed/installed, replaced or repaired (line${rb.length > 1 ? 's' : ''} ${rb.join(', ')}) — the blind spot radars sit behind the rear bumper`, rb,
+    `Rear blind spot (BSD) radar calibration required per ${per(make)}: the rear bumper operation on line${rb.length > 1 ? 's' : ''} ${rb.join(', ')} disturbs the radars mounted behind it (ALLDATA: Blind Spot Detection unit, rear bumper, static calibration). Failure to calibrate presents a safety liability and does not meet ${make} repair standards.`, out)
   // 5c. Stellantis — Dodge, Chrysler, Jeep, Ram, Fiat, Alfa Romeo (ALLDATA ADAS
   //     Quick Reference: 2023 Ram ProMaster + 2018 Dodge Challenger, pasted by Mark
   //     2026-10-02; "All Stellantis"). The ACC radar lives in the FRONT BUMPER:
