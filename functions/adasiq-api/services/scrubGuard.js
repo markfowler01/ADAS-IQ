@@ -54,13 +54,15 @@ Categories:
 - alignment: wheel alignment (labor or sublet), "align", "4 wheel", "steering system reset"
 - battery: battery disconnect / D&R / remove and install battery / hybrid battery
 - seat_airbag: front passenger seat, seat cushion / track, seat belt, pretensioner, airbag, air bag, SRS
-- liftgate: liftgate / tailgate / trunk lid / decklid replaced or removed-and-installed
+- liftgate: liftgate / tailgate / trunk lid / decklid replaced, removed-and-installed, or ADJUSTED / aligned (a panel with a camera in it that is moved needs the camera calibrated)
 - mirror: exterior mirror (left or right) replaced or removed-and-installed
 - radar_sensor: a line naming a RADAR: "radar", "millimeter wave", "distronic", "ACC sensor", "adaptive cruise sensor". NOT park distance / parking / PDC / ultrasonic / proximity sensors — those are never radar
 - camera: any line naming a camera (front, rear, side, surround, 360)
 - headlamp: headlamp / headlight assembly replaced or removed-and-installed
+- fender: FRONT fender (left or right) replaced, removed-and-installed, repaired or adjusted — not the fender liner, molding or flare alone
+- b_pillar: B-pillar / center pillar — outer or inner panel repaired, replaced or sectioned, OR the B-pillar trim / applique removed or replaced
 
-Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
+Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
     ] }],
   })
   const raw = (msg.content || []).map(b => b.text || '').join('').trim()
@@ -234,6 +236,19 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
         justification: `Blind spot radar aim recommended after the rear bumper was removed (line${rb.length > 1 ? 's' : ''} ${rb.join(', ')}): the radar's field of view and the bumper cover in front of it were disturbed. Performed as a Full Service verification; the manufacturer's procedure does not require it for a cover removal alone.`,
         enabled: false, _guard: 'full-service' })
       out.added.push(`Blind Spot Aim (Rear Bumper Removed) ← ${rb.join(', ')} (Full Service)`)
+    }
+  }
+  // 5b. Tesla (Mark 2026-10-02): every camera panel moved = camera calibration.
+  //     The trunk/liftgate camera, the front fender repeater cameras and the
+  //     B-pillar cameras are all part of Tesla's camera (Around View) system.
+  if (/tesla/i.test(make)) {
+    const fen = lines(hits.fender), bp = lines(hits.b_pillar)
+    const tl = [...new Set([...lg, ...fen, ...bp, ...cam])]
+    if (tl.length) {
+      const what = [lg.length && `trunk/liftgate (line ${lg.join(', ')})`, fen.length && `front fender (line ${fen.join(', ')})`, bp.length && `B-pillar (line ${bp.join(', ')})`, cam.length && `camera (line ${cam.join(', ')})`].filter(Boolean).join(', ')
+      require(cals, /around view|surround|360|bird|camera calibration|autopilot camera/i, 'Around View Camera', 'Dynamic',
+        `Tesla camera panel moved: ${what}`, tl,
+        `Tesla camera calibration required per ${per(make)}: ${what} carries one of the vehicle's Autopilot/surround cameras (trunk/liftgate rear camera, front fender repeater cameras, B-pillar cameras). Any repair, replacement, removal or adjustment of a panel holding a camera moves the camera and requires calibration. Failure to calibrate presents a safety liability and does not meet Tesla repair standards.`, out, true)
     }
   }
   // 5. Liftgate / rear camera line → Back Up Camera.
