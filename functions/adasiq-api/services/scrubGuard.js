@@ -329,6 +329,16 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
   //     holder, and/or sonar sensor are replaced" → bumper cover REPLACED or sensor
   //     replaced → park sensor check required (R&I of the bumper alone: not required).
   if (/subaru/i.test(make)) {
+    // Mark 2026-10-02: rear blind spot on any rear bumper R&I or replacement; Around
+    // View on any grille, decklid / trunk / hatch, or side mirror moved (cars with it).
+    if (rb.length) require(cals, /blind.?spot|rear.*radar/i, 'Rear Blind Spot Radar', 'Static',
+      `Rear bumper removed/installed or replaced (line${rb.length > 1 ? 's' : ''} ${rb.join(', ')})`, rb,
+      `Rear radar (blind spot) calibration required per ALLDATA ADAS Quick Reference (Subaru: rear Radar Sensors in the rear bumper, R&R / R&I, static with targets): the rear bumper operation on line${rb.length > 1 ? 's' : ''} ${rb.join(', ')} moves the radars. Failure to calibrate presents a safety liability and does not meet Subaru repair standards.`, out)
+    const grS = lines(hits.grille)
+    const avTrig = [...new Set([...grS, ...lg, ...mir])]
+    if (avTrig.length && has(cals, /around view|surround|360|bird/i)) require(cals, /around view|surround|360|bird/i, 'Around View Camera', 'Static',
+      `Surround camera panel moved: ${[grS.length && `grille (line ${grS.join(', ')})`, lg.length && `decklid/trunk/hatch (line ${lg.join(', ')})`, mir.length && `side mirror (line ${mir.join(', ')})`].filter(Boolean).join(', ')}`, avTrig,
+      `Surround view (Around View) camera calibration required per ALLDATA ADAS Quick Reference (Subaru: Front View Camera in the grille and Rear View Camera on the liftgate, R&R / R&I, static) whenever the grille, decklid / trunk / hatch or a side mirror carrying a camera is moved (line${avTrig.length > 1 ? 's' : ''} ${avTrig.join(', ')}). Failure to calibrate presents a safety liability and does not meet Subaru repair standards.`, out)
     const camLines = [...new Set([...lg, ...cam])]
     if (camLines.length) require(cals, /back ?up|rear view camera|rear camera|reverse camera/i, 'Back Up Camera', 'Static',
       `Liftgate / rear camera removed, replaced or adjusted (line${camLines.length > 1 ? 's' : ''} ${camLines.join(', ')})`, camLines,
