@@ -1,9 +1,13 @@
-// Branded loading splash (Mark 2026-08-02): the logo car "calibrating" —
-// expanding sensor waves ripple outward in brand orange while a radar
-// sweep circles the mark. Used by App.jsx's loading state; index.html
-// carries a matching static copy for the pre-React boot moment.
+// Branded loading splash (Mark 2026-10-02 v2: "just the car and then a
+// horizontal line kinda like a laser scanning the car all the way up to the
+// radars so it goes up and down real slow"). The logo car with a glowing scan
+// line sweeping wheels → radar waves → wheels. Used by App.jsx's loading
+// state and as the overlay while a report is scrubbed or a job created;
+// index.html carries a matching static copy for the pre-React boot moment.
 
 const ORANGE = '#CD4419'
+const SIZE = 168          // the car mark
+const SCAN = '4.2s'       // one way; it eases back down the same speed
 
 // `overlay` renders it as a translucent full-screen layer on TOP of the
 // current screen — used while the AI is scrubbing a report or creating
@@ -16,21 +20,9 @@ export default function LoadingSplash({ label = 'Calibrating systems', overlay =
         : 'min-h-screen flex items-center justify-center'}
       style={{ backgroundColor: overlay ? 'rgba(245,243,240,0.94)' : '#f5f3f0' }}>
       <style>{`
-        @keyframes aa-wave {
-          0%   { transform: scale(0.55); opacity: 0.55; }
-          80%  { opacity: 0.08; }
-          100% { transform: scale(1.55); opacity: 0; }
-        }
-        @keyframes aa-sweep {
-          from { transform: rotate(0deg); }
-          to   { transform: rotate(360deg); }
-        }
-        @keyframes aa-breathe {
-          0%, 100% { transform: scale(1); }
-          50%      { transform: scale(1.06); }
-        }
-        @keyframes aa-dots {
-          0%, 20%  { content: ''; }
+        @keyframes aa-scan {
+          from { transform: translateY(${Math.round(SIZE * 0.86)}px); }
+          to   { transform: translateY(${Math.round(SIZE * 0.08)}px); }
         }
         @keyframes aa-dot-blink {
           0%, 60%, 100% { opacity: 0.2; }
@@ -39,46 +31,16 @@ export default function LoadingSplash({ label = 'Calibrating systems', overlay =
       `}</style>
 
       <div className="flex flex-col items-center gap-5">
-        <div style={{ position: 'relative', width: 148, height: 148 }}>
-          {/* Expanding sensor waves */}
-          {[0, 1, 2].map(i => (
-            <div key={i} style={{
-              position: 'absolute', inset: 0, borderRadius: '50%',
-              border: `2.5px solid ${ORANGE}`,
-              animation: `aa-wave 2.4s cubic-bezier(0.2, 0.6, 0.4, 1) ${i * 0.8}s infinite`,
-            }} />
-          ))}
-
-          {/* Radar sweep ring */}
-          <div style={{
-            position: 'absolute', inset: 10, borderRadius: '50%',
-            background: `conic-gradient(from 0deg, transparent 0deg, transparent 300deg, ${ORANGE}33 330deg, ${ORANGE} 360deg)`,
-            WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), black calc(100% - 4px))',
-            mask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), black calc(100% - 4px))',
-            animation: 'aa-sweep 1.8s linear infinite',
-          }} />
-
-          {/* Tick marks — calibration reticle */}
-          {[0, 90, 180, 270].map(deg => (
-            <div key={deg} style={{
-              position: 'absolute', left: '50%', top: '50%', width: 3, height: 10,
-              backgroundColor: '#d8d2cc', borderRadius: 2,
-              transform: `rotate(${deg}deg) translateY(-66px) translateX(-50%)`,
-              transformOrigin: '0 0',
-            }} />
-          ))}
-
-          {/* The mark itself, breathing gently */}
-          <div style={{
-            position: 'absolute', inset: 0, display: 'flex',
-            alignItems: 'center', justifyContent: 'center',
-            animation: 'aa-breathe 2.4s ease-in-out infinite',
-          }}>
-            <img
-              src={import.meta.env.BASE_URL + 'logo.png'}
-              alt="Absolute ADAS"
-              style={{ width: 64, height: 64, objectFit: 'contain' }}
-            />
+        <div style={{ position: 'relative', width: SIZE + 40, height: SIZE }}>
+          <img
+            src={import.meta.env.BASE_URL + 'logo.png'}
+            alt="Absolute ADAS"
+            style={{ position: 'absolute', left: 20, top: 0, width: SIZE, height: SIZE, objectFit: 'contain' }}
+          />
+          {/* The laser: a soft beam band with a bright core line, wheels → radars → wheels */}
+          <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: 0, animation: `aa-scan ${SCAN} ease-in-out infinite alternate` }}>
+            <div style={{ position: 'absolute', left: 0, right: 0, top: -14, height: 28, background: `linear-gradient(to bottom, transparent, ${ORANGE}22 40%, ${ORANGE}33 50%, ${ORANGE}22 60%, transparent)` }} />
+            <div style={{ position: 'absolute', left: 0, right: 0, top: -1, height: 2, borderRadius: 2, background: `linear-gradient(to right, transparent, #ff6a3d 12%, #ffd2c2 50%, #ff6a3d 88%, transparent)`, boxShadow: `0 0 8px 2px ${ORANGE}99, 0 0 18px 4px ${ORANGE}44` }} />
           </div>
         </div>
 
