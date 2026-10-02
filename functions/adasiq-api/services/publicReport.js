@@ -44,7 +44,13 @@ export async function reportData(req, scrubId, { withDocs = true } = {}) {
   } catch { /* plain rows */ }
   let cited = []
   if (withDocs) {
-    try { const A = await import('./oemAttach.js'); cited = await A.fetchCited(req, await A.citedDocs(req, cals), cals) } catch (e) { console.warn('[public report] docs:', e.message) }
+    try {
+      const A = await import('./oemAttach.js'); const docs = await A.citedDocs(req, cals)
+      // Remember what each row cites before fetching, so the popup still names the
+      // document even when its file can't be pulled.
+      for (const c of cals) if (c._attach) c._citeTitles = c._attach.map(n => docs.find(d => d.n === n)).filter(Boolean).map(d => `${d.row.doc_oem ? d.row.doc_oem + ': ' : ''}${d.row.doc_title}`)
+      cited = await A.fetchCited(req, docs, cals)
+    } catch (e) { console.warn('[public report] docs:', e.message) }
   }
   return { s, cals, cited }
 }
@@ -60,7 +66,9 @@ export function renderReport({ s, cals, cited }, token) {
     const name = String(c.calibration_name || '').replace(/\s*calibration$/i, '')
     const q = c.enabled ? `Why is a ${name}${c.cal_type ? ` – ${c.cal_type}` : ''} calibration required?` : `Why isn't a ${name} calibration required?`
     const refs = (c._refs || []).map(r => `<div class="ref"><b>OEM Reference:</b> Attachment ${r.n} — ${esc(r.title)}${r.pages.length ? `, see page${r.pages.length > 1 ? 's' : ''} ${r.pages.join(', ')}` : ''}<br><a class="btn" target="_blank" href="${docLink(r.n, r.pages[0])}">Open the OEM document${r.pages[0] ? ` at page ${r.pages[0]}` : ''} ↗</a></div>`).join('')
-    return { q, a: c.justification || (c.enabled ? 'Required by the vehicle manufacturer for this repair.' : 'No operation on this estimate disturbs this sensor.'), refs }
+    const fetched = new Set((c._refs || []).map(r => r.title))
+    const named = (c._citeTitles || []).filter(t => !fetched.has(t)).map(t => `<div class="ref"><b>OEM Reference:</b> ${esc(t)}</div>`).join('')
+    return { q, a: c.justification || (c.enabled ? 'Required by the vehicle manufacturer for this repair.' : 'No operation on this estimate disturbs this sensor.'), refs: refs + named }
   }
   const rowHtml = rows.map((c, i) => {
     const w = why(c), on = !!c.enabled

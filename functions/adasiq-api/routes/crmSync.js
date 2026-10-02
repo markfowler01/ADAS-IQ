@@ -705,6 +705,17 @@ router.get('/scrub-timings', async (req, res) => {
   try { const r = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery("SELECT config_value FROM AppConfig WHERE config_key = 'scrub_timings' LIMIT 1"); res.json(JSON.parse(r?.[0]?.AppConfig?.config_value || '[]')) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 📎 Which OEM docs a scrub cites and whether each file loads.
+router.get('/report-docs', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { getScrub } = await import('../services/scrubStore.js'); const A = await import('../services/oemAttach.js')
+    const s = await getScrub(req, String(req.query.scrub || '')); const cals = (s?.payload?.calibrations || []).map(c => ({ ...c }))
+    const docs = await A.citedDocs(req, cals); const warns = []; const w = console.warn; console.warn = (...x) => { warns.push(x.join(' ')); w(...x) }
+    let got = []; try { got = await A.fetchCited(req, docs, cals) } finally { console.warn = w }
+    res.json({ cited: docs.map(d => ({ n: d.n, title: d.row.doc_title, src: d.row.doc_hosted_url || d.row.doc_source_url, cals: d.cals })), loaded: got.map(d => ({ n: d.n, title: d.row.doc_title, pages: d.pageTexts?.length })), warns })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // 🌐 The online-report link for a scrub (preview / support).
 router.get('/report-link', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
