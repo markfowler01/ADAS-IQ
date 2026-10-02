@@ -34,7 +34,7 @@ const SAS_AFTER_BATTERY = /honda|acura|subaru/i
 // Honda/Acura: front passenger weight sensor output check after ANY collision,
 // deployed or not (Honda S/I "Front Passenger's Weight Sensor Output Check
 // After a Vehicle Collision"; Honda/Acura post-collision position statement).
-const SWS_ANY_COLLISION = /honda|acura|mazda/i   // Mazda added 2026-10-02 (Mark: "every mazda in a collision")
+const SWS_ANY_COLLISION = /honda|acura|mazda|nissan|infiniti/i   // Nissan/Infiniti added 2026-10-02 (ALLDATA collision inspection: passenger seat removed for the OCS check → zero point reset; Mark: "any time the vehicle is in a collision")   // Mazda added 2026-10-02 (Mark: "every mazda in a collision")
 // Makes whose statements require the camera after a wheel alignment.
 const CAM_AFTER_ALIGN = /^(?!.*(honda|acura)).*/i   // every make after an alignment (Mark 2026-10-02) EXCEPT Honda/Acura: Honda's job aid + ALLDATA say camera/radar are NOT required after an alignment
 
@@ -213,7 +213,9 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     const honda = /honda|acura/i.test(make)
     const why = honda
       ? `Front Passenger Weight Sensor output check required per ${per(make, "Honda service information: 'Check the front passenger's weight sensor output after a vehicle collision, regardless if the airbags and seatbelt tensioners deployed or not'")}`
-      : `Front passenger seat weight sensor (occupant classification) check required on every ${make} collision repair per ${per(make)}`
+      : /nissan|infiniti/i.test(make)
+        ? `Occupant classification (seat weight) zero point reset required per Nissan service information (ALLDATA "Repairs and Inspections Required After a Collision"): "Remove passenger seat assembly … Perform zero point reset function after front passenger seat is installed in the vehicle", whether or not the airbags deployed`
+        : `Front passenger seat weight sensor (occupant classification) check required on every ${make} collision repair per ${per(make)}`
     require(cals, /seat weight|occupant|\bods\b|\bocs\b|passenger seat/, 'Seat Weight Sensor', 'Reset',
       sa.length ? `Seat / SRS lines ${sa.join(', ')}; ${make} requires the weight sensor check after any collision` : `In collision: ${make} requires the front passenger weight sensor check after any collision, deployed or not`, sa,
       `${why}${sa.length ? ` (seat/SRS line${sa.length > 1 ? 's' : ''} ${sa.join(', ')}: initialization if the SRS unit, weight sensor, seat frame or rail was replaced or removed)` : ''}. Failure to check presents a safety liability and does not meet ${make} repair standards.`, out, true)
