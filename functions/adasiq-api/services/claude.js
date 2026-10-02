@@ -121,6 +121,8 @@ STEP 4b — MAKE-WIDE POSITION-STATEMENT RULES (these apply on top of the line r
 - Honda / Acura (other): liftgate/tailgate Repl or rear camera R&I → Back Up Camera REQUIRED. Front bumper removal → Front Radar aiming REQUIRED.
 - Subaru (EyeSight): ANY collision repair on the estimate → Front Windshield Camera (EyeSight stereo camera) REQUIRED, trigger "In Collision (Subaru EyeSight)". Subaru requires EyeSight inspection/calibration after any collision regardless of impact location (Mark's estimator guide: "Subaru = any collision"; Kinetic applies it on every Subaru collision report).
 - Ford / Lincoln: Ford's "Collision Position Statement: ADAS Integrity and Repair Technical Imperatives (May 2026)" requires calibration for ANY repair, replacement or remove/install of an ADAS sensor, of parts that mount or position one (bumper beams, quarter panels, mounting brackets), or of parts in a sensor's field of view (bumper fascias, grilles, glass). So on Ford/Lincoln: front bumper fascia R&I / Rpr / Repl, grille, front bumper beam or radar bracket → Front Radar REQUIRED; rear bumper fascia R&I / Rpr / Repl, quarter panel or rear beam → Rear Blind Spot Radar (BLIS) REQUIRED; windshield or any glass in a camera's view → that camera REQUIRED; mirror, grille, bumper or liftgate carrying a 360 camera → Around View Camera REQUIRED. Ford's ADAS Job Aid (11/2021) also requires the radar vertical check and horizontal alignment "when a vehicle has been in an accident" with front damage. Cite the May 2026 statement by name in each justification.
+- ALL MAKES (Mark 2026-10-02: "every alignment"): wheel alignment (labor or sublet) → Front Windshield Camera REQUIRED (when the car has one) + Steering Angle Sensor REQUIRED.
+- Mazda: ANY collision repair → Seat Weight Sensor (occupant classification) REQUIRED, trigger "In collision (Mazda)" (Mark 2026-10-02: "every Mazda in a collision").
 - Toyota / Lexus: wheel alignment → Front Windshield Camera + Steering Angle Sensor. (A battery disconnect alone does NOT trigger SAS on Toyota/Lexus — only on Honda/Acura and Subaru, Mark 2026-10-01.)
 
 STEP 4f — WHAT NEVER TRIGGERS FRONT RADAR (2026-10-01 benchmark: these produced false radar calls)
@@ -219,7 +221,29 @@ export async function detectPdfMeta(base64Pdf) {
  * Kept separate on purpose: the scrub path's detector is benchmarked and must
  * not be disturbed.
  */
+// 💵 Free first (Mark 2026-10-02 "run leaner"): most files say what they are in
+// their own text. Only a scan or an unknown layout pays for the Haiku read.
+const KIND_MAKES = ['Mercedes-Benz', 'Land Rover', 'Alfa Romeo', 'Acura', 'Audi', 'BMW', 'Buick', 'Cadillac', 'Chevrolet', 'Chrysler', 'Dodge', 'Fiat', 'Ford', 'Genesis', 'GMC', 'Honda', 'Hyundai', 'Infiniti', 'Jaguar', 'Jeep', 'Kia', 'Lexus', 'Lincoln', 'Lucid', 'Mazda', 'Mini', 'Mitsubishi', 'Nissan', 'Polestar', 'Porsche', 'Ram', 'Rivian', 'Subaru', 'Tesla', 'Toyota', 'Volkswagen', 'Volvo']
+async function detectPdfKindFromText(base64Pdf) {
+  let text = ''
+  try { const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default; text = ((await pdf(Buffer.from(base64Pdf, 'base64'), { max: 2 })).text || '') } catch { return null }
+  if (text.length < 300) return null   // a scan — let the model look
+  const head = text.slice(0, 6000)
+  let kind = ''
+  if (/^\s*Calibration Identification Report/i.test(head)) kind = 'REPORT'   // Kinetic's report opens with its title
+  else if (/Absolute ADAS/i.test(head) && /Calibration (&|and) Diagnostic Report/i.test(head)) kind = 'ABSOLUTE'
+  else if (/Workfile ID|CCC ONE|CCC Intelligent Solutions|Estimate of Record|CCC Pathways/i.test(text)) kind = 'CCC'   // every CCC estimate prints its Workfile ID
+  else if (/\b(INVOICE|REMITTANCE|STATEMENT OF ACCOUNT|AMOUNT DUE)\b/.test(head) && !/estimate/i.test(head)) kind = 'INVOICE'
+  if (!kind) return null
+  // The vehicle line ("2020 BMW X7 …") names the make; a shop or insurer name can't fool it.
+  const yearMake = (text.match(/\b(?:19|20)\d{2}\s+([A-Z][A-Za-z]+(?:[- ][A-Z][a-z]+)?)/g) || []).map(x => x.replace(/^\d{4}\s+/, ''))
+  const make = KIND_MAKES.find(m => yearMake.some(y => y.toLowerCase().replace(' ', '-') === m.toLowerCase() || y.toLowerCase().startsWith(m.toLowerCase()))) || ''
+  return { kind, make, raw: 'text' }
+}
+
 export async function detectPdfKind(base64Pdf) {
+  const free = await detectPdfKindFromText(base64Pdf)
+  if (free) return free
   const message = await getClient().messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 40,

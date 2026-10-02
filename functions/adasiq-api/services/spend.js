@@ -44,8 +44,10 @@ export async function flush(req) {
     if (Math.floor(after / ALERT_EVERY) > Math.floor(before / ALERT_EVERY)) {
       const line = Math.floor(after / ALERT_EVERY) * ALERT_EVERY
       const msg = `💵 Scrubbing has spent $${after.toFixed(2)} on Claude today (passed $${line}). Still scrubbing — nothing is held. You'll hear again at $${line + ALERT_EVERY}.`
-      try { const { createNotification } = await import('../routes/notifications.js'); await createNotification(req, { to: 'Mark', toEmail: 'mark@absoluteadas.com', type: 'spend', title: `💵 Scrub spend today: $${after.toFixed(2)}`, body: msg, skipTechChannel: true }) } catch { /* fine */ }
-      try { const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js'); await postToCliqChannel(DISPATCH_CHANNEL, msg) } catch { /* fine */ }
+      let breakdown = ''
+      try { const { spendDay } = await import('./aiSpend.js'); const d = await spendDay(req); if (d.rows.length) breakdown = `\nWhole app today: $${d.total.toFixed(2)} · top: ${d.rows.slice(0, 4).map(r => `${r.feature.replace(/^(services|routes)\//, '')} $${r.dollars.toFixed(2)} (${r.calls})`).join(', ')}` } catch { /* fine */ }
+      try { const { createNotification } = await import('../routes/notifications.js'); await createNotification(req, { to: 'Mark', toEmail: 'mark@absoluteadas.com', type: 'spend', title: `💵 Scrub spend today: $${after.toFixed(2)}`, body: msg + breakdown, skipTechChannel: true }) } catch { /* fine */ }
+      try { const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js'); await postToCliqChannel(DISPATCH_CHANNEL, msg + breakdown) } catch { /* fine */ }
     }
     return after
   } catch (e) { pending += add; console.warn('[spend] flush failed:', e.message); return null }

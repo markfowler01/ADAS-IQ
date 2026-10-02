@@ -34,9 +34,9 @@ const SAS_AFTER_BATTERY = /honda|acura|subaru/i
 // Honda/Acura: front passenger weight sensor output check after ANY collision,
 // deployed or not (Honda S/I "Front Passenger's Weight Sensor Output Check
 // After a Vehicle Collision"; Honda/Acura post-collision position statement).
-const SWS_ANY_COLLISION = /honda|acura/i
+const SWS_ANY_COLLISION = /honda|acura|mazda/i   // Mazda added 2026-10-02 (Mark: "every mazda in a collision")
 // Makes whose statements require the camera after a wheel alignment.
-const CAM_AFTER_ALIGN = /toyota|lexus|subaru|honda|acura|mazda|hyundai|kia|nissan|infiniti/i
+const CAM_AFTER_ALIGN = /./   // Mark 2026-10-02: "yes every alignment" — windshield camera after any alignment, every make (when the car has one)
 
 /** One Haiku read: which lines carry which trigger words. */
 export async function triggerLines(base64Pdf, { text = '' } = {}) {
@@ -196,12 +196,16 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       `Battery disconnect (line${bat.length > 1 ? 's' : ''} ${bat.join(', ')})`, bat,
       `Power-loss initializations required per ${per(make)} after the battery disconnect (line${bat.length > 1 ? 's' : ''} ${bat.join(', ')}): power window auto up/down, sunroof, power liftgate / sliding door and memory settings must be re-initialized or they will not operate as designed.`, out, true)
   }
-  // 4b. Honda/Acura collision → Seat Weight Sensor output check (any damage).
+  // 4b. Honda/Acura/Mazda collision → Seat Weight Sensor check (any damage).
   if (SWS_ANY_COLLISION.test(make)) {
     const sa = lines(hits.seat_airbag)
+    const honda = /honda|acura/i.test(make)
+    const why = honda
+      ? `Front Passenger Weight Sensor output check required per ${per(make, "Honda service information: 'Check the front passenger's weight sensor output after a vehicle collision, regardless if the airbags and seatbelt tensioners deployed or not'")}`
+      : `Front passenger seat weight sensor (occupant classification) check required on every ${make} collision repair per ${per(make)}`
     require(cals, /seat weight|occupant|\bods\b|\bocs\b|passenger seat/, 'Seat Weight Sensor', 'Reset',
-      sa.length ? `Seat / SRS lines ${sa.join(', ')}; Honda requires the weight sensor check after any collision` : 'In collision: Honda requires the front passenger weight sensor output check after any collision, deployed or not', sa,
-      `Front Passenger Weight Sensor output check required per ${per(make, "Honda service information: 'Check the front passenger's weight sensor output after a vehicle collision, regardless if the airbags and seatbelt tensioners deployed or not'")}${sa.length ? ` (seat/SRS line${sa.length > 1 ? 's' : ''} ${sa.join(', ')}: initialization if the SRS unit, weight sensor, seat frame or rail was replaced or removed)` : ''}. Failure to check presents a safety liability and does not meet ${make} repair standards.`, out, true)
+      sa.length ? `Seat / SRS lines ${sa.join(', ')}; ${make} requires the weight sensor check after any collision` : `In collision: ${make} requires the front passenger weight sensor check after any collision, deployed or not`, sa,
+      `${why}${sa.length ? ` (seat/SRS line${sa.length > 1 ? 's' : ''} ${sa.join(', ')}: initialization if the SRS unit, weight sensor, seat frame or rail was replaced or removed)` : ''}. Failure to check presents a safety liability and does not meet ${make} repair standards.`, out, true)
   }
   if (al.length && CAM_AFTER_ALIGN.test(make)) {
     require(cals, /windshield|front camera|lane depart|forward camera/, 'Front Windshield Camera', 'Static/Dynamic',

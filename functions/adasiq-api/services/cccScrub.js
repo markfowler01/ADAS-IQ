@@ -73,7 +73,7 @@ export async function scrubCccItem(req, item) {
   const prev = sigKey ? await cfgRead(req, sigKey) : null
   const fast = nothingToCalibrate(text)
   let data, how = 'full'
-  if (fast.skip && /honda|acura/i.test(e.make || '')) fast.skip = false   // Honda: weight sensor check after any collision — never 'nothing to calibrate'
+  if (fast.skip && /honda|acura|mazda/i.test(e.make || '')) fast.skip = false   // Honda: weight sensor check after any collision — never 'nothing to calibrate'
   if (fast.skip) {
     // ⚡ No line touches anything ADAS lives on — no AI read needed.
     data = noAdasResult(meta); how = 'fast: no ADAS lines'

@@ -693,6 +693,12 @@ router.all('/jobs/relink-estimate', async (req, res) => {
     res.json({ ok: true, patch })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
+// 💵 Claude spend by feature, today or ?day=YYYYMMDD (aiSpend.js).
+router.get('/ai-spend', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const { spendDay } = await import('../services/aiSpend.js')
+  res.json(await spendDay(req, String(req.query.day || '')))
+})
 router.get('/jobs/find', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {

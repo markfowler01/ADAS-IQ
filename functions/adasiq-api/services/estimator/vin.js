@@ -83,5 +83,5 @@ export async function vinEquipment(req, vin) {
   const opt = EQUIP.filter(([k]) => /optional/i.test(d.adas?.[k] || '')).map(([, l]) => l)
   const summary = std.length ? `Standard per VIN: ${std.join('; ')}` : 'VIN decode lists no ADAS equipment as standard'
   const block = `VIN DECODE (NHTSA, ${d.year} ${d.make} ${d.model}${d.trim ? ' ' + d.trim : ''}):\n- STANDARD on this VIN: ${std.join('; ') || 'none listed'}\n- Optional (may or may not be fitted): ${opt.join('; ') || 'none listed'}\nHow to use it: "Standard" means the system is fitted, so treat its sensor as equipped. Blank or "Optional" means the decode cannot tell; NEVER drop a calibration for that reason; keep the verdict from the repair lines and add the note "if equipped, confirm at pre-scan".`
-  return { vin, std, opt, summary, block }
+  return { vin, std, opt, summary, block, make: d.make || '', year: d.year || '', model: d.model || '' }
 }
