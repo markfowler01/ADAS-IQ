@@ -276,13 +276,6 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
   //     required"; Mark 2026-10-02: required for every shop). Sensor removed,
   //     replaced or transferred → Park Distance Sensor reset REQUIRED.
   if (/honda|acura/i.test(make)) {
-    // Bumper removed or replaced moves the sensors with it (Mark 2026-10-02) — flips the
-    // row when the car has park sensors (the scrub lists them only when equipped).
-    const bump = [...new Set([...fb.slice(0, 3), ...rb.slice(0, 3)])]
-    const psRow = has(cals, /park|ultrasonic|pdc|back.?up sensor|parking sensor/i)
-    if (bump.length && psRow && psRow.enabled !== true) require(cals, /park|ultrasonic|pdc|back.?up sensor|parking sensor/i, 'Park Distance Sensor', 'Reset',
-      `Bumper removed/replaced with parking sensors (line${bump.length > 1 ? 's' : ''} ${bump.join(', ')})`, bump,
-      `Parking and back-up sensor reset required per ALLDATA ADAS Quick Reference (Honda: Parking and Back-Up Sensors, R&R / R&I, static reset with scan tool): the bumper removal or replacement on line${bump.length > 1 ? 's' : ''} ${bump.join(', ')} disconnects and moves the sensors.`, out)
     const ps = lines(hits.park_sensor)
     if (ps.length) require(cals, /park|ultrasonic|pdc|back.?up sensor|parking sensor/i, 'Park Distance Sensor', 'Reset',
       `Parking / back-up sensor removed, replaced or transferred (line${ps.length > 1 ? 's' : ''} ${ps.join(', ')})`, ps,
