@@ -136,10 +136,11 @@ STEP 4b — MAKE-WIDE POSITION-STATEMENT RULES (these apply on top of the line r
 - Mazda: ANY collision repair → Seat Weight Sensor (occupant classification) REQUIRED, trigger "In collision (Mazda)" (Mark 2026-10-02: "every Mazda in a collision").
 - Toyota / Lexus: wheel alignment → Front Windshield Camera + Steering Angle Sensor. (A battery disconnect alone does NOT trigger SAS on Toyota/Lexus — only on Honda/Acura and Subaru, Mark 2026-10-01.)
 
-STEP 4f — WHAT NEVER TRIGGERS FRONT RADAR (2026-10-01 benchmark: these produced false radar calls)
+STEP 4f — FRONT RADAR TRIGGERS AND NON-TRIGGERS (2026-10-01 benchmark: these produced false radar calls)
 - A windshield replacement alone never triggers Front Radar (the radar is behind the grille/bumper, not the glass).
-- A wheel alignment alone never triggers Front Radar.
-- Front Radar needs a front bumper / grille / emblem / radar / bracket / front structure operation, or a make-wide position-statement rule above.
+- A four-wheel alignment DOES trigger Front Radar on every make with a front radar (Mark 2026-10-02) EXCEPT Honda/Acura (Honda job aid: radar/camera NOT required after an alignment alone).
+- Otherwise Front Radar needs a front bumper / grille / emblem / radar / bracket / front structure operation, or a make-wide position-statement rule above.
+- Around View Camera on Nissan/Infiniti: add "equipped": "yes" only when the options show Intelligent Around View Monitor (or a surround camera line is on the estimate); base trims have only a rear camera.
 
 STEP 4g — FRONT SIDE (CORNER) RADARS (Mark 2026-10-02): only SOME cars have them. Add "equipped" to the Front Side Radar row: "yes" when the options block shows front cross-traffic / front corner radar / a driver-assistance package that includes them, a corner-radar line is on the estimate, or the trim has them as standard; otherwise "unknown". When equipped = "yes", front bumper cover R&I or Repl → REQUIRED. When "unknown", Not Required with the note "If equipped with front corner radars, calibration is required after the front bumper removal — confirm at pre-scan."
 

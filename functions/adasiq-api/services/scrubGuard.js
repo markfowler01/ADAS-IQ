@@ -230,6 +230,13 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     if (!sws) { sws = { calibration_name: 'Seat Weight Sensor', cal_type: 'Reset', trigger: '', line_references: '', justification: 'Not required by the repair lines — no front passenger seat, occupant sensor or SRS operation on this estimate.', enabled: false, _guard: 'listed' }; cals.push(sws) }
     if (sws.enabled !== true && !/B178[5-8]/.test(`${sws.justification || ''} ${sws.note || ''}`)) sws.justification = [sws.justification, NOTE].filter(Boolean).join(' ')   // the report prints the justification
   }
+  // 4d. Mark 2026-10-02: "if a four wheel alignment is completed, the front radar needs
+  //     to be calibrated, every make, if equipped." Flips the radar row the scrub listed
+  //     (= the car has one). Honda/Acura excluded: Honda's job aid says radar/camera are
+  //     NOT required after an alignment alone.
+  if (al.length && !/honda|acura/i.test(make)) require(cals, /^front radar|front radar|distance sensor|acc radar|millimeter/i, 'Front Radar', 'Static',
+    `Four-wheel alignment (line${al.length > 1 ? 's' : ''} ${al.join(', ')}) — the front radar must be re-aimed to the new thrust angle`, al,
+    `Front radar calibration required per ${per(make, 'the radar is aimed to the vehicle thrust line, so a wheel alignment requires the radar to be calibrated')} (line${al.length > 1 ? 's' : ''} ${al.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
   if (al.length && CAM_AFTER_ALIGN.test(make)) {
     require(cals, /windshield|front camera|lane depart|forward camera/, 'Front Windshield Camera', 'Static/Dynamic',
       `Wheel alignment (line ${al.join(', ')}) — ${make} requires forward camera calibration after alignment`, al,
@@ -438,6 +445,18 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     }
   }
 
+  // 6d. Nissan/Infiniti Intelligent Around View only when the car has it (2022 Altima SR
+  //     benchmark vs 1Source: base trims have only a rear camera).
+  if (/nissan|infiniti/i.test(make)) {
+    const av = cals.find(c => /around view|surround|360|bird/i.test(String(c.calibration_name || '')))
+    const why = `${av?.justification || ''} ${av?.note || ''}`
+    const equipped = String(av?.equipped || '').toLowerCase() === 'yes' || (/around view monitor|intelligent around view|options? (show|list)/i.test(why) && !/if equipped|unknown/i.test(why)) || lines(hits.camera).length > 0
+    if (av && av.enabled === true && !equipped) {
+      Object.assign(av, { enabled: false, line_references: '', _guard: 'if-equipped', justification: 'If equipped with Intelligent Around View Monitor, the camera calibration is required after this repair — confirm at pre-scan. The estimate options do not show Around View, so it is not billed by default.' })
+      out.demoted = [...(out.demoted || []), 'Around View (Nissan, not shown as equipped)']
+    }
+  }
+
   // 6b. GM "any collision" front radar only when the car HAS adaptive cruise radar
   //     (Mark 2026-10-02: Kinetic's 6-of-62 = most Chevys have no radar). Kept when
   //     the VIN decode or the estimate's options show adaptive cruise, or a front
@@ -462,11 +481,11 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     const trig = `${fr?.trigger || ''} ${fr?.justification || ''}`
     const frontPart = /bumper|fascia|grille|grill|emblem|absorber|reinforc|impact bar|radiator support|core support|apron|rail|radar|distance sensor|bracket|structur|hood|in collision/i
     const makeRule = /chevrolet|gmc|buick|cadillac|ford|lincoln|dodge|chrysler|jeep|\bram\b|fiat|alfa/i.test(make) || /promaster/i.test(String(data.model || data.vehicle || ''))   // Stellantis: ALLDATA lists ACC calibration after alignment
-    if (fr && fr.enabled === true && !fb.length && !rs.length && !makeRule && !frontPart.test(fr.trigger || '') && /align|windshield|w\/s|glass/i.test(trig)) {
+    if (fr && fr.enabled === true && !fb.length && !rs.length && !al.length && !makeRule && !frontPart.test(fr.trigger || '') && /windshield|w\/s|glass/i.test(trig)) {
       fr.enabled = false
-      fr.justification = `Not required: a wheel alignment or windshield replacement does not disturb the front radar (it sits behind the bumper/grille, not the glass), and no front bumper, grille or radar operation is on this estimate.`
+      fr.justification = `Not required: a windshield replacement does not disturb the front radar (it sits behind the bumper/grille, not the glass), and no front bumper, grille, radar or alignment operation is on this estimate.`
       fr.trigger = ''; fr.line_references = ''; fr._guard = 'demoted'
-      out.demoted = [...(out.demoted || []), 'Front Radar (alignment/windshield only)']
+      out.demoted = [...(out.demoted || []), 'Front Radar (windshield only)']
     }
   }
   if (out.flipped.length || out.added.length) console.log(`[guard] ${make} ${data.year || ''}: flipped ${out.flipped.length}, added ${out.added.length}${out.demoted ? `, demoted ${out.demoted.length}` : ''} — ${[...out.flipped, ...out.added, ...(out.demoted || [])].join(' · ')}`)
