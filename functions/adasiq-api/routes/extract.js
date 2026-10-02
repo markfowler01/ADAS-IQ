@@ -299,6 +299,16 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
     data._estimateFileId = filed.id || ''
   }
   console.log(`[scrub ⏱] total ${Math.round((Date.now() - t0) / 1000)}s`)
+  // ⏱ Keep the last 30 scrub timings in AppConfig 'scrub_timings' for the speed study.
+  try {
+    const app = (await import('zcatalyst-sdk-node')).default.initialize(req, { type: 'advancedio' })
+    const rec = { at: new Date().toISOString(), car: String(data?.vehicle || [data?.year, data?.make, data?.model].filter(Boolean).join(' ')).slice(0, 50), mode: data?._textMode ? 'text' : 'pdf', total: Date.now() - t0, main: data?._usage?.ms || null, outTok: data?._usage?.out || null, inTok: data?._usage?.in || null, cacheRead: data?._usage?.cacheRead || null, thinkingChars: data?._usage?.thinkingChars || null, jsonChars: data?._usage?.jsonChars || null, textChars: estText.length }
+    const r = await app.zcql().executeZCQLQuery("SELECT ROWID, config_value FROM AppConfig WHERE config_key = 'scrub_timings' LIMIT 1")
+    const row = r?.[0]?.AppConfig
+    const list = [rec, ...(() => { try { return JSON.parse(row?.config_value || '[]') } catch { return [] } })()].slice(0, 30)
+    if (row) await app.datastore().table('AppConfig').updateRow({ ROWID: row.ROWID, config_value: JSON.stringify(list) })
+    else await app.datastore().table('AppConfig').insertRow({ config_key: 'scrub_timings', config_value: JSON.stringify(list) })
+  } catch (e) { console.warn('[scrub ⏱] timing save failed:', e.message) }
   try { const { flush } = await import('../services/spend.js'); await flush(req) } catch { /* never block */ }
   return data
 }

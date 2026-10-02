@@ -699,6 +699,12 @@ router.get('/ai-spend', async (req, res) => {
   const { spendDay } = await import('../services/aiSpend.js')
   res.json(await spendDay(req, String(req.query.day || '')))
 })
+// ⏱ Last 30 scrub timings (speed study 2026-10-02).
+router.get('/scrub-timings', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const r = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery("SELECT config_value FROM AppConfig WHERE config_key = 'scrub_timings' LIMIT 1"); res.json(JSON.parse(r?.[0]?.AppConfig?.config_value || '[]')) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/jobs/find', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {

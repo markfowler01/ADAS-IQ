@@ -298,6 +298,7 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', ef
     ? { type: 'text', text: `CCC ONE ESTIMATE (structured data from CCC Secure Share; each line: line number | operation | description | part type | labor hours | notes):\n\n${text}` }
     : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } }
 
+  const tMain = Date.now()
   const message = await getClient().messages.create({
     model: 'claude-opus-4-7',  // best model + adaptive thinking: this is a judgment task (Kinetic benchmark 2026-09-24)
     max_tokens: 16000,
@@ -323,10 +324,14 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', ef
 
   const raw = (message.content.find(b => b.type === 'text')?.text || '').trim()
   const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
+  // ⏱ Speed study (Mark 2026-10-02 "PDF scrubs … way too slow"): what the main read cost.
+  const u = message.usage || {}
+  const _usage = { ms: Date.now() - tMain, in: u.input_tokens || 0, out: u.output_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, thinkingChars: (message.content || []).filter(b => b.type === 'thinking').reduce((n, b) => n + String(b.thinking || '').length, 0), jsonChars: cleaned.length }
 
   let parsed
   try {
     parsed = JSON.parse(cleaned.slice(cleaned.indexOf('{'), cleaned.lastIndexOf('}') + 1))
+    parsed._usage = _usage
   } catch {
     throw new Error(`Claude returned invalid JSON: ${cleaned.slice(0, 200)}`)
   }
