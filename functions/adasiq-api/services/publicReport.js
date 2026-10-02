@@ -42,6 +42,9 @@ export async function reportData(req, scrubId, { withDocs = true } = {}) {
     const r = s.shop ? await fs.readFullService(req, s.shop) : null
     cals = fs.tagRows(cals, r?.rules, { collision: r ? r.collision : true })
   } catch { /* plain rows */ }
+  // 🧾 PCSI + pre/post scans sit in the Operations table like any calibration
+  // (Mark 2026-10-02), each citing the make's own document when we have one.
+  cals = [...cals.filter(c => c.enabled && !c._fs), ...await alwaysRows(req, s), ...cals.filter(c => !(c.enabled && !c._fs))]
   let cited = []
   if (withDocs) {
     try {
@@ -55,10 +58,29 @@ export async function reportData(req, scrubId, { withDocs = true } = {}) {
   return { s, cals, cited }
 }
 
+const FAMILY = [['general motors', /chevrolet|chevy|gmc|buick|cadillac|\bgm\b/], ['stellantis', /dodge|chrysler|jeep|\bram\b|fiat|alfa/], ['honda', /honda|acura/], ['toyota', /toyota|lexus/], ['nissan', /nissan|infiniti/], ['hyundai', /hyundai|genesis/], ['kia', /\bkia\b/], ['ford', /ford|lincoln/], ['mercedes', /mercedes/], ['volkswagen', /volkswagen|\bvw\b|audi/]]
+const sameMaker = (docOem, make) => { const o = String(docOem || '').toLowerCase(), m = String(make || '').toLowerCase(); if (!o || !m) return false; if (o.includes(m) || m.includes(o)) return true; return FAMILY.some(([f, re]) => o.includes(f) && re.test(m)) }
+async function alwaysRows(req, s) {
+  const make = s.make || ''
+  let lib = []
+  try { lib = (await (await import('./oemAttach.js')).oemLibrary(req)).filter(d => sameMaker(d.doc_oem, make)) } catch { /* no docs */ }
+  const newest = re => lib.filter(d => re.test(d.doc_title || '')).sort((a, b) => String(b.doc_published_date || '').localeCompare(String(a.doc_published_date || '')))[0]
+  const pcsiDoc = newest(/inspection|seat ?belt|steering column|after a collision|srs/i), scanDoc = newest(/scan/i)
+  const per = d => d ? ` See ${d.doc_title}.` : ''
+  return [
+    { calibration_name: 'Post-Collision Safety Inspection (PCSI)', enabled: true, cal_type: 'Inspection', _always: true, line_references: '',
+      trigger: 'In Collision — every collision repair (seat belts, SRS, steering column)',
+      justification: `OEM service information requires assessment of seat belt tensioners, SRS components and steering columns on any vehicle involved in a collision.${per(pcsiDoc)}` },
+    { calibration_name: 'Pre & Post Repair Scans', enabled: true, cal_type: 'Scan', _always: true, line_references: '',
+      trigger: `In Collision — ${make || 'manufacturer'} position statement (every collision repair)`,
+      justification: `${make || 'The manufacturer'}'s collision position statement requires a pre-repair scan (warning lights are not a reliable indicator) and a post-repair scan to confirm every system communicates with no new faults.${per(scanDoc)}` },
+  ]
+}
+
 const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 export function renderReport({ s, cals, cited }, token) {
-  const req = cals.filter(c => c.enabled && !c._fs), fsv = cals.filter(c => c.enabled && c._fs), notReq = cals.filter(c => !c.enabled && !c._fs)
+  const req = cals.filter(c => c.enabled && !c._fs), reqCals = req.filter(c => !c._always), fsv = cals.filter(c => c.enabled && c._fs), notReq = cals.filter(c => !c.enabled && !c._fs)
   const rows = [...req, ...fsv, ...notReq]
   const vehicle = [s.year, s.make, s.model].filter(Boolean).join(' ') || s.vehicle || 'Vehicle'
   const docLink = (n, page) => `${esc(token)}/doc/${n}${page ? `#page=${page}` : ''}`
@@ -109,12 +131,9 @@ textarea,select{width:100%;border:1.5px solid #ddd;border-radius:8px;padding:8px
 <div class="wrap">
 <div class="card"><div style="font-size:20px;font-weight:800">${esc(vehicle)}</div>${s.vin ? `<div class="muted">VIN ${esc(s.vin)}</div>` : ''}
 <div class="grid" style="margin-top:10px">${[['Shop', s.shop], ['RO', s.ro], ['Insurer', s.insurer], ['Claim', s.claim]].filter(([, v]) => v).map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div></div>
-<div class="tiles" style="margin-bottom:14px"><div class="tile"><b>${req.length}</b><div>Calibrations required</div></div>${fsv.length ? `<div class="tile" style="background:#f4f2f0;border-color:#1a1a1a"><b style="color:#1a1a1a">${fsv.length}</b><div>Full Service</div></div>` : ''}<div class="tile gray"><b>${notReq.length}</b><div>Checked, not required</div></div></div>
+<div class="tiles" style="margin-bottom:14px"><div class="tile"><b>${reqCals.length}</b><div>Calibrations required</div></div>${fsv.length ? `<div class="tile" style="background:#f4f2f0;border-color:#1a1a1a"><b style="color:#1a1a1a">${fsv.length}</b><div>Full Service</div></div>` : ''}<div class="tile gray"><b>${notReq.length}</b><div>Checked, not required</div></div></div>
 <div class="card" style="padding:0;overflow:hidden"><div style="padding:14px 16px;font-weight:800;font-size:17px">Operations <span class="muted" style="font-weight:400">— tap ✨ for why, 💬 to send us feedback</span></div>
 <table><thead><tr><th>Sensor</th><th>Repair triggers</th><th>Lines</th><th>Type</th><th></th></tr></thead><tbody>${rowHtml}</tbody></table></div>
-<div class="card"><div style="font-weight:800">Required on every collision repair</div>
-<div class="box"><b>Seatbelts &amp; Post-Collision Safety Inspection (SRS, steering columns)</b> — required. OEM service information requires assessment of seat belt tensioners, SRS components and steering columns on any vehicle involved in a collision.</div>
-<div class="box"><b>Pre-Repair &amp; Post-Repair Diagnostic Scans</b> — required. ${esc(s.make || 'The manufacturer')}'s collision position statement requires a pre-repair scan (warning lights are not a reliable indicator) and a post-repair scan to confirm every system communicates with no new faults.</div></div>
 ${docs ? `<div class="card"><div style="font-weight:800;margin-bottom:6px">Supporting OEM documents</div><ul style="margin:0;padding-left:18px">${docs}</ul></div>` : ''}
 <p class="muted" style="text-align:center">Absolute ADAS · Mobile ADAS Calibration &amp; Diagnostics · Lake Stevens, WA · absoluteadas.com</p>
 </div>

@@ -18,6 +18,7 @@ const MAX_PAGES_PER_DOC = 8
 const norm = s => String(s || '').toLowerCase().replace(/\([^)]*\)/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim()
 
 let _lib = { at: 0, rows: [] }
+export async function oemLibrary(req) { return library(req) }
 async function library(req) {
   if (Date.now() - _lib.at < 10 * 60 * 1000 && _lib.rows.length) return _lib.rows
   const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(
@@ -146,7 +147,7 @@ export async function fetchCited(req, docs, cals) {
     try { await pdfParse(d.bytes, { max: MAX_PAGES_PER_DOC, pagerender: pg => pg.getTextContent().then(t => { const txt = t.items.map(i => i.str).join(' '); pages.push(txt); return txt }) }) } catch { /* no page text (scan) */ }
     d.pageTexts = pages
   }
-  const KW = n => /camera|windshield|multipurpose/i.test(n) ? /camera|windshield|forward[- ]?view|lane/i : /side radar|corner|cross/i.test(n) ? /corner|side radar|cross.?traffic/i : /blind|rear.*radar|bsm|bsi|side obstacle/i.test(n) ? /blind|bsm|bsi|side (blind|obstacle)|rear radar/i : /radar|distance|millimeter/i.test(n) ? /radar|distance sensor|millimeter|cruise/i : /steering|sas|vsa/i.test(n) ? /steering angle|vsa|neutral position|alignment/i : /seat|occupant|ods|ocs/i.test(n) ? /seat|occupant|weight sensor/i : /park|sonar|ultrasonic/i.test(n) ? /park|sonar|ultrasonic/i : /around|surround|multi.?view/i.test(n) ? /surround|around view|multi.?view|360/i : /headl/i.test(n) ? /headl|aim/i : /program|module/i.test(n) ? /program|module|sps/i : null
+  const KW = n => /inspection|pcsi/i.test(n) ? /seat ?belt|srs|steering column|inspect/i : /scan/i.test(n) ? /pre-?(repair )?scan|post-?(repair )?scan|scanning/i : /camera|windshield|multipurpose/i.test(n) ? /camera|windshield|forward[- ]?view|lane/i : /side radar|corner|cross/i.test(n) ? /corner|side radar|cross.?traffic/i : /blind|rear.*radar|bsm|bsi|side obstacle/i.test(n) ? /blind|bsm|bsi|side (blind|obstacle)|rear radar/i : /radar|distance|millimeter/i.test(n) ? /radar|distance sensor|millimeter|cruise/i : /steering|sas|vsa/i.test(n) ? /steering angle|vsa|neutral position|alignment/i : /seat|occupant|ods|ocs/i.test(n) ? /seat|occupant|weight sensor/i : /park|sonar|ultrasonic/i.test(n) ? /park|sonar|ultrasonic/i : /around|surround|multi.?view/i.test(n) ? /surround|around view|multi.?view|360/i : /headl/i.test(n) ? /headl|aim/i : /program|module/i.test(n) ? /program|module|sps/i : null
   for (const c of cals || []) {
     if (!Array.isArray(c._attach)) continue
     const re = KW(String(c.calibration_name || ''))
