@@ -199,7 +199,7 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       al.length ? `Wheel alignment (line ${al.join(', ')})${hondaAlign ? ' — VSA sensor neutral position memorization' : ''}` : `Battery disconnect (line ${bat.join(', ')}) — zero-point after power loss on ${make}`, ref,
       hondaAlign
         ? `Steering angle / VSA sensor neutral position memorization required per Honda service information (Wheel Alignment procedure): "After adjusting the wheel alignment, do the VSA sensor neutral position memorization" (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to perform it presents a safety liability and does not meet Honda repair standards.`
-        : `Steering Angle Sensor ${al.length ? 'calibration' : 'zero-point reset'} required per ${per(make)} following ${al.length ? 'wheel alignment' : 'battery disconnect'} (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
+        : `Steering Angle Sensor ${al.length ? 'calibration' : 'zero-point reset'} required per ${per(make)} following ${al.length ? 'wheel alignment' : 'battery disconnect'} (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`,out, true)   // every make, every model: added even when the scrub didn't list it (Mark 2026-10-02)
   }
   // 4a. 🧰 Full Service: any battery disconnect → the power-loss resets (windows, sunroof, liftgate…).
   if (bat.length) {
