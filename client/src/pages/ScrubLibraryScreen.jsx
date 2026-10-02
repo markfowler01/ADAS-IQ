@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar'
+import { ScanLogo } from '../components/LoadingSplash'
 // The SAME blue "Send Quote to Shop" button the jobs page uses — line review, then
 // /shop-quotes/send attaches the Quote PDF. Reused, not copied (Mark 2026-09-29).
 import { SendQuoteButton } from '../components/ToggleBoard'
@@ -598,7 +599,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
           <button onClick={pickFile} disabled={up.busy} className="rounded-lg px-4 py-2.5 text-sm font-bold whitespace-nowrap" style={{ backgroundColor: ORANGE, color: '#fff', minHeight: 44, opacity: up.busy ? 0.6 : 1 }}>{up.busy ? '⏳ Scrubbing…' : '⬆️ Upload report'}</button>
           <input ref={fileRef} type="file" accept="application/pdf,.pdf" onChange={onFile} style={{ display: 'none' }} />
         </div>
-        {up.msg && <div className="w-full text-xs rounded-lg px-3 py-2" style={{ backgroundColor: up.busy ? '#eff6ff' : '#fef2f2', color: up.busy ? '#1e40af' : '#b91c1c' }}>{up.msg}</div>}
+        {up.msg && !up.busy && <div className="w-full text-xs rounded-lg px-3 py-2" style={{ backgroundColor: up.busy ? '#eff6ff' : '#fef2f2', color: up.busy ? '#1e40af' : '#b91c1c' }}>{up.msg}</div>}
         <input
           value={q}
           onChange={e => setQ(e.target.value)}
@@ -616,9 +617,10 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         onClick={() => !up.busy && pickFile()}
         role="button"
         className="rounded-xl mb-4 px-4 py-5 text-center cursor-pointer select-none"
-        style={{ border: `2px dashed ${dragOver ? ORANGE : '#cfcfcf'}`, backgroundColor: dragOver ? '#fff5f0' : up.busy ? '#eff6ff' : '#fafafa', color: up.busy ? '#1e40af' : '#555' }}
+        style={{ border: `2px dashed ${dragOver ? ORANGE : '#cfcfcf'}`, backgroundColor: dragOver ? '#fff5f0' : up.busy ? '#fdf3ef' : '#fafafa', color: up.busy ? '#6b6b6b' : '#555', borderColor: up.busy ? '#e8c5b0' : undefined }}
       >
-        <div className="text-sm font-bold" style={{ color: dragOver ? ORANGE : INK }}>{up.busy ? '⏳ Scrubbing…' : dragOver ? 'Drop it' : '📥 Drop an estimate here'}</div>
+        {up.busy && <ScanLogo size={96} />}
+        <div className={up.busy ? 'text-sm font-bold mt-2' : 'text-sm font-bold'} style={{ color: dragOver ? ORANGE : INK, letterSpacing: up.busy ? '0.08em' : undefined, textTransform: up.busy ? 'uppercase' : undefined }}>{up.busy ? <>Scanning the <span style={{ color: ORANGE }}>estimate</span></> : dragOver ? 'Drop it' : '📥 Drop an estimate here'}</div>
         <div className="text-xs mt-1">{up.busy ? up.msg : 'Drag a CCC estimate PDF onto this box, or tap to choose one. It is scrubbed and filed in the library.'}</div>
       </div>
 
