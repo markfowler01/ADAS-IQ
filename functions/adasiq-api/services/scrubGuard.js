@@ -61,11 +61,13 @@ Categories:
 - headlamp: headlamp / headlight assembly replaced or removed-and-installed
 - fender: FRONT fender (left or right) replaced, removed-and-installed, repaired or adjusted — not the fender liner, molding or flare alone
 - structural: STRUCTURAL body repair lines: a welded / riveted / bonded unibody panel (quarter panel, rocker, pillar, rail, apron, floor pan, rear body panel, roof panel, wheelhouse) that is REPLACED or SECTIONED, or REPAIRED with more than 1.0 hour of body labor; a bumper reinforcement / impact bar repaired or replaced; a DOOR SHELL or door assembly REPLACED (new intrusion beam); a radiator / core support or bolt-on front bulkhead replaced; any frame/unibody pull or measure. NOT structural: refinish, blend, mask, buff, denib, trim or molding R&I, and panel repairs of 1.0 hour or less
+- grille: front grille / upper grille / grille emblem replaced or removed-and-installed (not grille moldings or refinish only)
+- front_door: driver or front passenger DOOR — replaced, removed-and-installed, repaired (door shell / skin) or adjusted
 - park_sensor: a parking / back-up / ultrasonic / PDC / distance sensor (park assist) line: replaced, removed-and-installed, or transferred to a new bumper cover
 - srs_deploy: an air bag / airbag module or SRS seat-belt pretensioner REPLACED (a deployment)
 - b_pillar: B-pillar / center pillar — outer or inner panel repaired, replaced or sectioned, OR the B-pillar trim / applique removed or replaced
 
-Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...],"park_sensor":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
+Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...],"park_sensor":[...],"grille":[...],"front_door":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
     ] }],
   })
   const raw = (msg.content || []).map(b => b.text || '').join('').trim()
@@ -270,6 +272,22 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       require(cals, /^front radar|millimeter|distance sensor|acc radar/i, 'Front Radar', 'Static', `Honda: ${why}`, ref, `Front Radar (millimeter wave) aiming required ${cite} (${why}). Failure to aim presents a safety liability and does not meet Honda repair standards.`, out)
       require(cals, /windshield|front camera|multipurpose|lane depart|forward camera/i, 'Front Windshield Camera', 'Static', `Honda: ${why}`, ref, `Multipurpose / windshield camera aiming required ${cite} (${why}). Failure to aim presents a safety liability and does not meet Honda repair standards.`, out)
     }
+  }
+  // 5f. Honda/Acura (ALLDATA 2024 Pilot + Honda job aid p. 9, Mark 2026-10-02):
+  //     the millimeter wave radar sits in the GRILLE (grille R&I/Repl moves it), and
+  //     the Multi View cameras need aiming after the front bumper, grille, a front
+  //     door, a mirror or the tailgate is replaced or removed/installed, a front
+  //     door or the tailgate is adjusted, or any collision repair to a front door.
+  if (/honda|acura/i.test(make)) {
+    const gr = lines(hits.grille), fd = lines(hits.front_door)
+    if (gr.length) require(cals, /^front radar|millimeter|distance sensor|acc radar/i, 'Front Radar', 'Static',
+      `Grille removed/replaced (line${gr.length > 1 ? 's' : ''} ${gr.join(', ')}) — the millimeter wave radar is mounted in the grille`, gr,
+      `Millimeter wave radar aiming required per ALLDATA ADAS Quick Reference (Honda: Millimeter Wave Radar, location Grille, R&R / R&I, static + dynamic): the grille operation on line${gr.length > 1 ? 's' : ''} ${gr.join(', ')} removes the radar. Failure to aim presents a safety liability and does not meet Honda repair standards.`, out)
+    const mv = has(cals, /around view|surround|multi.?view|360|bird/i)
+    const mvTrig = [...new Set([...fb.slice(0, 3), ...gr, ...fd, ...mir, ...lg])]
+    if (mv && mv.enabled !== true && mvTrig.length) require(cals, /around view|surround|multi.?view|360|bird/i, 'Around View Camera', 'Static',
+      `Multi View camera location disturbed (line${mvTrig.length > 1 ? 's' : ''} ${mvTrig.join(', ')})`, mvTrig,
+      `Multi View camera aiming required per Honda's "Aiming Driving Support Systems" job aid (November 2022, page 9): after replacing or removing/reinstalling the front bumper, front grille, a front door, a power mirror or the tailgate, after adjusting a front door or the tailgate, or after any collision repair to a front door (line${mvTrig.length > 1 ? 's' : ''} ${mvTrig.join(', ')}). Failure to aim presents a safety liability and does not meet Honda repair standards.`, out)
   }
   // 5e. Honda/Acura park sensors (ALLDATA ADAS Quick Reference, 2024 Pilot: "Parking
   //     and Back-Up Sensors — R&R, R&I — Static — component reset may be
