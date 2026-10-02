@@ -64,11 +64,12 @@ Categories:
 - structural: STRUCTURAL body repair lines: a welded / riveted / bonded unibody panel (quarter panel, rocker, pillar, rail, apron, floor pan, rear body panel, roof panel, wheelhouse) that is REPLACED or SECTIONED, or REPAIRED with more than 1.0 hour of body labor; a bumper reinforcement / impact bar repaired or replaced; a DOOR SHELL or door assembly REPLACED (new intrusion beam); a radiator / core support or bolt-on front bulkhead replaced; any frame/unibody pull or measure. NOT structural: refinish, blend, mask, buff, denib, trim or molding R&I, and panel repairs of 1.0 hour or less
 - grille: front grille / upper grille / grille emblem replaced or removed-and-installed (not grille moldings or refinish only)
 - front_door: driver or front passenger DOOR — replaced, removed-and-installed, repaired (door shell / skin) or adjusted
+- module_repl: an ELECTRONIC module or sensor unit REPLACED (Repl / new part): radar sensor (front, corner, blind spot), camera, body control module, SRS / airbag control unit (SDM), ABS / brake module, engine or transmission control module, park assist / sonar module, headlamp control module, keyless / smart key module, power liftgate module, instrument cluster, gateway, telematics, HVAC control module. ONE line number per module. NOT R&I, NOT wiring/connectors/brackets, NOT bulbs, NOT lamps without a module
 - park_sensor: a parking / back-up / ultrasonic / PDC / distance sensor (park assist) line: replaced, removed-and-installed, or transferred to a new bumper cover
 - srs_deploy: an air bag / airbag module or SRS seat-belt pretensioner REPLACED (a deployment)
 - b_pillar: B-pillar / center pillar — outer or inner panel repaired, replaced or sectioned, OR the B-pillar trim / applique removed or replaced
 
-Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...],"park_sensor":[...],"grille":[...],"front_door":[...],"rear_bumper_rpr":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
+Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper":[...],"rear_bumper":[...],"alignment":[...],"battery":[...],"seat_airbag":[...],"liftgate":[...],"mirror":[...],"radar_sensor":[...],"camera":[...],"headlamp":[...],"fender":[...],"b_pillar":[...],"structural":[...],"srs_deploy":[...],"park_sensor":[...],"grille":[...],"front_door":[...],"rear_bumper_rpr":[...],"module_repl":[...]} with line numbers as strings. Empty arrays when nothing matches. No prose.` },
     ] }],
   })
   const raw = (msg.content || []).map(b => b.text || '').join('').trim()
@@ -500,6 +501,24 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       out.demoted = [...(out.demoted || []), 'Front Radar (windshield only)']
     }
   }
+  // 7b. 🔑 Module programming (Mark 2026-10-02): "any module replaced … programming will
+  //     need to be added … every make and model except Toyota and Honda." One line,
+  //     "Module Programming and Reflash - <Make>" (the Books item; body shops get the
+  //     Collision twin), quantity = modules replaced, each module named.
+  {
+    const mods = lines(hits.module_repl)
+    if (mods.length && make && !/toyota|lexus|honda|acura/i.test(make)) {
+      const MAKES = { chevrolet: 'Chevrolet', chevy: 'Chevrolet', gmc: 'GMC', buick: 'Buick', cadillac: 'Cadillac', ford: 'Ford', lincoln: 'Lincoln', dodge: 'Dodge', chrysler: 'Chrysler', jeep: 'Jeep', ram: 'Ram', fiat: 'Fiat', 'alfa romeo': 'Alfa Romeo', alfa: 'Alfa Romeo', audi: 'Audi', volkswagen: 'Volkswagen', vw: 'Volkswagen', bmw: 'BMW', mini: 'MINI', 'mercedes-benz': 'Mercedes-Benz', mercedes: 'Mercedes-Benz', porsche: 'Porsche', volvo: 'Volvo', 'land rover': 'Land Rover', jaguar: 'Jaguar', nissan: 'Nissan', infiniti: 'Infiniti', hyundai: 'Hyundai', kia: 'Kia', genesis: 'Genesis', mazda: 'Mazda', subaru: 'Subaru', mitsubishi: 'Mitsubishi', tesla: 'Tesla', rivian: 'Rivian' }
+      const mk = MAKES[String(make).toLowerCase().trim()] || Object.entries(MAKES).find(([k]) => String(make).toLowerCase().includes(k))?.[1] || make
+      const name = `Module Programming and Reflash - ${mk}`
+      if (!cals.some(c => /module programming/i.test(String(c.calibration_name || '')) && c.enabled === true)) {
+        cals.push({ calibration_name: name, cal_type: 'Programming', trigger: `Module replaced (line${mods.length > 1 ? 's' : ''} ${mods.join(', ')})`, line_references: mods.join(', '), quantity: mods.length, enabled: true, equipped: 'yes', _guard: 'added',
+          justification: `Module programming / coding required per ${per(mk)}: ${mods.length} electronic module${mods.length > 1 ? 's are' : ' is'} replaced on this estimate (line${mods.length > 1 ? 's' : ''} ${mods.join(', ')}). A new ${mk} module must be programmed and configured to this VIN (and coded where the OEM requires it) before it will operate and before any related calibration can be performed. One programming operation per module.` })
+        out.added.push(`${name} ×${mods.length} ← ${mods.join(', ')}`)
+      }
+    }
+  }
+
   // 8. 🔎 Equipment check on every sensor row (Mark 2026-10-02, "yes" to checking
   //    equipment across all makes after the Altima / Compass over-calls). The scrub
   //    marks each row equipped yes / no / unknown. A required row on a car that clearly

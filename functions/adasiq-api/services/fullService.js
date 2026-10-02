@@ -25,7 +25,7 @@ export const FULL_SERVICE = [
   // Optional = not OEM-required; shows only for Full Service shops (Mark 2026-10-02).
   { key: 'bsm_rr',     emoji: '📡', label: 'Blind spot aim after rear bumper removal', match: /rear bumper removed/i, optional: true },
   { key: 'tpms',       emoji: '🛞', label: 'TPMS relearn',            match: /\btpms\b|tire pressure/i },
-  { key: 'programming', emoji: '🔑', label: 'Module programming',     match: /programming|software update|module (setup|coding|config|replacement)|\bcoding\b/i },
+  // 'programming' left Full Service 2026-10-02: required on every make except Toyota/Honda (scrubGuard 7b).
   { key: 'resets',     emoji: '🪟', label: 'Battery-disconnect resets', match: /window|sunroof|moon ?roof|power (liftgate|tailgate|sliding door)|initiali[sz]ation after battery|battery.*reset|reset.*battery/i },
 ]
 export const FS_MODES = { we: 'We do it', shop: 'Shop does it', ask: 'Ask' }

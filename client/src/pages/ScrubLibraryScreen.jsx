@@ -99,7 +99,6 @@ const FS_ITEMS = [
   { key: 'headlamp', emoji: '💡', label: 'Headlamp aim (manual)', match: /^(?!.*(adaptive|level|swivel|afs|matrix|module|initiali|calibration|electronic)).*(headlamp|headlight)/i },   // electronic headlamps = a calibration we always do
   { key: 'bsm_rr', emoji: '📡', label: 'Blind spot aim after rear bumper removal', match: /rear bumper removed/i, optional: true },   // Full Service shops only (Mark 2026-10-02)
   { key: 'tpms', emoji: '🛞', label: 'TPMS relearn', match: /\btpms\b|tire pressure/i },
-  { key: 'programming', emoji: '🔑', label: 'Module programming', match: /programming|software update|module (setup|coding|config|replacement)|\bcoding\b/i },
   { key: 'resets', emoji: '🪟', label: 'Battery-disconnect resets', match: /window|sunroof|moon ?roof|power (liftgate|tailgate|sliding door)|initiali[sz]ation after battery|battery.*reset|reset.*battery/i },
 ]
 const FS_MODE = { we: { label: 'We do it', bg: '#CD4419' }, shop: { label: 'Shop does it', bg: '#78716c' }, ask: { label: 'Ask', bg: '#16a34a' } }
