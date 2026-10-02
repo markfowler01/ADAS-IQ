@@ -192,6 +192,42 @@ function buildPdf(jobData) {
     doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID).text('Not Required', sx2 + 18 + 36, y + 29)
     y += 74
 
+    // ── OPERATIONS SUMMARY (Mark 2026-10-02: "the Kinetic report has all of the
+    // calibrations all up top"): every sensor in one table — required first — before
+    // the detailed Q&A cards. ───────────────────────────────────────────────────
+    {
+      const all = [...required, ...fullSvc, ...notReq]
+      const COL = { name: MARGIN + 18, trig: MARGIN + 170, lines: MARGIN + 392, type: MARGIN + 440 }
+      const W = { name: 148, trig: 216, lines: 44, type: 76 }
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK).text('Operations', MARGIN, y)
+      { const lx = MARGIN + CONTENT_W - 118
+        doc.circle(lx, y + 5.5, 3).fill(ORANGE); doc.font('Helvetica').fontSize(7).fillColor(GRAY_MID).text('Required', lx + 6, y + 2, { lineBreak: false })
+        doc.circle(lx + 52, y + 5.5, 3).lineWidth(1).fillAndStroke(WHITE, '#bdb7b1'); doc.fillColor(GRAY_MID).text('Not required', lx + 58, y + 2, { lineBreak: false }) }
+      y += 16
+      doc.rect(MARGIN, y, CONTENT_W, 16).fill(ORANGE)
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor(WHITE)
+      doc.text('Sensor', COL.name, y + 5, { width: W.name }); doc.text('Repair triggers', COL.trig, y + 5, { width: W.trig })
+      doc.text('Lines', COL.lines, y + 5, { width: W.lines }); doc.text('Type', COL.type, y + 5, { width: W.type })
+      y += 16
+      all.forEach((c, i) => {
+        const req = !!c.enabled
+        const trig = req ? String(c.trigger || '').replace(/\s+/g, ' ').slice(0, 90) : '—'
+        const name = String(c.calibration_name || '').replace(/\s*calibration$/i, '')
+        const rowH = Math.max(15, doc.font('Helvetica').fontSize(7).heightOfString(trig, { width: W.trig }) + 7, doc.font('Helvetica-Bold').fontSize(7.5).heightOfString(name, { width: W.name }) + 7)
+        if (y + rowH > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+        if (i % 2) doc.rect(MARGIN, y, CONTENT_W, rowH).fill('#faf8f6')
+        doc.circle(MARGIN + 9, y + 7.5, 3).lineWidth(1).fillAndStroke(req ? ORANGE : WHITE, req ? ORANGE : '#bdb7b1')
+        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(req ? DARK : '#9a948e').text(name, COL.name, y + 4, { width: W.name })
+        doc.font('Helvetica').fontSize(7).fillColor(req ? GRAY_DARK : '#b5afa9').text(trig, COL.trig, y + 4, { width: W.trig })
+        doc.font('Helvetica').fontSize(7).fillColor(req ? GRAY_DARK : '#b5afa9').text(req ? String(c.line_references || '—').slice(0, 18) : '—', COL.lines, y + 4, { width: W.lines })
+        const typ = req ? (c._fs ? `Full Service` : String(c.cal_type || 'Required')) : 'Not required'
+        doc.font('Helvetica-Bold').fontSize(6.5).fillColor(req ? (c._fs ? '#0369a1' : ORANGE) : '#b5afa9').text(typ.toUpperCase(), COL.type, y + 4.5, { width: W.type })
+        y += rowH
+      })
+      doc.moveTo(MARGIN, y).lineTo(MARGIN + CONTENT_W, y).strokeColor(GRAY_BORDER).lineWidth(0.5).stroke()
+      y += 16
+    }
+
     // ── CALIBRATION CARD RENDERER ──────────────────────────────────────────
     function drawCal(cal, isRequired, opt = {}) {
       const accentColor = isRequired ? ORANGE      : '#c8c4c0'
