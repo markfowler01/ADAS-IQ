@@ -1014,6 +1014,24 @@ router.get('/books/catalog-debug', async (req, res) => {
 })
 
 // 🧪 Price-only check (no Books writes): the same lines as a repair shop vs a body shop.
+// ➕ Create one Zoho Books service item (Mark approves each: 2026-10-02 "Headlamp Aim"
+// $100). Idempotent: an exact-name item already in Books is returned, not duplicated.
+router.post('/books/create-item', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { name, rate, description } = req.body || {}
+    if (!name || !Number.isFinite(Number(rate))) return res.status(400).json({ error: 'name and rate required' })
+    const axios = (await import('axios')).default
+    const { getAccessToken, getItemCatalogForAudit } = await import('../services/zoho.js'); const token = await getAccessToken()
+    try { const { allItems } = await getItemCatalogForAudit(); const dup = allItems.find(i => String(i.name).trim().toLowerCase() === String(name).trim().toLowerCase()); if (dup) return res.json({ ok: true, existed: true, item: { item_id: dup.item_id, name: dup.name, rate: dup.rate } }) } catch { /* create anyway */ }
+    const r = await axios.post('https://www.zohoapis.com/books/v3/items', { name: String(name).slice(0, 100), rate: Number(rate), description: String(description || '').slice(0, 2000), product_type: 'service' },
+      { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID }, timeout: 15000, validateStatus: st => st < 500 })
+    if (r.data?.code !== 0) return res.status(400).json({ error: r.data?.message || 'Zoho refused', code: r.data?.code })
+    const it = r.data.item || {}
+    console.log(`[books item] created "${it.name}" $${it.rate} (${it.item_id})`)
+    res.json({ ok: true, item: { item_id: it.item_id, name: it.name, rate: it.rate } })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
 router.get('/books/price-test', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {
