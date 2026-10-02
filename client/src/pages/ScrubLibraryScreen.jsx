@@ -97,6 +97,7 @@ function normScrub(s) {
 // we = on the quote · shop = shop handles it, never quoted · ask = an offer.
 const FS_ITEMS = [
   { key: 'headlamp', emoji: '💡', label: 'Headlamp aim (manual)', match: /^(?!.*(adaptive|level|swivel|afs|matrix|module|initiali|calibration|electronic)).*(headlamp|headlight)/i },   // electronic headlamps = a calibration we always do
+  { key: 'bsm_rr', emoji: '📡', label: 'Blind spot aim after rear bumper removal', match: /rear bumper removed/i, optional: true },   // Full Service shops only (Mark 2026-10-02)
   { key: 'tpms', emoji: '🛞', label: 'TPMS relearn', match: /\btpms\b|tire pressure/i },
   { key: 'programming', emoji: '🔑', label: 'Module programming', match: /programming|software update|module (setup|coding|config|replacement)|\bcoding\b/i },
   { key: 'resets', emoji: '🪟', label: 'Battery-disconnect resets', match: /window|sunroof|moon ?roof|power (liftgate|tailgate|sliding door)|initiali[sz]ation after battery|battery.*reset|reset.*battery/i },
@@ -114,13 +115,19 @@ const fsMode = (rules, key) => rules?.[key] || 'shop'   // no answer from the se
 /** Apply the shop's Full Service rules to outgoing calibration rows (quote / job request). */
 function applyFs(cals, rules, collision = true) {
   const offers = [], shopDoes = [], weDo = []
-  if (!collision) return []   // repair shop / dealer / retail: plain lines, no Full Service
   for (const c of cals) {
-    const f = fsItemFor(c.calibration_name); if (!f || !c.enabled) continue
+    const f = fsItemFor(c.calibration_name)
+    // Optional items (not OEM-required) only exist for Full Service shops that do or offer them.
+    if (f?.optional && (!collision || fsMode(rules, f.key) === 'shop')) { c._drop = true; continue }
+    if (!collision) continue   // repair shop / dealer / retail: plain lines, no Full Service
+    if (!f || (!c.enabled && !f.optional)) continue
     const m = fsMode(rules, f.key)
+    if (f.optional && m === 'we') c.enabled = true
     if (m === 'we') weDo.push(`${f.emoji} ${c.calibration_name}`)
     else { c.enabled = false; (m === 'shop' ? shopDoes : offers).push(`${f.emoji} ${c.calibration_name}`); c.justification = `${m === 'shop' ? 'Required · shop handles this (Full Service rule).' : '💰 Offer: required, and we can do it for the shop.'} ${c.justification || ''}`.trim() }
   }
+  for (let i = cals.length - 1; i >= 0; i--) if (cals[i]._drop) cals.splice(i, 1)
+  if (!collision) return []
   return [weDo.length ? `🧰 Full Service (we do it): ${weDo.join(', ')}` : '', offers.length ? `💰 Offer the shop: ${offers.join(', ')}` : '', shopDoes.length ? `🏪 Shop handles: ${shopDoes.join(', ')}` : ''].filter(Boolean)
 }
 
@@ -1270,12 +1277,13 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
 // right here (the first pick for a shop becomes its rule; it's also on the
 // CRM Billing tab).
 function FullServiceCard({ shop, rows }) {
-  const items = FS_ITEMS.map(f => ({ ...f, rows: (rows || []).filter(r => r.required && f.match.test(r.name)) })).filter(f => f.rows.length)
+  const items = FS_ITEMS.map(f => ({ ...f, rows: (rows || []).filter(r => (r.required || f.optional) && f.match.test(r.name)) })).filter(f => f.rows.length)
   const [fs, setFs] = useState(null)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
   useEffect(() => { if (shop && items.length) fsRulesFor(shop).then(setFs) }, [shop, items.length])
-  if (!items.length || (fs && fs.collision === false)) return null   // collision shops only
+  const shown = items.filter(f => !f.optional || fs?.on)   // optional items only matter to Full Service shops
+  if (!shown.length || (fs && fs.collision === false)) return null   // collision shops only
   const pick = async (key, mode) => {
     if (!shop || busy) return
     setBusy(key); setMsg('')
@@ -1293,7 +1301,7 @@ function FullServiceCard({ shop, rows }) {
         : fs && !fs.on ? `Required follow-up work. Full Service is OFF for ${shop}: the shop does it, and our report says so. Turn it on in CRM → Billing once it's agreed with the shop.`
         : `Required follow-up work. ${shop} is on Full Service; 💰 = offer it to the shop.`}</div>
       <div className="grid gap-2">
-        {items.map(f => {
+        {shown.map(f => {
           const m = fsMode(fs?.rules, f.key), isSet = !!fs?.set?.[f.key]
           return (
             <div key={f.key} className="rounded-lg p-2" style={{ backgroundColor: '#fff', border: '1px solid #bae6fd' }}>

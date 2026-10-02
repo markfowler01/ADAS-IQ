@@ -22,6 +22,8 @@ import { postToCliqChannel, DISPATCH_CHANNEL } from './cliq.js'
 export const FULL_SERVICE = [
   // Manual aim only — electronic (adaptive / auto-leveling) headlamps are a calibration we always do (Mark 2026-10-01).
   { key: 'headlamp',   emoji: '💡', label: 'Headlamp aim (manual)',   match: /^(?!.*(adaptive|level|swivel|afs|matrix|module|initiali|calibration|electronic)).*(headlamp|headlight)/i },
+  // Optional = not OEM-required; shows only for Full Service shops (Mark 2026-10-02).
+  { key: 'bsm_rr',     emoji: '📡', label: 'Blind spot aim after rear bumper removal', match: /rear bumper removed/i, optional: true },
   { key: 'tpms',       emoji: '🛞', label: 'TPMS relearn',            match: /\btpms\b|tire pressure/i },
   { key: 'programming', emoji: '🔑', label: 'Module programming',     match: /programming|software update|module (setup|coding|config|replacement)|\bcoding\b/i },
   { key: 'resets',     emoji: '🪟', label: 'Battery-disconnect resets', match: /window|sunroof|moon ?roof|power (liftgate|tailgate|sliding door)|initiali[sz]ation after battery|battery.*reset|reset.*battery/i },
@@ -91,12 +93,17 @@ export async function saveFullService(req, shop, patch, by = '', { learnOnly = f
  * row._fs = { key, label, emoji, mode }. Calibrations are left untouched.
  */
 export function tagRows(cals, rules, { collision = true } = {}) {
+  const keep = []
   for (const c of Array.isArray(cals) ? cals : []) {
-    if (!collision) { delete c._fs; continue }   // non-collision customers: plain lines
     const key = fsKeyFor(c.calibration_name || c.name)
-    if (!key) { delete c._fs; continue }
-    const f = FULL_SERVICE.find(x => x.key === key)
-    c._fs = { key, label: f.label, emoji: f.emoji, mode: rules?.[key] || FS_DEFAULT }
+    const f = key ? FULL_SERVICE.find(x => x.key === key) : null
+    // Optional items (not OEM-required) exist only for Full Service shops that do or offer them.
+    if (f?.optional && (!collision || (rules?.[key] || FS_DEFAULT) === 'shop' || !rules)) continue
+    if (!collision || !f) { delete c._fs; keep.push(c); continue }   // non-collision customers: plain lines
+    c._fs = { key, label: f.label, emoji: f.emoji, mode: rules?.[key] || FS_DEFAULT, optional: !!f.optional }
+    if (f.optional && c._fs.mode === 'we') c.enabled = true   // the shop's Full Service makes it part of the job
+    if (f.optional && c._fs.mode === 'ask') c.enabled = true  // shown as an offer in the Full Service section
+    keep.push(c)
   }
-  return cals
+  return keep
 }

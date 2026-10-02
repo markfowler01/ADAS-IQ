@@ -208,6 +208,20 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       `Wheel alignment (line ${al.join(', ')}) — ${make} requires forward camera calibration after alignment`, al,
       `Front Windshield Camera calibration required per ${per(make, 'camera calibration is required after any wheel alignment on this make')} (line${al.length > 1 ? 's' : ''} ${al.join(', ')}). Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
   }
+  // 5a. 🧰 Full Service: rear bumper removed on a car WITH blind spot, but the OEM
+  //     doesn't require the aim (e.g. Honda cover dropped for paint). Mark
+  //     2026-10-02: "when full service is selected … Blindspot on everything that
+  //     has had the rear bumper removed." Added NOT required here; the shop's Full
+  //     Service rule turns it on (We do it / Ask) or drops it (Full Service off).
+  {
+    const bsm = cals.find(c => /blind.?spot|rear.*radar/i.test(String(c.calibration_name || c.name || '')) && !/front/i.test(String(c.calibration_name || '')))
+    if (rb.length && bsm && bsm.enabled !== true && !has(cals, /rear bumper removed/i)) {
+      cals.push({ calibration_name: 'Blind Spot Aim (Rear Bumper Removed)', cal_type: 'Static', trigger: `Rear bumper removed (line${rb.length > 1 ? 's' : ''} ${rb.join(', ')})`, line_references: rb.join(', '),
+        justification: `Blind spot radar aim recommended after the rear bumper was removed (line${rb.length > 1 ? 's' : ''} ${rb.join(', ')}): the radar's field of view and the bumper cover in front of it were disturbed. Performed as a Full Service verification; the manufacturer's procedure does not require it for a cover removal alone.`,
+        enabled: false, _guard: 'full-service' })
+      out.added.push(`Blind Spot Aim (Rear Bumper Removed) ← ${rb.join(', ')} (Full Service)`)
+    }
+  }
   // 5. Liftgate / rear camera line → Back Up Camera.
   if (lg.length || cam.some(l => true) && /rear|back/.test(JSON.stringify(cam))) {
     const ref = [...new Set([...lg])]
