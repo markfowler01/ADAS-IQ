@@ -91,25 +91,25 @@ export function renderReport({ s, cals, cited }, token) {
 .top b{font-size:20px}.wrap{max-width:980px;margin:0 auto;padding:16px}
 .card{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:14px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.k{font-size:11px;color:var(--g);text-transform:uppercase;letter-spacing:.04em}.v{font-weight:700}
-.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tile{border-radius:12px;padding:14px;background:#fff5f0;border:1px solid #f6c3b1}.tile.gray{background:#f5f5f4;border-color:var(--bd)}.tile b{font-size:30px;color:var(--o)}.tile.gray b{color:var(--g)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.tile{border-radius:12px;padding:14px;background:#fdf3ef;border:1px solid #e8c5b0}.tile.gray{background:#f5f5f4;border-color:var(--bd)}.tile b{font-size:30px;color:var(--o)}.tile.gray b{color:var(--g)}
 table{width:100%;border-collapse:collapse;font-size:14px}th{background:var(--o);color:#fff;text-align:left;padding:9px;font-size:12px}td{padding:9px;border-bottom:1px solid #f0ece8;vertical-align:top}
 tr.off td{color:#a8a29e}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;border:1.5px solid #bdb7b1;margin-right:8px}.dot.r{background:var(--o);border-color:var(--o)}
-.type{font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;white-space:nowrap}.type.req{background:#fde8de;color:var(--o)}.type.fs{background:#e0f2fe;color:#0369a1}.type.nr{background:#f5f5f4;color:#a8a29e}
-.ln{white-space:nowrap}button.why,button.fb{border:0;background:#f5f3ff;border-radius:999px;cursor:pointer;padding:3px 7px;font-size:13px}button.fb{background:#f5f5f4}
+.type{font-size:11px;font-weight:800;padding:3px 8px;border-radius:999px;white-space:nowrap}.type.req{background:#fdf3ef;color:var(--o)}.type.fs{background:#1a1a1a;color:#fff}.type.nr{background:#f5f5f4;color:#a8a29e}
+.ln{white-space:nowrap}button.why,button.fb{border:0;background:#fdf3ef;border-radius:999px;cursor:pointer;padding:3px 7px;font-size:13px}button.fb{background:#f5f5f4}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:flex-end;justify-content:center;padding:12px}.modal.show{display:flex}
 @media(min-width:640px){.modal{align-items:center}}.sheet{background:#fff;border-radius:16px;max-width:620px;width:100%;padding:18px;max-height:85vh;overflow:auto}
-.sheet h3{margin:0 0 8px;font-size:16px}.ref{background:#faf5ff;border:1px solid #e9d5ff;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;color:#5b21b6}
-.btn{display:inline-block;margin-top:8px;background:#5b21b6;color:#fff;border-radius:8px;padding:7px 12px;text-decoration:none;font-weight:700;font-size:13px}
+.sheet h3{margin:0 0 8px;font-size:16px}.ref{background:#f4f2f0;border:1px solid #e0dbd6;border-left:4px solid #CD4419;border-radius:10px;padding:10px;margin-top:10px;font-size:13px;color:#1a1a1a}.ref b{color:#CD4419}
+.btn{display:inline-block;margin-top:8px;background:#CD4419;color:#fff;border-radius:8px;padding:7px 12px;text-decoration:none;font-weight:700;font-size:13px}
 .close{float:right;border:0;background:#f5f5f4;border-radius:999px;width:30px;height:30px;font-size:16px;cursor:pointer}
 textarea,select{width:100%;border:1.5px solid #ddd;border-radius:8px;padding:8px;font:inherit;margin-top:6px}.send{background:var(--ink);color:#fff;border:0;border-radius:10px;padding:10px 14px;font-weight:800;margin-top:10px;cursor:pointer}
-.muted{color:var(--g);font-size:12px}.box{border:1.5px solid var(--o);background:#fff7ed;border-radius:12px;padding:12px;margin-top:10px;font-size:14px}
+.muted{color:var(--g);font-size:12px}.box{border:1.5px solid var(--o);background:#fdf3ef;border-radius:12px;padding:12px;margin-top:10px;font-size:14px}
 @media(max-width:640px){th:nth-child(3),td:nth-child(3){display:none}table{font-size:13px}}
 </style></head><body>
 <div class="top"><b>Absolute ADAS</b><span>ADAS Calibration &amp; Diagnostic Report${s.ro ? ` · RO ${esc(s.ro)}` : ''}</span></div>
 <div class="wrap">
 <div class="card"><div style="font-size:20px;font-weight:800">${esc(vehicle)}</div>${s.vin ? `<div class="muted">VIN ${esc(s.vin)}</div>` : ''}
 <div class="grid" style="margin-top:10px">${[['Shop', s.shop], ['RO', s.ro], ['Insurer', s.insurer], ['Claim', s.claim]].filter(([, v]) => v).map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div></div>
-<div class="tiles" style="margin-bottom:14px"><div class="tile"><b>${req.length}</b><div>Calibrations required</div></div>${fsv.length ? `<div class="tile" style="background:#f0f9ff;border-color:#bae6fd"><b style="color:#0369a1">${fsv.length}</b><div>Full Service</div></div>` : ''}<div class="tile gray"><b>${notReq.length}</b><div>Checked, not required</div></div></div>
+<div class="tiles" style="margin-bottom:14px"><div class="tile"><b>${req.length}</b><div>Calibrations required</div></div>${fsv.length ? `<div class="tile" style="background:#f4f2f0;border-color:#1a1a1a"><b style="color:#1a1a1a">${fsv.length}</b><div>Full Service</div></div>` : ''}<div class="tile gray"><b>${notReq.length}</b><div>Checked, not required</div></div></div>
 <div class="card" style="padding:0;overflow:hidden"><div style="padding:14px 16px;font-weight:800;font-size:17px">Operations <span class="muted" style="font-weight:400">— tap ✨ for why, 💬 to send us feedback</span></div>
 <table><thead><tr><th>Sensor</th><th>Repair triggers</th><th>Lines</th><th>Type</th><th></th></tr></thead><tbody>${rowHtml}</tbody></table></div>
 <div class="card"><div style="font-weight:800">Required on every collision repair</div>
