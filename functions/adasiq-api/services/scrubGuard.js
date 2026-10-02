@@ -519,6 +519,13 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     }
   }
 
+  // 7c. GM front radar + windshield camera are DYNAMIC (drive-cycle) learns (1Source
+  //     2025 Yukon: "Radar Sensor Module – Long Range Learn" / "Front View Camera Module
+  //     Learn", both Dynamic; Kinetic agrees).
+  if (/chevrolet|gmc|buick|cadillac/i.test(make)) for (const c of cals) {
+    if (c.enabled === true && /^front radar|long range|windshield|front camera|front view camera/i.test(String(c.calibration_name || '')) && !/side|corner/i.test(String(c.calibration_name || ''))) c.cal_type = 'Dynamic'
+  }
+
   // 8. 🔎 Equipment check on every sensor row (Mark 2026-10-02, "yes" to checking
   //    equipment across all makes after the Altima / Compass over-calls). The scrub
   //    marks each row equipped yes / no / unknown. A required row on a car that clearly
