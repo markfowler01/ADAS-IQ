@@ -419,6 +419,21 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
       buc.justification = `${buc.justification || ''} If equipped with surround view (Around View / 360), this is performed as the Around View calibration.`.trim()
   }
 
+  // 6b. GM "any collision" front radar only when the car HAS adaptive cruise radar
+  //     (Mark 2026-10-02: Kinetic's 6-of-62 = most Chevys have no radar). Kept when
+  //     the VIN decode or the estimate's options show adaptive cruise, or a front
+  //     bumper / grille / radar line is on the estimate; otherwise "if equipped".
+  if (/chevrolet|gmc|buick|cadillac/i.test(make)) {
+    const fr = cals.find(c => /^front radar|distance sensor|acc radar/i.test(String(c.calibration_name || '')) && !/side|corner/i.test(String(c.calibration_name || '')))
+    const equipped = /adaptive cruise/i.test(String(data.vin_equipment || '')) || /adaptive cruise|\bacc\b|intelligent cruise|full.?speed range/i.test(`${fr?.justification || ''} ${fr?.note || ''}`)
+    const frontWork = fb.length || rs.length || lines(hits.grille).length
+    if (fr && fr.enabled === true && !equipped && !frontWork) {
+      Object.assign(fr, { enabled: false, line_references: '', _guard: 'if-equipped',
+        justification: 'If equipped with adaptive cruise (front radar), GM requires the front radar calibration after this collision repair — confirm the radar at pre-scan. The VIN decode and estimate options do not show adaptive cruise, so it is not billed by default.' })
+      out.demoted = [...(out.demoted || []), 'Front Radar (GM, no adaptive cruise shown)']
+    }
+  }
+
   // 7. 🚫 Front Radar from an alignment or windshield alone is a model error
   //    (benchmark 2026-10-02: 8 cars, prompt STEP 4f ignored). Demote it unless
   //    the estimate has a front bumper / radar line, its trigger names a front
