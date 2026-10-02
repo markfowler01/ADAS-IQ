@@ -361,6 +361,18 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
   if (/hyundai|kia|genesis/i.test(make) && rbH.length) require(cals, /blind.?spot|rear.*radar|\bbsd\b/i, 'Rear Blind Spot Radar', 'Static',
     `Rear bumper removed/installed, replaced or repaired (line${rbH.length > 1 ? 's' : ''} ${rbH.join(', ')}) — the blind spot radars sit behind the rear bumper`, rbH,
     `Rear blind spot (BSD) radar calibration required per ${per(make)}: the rear bumper operation on line${rbH.length > 1 ? 's' : ''} ${rbH.join(', ')} disturbs the radars mounted behind it (ALLDATA: Blind Spot Detection unit, rear bumper, static calibration). Failure to calibrate presents a safety liability and does not meet ${make} repair standards.`, out)
+  // 5j. Ford / Lincoln park sensors (ALLDATA 2024 Transit: Parking Aid Sensor and
+  //     Active Park Assist Sensor — R&R / R&I, static; Mark 2026-10-02: "calibrated
+  //     anytime the bumpers are removed and installed") → front or rear bumper R&I or
+  //     replaced, or a sensor removed/replaced, on cars with park sensors.
+  if (/ford|lincoln/i.test(make)) {
+    const ps = lines(hits.park_sensor)
+    const psRow = has(cals, /park|ultrasonic|pdc|parking aid|parking sensor/i)
+    const trig = [...new Set([...ps, ...(psRow ? [...fb.slice(0, 3), ...rb.slice(0, 3)] : [])])]
+    if (trig.length) require(cals, /park|ultrasonic|pdc|parking aid|parking sensor/i, 'Park Distance Sensor', 'Static',
+      `Bumper removed/installed or replaced, or park sensor removed (line${trig.length > 1 ? 's' : ''} ${trig.join(', ')})`, trig,
+      `Parking aid sensor calibration required per ALLDATA ADAS Quick Reference (Ford: Parking Aid Sensor / Active Park Assist Sensor in the front and rear bumpers, R&R / R&I, static with targets): the operation on line${trig.length > 1 ? 's' : ''} ${trig.join(', ')} removes the sensors.`, out, ps.length > 0)
+  }
   // 5c. Stellantis — Dodge, Chrysler, Jeep, Ram, Fiat, Alfa Romeo (ALLDATA ADAS
   //     Quick Reference: 2023 Ram ProMaster + 2018 Dodge Challenger, pasted by Mark
   //     2026-10-02; "All Stellantis"). The ACC radar lives in the FRONT BUMPER:
