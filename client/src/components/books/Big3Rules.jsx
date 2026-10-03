@@ -254,6 +254,44 @@ function NewShopChecklist({ shop }) {
   )
 }
 
+// 🧾 Shop billing bar for the scrub report (Mark 2026-10-02: "Big 4 changes need to
+// save", one home = the CRM shop). Shows which CRM shop the name matched, and every
+// switch saves to that shop the moment it's flipped.
+export function ShopBig4Bar({ shopName, onRules }) {
+  const [d, setD] = useState(null)
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    let live = true; setD(null); setMsg('')
+    if (!shopName) return
+    apiFetch(`${API_BASE}/api/shops/billing-by-name?name=${encodeURIComponent(shopName)}`).then(r => r.json()).then(x => { if (live) { setD(x); if (x?.rules && onRules) onRules(x.rules) } }).catch(() => { if (live) setD({ found: false, error: true }) })
+    return () => { live = false }
+  }, [shopName]) // eslint-disable-line react-hooks/exhaustive-deps
+  async function change(rules) {
+    setD(x => ({ ...x, rules })); setBusy(true); setMsg('Saving…')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/big3-by-name`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop_id: d?.shop_id, name: shopName, rules }) })
+      const x = await r.json(); if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`)
+      setMsg(`✓ Saved for ${x.shop_name}`); invalidateBig3Map(); if (onRules) onRules(x.rules)
+    } catch (e) { setMsg(`✗ Not saved: ${e.message}`) } finally { setBusy(false) }
+  }
+  if (!shopName) return null
+  if (!d) return <div className="rounded-lg p-3 mb-4 text-xs" style={{ backgroundColor: '#f4f2f0', color: '#888' }}>🧾 Loading {shopName}'s billing…</div>
+  if (!d.found) return <div className="rounded-lg p-3 mb-4 text-xs font-semibold" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>⚠ No CRM shop matches "{shopName}" — the Big 4 can't be saved until the shop is in the CRM (or the name matches).</div>
+  return (
+    <div className="rounded-lg p-3 mb-4" style={{ backgroundColor: '#f4f2f0', border: '1px solid #e0dbd6', borderLeft: '4px solid #CD4419' }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+        <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#1a1a1a' }}>🧾 Big 4 · {d.shop_name}{d.customer_type ? ` · ${({ body_shop: 'Collision', repair_shop: 'Auto repair', dealer: 'Dealer', retail: 'Retail' })[d.customer_type] || d.customer_type}` : ''}{d.discount_pct != null ? ` · ${d.discount_pct}% off` : ''}</span>
+        <span className="text-[10px]" style={{ color: msg.startsWith('✗') ? '#b91c1c' : msg.startsWith('✓') ? '#166534' : '#888' }}>{msg || (d.has_rule ? `saved rule${d.set_by ? ` · ${d.set_by}` : ''}` : 'default — any change saves for this shop')}</span>
+      </div>
+      {!d.exact && <div className="text-[11px] mb-1.5" style={{ color: '#92400e' }}>Matched CRM shop "{d.shop_name}" for "{shopName}"{d.twins ? ` · ${d.twins} other CRM shop(s) share this name` : ''}.</div>}
+      {d.collision === false
+        ? <div className="text-xs" style={{ color: '#555' }}>Not a collision shop — no Big 4 on its quotes or invoices.</div>
+        : <Big3Picker rules={d.rules} onChange={change} disabled={busy} compact />}
+    </div>
+  )
+}
+
 // CRM Billing tab block — loads and saves the shop's rule.
 export default function Big3Rules({ shop }) {
   const [rules, setRules] = useState(null)

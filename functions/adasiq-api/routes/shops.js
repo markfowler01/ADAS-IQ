@@ -430,6 +430,37 @@ router.put('/full-service-by-name', async (req, res) => {
     res.json({ ok: true, ...r })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 🧾 The shop's billing by NAME, for the scrub report header (Mark 2026-10-02: Big 4
+// changes save the moment they're made, one home = the CRM shop). Reports which
+// CRM row the name matched, so a wrong / missing match is visible, not silent.
+router.get('/billing-by-name', async (req, res) => {
+  try {
+    const b3 = await import('../services/big3.js')
+    const name = String(req.query.name || '').trim()
+    if (!name) return res.status(400).json({ error: 'name required' })
+    const shop = await b3.findShopByName(req, name)
+    if (!shop) return res.json({ ok: true, found: false, name })
+    const r = await b3.readBig3(req, shop.shop_name)
+    const br = typeof shop.billing_rules === 'string' ? (() => { try { return JSON.parse(shop.billing_rules) } catch { return {} } })() : (shop.billing_rules || {})
+    const all = await getAllShops(req)
+    const key = s2 => String(s2 || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+    const twins = all.filter(x => x.id !== shop.id && key(x.shop_name) === key(shop.shop_name)).length
+    res.json({ ok: true, found: true, name, shop_id: shop.id, shop_name: shop.shop_name, exact: key(shop.shop_name) === key(name), twins,
+      rules: b3.withDefaults(r.rules), has_rule: !!r.rules, set_by: r.set_by || '', set_at: r.set_at || '',
+      customer_type: br.customer_type || '', collision: !b3.NON_COLLISION.has(br.customer_type), discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/big3-by-name', async (req, res) => {
+  try {
+    const b3 = await import('../services/big3.js')
+    const shop = req.body?.shop_id ? rowToShop(await getTable(req).getRow(String(req.body.shop_id))) : await b3.findShopByName(req, String(req.body?.name || ''))
+    if (!shop) return res.status(404).json({ error: 'No CRM shop by that name — add it in the CRM first so the rule has a home.' })
+    const rules = b3.normalizeRules(req.body?.rules)
+    if (!rules) return res.status(400).json({ error: 'rules required' })
+    const r = await b3.saveBig3(req, shop.shop_name, b3.withDefaults(rules), req.user?.name || req.user?.email || '', { shop })
+    res.json({ ok: true, changed: !!r?.changed, shop_name: shop.shop_name, rules: b3.withDefaults(rules) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/big3-map', async (req, res) => {
   try { const b3 = await import('../services/big3.js'); res.json({ ok: true, ...(await b3.big3Map(req)) }) }
   catch (e) { res.status(500).json({ error: e.message }) }

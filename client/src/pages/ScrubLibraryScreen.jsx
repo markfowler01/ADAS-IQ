@@ -16,6 +16,7 @@ import { ScanLogo } from '../components/LoadingSplash'
 // The SAME blue "Send Quote to Shop" button the jobs page uses — line review, then
 // /shop-quotes/send attaches the Quote PDF. Reused, not copied (Mark 2026-09-29).
 import { SendQuoteButton } from '../components/ToggleBoard'
+import { ShopBig4Bar } from '../components/books/Big3Rules.jsx'
 
 const ORANGE = '#CD4419'
 const INK = '#1a1a1a'
@@ -1208,6 +1209,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
               <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>📎 Went out with the invoice: {s.reports.map(r => r.name).join(', ')}</div>
             )}
 
+            {!editing && s.shop && <ShopBig4Bar shopName={s.shop} />}
             {!editing && <FullServiceCard shop={s.shop} rows={list} />}
 
             <div className="flex items-center justify-between mb-2">

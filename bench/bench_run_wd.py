@@ -30,7 +30,7 @@ def one(j):
     if not os.path.exists(out) or os.path.getsize(out) < 1000:
         subprocess.run(["curl", "-s", "-m", "90", "-H", H, f"{B}/wd/file?id={fid}", "-o", out])
     r = subprocess.run(["curl", "-s", "-m", "170", "-X", "POST", "-H", H, "-F", f"file=@{out};type=application/pdf",
-                        "-F", f"name={name}", "-F", f"source={SRC}", "-F", "force=1", f"{B}/scrub-file"], capture_output=True, text=True)
+                        "-F", f"name={name}", "-F", f"source={SRC}", "-F", "force=1", "-F", f"effort={os.environ.get('EFFORT', '')}", f"{B}/scrub-file"], capture_output=True, text=True)
     print(f"{name[:60]} | {r.stdout[:120]}", flush=True)
 
 with ThreadPoolExecutor(int(os.environ.get("PAR", "4"))) as ex: list(ex.map(one, jobs))

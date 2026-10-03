@@ -52,7 +52,7 @@ export default function ReviewCompact(props) {
     selectedCustomer, setSelectedCustomer, setSelectedSalesperson, jobDate, setJobDate, todayPT,
     liveTotal, selected, onCreate, creating, previewBusy, invoiceError, kanbanWarning, resultCard, busy,
     dispatch = 'mark', setDispatch = () => {}, poolOverride = null, onPool = () => {},
-    big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {},
+    big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '',
     listTotal = null, cashCap = 700, setCashCap = () => {}, onOldLook, onPanelLook,
   } = props
   const [showNotRequired, setShowNotRequired] = useState(false)
@@ -155,7 +155,7 @@ export default function ReviewCompact(props) {
             : <div className="rounded-xl px-2.5 py-2" style={{ backgroundColor: '#fafaf9', border: '1px solid #ece8e4' }}>
                 <div className="flex items-center justify-between mb-1.5"><span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#555' }}>🧾 Big 4{feeTotal ? ` · ${fmt(feeTotal)}` : ''}</span><span className="text-[10px]" style={{ color: '#888' }}>{big3Info?.source === 'shop' ? 'shop rule' : big3Info?.source === 'insurer' ? 'insurer rule' : big3Info?.source === 'modal' ? 'edited here' : 'default'}</span></div>
                 <Big3Picker rules={rules} onChange={onBig3} compact />
-                <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}><input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'}</label>
+                <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}><input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'}</label>{big3Msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: big3Msg.startsWith('✗') ? '#b91c1c' : big3Msg.startsWith('✓') ? '#166534' : '#888' }}>{big3Msg}</div>}
               </div>)}
         </div>
       </Panel>

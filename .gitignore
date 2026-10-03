@@ -16,3 +16,4 @@ app-hosting/
 *.tgz
 client/package-lock.json
 client/.asset-archive/
+bench/.wd/

@@ -303,7 +303,9 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', ef
     model: 'claude-opus-4-7',  // best model + adaptive thinking: this is a judgment task (Kinetic benchmark 2026-09-24)
     max_tokens: 16000,
     thinking: { type: 'adaptive' },
-    ...(effort ? { output_config: { effort } } : {}),   // benchmark knob (2026-09-30): 'medium' = less thinking, faster
+    // ⚡ 'medium' by default (Mark 2026-10-02 "yes lets go"): benchmark v8m on 50 cars = recall 94%
+    // vs 93% at high, ~35s vs ~55s a scrub. Pass effort: 'high' to go back for one call.
+    output_config: { effort: effort || 'medium' },
     // ⚡ Cached: the rulebook is the same every scrub — faster start, ~10% of the input price on a hit (2026-09-30).
     system: [
       { type: 'text', text: CCC_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },

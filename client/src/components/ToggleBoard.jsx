@@ -1,5 +1,5 @@
 import { API_BASE, apiFetch } from '../utils/api.js'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import JobCard from './JobCard'
 import CalibrationRow from './CalibrationRow'
 import ManualAddForm from './ManualAddForm'
@@ -96,6 +96,10 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // 🧾 Big 3 rule (Mark 2026-09-10): null = use the shop's saved rule;
   // an object = Kat's edit in the modal (remembered on create by default).
   const [big3Rules, setBig3Rules] = useState(null)
+  // Big 4 flipped on the job screen saves to the shop right away when "Remember" is
+  // ticked (Mark 2026-10-02: it looked saved but only saved on Create).
+  const [big3Msg, setBig3Msg] = useState('')
+  const big3SaveRef = useRef(null)
   const [big3Info, setBig3Info] = useState(null)
   // 💵 Cash cap on the main screen (Mark 2026-09-14): 700 (default) | 350 | 0 = no cap
   const [cashCap, setCashCap] = useState(700)   // { rules, source, set_by } from the pricer — shown on the main screen
@@ -254,6 +258,21 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       }, 0) + (rowPrices._fixed_total || 0)) * 100) / 100
     : null
   const liveTotalCapped = (cashMode && liveTotal != null && cashCap > 0 && liveTotal > cashCap) ? cashCap : liveTotal
+
+  function onBig3Change(rules) {
+    setBig3Rules(rules)
+    const name = selectedCustomer?.name || jobData?.shop || ''
+    if (!big3Save || !name) { setBig3Msg(''); return }
+    setBig3Msg('Saving…')
+    clearTimeout(big3SaveRef.current)
+    big3SaveRef.current = setTimeout(async () => {
+      try {
+        const r = await apiFetch(`${API_BASE}/api/shops/big3-by-name`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, rules }) })
+        const x = await r.json(); if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`)
+        setBig3Msg(`✓ Saved for ${x.shop_name}`)
+      } catch (e) { setBig3Msg(`✗ Not saved: ${e.message}`) }
+    }, 400)
+  }
 
   // Step 1 (Mark 2026-08-29): price the lines BEFORE anything is created
   // in Books — same review pattern as sending a quote.
@@ -612,7 +631,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}
           dispatch={dispatch} setDispatch={setDispatch}
           poolOverride={poolOverride} onPool={pickPoolOnScreen}
-          big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={setBig3Rules} big3Save={big3Save} setBig3Save={setBig3Save}
+          big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={onBig3Change} big3Msg={big3Msg} big3Save={big3Save} setBig3Save={setBig3Save}
           onOldLook={() => { try { localStorage.setItem('adas_upload_look', 'old') } catch {} setOldLook(true) }}
           onPanelLook={panelLook ? () => { try { localStorage.removeItem('adas_upload_look') } catch {} setPanelLook(false) } : () => { try { localStorage.setItem('adas_upload_look', 'panel') } catch {} setPanelLook(true) }}
         />) })()}

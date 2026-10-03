@@ -101,7 +101,7 @@ export default function ReviewLayout({
   onCreate, creating, previewBusy, onCreateLegacy, creatingLegacy,
   invoiceError, kanbanWarning, resultCard, busy,
   dispatch = 'mark', setDispatch = () => {},
-  poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {},
+  poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '',
   listTotal = null, cashCap = 700, setCashCap = () => {},
   onOldLook,
 }) {
@@ -248,7 +248,7 @@ export default function ReviewLayout({
                 </div>
                 <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}>
                   <input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'} (every invoice from now on)
-                </label>
+                </label>{big3Msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: big3Msg.startsWith('✗') ? '#b91c1c' : big3Msg.startsWith('✓') ? '#166534' : '#888' }}>{big3Msg}</div>}
               </div>
             </Panel>
 
