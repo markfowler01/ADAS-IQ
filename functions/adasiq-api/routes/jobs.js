@@ -245,7 +245,8 @@ async function getAllJobs(req) {
       out.push(...batch)
       if (batch.length < 300) break
     }
-    return out.map(rowToJob)
+    const seen = new Set()   // ZCQL pages overlap by one row at each boundary
+    return out.filter(r => { const id = String(r.ROWID || ''); if (!id) return true; if (seen.has(id)) return false; seen.add(id); return true }).map(rowToJob)
   }
 }
 

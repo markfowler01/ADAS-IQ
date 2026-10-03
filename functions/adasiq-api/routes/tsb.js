@@ -49,10 +49,10 @@ const fromRow = r => {
 // ZCQL results come wrapped { AdasTsb: {...} }; ROWIDs stay strings.
 async function zcqlAll(app, sqlNoLimit) {
   const out = []
-  for (let off = 0; ; off += ZCQL_PAGE) {
+  const seen = new Set(); for (let off = 0; ; off += ZCQL_PAGE) {
     const rows = await app.zcql().executeZCQLQuery(`${sqlNoLimit} LIMIT ${off}, ${ZCQL_PAGE}`)
     const batch = (rows || []).map(r => r?.[TABLE] || r).filter(Boolean)
-    out.push(...batch)
+    for (const x of batch) { const id = String(x?.ROWID || x?.id || ''); if (id && seen.has(id)) continue; if (id) seen.add(id); out.push(x) }
     if (batch.length < ZCQL_PAGE) break
   }
   return out

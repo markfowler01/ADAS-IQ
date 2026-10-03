@@ -52,10 +52,10 @@ function rowToCandidate(r) {
 export async function readAll(req) {
   const app = catalyst.initialize(req)
   const out = []
-  for (let off = 0; ; off += 300) {
+  const seen = new Set(); for (let off = 0; ; off += 300) {
     const rows = await app.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} LIMIT ${off}, 300`)
     const batch = (rows || []).map(r => r?.[TABLE] || r).filter(Boolean)
-    out.push(...batch)
+    for (const x of batch) { const id = String(x?.ROWID || x?.id || ''); if (id && seen.has(id)) continue; if (id) seen.add(id); out.push(x) }
     if (batch.length < 300) break
   }
   return out.map(rowToCandidate).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))

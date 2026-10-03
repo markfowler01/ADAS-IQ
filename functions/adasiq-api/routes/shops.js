@@ -117,7 +117,10 @@ async function getAllShops(req) {
     out.push(...batch)
     if (batch.length < 300) break
   }
-  return out.map(rowToShop)
+  // ZCQL pages overlap by one row at each 300 boundary (2026-10-02: Fix Auto Maple
+  // Valley listed twice) — keep each ROWID once.
+  const seen = new Set()
+  return out.filter(r => { const id = String(r.ROWID || ''); if (!id) return true; if (seen.has(id)) return false; seen.add(id); return true }).map(rowToShop)
 }
 
 // Exported for the dispatch-map feature (geocoding cron, map data endpoint).

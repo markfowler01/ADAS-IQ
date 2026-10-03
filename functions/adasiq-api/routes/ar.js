@@ -9,7 +9,7 @@ const who = req => req.user?.name || req.user?.email || 'staff'
 const fail = (res, e, w) => { console.log(`[ar] ${w}:`, e.message); res.status(500).json({ error: e.message }) }
 const q = s => String(s ?? '').replace(/'/g, "''")
 const app = req => catalyst.initialize(req, { type: 'advancedio' })
-async function zcqlAll(a, table, sql) { const out = []; for (let off = 0; ; off += 300) { const rows = await a.zcql().executeZCQLQuery(`${sql} LIMIT ${off}, 300`); const b = (rows || []).map(r => r?.[table] || r).filter(Boolean); out.push(...b); if (b.length < 300) break } return out }
+async function zcqlAll(a, table, sql) { const out = []; const seen = new Set(); for (let off = 0; ; off += 300) { const rows = await a.zcql().executeZCQLQuery(`${sql} LIMIT ${off}, 300`); const b = (rows || []).map(r => r?.[table] || r).filter(Boolean); for (const x of b) { const id = String(x?.ROWID || x?.id || ''); if (id && seen.has(id)) continue; if (id) seen.add(id); out.push(x) }; if (b.length < 300) break } return out }
 
 router.get('/status', async (req, res) => {
   try {

@@ -53,10 +53,10 @@ function rowToStop(r) {
 async function allStops(req) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
   const out = []
-  for (let off = 0; off < 6000; off += 300) {
+  const seen = new Set(); for (let off = 0; off < 6000; off += 300) {
     const rows = await app.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} ORDER BY stop_at DESC LIMIT ${off}, 300`)
     const batch = (rows || []).map(rowToStop)
-    out.push(...batch)
+    for (const x of batch) { const id = String(x?.ROWID || x?.id || ''); if (id && seen.has(id)) continue; if (id) seen.add(id); out.push(x) }
     if (batch.length < 300) break
   }
   return out

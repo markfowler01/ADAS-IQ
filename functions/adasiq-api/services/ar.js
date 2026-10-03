@@ -23,10 +23,10 @@ const T = { acc: 'ArAccounts', cn: 'ArCreditNotes', al: 'ArAllocations', lg: 'Ar
 
 async function zcqlAll(a, table, sql) {
   const out = []
-  for (let off = 0; ; off += 300) {
+  const seen = new Set(); for (let off = 0; ; off += 300) {
     const rows = await a.zcql().executeZCQLQuery(`${sql} LIMIT ${off}, 300`)
     const b = (rows || []).map(r => r?.[table] || r).filter(Boolean)
-    out.push(...b); if (b.length < 300) break
+    for (const x of b) { const id = String(x?.ROWID || x?.id || ''); if (id && seen.has(id)) continue; if (id) seen.add(id); out.push(x) }; if (b.length < 300) break
   }
   return out
 }
