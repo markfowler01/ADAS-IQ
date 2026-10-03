@@ -436,6 +436,15 @@ router.put('/full-service-by-name', async (req, res) => {
 // 🧾 The shop's billing by NAME, for the scrub report header (Mark 2026-10-02: Big 4
 // changes save the moment they're made, one home = the CRM shop). Reports which
 // CRM row the name matched, so a wrong / missing match is visible, not silent.
+// ⭐ One tap from the Customers view: "this shop sends us cars — mark it a customer".
+router.post('/:id/mark-customer', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    const upd = await updateShop(req, shop.id, { ...shop, pipeline_stage: 'active', stage_changed_at: new Date().toISOString() })
+    try { await postToCliqChannel(DISPATCH_CHANNEL, `⭐ *${shop.shop_name}* marked a current customer (was "${shop.pipeline_stage}") — it sends us cars (${req.user?.name || 'staff'})`) } catch { /* fine */ }
+    res.json({ ok: true, shop: upd })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // ⭐ Customers view (Mark 2026-10-03).
 router.get('/customers', async (req, res) => {
   try { const { customerReport } = await import('../services/customers.js'); res.json({ ok: true, ...(await customerReport(req)) }) }

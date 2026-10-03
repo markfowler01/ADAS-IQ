@@ -647,7 +647,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   if (crmMode === 'customers') return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
-      <CustomersView modeToggle={modeToggle} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) setDetailShop(sh) }} />
+      <CustomersView modeToggle={modeToggle} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) setDetailShop(sh) }}
+        onMarkCustomer={async id => { const r = await apiFetch(`${API_BASE}/api/shops/${id}/mark-customer`, { method: 'POST' }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setShops(prev => prev.map(s => String(s.id) === String(id) ? { ...s, pipeline_stage: 'active' } : s)) }} />
       {detailShop && <ShopDetailPanel shop={detailShop} user={user} onClose={() => setDetailShop(null)} onSave={handleSave} onDelete={handleDelete} />}
     </div>
   )

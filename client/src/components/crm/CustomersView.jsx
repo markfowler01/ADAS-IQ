@@ -14,6 +14,8 @@ const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct
 
 // Health = the one thing to know about this customer right now.
 function healthOf(r, winBackDays) {
+  if (r.flags.includes('no_crm')) return { key: 'fix', color: '#7c3aed', text: 'Invoiced in Books, no CRM shop yet', group: 'Not in the CRM' }
+  if (r.flags.includes('not_marked')) return { key: 'fix', color: '#7c3aed', text: `Sends us cars but is "${r.stage}" in the CRM`, group: 'Not marked as a customer' }
   if (r.flags.includes('win_back')) return { key: 'attention', color: RED, text: `No job in ${r.days_since} days`, group: 'Needs attention' }
   if (r.flags.includes('slipping')) return { key: 'attention', color: AMBER, text: `Slipping — ${Math.round((r.pace || 0) * 100)}% of their usual pace`, group: 'Needs attention' }
   if (r.flags.includes('overdue')) return { key: 'owes', color: AMBER, text: `${fmt(r.ar.overdue)} overdue since ${r.ar.oldest_due}`, group: 'Owes us' }
@@ -21,7 +23,7 @@ function healthOf(r, winBackDays) {
   return { key: 'healthy', color: GREEN, text: r.pace != null && r.pace >= 1 ? 'On pace or ahead' : 'Healthy', group: 'Healthy' }
 }
 
-export default function CustomersView({ modeToggle, onOpenShop }) {
+export default function CustomersView({ modeToggle, onOpenShop, onMarkCustomer }) {
   const [d, setD] = useState(null)
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
@@ -34,7 +36,7 @@ export default function CustomersView({ modeToggle, onOpenShop }) {
     if (only) r = r.filter(c => c.health.group === only)
     return r
   }, [all, q, only, d])
-  const groups = ['Needs attention', 'Owes us', 'Healthy'].map(g => ({ name: g, rows: rows.filter(c => c.health.group === g).sort((a, b) => b.year.amount - a.year.amount) })).filter(g => g.rows.length)
+  const groups = ['Not marked as a customer', 'Not in the CRM', 'Needs attention', 'Owes us', 'Healthy'].map(g => ({ name: g, rows: rows.filter(c => c.health.group === g).sort((a, b) => b.year.amount - a.year.amount) })).filter(g => g.rows.length)
   const totals = { month: all.reduce((t, r) => t + r.this_month.amount, 0), open: all.reduce((t, r) => t + r.ar.open, 0), overdue: all.reduce((t, r) => t + r.ar.overdue, 0) }
   const countOf = g => all.filter(c => healthOf(c, d?.win_back_days || 60).group === g).length
 
@@ -54,16 +56,16 @@ export default function CustomersView({ modeToggle, onOpenShop }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap mb-4">
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search customers…" className="rounded-lg px-3 py-2 text-sm" style={{ border: `1.5px solid ${LINE}`, outline: 'none', minWidth: 220, backgroundColor: 'white' }} />
-          {[['', 'All', all.length], ['Needs attention', '🔴 Needs attention', countOf('Needs attention')], ['Owes us', '🟠 Owes us', countOf('Owes us')], ['Healthy', '🟢 Healthy', countOf('Healthy')]].map(([k, l, n]) => (
+          {[['', 'All', all.length], ['Not marked as a customer', '🟣 Not marked', countOf('Not marked as a customer') + countOf('Not in the CRM')], ['Needs attention', '🔴 Needs attention', countOf('Needs attention')], ['Owes us', '🟠 Owes us', countOf('Owes us')], ['Healthy', '🟢 Healthy', countOf('Healthy')]].map(([k, l, n]) => (
             <button key={k} onClick={() => setOnly(k)} className="text-xs font-semibold px-3 py-1.5 rounded-full" style={only === k ? { backgroundColor: INK, color: 'white' } : { backgroundColor: 'white', color: '#555', border: `1px solid ${LINE}` }}>{l} · {n}</button>
           ))}
           <span className="text-[11px] ml-auto" style={{ color: '#b5afa9' }}>as of {d.as_of} · {d.invoices_read} invoices · win back after {d.win_back_days} quiet days</span>
         </div>
         {groups.map(g => (
           <section key={g.name} className="mb-6">
-            <h2 className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: MUTED }}>{g.name} · {g.rows.length}</h2>
+            <h2 className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: MUTED }}>{g.name} · {g.rows.length}{g.name === 'Not marked as a customer' && <span className="normal-case tracking-normal font-normal ml-2">— they invoice regularly; one tap moves them out of the pipeline</span>}</h2>
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
-              {g.rows.map(r => <CustomerCard key={r.id} r={r} onOpen={() => onOpenShop(r.id)} />)}
+              {g.rows.map(r => <CustomerCard key={r.id} r={r} onOpen={() => r.flags.includes('no_crm') ? null : onOpenShop(r.id)} onMark={r.flags.includes('not_marked') && onMarkCustomer ? async () => { await onMarkCustomer(r.id); setD(x => ({ ...x, customers: x.customers.map(c => c.id === r.id ? { ...c, marked: true, stage: 'active', flags: c.flags.filter(f => f !== 'not_marked') } : c) })) } : null} />)}
             </div>
           </section>
         ))}
@@ -90,7 +92,7 @@ function Bars({ series }) {
   )
 }
 
-function CustomerCard({ r, onOpen }) {
+function CustomerCard({ r, onOpen, onMark }) {
   const tb = typeBadge(r.type), h = r.health
   const notes = [...r.setup.map(s => `⚠ Needs ${s}`), ...r.upsell.map(s => `💰 ${s.replace(' — pitch it', ': pitch it').replace(' — offer them', ': offer them')}`)]
   const who = r.people[0]
@@ -108,7 +110,10 @@ function CustomerCard({ r, onOpen }) {
             <p className="text-[10px] mt-1" style={{ color: MUTED }}>{r.year.count} jobs · 12 mo</p>
           </div>
         </div>
-        <p className="text-xs font-semibold mt-2" style={{ color: h.color }}>{h.text}</p>
+        <div className="flex items-center justify-between gap-2 mt-2">
+          <p className="text-xs font-semibold" style={{ color: h.color }}>{h.text}</p>
+          {onMark && <button onClick={e => { e.stopPropagation(); onMark() }} className="text-[11px] font-bold rounded-lg px-2 py-1 text-white flex-shrink-0" style={{ backgroundColor: '#7c3aed' }}>✓ Mark as customer</button>}
+        </div>
         <div className="flex items-end justify-between gap-3 mt-2.5">
           <Bars series={r.series || []} />
           <div className="flex gap-4 text-right">

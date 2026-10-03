@@ -26,7 +26,7 @@ async function invoicesSince(req, since) {
 export async function customerReport(req) {
   const { getAllShops } = await import('../routes/shops.js')
   const b3 = await import('./big3.js')
-  const shops = (await getAllShops(req)).filter(s => CUSTOMER_STAGES.includes(s.pipeline_stage))
+  const allShops = await getAllShops(req)
   const now = new Date(), today = now.toISOString().slice(0, 10)
   const since = new Date(now.getFullYear(), now.getMonth() - 12, 1).toISOString().slice(0, 10)
   let inv = []
@@ -36,6 +36,19 @@ export async function customerReport(req) {
     if (i.customer_id) byId.set(String(i.customer_id), [...(byId.get(String(i.customer_id)) || []), i])
     const k = loose(i.customer_name); if (k) byName.set(k, [...(byName.get(k) || []), i])
   }
+  // Who counts as a customer: marked active in the CRM, OR invoiced in the last
+  // WIN_BACK_DAYS whatever the CRM says (2026-10-03: B&H and Avon send cars every
+  // week and were not marked). Those get a "not marked" flag + one-tap fix.
+  const recentCut = new Date(now.getTime() - WIN_BACK_DAYS * 86400000).toISOString().slice(0, 10)
+  const recentById = new Set(inv.filter(i => String(i.inv_date) >= recentCut && i.customer_id).map(i => String(i.customer_id)))
+  const recentByName = new Set(inv.filter(i => String(i.inv_date) >= recentCut).map(i => loose(i.customer_name)).filter(Boolean))
+  const isCust = s => CUSTOMER_STAGES.includes(s.pipeline_stage)
+  const invoicedRecently = s => (s.zoho_contact_id && recentById.has(String(s.zoho_contact_id))) || recentByName.has(loose(s.shop_name))
+  const shops = allShops.filter(s => isCust(s) || invoicedRecently(s))
+  // Books customers with recent invoices and no CRM shop at all.
+  const crmIds = new Set(allShops.map(s => String(s.zoho_contact_id || '')).filter(Boolean)), crmNames = new Set(allShops.map(s => loose(s.shop_name)))
+  const orphans = new Map()
+  for (const i of inv) { if (String(i.inv_date) < recentCut) continue; const id = String(i.customer_id || ''); if ((id && crmIds.has(id)) || crmNames.has(loose(i.customer_name))) continue; const k = id || loose(i.customer_name); if (!orphans.has(k)) orphans.set(k, { customer_id: id, name: i.customer_name || '' }) }
   const thisYm = today.slice(0, 7)
   const prevYms = [1, 2, 3].map(n => { const d = new Date(now.getFullYear(), now.getMonth() - n, 1); return d.toISOString().slice(0, 7) })
   const day = now.getDate(), daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
@@ -72,8 +85,9 @@ export async function customerReport(req) {
     else if (pace != null && pace < 0.6) flags.push('slipping')
     if (!mine.length) flags.push('no_invoices')
     if (overdue.length) flags.push('overdue')
+    if (!isCust(s)) flags.push('not_marked')
     return {
-      id: s.id, name: s.shop_name, stage: s.pipeline_stage, type: br.customer_type || '', phone: s.phone || '', address: s.address || '',
+      id: s.id, name: s.shop_name, stage: s.pipeline_stage, marked: isCust(s), type: br.customer_type || '', phone: s.phone || '', address: s.address || '',
       people: (s.people || []).slice(0, 3).map(p => ({ name: p.name || '', title: p.title || '', phone: p.phone || '', email: p.email || '' })),
       last_invoice: last, days_since: daysSince, this_month: { count: thisCount, amount: thisAmt }, usual: { count: avgCount, amount: avgAmt }, pace,
       ar: { open: r2(open.reduce((t, i) => t + Number(i.inv_balance || 0), 0)), overdue: r2(overdue.reduce((t, i) => t + Number(i.inv_balance || 0), 0)), oldest_due: oldestDue, count: open.length },
@@ -81,6 +95,19 @@ export async function customerReport(req) {
       series, setup, upsell, flags, books_linked: !!s.zoho_contact_id,
     }
   })
+  for (const o of orphans.values()) {
+    const mine = (o.customer_id && byId.get(o.customer_id)) || byName.get(loose(o.name)) || []
+    const dates = mine.map(i => String(i.inv_date || '')).filter(Boolean).sort(); const last = dates[dates.length - 1] || ''
+    const open = mine.filter(i => Number(i.inv_balance) > 0), overdue = open.filter(i => i.inv_due_date && i.inv_due_date < today)
+    rows.push({ id: `books:${o.customer_id || loose(o.name)}`, books_customer_id: o.customer_id, name: o.name, stage: '', marked: false, type: '', phone: '', address: '', people: [],
+      last_invoice: last, days_since: last ? Math.floor((now - new Date(last)) / 86400000) : null,
+      this_month: { count: mine.filter(i => ymOf(i.inv_date) === thisYm).length, amount: r2(mine.filter(i => ymOf(i.inv_date) === thisYm).reduce((t, i) => t + Number(i.inv_total || 0), 0)) },
+      usual: { count: 0, amount: 0 }, pace: null,
+      series: [5, 4, 3, 2, 1, 0].map(n => { const d = new Date(now.getFullYear(), now.getMonth() - n, 1); const ym = d.toISOString().slice(0, 7); const m = mine.filter(i => ymOf(i.inv_date) === ym); return { ym, count: m.length, amount: r2(m.reduce((t, i) => t + Number(i.inv_total || 0), 0)) } }),
+      ar: { open: r2(open.reduce((t, i) => t + Number(i.inv_balance || 0), 0)), overdue: r2(overdue.reduce((t, i) => t + Number(i.inv_balance || 0), 0)), oldest_due: overdue.map(i => i.inv_due_date).sort()[0] || '', count: open.length },
+      year: { count: mine.length, amount: r2(mine.reduce((t, i) => t + Number(i.inv_total || 0), 0)) },
+      setup: ['CRM shop'], upsell: [], flags: ['no_crm', ...(overdue.length ? ['overdue'] : [])], books_linked: true })
+  }
   const rank = r => (r.flags.includes('win_back') ? 0 : r.flags.includes('slipping') ? 1 : r.flags.includes('overdue') ? 2 : 3)
   rows.sort((a, b) => rank(a) - rank(b) || (b.year.amount - a.year.amount))
   return { as_of: today, win_back_days: WIN_BACK_DAYS, invoices_read: inv.length, customers: rows }
@@ -98,6 +125,7 @@ export async function debugCustomer(req, name) {
   const byId = inv.filter(i => String(i.customer_id) === String(shop.zoho_contact_id || '-'))
   const byNm = inv.filter(i => loose(i.customer_name) === loose(shop.shop_name))
   const show = l => [...l].sort((a, b) => String(b.inv_date).localeCompare(String(a.inv_date))).slice(0, 6).map(i => ({ date: i.inv_date, customer_id: i.customer_id, name: i.customer_name, status: i.inv_status }))
-  const names = [...new Set(inv.filter(i => String(i.customer_name).toLowerCase().includes(name.toLowerCase().split(' ')[0])).map(i => `${i.customer_name} [${i.customer_id}]`))]
+  const probe = String(name).toLowerCase().replace(/[^a-z0-9]/g, '')
+  const names = [...new Set(inv.filter(i => String(i.customer_name).toLowerCase().replace(/[^a-z0-9]/g, '').includes(probe)).map(i => `${i.customer_name} [${i.customer_id}] newest ${[...inv].filter(x => x.customer_id === i.customer_id).map(x => String(x.inv_date)).sort().pop()}`))]
   return { shop: { id: shop.id, name: shop.shop_name, zoho_contact_id: shop.zoho_contact_id || '' }, loose_name: loose(shop.shop_name), invoices_read: inv.length, by_id: { count: byId.length, newest: show(byId) }, by_name: { count: byNm.length, newest: show(byNm) }, books_names_like: names.slice(0, 10), newest_in_mirror: newest }
 }
