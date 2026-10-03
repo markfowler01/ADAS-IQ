@@ -288,6 +288,16 @@ router.post('/edit-lines', express.json(), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
+// Who the quote would go to, BEFORE it's built (quote-first screen, Mark 2026-10-02).
+router.get('/emails', async (req, res) => {
+  try {
+    const cid = String(req.query.customer_id || '')
+    if (!cid) return res.json({ ok: true, sent_to: [] })
+    const token = await getAccessToken()
+    res.json({ ok: true, sent_to: await shopEmails(token, cid).catch(() => []) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // One tap: template → email → durable board record.
 router.post('/send', async (req, res) => {
   if (!staffOnly(req, res)) return
@@ -308,6 +318,22 @@ router.post('/send', async (req, res) => {
     }
 
     await applyQuoteTemplateStrict(req, token, estimateId)
+    // 🌐 Online report link on the quote (Mark 2026-10-02): the shop taps it for the
+    // ✨ "why is this required" popups + OEM documents. Goes in the quote's notes, so
+    // it's on the PDF the email carries. Never blocks the send.
+    try {
+      const sid = String(req.body?.meta?.scrub_id || '')
+      if (sid) {
+        const { reportUrl } = await import('../services/publicReport.js')
+        const url = await reportUrl(req, sid)
+        const est0 = await getEstimate(token, estimateId)
+        const notes = String(est0?.notes || '')
+        if (url && !notes.includes(url)) {
+          const line = `Online ADAS report — why each calibration is required, with the OEM documents: ${url}`
+          await axios.put(`${ZOHO_API_BASE}/estimates/${estimateId}`, { notes: notes ? `${notes}\n\n${line}` : line }, { headers: zohoHeaders(token), params: orgParam(), timeout: 20000, validateStatus: s2 => s2 < 500 })
+        }
+      }
+    } catch (e) { console.warn('[shop-quotes] report link not added:', e.message) }
     await emailEstimate(token, estimateId, emails)
 
     const meta = req.body?.meta || {}

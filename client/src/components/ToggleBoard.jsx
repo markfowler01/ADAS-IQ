@@ -99,6 +99,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // Big 4 flipped on the job screen saves to the shop right away when "Remember" is
   // ticked (Mark 2026-10-02: it looked saved but only saved on Create).
   const [big3Msg, setBig3Msg] = useState('')
+  const [quoteSent, setQuoteSent] = useState('')
   const big3SaveRef = useRef(null)
   const [big3Info, setBig3Info] = useState(null)
   // 💵 Cash cap on the main screen (Mark 2026-09-14): 700 (default) | 350 | 0 = no cap
@@ -260,6 +261,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const liveTotalCapped = (cashMode && liveTotal != null && cashCap > 0 && liveTotal > cashCap) ? cashCap : liveTotal
 
   function onBig3Change(rules) {
+    // 🔒 After the quote is built the job screen's switches no longer change it.
+    if (invoiceResult) { setBig3Msg('🔒 The quote is already built — change the Big 4 in 📤 Send Quote below.'); return }
     setBig3Rules(rules)
     const name = selectedCustomer?.name || jobData?.shop || ''
     if (!big3Save || !name) { setBig3Msg(''); return }
@@ -321,7 +324,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     openPriceReview(poolOverride, rules)
   }
 
-  async function handleApprove(fixedOverrides = null, fixedZero = null, lineOverrides = null, lineEdits = null, addedItems = null) {
+  async function handleApprove(fixedOverrides = null, fixedZero = null, lineOverrides = null, lineEdits = null, addedItems = null, opts = {}) {
     if (selected.length === 0) return
     setPricePreview(null)
     setSubmitting(true)
@@ -472,6 +475,19 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         console.error('[kanban] Auto-ticket failed:', autoErr.message)
         setKanbanWarning(`⚠️ Zoho quote saved, but the Kanban card was NOT created. Reason: ${autoErr.message}. Add it manually on the Job Board.`)
       }
+      // 📤 Quote-first (Mark 2026-10-02): "Build & send" emails the quote in the same tap.
+      if (opts.send && data.quoteId) {
+        try {
+          const sr = await apiFetch(`${API_BASE}/api/shop-quotes/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            estimate_id: data.quoteId,
+            meta: { shop: selectedCustomer?.name || jobData.shop || '', vehicle: [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '), vin: jobData.vin || '', ro_number: jobData.ro_number || '', claim: jobData.claim || '', insurer: jobData.insurer || '', cal_count: selected.length, scrub_id: jobData._scrubId || '' },
+          }) })
+          const sd = await sr.json().catch(() => ({}))
+          if (!sr.ok) throw new Error(sd.error || `Error ${sr.status}`)
+          setQuoteSent(`📤 Quote emailed to ${(sd.sent_to || []).join(', ')} — it's on the Jobs board under Quotes Out.`)
+          if (onNavigate) setTimeout(() => onNavigate('kanban'), 2500)
+        } catch (sendErr) { setQuoteSent(`✗ The quote was built but NOT sent: ${sendErr.message} — use 📤 Send Quote below.`) }
+      }
     } catch (e) {
       setInvoiceError(e.message || 'Failed to create invoice. Please try again.')
     } finally {
@@ -604,11 +620,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           shopName={selectedCustomer?.name || jobData.shop || ''}
           onClose={() => setPricePreview(null)}
           onConfirm={handleApprove}
+          customerId={selectedCustomer?.id || ''}
           busy={submitting || previewBusy}
         />
   ) : null
   const resultCard = invoiceResult
-    ? <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} big4Pref={big3Rules} />
+    ? <>{quoteSent && <div className="rounded-xl px-4 py-2.5 mb-2 text-sm font-semibold text-center" style={quoteSent.startsWith('✗') ? { backgroundColor: '#fef2f2', color: '#b91c1c', border: '1.5px solid #fecaca' } : { backgroundColor: '#f0fdf4', color: '#166534', border: '1.5px solid #86efac' }}>{quoteSent}</div>}<SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} big4Pref={big3Rules} /></>
     : jobResult ? <JobSuccessCard result={jobResult} onNavigate={onNavigate} /> : null
 
   return (
@@ -910,7 +927,17 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 // carry, priced by the real matcher, fully editable before anything
 // exists in Books — schedule picker, tier swaps, included/paid toggles,
 // inline rate edit, quantity stepper, add + remove lines.
-function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3, big3Save, onBig3Save, shopName, onClose, onConfirm, busy }) {
+function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3, big3Save, onBig3Save, shopName, onClose, onConfirm, busy, customerId = '' }) {
+  // 📤 Quote-first (Mark 2026-10-02): collision shops build AND send from this screen.
+  const quoteFirst = preview?.collision !== false && String(insurer || '').toLowerCase() !== 'cash'
+  const [sendTo, setSendTo] = useState(null)
+  useEffect(() => {
+    if (!quoteFirst || !customerId) { setSendTo([]); return }
+    let live = true
+    apiFetch(`${API_BASE}/api/shop-quotes/emails?customer_id=${encodeURIComponent(customerId)}`).then(r => r.json()).then(d => { if (live) setSendTo(d.sent_to || []) }).catch(() => { if (live) setSendTo([]) })
+    return () => { live = false }
+  }, [customerId, quoteFirst])
+  const sendRef = useRef(false)
   const [picks, setPicks] = useState({})       // fixed toggle: name → 'paid' | 'included'
   const [swaps, setSwaps] = useState({})       // name → catalog item pick
   const [swapOpen, setSwapOpen] = useState(null)
@@ -1008,7 +1035,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
         rate: rateEdits[li._key] != null ? rateEdits[li._key] : li.rate,
         quantity: qtyEdits[li._key] != null ? qtyEdits[li._key] : li.quantity,
       }))
-    onConfirm(overrides, zeros, lineOverrides, lineEdits, addedItems)
+    onConfirm(overrides, zeros, lineOverrides, lineEdits, addedItems, { send: sendRef.current })
   }
 
   return (
@@ -1020,7 +1047,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
       <div className="bg-white w-full rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '96vh', maxWidth: 'min(900px, 98vw)' }}>
         <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid #ebebeb' }}>
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🧾 Create job · review before anything is created</div>
+            <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>{quoteFirst ? '📤 Quote · review every line, then build & send' : '🧾 Create job · review before anything is created'}</div>
             <div className="font-bold text-xl truncate" style={{ color: '#1a1a1a' }}>{shopName || 'Pick the customer'}</div>
           </div>
           <button onClick={onClose} disabled={busy} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
@@ -1210,16 +1237,34 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             ⚠ {flagged.length} unmatched line{flagged.length > 1 ? 's' : ''} — no price found. It will land on the invoice at $0 flagged for pricing.
           </p>
         )}
+        {quoteFirst && (
+          <div>
+            <div className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>Send the quote to</div>
+            <div className="rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', color: sendTo?.length ? '#1a1a1a' : '#b91c1c' }}>{sendTo == null ? 'Loading…' : sendTo.length ? sendTo.join(', ') : (customerId ? '⚠ no email on this shop in Books — use "Build, send later"' : '⚠ pick the customer first')}</div>
+            <div className="text-xs mt-1" style={{ color: '#888' }}>The quote PDF and the online report link go with it.</div>
+          </div>
+        )}
         </div>
         <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}>
           <button onClick={onClose} disabled={busy}
             className="flex-1 rounded-xl py-3.5 text-base font-semibold"
             style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
-          <button onClick={confirm} disabled={busy}
+          {quoteFirst ? (<>
+            <button onClick={() => { sendRef.current = false; confirm() }} disabled={busy}
+              className="flex-1 rounded-xl py-3.5 text-sm font-bold" style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px solid ${ORANGE}`, opacity: busy ? .45 : 1 }}>
+              Build, send later
+            </button>
+            <button onClick={() => { sendRef.current = true; confirm() }} disabled={busy || !sendTo?.length}
+              className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white"
+              style={{ backgroundColor: ORANGE, opacity: busy || !sendTo?.length ? .45 : 1 }}>
+              {busy ? 'Building & sending…' : `📤 Build & send quote — $${Number(finalTotal).toFixed(2)}`}
+            </button>
+          </>) : (
+          <button onClick={() => { sendRef.current = false; confirm() }} disabled={busy}
             className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white"
             style={{ backgroundColor: ORANGE, opacity: busy ? .45 : 1 }}>
             {busy ? 'Creating…' : `🧾 Create job — $${Number(finalTotal).toFixed(2)}`}
-          </button>
+          </button>)}
         </div>
       </div>
     </div>
@@ -1290,7 +1335,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
             shop: selectedCustomer?.name || job.shop || '',
             vehicle: [job.year, job.make, job.model].filter(Boolean).join(' '),
             vin: job.vin || '', ro_number: job.ro_number || '', claim: job.claim || '',
-            insurer: job.insurer || '', cal_count: lineCount,
+            insurer: job.insurer || '', cal_count: lineCount, scrub_id: job._scrubId || job.scrubId || '',
           },
         }),
       })

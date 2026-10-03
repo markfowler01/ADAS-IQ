@@ -1046,7 +1046,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
                 {s.quoteNumber && <div className="text-xs font-semibold text-center" style={{ color: '#1e40af' }}>📝 Quote {s.quoteNumber} is built — review the lines and send:</div>}
                 <SendQuoteButton
                   result={{ quoteId: qid, quoteNumber: s.quoteNumber || '' }}
-                  job={{ shop: s.shop || '', year: s.year || '', make: s.make || '', model: s.model || '', vin: s.vin || '', ro_number: s.ro || '', claim: s.claim || '', insurer: s.insurer || '' }}
+                  job={{ scrubId: s.id, shop: s.shop || '', year: s.year || '', make: s.make || '', model: s.model || '', vin: s.vin || '', ro_number: s.ro || '', claim: s.claim || '', insurer: s.insurer || '' }}
                   lineCount={required.length}
                   selectedCustomer={{ name: s.shop || '' }}
                   onNavigate={onNavigate} />
