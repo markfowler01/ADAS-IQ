@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { EstimateFirstPill } from './books/Big3Rules.jsx'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
+import CustomersView from './crm/CustomersView.jsx'
+import { typeBadge, shopTypeOf } from './crm/shopType.js'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel } from './crmConstants.js'
 import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, DiscoverModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
@@ -206,12 +208,13 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
   return (
     <div draggable onDragStart={e => onDragStart(e, shop)} onClick={() => onOpen(shop)}
       className="bg-white rounded-xl shadow-sm cursor-pointer select-none transition-shadow hover:shadow-md active:opacity-75"
-      style={{ border: `1px solid ${overdue ? '#fca5a5' : '#ebebeb'}` }}>
+      style={{ border: `1px solid ${overdue ? '#fca5a5' : '#ebebeb'}`, borderLeft: `5px solid ${typeBadge(shopTypeOf(shop)).color}` }}>
 
       {/* Header: the whole name, then the chips on their own line */}
       <div className="px-3 py-2 rounded-t-xl" style={{ backgroundColor: ORANGE }}>
         <p className="text-sm font-bold text-white leading-snug" style={{ wordBreak: 'break-word' }}>{shop.shop_name} <EstimateFirstPill shopName={shop.shop_name} /></p>
         <div className="flex items-center gap-1 flex-wrap mt-1">
+          {(() => { const tb = typeBadge(shopTypeOf(shop)); return <span className="text-[10px] font-bold px-1.5 rounded-full" style={{ backgroundColor: 'white', color: tb.color }} title="Billing customer type">{tb.label}</span> })()}
           {shop.region && <span className="text-[10px] px-1.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.2)', color: 'rgba(255,255,255,0.95)' }}>📍 {zoneLabel(shop.region)}</span>}
           {shop.assigned_to && <span className="text-[10px] px-1.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>👤 {shop.assigned_to}</span>}
           {rating[1] && <span className="text-[10px] px-1.5 rounded-full font-semibold" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>★ {rating[1]} ({rating[2]})</span>}
@@ -459,6 +462,8 @@ function NoteLine({ line }) {
   )
 }
 
+const CUSTOMER_STAGES = ['active', 'active2']
+
 // Billing customer type of a CRM shop → its CRM tab. No type yet = collision.
 function typeOfShop(sh) {
   let br = sh?.billing_rules
@@ -479,11 +484,12 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const setCrmMode = m => { setCrmModeState(m); try { localStorage.setItem('adas_crm_mode', m) } catch {} }
   const [allShops,      setShops]         = useState([])
   const [dupOpen,       setDupOpen]       = useState(false)
-  const shops = crmMode === 'retail' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode)
+  // Customers (active / active2) live in ⭐ Customers, not the pipeline (Mark 2026-10-03).
+  const shops = crmMode === 'retail' || crmMode === 'customers' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode && !CUSTOMER_STAGES.includes(sh.pipeline_stage))
   const modeToggle = (
     <div className="inline-flex rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
-      {[['collision', '🏢 Collision shops'], ['repair_shop', '🔧 Auto repair shops'], ['dealer', '🚗 Dealers'], ['retail', '🙂 Retail customers']].map(([m, l]) => (
-        <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1 whitespace-nowrap" style={{ backgroundColor: crmMode === m ? ORANGE : 'transparent', color: crmMode === m ? 'white' : '#666' }}>{l}{m !== 'retail' && allShops.length ? ` · ${allShops.filter(sh => typeOfShop(sh) === m).length}` : ''}</button>
+      {[['customers', '⭐ Customers'], ['collision', '🏢 Collision shops'], ['repair_shop', '🔧 Auto repair shops'], ['dealer', '🚗 Dealers'], ['retail', '🙂 Retail customers']].map(([m, l]) => (
+        <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1 whitespace-nowrap" style={{ backgroundColor: crmMode === m ? ORANGE : 'transparent', color: crmMode === m ? 'white' : '#666' }}>{l}{m === 'customers' && allShops.length ? ` · ${allShops.filter(sh => CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : m !== 'retail' && m !== 'customers' && allShops.length ? ` · ${allShops.filter(sh => typeOfShop(sh) === m && !CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : ''}</button>
       ))}
     </div>
   )
@@ -636,8 +642,15 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   }, {})
 
   // Kanban only shows non-lost stages; Lost appears in mobile list + filter pill
-  const kanbanStages = STAGES.filter(s => s.id !== 'lost')
+  const kanbanStages = STAGES.filter(s => s.id !== 'lost' && !CUSTOMER_STAGES.includes(s.id))
 
+  if (crmMode === 'customers') return (
+    <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#f5f3f0' }}>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      <CustomersView modeToggle={modeToggle} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) setDetailShop(sh) }} />
+      {detailShop && <ShopDetailPanel shop={detailShop} user={user} onClose={() => setDetailShop(null)} onSave={handleSave} onDelete={handleDelete} />}
+    </div>
+  )
   if (crmMode === 'retail') return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
@@ -957,7 +970,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
                     style={{ backgroundColor: ORANGE }}>+ Add Shop</button>
                 </div>
               ) : (
-                STAGES.filter(s => !stageFilter || s.id === stageFilter).map(stage => {
+                STAGES.filter(s => !CUSTOMER_STAGES.includes(s.id) && (!stageFilter || s.id === stageFilter)).map(stage => {
                   const stageShops = byStage[stage.id] || []
                   if (stageShops.length === 0) return null
                   return (
