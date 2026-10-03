@@ -730,6 +730,10 @@ router.post('/shops/merge-twins', async (req, res) => {
   try { const M = await import('../services/shopMerge.js'); res.json(await M.mergeExactTwins(req, 'auto-merge (exact twins)', { dry: String(req.query.dry || '') === '1' })) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+router.get('/shops/customers', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { customerReport } = await import('../services/customers.js'); res.json(await customerReport(req)) } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/shops/duplicates', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {

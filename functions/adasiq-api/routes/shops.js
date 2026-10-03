@@ -436,6 +436,11 @@ router.put('/full-service-by-name', async (req, res) => {
 // 🧾 The shop's billing by NAME, for the scrub report header (Mark 2026-10-02: Big 4
 // changes save the moment they're made, one home = the CRM shop). Reports which
 // CRM row the name matched, so a wrong / missing match is visible, not silent.
+// ⭐ Customers view (Mark 2026-10-03).
+router.get('/customers', async (req, res) => {
+  try { const { customerReport } = await import('../services/customers.js'); res.json({ ok: true, ...(await customerReport(req)) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
 // 🔀 Merge — Mark and Kat only (Mark 2026-10-02).
 router.post('/merge', express.json(), async (req, res) => {
   try {
