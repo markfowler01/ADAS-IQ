@@ -9,7 +9,7 @@ function inline(text, key) {
   // `code`, **bold**, and bare links, in one pass.
   const parts = []
   let rest = String(text)
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(https?:\/\/[^\s)]+)/
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\(https?:\/\/[^\s)]+\))|(https?:\/\/[^\s)]+)/   // `code`, **bold**, [text](url), bare url
   let i = 0
   for (;;) {
     const m = rest.match(re)
@@ -18,6 +18,7 @@ function inline(text, key) {
     const tok = m[0]
     if (tok.startsWith('`')) parts.push(<code key={`${key}c${i}`} style={{ backgroundColor: '#f1ede9', padding: '1px 5px', borderRadius: 4, fontFamily: 'IBM Plex Mono, monospace', fontSize: '.92em' }}>{tok.slice(1, -1)}</code>)
     else if (tok.startsWith('**')) parts.push(<b key={`${key}b${i}`}>{tok.slice(2, -2)}</b>)
+    else if (tok.startsWith('[')) { const mm = tok.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/); parts.push(<a key={`${key}l${i}`} href={mm[2]} target="_blank" rel="noreferrer" style={{ color: ORANGE, fontWeight: 700 }}>{mm[1]}</a>) }
     else parts.push(<a key={`${key}a${i}`} href={tok} target="_blank" rel="noreferrer" style={{ color: ORANGE, fontWeight: 700 }}>{tok}</a>)
     rest = rest.slice(m.index + tok.length); i++
   }

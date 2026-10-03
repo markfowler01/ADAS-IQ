@@ -8,7 +8,7 @@ Zoho Assist unattended access lets the office or a senior tech see and drive a f
 
 | Piece | What it does | Where it comes from |
 | --- | --- | --- |
-| APKMirror Installer | Installs the bundled (.apkm) Zoho app on a tablet with no Play Store | WorkDrive · Tech Dept > Autel Setup > Zoho Assist, or [APKMirror Installer (Official)](https://www.apkmirror.com/apk/apkmirror/apkmirror-installer-official/) |
+| APKMirror Installer | Installs the bundled (.apkm) Zoho app on a tablet with no Play Store | WorkDrive · Absolute ADAS Command Center > 01_Ops > Autel Setup > Zoho Assist, or [APKMirror Installer (Official)](https://www.apkmirror.com/apk/apkmirror/apkmirror-installer-official/) |
 | Zoho Assist Customer App | The agent that keeps the tablet reachable | Same folder, 1.48 bundle (1.37.2 plain APK as a fallback), or [Customer App - Zoho Assist on APKMirror](https://www.apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/) |
 | Zoho Assist Universal Add-on | Turns view-only into full remote control | Same folder |
 | Zoho Assist console | Where you enroll, name, connect and manage tablets | assist.zoho.com, or the Zoho Assist phone app |
@@ -33,7 +33,7 @@ Two rules. We already pay for Zoho Assist, so no TeamViewer for Autel's built-in
 
 ## Step 3: Get the files
 
-- [ ] In the tablet's browser, open the shared WorkDrive folder Tech Dept > Autel Setup > Zoho Assist, or scan the QR code posted in the shop.
+- [ ] In the tablet's browser, open the WorkDrive folder Absolute ADAS Command Center > 01_Ops > Autel Setup > Zoho Assist, or scan the QR code posted in the shop.
 - [ ] Download all four files:
   - 1_APKMirror-Installer.apk
   - 2_Zoho-Customer-1.48.apkm
