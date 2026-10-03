@@ -101,6 +101,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [big3Msg, setBig3Msg] = useState('')
   const [quoteSent, setQuoteSent] = useState('')
   const [liveCollision, setLiveCollision] = useState(true)
+  const [jobOnly, setJobOnly] = useState(false)   // 🧾 Create job (no quote email) beside 📝 Build quote — Mark 2026-10-02
   const big3SaveRef = useRef(null)
   const [big3Info, setBig3Info] = useState(null)
   // 💵 Cash cap on the main screen (Mark 2026-09-14): 700 (default) | 350 | 0 = no cap
@@ -623,6 +624,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           onClose={() => setPricePreview(null)}
           onConfirm={handleApprove}
           customerId={selectedCustomer?.id || ''}
+          jobOnly={jobOnly}
           busy={submitting || previewBusy}
         />
   ) : null
@@ -645,7 +647,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           selectedCustomer={selectedCustomer} setSelectedCustomer={setSelectedCustomer} setSelectedSalesperson={setSelectedSalesperson}
           jobDate={jobDate} setJobDate={setJobDate} todayPT={todayPT}
           liveTotal={liveTotalCapped} listTotal={liveTotal} cashCap={cashCap} setCashCap={setCashCap} selected={selected} removed={removed}
-          onCreate={() => openPriceReview()} creating={submitting} previewBusy={previewBusy}
+          onCreate={() => { setJobOnly(false); openPriceReview() }} onCreateJob={() => { setJobOnly(true); openPriceReview() }} creating={submitting} previewBusy={previewBusy}
           onCreateLegacy={handleCreateJob} creatingLegacy={creatingJob} busy={submitting || creatingJob}
           invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}
           dispatch={dispatch} setDispatch={setDispatch}
@@ -929,9 +931,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 // carry, priced by the real matcher, fully editable before anything
 // exists in Books — schedule picker, tier swaps, included/paid toggles,
 // inline rate edit, quantity stepper, add + remove lines.
-function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3, big3Save, onBig3Save, shopName, onClose, onConfirm, busy, customerId = '' }) {
+function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3, big3Save, onBig3Save, shopName, onClose, onConfirm, busy, customerId = '', jobOnly = false }) {
   // 📤 Quote-first (Mark 2026-10-02): collision shops build AND send from this screen.
-  const quoteFirst = preview?.collision !== false && String(insurer || '').toLowerCase() !== 'cash'
+  const quoteFirst = !jobOnly && preview?.collision !== false && String(insurer || '').toLowerCase() !== 'cash'
   const [sendTo, setSendTo] = useState(null)
   useEffect(() => {
     if (!quoteFirst || !customerId) { setSendTo([]); return }

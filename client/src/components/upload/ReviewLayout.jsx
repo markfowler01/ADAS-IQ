@@ -101,7 +101,7 @@ export default function ReviewLayout({
   onCreate, creating, previewBusy, onCreateLegacy, creatingLegacy,
   invoiceError, kanbanWarning, resultCard, busy,
   dispatch = 'mark', setDispatch = () => {},
-  poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '', quoteFirst = false,
+  poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '', quoteFirst = false, onCreateJob = null,
   listTotal = null, cashCap = 700, setCashCap = () => {},
   onOldLook,
 }) {
@@ -328,7 +328,7 @@ export default function ReviewLayout({
         <Footer
           note={!selectedCustomer ? 'Pick the Zoho customer to enable Create job' : selected.length === 0 ? 'Turn on at least one calibration' : null}
           secondary={<div className="flex-1 flex items-center gap-3 px-1"><span className="text-xl font-extrabold tabular-nums" style={{ color: '#1a1a1a' }}>{liveTotal != null ? fmt(liveTotal) : '—'}</span><span className="text-xs" style={{ color: '#666' }}><b style={{ color: ORANGE }}>{selected.length}</b> selected · {removed.length} off</span></div>}
-          primary={<PrimaryButton tone={quoteFirst ? 'blue' : 'orange'} onClick={onCreate} disabled={!canCreate}>{quoteFirst ? (creating ? 'Building the quote…' : previewBusy ? 'Pricing lines…' : `📝 Build quote${liveTotal != null ? ` — ${fmt(liveTotal)}` : ''}`) : creating ? 'Creating job…' : previewBusy ? 'Pricing lines…' : `Create job${liveTotal != null ? ` — ${fmt(liveTotal)}` : ''} → ${dispatch === 'need_dispatch' ? 'Ready to dispatch' : dispatch === 'jaden' ? 'Jayden' : 'Mark'}`}</PrimaryButton>}
+          primary={<>{quoteFirst && onCreateJob && <PrimaryButton tone="orange" className="!flex-1" onClick={onCreateJob} disabled={!canCreate}>🧾 Create job</PrimaryButton>}<PrimaryButton tone={quoteFirst ? 'blue' : 'orange'} onClick={onCreate} disabled={!canCreate}>{quoteFirst ? (creating ? 'Building the quote…' : previewBusy ? 'Pricing lines…' : `📝 Build quote${liveTotal != null ? ` — ${fmt(liveTotal)}` : ''}`) : creating ? 'Creating job…' : previewBusy ? 'Pricing lines…' : `Create job${liveTotal != null ? ` — ${fmt(liveTotal)}` : ''} → ${dispatch === 'need_dispatch' ? 'Ready to dispatch' : dispatch === 'jaden' ? 'Jayden' : 'Mark'}`}</PrimaryButton></>}
         />
       )}
     </>
