@@ -1210,7 +1210,7 @@ const TABS = [
   { id: 'vans',    label: 'Vans & Locations' },
   { id: 'assets',  label: 'Tools & Equipment' },
   { id: 'laptops', label: 'Laptops' },
-  { id: 'setup',   label: 'Laptop Setup' },   // the rule, the asset list and both runbooks (2026-09-27)
+  { id: 'setup',   label: 'Setup Runbooks' },   // the rule, the asset list and both runbooks (2026-09-27)
   { id: 'oem',     label: 'OEM Software' },
 ]
 

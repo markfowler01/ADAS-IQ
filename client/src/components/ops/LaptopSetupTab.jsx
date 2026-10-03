@@ -10,6 +10,7 @@ import { useState } from 'react'
 import Markdown from '../Markdown.jsx'
 import shopRunbook from '../../content/tech-laptop-shop-runbook.md?raw'
 import euroRunbook from '../../content/tech-laptop-euro-runbook.md?raw'
+import tabletRunbook from '../../content/autel-tablet-zoho-assist-runbook.md?raw'   // Mark's SOP, 2026-10-03
 
 const ORANGE = '#CD4419'
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } }
@@ -105,6 +106,7 @@ export default function LaptopSetupTab() {
       {[
         { id: 'shop', title: 'Shop Laptop Setup Runbook', sub: 'Ford and GM machine · TECH-LAPTOP-1, TECH-LAPTOP-2…', md: shopRunbook },
         { id: 'euro', title: 'Tech Laptop Euro Setup Runbook', sub: 'BMW, Mercedes, VW/Audi, Volvo, JLR · TECH-LAPTOP-EURO-1…', md: euroRunbook },
+        { id: 'tablet', title: 'Zoho Assist Unattended Access on Autel Tablets', sub: 'MS909, IM608 and other Android Autel units · sideload from WorkDrive, enroll, name, test', md: tabletRunbook },
       ].map(b => {
         const open = openBook === b.id
         return (
