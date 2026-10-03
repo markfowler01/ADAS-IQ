@@ -105,7 +105,7 @@ function require(cals, re, label, calType, trigger, lineRefs, why, out, mayAdd =
  * Enforce the hard rules on a finished scrub. Mutates data.calibrations.
  * Returns what it changed so the report can say "guard: …".
  */
-export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
+export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '' } = {}) {
   const out = { flipped: [], added: [], hits: {} }
   if (!data || !Array.isArray(data.calibrations)) return out
   let hits = {}
@@ -467,6 +467,22 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null } = {}) {
     if (av && av.enabled === true && !equipped) {
       Object.assign(av, { enabled: false, line_references: '', _guard: 'if-equipped', justification: 'If equipped with Intelligent Around View Monitor, the camera calibration is required after this repair — confirm at pre-scan. The estimate options do not show Around View, so it is not billed by default.' })
       out.demoted = [...(out.demoted || []), 'Around View (Nissan, not shown as equipped)']
+    }
+  }
+
+  // 6e. Around View on EVERY make only when the car has the system (Mark 2026-10-02,
+  //     2022 Yukon Denali CH11819: "yes if the car has the around view system, this
+  //     car does not"). Proof = the estimate itself (options block or a line) names a
+  //     surround / 360 / around-view / bird's-eye / multi-view camera. The model's own
+  //     "equipped" guess is not proof. Only judged when we have the estimate text.
+  if (text) {
+    const AV_PROOF = /surround[- ]?vision|surround[- ]?view|around[- ]?view|360[°º]?[- ]?(degree[- ]?)?(camera|view|vision)|bird'?s?[- ]?eye|multi[- ]?view camera|panoramic view (monitor|camera)|top[- ]?view camera|overhead (view )?camera|side view camera|hd surround/i
+    const hasAv = AV_PROOF.test(text)
+    for (const av of cals.filter(c => /around view|surround|360|bird|multi[- ]?view/i.test(String(c.calibration_name || '')))) {
+      if (av.enabled === true && !hasAv && !av._fs) {
+        Object.assign(av, { enabled: false, line_references: '', equipped: 'unknown', _guard: 'if-equipped', justification: 'Not required — the estimate shows no surround-view (Around View / 360) camera system on this vehicle. If it is equipped, the Around View calibration is required after this repair — confirm at pre-scan.' })
+        out.demoted = [...(out.demoted || []), 'Around View (no surround-view system shown)']
+      }
     }
   }
 

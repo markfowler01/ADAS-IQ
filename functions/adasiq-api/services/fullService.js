@@ -53,7 +53,9 @@ export function fsRulesOf(shop) {
   const ctype = String(br.customer_type || '')
   const collision = !ctype || ctype === 'body_shop'
   const on = collision && br.full_service_on === true
-  const rules = Object.fromEntries(FULL_SERVICE.map(f => [f.key, !collision ? 'we' : on ? (set[f.key] || FS_DEFAULT) : 'shop']))
+  // Full Service OFF in the CRM = the items are left off the report and the quote entirely
+  // (Mark 2026-10-02: "the full service items are on the report and it is turned off in the crm").
+  const rules = Object.fromEntries(FULL_SERVICE.map(f => [f.key, !collision ? 'we' : on ? (set[f.key] || FS_DEFAULT) : 'off']))
   return { rules, set, on, collision, customer_type: ctype, set_by: br.full_service_set_by || '', set_at: br.full_service_set_at || '' }
 }
 
@@ -94,9 +96,12 @@ export async function saveFullService(req, shop, patch, by = '', { learnOnly = f
  */
 export function tagRows(cals, rules, { collision = true } = {}) {
   const keep = []
+  const seenFs = new Set()
   for (const c of Array.isArray(cals) ? cals : []) {
     const key = fsKeyFor(c.calibration_name || c.name)
     const f = key ? FULL_SERVICE.find(x => x.key === key) : null
+    if (f && collision && rules?.[key] === 'off') continue          // Full Service switched off for this shop
+    if (f) { if (seenFs.has(key)) continue; seenFs.add(key) }        // one row per item (two "Battery-Disconnect Resets" on CH11819)
     // Optional items (not OEM-required) exist only for Full Service shops that do or offer them.
     if (f?.optional && (!collision || (rules?.[key] || FS_DEFAULT) === 'shop' || !rules)) continue
     if (!collision || !f) { delete c._fs; keep.push(c); continue }   // non-collision customers: plain lines

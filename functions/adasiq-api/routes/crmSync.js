@@ -721,6 +721,29 @@ router.get('/report-link', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try { const R = await import('../services/publicReport.js'); res.json({ url: await R.reportUrl(req, String(req.query.scrub || '')) }) } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 🔎 CRM duplicate finder (Mark 2026-10-02: "I see 2 Showcases"). Read-only: groups
+// shops whose names match once "auto / body / collision / rebuild / shop / inc / llc"
+// are ignored, or share a phone / email / Books link. Nothing is merged here.
+router.get('/shops/duplicates', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { getAllShops } = await import('./shops.js')
+    const shops = await getAllShops(req)
+    const loose = n => String(n || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]/g, ' ').replace(/\b(the|auto|automotive|body|bodyshop|shop|collision|repair|repairs|center|centre|rebuild|rebuilders|inc|llc|co|company|and|of)\b/g, ' ').replace(/\s+/g, ' ').trim()
+    const digits = p => String(p || '').replace(/\D/g, '').slice(-10)
+    const groups = new Map()
+    const add = (k, sh, why) => { if (!k) return; const g = groups.get(k) || { key: k, why, shops: new Map() }; g.shops.set(sh.id, sh); groups.set(k, g) }
+    for (const sh of shops) {
+      add(`name:${loose(sh.shop_name)}`, sh, 'same name')
+      const ph = digits(sh.phone || sh.shop_phone); if (ph.length === 10) add(`phone:${ph}`, sh, 'same phone')
+      const em = String(sh.email || '').toLowerCase().trim(); if (em.includes('@')) add(`email:${em}`, sh, 'same email')
+      if (sh.zoho_contact_id) add(`books:${sh.zoho_contact_id}`, sh, 'same Books customer')
+    }
+    const out = [...groups.values()].filter(g => g.shops.size > 1).map(g => ({ why: g.why, key: g.key, shops: [...g.shops.values()].map(s => ({ id: s.id, name: s.shop_name, stage: s.pipeline_stage || '', city: s.city || '', phone: s.phone || '', books: s.zoho_contact_id || '', jobs: s.job_count ?? null, has_rules: !!s.billing_rules })) }))
+    const q = String(req.query.q || '').toLowerCase()
+    res.json({ total_shops: shops.length, groups: q ? out.filter(g => g.shops.some(s => s.name.toLowerCase().includes(q))) : out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/quote-audit', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {

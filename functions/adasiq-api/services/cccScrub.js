@@ -98,7 +98,7 @@ export async function scrubCccItem(req, item) {
     // CCC's own fields beat anything read back by the model.
     Object.assign(data, { shop: e.shop || data.shop, ro_number: e.ro || data.ro_number, claim: e.claim || data.claim, insurer: e.insurer || data.insurer, vin: (e.vin.length === 17 ? e.vin : data.vin) || e.vin, year: e.year || data.year, make: e.make || data.make, model: e.model || data.model })
     data._pdfType = 'CCC'
-    try { await guardScrub(data, '', { hitsPromise }) } catch (err) { console.warn('[ccc scrub] guard skipped:', err.message) }
+    try { await guardScrub(data, '', { hitsPromise, text }) } catch (err) { console.warn('[ccc scrub] guard skipped:', err.message) }
   }
   data.vehicle = [data.year, data.make, data.model].filter(Boolean).join(' ')
   const { saveScrub } = await import('./scrubStore.js')

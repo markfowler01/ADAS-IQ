@@ -216,7 +216,7 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   // does not. Only on estimates (never on a Kinetic report read), and it can
   // only add or flip to required — never remove.
   if (String(data?._pdfType || '').toUpperCase() === 'CCC' && !data._demo) {
-    try { const { guardScrub } = await import('../services/scrubGuard.js'); await guardScrub(data, buffer.toString('base64'), { hitsPromise }); console.log(`[scrub ⏱] + guard ${Math.round((Date.now() - t0) / 1000)}s`) }
+    try { const { guardScrub } = await import('../services/scrubGuard.js'); await guardScrub(data, buffer.toString('base64'), { hitsPromise, text: estText || '' }); console.log(`[scrub ⏱] + guard ${Math.round((Date.now() - t0) / 1000)}s`) }
     catch (e) { console.warn('[extract] guard skipped:', e.message) }
   }
 

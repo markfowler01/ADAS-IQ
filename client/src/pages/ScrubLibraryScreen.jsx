@@ -123,6 +123,7 @@ function applyFs(cals, rules, collision = true) {
     if (!collision) continue   // repair shop / dealer / retail: plain lines, no Full Service
     if (!f || (!c.enabled && !f.optional)) continue
     const m = fsMode(rules, f.key)
+    if (m === 'off') { c._drop = true; continue }   // Full Service OFF for this shop → not on the quote at all
     if (f.optional && m === 'we') c.enabled = true
     if (m === 'we') weDo.push(`${f.emoji} ${c.calibration_name}`)
     else { c.enabled = false; (m === 'shop' ? shopDoes : offers).push(`${f.emoji} ${c.calibration_name}`); c.justification = `${m === 'shop' ? 'Required · shop handles this (Full Service rule).' : '💰 Offer: required, and we can do it for the shop.'} ${c.justification || ''}`.trim() }
