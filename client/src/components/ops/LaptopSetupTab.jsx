@@ -106,7 +106,7 @@ export default function LaptopSetupTab() {
       {[
         { id: 'shop', title: 'Shop Laptop Setup Runbook', sub: 'Ford and GM machine · TECH-LAPTOP-1, TECH-LAPTOP-2…', md: shopRunbook },
         { id: 'euro', title: 'Tech Laptop Euro Setup Runbook', sub: 'BMW, Mercedes, VW/Audi, Volvo, JLR · TECH-LAPTOP-EURO-1…', md: euroRunbook },
-        { id: 'tablet', title: 'Zoho Assist Unattended Access on Autel Tablets', sub: 'MS909, IM608 and other Android Autel units · sideload from WorkDrive, enroll, name, test', md: tabletRunbook },
+        { id: 'tablet', title: 'Autel Tablet Remote Access Runbook', sub: 'Zoho Assist unattended access · MS909, IM608 and other Android Autel units', md: tabletRunbook },
       ].map(b => {
         const open = openBook === b.id
         return (
