@@ -350,6 +350,49 @@ function StatsBar({ shops }) {
   )
 }
 
+// 🔎 Duplicate shops (read-only for now — merging comes with the merge tool).
+function DuplicatesPanel({ onClose, onOpenShop }) {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  const [all, setAll] = useState(false)
+  useEffect(() => { apiFetch(`${API_BASE}/api/shops/duplicates`).then(r => r.json()).then(x => { if (x.error) setErr(x.error); else setD(x) }).catch(e => setErr(e.message)) }, [])
+  const groups = (d?.groups || []).filter(g => all || g.likely)
+  const WHY = { 'same name': 'Same name', 'same phone': '📞 Same phone', 'same email': '✉️ Same email', 'same Books customer': '📚 Same Books customer' }
+  return (
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white w-full rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '92vh', maxWidth: 'min(860px, 98vw)' }}>
+        <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid #ebebeb' }}>
+          <div>
+            <div className="font-bold text-lg" style={{ color: '#1a1a1a' }}>🔎 Duplicate shops</div>
+            <div className="text-xs" style={{ color: '#888' }}>{d ? `${groups.length} group${groups.length === 1 ? '' : 's'} · ${d.total_shops} shops checked · nothing is merged from here yet` : 'Checking every shop…'}</div>
+          </div>
+          <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
+        </div>
+        <div className="px-5 py-3 overflow-y-auto space-y-3">
+          {err && <p className="text-sm" style={{ color: '#b91c1c' }}>{err}</p>}
+          {d && <label className="flex items-center gap-2 text-xs" style={{ color: '#555' }}><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} /> Also show same-name shops with different phones (usually separate locations, e.g. Maaco)</label>}
+          {groups.map(g => (
+            <div key={g.key} className="rounded-xl overflow-hidden" style={{ border: `1.5px solid ${g.likely ? '#fcd34d' : '#e0dbd6'}` }}>
+              <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ backgroundColor: g.likely ? '#fffbeb' : '#f5f3f0', color: g.likely ? '#92400e' : '#666' }}>{WHY[g.why] || g.why}{g.likely ? ' · likely the same shop' : ''}</div>
+              {g.shops.map(s => (
+                <button key={s.id} onClick={() => onOpenShop(s.id)} className="w-full text-left px-3 py-2 flex items-center justify-between gap-2 text-sm" style={{ borderTop: '1px solid #f1f5f9' }}>
+                  <span className="min-w-0"><b style={{ color: '#1a1a1a' }}>{s.name}</b> <span className="text-xs" style={{ color: '#888' }}>{s.phone || 'no phone'}{s.city ? ` · ${s.city}` : ''}</span></span>
+                  <span className="flex items-center gap-1 flex-shrink-0 text-[10px] font-bold">
+                    <span className="px-1.5 py-0.5 rounded" style={['active', 'active2', 'second_active'].includes(s.stage) ? { backgroundColor: '#dcfce7', color: '#166534' } : { backgroundColor: '#f5f3f0', color: '#666' }}>{s.stage || '—'}</span>
+                    {s.books && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>📚 Books</span>}
+                    {s.has_rules && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fdf3ef', color: '#CD4419' }}>🧾 rules</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))}
+          {d && !groups.length && <p className="text-sm" style={{ color: '#166534' }}>✓ No duplicates found.</p>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Billing customer type of a CRM shop → its CRM tab. No type yet = collision.
 function typeOfShop(sh) {
   let br = sh?.billing_rules
@@ -369,6 +412,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [crmMode, setCrmModeState] = useState(() => { try { const m = localStorage.getItem('adas_crm_mode') || 'collision'; return ({ shops: 'collision', repair: 'retail' })[m] || m } catch { return 'collision' } })
   const setCrmMode = m => { setCrmModeState(m); try { localStorage.setItem('adas_crm_mode', m) } catch {} }
   const [allShops,      setShops]         = useState([])
+  const [dupOpen,       setDupOpen]       = useState(false)
   const shops = crmMode === 'retail' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode)
   const modeToggle = (
     <div className="inline-flex rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
@@ -538,6 +582,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'white' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      {dupOpen && <DuplicatesPanel onClose={() => setDupOpen(false)} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) { setDupOpen(false); setDetailShop(sh) } }} />}
 
       <main className="flex-1 flex flex-col" style={{ padding: '1.25rem 1.25rem 0', minHeight: 0 }}>
 
@@ -594,6 +639,13 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
                 <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
               </svg>
               <span className="hidden sm:inline">Broadcast</span>
+            </button>
+
+            {/* 🔎 Duplicates (Mark 2026-10-02) */}
+            <button onClick={() => setDupOpen(true)}
+              className="text-sm font-semibold px-4 py-2 rounded-xl"
+              style={{ border: '1.5px solid #fcd34d', color: '#92400e', backgroundColor: '#fffbeb' }}>
+              🔎 Duplicates
             </button>
 
             {/* Export */}

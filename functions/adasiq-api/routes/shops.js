@@ -433,6 +433,11 @@ router.put('/full-service-by-name', async (req, res) => {
 // 🧾 The shop's billing by NAME, for the scrub report header (Mark 2026-10-02: Big 4
 // changes save the moment they're made, one home = the CRM shop). Reports which
 // CRM row the name matched, so a wrong / missing match is visible, not silent.
+// 🔎 Duplicates for the CRM screen (read-only).
+router.get('/duplicates', async (req, res) => {
+  try { const { findShopDuplicates } = await import('../services/shopDupes.js'); res.json({ ok: true, ...(await findShopDuplicates(req)) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/billing-by-name', async (req, res) => {
   try {
     const b3 = await import('../services/big3.js')
