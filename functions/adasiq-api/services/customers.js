@@ -47,8 +47,11 @@ export async function customerReport(req) {
   const shops = allShops.filter(s => isCust(s) || invoicedRecently(s))
   // Books customers with recent invoices and no CRM shop at all.
   const crmIds = new Set(allShops.map(s => String(s.zoho_contact_id || '')).filter(Boolean)), crmNames = new Set(allShops.map(s => loose(s.shop_name)))
+  // Retail people (Books 'individual' contacts) live under Retail customers, not here.
+  let individuals = new Set()
+  try { const z = catalyst.initialize(req, { type: 'advancedio' }).zcql(); const rows = await z.executeZCQLQuery("SELECT ac_contact_id FROM ArAccounts WHERE ac_kind = 'individual' LIMIT 300"); individuals = new Set((rows || []).map(r => String((r.ArAccounts || r).ac_contact_id))) } catch { /* fine */ }
   const orphans = new Map()
-  for (const i of inv) { if (String(i.inv_date) < recentCut) continue; const id = String(i.customer_id || ''); if ((id && crmIds.has(id)) || crmNames.has(loose(i.customer_name))) continue; const k = id || loose(i.customer_name); if (!orphans.has(k)) orphans.set(k, { customer_id: id, name: i.customer_name || '' }) }
+  for (const i of inv) { if (String(i.inv_date) < recentCut || individuals.has(String(i.customer_id || ''))) continue; const id = String(i.customer_id || ''); if ((id && crmIds.has(id)) || crmNames.has(loose(i.customer_name))) continue; const k = id || loose(i.customer_name); if (!orphans.has(k)) orphans.set(k, { customer_id: id, name: i.customer_name || '' }) }
   const thisYm = today.slice(0, 7)
   const prevYms = [1, 2, 3].map(n => { const d = new Date(now.getFullYear(), now.getMonth() - n, 1); return d.toISOString().slice(0, 7) })
   const day = now.getDate(), daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
