@@ -26,6 +26,7 @@ import pipelineRouter, { pipelineCronRouter } from './routes/pipeline.js'   // C
 import recruitRouter, { publicRouter as recruitPublicRouter } from './routes/recruit.js'
 import { publicRouter as bookingPublicRouter } from './routes/booking.js'
 import shopAnswersPublicRouter from './routes/shopAnswersPublic.js'
+import opsRouter from './routes/ops.js'
 import publicReportRouter from './routes/publicReport.js'
 import extractBusinessCardRouter from './routes/extract-business-card.js'
 import invoiceRouter from './routes/invoice.js'
@@ -378,6 +379,7 @@ app.use('/api/public/estimate', estimatorPublicRouter(estimatorInternals))  // s
 app.use('/api/public/partstech', partsTechPublicRouter(estimatorInternals))  // PartsTech cart/order callback, HMAC-checked
 app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
+app.use('/api/ops', requireAuth, requireStaff, opsRouter)   // 🏭 shared Ops Hub state (2026-10-03)
 app.use('/api/sales-stops', requireAuth, salesStopsRouter)
 // 💬 Text as Mark — outbox (owner) + Mac bridge (cron secret). The Mac sends, never Catalyst.
 app.use('/api/personal-texts', requireAuth, requireMark, personalTextsOwnerRouter)

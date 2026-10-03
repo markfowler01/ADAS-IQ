@@ -1,6 +1,7 @@
 import LaptopSetupTab from './ops/LaptopSetupTab.jsx'
 import { useState, useEffect, useRef } from 'react'
 import Navbar from './Navbar'
+import { API_BASE, apiFetch } from '../utils/api.js'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const BRAND = '#CD4419'
@@ -71,30 +72,30 @@ const SEED_LAPTOPS = [
 ]
 
 const SEED_OEM = [
-  { id: 'o1',  name: 'Ford IDS / FDRS',         build: 'Build 2', tech: 'mark',   renewal: '2026-09-01', cost: 1200, username: '', portal: 'https://www.fordtechservice.dealerconnection.com', twofa: '',                                              notes: 'J2534 required' },
-  { id: 'o2',  name: 'GM Techline Connect',      build: 'Build 2', tech: 'mark',   renewal: '2026-07-15', cost: 1800, username: '', portal: 'https://www.gmtechinfo.com',                       twofa: '',                                              notes: 'SPS module programming' },
-  { id: 'o3',  name: 'Toyota Techstream / GTS+', build: 'Build 2', tech: 'mark',   renewal: '2026-11-01', cost: 660,  username: '', portal: 'https://techinfo.toyota.com',                      twofa: '',                                              notes: 'Includes Lexus' },
-  { id: 'o4',  name: 'Honda HDS',                build: 'Build 2', tech: 'jayden', renewal: '2026-08-20', cost: 480,  username: '', portal: 'https://ecomdl.honda.com',                          twofa: '',                                              notes: 'Includes Acura' },
-  { id: 'o5',  name: 'Nissan Consult III+',      build: 'Build 2', tech: 'jayden', renewal: '2026-08-01', cost: 480,  username: '', portal: 'https://techinfo.nissan.com',                       twofa: '',                                              notes: 'Includes Infiniti. Serial# needed.' },
-  { id: 'o6',  name: 'Tesla Toolbox',            build: 'Build 2', tech: 'mark',   renewal: '2026-10-01', cost: 0,    username: '', portal: 'https://toolbox.tesla.com',                         twofa: '',                                              notes: 'Online / current' },
-  { id: 'o7',  name: 'BMW ISTA',                 build: 'Build 1', tech: 'mark',   renewal: '2026-10-15', cost: 1560, username: '', portal: 'https://www.bmwtechinfo.com',                       twofa: '',                                              notes: 'Includes Mini. ENET/ICOM required.' },
-  { id: 'o8',  name: 'Volvo VIDA',               build: 'Build 1', tech: 'mark',   renewal: '2026-07-01', cost: 720,  username: '', portal: 'https://vida.volvocars.com',                        twofa: 'https://volvocars.service-now.com/sp?id=index', notes: 'Includes Polestar' },
-  { id: 'o9',  name: 'FCA / Stellantis wiTECH',  build: 'Build 1', tech: 'mark',   renewal: '2026-09-01', cost: 960,  username: '', portal: 'https://www.fcawitech.com',                         twofa: '1-844-948-3242',                                notes: '2FA — call 1-844-948-3242' },
-  { id: 'o10', name: 'Mercedes XENTRY',          build: 'Build 1', tech: 'mark',   renewal: '2026-12-01', cost: 2400, username: '', portal: 'https://xentry.mercedes-benz.com',                  twofa: 'https://login.mercedes-benz.com/password/mfa-reset', notes: 'System# + HW ID required' },
-  { id: 'o11', name: 'VW ODIS / GRP',            build: 'Build 1', tech: 'jayden', renewal: '2026-09-30', cost: 960,  username: '', portal: 'https://erwin.volkswagen.de',                       twofa: 'odiscerts@vw.com',                              notes: '2FA — odiscerts@vw.com' },
-  { id: 'o12', name: 'Audi ODIS',                build: 'Build 1', tech: 'jayden', renewal: '2026-09-30', cost: 960,  username: '', portal: 'https://erwin.volkswagen.de',                       twofa: 'odiscerts@vw.com',                              notes: 'Same portal as VW' },
-  { id: 'o13', name: 'Subaru SSM4',              build: 'Build 2', tech: 'mark',   renewal: '2026-06-01', cost: 360,  username: '', portal: 'https://www.subarutech.com',                        twofa: '',                                              notes: '' },
-  { id: 'o14', name: 'Mazda MDARS',              build: 'Build 2', tech: 'mark',   renewal: '2026-08-01', cost: 480,  username: '', portal: 'https://mazdatechinfo.com',                         twofa: '',                                              notes: 'C3 R2R / C4 R2R compatible' },
+  { id: 'o1',  name: 'Ford IDS / FDRS',         build: 'Build 2', tech: 'mark',   renewal: '', cost: 1200, username: '', portal: 'https://www.fordtechservice.dealerconnection.com', twofa: '',                                              notes: 'J2534 required' },
+  { id: 'o2',  name: 'GM Techline Connect',      build: 'Build 2', tech: 'mark',   renewal: '', cost: 1800, username: '', portal: 'https://www.gmtechinfo.com',                       twofa: '',                                              notes: 'SPS module programming' },
+  { id: 'o3',  name: 'Toyota Techstream / GTS+', build: 'Build 2', tech: 'mark',   renewal: '', cost: 660,  username: '', portal: 'https://techinfo.toyota.com',                      twofa: '',                                              notes: 'Includes Lexus' },
+  { id: 'o4',  name: 'Honda HDS',                build: 'Build 2', tech: 'jayden', renewal: '', cost: 480,  username: '', portal: 'https://ecomdl.honda.com',                          twofa: '',                                              notes: 'Includes Acura' },
+  { id: 'o5',  name: 'Nissan Consult III+',      build: 'Build 2', tech: 'jayden', renewal: '', cost: 480,  username: '', portal: 'https://techinfo.nissan.com',                       twofa: '',                                              notes: 'Includes Infiniti. Serial# needed.' },
+  { id: 'o6',  name: 'Tesla Toolbox',            build: 'Build 2', tech: 'mark',   renewal: '', cost: 0,    username: '', portal: 'https://toolbox.tesla.com',                         twofa: '',                                              notes: 'Online / current' },
+  { id: 'o7',  name: 'BMW ISTA',                 build: 'Build 1', tech: 'mark',   renewal: '', cost: 1560, username: '', portal: 'https://www.bmwtechinfo.com',                       twofa: '',                                              notes: 'Includes Mini. ENET/ICOM required.' },
+  { id: 'o8',  name: 'Volvo VIDA',               build: 'Build 1', tech: 'mark',   renewal: '', cost: 720,  username: '', portal: 'https://vida.volvocars.com',                        twofa: 'https://volvocars.service-now.com/sp?id=index', notes: 'Includes Polestar' },
+  { id: 'o9',  name: 'FCA / Stellantis wiTECH',  build: 'Build 1', tech: 'mark',   renewal: '', cost: 960,  username: '', portal: 'https://www.fcawitech.com',                         twofa: '1-844-948-3242',                                notes: '2FA — call 1-844-948-3242' },
+  { id: 'o10', name: 'Mercedes XENTRY',          build: 'Build 1', tech: 'mark',   renewal: '', cost: 2400, username: '', portal: 'https://xentry.mercedes-benz.com',                  twofa: 'https://login.mercedes-benz.com/password/mfa-reset', notes: 'System# + HW ID required' },
+  { id: 'o11', name: 'VW ODIS / GRP',            build: 'Build 1', tech: 'jayden', renewal: '', cost: 960,  username: '', portal: 'https://erwin.volkswagen.de',                       twofa: 'odiscerts@vw.com',                              notes: '2FA — odiscerts@vw.com' },
+  { id: 'o12', name: 'Audi ODIS',                build: 'Build 1', tech: 'jayden', renewal: '', cost: 960,  username: '', portal: 'https://erwin.volkswagen.de',                       twofa: 'odiscerts@vw.com',                              notes: 'Same portal as VW' },
+  { id: 'o13', name: 'Subaru SSM4',              build: 'Build 2', tech: 'mark',   renewal: '', cost: 360,  username: '', portal: 'https://www.subarutech.com',                        twofa: '',                                              notes: '' },
+  { id: 'o14', name: 'Mazda MDARS',              build: 'Build 2', tech: 'mark',   renewal: '', cost: 480,  username: '', portal: 'https://mazdatechinfo.com',                         twofa: '',                                              notes: 'C3 R2R / C4 R2R compatible' },
   { id: 'o15', name: 'Rivian',                   build: 'Build 1', tech: 'mark',   renewal: '',           cost: 0,    username: '', portal: '',                                                   twofa: '',                                              notes: 'Build pending' },
-  { id: 'o16', name: 'Autoauth',                 build: 'Both',    tech: 'mark',   renewal: '2026-12-01', cost: 720,  username: '', portal: 'https://autoauth.com',                              twofa: '',                                              notes: 'Covers multiple OEMs via portal' },
-  { id: 'o17', name: 'I-CAR',                    build: 'Both',    tech: 'mark',   renewal: '2026-12-01', cost: 0,    username: '', portal: 'https://www.i-car.com',                             twofa: '',                                              notes: 'Training certifications' },
+  { id: 'o16', name: 'Autoauth',                 build: 'Both',    tech: 'mark',   renewal: '', cost: 720,  username: '', portal: 'https://autoauth.com',                              twofa: '',                                              notes: 'Covers multiple OEMs via portal' },
+  { id: 'o17', name: 'I-CAR',                    build: 'Both',    tech: 'mark',   renewal: '', cost: 0,    username: '', portal: 'https://www.i-car.com',                             twofa: '',                                              notes: 'Training certifications' },
   { id: 'o18', name: 'Mitsubishi MUT-III',       build: 'Build 2', tech: 'mark',   renewal: '',           cost: 0,    username: '', portal: '',                                                   twofa: '800-846-7575',                                  notes: '2FA support line' },
 ]
 
 const SEED_ASSETS = [
   // Van 1 — Mark
   { id: 't1',  name: 'Autel MA600 ADAS Frame',              cat: 'Cal Frame',  location: 'van-1', sn: 'MA600',           sub_exp: '',           nickname: '', notes: 'Primary ADAS cal frame' },
-  { id: 't2',  name: 'Autel MS909 Scanner',                  cat: 'Scanner',    location: 'van-1', sn: '',                sub_exp: '2026-02-12', nickname: 'Obi-Wan', notes: "Mark's scanner" },
+  { id: 't2',  name: 'Autel MS909 Scanner',                  cat: 'Scanner',    location: 'van-1', sn: '',                sub_exp: '', nickname: 'Obi-Wan', notes: "Mark's scanner" },
   { id: 't3',  name: 'Autel IM608 Key Programmer',           cat: 'Full Kit',   location: 'van-1', sn: '',                sub_exp: '',           nickname: '', notes: '' },
   { id: 't4',  name: 'Radar Cal Plate — black stationary',   cat: 'Cal Target', location: 'van-1', sn: 'CSC0602/02',      sub_exp: '',           nickname: '', notes: 'ACC/Radar' },
   { id: 't5',  name: 'Radar Cal Plate — white Z',            cat: 'Cal Target', location: 'van-1', sn: 'CSC0802/03',      sub_exp: '',           nickname: '', notes: 'Nissan/Infiniti type II ACC' },
@@ -116,7 +117,7 @@ const SEED_ASSETS = [
   { id: 't21', name: 'J2534 CarDAQ-M Interface',             cat: 'Small Tool', location: 'van-1', sn: '',                sub_exp: '',           nickname: '', notes: 'OEM pass-thru' },
   // Van 2 — Jayden
   { id: 't22', name: 'Autel MA600 ADAS Frame',              cat: 'Cal Frame',  location: 'van-2', sn: 'MA600',           sub_exp: '',           nickname: '', notes: "Jayden's cal frame" },
-  { id: 't23', name: 'Autel MS909 Scanner',                  cat: 'Scanner',    location: 'van-2', sn: '',                sub_exp: '2026-05-20', nickname: 'Chewbacca', notes: "Jayden's scanner" },
+  { id: 't23', name: 'Autel MS909 Scanner',                  cat: 'Scanner',    location: 'van-2', sn: '',                sub_exp: '', nickname: 'Chewbacca', notes: "Jayden's scanner" },
   { id: 't24', name: 'Radar Cal Plate — black stationary',   cat: 'Cal Target', location: 'van-2', sn: 'CSC0602/02',      sub_exp: '',           nickname: '', notes: 'ACC/Radar' },
   { id: 't25', name: 'Radar Cal Plate — white Z',            cat: 'Cal Target', location: 'van-2', sn: 'CSC0802/03',      sub_exp: '',           nickname: '', notes: 'Nissan/Infiniti type II ACC' },
   { id: 't26', name: 'J2534 Interface',                      cat: 'Small Tool', location: 'van-2', sn: '',                sub_exp: '',           nickname: '', notes: '' },
@@ -153,7 +154,7 @@ const days = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null
 const statusOf = (d, base = 'active') => {
   if (base === 'inactive') return 'inactive'
   const n = days(d)
-  if (n === null) return base
+  if (n === null) return base === 'active' ? 'nodate' : base   // no date entered yet — say so, don't guess
   if (n < 0) return 'expired'
   if (n <= 60) return 'expiring'
   return 'active'
@@ -164,6 +165,7 @@ const STATUS = {
   expiring: { bg: '#fff3cd', fg: '#7d5a00', label: 'Expiring' },
   expired:  { bg: '#fde8e8', fg: '#9b1c1c', label: 'Expired' },
   inactive: { bg: '#f1efea', fg: '#5f5e5a', label: 'Inactive' },
+  nodate:   { bg: '#f1efea', fg: '#8a847e', label: 'No date yet' },
 }
 
 function Chip({ status }) {
@@ -345,8 +347,9 @@ function Alerts({ oem }) {
     if (n < 0)      alerts.push({ name: s.name, msg: 'EXPIRED',          err: true })
     else if (n <= 60) alerts.push({ name: s.name, msg: `Renews in ${n} days`, err: n <= 14 })
   })
+  const undated = oem.filter(s => !s.renewal && s.status !== 'inactive').length
   if (!alerts.length) return (
-    <div style={{ background: '#e6f4ea', borderRadius: 8, padding: '9px 14px', fontSize: 12, color: '#1a7336', marginBottom: 16 }}>All subscriptions current.</div>
+    <div style={{ background: undated ? '#f1efea' : '#e6f4ea', borderRadius: 8, padding: '9px 14px', fontSize: 12, color: undated ? '#5f5e5a' : '#1a7336', marginBottom: 16 }}>{undated ? `${undated} subscription${undated === 1 ? ' has' : 's have'} no renewal date yet — open each one and enter it; alerts and counters run off those dates.` : 'All subscriptions current.'}</div>
   )
   return (
     <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -1217,22 +1220,56 @@ const TABS = [
 export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
   const [tab, setTab] = useState('vans')
 
+  // Shared on the server (2026-10-03). The browser copy is a cache + the photos;
+  // the first load pushes any real edits that only ever lived in this browser.
   const [locations, setLocations] = useState(() => lsGet('ops2_loc',     SEED_LOCATIONS))
   const [assets,    setAssets]    = useState(() => lsGet('ops2_assets',  SEED_ASSETS))
   const [laptops,   setLaptops]   = useState(() => lsGet('ops2_laptops', SEED_LAPTOPS))
   const [oem,       setOem]       = useState(() => lsGet('ops2_oem',     SEED_OEM))
+  const [synced, setSynced] = useState(false)
+  const [syncMsg, setSyncMsg] = useState('')
+  const stripPhotos = list => list.map(x => { const o = { ...x }; for (const k of Object.keys(o)) if (typeof o[k] === 'string' && o[k].startsWith('data:')) delete o[k]; return o })
+  const sameAsSeed = (list, seed) => JSON.stringify(stripPhotos(list)) === JSON.stringify(stripPhotos(seed))
+  const keepPhotos = (fromServer, local) => fromServer.map(x => { const l = local.find(y => y.id === x.id); return l?.photo ? { ...x, photo: l.photo } : x })
+  useEffect(() => {
+    let live = true
+    ;(async () => {
+      try {
+        const r = await apiFetch(`${API_BASE}/api/ops/state`); const d = await r.json(); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+        const st = d.state || {}
+        const sections = [['locations', locations, setLocations, SEED_LOCATIONS], ['assets', assets, setAssets, SEED_ASSETS], ['laptops', laptops, setLaptops, SEED_LAPTOPS], ['oem', oem, setOem, SEED_OEM]]
+        for (const [key, local, set, seed] of sections) {
+          if (Array.isArray(st[key])) { if (live) set(keepPhotos(st[key], local)) }
+          else if (!sameAsSeed(local, seed)) { await apiFetch(`${API_BASE}/api/ops/state/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: stripPhotos(local) }) }) }   // first load: this browser's edits become the shared copy
+          else if (live) set(seed)   // untouched placeholder data → the clean seed (blank dates)
+        }
+        if (live) setSynced(true)
+      } catch (e) { if (live) setSyncMsg(`Not shared: ${e.message} — changes stay in this browser until it reconnects.`) }
+    })()
+    return () => { live = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const saveTimers = useRef({})
+  const saveShared = (key, list) => {
+    if (!synced) return
+    clearTimeout(saveTimers.current[key])
+    saveTimers.current[key] = setTimeout(async () => {
+      try { const r = await apiFetch(`${API_BASE}/api/ops/state/${key}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: stripPhotos(list) }) }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`); setSyncMsg('') }
+      catch (e) { setSyncMsg(`✗ Not saved to the shared Ops page: ${e.message}`) }
+    }, 600)
+  }
   const techs = SEED_TECHS
 
-  useEffect(() => lsSet('ops2_loc',     locations), [locations])
-  useEffect(() => lsSet('ops2_assets',  assets),    [assets])
-  useEffect(() => lsSet('ops2_laptops', laptops),   [laptops])
-  useEffect(() => lsSet('ops2_oem',     oem),       [oem])
+  useEffect(() => { lsSet('ops2_loc',     locations); saveShared('locations', locations) }, [locations])   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { lsSet('ops2_assets',  assets);    saveShared('assets', assets) },       [assets])      // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { lsSet('ops2_laptops', laptops);   saveShared('laptops', laptops) },     [laptops])     // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { lsSet('ops2_oem',     oem);       saveShared('oem', oem) },             [oem])         // eslint-disable-line react-hooks/exhaustive-deps
 
   const counts = { vans: locations.length, assets: assets.length, laptops: laptops.length, oem: oem.length }
 
   return (
     <div style={{ background: 'white', minHeight: '100vh' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      {syncMsg && <div style={{ background: '#fde8e8', color: '#b71c1c', fontSize: 12, padding: '6px 20px' }}>{syncMsg}</div>}
       {/* Section header */}
       <div style={{ background: '#1a1a1a', padding: '13px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ width: 30, height: 30, background: BRAND, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
