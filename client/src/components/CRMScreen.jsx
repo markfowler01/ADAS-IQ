@@ -264,7 +264,7 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
           </div>
         )}
         {lastTouchTxt && <p className="text-xs mb-1.5" style={{ color: '#999', fontStyle: 'italic' }}>Last: {lastTouchTxt}</p>}
-        {humanNotes.map((line, i) => <p key={i} className="text-xs mb-0.5" style={{ color: '#666' }}>· {line}</p>)}
+        {humanNotes.map((line, i) => <NoteLine key={i} line={line} />)}
 
         {(shop.pipeline_stage === 'denied' || shop.pipeline_stage === 'active2') && (() => {
           const reasons = shop.pipeline_stage === 'denied' ? (Array.isArray(shop.denied_reasons) ? shop.denied_reasons : shop.denied_reason ? [shop.denied_reason] : []) : []
@@ -438,6 +438,23 @@ function DuplicatesPanel({ user, onClose, onOpenShop, onMerged }) {
           {d && !groups.length && <p className="text-sm" style={{ color: '#166534' }}>✓ No duplicates found.</p>}
         </div>
       </div>
+    </div>
+  )
+}
+
+// A note line with its links as buttons instead of long raw URLs running off the
+// card (Mark 2026-10-03). Google Maps → 📍 Map, anything else → 🌐 <site>.
+function NoteLine({ line }) {
+  const urls = String(line || '').match(/https?:\/\/[^\s|]+/g) || []
+  const text = String(line || '').replace(/https?:\/\/[^\s|]+/g, ' ').replace(/[|·]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/^[.,;:\-\s]+$/, '')
+  const label = u => { try { const h = new URL(u).hostname.replace(/^www\./, ''); return /google\.[a-z.]+$/.test(h) && /maps|cid=|\/maps/.test(u) ? '📍 Map' : `🌐 ${h.split('.').slice(-2, -1)[0] || h}` } catch { return '🔗 Link' } }
+  if (!urls.length) return <p className="text-xs mb-0.5 break-words" style={{ color: '#666' }}>· {line}</p>
+  return (
+    <div className="text-xs mb-1 flex flex-wrap items-center gap-1" style={{ color: '#666' }}>
+      {text && <span className="break-words">· {text}</span>}
+      {[...new Set(urls)].map(u => (
+        <a key={u} href={u} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f3e8ff', color: '#7c3aed' }} title={u}>{label(u)} ↗</a>
+      ))}
     </div>
   )
 }
