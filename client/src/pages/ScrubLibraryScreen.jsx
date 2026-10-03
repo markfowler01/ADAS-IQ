@@ -1055,7 +1055,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
             return (
               <button onClick={openBuilder} disabled={qBusy || editing || !list.length || !onExtracted}
                 className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
-                style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1e40af', color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
+                style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1d4ed8', color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
                 title="Opens the estimate screen pre-filled from this scrub — pick the customer, check the lines, build, then send"
               >{qBusy ? 'Opening the estimate…' : `📝 Build quote${required.length ? ` (${required.length} required)` : ''}`}</button>
             )

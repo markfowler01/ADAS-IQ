@@ -100,6 +100,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   // ticked (Mark 2026-10-02: it looked saved but only saved on Create).
   const [big3Msg, setBig3Msg] = useState('')
   const [quoteSent, setQuoteSent] = useState('')
+  const [liveCollision, setLiveCollision] = useState(true)
   const big3SaveRef = useRef(null)
   const [big3Info, setBig3Info] = useState(null)
   // 💵 Cash cap on the main screen (Mark 2026-09-14): 700 (default) | 350 | 0 = no cap
@@ -243,6 +244,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         priceMap._fixed_total = fixedTotal
         setRowPrices(priceMap)
         if (d.big3) setBig3Info(d.big3)
+        setLiveCollision(d.collision !== false)
         if (d.shop_default_pool) setPoolOverride(prev => prev ?? notCashDefault(d.shop_default_pool))
       } catch { /* prices are a bonus, never a blocker */ }
     })()
@@ -648,7 +650,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}
           dispatch={dispatch} setDispatch={setDispatch}
           poolOverride={poolOverride} onPool={pickPoolOnScreen}
-          big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={onBig3Change} big3Msg={big3Msg} big3Save={big3Save} setBig3Save={setBig3Save}
+          big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={onBig3Change} big3Msg={big3Msg} quoteFirst={liveCollision && !cashMode && String(insurerOut || '').toLowerCase() !== 'cash'} big3Save={big3Save} setBig3Save={setBig3Save}
           onOldLook={() => { try { localStorage.setItem('adas_upload_look', 'old') } catch {} setOldLook(true) }}
           onPanelLook={panelLook ? () => { try { localStorage.removeItem('adas_upload_look') } catch {} setPanelLook(false) } : () => { try { localStorage.setItem('adas_upload_look', 'panel') } catch {} setPanelLook(true) }}
         />) })()}
@@ -1251,12 +1253,12 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
           {quoteFirst ? (<>
             <button onClick={() => { sendRef.current = false; confirm() }} disabled={busy}
-              className="flex-1 rounded-xl py-3.5 text-sm font-bold" style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px solid ${ORANGE}`, opacity: busy ? .45 : 1 }}>
+              className="flex-1 rounded-xl py-3.5 text-sm font-bold" style={{ backgroundColor: 'white', color: '#1d4ed8', border: '1.5px solid #1d4ed8', opacity: busy ? .45 : 1 }}>
               Build, send later
             </button>
             <button onClick={() => { sendRef.current = true; confirm() }} disabled={busy || !sendTo?.length}
               className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white"
-              style={{ backgroundColor: ORANGE, opacity: busy || !sendTo?.length ? .45 : 1 }}>
+              style={{ backgroundColor: '#1d4ed8', opacity: busy || !sendTo?.length ? .45 : 1 }}>
               {busy ? 'Building & sending…' : `📤 Build & send quote — $${Number(finalTotal).toFixed(2)}`}
             </button>
           </>) : (

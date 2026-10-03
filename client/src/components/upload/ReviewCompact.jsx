@@ -52,7 +52,7 @@ export default function ReviewCompact(props) {
     selectedCustomer, setSelectedCustomer, setSelectedSalesperson, jobDate, setJobDate, todayPT,
     liveTotal, selected, onCreate, creating, previewBusy, invoiceError, kanbanWarning, resultCard, busy,
     dispatch = 'mark', setDispatch = () => {}, poolOverride = null, onPool = () => {},
-    big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '',
+    big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '', quoteFirst = false,
     listTotal = null, cashCap = 700, setCashCap = () => {}, onOldLook, onPanelLook,
   } = props
   const [showNotRequired, setShowNotRequired] = useState(false)
@@ -202,7 +202,7 @@ export default function ReviewCompact(props) {
       {!resultCard && (
         <div className="sticky bottom-0 rounded-2xl p-3 bg-white flex items-center gap-3" style={{ border: '1.5px solid #e8e4e0', boxShadow: '0 -6px 20px rgba(0,0,0,.06)' }}>
           <div className="min-w-0"><div className="text-xl font-extrabold tabular-nums" style={{ color: '#1a1a1a' }}>{liveTotal != null ? fmt(liveTotal) : '—'}</div><div className="text-[11px] truncate" style={{ color: '#888' }}>{!selectedCustomer ? 'Pick the Zoho customer' : selected.length === 0 ? 'Turn on at least one line' : `${selected.length} line${selected.length === 1 ? '' : 's'} · ${pool.label}${listTotal != null && cashMode && cashCap > 0 && listTotal > cashCap ? ` · list ${fmt(listTotal)} capped` : ''}`}</div></div>
-          <button type="button" onClick={onCreate} disabled={!canCreate} className="flex-1 rounded-xl py-3 text-base font-bold text-white" style={{ backgroundColor: ORANGE, opacity: canCreate ? 1 : .45 }}>{creating ? 'Creating job…' : previewBusy ? 'Pricing…' : `Create job → ${dispatch === 'need_dispatch' ? 'Dispatch' : dispatch === 'jaden' ? 'Jayden' : 'Mark'}`}</button>
+          <button type="button" onClick={onCreate} disabled={!canCreate} className="flex-1 rounded-xl py-3 text-base font-bold text-white" style={{ backgroundColor: quoteFirst ? '#1d4ed8' : ORANGE, opacity: canCreate ? 1 : .45 }}>{quoteFirst ? (creating ? 'Building the quote…' : previewBusy ? 'Pricing…' : '📝 Build quote') : creating ? 'Creating job…' : previewBusy ? 'Pricing…' : `Create job → ${dispatch === 'need_dispatch' ? 'Dispatch' : dispatch === 'jaden' ? 'Jayden' : 'Mark'}`}</button>
         </div>
       )}
     </div>
