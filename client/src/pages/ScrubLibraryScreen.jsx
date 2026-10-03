@@ -484,6 +484,15 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
     try {
       const r = await apiFetch(`${API_BASE}/api/scrubs/upload`, { method: 'POST', body: fd })
       if (r.status === 400) { const d = await r.json().catch(() => ({})); refused = d.error || 'Not accepted.' }
+      else if (r.ok) {
+        // Finished inside the window, or the same file was just scrubbed → open it now.
+        const d = await r.json().catch(() => ({}))
+        if (d.scrubId) {
+          const l = await apiFetch(`${API_BASE}/api/scrubs?limit=60`).then(x => x.json()).catch(() => ({}))
+          const hit = (l.scrubs || []).find(x => String(x.id) === String(d.scrubId))
+          if (hit) { setRows((l.scrubs || []).map(normScrub)); setUp({ busy: false, msg: '', name: '' }); openScrub(hit); return }
+        }
+      }
     } catch { /* gateway cut — the scrub is still running */ }
     if (refused) { setUp({ busy: false, msg: refused, name: '' }); return }
     const t0 = Date.now()
