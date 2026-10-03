@@ -350,20 +350,33 @@ function StatsBar({ shops }) {
   )
 }
 
+// Billing customer type of a CRM shop → its CRM tab. No type yet = collision.
+function typeOfShop(sh) {
+  let br = sh?.billing_rules
+  if (typeof br === 'string') { try { br = JSON.parse(br) } catch { br = {} } }
+  const t = String(br?.customer_type || '')
+  return t === 'repair_shop' ? 'repair_shop' : t === 'dealer' ? 'dealer' : 'collision'
+}
+
 // ─── Main CRM Screen ──────────────────────────────────────────────────────────
 export default function CRMScreen({ user, onLogout, currentScreen, onNavigate }) {
   // Mark 2026-09-14: repair customers live in the CRM too, but SEPARATE from
   // body shops — own table, own tab, never in the pipeline / marketing lists.
-  const [crmMode, setCrmModeState] = useState(() => { try { return localStorage.getItem('adas_crm_mode') || 'shops' } catch { return 'shops' } })
+  // Tabs = the billing customer types (Mark 2026-10-02: "should have all the same
+  // categories as the billing"). Collision / Auto repair / Dealer are CRM shops by
+  // their billing type (no type yet = collision, same default as billing); Retail =
+  // the people in Repair customers.
+  const [crmMode, setCrmModeState] = useState(() => { try { const m = localStorage.getItem('adas_crm_mode') || 'collision'; return ({ shops: 'collision', repair: 'retail' })[m] || m } catch { return 'collision' } })
   const setCrmMode = m => { setCrmModeState(m); try { localStorage.setItem('adas_crm_mode', m) } catch {} }
+  const [allShops,      setShops]         = useState([])
+  const shops = crmMode === 'retail' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode)
   const modeToggle = (
     <div className="inline-flex rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
-      {[['shops', '🏪 Body shops'], ['repair', '🙂 Repair customers']].map(([m, l]) => (
-        <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: crmMode === m ? ORANGE : 'transparent', color: crmMode === m ? 'white' : '#666' }}>{l}</button>
+      {[['collision', '🏢 Collision shops'], ['repair_shop', '🔧 Auto repair shops'], ['dealer', '🚗 Dealers'], ['retail', '🙂 Retail customers']].map(([m, l]) => (
+        <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1 whitespace-nowrap" style={{ backgroundColor: crmMode === m ? ORANGE : 'transparent', color: crmMode === m ? 'white' : '#666' }}>{l}{m !== 'retail' && allShops.length ? ` · ${allShops.filter(sh => typeOfShop(sh) === m).length}` : ''}</button>
       ))}
     </div>
   )
-  const [shops,         setShops]         = useState([])
   const [loading,       setLoading]       = useState(true)
   const [error,         setError]         = useState(null)
   const [detailShop,    setDetailShop]    = useState(null)
@@ -515,7 +528,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   // Kanban only shows non-lost stages; Lost appears in mobile list + filter pill
   const kanbanStages = STAGES.filter(s => s.id !== 'lost')
 
-  if (crmMode === 'repair') return (
+  if (crmMode === 'retail') return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
       <RepairCustomers user={user} onNavigate={onNavigate} modeToggle={modeToggle} />
