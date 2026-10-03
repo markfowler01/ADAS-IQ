@@ -439,6 +439,27 @@ export const KINETIC_ALIASES = {
 // on their "(Collision)" twins at +30%; repair shops, dealers and retail keep
 // the originals. An insurer's own item (GEICO -, SF -, AS -) is never swapped.
 const PROG_TWIN_RE = /^(Module Programming and Reflash - .+|Security Access and Authorization Fee|Gateway Access Fee)$/i
+
+// Next free ".N" for an RO (Mark 2026-10-02: test quotes on one RO ran past .9 and
+// the 10 tries ran out). RO# is unique across every customer's quotes, so look at
+// every estimate that carries this RO and start after the highest suffix.
+async function nextRoSuffix(token, ro) {
+  const base = String(ro || '').trim()
+  if (!base) return 0
+  try {
+    const r = await axios.get(`${ZOHO_API_BASE}/estimates`, { headers: zohoHeaders(token), params: { ...orgParam(), search_text: base, per_page: 200 }, timeout: 15000 })
+    const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    let max = -1
+    for (const e of r.data?.estimates || []) {
+      for (const v of [e.estimate_number, e.reference_number, ...(e.custom_fields || []).map(c => c.value)]) {
+        const m = String(v || '').match(new RegExp(`${esc}(?:\\.(\\d+))?$`))
+        if (m) max = Math.max(max, m[1] ? Number(m[1]) : 0)
+      }
+    }
+    return max + 1
+  } catch { return 0 }
+}
+
 export function collisionTwin(item, allItems) {
   const nm = String(item?.matchedName || item?.name || '').trim()
   if (!nm || !PROG_TWIN_RE.test(nm) || /\(collision\)$/i.test(nm)) return null
@@ -1001,7 +1022,7 @@ export async function createDraftQuote({
   // 4. Create the estimate — retry with .1, .2 etc. on duplicate number or unique field conflict
   let res
   let attempt = 0
-  const MAX_ATTEMPTS = 10
+  const MAX_ATTEMPTS = 200   // attempts jump to the next free suffix, so this is a ceiling, not a count
   let capFolded = false
   while (attempt < MAX_ATTEMPTS) {
     const suffix = attempt === 0 ? '' : `.${attempt}`
@@ -1093,7 +1114,8 @@ export async function createDraftQuote({
 
     if (isDuplicate) {
       console.log(`[zoho] Duplicate on attempt ${attempt} (code ${resCode}) — will retry`)
-      attempt++
+      // First clash → jump straight past every suffix this RO already has.
+      if (attempt === 0) { const nx = await nextRoSuffix(token, ro_number); attempt = Math.max(1, nx); console.log(`[zoho] next free RO suffix: .${attempt}`) } else attempt++
       continue
     }
 
