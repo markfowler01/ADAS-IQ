@@ -64,17 +64,43 @@ router.post('/upload', (req, res) => {
     if (err) return res.status(400).json({ error: err.message })
     if (!req.file || req.file.buffer.length < 512) return res.status(400).json({ error: 'No usable PDF.' })
     const name = String(req.file.originalname || 'estimate.pdf').slice(0, 255)
+    // 🔁 One file, one scrub (2026-10-02: a single upload of the Denali estimate was
+    // re-sent ~every 40s and scrubbed 21 times — the request outlives the gateway's
+    // 30s window and comes back). Same bytes within 15 min → hand back the scrub
+    // already done or still running instead of paying for another one.
+    const hash = (await import('crypto')).createHash('sha1').update(req.file.buffer).digest('hex')
+    const lockKey = `scrub_up_${hash}`
+    let seg = null
+    try { seg = (await import('zcatalyst-sdk-node')).default.initialize(req).cache().segment() } catch { seg = null }
+    const readLock = async () => { try { return JSON.parse(await seg.getValue(lockKey)) || null } catch { return null } }
+    if (seg) {
+      for (let i = 0; i < 6; i++) {
+        const l = await readLock()
+        if (!l || Date.now() - Number(l.at || 0) > 15 * 60 * 1000) break
+        if (l.state === 'done') return res.json({ ...l.result, duplicate: true })
+        if (l.state === 'running' && Date.now() - Number(l.at || 0) > 3 * 60 * 1000) break   // stale
+        if (l.state === 'running') { if (i === 5) return res.status(202).json({ ok: true, pending: true, name }); await new Promise(r => setTimeout(r, 4000)); continue }
+        break
+      }
+      try { await seg.put(lockKey, JSON.stringify({ state: 'running', at: Date.now() }), 1) } catch { /* no lock, scrub anyway */ }
+    }
     try {
       const { detectPdfKind } = await import('../services/claude.js')
       let kind = 'OTHER', make = ''
       try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = 'OTHER' }
-      if (kind === 'ABSOLUTE') return res.status(400).json({ error: 'That is one of our own Absolute ADAS reports — upload the shop\'s estimate instead.', kind })
-      if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) return res.status(400).json({ error: `That does not look like an estimate or a calibration report (read as ${kind.toLowerCase()}).`, kind })
+      const unlock = async () => { if (seg) { try { await seg.delete(lockKey) } catch { /* fine */ } } }
+      if (kind === 'ABSOLUTE') { await unlock(); return res.status(400).json({ error: 'That is one of our own Absolute ADAS reports — upload the shop\'s estimate instead.', kind }) }
+      if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) { await unlock(); return res.status(400).json({ error: `That does not look like an estimate or a calibration report (read as ${kind.toLowerCase()}).`, kind }) }
       const { scrubPdfBuffer } = await import('./extract.js')
       const data = await scrubPdfBuffer(req, req.file.buffer, { learn: true, source: 'upload', by: who(req), file: { name }, pdfType: kind === 'REPORT' ? 'KINETIC' : 'CCC', make })
       const scrubs = await scrubsForJob(req, '').catch(() => [])
-      res.json({ ok: true, kind, name, scrubId: data?._scrubId || '', vehicle: data?.vehicle || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length })
-    } catch (e) { res.status(500).json({ error: e.message, name }) }
+      const out = { ok: true, kind, name, scrubId: data?._scrubId || '', vehicle: data?.vehicle || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length }
+      if (seg) { try { await seg.put(lockKey, JSON.stringify({ state: 'done', at: Date.now(), result: out }), 1) } catch { /* fine */ } }
+      res.json(out)
+    } catch (e) {
+      if (seg) { try { await seg.delete(lockKey) } catch { /* fine */ } }
+      res.status(500).json({ error: e.message, name })
+    }
   })
 })
 

@@ -487,12 +487,13 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
     } catch { /* gateway cut — the scrub is still running */ }
     if (refused) { setUp({ busy: false, msg: refused, name: '' }); return }
     const t0 = Date.now()
+    const fresh = x => !x.at || Date.parse(x.at) >= t0 - 120000   // this upload's scrub, not an older one of the same file
     while (Date.now() - t0 < 180000) {
-      await new Promise(res => setTimeout(res, 8000))
+      await new Promise(res => setTimeout(res, 5000))
       try {
         const r = await apiFetch(`${API_BASE}/api/scrubs?limit=30`)
         const d = await r.json().catch(() => ({}))
-        const hit = (d.scrubs || []).find(x => x.fileName === name || (x.fileName || '').endsWith(name))
+        const hit = (d.scrubs || []).find(x => (x.fileName === name || (x.fileName || '').endsWith(name)) && fresh(x))
         if (hit) { setRows((d.scrubs || []).map(normScrub)); setUp({ busy: false, msg: '', name: '' }); openScrub(hit); return }
       } catch { /* keep polling */ }
     }
