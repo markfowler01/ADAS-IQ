@@ -8,8 +8,8 @@ Zoho Assist unattended access lets the office or a senior tech see and drive a f
 
 | Piece | What it does | Where it comes from |
 | --- | --- | --- |
-| APKMirror Installer | Installs the bundled (.apkm) Zoho app on a tablet with no Play Store | WorkDrive · Tech Dept > Autel Setup > Zoho Assist |
-| Zoho Assist Customer App | The agent that keeps the tablet reachable | Same folder, 1.48 bundle (1.37.2 plain APK as a fallback) |
+| APKMirror Installer | Installs the bundled (.apkm) Zoho app on a tablet with no Play Store | WorkDrive · Tech Dept > Autel Setup > Zoho Assist, or [APKMirror Installer (Official)](https://www.apkmirror.com/apk/apkmirror/apkmirror-installer-official/) |
+| Zoho Assist Customer App | The agent that keeps the tablet reachable | Same folder, 1.48 bundle (1.37.2 plain APK as a fallback), or [Customer App - Zoho Assist on APKMirror](https://www.apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/) |
 | Zoho Assist Universal Add-on | Turns view-only into full remote control | Same folder |
 | Zoho Assist console | Where you enroll, name, connect and manage tablets | assist.zoho.com, or the Zoho Assist phone app |
 
@@ -123,7 +123,7 @@ Use these instead of swiping where you can.
 
 ## Maintenance
 
-- **Every 3 months:** download the newest Customer App bundle from APKMirror (apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/), replace the file in the WorkDrive folder and put the new version number in the file name. On each tablet, install it over the old one with APKMirror Installer. Enrollment and permissions carry over.
+- **Every 3 months:** download the newest Customer App bundle from [APKMirror](https://www.apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/), replace the file in the WorkDrive folder and put the new version number in the file name. On each tablet, install it over the old one with APKMirror Installer. Enrollment and permissions carry over.
 - **After any app update:** check that Accessibility > Zoho Assist Universal Add-on is still On.
 - **When a tablet is retired or replaced:** delete it from Unattended Access in the console at assist.zoho.com, so it doesn't clutter the list or hold a license slot.
-- **Security:** only the files in our WorkDrive folder, or fresh from APKMirror. Nothing from any other APK site.
+- **Security:** only the files in our WorkDrive folder, or fresh from APKMirror ([APKMirror Installer](https://www.apkmirror.com/apk/apkmirror/apkmirror-installer-official/) · [Customer App - Zoho Assist](https://www.apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/)). Nothing from any other APK site.
