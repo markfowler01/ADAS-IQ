@@ -224,6 +224,19 @@ router.post('/', async (req, res) => {
         if (f.changed) { console.warn(`[invoice] 🔒 Big 4 corrected on ${result.quoteNumber || result.quoteId}: ${f.fixed.join(', ')}`); result.big4_fixed = f.fixed; result.total_after_fix = f.total }
       } catch (e) { console.error('[invoice] Big 4 check failed:', e.message); result.big4_check_error = e.message }
     }
+    // 🧾 Quote audit (last 100): what the screen sent vs what was built — the record
+    // to check when a quote looks wrong. Never blocks.
+    try {
+      const catalystSdk = (await import('zcatalyst-sdk-node')).default
+      const app = catalystSdk.initialize(req, { type: 'advancedio' })
+      const r0 = await app.zcql().executeZCQLQuery("SELECT ROWID, config_value FROM AppConfig WHERE config_key = 'quote_audit' LIMIT 1")
+      const row = r0?.[0]?.AppConfig
+      const entry = { at: new Date().toISOString(), by: req.user?.name || req.user?.email || '', quote: result?.quoteNumber || '', id: result?.quoteId || '', customer: customerName || '', shop: shop || '',
+        body_big4: req.body.big3_rules || null, used_big4: big3Rules ? b3.withDefaults(big3Rules) : null, fixed: result?.big4_fixed || [], check_error: result?.big4_check_error || '' }
+      const list = [entry, ...(() => { try { return JSON.parse(row?.config_value || '[]') } catch { return [] } })()].slice(0, 100)
+      if (row) await app.datastore().table('AppConfig').updateRow({ ROWID: row.ROWID, config_value: JSON.stringify(list) })
+      else await app.datastore().table('AppConfig').insertRow({ config_key: 'quote_audit', config_value: JSON.stringify(list) })
+    } catch (e) { console.warn('[invoice] audit not saved:', e.message) }
 
     // Learn the Big 3 rule for this shop (Mark 2026-09-10) — unless the
     // modal unticked "remember".

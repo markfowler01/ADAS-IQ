@@ -783,13 +783,18 @@ export async function createDraftQuote({
         || (b.paidFallback ? itemByName.get(b.paidFallback.toLowerCase()) : null)
       if (paid) b3Overrides[b.base] = paid.name
     }
-    big3Note = `Big 3 (${shop || customerName || 'shop'}): ${b3.describeRules(rulesEff)}${big3Rules ? '' : ' — default, no shop rule yet'}`
+    big3Note = `Big 3 (${customerName || shop || 'shop'}): ${b3.describeRules(rulesEff)}${big3Rules ? '' : ' — default, no shop rule yet'}`
     console.log(`[zoho] ${big3Note}`)
   }
   const fixedLineItems = baseFixedNames.map((baseName) => {
     if (b3Remove.has(baseName)) { console.log(`[zoho] Big 4: "${baseName}" left off — snapshot instead`); return null }
     const name = b3Overrides[baseName] || baseName
-    const li = buildLineItem(name, '')
+    // 🔒 Big 4 items by EXACT catalog name — the same way the review screen prices
+    // them (Mark 2026-10-02: "Post Collision Safety Inspection 1 (included)" went
+    // through the item matcher / Item Map and came out as the $99 paid item).
+    const exactB4 = itemByName.get(String(name).toLowerCase().trim())
+    const li = exactB4 ? { item_id: exactB4.item_id, description: '', quantity: 1 } : buildLineItem(name, '')
+    if (exactB4) console.log(`[zoho] Big 4: "${name}" → exact item $${exactB4.rate}`)
     if (li && b3Zero.has(baseName)) li.rate = 0
     return li
   }).filter(Boolean)

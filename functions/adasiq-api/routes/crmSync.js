@@ -721,6 +721,14 @@ router.get('/report-link', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try { const R = await import('../services/publicReport.js'); res.json({ url: await R.reportUrl(req, String(req.query.scrub || '')) }) } catch (e) { res.status(500).json({ error: e.message }) }
 })
+router.get('/quote-audit', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const app = (await import('zcatalyst-sdk-node')).default.initialize(req, { type: 'advancedio' })
+    const r = await app.zcql().executeZCQLQuery("SELECT config_value FROM AppConfig WHERE config_key = 'quote_audit' LIMIT 1")
+    res.json(JSON.parse(r?.[0]?.AppConfig?.config_value || '[]').slice(0, Number(req.query.n) || 20))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/jobs/find', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {
