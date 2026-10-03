@@ -159,7 +159,9 @@ export async function big3Map(req) {
     // card said "Big 3: yes") — the badge and the "without a rule" count see all-off.
     const nonCollision = NON_COLLISION.has(br.customer_type)
     const rules = nonCollision ? { cal_id: 'off', pcsi: 'off', pre_scan: 'off', post_scan: 'off', snapshot: 'off' } : normalizeRules(br.big3)
-    const complete = nonCollision || (rules && BIG3.every(b => rules[b.key]))
+    // Complete = the three a shop actually decides (Cal ID / PCSI / Post-Scan); Pre-Scan and
+    // Snapshot default to off, so a rule saved before they existed (2026-10-01) still counts.
+    const complete = nonCollision || (rules && ['cal_id', 'pcsi', 'post_scan'].every(k => rules[k]))
     const drps = Array.isArray(sh.drps) ? sh.drps : []
     const billing = br.customer_type ? { customer_type: br.customer_type, discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, pay_mode: br.pay_mode || CUSTOMER_TYPES[br.customer_type]?.pay || '', mode: billingModeFor(br.customer_type) } : null
     const ints = br.integrations ? { kinetic: br.integrations.kinetic?.state || 'off', adasmaps: br.integrations.adasmaps?.state || 'off' } : null

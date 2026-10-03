@@ -75,7 +75,7 @@ export async function customerReport(req) {
     const collision = !b3.NON_COLLISION.has(br.customer_type)
     const setup = [
       !br.customer_type && 'customer type',
-      collision && !(rules && b3.BIG3.every(b => rules[b.key])) && 'Big 4 rule',
+      collision && !(rules && ['cal_id', 'pcsi', 'post_scan'].every(k => rules[k])) && 'Big 4 rule',
       collision && br.discount_value == null && 'discount',
       !s.zoho_contact_id && 'Books link',
     ].filter(Boolean)
