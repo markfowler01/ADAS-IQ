@@ -1,108 +1,135 @@
 // ⭐ Customers (Mark 2026-10-03): current customers live here, out of the
-// pipeline. One card per account: last job, this month vs their usual pace,
-// what they owe, setup gaps, and what to pitch. Data from /api/shops/customers.
+// pipeline. One card per account: a health strip, one plain status line, the
+// 12-month total, a 6-month bar chart of their jobs, and three numbers that
+// matter (last job · this month · owes us). Grouped Needs attention / Owes us /
+// Healthy. Data from /api/shops/customers.
 import { useEffect, useMemo, useState } from 'react'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { typeBadge } from './shopType.js'
 
-const ORANGE = '#CD4419'
-const fmt = n => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-const FLAG = {
-  win_back:    { label: '🔁 Win back', bg: '#fee2e2', fg: '#b91c1c', why: d => `no job in ${d} days` },
-  slipping:    { label: '📉 Slipping', bg: '#fef3c7', fg: '#92400e', why: () => 'well under their usual pace' },
-  overdue:     { label: '💸 Overdue', bg: '#fee2e2', fg: '#b91c1c', why: () => 'past-due invoices' },
-  no_invoices: { label: '🫥 No invoices yet', bg: '#f5f3f0', fg: '#666', why: () => 'nothing billed in 12 months' },
+const ORANGE = '#CD4419', INK = '#1a1a1a', MUTED = '#8a847e', LINE = '#ebe7e2'
+const RED = '#b91c1c', AMBER = '#b45309', GREEN = '#15803d', BLUE = '#1d4ed8'
+const fmt = n => `$${Math.round(Number(n || 0)).toLocaleString()}`
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// Health = the one thing to know about this customer right now.
+function healthOf(r, winBackDays) {
+  if (r.flags.includes('win_back')) return { key: 'attention', color: RED, text: `No job in ${r.days_since} days`, group: 'Needs attention' }
+  if (r.flags.includes('slipping')) return { key: 'attention', color: AMBER, text: `Slipping — ${Math.round((r.pace || 0) * 100)}% of their usual pace`, group: 'Needs attention' }
+  if (r.flags.includes('overdue')) return { key: 'owes', color: AMBER, text: `${fmt(r.ar.overdue)} overdue since ${r.ar.oldest_due}`, group: 'Owes us' }
+  if (r.flags.includes('no_invoices')) return { key: 'attention', color: MUTED, text: 'Nothing billed in 12 months', group: 'Needs attention' }
+  return { key: 'healthy', color: GREEN, text: r.pace != null && r.pace >= 1 ? 'On pace or ahead' : 'Healthy', group: 'Healthy' }
 }
 
 export default function CustomersView({ modeToggle, onOpenShop }) {
   const [d, setD] = useState(null)
   const [err, setErr] = useState('')
-  const [filter, setFilter] = useState('')
   const [q, setQ] = useState('')
+  const [only, setOnly] = useState('')
   useEffect(() => { apiFetch(`${API_BASE}/api/shops/customers`).then(r => r.json()).then(x => { if (x.error) setErr(x.error); else setD(x) }).catch(e => setErr(e.message)) }, [])
-  const list = useMemo(() => {
-    let rows = d?.customers || []
-    if (filter) rows = rows.filter(r => r.flags.includes(filter))
-    if (q.trim()) { const s = q.toLowerCase(); rows = rows.filter(r => r.name.toLowerCase().includes(s)) }
-    return rows
-  }, [d, filter, q])
   const all = d?.customers || []
-  const count = f => all.filter(r => r.flags.includes(f)).length
+  const rows = useMemo(() => {
+    let r = all.map(c => ({ ...c, health: healthOf(c, d?.win_back_days || 60) }))
+    if (q.trim()) { const s = q.toLowerCase(); r = r.filter(c => c.name.toLowerCase().includes(s)) }
+    if (only) r = r.filter(c => c.health.group === only)
+    return r
+  }, [all, q, only, d])
+  const groups = ['Needs attention', 'Owes us', 'Healthy'].map(g => ({ name: g, rows: rows.filter(c => c.health.group === g).sort((a, b) => b.year.amount - a.year.amount) })).filter(g => g.rows.length)
   const totals = { month: all.reduce((t, r) => t + r.this_month.amount, 0), open: all.reduce((t, r) => t + r.ar.open, 0), overdue: all.reduce((t, r) => t + r.ar.overdue, 0) }
+  const countOf = g => all.filter(c => healthOf(c, d?.win_back_days || 60).group === g).length
 
   return (
     <main className="flex-1 flex flex-col" style={{ padding: '1.25rem', minHeight: 0 }}>
-      <div className="flex items-center gap-3 flex-wrap mb-3">
-        <h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>Customers</h1>{modeToggle}
+      <div className="flex items-center gap-3 flex-wrap mb-4">
+        <h1 className="text-xl font-bold" style={{ color: INK }}>Customers</h1>{modeToggle}
       </div>
-      {err && <p className="text-sm mb-3" style={{ color: '#b91c1c' }}>{err}</p>}
-      {!d && !err && <p className="text-sm" style={{ color: '#888' }}>Reading every customer's invoices…</p>}
+      {err && <p className="text-sm mb-3" style={{ color: RED }}>{err}</p>}
+      {!d && !err && <p className="text-sm" style={{ color: MUTED }}>Reading every customer's invoices…</p>}
       {d && (<>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-          {[['Customers', all.length, '#1a1a1a'], ['Billed this month', fmt(totals.month), '#15803d'], ['Open AR', fmt(totals.open), '#1d4ed8'], ['Overdue', fmt(totals.overdue), totals.overdue ? '#b91c1c' : '#888']].map(([l, v, c]) => (
-            <div key={l} className="rounded-xl p-3" style={{ backgroundColor: '#f9f8f7', border: '1px solid #ebebeb' }}><p className="text-lg font-bold" style={{ color: c }}>{v}</p><p className="text-xs" style={{ color: '#888' }}>{l}</p></div>
+        {/* Four numbers, quiet */}
+        <div className="flex flex-wrap gap-x-8 gap-y-2 mb-4 pb-4" style={{ borderBottom: `1px solid ${LINE}` }}>
+          {[['Customers', all.length, INK], ['Billed this month', fmt(totals.month), GREEN], ['Open AR', fmt(totals.open), BLUE], ['Overdue', fmt(totals.overdue), totals.overdue ? RED : MUTED]].map(([l, v, c]) => (
+            <div key={l}><div className="text-2xl font-extrabold tabular-nums leading-none" style={{ color: c }}>{v}</div><div className="text-[11px] uppercase tracking-wider mt-1" style={{ color: MUTED }}>{l}</div></div>
           ))}
         </div>
-        <div className="flex items-center gap-2 flex-wrap mb-3">
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search customers…" className="rounded-lg px-3 py-2 text-sm" style={{ border: '1.5px solid #ddd', outline: 'none', minWidth: 200 }} />
-          <button onClick={() => setFilter('')} className="text-xs font-semibold px-3 py-1.5 rounded-full" style={!filter ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: '#f5f3f0', color: '#666' }}>All ({all.length})</button>
-          {Object.entries(FLAG).map(([k, f]) => count(k) > 0 && (
-            <button key={k} onClick={() => setFilter(filter === k ? '' : k)} className="text-xs font-semibold px-3 py-1.5 rounded-full" style={filter === k ? { backgroundColor: f.fg, color: 'white' } : { backgroundColor: f.bg, color: f.fg }}>{f.label} ({count(k)})</button>
+        <div className="flex items-center gap-2 flex-wrap mb-4">
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search customers…" className="rounded-lg px-3 py-2 text-sm" style={{ border: `1.5px solid ${LINE}`, outline: 'none', minWidth: 220, backgroundColor: 'white' }} />
+          {[['', 'All', all.length], ['Needs attention', '🔴 Needs attention', countOf('Needs attention')], ['Owes us', '🟠 Owes us', countOf('Owes us')], ['Healthy', '🟢 Healthy', countOf('Healthy')]].map(([k, l, n]) => (
+            <button key={k} onClick={() => setOnly(k)} className="text-xs font-semibold px-3 py-1.5 rounded-full" style={only === k ? { backgroundColor: INK, color: 'white' } : { backgroundColor: 'white', color: '#555', border: `1px solid ${LINE}` }}>{l} · {n}</button>
           ))}
-          <span className="text-[11px] ml-auto" style={{ color: '#aaa' }}>as of {d.as_of} · {d.invoices_read} invoices read · win back after {d.win_back_days} quiet days</span>
+          <span className="text-[11px] ml-auto" style={{ color: '#b5afa9' }}>as of {d.as_of} · {d.invoices_read} invoices · win back after {d.win_back_days} quiet days</span>
         </div>
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' }}>
-          {list.map(r => <CustomerCard key={r.id} r={r} winBackDays={d.win_back_days} onOpen={() => onOpenShop(r.id)} />)}
-          {!list.length && <p className="text-sm" style={{ color: '#888' }}>Nothing here.</p>}
-        </div>
+        {groups.map(g => (
+          <section key={g.name} className="mb-6">
+            <h2 className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: MUTED }}>{g.name} · {g.rows.length}</h2>
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
+              {g.rows.map(r => <CustomerCard key={r.id} r={r} onOpen={() => onOpenShop(r.id)} />)}
+            </div>
+          </section>
+        ))}
+        {!rows.length && <p className="text-sm" style={{ color: MUTED }}>Nothing here.</p>}
       </>)}
     </main>
   )
 }
 
-function CustomerCard({ r, winBackDays, onOpen }) {
-  const tb = typeBadge(r.type)
-  const paceTxt = r.pace == null ? null : r.pace >= 1 ? `${Math.round(r.pace * 100)}% of usual · ahead` : `${Math.round(r.pace * 100)}% of usual`
-  const paceColor = r.pace == null ? '#888' : r.pace < 0.6 ? '#b91c1c' : r.pace < 0.9 ? '#92400e' : '#15803d'
-  const main = r.flags.find(f => FLAG[f])
+function Bars({ series }) {
+  const max = Math.max(1, ...series.map(m => m.count))
   return (
-    <div onClick={onOpen} className="bg-white rounded-xl shadow-sm cursor-pointer hover:shadow-md" style={{ border: `1px solid ${main === 'win_back' || main === 'overdue' ? '#fca5a5' : main === 'slipping' ? '#fcd34d' : '#ebebeb'}`, borderLeft: `5px solid ${tb.color}` }}>
-      <div className="px-3 py-2 flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-sm font-bold leading-snug" style={{ color: '#1a1a1a', wordBreak: 'break-word' }}>{r.name}</p>
-          <div className="flex items-center gap-1 flex-wrap mt-1">
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: tb.bg, color: tb.color }}>{tb.label}</span>
-            {r.stage === 'active2' && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }}>🔄 backup</span>}
-            {r.flags.filter(f => FLAG[f]).map(f => <span key={f} className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: FLAG[f].bg, color: FLAG[f].fg }} title={FLAG[f].why(winBackDays)}>{FLAG[f].label}</span>)}
+    <div className="flex items-end gap-1" style={{ height: 34 }} title={series.map(m => `${MON[Number(m.ym.slice(5)) - 1]}: ${m.count} job${m.count === 1 ? '' : 's'} · ${fmt(m.amount)}`).join('\n')}>
+      {series.map((m, i) => {
+        const last = i === series.length - 1
+        return (
+          <div key={m.ym} className="flex flex-col items-center" style={{ width: 16 }}>
+            <div style={{ width: 12, height: Math.max(2, Math.round((m.count / max) * 24)), borderRadius: 2, backgroundColor: m.count ? (last ? ORANGE : '#d9cfc7') : LINE }} />
+            <div className="text-[9px] mt-0.5" style={{ color: last ? ORANGE : '#b5afa9' }}>{MON[Number(m.ym.slice(5)) - 1][0]}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function CustomerCard({ r, onOpen }) {
+  const tb = typeBadge(r.type), h = r.health
+  const notes = [...r.setup.map(s => `⚠ Needs ${s}`), ...r.upsell.map(s => `💰 ${s.replace(' — pitch it', ': pitch it').replace(' — offer them', ': offer them')}`)]
+  const who = r.people[0]
+  return (
+    <div onClick={onOpen} className="bg-white rounded-xl cursor-pointer transition-shadow hover:shadow-md" style={{ border: `1px solid ${LINE}`, boxShadow: '0 1px 2px rgba(0,0,0,.04)', overflow: 'hidden' }}>
+      <div style={{ height: 4, backgroundColor: h.color }} />
+      <div className="px-3.5 pt-2.5 pb-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[15px] font-bold leading-tight truncate" style={{ color: INK }}>{r.name}</p>
+            <p className="text-xs mt-0.5 flex items-center gap-1.5" style={{ color: tb.color }}><span className="font-bold">{tb.label}</span>{r.stage === 'active2' && <span style={{ color: MUTED }}>· backup</span>}</p>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <p className="text-lg font-extrabold tabular-nums leading-none" style={{ color: INK }}>{fmt(r.year.amount)}</p>
+            <p className="text-[10px] mt-1" style={{ color: MUTED }}>{r.year.count} jobs · 12 mo</p>
           </div>
         </div>
-        <div className="text-right flex-shrink-0">
-          <p className="text-base font-extrabold tabular-nums" style={{ color: '#1a1a1a' }}>{fmt(r.year.amount)}</p>
-          <p className="text-[10px]" style={{ color: '#888' }}>{r.year.count} jobs · 12 mo</p>
+        <p className="text-xs font-semibold mt-2" style={{ color: h.color }}>{h.text}</p>
+        <div className="flex items-end justify-between gap-3 mt-2.5">
+          <Bars series={r.series || []} />
+          <div className="flex gap-4 text-right">
+            <div><div className="text-[10px] uppercase tracking-wider" style={{ color: MUTED }}>Last job</div><div className="text-sm font-bold tabular-nums" style={{ color: h.key === 'attention' && r.days_since != null ? RED : INK }}>{r.days_since == null ? '—' : `${r.days_since}d`}</div></div>
+            <div><div className="text-[10px] uppercase tracking-wider" style={{ color: MUTED }}>Month</div><div className="text-sm font-bold tabular-nums" style={{ color: INK }}>{r.this_month.count}</div></div>
+            <div><div className="text-[10px] uppercase tracking-wider" style={{ color: MUTED }}>Owes</div><div className="text-sm font-bold tabular-nums" style={{ color: r.ar.overdue ? RED : r.ar.open ? BLUE : GREEN }}>{r.ar.open ? fmt(r.ar.open) : '$0'}</div></div>
+          </div>
         </div>
+        {(notes.length > 0 || who) && (
+          <div className="flex items-center justify-between gap-2 mt-2.5 pt-2" style={{ borderTop: `1px solid ${LINE}` }}>
+            <p className="text-[11px] truncate" style={{ color: MUTED }} title={notes.join(' · ')}>{notes.join(' · ')}</p>
+            {who && (
+              <span className="flex items-center gap-1.5 flex-shrink-0 text-[11px]" style={{ color: '#555' }}>
+                <span className="truncate" style={{ maxWidth: 110 }}>{who.name || 'Contact'}</span>
+                {who.phone && <a href={`tel:${who.phone}`} onClick={e => e.stopPropagation()} className="rounded-full px-1.5" style={{ backgroundColor: '#dcfce7', color: GREEN }}>📞</a>}
+                {who.phone && <a href={`sms:${who.phone}`} onClick={e => e.stopPropagation()} className="rounded-full px-1.5" style={{ backgroundColor: '#e8f0fe', color: BLUE }}>💬</a>}
+              </span>
+            )}
+          </div>
+        )}
       </div>
-      <div className="px-3 pb-2 grid grid-cols-3 gap-2 text-xs">
-        <div><p style={{ color: '#888' }}>Last job</p><p className="font-semibold" style={{ color: r.days_since == null ? '#888' : r.days_since > winBackDays ? '#b91c1c' : '#1a1a1a' }}>{r.last_invoice ? `${r.days_since}d ago` : '—'}</p></div>
-        <div><p style={{ color: '#888' }}>This month</p><p className="font-semibold" style={{ color: '#1a1a1a' }}>{r.this_month.count} · {fmt(r.this_month.amount)}</p>{paceTxt && <p className="text-[10px] font-semibold" style={{ color: paceColor }}>{paceTxt}</p>}{!paceTxt && r.usual.count > 0 && <p className="text-[10px]" style={{ color: '#888' }}>usual {r.usual.count}/mo</p>}</div>
-        <div><p style={{ color: '#888' }}>Owes us</p><p className="font-semibold" style={{ color: r.ar.overdue ? '#b91c1c' : r.ar.open ? '#1d4ed8' : '#15803d' }}>{r.ar.open ? fmt(r.ar.open) : 'paid up'}</p>{r.ar.overdue > 0 && <p className="text-[10px] font-semibold" style={{ color: '#b91c1c' }}>{fmt(r.ar.overdue)} overdue</p>}</div>
-      </div>
-      {(r.setup.length > 0 || r.upsell.length > 0) && (
-        <div className="px-3 pb-2 flex flex-wrap gap-1">
-          {r.setup.map(s => <span key={s} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>⚠ {s}</span>)}
-          {r.upsell.map(s => <span key={s} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>💰 {s}</span>)}
-        </div>
-      )}
-      {r.people.length > 0 && (
-        <div className="px-3 pb-2 flex flex-wrap gap-1">
-          {r.people.map((p, i) => (
-            <span key={i} className="text-[11px] px-2 py-0.5 rounded-lg flex items-center gap-1" style={{ backgroundColor: '#f5f3f0', color: '#444' }}>
-              <b>{p.name || 'Contact'}</b>{p.title ? <span style={{ color: '#888' }}>· {p.title}</span> : null}
-              {p.phone && <a href={`tel:${p.phone}`} onClick={e => e.stopPropagation()} style={{ color: '#15803d' }}>📞</a>}
-              {p.phone && <a href={`sms:${p.phone}`} onClick={e => e.stopPropagation()} style={{ color: '#1d4ed8' }}>💬</a>}
-            </span>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

@@ -756,7 +756,11 @@ router.post('/books/mirror-sync', async (req, res) => {
 })
 router.get('/shops/customers', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
-  try { const { customerReport } = await import('../services/customers.js'); res.json(await customerReport(req)) } catch (e) { res.status(500).json({ error: e.message }) }
+  try {
+    const C = await import('../services/customers.js')
+    if (req.query.debug) return res.json(await C.debugCustomer(req, String(req.query.debug)))
+    res.json(await C.customerReport(req))
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/shops/duplicates', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
