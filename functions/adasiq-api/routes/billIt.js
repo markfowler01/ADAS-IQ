@@ -428,7 +428,7 @@ router.post('/:id/bill', async (req, res) => {
     // 25% I want it to remember this") — whenever it differs from the file.
     const learnPct = !dry && !p.cash_job && (!p.has_discount || Number(p.discount_pct) !== pct)
     const learnType = !dry && !p.cash_job && p.saved_type !== 'body_shop'   // picked the Collision pill → remembered
-    const saveRules = !p.big3?.insurer_rule && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
+    const saveRules = (!p.big3?.insurer_rule || req.body?.big3_edited === true) && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
     if (!dry && (saveRules || learnPct || learnType)) {
       try {
         const b3 = await import('../services/big3.js')

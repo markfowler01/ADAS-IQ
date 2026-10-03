@@ -216,7 +216,7 @@ router.post('/', async (req, res) => {
 
     // Learn the Big 3 rule for this shop (Mark 2026-09-10) — unless the
     // modal unticked "remember".
-    if (big3Rules && req.body.big3_save !== false && (customerName || shop) && !insurerB3.insurer_rule) {   // never learn a shop rule from an insurer-forced invoice
+    if (big3Rules && req.body.big3_save !== false && (customerName || shop) && (!insurerB3.insurer_rule || req.body.big3_edited === true)) {   // Mark 2026-10-02: an edit Mark/Kat made on screen is saved even on an insurer-rule job   // never learn a shop rule from an insurer-forced invoice
       try { await b3.saveBig3(req, customerName || shop, big3Rules, req.user?.name || req.user?.email || '') }
       catch (e) { console.warn('[invoice] big3 save failed (non-fatal):', e.message) }
     }

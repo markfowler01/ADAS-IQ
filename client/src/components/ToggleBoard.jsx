@@ -361,6 +361,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           cash: cashMode,
         big3_rules: big3Rules || pricePreview?.big3?.rules || null,
         big3_save: big3Save,
+        big3_edited: !!big3Rules,   // an on-screen edit saves even on an insurer-rule job (Mark 2026-10-02)
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
         method: 'POST',
@@ -588,7 +589,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         />
   ) : null
   const resultCard = invoiceResult
-    ? <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
+    ? <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} big4Pref={big3Rules} />
     : jobResult ? <JobSuccessCard result={jobResult} onNavigate={onNavigate} /> : null
 
   return (
@@ -832,7 +833,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
 
           {priceModal}
       {invoiceResult ? (
-            <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
+            <SuccessCard result={invoiceResult} job={jobData} lineCount={selected.length} selectedCustomer={selectedCustomer} onNavigate={onNavigate} big4Pref={big3Rules} />
           ) : jobResult ? (
             <JobSuccessCard result={jobResult} onNavigate={onNavigate} />
           ) : (
@@ -1208,21 +1209,51 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
 
 // Exported so the Scrub Library can reuse the exact same review → send flow
 // (same /shop-quotes/preview lines, same Quote PDF attached by /shop-quotes/send).
-export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNavigate }) {
+export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNavigate, big4Pref = null }) {
   const [phase, setPhase] = useState('idle')  // idle | loading | review | sending | sent | error
   const [preview, setPreview] = useState(null)
   const [msg, setMsg] = useState('')
+  // ✏️ Edits before sending (Mark 2026-10-02): per-line price / remove, Big 4 switches.
+  const [lineEdits, setLineEdits] = useState({})
+  const [big4Draft, setBig4Draft] = useState({})
+  const [remember, setRemember] = useState(true)
+  const [editBusy, setEditBusy] = useState(false)
+  const [editMsg, setEditMsg] = useState('')
   if (!result.quoteId) return null
+  const big4Now = preview?.big4?.current || {}
+  const big4Diff = Object.fromEntries(Object.entries(big4Draft).filter(([k, v]) => v && v !== big4Now[k]))
+  const dirty = Object.keys(big4Diff).length > 0 || Object.values(lineEdits).some(e => e.remove || e.rate != null)
+
+  async function loadPreview(applyPref = false) {
+    const r = await apiFetch(`${API_BASE}/api/shop-quotes/preview?estimate_id=${encodeURIComponent(result.quoteId)}`)
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+    setPreview(d); setLineEdits({})
+    // The Big 4 picked on the job screen after the quote was built → pre-load
+    // here as pending changes, so what's on screen is what goes out.
+    const cur = d.big4?.current || {}
+    const pref = applyPref && big4Pref ? Object.fromEntries(Object.entries(big4Pref).filter(([k, v]) => k in cur && v !== cur[k])) : {}
+    setBig4Draft(pref)
+    return d
+  }
+  async function saveEdits() {
+    setEditBusy(true); setEditMsg('')
+    try {
+      const lines = Object.entries(lineEdits).map(([line_item_id, e]) => ({ line_item_id, ...e }))
+      const r = await apiFetch(`${API_BASE}/api/shop-quotes/edit-lines`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estimate_id: result.quoteId, lines, big4: big4Diff, remember: remember && Object.keys(big4Diff).length > 0 }) })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+      await loadPreview(false)
+      setEditMsg(`✓ Quote updated in Books${d.saved ? ` · saved for ${selectedCustomer?.name || job?.shop || 'the shop'}: ${d.saved}` : ''}`)
+    } catch (e) { setEditMsg(`✗ ${e.message}`) } finally { setEditBusy(false) }
+  }
 
   // Step 1: fetch every line the shop will see (Mark: "i need to know
   // every line on the estimate before the quote is sent").
   async function openReview() {
-    setPhase('loading')
+    setPhase('loading'); setEditMsg('')
     try {
-      const r = await apiFetch(`${API_BASE}/api/shop-quotes/preview?estimate_id=${encodeURIComponent(result.quoteId)}`)
-      const d = await r.json()
-      if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
-      setPreview(d)
+      await loadPreview(true)
       setPhase('review')
     } catch (e) { setMsg(e.message); setPhase('error') }
   }
@@ -1289,19 +1320,34 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
                   <span>📝 Quote {preview.estimate_number}</span>
                   <span className="text-xs font-semibold" style={{ color: '#3b82f6' }}>every line the shop will see</span>
                 </div>
-                {preview.line_items.map((li, i) => (
+                {preview.big4 && (
+                  <div className="px-4 py-3" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#fafaf9' }}>
+                    <div className="text-[11px] font-bold uppercase tracking-wider mb-1.5" style={{ color: '#555' }}>🧾 Big 4 on this quote{Object.keys(big4Diff).length ? ' · changes not saved yet' : ''}</div>
+                    <Big3Picker rules={{ ...big4Now, ...big4Draft }} onChange={r => setBig4Draft(Object.fromEntries(Object.entries(r).filter(([k, v]) => v !== big4Now[k])))} disabled={editBusy || phase === 'sending'} compact />
+                    <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember for {selectedCustomer?.name || job?.shop || 'this shop'} (every quote and invoice from now on)</label>
+                  </div>
+                )}
+                {preview.line_items.map((li, i) => {
+                  const e = lineEdits[li.line_item_id] || {}
+                  const off = !!e.remove || (li.big4 && big4Diff[li.big4])
+                  const setE = patch => setLineEdits(x => ({ ...x, [li.line_item_id]: { ...(x[li.line_item_id] || {}), ...patch } }))
+                  return (
                   <div key={i} className="flex items-center justify-between gap-3 px-4 py-2 text-base"
-                    style={{ borderTop: '1px solid #f1f5f9', minHeight: 45, backgroundColor: li.needs_price ? '#fef2f2' : 'white' }}>
-                    <span className="min-w-0" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a' }}>{li.name}{li.quantity > 1 ? ` ×${li.quantity}` : ''}</span>
-                    <span className="flex-shrink-0 tabular-nums font-semibold" style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af') }}>
-                      {li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}
+                    style={{ borderTop: '1px solid #f1f5f9', minHeight: 45, backgroundColor: off ? '#f5f5f4' : li.needs_price ? '#fef2f2' : 'white', opacity: off ? 0.55 : 1 }}>
+                    <span className="min-w-0" style={{ color: li.needs_price ? '#b91c1c' : '#1a1a1a', textDecoration: off ? 'line-through' : 'none' }}>{li.name}{li.quantity > 1 ? ` ×${li.quantity}` : ''}</span>
+                    <span className="flex-shrink-0 flex items-center gap-2">
+                      {li.big4 || !li.line_item_id
+                        ? <span className="tabular-nums font-semibold" style={{ color: li.needs_price ? '#b91c1c' : (li.rate ? '#1a1a1a' : '#9ca3af') }}>{li.big4 && big4Diff[li.big4] ? 'changing ↑' : li.rate ? '$' + Number(li.amount).toFixed(2) : (li.needs_price ? '$0.00' : 'included')}</span>
+                        : <span className="flex items-center gap-0.5 tabular-nums font-semibold">$<input type="number" step="0.01" min="0" disabled={off || editBusy} value={e.rate != null ? e.rate : li.rate} onChange={ev => setE({ rate: ev.target.value })} className="w-24 text-right rounded-md px-1.5 py-0.5" style={{ border: '1px solid #e0dbd6' }} /></span>}
+                      {li.line_item_id && !li.big4 && <button onClick={() => setE({ remove: !e.remove })} disabled={editBusy} title={e.remove ? 'Put it back' : 'Remove this line'} className="text-sm font-bold w-6" style={{ color: e.remove ? '#166534' : '#b91c1c' }}>{e.remove ? '↺' : '✕'}</button>}
                     </span>
                   </div>
-                ))}
+                )})}
                 <div className="flex justify-between px-4 py-3 text-xl font-extrabold" style={{ borderTop: '2px solid #e2e8f0', color: '#1a1a1a' }}>
                   <span>Total</span><span className="tabular-nums">${Number(preview.total).toFixed(2)}</span>
                 </div>
               </div>
+              {editMsg && <p className="text-sm font-semibold" style={{ color: editMsg.startsWith('✗') ? '#b91c1c' : '#166534' }}>{editMsg}</p>}
               {zeroLines.length > 0 && (
                 <p className="text-sm font-semibold rounded-xl p-3" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
                   ⚠ {zeroLines.length} unmatched line{zeroLines.length > 1 ? 's' : ''} — no price found in Books. Fix before sending or the shop sees $0.
@@ -1316,10 +1362,15 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
             <div className="px-5 py-3 flex gap-2" style={{ borderTop: '1px solid #ebebeb' }}>
               <button onClick={() => setPhase('idle')} disabled={phase === 'sending'}
                 className="flex-1 rounded-xl py-3.5 text-base font-semibold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
-              <button onClick={send} disabled={phase === 'sending' || !preview.sent_to?.length}
-                className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: '#1d4ed8', opacity: phase === 'sending' || !preview.sent_to?.length ? .45 : 1 }}>
-                {phase === 'sending' ? 'Sending…' : `📤 Send quote — $${Number(preview.total).toFixed(2)}`}
-              </button>
+              {dirty
+                ? <button onClick={saveEdits} disabled={editBusy}
+                    className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: '#CD4419', opacity: editBusy ? .55 : 1 }}>
+                    {editBusy ? 'Updating the quote…' : '💾 Save changes to the quote'}
+                  </button>
+                : <button onClick={send} disabled={phase === 'sending' || !preview.sent_to?.length}
+                    className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: '#1d4ed8', opacity: phase === 'sending' || !preview.sent_to?.length ? .45 : 1 }}>
+                    {phase === 'sending' ? 'Sending…' : `📤 Send quote — $${Number(preview.total).toFixed(2)}`}
+                  </button>}
             </div>
           </div>
         </div>
@@ -1328,7 +1379,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
   )
 }
 
-function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate }) {
+function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate, big4Pref = null }) {
   return (
     <div className="rounded-xl px-5 py-4 flex flex-col gap-3" style={{ backgroundColor: '#f0faf4', border: '1.5px solid #6fcf97' }}>
       <div className="flex items-center gap-2">
@@ -1343,7 +1394,7 @@ function SuccessCard({ result, job, lineCount, selectedCustomer, onNavigate }) {
         {result.quoteNumber && <SuccessField label="Invoice #" value={result.quoteNumber} />}
       </div>
 
-      <SendQuoteButton result={result} job={job} lineCount={lineCount} selectedCustomer={selectedCustomer} onNavigate={onNavigate} />
+      <SendQuoteButton result={result} job={job} lineCount={lineCount} selectedCustomer={selectedCustomer} onNavigate={onNavigate} big4Pref={big4Pref} />
 
       {/* Links row */}
       <div className="flex flex-col gap-2 pt-1" style={{ borderTop: '1px solid #b7e4c7' }}>

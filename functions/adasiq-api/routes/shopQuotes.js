@@ -85,6 +85,29 @@ async function readDiscounts(app) {
   try { return JSON.parse(r?.config_value || '{}') || {} } catch { return {} }
 }
 
+// ── Big 4 lines on a quote (Mark 2026-10-02: "in the quote screen, we should be
+// able to edit this stuff") ─────────────────────────────────────────────
+const B4 = {
+  cal_id:    [/^calibration identification report/i],
+  pcsi:      [/^post collision safety inspection/i],
+  pre_scan:  [/^pre-?scan/i],
+  post_scan: [/^post-?scan/i, /^post-calibration scan/i],
+  snapshot:  [/^calibration snapshot/i],
+}
+function big4KeyOf(name) { const n = String(name || '').trim(); for (const [k, res] of Object.entries(B4)) if (res.some(re => re.test(n))) return k; return null }
+function big4State(b3, lines) {
+  const out = {}
+  for (const b of b3.BIG3) {
+    const li = lines.find(l => big4KeyOf(l.name) === b.key)
+    out[b.key] = !li ? 'off' : (/\(included\)|\(l-m\)/i.test(li.name || '') || !(Number(li.rate) > 0)) ? 'included' : 'charge'
+  }
+  return out
+}
+async function itemNamed(token, name) {
+  const r = await axios.get(`${ZOHO_API_BASE}/items`, { headers: zohoHeaders(token), params: { ...orgParam(), search_text: name, filter_by: 'Status.Active' }, timeout: 15000 })
+  return (r.data?.items || []).find(i => String(i.name || '').toLowerCase() === String(name).toLowerCase()) || null
+}
+
 // ── Books helpers ───────────────────────────────────────────────────────
 async function getEstimate(token, estimateId) {
   const r = await axios.get(`${ZOHO_API_BASE}/estimates/${estimateId}`, {
@@ -197,7 +220,10 @@ router.get('/preview', async (req, res) => {
       total: Number(est.total) || 0,
       sent_to: emails,
       template_ok: !!templateId,
+      big4: await (async () => { try { const b3 = await import('../services/big3.js'); return { modes: Object.fromEntries(b3.BIG3.map(b => [b.key, b.modes])), labels: Object.fromEntries(b3.BIG3.map(b => [b.key, b.label])), current: big4State(b3, est.line_items || []), shop_rule: (await b3.readBig3(req, est.customer_name || '')).rules || null } } catch { return null } })(),
       line_items: (est.line_items || []).map(li => ({
+        line_item_id: li.line_item_id || '',
+        big4: big4KeyOf(li.name),
         name: li.name || '',
         description: li.description || '',
         rate: Number(li.rate) || 0,
@@ -212,6 +238,54 @@ router.get('/preview', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.response?.data?.message || e.message })
   }
+})
+
+// ✏️ Edit the quote's lines before it goes out: remove a line, change a price
+// or quantity, flip a Big 4 item Charge / Included / Off. "Remember" saves the
+// Big 4 choice as the shop's rule (same as the CRM Billing tab).
+router.post('/edit-lines', express.json(), async (req, res) => {
+  try {
+    const estimateId = String(req.body?.estimate_id || '')
+    if (!estimateId) return res.status(400).json({ error: 'estimate_id required' })
+    const token = await getAccessToken()
+    const est = await getEstimate(token, estimateId)
+    if (!est) return res.status(404).json({ error: 'Estimate not found in Zoho Books' })
+    const b3 = await import('../services/big3.js')
+    const edits = new Map((req.body?.lines || []).map(l => [String(l.line_item_id || ''), l]))
+    const want = req.body?.big4 && typeof req.body.big4 === 'object' ? req.body.big4 : {}
+    const cur = big4State(b3, est.line_items || [])
+    const lines = []
+    for (const li of est.line_items || []) {
+      const e = edits.get(String(li.line_item_id)) || {}
+      const k = big4KeyOf(li.name)
+      if (e.remove) continue
+      if (k && want[k] && want[k] !== cur[k]) continue          // replaced below
+      lines.push({ line_item_id: li.line_item_id, ...(li.item_id ? { item_id: li.item_id } : { name: li.name }), description: li.description || '',
+        rate: e.rate != null && e.rate !== '' ? Number(e.rate) : li.rate, quantity: e.quantity != null && e.quantity !== '' ? Number(e.quantity) : li.quantity })
+    }
+    const missing = []
+    for (const b of b3.BIG3) {
+      const m = want[b.key]
+      if (!m || m === cur[b.key] || m === 'off') continue
+      const name = m === 'included' ? b.base : b.paid
+      if (!name) continue
+      let it = await itemNamed(token, name)
+      if (!it && m === 'charge' && b.paidFallback) it = await itemNamed(token, b.paidFallback)
+      if (!it) { missing.push(name); continue }
+      lines.push({ item_id: it.item_id, description: it.description || '', rate: Number(it.rate) || 0, quantity: 1 })
+    }
+    if (missing.length) return res.status(400).json({ error: `Not in the Books catalog: ${missing.join(', ')} — nothing changed.` })
+    if (!lines.length) return res.status(400).json({ error: 'The quote needs at least one line.' })
+    const u = await axios.put(`${ZOHO_API_BASE}/estimates/${estimateId}`, { line_items: lines }, { headers: zohoHeaders(token), params: orgParam(), timeout: 20000, validateStatus: s => s < 500 })
+    if (u.data?.code !== 0) throw new Error(u.data?.message || `Books said ${u.status}`)
+    let saved = null
+    if (req.body?.remember && Object.keys(want).length && est.customer_name) {
+      const prev = (await b3.readBig3(req, est.customer_name)).rules || {}
+      const r = await b3.saveBig3(req, est.customer_name, b3.withDefaults({ ...prev, ...want }), req.user?.name || req.user?.email || 'quote screen')
+      saved = r ? b3.describeRules(b3.withDefaults({ ...prev, ...want })) : null
+    }
+    res.json({ ok: true, total: Number(u.data?.estimate?.total) || 0, saved })
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
 // One tap: template → email → durable board record.
