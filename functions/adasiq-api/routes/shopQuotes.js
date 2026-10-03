@@ -248,43 +248,19 @@ router.post('/edit-lines', express.json(), async (req, res) => {
     const estimateId = String(req.body?.estimate_id || '')
     if (!estimateId) return res.status(400).json({ error: 'estimate_id required' })
     const token = await getAccessToken()
-    const est = await getEstimate(token, estimateId)
-    if (!est) return res.status(404).json({ error: 'Estimate not found in Zoho Books' })
+    const { enforceBig4, getEst } = await import('../services/big4Enforce.js')
     const b3 = await import('../services/big3.js')
-    const edits = new Map((req.body?.lines || []).map(l => [String(l.line_item_id || ''), l]))
     const want = req.body?.big4 && typeof req.body.big4 === 'object' ? req.body.big4 : {}
-    const cur = big4State(b3, est.line_items || [])
-    const lines = []
-    for (const li of est.line_items || []) {
-      const e = edits.get(String(li.line_item_id)) || {}
-      const k = big4KeyOf(li.name)
-      if (e.remove) continue
-      if (k && want[k] && want[k] !== cur[k]) continue          // replaced below
-      lines.push({ line_item_id: li.line_item_id, ...(li.item_id ? { item_id: li.item_id } : { name: li.name }), description: li.description || '',
-        rate: e.rate != null && e.rate !== '' ? Number(e.rate) : li.rate, quantity: e.quantity != null && e.quantity !== '' ? Number(e.quantity) : li.quantity })
-    }
-    const missing = []
-    for (const b of b3.BIG3) {
-      const m = want[b.key]
-      if (!m || m === cur[b.key] || m === 'off') continue
-      const name = m === 'included' ? b.base : b.paid
-      if (!name) continue
-      let it = await itemNamed(token, name)
-      if (!it && m === 'charge' && b.paidFallback) it = await itemNamed(token, b.paidFallback)
-      if (!it) { missing.push(name); continue }
-      lines.push({ item_id: it.item_id, description: it.description || '', rate: Number(it.rate) || 0, quantity: 1 })
-    }
-    if (missing.length) return res.status(400).json({ error: `Not in the Books catalog: ${missing.join(', ')} — nothing changed.` })
-    if (!lines.length) return res.status(400).json({ error: 'The quote needs at least one line.' })
-    const u = await axios.put(`${ZOHO_API_BASE}/estimates/${estimateId}`, { line_items: lines }, { headers: zohoHeaders(token), params: orgParam(), timeout: 20000, validateStatus: s => s < 500 })
-    if (u.data?.code !== 0) throw new Error(u.data?.message || `Books said ${u.status}`)
+    const edits = Object.fromEntries((req.body?.lines || []).map(l => [String(l.line_item_id || ''), l]))
+    const r = await enforceBig4(token, estimateId, want, edits)
     let saved = null
-    if (req.body?.remember && Object.keys(want).length && est.customer_name) {
+    const est = await getEst(token, estimateId)
+    if (req.body?.remember && Object.keys(want).length && est?.customer_name) {
       const prev = (await b3.readBig3(req, est.customer_name)).rules || {}
-      const r = await b3.saveBig3(req, est.customer_name, b3.withDefaults({ ...prev, ...want }), req.user?.name || req.user?.email || 'quote screen')
-      saved = r ? b3.describeRules(b3.withDefaults({ ...prev, ...want })) : null
+      const rules = b3.withDefaults({ ...prev, ...want })
+      if (await b3.saveBig3(req, est.customer_name, rules, req.user?.name || req.user?.email || 'quote screen')) saved = b3.describeRules(rules)
     }
-    res.json({ ok: true, total: Number(u.data?.estimate?.total) || 0, saved })
+    res.json({ ok: true, total: r.total || Number(est?.total) || 0, fixed: r.fixed, saved })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 
@@ -317,6 +293,17 @@ router.post('/send', async (req, res) => {
       })
     }
 
+    // 🔒 Never email a quote that differs from what was reviewed (Mark 2026-10-02,
+    // T CH11819 went out with a $99 PCSI the screen didn't show).
+    const expectTotal = req.body?.expect_total
+    if (expectTotal != null && expectTotal !== '') {
+      const live = await getEstimate(token, estimateId)
+      const booksTotal = Number(live?.total) || 0
+      if (Math.abs(booksTotal - Number(expectTotal)) > 0.009) {
+        const lines = (live?.line_items || []).map(li => `${li.name} $${Number(li.item_total ?? li.rate * li.quantity).toFixed(2)}`)
+        return res.status(409).json({ error: `NOT SENT — the quote in Books is $${booksTotal.toFixed(2)} but the screen you approved showed $${Number(expectTotal).toFixed(2)}. Open 📤 Send Quote to see the real lines and fix them.`, books_total: booksTotal, lines })
+      }
+    }
     await applyQuoteTemplateStrict(req, token, estimateId)
     // 🌐 Online report link on the quote (Mark 2026-10-02): the shop taps it for the
     // ✨ "why is this required" popups + OEM documents. Goes in the quote's notes, so

@@ -214,6 +214,17 @@ router.post('/', async (req, res) => {
       req,
     })
 
+    // 🔒 Make the built quote's Big 4 lines exactly the rule it was priced with —
+    // whatever the item matcher did (Mark 2026-10-02: "so it can never happen").
+    if (result?.quoteId && big3Rules && !['repair_shop', 'dealer', 'retail'].includes(ctypeCreate) && String(insurer || '').toLowerCase() !== 'cash') {
+      try {
+        const { enforceBig4 } = await import('../services/big4Enforce.js')
+        const { getAccessToken: tok } = await import('../services/zoho.js')
+        const f = await enforceBig4(await tok(), result.quoteId, b3.withDefaults(big3Rules))
+        if (f.changed) { console.warn(`[invoice] 🔒 Big 4 corrected on ${result.quoteNumber || result.quoteId}: ${f.fixed.join(', ')}`); result.big4_fixed = f.fixed; result.total_after_fix = f.total }
+      } catch (e) { console.error('[invoice] Big 4 check failed:', e.message); result.big4_check_error = e.message }
+    }
+
     // Learn the Big 3 rule for this shop (Mark 2026-09-10) — unless the
     // modal unticked "remember".
     if (big3Rules && req.body.big3_save !== false && (customerName || shop) && (!insurerB3.insurer_rule || req.body.big3_edited === true)) {   // Mark 2026-10-02: an edit Mark/Kat made on screen is saved even on an insurer-rule job   // never learn a shop rule from an insurer-forced invoice

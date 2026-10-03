@@ -383,7 +383,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         pool_override: poolOverride || null,
             cash_cap: cashCap,
           cash: cashMode,
-        big3_rules: big3Rules || pricePreview?.big3?.rules || null,
+        big3_rules: pricePreview?.big3?.rules || big3Rules || null,   // exactly what the review screen showed (2026-10-02)
         big3_save: big3Save,
         big3_edited: !!big3Rules,   // an on-screen edit saves even on an insurer-rule job (Mark 2026-10-02)
       }
@@ -481,7 +481,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
       if (opts.send && data.quoteId) {
         try {
           const sr = await apiFetch(`${API_BASE}/api/shop-quotes/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-            estimate_id: data.quoteId,
+            estimate_id: data.quoteId, expect_total: opts.expectTotal,
             meta: { shop: selectedCustomer?.name || jobData.shop || '', vehicle: [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '), vin: jobData.vin || '', ro_number: jobData.ro_number || '', claim: jobData.claim || '', insurer: jobData.insurer || '', cal_count: selected.length, scrub_id: jobData._scrubId || '' },
           }) })
           const sd = await sr.json().catch(() => ({}))
@@ -1037,7 +1037,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
         rate: rateEdits[li._key] != null ? rateEdits[li._key] : li.rate,
         quantity: qtyEdits[li._key] != null ? qtyEdits[li._key] : li.quantity,
       }))
-    onConfirm(overrides, zeros, lineOverrides, lineEdits, addedItems, { send: sendRef.current })
+    onConfirm(overrides, zeros, lineOverrides, lineEdits, addedItems, { send: sendRef.current, expectTotal: Number(finalTotal) })
   }
 
   return (
@@ -1332,7 +1332,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          estimate_id: result.quoteId,
+          estimate_id: result.quoteId, expect_total: preview?.total,
           meta: {
             shop: selectedCustomer?.name || job.shop || '',
             vehicle: [job.year, job.make, job.model].filter(Boolean).join(' '),
