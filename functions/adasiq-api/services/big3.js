@@ -155,8 +155,11 @@ export async function big3Map(req) {
   const map = {}, missing = []
   for (const sh of shops) {
     const br = parseBR(sh)
-    const rules = normalizeRules(br.big3)
-    const complete = rules && BIG3.every(b => rules[b.key])
+    // Dealers / repair shops / retail never carry the Big 4 (Mark 2026-10-03: a dealer's
+    // card said "Big 3: yes") — the badge and the "without a rule" count see all-off.
+    const nonCollision = NON_COLLISION.has(br.customer_type)
+    const rules = nonCollision ? { cal_id: 'off', pcsi: 'off', pre_scan: 'off', post_scan: 'off', snapshot: 'off' } : normalizeRules(br.big3)
+    const complete = nonCollision || (rules && BIG3.every(b => rules[b.key]))
     const drps = Array.isArray(sh.drps) ? sh.drps : []
     const billing = br.customer_type ? { customer_type: br.customer_type, discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, pay_mode: br.pay_mode || CUSTOMER_TYPES[br.customer_type]?.pay || '', mode: billingModeFor(br.customer_type) } : null
     const ints = br.integrations ? { kinetic: br.integrations.kinetic?.state || 'off', adasmaps: br.integrations.adasmaps?.state || 'off' } : null

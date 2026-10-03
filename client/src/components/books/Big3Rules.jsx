@@ -147,6 +147,8 @@ export function Big3Badge({ shopName, size = 'xs' }) {
   const entry = map[shopKeyOf(shopName)]
   if (!shopName) return null
   const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
+  const ct = entry?.billing?.customer_type
+  if (ct && ct !== 'body_shop') return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#f5f3f0', color: '#666' }} title="Collision shops only — no Cal ID, PCSI, scans or snapshot on this customer's quotes or invoices">🧾 No Big 4 ({({ repair_shop: 'repair shop', dealer: 'dealer', retail: 'retail' })[ct] || ct})</span>
   if (!entry?.rules) {
     return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e' }} title="No Big 3 rule yet — default: Cal ID charged, PCSI + Post-Scan included. The first invoice will ask.">🧾 Big 3: default (no rule yet)</span>
   }
