@@ -350,42 +350,91 @@ function StatsBar({ shops }) {
   )
 }
 
-// 🔎 Duplicate shops (read-only for now — merging comes with the merge tool).
-function DuplicatesPanel({ onClose, onOpenShop }) {
+// 🔎 Duplicate shops (Mark 2026-10-02): every group, active customers boxed in green,
+// pick the one to keep, merge. Only Mark and Kat can merge; exact twins (same name and
+// same phone) merge in one tap.
+function DuplicatesPanel({ user, onClose, onOpenShop, onMerged }) {
   const [d, setD] = useState(null)
   const [err, setErr] = useState('')
-  const [all, setAll] = useState(false)
-  useEffect(() => { apiFetch(`${API_BASE}/api/shops/duplicates`).then(r => r.json()).then(x => { if (x.error) setErr(x.error); else setD(x) }).catch(e => setErr(e.message)) }, [])
-  const groups = (d?.groups || []).filter(g => all || g.likely)
+  const [keep, setKeep] = useState({})       // group key → shop id to keep
+  const [skip, setSkip] = useState({})       // `${group}|${id}` → leave this one out
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const canMerge = isOwnerUser(user)
+  const load = () => apiFetch(`${API_BASE}/api/shops/duplicates`).then(r => r.json()).then(x => { if (x.error) setErr(x.error); else { setD(x); setKeep({}); setSkip({}) } }).catch(e => setErr(e.message))
+  useEffect(() => { load() }, [])
+  const groups = d?.groups || []
+  const twins = groups.filter(g => g.twin)
   const WHY = { 'same name': 'Same name', 'same phone': '📞 Same phone', 'same email': '✉️ Same email', 'same Books customer': '📚 Same Books customer' }
+  async function merge(g) {
+    const k = keep[g.key] || g.keep
+    const ids = g.shops.filter(s => s.id !== k && !skip[`${g.key}|${s.id}`]).map(s => s.id)
+    const kept = g.shops.find(s => s.id === k)
+    if (!ids.length) return
+    if (!window.confirm(`Keep "${kept?.name}" and merge ${ids.length} other shop${ids.length === 1 ? '' : 's'} into it?\n\nTheir phone, email, Books link, contacts and notes move over; the extra cards are deleted (saved in the merge log).`)) return
+    setBusy(g.key); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keep_id: k, merge_ids: ids }) })
+      const x = await r.json(); if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`)
+      setMsg(`✓ Kept ${x.kept?.name} · merged ${(x.merged || []).map(m => m.name).join(', ')}`); onMerged && onMerged(); await load()
+    } catch (e) { setMsg(`✗ ${e.message}`) } finally { setBusy('') }
+  }
+  async function mergeTwins() {
+    if (!window.confirm(`Merge all ${twins.length} exact twin group${twins.length === 1 ? '' : 's'} (same name AND same phone)? The customer / Books-linked card is kept in each.`)) return
+    setBusy('twins'); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/merge-twins`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const x = await r.json(); if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`)
+      setMsg(`✓ Merged ${x.groups} exact twin group${x.groups === 1 ? '' : 's'}`); onMerged && onMerged(); await load()
+    } catch (e) { setMsg(`✗ ${e.message}`) } finally { setBusy('') }
+  }
   return (
     <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="bg-white w-full rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '92vh', maxWidth: 'min(860px, 98vw)' }}>
-        <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid #ebebeb' }}>
+      <div className="bg-white w-full rounded-t-2xl sm:rounded-2xl flex flex-col" style={{ maxHeight: '92vh', maxWidth: 'min(900px, 98vw)' }}>
+        <div className="flex items-center justify-between gap-2 px-5 py-3" style={{ borderBottom: '1px solid #ebebeb' }}>
           <div>
             <div className="font-bold text-lg" style={{ color: '#1a1a1a' }}>🔎 Duplicate shops</div>
-            <div className="text-xs" style={{ color: '#888' }}>{d ? `${groups.length} group${groups.length === 1 ? '' : 's'} · ${d.total_shops} shops checked · nothing is merged from here yet` : 'Checking every shop…'}</div>
+            <div className="text-xs" style={{ color: '#888' }}>{d ? `${groups.length} group${groups.length === 1 ? '' : 's'} · ${d.total_shops} shops checked · green box = active customer` : 'Checking every shop…'}</div>
           </div>
-          <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
+          <div className="flex items-center gap-2">
+            {canMerge && twins.length > 0 && <button onClick={mergeTwins} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#CD4419', opacity: busy ? .5 : 1 }}>{busy === 'twins' ? 'Merging…' : `🔀 Merge ${twins.length} exact twin${twins.length === 1 ? '' : 's'}`}</button>}
+            <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
+          </div>
         </div>
         <div className="px-5 py-3 overflow-y-auto space-y-3">
           {err && <p className="text-sm" style={{ color: '#b91c1c' }}>{err}</p>}
-          {d && <label className="flex items-center gap-2 text-xs" style={{ color: '#555' }}><input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} /> Also show same-name shops with different phones (usually separate locations, e.g. Maaco)</label>}
-          {groups.map(g => (
+          {msg && <p className="text-sm font-semibold" style={{ color: msg.startsWith('✗') ? '#b91c1c' : '#166534' }}>{msg}</p>}
+          {!canMerge && d && <p className="text-xs" style={{ color: '#888' }}>Only Mark and Kat can merge shops.</p>}
+          {groups.map(g => {
+            const k = keep[g.key] || g.keep
+            const n = g.shops.filter(s => s.id !== k && !skip[`${g.key}|${s.id}`]).length
+            return (
             <div key={g.key} className="rounded-xl overflow-hidden" style={{ border: `1.5px solid ${g.likely ? '#fcd34d' : '#e0dbd6'}` }}>
-              <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider" style={{ backgroundColor: g.likely ? '#fffbeb' : '#f5f3f0', color: g.likely ? '#92400e' : '#666' }}>{WHY[g.why] || g.why}{g.likely ? ' · likely the same shop' : ''}</div>
-              {g.shops.map(s => (
-                <button key={s.id} onClick={() => onOpenShop(s.id)} className="w-full text-left px-3 py-2 flex items-center justify-between gap-2 text-sm" style={{ borderTop: '1px solid #f1f5f9' }}>
-                  <span className="min-w-0"><b style={{ color: '#1a1a1a' }}>{s.name}</b> <span className="text-xs" style={{ color: '#888' }}>{s.phone || 'no phone'}{s.city ? ` · ${s.city}` : ''}</span></span>
-                  <span className="flex items-center gap-1 flex-shrink-0 text-[10px] font-bold">
-                    <span className="px-1.5 py-0.5 rounded" style={['active', 'active2', 'second_active'].includes(s.stage) ? { backgroundColor: '#dcfce7', color: '#166534' } : { backgroundColor: '#f5f3f0', color: '#666' }}>{s.stage || '—'}</span>
-                    {s.books && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>📚 Books</span>}
-                    {s.has_rules && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fdf3ef', color: '#CD4419' }}>🧾 rules</span>}
-                  </span>
-                </button>
-              ))}
+              <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider flex items-center justify-between gap-2" style={{ backgroundColor: g.likely ? '#fffbeb' : '#f5f3f0', color: g.likely ? '#92400e' : '#666' }}>
+                <span>{WHY[g.why] || g.why}{g.twin ? ' · exact twin' : g.likely ? ' · likely the same shop' : ' · maybe separate locations'}</span>
+                {canMerge && <button onClick={() => merge(g)} disabled={!!busy || !n} className="normal-case tracking-normal text-xs font-bold rounded-lg px-2.5 py-1 text-white" style={{ backgroundColor: '#1a1a1a', opacity: busy || !n ? .4 : 1 }}>{busy === g.key ? 'Merging…' : `🔀 Merge ${n} into the kept one`}</button>}
+              </div>
+              <div className="p-2 space-y-1.5">
+                {g.shops.map(s => {
+                  const isKeep = s.id === k, out = skip[`${g.key}|${s.id}`]
+                  return (
+                  <div key={s.id} className="rounded-lg px-2.5 py-2 flex items-center justify-between gap-2 text-sm" style={{ border: s.active ? '2px solid #16a34a' : '1px solid #ebebeb', backgroundColor: s.active ? '#f0fdf4' : 'white', opacity: out ? .45 : 1 }}>
+                    <span className="flex items-center gap-2 min-w-0">
+                      {canMerge && <input type="radio" name={g.key} checked={isKeep} onChange={() => setKeep(x => ({ ...x, [g.key]: s.id }))} title="Keep this one" />}
+                      <button onClick={() => onOpenShop(s.id)} className="text-left min-w-0"><b style={{ color: '#1a1a1a' }}>{s.name}</b> <span className="text-xs" style={{ color: '#888' }}>{s.phone || 'no phone'}{s.city ? ` · ${s.city}` : ''}</span></button>
+                    </span>
+                    <span className="flex items-center gap-1 flex-shrink-0 text-[10px] font-bold">
+                      {isKeep && canMerge && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>KEEP</span>}
+                      <span className="px-1.5 py-0.5 rounded" style={s.active ? { backgroundColor: '#16a34a', color: 'white' } : { backgroundColor: '#f5f3f0', color: '#666' }}>{s.active ? '✓ CUSTOMER' : (s.stage || '—')}</span>
+                      {s.books && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>📚 Books</span>}
+                      {s.has_rules && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fdf3ef', color: '#CD4419' }}>🧾 rules</span>}
+                      {canMerge && !isKeep && <label className="flex items-center gap-1 font-normal" style={{ color: '#666' }}><input type="checkbox" checked={!out} onChange={e => setSkip(x => ({ ...x, [`${g.key}|${s.id}`]: !e.target.checked }))} />merge</label>}
+                    </span>
+                  </div>
+                )})}
+              </div>
             </div>
-          ))}
+          )})}
           {d && !groups.length && <p className="text-sm" style={{ color: '#166534' }}>✓ No duplicates found.</p>}
         </div>
       </div>
@@ -582,7 +631,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'white' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
-      {dupOpen && <DuplicatesPanel onClose={() => setDupOpen(false)} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) { setDupOpen(false); setDetailShop(sh) } }} />}
+      {dupOpen && <DuplicatesPanel user={user} onMerged={() => fetchShops()} onClose={() => setDupOpen(false)} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) { setDupOpen(false); setDetailShop(sh) } }} />}
 
       <main className="flex-1 flex flex-col" style={{ padding: '1.25rem 1.25rem 0', minHeight: 0 }}>
 

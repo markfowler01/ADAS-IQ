@@ -724,6 +724,12 @@ router.get('/report-link', async (req, res) => {
 // 🔎 CRM duplicate finder (Mark 2026-10-02: "I see 2 Showcases"). Read-only: groups
 // shops whose names match once "auto / body / collision / rebuild / shop / inc / llc"
 // are ignored, or share a phone / email / Books link. Nothing is merged here.
+// Exact-twin auto-merge (Mark 2026-10-02 "auto merge exact twins"); ?dry=1 lists only.
+router.post('/shops/merge-twins', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const M = await import('../services/shopMerge.js'); res.json(await M.mergeExactTwins(req, 'auto-merge (exact twins)', { dry: String(req.query.dry || '') === '1' })) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/shops/duplicates', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {

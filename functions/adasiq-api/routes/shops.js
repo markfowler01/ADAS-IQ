@@ -121,7 +121,7 @@ async function getAllShops(req) {
 }
 
 // Exported for the dispatch-map feature (geocoding cron, map data endpoint).
-export { getAllShops, insertShop, updateShop }
+export { getAllShops, insertShop, updateShop, deleteShop }
 
 async function insertShop(req, shopData) {
   const table = getTable(req)
@@ -433,6 +433,22 @@ router.put('/full-service-by-name', async (req, res) => {
 // 🧾 The shop's billing by NAME, for the scrub report header (Mark 2026-10-02: Big 4
 // changes save the moment they're made, one home = the CRM shop). Reports which
 // CRM row the name matched, so a wrong / missing match is visible, not silent.
+// 🔀 Merge — Mark and Kat only (Mark 2026-10-02).
+router.post('/merge', express.json(), async (req, res) => {
+  try {
+    const M = await import('../services/shopMerge.js')
+    if (!M.isOwner(req)) return res.status(403).json({ error: 'Only Mark and Kat can merge shops.' })
+    const keep = String(req.body?.keep_id || ''), ids = Array.isArray(req.body?.merge_ids) ? req.body.merge_ids : []
+    res.json({ ok: true, ...(await M.mergeShops(req, keep, ids, req.user?.name || req.user?.email || '')) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/merge-twins', express.json(), async (req, res) => {
+  try {
+    const M = await import('../services/shopMerge.js')
+    if (!M.isOwner(req)) return res.status(403).json({ error: 'Only Mark and Kat can merge shops.' })
+    res.json({ ok: true, ...(await M.mergeExactTwins(req, req.user?.name || req.user?.email || '', { dry: req.body?.dry === true })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // 🔎 Duplicates for the CRM screen (read-only).
 router.get('/duplicates', async (req, res) => {
   try { const { findShopDuplicates } = await import('../services/shopDupes.js'); res.json({ ok: true, ...(await findShopDuplicates(req)) }) }
