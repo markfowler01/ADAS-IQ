@@ -730,6 +730,30 @@ router.post('/shops/merge-twins', async (req, res) => {
   try { const M = await import('../services/shopMerge.js'); res.json(await M.mergeExactTwins(req, 'auto-merge (exact twins)', { dry: String(req.query.dry || '') === '1' })) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 📚 Books invoice mirror: how fresh is it, and refresh recent months (same pull the
+// nightly job makes). 2026-10-03: the Customers view showed nobody invoiced in 60 days.
+router.get('/books/mirror-status', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { readMeta } = await import('../services/zohoMirror.js')
+    const z = catalyst.initialize(req, { type: 'advancedio' }).zcql()
+    const months = {}
+    const rows = await z.executeZCQLQuery("SELECT inv_month, COUNT(ROWID) FROM AdasInvoices GROUP BY inv_month")
+    for (const r of rows || []) { const x = r.AdasInvoices || r; months[x.inv_month] = Number(x['COUNT(ROWID)'] ?? Object.values(x).find(v => /^\d+$/.test(String(v)))) }
+    const mx = await z.executeZCQLQuery("SELECT MAX(inv_date) FROM AdasInvoices")
+    const stamps = await z.executeZCQLQuery("SELECT config_key, config_value FROM AppConfig WHERE config_key LIKE 'zb_mirror:%' ORDER BY config_key DESC LIMIT 5")
+    res.json({ meta: await readMeta(req), months, newest_invoice: Object.values((mx?.[0] || {}).AdasInvoices || mx?.[0] || {})[0] || null, nightly_stamps: (stamps || []).map(r => r.AppConfig || r) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/books/mirror-sync', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { syncMonths } = await import('../services/zohoMirror.js')
+    const months = String(req.query.months || '').split(',').map(x => x.trim()).filter(x => /^\d{4}-\d{2}$/.test(x)).slice(0, 6)
+    if (!months.length) return res.status(400).json({ error: 'months=YYYY-MM,YYYY-MM' })
+    res.json(await syncMonths(req, months, { dryRun: req.query.dry === '1' }))
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
+})
 router.get('/shops/customers', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try { const { customerReport } = await import('../services/customers.js'); res.json(await customerReport(req)) } catch (e) { res.status(500).json({ error: e.message }) }
