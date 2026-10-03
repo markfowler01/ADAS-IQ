@@ -230,8 +230,23 @@ function getTable(req) {
 
 async function getAllJobs(req) {
   const table = getTable(req)
-  const rows = await table.getAllRows()
-  return (rows || []).map(rowToJob)
+  try {
+    const rows = await table.getAllRows()
+    return (rows || []).map(rowToJob)
+  } catch (e) {
+    // The board never goes blank over one failed bulk read (2026-10-02: "Server
+    // error 500" on the Jobs board). Same rows, read 300 at a time with ZCQL.
+    console.error('[jobs] getAllRows failed, reading with ZCQL:', e.message)
+    const z = catalyst.initialize(req, { type: 'advancedio' }).zcql()
+    const out = []
+    for (let off = 0; off < 30000; off += 300) {
+      const r = await z.executeZCQLQuery(`SELECT * FROM ${JOBS_TABLE_NAME} ORDER BY ROWID LIMIT ${off}, 300`)
+      const batch = (r || []).map(x => x[JOBS_TABLE_NAME] || x)
+      out.push(...batch)
+      if (batch.length < 300) break
+    }
+    return out.map(rowToJob)
+  }
 }
 
 async function insertJob(req, jobData) {
