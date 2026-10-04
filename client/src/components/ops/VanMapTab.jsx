@@ -162,7 +162,63 @@ function VanPanel({ van, onGo, setLocations }) {
   )
 }
 
-function Panel({ van, kit, sel, onGo, setLocations }) {
+// ↔ Transfer a tool from this van to another (Mark 2026-10-04: rare target sets move
+// between vans; log who moved it; keep it dead simple for the techs).
+function GearPanel({ van, b, locations, onGo, onTransfer }) {
+  const [moving, setMoving] = useState(null)   // asset id being transferred
+  const [to, setTo] = useState('')
+  const [note, setNote] = useState('')
+  const others = locations.filter(l => l.type === 'van' && l.id !== van.id)
+  const nm = id => locations.find(l => l.id === id)?.name || 'Spare'
+  const H = ({ t, s }) => <div style={{ marginBottom: 10 }}><div style={{ fontSize: 16, fontWeight: 700, color: INK }}>{t}</div>{s && <div style={{ fontSize: 12, color: MUTED }}>{s}</div>}</div>
+  const inp = { fontSize: 12, padding: '6px 8px', borderRadius: 6, border: '1px solid #e0ddd8', width: '100%' }
+  return (
+    <div>
+      <H t={b.label} s={`${b.items.length} on ${van.name}`} />
+      {b.items.map(a => {
+        const last = (a.transfers || [])[a.transfers?.length - 1]
+        return (
+          <div key={a.id} style={{ padding: '6px 0', borderBottom: '1px solid #f1ede9' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>{a.nickname ? `${a.name} "${a.nickname}"` : a.name}</div>
+                <div style={{ fontSize: 11, color: sev(a.sub_exp) >= 2 ? RED : MUTED }}>{[a.sn, a.sub_exp ? `sub ${when(a.sub_exp)}` : '', a.notes].filter(Boolean).join(' · ')}</div>
+                {last && <div style={{ fontSize: 11, color: '#7c3aed' }}>↔ from {nm(last.from)} · {last.by || 'someone'} · {String(last.at).slice(0, 10)}</div>}
+              </div>
+              {onTransfer && others.length > 0 && moving !== a.id && <button onClick={() => { setMoving(a.id); setTo(others[0].id); setNote('') }} style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', border: 0, borderRadius: 6, padding: '5px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}>↔ Transfer</button>}
+            </div>
+            {moving === a.id && (
+              <div style={{ marginTop: 8, background: '#faf5ff', borderRadius: 8, padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <select value={to} onChange={e => setTo(e.target.value)} style={inp}>{others.map(l => <option key={l.id} value={l.id}>{l.name}{l.tech ? '' : ''}</option>)}<option value="">Spare / shop</option></select>
+                <input value={note} onChange={e => setNote(e.target.value)} placeholder="Why (optional) — e.g. Rivian job Tue" style={inp} />
+                <div style={{ gridColumn: 'span 2', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                  <button onClick={() => setMoving(null)} style={{ fontSize: 11, fontWeight: 700, padding: '6px 10px', borderRadius: 6, border: '1px solid #e0ddd8', background: 'white', cursor: 'pointer' }}>Cancel</button>
+                  <button onClick={() => { onTransfer(a.id, to, note); setMoving(null) }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 10px', borderRadius: 6, border: 0, background: '#7c3aed', color: 'white', cursor: 'pointer' }}>Move to {nm(to)}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
+      <button onClick={() => onGo('assets')} style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: BRAND, background: 'white', border: `1px solid ${BRAND}`, borderRadius: 7, padding: '7px 12px', cursor: 'pointer' }}>Open Equipment →</button>
+    </div>
+  )
+}
+
+// Recent transfers across every van — who moved what, where, when.
+function RecentTransfers({ assets, locations }) {
+  const nm = id => locations.find(l => l.id === id)?.name || 'Spare'
+  const rows = assets.flatMap(a => (a.transfers || []).map(t => ({ ...t, item: a.nickname ? `${a.name} "${a.nickname}"` : a.name }))).sort((x, y) => String(y.at).localeCompare(String(x.at))).slice(0, 8)
+  if (!rows.length) return null
+  return (
+    <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: INK, marginBottom: 8 }}>↔ Recent transfers</div>
+      {rows.map((t, i) => <div key={i} style={{ fontSize: 12, padding: '5px 0', borderBottom: '1px solid #f1ede9', color: '#444' }}><b style={{ color: INK }}>{t.item}</b> · {nm(t.from)} → {nm(t.to)} · {t.by || 'someone'} · {String(t.at).slice(0, 10)}{t.note ? <span style={{ color: MUTED }}> · "{t.note}"</span> : null}</div>)}
+    </div>
+  )
+}
+
+function Panel({ van, kit, sel, onGo, setLocations, locations, onTransfer }) {
   if (!sel) return <div style={{ fontSize: 13, color: MUTED }}>Tap anything in the van.</div>
   const smallKinds = ['Small Tool', 'Scanner', 'Other']
   const smallItems = kit.gearBoxes.filter(g => smallKinds.includes(g.label)).flatMap(g => g.items)
@@ -181,7 +237,7 @@ function Panel({ van, kit, sel, onGo, setLocations }) {
       <Go tab={b.item ? 'oem' : 'laptops'} label={b.item ? 'Open OEM Software' : 'Open Laptops'} />
     </div>)
   if (b.kind === 'tablet') return <div><H t={b.item ? b.item.name : 'Tablet — empty slot'} s={b.item ? `${b.item.cat}${b.item.nickname ? ` · "${b.item.nickname}"` : ''}` : 'add the Autel tablet to this van on Tools & Equipment'} />{b.item && <><Line l="Serial" v={b.item.sn} /><Line l="Subscription" v={b.item.sub_exp ? `${b.item.sub_exp} · ${when(b.item.sub_exp)}` : 'no date yet'} warn={sev(b.item.sub_exp) >= 2} />{b.item.notes && <Line l="Notes" v={b.item.notes} />}</>}<Go tab="assets" label="Open Tools & Equipment" /></div>
-  if (b.kind === 'gear' || b.kind === 'tools') return <div><H t={b.label} s={`${b.items.length} on ${van.name}`} />{b.items.map(a => <Line key={a.id} l={a.nickname ? `${a.name} "${a.nickname}"` : a.name} v={a.sub_exp ? `sub ${when(a.sub_exp)}` : (a.sn || '')} warn={sev(a.sub_exp) >= 2} />)}<Go tab="assets" label="Open Tools & Equipment" /></div>
+  if (b.kind === 'gear' || b.kind === 'tools') return <GearPanel van={van} b={b} locations={locations || []} onGo={onGo} onTransfer={onTransfer} />
   return null
 }
 
@@ -290,7 +346,7 @@ function VanHeader({ van, kit, setLocations }) {
   )
 }
 
-export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo, setLocations, setLaptops, setAssets }) {
+export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo, setLocations, setLaptops, setAssets, onTransfer = null, user = null }) {
   const [adding, setAdding] = useState(false)
   function createVan({ name, tech, kit }) {
     const id = `van-${uid()}`, n = locations.filter(l => l.type === 'van').length + 1
@@ -329,9 +385,10 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
         <div style={{ position: 'sticky', top: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16, minHeight: 120 }}>
             {sel && <button onClick={() => setSel('')} style={{ float: 'right', fontSize: 11, color: MUTED, background: 'none', border: 0, cursor: 'pointer' }}>✕ close</button>}
-            <Panel van={van} kit={kit} sel={sel} onGo={onGo} setLocations={setLocations} />
+            <Panel van={van} kit={kit} sel={sel} onGo={onGo} setLocations={setLocations} locations={locations} onTransfer={onTransfer} />
           </div>
           <VanSubs van={van} kit={kit} onGo={onGo} />
+          <RecentTransfers assets={assets} locations={locations} />
         </div>
       </div>}
     </div>

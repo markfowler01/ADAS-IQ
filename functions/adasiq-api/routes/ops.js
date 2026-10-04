@@ -40,6 +40,19 @@ router.put('/state/:key', express.json({ limit: '2mb' }), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ↔ Tool transfer between vans (Mark 2026-10-04): the move itself is saved with the
+// Ops state; this tells #dispatch who moved what, so the one rare target set is never
+// a mystery.
+router.post('/transfer', express.json(), async (req, res) => {
+  try {
+    const { item, from, to, note } = req.body || {}
+    const by = req.user?.name || req.user?.email || 'someone'
+    const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
+    await postToCliqChannel(DISPATCH_CHANNEL, `↔ *Tool transfer* · *${String(item || '').slice(0, 120)}* · ${from || 'Spare'} → ${to || 'Spare'} · by ${by}${note ? `\n"${String(note).slice(0, 200)}"` : ''}`).catch(() => {})
+    res.json({ ok: true, by })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // One-time cleanup (2026-10-04): the page shipped with made-up renewal dates, and a
 // browser that still had them pushed them up as the shared copy. Blank exactly those
 // dates (same name, same date, no purchase date entered). ?dry=1 lists only.

@@ -885,7 +885,7 @@ function VansTab({ locations, setLocations, techs, assets }) {
 
 // ── ASSETS TAB ────────────────────────────────────────────────────────────────
 
-function AssetsTab({ assets, setAssets, locations, q = '' }) {
+function AssetsTab({ assets, setAssets, locations, q = '', onTransfer = null }) {
   const [modal, setModal]     = useState(false)
   const [form, setForm]       = useState({})
   const [editId, setEditId]   = useState(null)
@@ -941,7 +941,7 @@ function AssetsTab({ assets, setAssets, locations, q = '' }) {
         const lanes = [...locations.map(l => ({ id: l.id, label: l.name, items: filtered.filter(a => a.location === l.id) })), { id: '', label: 'Spare / shop', items: filtered.filter(a => !a.location || !locations.some(l => l.id === a.location)) }]
           .filter(l => filterLoc === 'all' || l.id === filterLoc)
         const CAT_COLOR = { 'Cal Frame': '#157347', 'Cal Target': '#157347', 'Cal Mat': '#157347', 'Cal Stand': '#157347', 'Full Kit': '#157347', 'Scanner': '#1e4fb3', 'Tablet': '#1e4fb3', 'Small Tool': '#4b5563', 'Specialty': '#4b5563', 'Other': '#4b5563' }
-        const move = (id, loc) => setAssets(p => p.map(a => a.id === id ? { ...a, location: loc } : a))
+        const move = (id, loc) => onTransfer ? onTransfer(id, loc) : setAssets(p => p.map(a => a.id === id ? { ...a, location: loc } : a))
         const AssetCard = ({ a }) => {
           const st = statusOf(a.sub_exp)
           const meta = (l, v) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}><span style={{ color: '#888' }}>{l}</span><span style={{ color: '#1a1a1a', fontWeight: 600, textAlign: 'right', fontFamily: l === 'S/N' ? 'IBM Plex Mono, monospace' : 'inherit' }}>{v}</span></div>
@@ -959,6 +959,7 @@ function AssetsTab({ assets, setAssets, locations, q = '' }) {
                 {a.sn && meta('S/N', a.sn)}
                 {a.sub_exp && meta('Subscription', `${a.sub_exp}${days(a.sub_exp) !== null ? (days(a.sub_exp) < 0 ? ` · ${Math.abs(days(a.sub_exp))}d ago` : ` · in ${days(a.sub_exp)}d`) : ''}`)}
                 {a.notes && <div style={{ fontSize: 11, color: '#888' }}>{a.notes}</div>}
+                {(a.transfers || []).length > 0 && (() => { const t = a.transfers[a.transfers.length - 1]; const nm = id => locations.find(l => l.id === id)?.name || 'Spare'; return <div style={{ fontSize: 11, color: '#7c3aed' }}>↔ {nm(t.from)} → {nm(t.to)} · {t.by || 'someone'} · {String(t.at).slice(0, 10)}{t.note ? ` · "${t.note}"` : ''}</div> })()}
                 <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                   <select value={a.location || ''} onChange={e => move(a.id, e.target.value)} title="Move" style={{ fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1px solid #e0ddd8', background: 'white', color: '#444', flex: 1 }}>
                     <option value="">Spare / shop</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
@@ -1429,6 +1430,15 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
     })()
     return () => { live = false }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // ↔ Transfer a tool to another van (or Spare): moves it, logs who / when / from / to,
+  // tells #dispatch. Same path for the dropdown, drag-and-drop and the van map.
+  const vanLabel = id => locations.find(l => l.id === id)?.name || 'Spare'
+  function transferAsset(assetId, toLoc, note = '') {
+    const a = assets.find(x => x.id === assetId); if (!a || (a.location || '') === (toLoc || '')) return
+    const rec = { at: new Date().toISOString(), by: user?.name || user?.email || '', from: a.location || '', to: toLoc || '', note: note || '' }
+    setAssets(p => p.map(x => x.id === assetId ? { ...x, location: toLoc || '', transfers: [...(x.transfers || []), rec].slice(-50) } : x))
+    apiFetch(`${API_BASE}/api/ops/transfer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item: a.nickname ? `${a.name} "${a.nickname}"` : a.name, from: vanLabel(a.location), to: vanLabel(toLoc), note }) }).catch(() => {})
+  }
   const saveTimers = useRef({})
   const saveShared = (key, list) => {
     if (!synced) return
@@ -1500,9 +1510,9 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
         </div>
 
         {tab === 'due'     && <DueTab     locations={locations} assets={assets} laptops={laptops} oem={oem} onGo={setTab} q={q} />}
-        {tab === 'map'     && <VanMapTab  locations={locations} assets={assets} laptops={laptops} oem={oem} techs={techs} onGo={setTab} setLocations={setLocations} setLaptops={setLaptops} setAssets={setAssets} />}
+        {tab === 'map'     && <VanMapTab  locations={locations} assets={assets} laptops={laptops} oem={oem} techs={techs} onGo={setTab} setLocations={setLocations} setLaptops={setLaptops} setAssets={setAssets} onTransfer={transferAsset} user={user} />}
         {tab === 'vans'    && <VansTab    locations={locations} setLocations={setLocations} techs={techs} assets={assets} />}
-        {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} q={q} />}
+        {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} q={q} onTransfer={transferAsset} />}
         {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} assets={assets} setAssets={setAssets} q={q} />}
         {tab === 'setup'   && <LaptopSetupTab />}
         {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} locations={locations} assets={assets} setAssets={setAssets} q={q} />}
