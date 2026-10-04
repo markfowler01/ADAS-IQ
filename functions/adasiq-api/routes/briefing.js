@@ -22,7 +22,7 @@ import {
   getAllMailAccounts, getInboxFolderId,
 } from '../services/mail.js'
 import { extractCommitments } from '../services/commitmentExtractor.js'
-import { persist as persistCommits, listOpen, complete as completeCommit, migrateFromCache, dedupe as dedupeCommits } from '../services/commitments.js'
+import { persist as persistCommits, listOpen, complete as completeCommit, migrateFromCache, dedupe as dedupeCommits, assignNums } from '../services/commitments.js'
 import { proposeBig3 } from '../services/dayCoach.js'
 import { recordPlan, listDays, getDay, upsertDay } from '../services/dayLedger.js'
 import { readContext } from './coach.js'
@@ -1824,6 +1824,11 @@ router.get('/done/:n', async (req, res) => {
 
 router.get('/commitments', async (req, res) => {
   try { res.json({ ok: true, open: await listOpen(req) }) }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/commitments/assign-nums', async (req, res) => {
+  try { res.json({ ok: true, ...(await assignNums(req)) }) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 

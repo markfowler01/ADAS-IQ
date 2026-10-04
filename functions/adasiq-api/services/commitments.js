@@ -103,6 +103,7 @@ export async function persist(req, fresh, today) {
     const item = {
       key, text: c.text, person: c.person, direction: c.direction || 'inbound',
       due: c.due || null, source: c.source || 'cliq', first_seen: today,
+      num: nextNum([...byKey.values()]),   // permanent, never reused
     }
     await writeRow(app, item, 'open', null).catch(e => console.warn('[commitments write]', e.message))
     byKey.set(key, { ...item, status: 'open' })
@@ -120,14 +121,24 @@ async function writeRow(app, item, status, rowid) {
 }
 
 /**
- * Stable 1..N numbering, oldest first. The number is what Mark sees and what
- * he texts back, so it must not reshuffle between the morning brief and the
- * moment he replies — sorting by first_seen then key is deterministic.
+ * Order for display. The NUMBER is not positional — it is `num`, assigned once
+ * when the row is created and never reused.
+ *
+ * This was a real bug, and it was mine. The number used to be the item's index
+ * in the open list, which meant closing #4 renumbered everything after it, and
+ * a new commitment could land mid-list and shift the rest. The morning email
+ * would say "Done 12", Mark would tap it that afternoon, and 12 was now a
+ * different commitment. He could close something he had not done, and never
+ * know. An identifier that moves is not an identifier.
  */
 export function numbered(items) {
   return [...items]
-    .sort((a, b) => String(a.first_seen || '').localeCompare(String(b.first_seen || '')) || String(a.key).localeCompare(String(b.key)))
-    .map((it, i) => ({ ...it, n: i + 1 }))
+    .sort((a, b) => (a.num || 1e9) - (b.num || 1e9))
+    .map(it => ({ ...it, n: it.num }))
+}
+
+function nextNum(all) {
+  return all.reduce((m, i) => Math.max(m, Number(i.num) || 0), 0) + 1
 }
 
 export async function listOpen(req) {
@@ -144,7 +155,7 @@ export async function listOpen(req) {
 /** Mark done by short number or by key. Returns what was closed. */
 export async function complete(req, { n, key }) {
   const open = await listOpen(req)
-  const target = key ? open.find(i => i.key === key) : open.find(i => i.n === Number(n))
+  const target = key ? open.find(i => i.key === key) : open.find(i => Number(i.num) === Number(n))
   if (!target) return { ok: false, error: 'no open commitment matches', open: open.length }
 
   const app = catalyst.initialize(req, { type: 'advancedio' })
@@ -189,6 +200,26 @@ export async function dedupe(req, { dry = true } = {}) {
   }
   return { dry, before: open.length, after: keep.length, merged: merge.length,
            examples: merge.slice(0, 10).map(m => ({ person: m.from.person, dropped: m.from.text, kept: m.into.text })) }
+}
+
+/**
+ * Give every existing row a permanent num. Ordered by first_seen then key so
+ * the numbers land close to what the last brief showed, then they stop moving
+ * forever.
+ */
+export async function assignNums(req) {
+  const all = (await dsList(req, { includeDone: true })) || []
+  const missing = all.filter(i => !i.num)
+  if (!missing.length) return { assigned: 0, total: all.length }
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  let n = all.reduce((m, i) => Math.max(m, Number(i.num) || 0), 0)
+  const ordered = missing.sort((a, b) =>
+    String(a.first_seen || '').localeCompare(String(b.first_seen || '')) || String(a.key).localeCompare(String(b.key)))
+  for (const it of ordered) {
+    n += 1
+    await writeRow(app, { ...it, num: n }, it.status || 'open', it.ROWID).catch(e => console.warn('[assignNums]', e.message))
+  }
+  return { assigned: ordered.length, total: all.length }
 }
 
 /** One-time lift of whatever is still in the old Cache store. */

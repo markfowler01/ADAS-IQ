@@ -760,6 +760,31 @@ router.post('/ops/clean-placeholder-dates', async (req, res) => {
   req.url = `/clean-placeholder-dates${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`
   return ops(req, res, () => res.status(404).json({ error: 'no route' }))
 })
+// Non-secret config knobs (whitelisted) — e.g. the Notion "Parked" database id.
+router.post('/config/set', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const key = String(req.body?.key || ''), value = String(req.body?.value ?? '')
+    if (!['notion_parked_db'].includes(key)) return res.status(400).json({ error: 'key not allowed here' })
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const r = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`)
+    const row = r?.[0]?.AppConfig
+    if (row) await app.datastore().table('AppConfig').updateRow({ ROWID: row.ROWID, config_value: value })
+    else await app.datastore().table('AppConfig').insertRow({ config_key: key, config_value: value })
+    res.json({ ok: true, key })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/parked/status', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const r = await app.zcql().executeZCQLQuery("SELECT config_key, config_value FROM AppConfig WHERE config_key = 'notion_token' OR config_key = 'notion_parked_db'")
+    const cfg = Object.fromEntries((r || []).map(x => { const c = x.AppConfig || x; return [c.config_key, c.config_value] }))
+    const { listParked } = await import('../services/parked.js')
+    const items = await listParked(req)
+    res.json({ token_env: !!process.env.NOTION_TOKEN, token_appconfig: !!cfg.notion_token, db: cfg.notion_parked_db || process.env.NOTION_PARKED_DB || '', store: items[0]?.notion || (items.length === 0 && (process.env.NOTION_TOKEN || cfg.notion_token) && (cfg.notion_parked_db || process.env.NOTION_PARKED_DB)) ? 'notion' : 'server', open: items.length })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/van-ops/due', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try { const V = await import('../services/vanOps.js'); res.json({ due: await V.vanOpsDue(req), brief: await V.vanOpsForBrief(req) }) } catch (e) { res.status(500).json({ error: e.message }) }
