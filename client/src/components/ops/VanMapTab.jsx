@@ -200,6 +200,39 @@ function VanSubs({ van, kit, onGo }) {
   )
 }
 
+// The van's own facts at the top (Mark 2026-10-03: "add all of this at the top"):
+// plate, VIN, registration, insurance, oil change — editable in place, saved to the van.
+function VanHeader({ van, kit, setLocations }) {
+  const save = (k, v) => setLocations && setLocations(p => p.map(l => l.id === van.id ? { ...l, [k]: v } : l))
+  const F = ({ k, label, type = 'text', ph = '' }) => {
+    const v = van[k] || ''
+    const n = type === 'date' ? days(v) : null
+    const color = type === 'date' && v ? (n < 0 ? RED : n <= 60 ? '#b45309' : GREEN) : INK
+    return (
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '0.06em', color: MUTED, marginBottom: 2 }}>{label}{type === 'date' && v ? <span style={{ color, marginLeft: 6, textTransform: 'none', letterSpacing: 0, fontWeight: 700 }}>{when(v)}</span> : null}</div>
+        <input type={type} defaultValue={v} placeholder={ph} onBlur={e => e.target.value !== v && save(k, e.target.value)} onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+          style={{ width: '100%', fontSize: 13, fontWeight: 600, color, padding: '5px 8px', borderRadius: 7, border: '1px solid #ebe7e2', background: 'white', fontFamily: k === 'vin' || k === 'plate' ? 'IBM Plex Mono, monospace' : 'inherit' }} />
+      </div>
+    )
+  }
+  return (
+    <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: '12px 16px', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: INK }}>🚐 {van.name}{kit.tech ? <span style={{ fontWeight: 500, color: '#555' }}> · {kit.tech.name}</span> : null}{[van.year, van.make, van.model].filter(Boolean).length ? <span style={{ fontSize: 12, color: MUTED, marginLeft: 8 }}>{[van.year, van.make, van.model].filter(Boolean).join(' ')}</span> : null}</div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: kit.issues ? '#b45309' : GREEN }}>{kit.issues ? `${kit.issues} thing${kit.issues === 1 ? '' : 's'} need attention` : 'All current'}</div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+        <F k="plate" label="Plate" ph="ABC1234" />
+        <F k="vin" label="VIN" ph="17 characters" />
+        <F k="reg_exp" label="Registration" type="date" />
+        <F k="insurance" label="Insurance" type="date" />
+        <F k="oil_change" label="Oil change due" type="date" />
+      </div>
+    </div>
+  )
+}
+
 export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo, setLocations, setLaptops, setAssets }) {
   const [adding, setAdding] = useState(false)
   function createVan({ name, tech, kit }) {
@@ -230,12 +263,9 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
         {setLocations && <button onClick={() => setAdding(true)} style={{ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 999, border: '1.5px dashed #c9c3bc', background: 'white', color: '#555', cursor: 'pointer' }}>+ New van</button>}
       </div>
       {!van && <div style={{ fontSize: 13, color: MUTED }}>No vans yet — tap + New van.</div>}
+      {van && <VanHeader key={van.id} van={van} kit={kit} setLocations={setLocations} />}
       {van && <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ background: '#f9f8f7', borderRadius: 14, padding: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, flexWrap: 'wrap', gap: 6 }}>
-            <span style={{ fontSize: 15, fontWeight: 700, color: INK }}>{van.name}{kit.tech ? ` · ${kit.tech.name}` : ''}</span>
-            <span style={{ fontSize: 12, color: kit.issues ? '#7d5a00' : GREEN, fontWeight: 600 }}>{kit.issues ? `${kit.issues} thing${kit.issues === 1 ? '' : 's'} need attention` : 'All current'}</span>
-          </div>
           <VanSvg van={van} kit={kit} sel={sel} onPick={setSel} />
           <div style={{ fontSize: 11, color: MUTED, marginTop: 6 }}>Green light = current · amber = due within 60 days · red = expired · gray = no date entered yet</div>
         </div>
