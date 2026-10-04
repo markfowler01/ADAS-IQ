@@ -1,5 +1,6 @@
 import LaptopSetupTab from './ops/LaptopSetupTab.jsx'
 import VanMapTab from './ops/VanMapTab.jsx'
+import DueTab from './ops/DueTab.jsx'
 import { useState, useEffect, useRef } from 'react'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -991,7 +992,7 @@ function AssetsTab({ assets, setAssets, locations }) {
 
 // ── LAPTOPS TAB ───────────────────────────────────────────────────────────────
 
-function LaptopsTab({ laptops, setLaptops, techs, locations = [] }) {
+function LaptopsTab({ laptops, setLaptops, techs, locations = [], assets = [], setAssets = () => {} }) {
   const vanOpts = [{ v: '', l: 'Not in a van (spare)' }, ...locations.filter(l => l.type === 'van').map(l => ({ v: l.id, l: l.name }))]
   const [modal, setModal]   = useState(false)
   const [form, setForm]     = useState({})
@@ -1020,11 +1021,13 @@ function LaptopsTab({ laptops, setLaptops, techs, locations = [] }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ fontSize: 12, color: '#888' }}>Laptops and tablets. Pick a van on each one to move it; "Spare" means it is not in a van.</div>
         <Btn primary onClick={openAdd}>+ Add laptop</Btn>
       </div>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', marginBottom: 6 }}>💻 Laptops</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {laptops.map(lap => {
+        {[...laptops].sort((a, b) => (a.location || 'zz').localeCompare(b.location || 'zz')).map(lap => {
           const tech = techs.find(t => t.id === lap.tech)
           const creds = lap.oem_creds || []
           const vers  = lap.sw_versions || []
@@ -1057,6 +1060,12 @@ function LaptopsTab({ laptops, setLaptops, techs, locations = [] }) {
                   {lap.notes && <div style={{ fontSize: 11, color: '#888', marginTop: 5 }}>{lap.notes}</div>}
                 </div>
                 <Row gap={5} style={{ flexShrink: 0 }}>
+                  <select value={lap.location || ''} onChange={e => setLaptops(p => p.map(l => l.id === lap.id ? { ...l, location: e.target.value } : l))} title="Move to a van" style={{ fontSize: 11, padding: '4px 6px', borderRadius: 6, border: '1px solid #e0ddd8', background: lap.location ? 'white' : '#fff7ed', color: '#444' }}>
+                    <option value="">Spare</option>{locations.filter(l => l.type === 'van').map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                  <select value={lap.role || 'shop'} onChange={e => setLaptops(p => p.map(l => l.id === lap.id ? { ...l, role: e.target.value } : l))} title="Role in the van" style={{ fontSize: 11, padding: '4px 6px', borderRadius: 6, border: '1px solid #e0ddd8', background: 'white', color: '#444' }}>
+                    <option value="shop">Shop</option><option value="euro">Euro</option><option value="other">Other</option>
+                  </select>
                   <Btn small onClick={() => openEdit(lap)}>Edit</Btn>
                   <Btn small danger onClick={() => del(lap.id)}>×</Btn>
                 </Row>
@@ -1064,6 +1073,24 @@ function LaptopsTab({ laptops, setLaptops, techs, locations = [] }) {
             </Card>
           )
         })}
+      </div>
+      {/* 📱 Tablets live on Equipment (they are assets); shown here so every device is in one place and can be moved. */}
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', margin: '18px 0 6px' }}>📱 Tablets</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {assets.filter(a => a.cat === 'Tablet' || (a.cat === 'Scanner' && /ms9\d\d|mk9\d\d|im6\d\d|maxisys|tablet/i.test(a.name || ''))).map(a => (
+          <Card key={a.id}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <div>
+                <Row gap={8} style={{ marginBottom: 4 }}><span style={{ fontWeight: 500, fontSize: 14 }}>{a.name}{a.nickname ? ` "${a.nickname}"` : ''}</span><Chip status={statusOf(a.sub_exp)} /></Row>
+                <Row gap={12}>{a.sn && <Meta label="Serial" value={a.sn} />}{a.sub_exp && <Meta label="Subscription" value={a.sub_exp} warn={days(a.sub_exp) !== null && days(a.sub_exp) <= 60} />}{a.notes && <Meta label="Notes" value={a.notes} />}</Row>
+              </div>
+              <select value={a.location || ''} onChange={e => setAssets(p => p.map(x => x.id === a.id ? { ...x, location: e.target.value } : x))} title="Move to a van" style={{ fontSize: 11, padding: '4px 6px', borderRadius: 6, border: '1px solid #e0ddd8', background: a.location ? 'white' : '#fff7ed', color: '#444' }}>
+                <option value="">Spare</option>{locations.filter(l => l.type === 'van').map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </div>
+          </Card>
+        ))}
+        {!assets.some(a => a.cat === 'Tablet' || (a.cat === 'Scanner' && /ms9\d\d|mk9\d\d|im6\d\d|maxisys|tablet/i.test(a.name || ''))) && <div style={{ fontSize: 12, color: '#888' }}>No tablets yet — add one on Equipment with the category Tablet.</div>}
       </div>
       {modal && (
         <Modal title={editId ? 'Edit laptop' : 'Add laptop'} onClose={() => setModal(false)}>
@@ -1175,7 +1202,7 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
         <Btn primary onClick={openAdd}>+ Add subscription</Btn>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {filtered.map(s => {
+        {[...locations.filter(l => l.type === 'van').map(l => [l.id, `🚐 ${l.name}`]), ['', 'Not tied to a van']].flatMap(([vid, title]) => { const list = filtered.filter(x => (x.location || '') === vid); return list.length ? [{ _h: title, _n: list.length, id: `h-${vid}` }, ...list] : [] }).map(s => s._h ? <div key={s.id} style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', margin: '10px 0 2px' }}>{s._h} · {s._n}</div> : (() => {
           const renewal = renewalOf(s)
           const st   = statusOf(renewal, s.status)
           const n    = days(renewal)
@@ -1223,7 +1250,7 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
               </div>
             </Card>
           )
-        })}
+        })())}
       </div>
       {modal && (
         <Modal title={editId ? 'Edit subscription' : 'Add OEM subscription'} onClose={() => setModal(false)}>
@@ -1255,12 +1282,13 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 
 const TABS = [
-  { id: 'map',     label: 'Van map' },           // 🚐 the van outline, everything in it clickable (Mark 2026-10-03)
-  { id: 'vans',    label: 'Vans & Locations' },
-  { id: 'assets',  label: 'Tools & Equipment' },
-  { id: 'laptops', label: 'Laptops' },
-  { id: 'setup',   label: 'Setup Runbooks' },   // the rule, the asset list and both runbooks (2026-09-27)
-  { id: 'oem',     label: 'OEM Software' },
+  { id: 'map',     label: 'Van map' },        // 🚐 the van outline, everything in it clickable (Mark 2026-10-03)
+  { id: 'due',     label: 'Due' },            // 📋 everything with a date, soonest first
+  { id: 'oem',     label: 'Subscriptions' },  // its own page, grouped by van (Mark 2026-10-03)
+  { id: 'laptops', label: 'Devices' },        // laptops + tablets, spares, move between vans
+  { id: 'assets',  label: 'Equipment' },
+  { id: 'vans',    label: 'Vans' },
+  { id: 'setup',   label: 'Runbooks' },
 ]
 
 export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
@@ -1356,10 +1384,11 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
           ))}
         </div>
 
+        {tab === 'due'     && <DueTab     locations={locations} assets={assets} laptops={laptops} oem={oem} onGo={setTab} />}
         {tab === 'map'     && <VanMapTab  locations={locations} assets={assets} laptops={laptops} oem={oem} techs={techs} onGo={setTab} setLocations={setLocations} setLaptops={setLaptops} setAssets={setAssets} />}
         {tab === 'vans'    && <VansTab    locations={locations} setLocations={setLocations} techs={techs} assets={assets} />}
         {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} />}
-        {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} />}
+        {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} assets={assets} setAssets={setAssets} />}
         {tab === 'setup'   && <LaptopSetupTab />}
         {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} locations={locations} />}
       </div>

@@ -100,9 +100,9 @@ function VanSvg({ van, kit, sel, onPick }) {
       {boxes.map(b => { const t = TILE[b.kind] || TILE.gear; const icon = b.kind === 'gear' ? (GEAR_ICON[b.label] || t.icon) : t.icon; const on = sel === b.k; const wide = b.w > 170; const cx = b.x + b.w / 2; return (
         <g key={b.k} onClick={() => b.kind !== 'none' && onPick(b.k)} style={{ cursor: b.kind === 'none' ? 'default' : 'pointer' }}>
           <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="12" fill={t.fill} stroke={on ? '#CD4419' : t.edge} strokeWidth={on ? 3 : 1.5} />
-          {wide
-            ? <><text x={b.x + 22} y={b.y + b.h / 2 + 8} fontSize={22 * fs}>{icon}</text><text x={b.x + 62} y={b.y + (b.sub ? b.h / 2 - 1 : b.h / 2 + 5)} fontSize={15 * fs} fontWeight="700" fill={t.text}>{b.label}</text>{b.sub && <text x={b.x + 62} y={b.y + b.h / 2 + 17} fontSize={12 * fs} fill={t.sub}>{String(b.sub).slice(0, 36)}</text>}</>
-            : <><text x={cx} y={b.y + 28 * fs} textAnchor="middle" fontSize={22 * fs}>{icon}</text><text x={cx} y={b.y + b.h - (b.sub ? 22 : 10)} textAnchor="middle" fontSize={14 * fs} fontWeight="700" fill={t.text}>{b.label}</text>{b.sub && <text x={cx} y={b.y + b.h - 8} textAnchor="middle" fontSize={11 * fs} fill={t.sub}>{String(b.sub).slice(0, 24)}</text>}</>}
+          <text x={b.x + (wide ? 22 : 14)} y={b.y + b.h / 2 + (wide ? 8 : 7)} fontSize={(wide ? 22 : 17) * fs}>{icon}</text>
+          <text x={b.x + (wide ? 62 : 42)} y={b.y + (b.sub ? b.h / 2 - 1 : b.h / 2 + 5)} fontSize={(wide ? 15 : 12.5) * fs} fontWeight="700" fill={t.text}>{wide ? b.label : String(b.label).slice(0, 16)}</text>
+          {b.sub && <text x={b.x + (wide ? 62 : 42)} y={b.y + b.h / 2 + (wide ? 17 : 14)} fontSize={(wide ? 12 : 10.5) * fs} fill={t.sub}>{String(b.sub).slice(0, wide ? 36 : 17)}</text>}
           {b.kind !== 'none' && <><text x={b.x + b.w - 16} y={b.y + b.h / 2 + 6} textAnchor="middle" fontSize="16" fill={t.sub}>›</text><circle cx={b.x + b.w - 11} cy={b.y + 11} r="4.5" fill={light(b.s)} /></>}
         </g>
       ) })}
