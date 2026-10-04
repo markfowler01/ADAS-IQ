@@ -1214,71 +1214,82 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
         <StatCard label="No date yet"   value={live.filter(s => stOf(s) === 'nodate').length} sub="enter the purchase date" />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-        <Row gap={5}>
-          {['all', 'active', 'expiring', 'expired', 'nodate', 'pass'].map(s => (
-            <FilterPill key={s} active={filter === s} onClick={() => setFilter(s)}>
-              {s === 'all' ? 'All' : s === 'nodate' ? 'No date' : s === 'expiring' ? 'Renewing soon' : s === 'pass' ? 'Day passes' : s.charAt(0).toUpperCase() + s.slice(1)}
-            </FilterPill>
-          ))}
-        </Row>
+        <div style={{ fontSize: 12, color: '#888' }}>Tap a card to edit it. Cards move lanes on their own as dates come and go.</div>
         <Btn primary onClick={openAdd}>+ Add subscription</Btn>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {[['shared', '🌐 Shared — everyone uses these', x => kindOf(x) === 'shared'], ...locations.filter(l => l.type === 'van').map(l => [l.id, `🚐 ${l.name} only`, x => kindOf(x) === 'van' && x.location === l.id]), ['van-none', '🚐 Per van, van not set', x => kindOf(x) === 'van' && !locations.some(l => l.id === x.location)], ['pass', '🎟 Day passes — bought when a job needs them', x => kindOf(x) === 'pass']].flatMap(([vid, title, fn]) => { const list = filtered.filter(fn); return list.length ? [{ _h: title, _n: list.length, id: `h-${vid}` }, ...list] : [] }).map(s => s._h ? <div key={s.id} style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', margin: '10px 0 2px' }}>{s._h} · {s._n}</div> : (() => {
-          const renewal = renewalOf(s)
-          const st   = statusOf(renewal, s.status)
-          const n    = days(renewal)
-          const tech = techs.find(t => t.id === s.tech)
+      {/* 🗂 Kanban, like the CRM (Mark 2026-10-04): one lane per state, compact cards. */}
+      {(() => {
+        const LANES = [
+          ['nodate',   'No date yet',   '#8a847e', '#f1efea'],
+          ['active',   'Current',       '#1a7336', '#e6f4ea'],
+          ['expiring', 'Renewing ≤60d', '#7d5a00', '#fff3cd'],
+          ['expired',  'Expired',       '#9b1c1c', '#fde8e8'],
+          ['pass',     'Day passes',    '#4338ca', '#eef2ff'],
+          ['inactive', 'Inactive',      '#5f5e5a', '#f1efea'],
+        ]
+        const where = s => kindOf(s) === 'shared' ? '🌐 Shared' : kindOf(s) === 'pass' ? '🎟 Day pass' : `🚐 ${locations.find(l => l.id === s.location)?.name || 'van not set'}`
+        const SubCard = ({ s }) => {
+          const renewal = renewalOf(s), st = stOf(s), n = days(renewal), tech = techs.find(t => t.id === s.tech)
           const term = Number(s.term_months) || 12
           const total = s.purchased ? Math.max(1, Math.ceil((new Date(renewal) - new Date(s.purchased)) / 86400000)) : null
           const pct = total && n !== null ? Math.min(100, Math.max(0, Math.round(((total - n) / total) * 100))) : null
-          const barColor = st === 'expired' ? '#c62828' : st === 'expiring' ? '#f9a825' : '#1a7336'
-          const countdown = n === null ? 'No purchase date yet' : n < 0 ? `Expired ${Math.abs(n)} day${Math.abs(n) === 1 ? '' : 's'} ago` : n === 0 ? 'Renews today' : `Renews in ${n} day${n === 1 ? '' : 's'}`
+          const bar = st === 'expired' ? '#c62828' : st === 'expiring' ? '#f9a825' : '#1a7336'
+          const ps = (s.passes || []).slice().sort((x, y) => String(y.date).localeCompare(String(x.date)))
+          const meta = (l, v) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}><span style={{ color: '#888' }}>{l}</span><span style={{ color: '#1a1a1a', fontWeight: 600, textAlign: 'right' }}>{v}</span></div>
           return (
-            <Card key={s.id}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <Row gap={7} style={{ marginBottom: 5 }}>
-                    <span style={{ fontWeight: 500, fontSize: 14 }}>{s.name}</span>
-                    <Chip status={st} />
-                    <span style={{ fontSize: 10, fontWeight: 600, background: '#f5f3f0', color: '#888', padding: '1px 7px', borderRadius: 4, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{s.build}</span>
-                  </Row>
-                  <Row gap={14}>
-                    {s.location && <Meta label="Van" value={locations.find(l => l.id === s.location)?.name || s.location} />}
-                    {tech      && <Meta label="Tech"   value={tech.name} />}
-                    {s.cost > 0 && <Meta label="Cost"  value={'$' + Number(s.cost).toLocaleString() + '/yr'} />}
-                    {s.purchased && <Meta label="Bought" value={s.purchased} />}
-                    {renewal && <Meta label="Renews" value={renewal} warn={n !== null && n <= 60} />}
-                    <Meta label="Term" value={TERMS.find(t => t[0] === term)?.[1] || `${term} mo`} />
-                    {s.username && <Meta label="User"  value={s.username} />}
-                    {s.portal  && <a href={s.portal} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: BRAND }}>Portal ↗</a>}
-                    {s.twofa   && <span style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', padding: '1px 7px', borderRadius: 4, fontWeight: 600 }}>2FA: {s.twofa}</span>}
-                  </Row>
-                  {s.status !== 'inactive' && kindOf(s) === 'pass' && (() => { const ps = (s.passes || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date))); const yr = ps.filter(x => x.date && new Date(x.date) >= new Date(Date.now() - 365 * 86400000)); return (
-                    <div style={{ marginTop: 7, fontSize: 12, color: '#555' }}>
-                      🎟 {yr.length} pass{yr.length === 1 ? '' : 'es'} in 12 months · ${passSpend(s).toLocaleString()}{ps[0] ? ` · last ${ps[0].date} (${ps[0].days}-day${ps[0].ro ? `, RO ${ps[0].ro}` : ''})` : ' · none logged yet'}{s.pass_1 || s.pass_3 ? ` · 1-day $${s.pass_1 || '?'} · 3-day $${s.pass_3 || '?'}` : ''}
-                    </div>) })()}
-                  {s.status !== 'inactive' && kindOf(s) !== 'pass' && (
-                    <div style={{ marginTop: 7 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: st === 'expired' ? '#b71c1c' : st === 'expiring' ? '#7d5a00' : st === 'nodate' ? '#8a847e' : '#1a7336' }}>
-                        <span>⏱ {countdown}</span>{pct !== null && <span style={{ fontWeight: 500, color: '#888' }}>{pct}% of the term used</span>}
-                      </div>
-                      {pct !== null && <div style={{ height: 5, background: '#eee', borderRadius: 3, marginTop: 4, overflow: 'hidden' }}><div style={{ width: `${pct}%`, height: '100%', background: barColor }} /></div>}
-                    </div>
-                  )}
-                  {s.notes && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{s.notes}</div>}
+            <div onClick={() => openEdit(s)} style={{ background: 'white', borderRadius: 12, border: '1px solid #ebebeb', boxShadow: '0 1px 2px rgba(0,0,0,.05)', cursor: 'pointer', overflow: 'hidden' }}>
+              <div style={{ background: BRAND, padding: '8px 12px' }}>
+                <div style={{ color: 'white', fontWeight: 700, fontSize: 13, lineHeight: 1.25, wordBreak: 'break-word' }}>{s.name}</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, background: 'rgba(255,255,255,0.22)', color: 'white', padding: '1px 7px', borderRadius: 999 }}>{where(s)}</span>
+                  {s.build && <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.22)', color: 'white', padding: '1px 7px', borderRadius: 999 }}>{s.build}</span>}
                 </div>
-                <Row gap={5} style={{ flexShrink: 0 }}>
+              </div>
+              <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {kindOf(s) === 'pass' ? <>
+                  {meta('Passes · 12 mo', `${ps.filter(x => x.date && new Date(x.date) >= new Date(Date.now() - 365 * 86400000)).length} · $${passSpend(s).toLocaleString()}`)}
+                  {(s.pass_1 || s.pass_3) && meta('Price', `1-day $${s.pass_1 || '?'} · 3-day $${s.pass_3 || '?'}`)}
+                  {ps[0] && meta('Last pass', `${ps[0].date} · ${ps[0].days}-day${ps[0].ro ? ` · RO ${ps[0].ro}` : ''}`)}
+                </> : <>
+                  {s.cost > 0 && meta('Cost', `$${Number(s.cost).toLocaleString()} / ${TERMS.find(t => t[0] === term)?.[1] || `${term} mo`}`)}
+                  {s.purchased && meta('Bought', s.purchased)}
+                  {renewal ? meta('Renews', renewal) : meta('Renews', 'no date yet')}
+                  {n !== null && <div style={{ marginTop: 2 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: st === 'expired' ? '#b71c1c' : st === 'expiring' ? '#7d5a00' : '#1a7336' }}>⏱ {n < 0 ? `Expired ${Math.abs(n)}d ago` : n === 0 ? 'Renews today' : `Renews in ${n}d`}</div>
+                    {pct !== null && <div style={{ height: 4, background: '#eee', borderRadius: 3, marginTop: 3, overflow: 'hidden' }}><div style={{ width: `${pct}%`, height: '100%', background: bar }} /></div>}
+                  </div>}
+                </>}
+                {tech && meta('Tech', tech.name)}
+                {s.notes && <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>{s.notes}</div>}
+                <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }} onClick={e => e.stopPropagation()}>
                   {kindOf(s) === 'pass' && <Btn small primary onClick={() => { setPassFor(s.id); setPf({ date: todayStr(), days: 1, cost: s.pass_1 || '', ro: '' }) }}>+ Log pass</Btn>}
                   {(st === 'expired' || st === 'expiring') && <Btn small primary onClick={() => renewed(s)}>✓ Renewed</Btn>}
+                  {s.portal && <a href={s.portal} target="_blank" rel="noreferrer" style={{ fontSize: 11, fontWeight: 700, color: BRAND, padding: '4px 8px', border: `1px solid ${BRAND}`, borderRadius: 6, textDecoration: 'none' }}>Portal ↗</a>}
                   <Btn small onClick={() => openEdit(s)}>Edit</Btn>
                   <Btn small danger onClick={() => del(s.id)}>×</Btn>
-                </Row>
+                </div>
               </div>
-            </Card>
+            </div>
           )
-        })())}
-      </div>
+        }
+        const lanes = LANES.map(([id, label, fg, bg]) => ({ id, label, fg, bg, items: oem.filter(s => stOf(s) === id || (id === 'inactive' && s.status === 'inactive' && stOf(s) !== 'pass')) })).filter(l => l.items.length || ['nodate', 'active', 'expiring', 'expired'].includes(l.id))
+        return (
+          <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, alignItems: 'flex-start' }}>
+            {lanes.map(l => (
+              <div key={l.id} style={{ flex: '0 0 250px', background: '#f5f3f0', borderRadius: 12, padding: 8, minHeight: 120 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 6px 8px' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: l.fg }}>{l.label}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, background: l.bg, color: l.fg, borderRadius: 999, padding: '1px 8px' }}>{l.items.length}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {l.items.sort((x, y) => (days(renewalOf(x)) ?? 99999) - (days(renewalOf(y)) ?? 99999)).map(s => <SubCard key={s.id} s={s} />)}
+                  {!l.items.length && <div style={{ fontSize: 11, color: '#aaa', padding: '6px 6px 10px' }}>Nothing here</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
       {passFor && (
         <Modal title={`Log a day pass · ${oem.find(x => x.id === passFor)?.name || ''}`} onClose={() => setPassFor(null)}>
           <Grid2>
