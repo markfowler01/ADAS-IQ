@@ -170,6 +170,36 @@ function NewVan({ techs, count, onCreate, onClose }) {
   )
 }
 
+// The van's subscriptions, under the map (Mark 2026-10-03: "van at the top and the
+// subscriptions at the bottom"). One row each, grouped by the laptop they run on.
+function VanSubs({ van, kit, onGo }) {
+  const groups = kit.slots.filter(sl => sl.item || sl.subs.length).map(sl => ({ title: `${sl.label}${sl.item ? ` · ${sl.item.name}` : ''}`, subs: sl.subs }))
+  const total = groups.reduce((t, g) => t + g.subs.length, 0)
+  const cost = groups.reduce((t, g) => t + g.subs.reduce((x, s) => x + (Number(s.cost) || 0), 0), 0)
+  const sevColor = n => (n === 3 ? RED : n === 2 ? '#b45309' : n === 1 ? GREEN : MUTED)
+  return (
+    <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: INK }}>Subscriptions on {van.name}</div>
+        <div style={{ fontSize: 12, color: MUTED }}>{total} subscription{total === 1 ? '' : 's'}{cost ? ` · $${cost.toLocaleString()} per term` : ''}</div>
+      </div>
+      {!total && <div style={{ fontSize: 13, color: MUTED }}>None tied to this van yet. On the Subscriptions tab, set "Van it runs on" for each one.</div>}
+      {groups.map(g => g.subs.length > 0 && (
+        <div key={g.title} style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: MUTED, margin: '6px 0 4px' }}>💻 {g.title}</div>
+          {g.subs.sort((a, b) => (days(renewalOf(a)) ?? 9999) - (days(renewalOf(b)) ?? 9999)).map(sub => { const r = renewalOf(sub), n = sev(r); return (
+            <div key={sub.id} onClick={() => onGo('oem')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 8, border: '1px solid #f1ede9', borderLeft: `4px solid ${sevColor(n)}`, marginBottom: 5, cursor: 'pointer' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: INK, flex: 1, minWidth: 0 }}>{sub.name}</span>
+              {sub.cost > 0 && <span style={{ fontSize: 12, color: MUTED }}>${Number(sub.cost).toLocaleString()}</span>}
+              <span style={{ fontSize: 12, fontWeight: 700, color: sevColor(n), whiteSpace: 'nowrap' }}>{r ? `${when(r)} · ${r}` : 'no date yet'}</span>
+              <span style={{ color: BRAND, fontWeight: 700 }}>›</span>
+            </div>) })}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo, setLocations, setLaptops, setAssets }) {
   const [adding, setAdding] = useState(false)
   function createVan({ name, tech, kit }) {
@@ -200,7 +230,7 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
         {setLocations && <button onClick={() => setAdding(true)} style={{ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 999, border: '1.5px dashed #c9c3bc', background: 'white', color: '#555', cursor: 'pointer' }}>+ New van</button>}
       </div>
       {!van && <div style={{ fontSize: 13, color: MUTED }}>No vans yet — tap + New van.</div>}
-      {van && <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(260px, 1fr)', gap: 14, alignItems: 'start' }}>
+      {van && <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ background: '#f9f8f7', borderRadius: 14, padding: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, flexWrap: 'wrap', gap: 6 }}>
             <span style={{ fontSize: 15, fontWeight: 700, color: INK }}>{van.name}{kit.tech ? ` · ${kit.tech.name}` : ''}</span>
@@ -209,9 +239,10 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
           <VanSvg van={van} kit={kit} sel={sel} onPick={setSel} />
           <div style={{ fontSize: 11, color: MUTED, marginTop: 6 }}>Green light = current · amber = due within 60 days · red = expired · gray = no date entered yet</div>
         </div>
-        <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16, minHeight: 180, position: 'sticky', top: 12 }}>
+        {sel && <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16 }}>
           <Panel van={van} kit={kit} sel={sel} onGo={onGo} />
-        </div>
+        </div>}
+        <VanSubs van={van} kit={kit} onGo={onGo} />
       </div>}
     </div>
   )
