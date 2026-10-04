@@ -40,4 +40,28 @@ router.put('/state/:key', express.json({ limit: '2mb' }), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// One-time cleanup (2026-10-04): the page shipped with made-up renewal dates, and a
+// browser that still had them pushed them up as the shared copy. Blank exactly those
+// dates (same name, same date, no purchase date entered). ?dry=1 lists only.
+router.post('/clean-placeholder-dates', async (req, res) => {
+  try {
+    const fs = await import('fs'); const path = await import('path'); const url = await import('url')
+    const here = path.dirname(url.fileURLToPath(import.meta.url))
+    const known = JSON.parse(fs.readFileSync(path.join(here, '../services/opsPlaceholderDates.json'), 'utf8'))
+    const dry = String(req.query.dry || '') === '1'
+    const out = { oem: [], assets: [] }
+    const o = await readKey(req, 'oem')
+    if (Array.isArray(o.value)) {
+      const next = o.value.map(x => { if (!x.purchased && x.renewal && known.oem[x.name] === x.renewal) { out.oem.push(`${x.name} ${x.renewal}`); return { ...x, renewal: '' } } return x })
+      if (!dry && out.oem.length) await app(req).datastore().table('AppConfig').updateRow({ ROWID: o.row.ROWID, config_value: JSON.stringify(next) })
+    }
+    const a = await readKey(req, 'assets')
+    if (Array.isArray(a.value)) {
+      const next = a.value.map(x => { if (x.sub_exp && known.assets[x.id] === x.sub_exp) { out.assets.push(`${x.name} ${x.sub_exp}`); return { ...x, sub_exp: '' } } return x })
+      if (!dry && out.assets.length) await app(req).datastore().table('AppConfig').updateRow({ ROWID: a.row.ROWID, config_value: JSON.stringify(next) })
+    }
+    res.json({ ok: true, dry, cleared: out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export default router

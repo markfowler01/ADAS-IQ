@@ -1,0 +1,24 @@
+{
+ "oem": {
+  "Ford IDS / FDRS": "2026-09-01",
+  "GM Techline Connect": "2026-07-15",
+  "Toyota Techstream / GTS+": "2026-11-01",
+  "Honda HDS": "2026-08-20",
+  "Nissan Consult III+": "2026-08-01",
+  "Tesla Toolbox": "2026-10-01",
+  "BMW ISTA": "2026-10-15",
+  "Volvo VIDA": "2026-07-01",
+  "FCA / Stellantis wiTECH": "2026-09-01",
+  "Mercedes XENTRY": "2026-12-01",
+  "VW ODIS / GRP": "2026-09-30",
+  "Audi ODIS": "2026-09-30",
+  "Subaru SSM4": "2026-06-01",
+  "Mazda MDARS": "2026-08-01",
+  "Autoauth": "2026-12-01",
+  "I-CAR": "2026-12-01"
+ },
+ "assets": {
+  "t2": "2026-02-12",
+  "t23": "2026-05-20"
+ }
+}

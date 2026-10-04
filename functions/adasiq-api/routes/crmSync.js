@@ -754,6 +754,12 @@ router.post('/books/mirror-sync', async (req, res) => {
     res.json(await syncMonths(req, months, { dryRun: req.query.dry === '1' }))
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
+router.post('/ops/clean-placeholder-dates', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  const ops = (await import('./ops.js')).default
+  req.url = `/clean-placeholder-dates${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`
+  return ops(req, res, () => res.status(404).json({ error: 'no route' }))
+})
 router.get('/shops/customers', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {

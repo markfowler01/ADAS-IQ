@@ -348,24 +348,29 @@ function usePhotoUpload(locId, setLocations) {
 // ── ALERTS ────────────────────────────────────────────────────────────────────
 
 function Alerts({ oem }) {
+  // One quiet line, not a wall (Mark 2026-10-04). Tap to see the list.
+  const [open, setOpen] = useState(false)
   const alerts = []
   oem.forEach(s => {
-    const n = days(s.renewal)
+    if (s.status === 'inactive') return
+    const n = days(renewalOf(s))
     if (n === null) return
-    if (n < 0)      alerts.push({ name: s.name, msg: 'EXPIRED',          err: true })
-    else if (n <= 60) alerts.push({ name: s.name, msg: `Renews in ${n} days`, err: n <= 14 })
+    if (n < 0)      alerts.push({ name: s.name, msg: `expired ${Math.abs(n)}d ago`, err: true })
+    else if (n <= 60) alerts.push({ name: s.name, msg: `renews in ${n}d`, err: n <= 14 })
   })
-  const undated = oem.filter(s => !s.renewal && s.status !== 'inactive').length
+  const undated = oem.filter(s => !renewalOf(s) && s.status !== 'inactive').length
+  const expired = alerts.filter(a => a.err).length, soon = alerts.length - expired
   if (!alerts.length) return (
-    <div style={{ background: undated ? '#f1efea' : '#e6f4ea', borderRadius: 8, padding: '9px 14px', fontSize: 12, color: undated ? '#5f5e5a' : '#1a7336', marginBottom: 16 }}>{undated ? `${undated} subscription${undated === 1 ? ' has' : 's have'} no renewal date yet — open each one and enter it; alerts and counters run off those dates.` : 'All subscriptions current.'}</div>
+    <div style={{ background: undated ? '#f1efea' : '#e6f4ea', borderRadius: 8, padding: '8px 14px', fontSize: 12, color: undated ? '#5f5e5a' : '#1a7336', marginBottom: 14 }}>{undated ? `${undated} subscription${undated === 1 ? ' has' : 's have'} no renewal date yet — enter the purchase date on Subscriptions and the counters run from it.` : 'All subscriptions current.'}</div>
   )
   return (
-    <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 5 }}>
-      {alerts.map((a, i) => (
-        <div key={i} style={{ background: a.err ? '#fde8e8' : '#fff8e1', borderLeft: `3px solid ${a.err ? '#c62828' : '#f9a825'}`, borderRadius: '0 7px 7px 0', padding: '7px 12px', fontSize: 12, color: a.err ? '#b71c1c' : '#5a3e00' }}>
-          <strong>{a.name}</strong> — {a.msg}
-        </div>
-      ))}
+    <div style={{ marginBottom: 14 }}>
+      <button onClick={() => setOpen(o => !o)} style={{ width: '100%', textAlign: 'left', background: expired ? '#fde8e8' : '#fff8e1', border: 0, borderLeft: `3px solid ${expired ? '#c62828' : '#f9a825'}`, borderRadius: '0 8px 8px 0', padding: '8px 14px', fontSize: 12, color: expired ? '#b71c1c' : '#5a3e00', cursor: 'pointer', fontWeight: 600 }}>
+        {expired ? `${expired} subscription${expired === 1 ? '' : 's'} expired` : ''}{expired && soon ? ' · ' : ''}{soon ? `${soon} renewing within 60 days` : ''}{undated ? ` · ${undated} with no date` : ''} <span style={{ fontWeight: 400, marginLeft: 6 }}>{open ? '▴ hide' : '▾ show'}</span>
+      </button>
+      {open && <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+        {alerts.map((a, i) => <div key={i} style={{ background: a.err ? '#fde8e8' : '#fff8e1', borderRadius: 7, padding: '6px 12px', fontSize: 12, color: a.err ? '#b71c1c' : '#5a3e00' }}><strong>{a.name}</strong> — {a.msg}</div>)}
+      </div>}
     </div>
   )
 }
@@ -1338,7 +1343,11 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
   useEffect(() => { lsSet('ops2_laptops', laptops);   saveShared('laptops', laptops) },     [laptops])     // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { lsSet('ops2_oem',     oem);       saveShared('oem', oem) },             [oem])         // eslint-disable-line react-hooks/exhaustive-deps
 
-  const counts = { vans: locations.length, assets: assets.length, laptops: laptops.length, oem: oem.length }
+  // Tab badges that mean something (Mark 2026-10-04): vans on the map, items due or overdue
+  // within 60 days, live subscriptions, laptops + tablets, gear, runbooks.
+  const dueCount = (() => { const ds = [...oem.filter(x => x.status !== 'inactive').map(x => renewalOf(x)), ...assets.map(a => a.sub_exp), ...locations.flatMap(l => [l.reg_exp, l.insurance, l.oil_change])].map(days).filter(n => n !== null); return ds.filter(n => n <= 60).length })()
+  const tabletCount = assets.filter(a => a.cat === 'Tablet' || (a.cat === 'Scanner' && /ms9\d\d|mk9\d\d|im6\d\d|maxisys|tablet/i.test(a.name || ''))).length
+  const counts = { map: locations.filter(l => l.type === 'van').length, due: dueCount, vans: locations.length, assets: assets.length, laptops: laptops.length + tabletCount, oem: oem.filter(x => x.status !== 'inactive').length, setup: 4 }
 
   return (
     <div style={{ background: 'white', minHeight: '100vh' }}>
@@ -1379,7 +1388,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
               fontSize: 13, padding: '9px 16px', cursor: 'pointer', whiteSpace: 'nowrap',
             }}>
               {t.label}
-              <span style={{ marginLeft: 6, background: '#f5f3f0', borderRadius: 999, padding: '1px 7px', fontSize: 11, color: '#888' }}>{counts[t.id]}</span>
+              <span style={{ marginLeft: 6, background: t.id === 'due' && counts.due ? '#fde8e8' : '#f5f3f0', borderRadius: 999, padding: '1px 7px', fontSize: 11, color: t.id === 'due' && counts.due ? '#b71c1c' : '#888', fontWeight: t.id === 'due' && counts.due ? 700 : 400 }}>{counts[t.id] ?? 0}</span>
             </button>
           ))}
         </div>
