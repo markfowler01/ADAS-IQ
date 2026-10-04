@@ -19,8 +19,9 @@ export function dueItems({ locations, assets, laptops, oem }) {
   return out.map(i => ({ ...i, n: days(i.date) }))
 }
 
-export default function DueTab({ locations, assets, laptops, oem, onGo }) {
-  const items = dueItems({ locations, assets, laptops, oem })
+export default function DueTab({ locations, assets, laptops, oem, onGo, q = '' }) {
+  const t = String(q || '').trim().toLowerCase()
+  const items = dueItems({ locations, assets, laptops, oem }).filter(i => !t || t.split(/\s+/).every(w => `${i.name} ${i.kind} ${i.where} ${i.date}`.toLowerCase().includes(w)))
   const dated = items.filter(i => i.n !== null).sort((a, b) => a.n - b.n)
   const undated = items.filter(i => i.n === null)
   const groups = [

@@ -152,6 +152,8 @@ function lsSet(key, val) {
 // ── HELPERS ───────────────────────────────────────────────────────────────────
 
 const days = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null
+// Search: every text field of a record, plus the van name it sits in.
+const matchQ = (q, rec, extra = '') => { const t = String(q || '').trim().toLowerCase(); if (!t) return true; const hay = [...Object.values(rec || {}).filter(v => typeof v === 'string' || typeof v === 'number'), extra].join(' ').toLowerCase(); return t.split(/\s+/).every(w => hay.includes(w)) }
 // Subscriptions run from the purchase date for a term (most are a year): renewal =
 // purchased + term, and the card counts down from there (Mark 2026-10-03).
 const TERMS = [[1, '1 month'], [3, '3 months'], [6, '6 months'], [12, '1 year'], [24, '2 years'], [36, '3 years']]
@@ -890,7 +892,7 @@ function VansTab({ locations, setLocations, techs, assets }) {
 
 // ── ASSETS TAB ────────────────────────────────────────────────────────────────
 
-function AssetsTab({ assets, setAssets, locations }) {
+function AssetsTab({ assets, setAssets, locations, q = '' }) {
   const [modal, setModal]     = useState(false)
   const [form, setForm]       = useState({})
   const [editId, setEditId]   = useState(null)
@@ -911,7 +913,8 @@ function AssetsTab({ assets, setAssets, locations }) {
 
   const filtered = assets.filter(a =>
     (filterLoc === 'all' || a.location === filterLoc) &&
-    (filterCat === 'all' || a.cat === filterCat)
+    (filterCat === 'all' || a.cat === filterCat) &&
+    matchQ(q, a, locations.find(l => l.id === a.location)?.name || 'spare')
   )
 
   const byLoc = {}
@@ -1018,7 +1021,10 @@ function AssetsTab({ assets, setAssets, locations }) {
 
 // ── LAPTOPS TAB ───────────────────────────────────────────────────────────────
 
-function LaptopsTab({ laptops, setLaptops, techs, locations = [], assets = [], setAssets = () => {} }) {
+function LaptopsTab({ laptops: laptopsAll, setLaptops, techs, locations = [], assets: assetsAll = [], setAssets = () => {}, q = '' }) {
+  const vanName = id => locations.find(l => l.id === id)?.name || 'spare'
+  const laptops = laptopsAll.filter(l => matchQ(q, l, `${vanName(l.location)} ${techs.find(t => t.id === l.tech)?.name || ''} ${l.role || ''}`))
+  const assets = assetsAll.filter(a => matchQ(q, a, vanName(a.location)))
   const vanOpts = [{ v: '', l: 'Not in a van (spare)' }, ...locations.filter(l => l.type === 'van').map(l => ({ v: l.id, l: l.name }))]
   const [modal, setModal]   = useState(false)
   const [form, setForm]     = useState({})
@@ -1177,7 +1183,10 @@ function LaptopsTab({ laptops, setLaptops, techs, locations = [], assets = [], s
 
 // ── OEM SOFTWARE TAB ──────────────────────────────────────────────────────────
 
-function OEMTab({ oem, setOem, techs, locations = [], assets = [], setAssets = () => {} }) {
+function OEMTab({ oem: oemAll, setOem, techs, locations = [], assets: assetsAll = [], setAssets = () => {}, q = '' }) {
+  const vanName = id => locations.find(l => l.id === id)?.name || ''
+  const oem = oemAll.filter(x => matchQ(q, x, `${vanName(x.location)} ${techs.find(t => t.id === x.tech)?.name || ''} ${x.kind === 'pass' ? 'day pass' : x.kind === 'van' ? 'per van' : 'shared'}`))
+  const assets = assetsAll.filter(a => matchQ(q, a, vanName(a.location)))
   const vanOpts = [{ v: '', l: 'Not tied to a van' }, ...locations.filter(l => l.type === 'van').map(l => ({ v: l.id, l: l.name }))]
   const [modal, setModal]   = useState(false)
   const [form, setForm]     = useState({})
@@ -1397,6 +1406,7 @@ const TABS = [
 
 export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
   const [tab, setTab] = useState('map')
+  const [q, setQ] = useState('')   // 🔎 one search across every tab (Mark 2026-10-04)
 
   // Shared on the server (2026-10-03). The browser copy is a cache + the photos;
   // the first load pushes any real edits that only ever lived in this browser.
@@ -1490,15 +1500,19 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
               <span style={{ marginLeft: 6, background: t.id === 'due' && counts.due ? '#fde8e8' : '#f5f3f0', borderRadius: 999, padding: '1px 7px', fontSize: 11, color: t.id === 'due' && counts.due ? '#b71c1c' : '#888', fontWeight: t.id === 'due' && counts.due ? 700 : 400 }}>{counts[t.id] ?? 0}</span>
             </button>
           ))}
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 6, flexShrink: 0 }}>
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search gear, serials, subscriptions, vans…" style={{ fontSize: 13, padding: '7px 10px', borderRadius: 8, border: '1.5px solid #e0ddd8', minWidth: 260, outline: 'none' }} />
+            {q && <button onClick={() => setQ('')} style={{ fontSize: 12, color: '#888', background: 'none', border: 0, cursor: 'pointer' }}>✕</button>}
+          </div>
         </div>
 
-        {tab === 'due'     && <DueTab     locations={locations} assets={assets} laptops={laptops} oem={oem} onGo={setTab} />}
+        {tab === 'due'     && <DueTab     locations={locations} assets={assets} laptops={laptops} oem={oem} onGo={setTab} q={q} />}
         {tab === 'map'     && <VanMapTab  locations={locations} assets={assets} laptops={laptops} oem={oem} techs={techs} onGo={setTab} setLocations={setLocations} setLaptops={setLaptops} setAssets={setAssets} />}
         {tab === 'vans'    && <VansTab    locations={locations} setLocations={setLocations} techs={techs} assets={assets} />}
-        {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} />}
-        {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} assets={assets} setAssets={setAssets} />}
+        {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} q={q} />}
+        {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} assets={assets} setAssets={setAssets} q={q} />}
         {tab === 'setup'   && <LaptopSetupTab />}
-        {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} locations={locations} assets={assets} setAssets={setAssets} />}
+        {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} locations={locations} assets={assets} setAssets={setAssets} q={q} />}
       </div>
     </div>
   )
