@@ -5,6 +5,7 @@
 // Red / amber dots = something on that item is expired / due inside 60 days.
 // Tap anything → details on the right, with a way into the tab that edits it.
 import { useMemo, useState } from 'react'
+import { MAINT_TYPES, maintStatus, maintSev, vanOdometer } from './maint.js'
 
 const BRAND = '#CD4419', INK = '#1a1a1a', MUTED = '#8a847e', LINE = '#888780'
 const RED = '#c62828', AMBER = '#f9a825', GREEN = '#1a7336'
@@ -38,7 +39,7 @@ function kitOf(van, { assets, laptops, oem, techs, locations }) {
   const gear = here.filter(a => a !== tablet)
   const groups = GEAR_ORDER.map(cat => ({ cat, items: gear.filter(a => a.cat === cat) })).filter(g => g.items.length)
   const lapSev = l => l ? Math.max(0, ...subsFor(l).map(s => sev(renewalOf(s)))) : 0
-  const vanSev = Math.max(sev(van.reg_exp), sev(van.insurance), sev(van.oil_change))
+  const vanSev = Math.max(sev(van.reg_exp), sev(van.insurance_exp), sev(van.oil_change), maintSev(van))
   const slots = [
     { k: 'lap-shop', kind: 'laptop', label: 'Shop laptop', item: shop, sub: shop ? shop.name : '+ assign', s: lapSev(shop), subs: shop ? subsFor(shop) : [] },
     { k: 'lap-euro', kind: 'laptop', label: 'Euro laptop', item: euro, sub: euro ? euro.name : '+ assign', s: lapSev(euro), subs: euro ? subsFor(euro) : [] },
@@ -116,7 +117,52 @@ function VanSvg({ van, kit, sel, onPick }) {
 
 function Line({ l, v, warn }) { return <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 13, padding: '5px 0', borderBottom: '1px solid #f1ede9' }}><span style={{ color: MUTED }}>{l}</span><span style={{ color: warn ? RED : INK, fontWeight: 600, textAlign: 'right' }}>{v || '—'}</span></div> }
 
-function Panel({ van, kit, sel, onGo }) {
+// 🔧 The van itself: dates, odometer, every interval service with when it's due, and a
+// one-line form to log a service (writes the same maintenance record the Vans tab keeps).
+function VanPanel({ van, onGo, setLocations }) {
+  const [logging, setLogging] = useState(false)
+  const [rec, setRec] = useState({ type: 'Oil Change', date: new Date().toISOString().slice(0, 10), mileage: vanOdometer(van) || '', cost: '', vendor: '' })
+  const ms = maintStatus(van)
+  const recent = (van.maintenance || []).slice().sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 5)
+  const save = () => {
+    if (!rec.date || !rec.type) return
+    const r = { id: `m-${Date.now().toString(36)}`, type: rec.type, date: rec.date, mileage: rec.mileage ? Number(rec.mileage) : '', cost: rec.cost ? Number(rec.cost) : 0, vendor: rec.vendor, receipt: '', notes: '' }
+    setLocations(p => p.map(l => l.id === van.id ? { ...l, maintenance: [...(l.maintenance || []), r], odometer: Math.max(Number(l.odometer) || 0, Number(rec.mileage) || 0) || l.odometer } : l))
+    setLogging(false)
+  }
+  const inp = { fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid #e0ddd8', width: '100%' }
+  const H = ({ t, s }) => <div style={{ marginBottom: 10 }}><div style={{ fontSize: 16, fontWeight: 700, color: INK }}>{t}</div>{s && <div style={{ fontSize: 12, color: MUTED }}>{s}</div>}</div>
+  return (
+    <div>
+      <H t={van.name} s={[van.year, van.make, van.model].filter(Boolean).join(' ') || 'van'} />
+      <Line l="Plate" v={van.plate} /><Line l="VIN" v={van.vin} />
+      <Line l="Registration" v={van.reg_exp ? `${van.reg_exp} · ${when(van.reg_exp)}` : ''} warn={sev(van.reg_exp) >= 2} />
+      <Line l="Insurance" v={[van.insurance, van.insurance_exp ? `${van.insurance_exp} · ${when(van.insurance_exp)}` : ''].filter(Boolean).join(' · ')} warn={sev(van.insurance_exp) >= 2} />
+      <Line l="Odometer" v={vanOdometer(van) ? `${vanOdometer(van).toLocaleString()} mi` : ''} />
+      <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>Service schedule</div>
+      {ms.map(m => <Line key={m.type} l={m.type} v={m.last ? `${m.text} · last ${m.last.date}` : 'no record yet'} warn={m.sev >= 2} />)}
+      {recent.length > 0 && <><div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>Recent</div>
+        {recent.map(r => <Line key={r.id} l={`${r.date} · ${r.type}`} v={`${r.mileage ? Number(r.mileage).toLocaleString() + ' mi' : ''}${r.cost ? ` · $${Number(r.cost).toLocaleString()}` : ''}${r.vendor ? ` · ${r.vendor}` : ''}`} />)}</>}
+      {setLocations && !logging && <button onClick={() => setLogging(true)} style={{ marginTop: 12, marginRight: 8, fontSize: 12, fontWeight: 700, color: 'white', background: BRAND, border: 0, borderRadius: 7, padding: '7px 12px', cursor: 'pointer' }}>🔧 Log a service</button>}
+      {logging && (
+        <div style={{ marginTop: 12, background: '#f9f8f7', borderRadius: 10, padding: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+          <select value={rec.type} onChange={e => setRec(r => ({ ...r, type: e.target.value }))} style={inp}>{MAINT_TYPES.map(t => <option key={t}>{t}</option>)}</select>
+          <input type="date" value={rec.date} onChange={e => setRec(r => ({ ...r, date: e.target.value }))} style={inp} />
+          <input type="number" placeholder="Odometer (mi)" value={rec.mileage} onChange={e => setRec(r => ({ ...r, mileage: e.target.value }))} style={inp} />
+          <input type="number" placeholder="Cost ($)" value={rec.cost} onChange={e => setRec(r => ({ ...r, cost: e.target.value }))} style={inp} />
+          <input placeholder="Shop / vendor" value={rec.vendor} onChange={e => setRec(r => ({ ...r, vendor: e.target.value }))} style={{ ...inp, gridColumn: 'span 2' }} />
+          <div style={{ gridColumn: 'span 2', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => setLogging(false)} style={{ fontSize: 12, fontWeight: 700, padding: '6px 10px', borderRadius: 7, border: '1px solid #e0ddd8', background: 'white', cursor: 'pointer' }}>Cancel</button>
+            <button onClick={save} style={{ fontSize: 12, fontWeight: 700, padding: '6px 10px', borderRadius: 7, border: 0, background: BRAND, color: 'white', cursor: 'pointer' }}>Save service</button>
+          </div>
+        </div>
+      )}
+      <button onClick={() => onGo('vans')} style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: BRAND, background: 'white', border: `1px solid ${BRAND}`, borderRadius: 7, padding: '7px 12px', cursor: 'pointer' }}>Full history on Vans →</button>
+    </div>
+  )
+}
+
+function Panel({ van, kit, sel, onGo, setLocations }) {
   if (!sel) return <div style={{ fontSize: 13, color: MUTED }}>Tap anything in the van.</div>
   const smallKinds = ['Small Tool', 'Scanner', 'Other']
   const smallItems = kit.gearBoxes.filter(g => smallKinds.includes(g.label)).flatMap(g => g.items)
@@ -124,7 +170,7 @@ function Panel({ van, kit, sel, onGo }) {
   const H = ({ t, s }) => <div style={{ marginBottom: 10 }}><div style={{ fontSize: 16, fontWeight: 700, color: INK }}>{t}</div>{s && <div style={{ fontSize: 12, color: MUTED }}>{s}</div>}</div>
   const Go = ({ tab, label }) => <button onClick={() => onGo(tab)} style={{ marginTop: 12, fontSize: 12, fontWeight: 700, color: 'white', background: BRAND, border: 0, borderRadius: 7, padding: '7px 12px', cursor: 'pointer' }}>{label} →</button>
   if (sel === 'tech') return <div><H t={kit.tech ? kit.tech.name : 'No tech assigned'} s={`${van.name} · driver`} /><Line l="Van" v={van.name} /><Go tab="vans" label="Open Vans & Locations" /></div>
-  if (sel === 'van') return <div><H t={van.name} s={[van.year, van.make, van.model].filter(Boolean).join(' ') || 'van'} /><Line l="Plate" v={van.plate} /><Line l="VIN" v={van.vin} /><Line l="Registration" v={van.reg_exp ? `${van.reg_exp} · ${when(van.reg_exp)}` : ''} warn={sev(van.reg_exp) >= 2} /><Line l="Insurance" v={van.insurance ? `${van.insurance} · ${when(van.insurance)}` : ''} warn={sev(van.insurance) >= 2} /><Line l="Oil change" v={van.oil_change ? `${van.oil_change} · ${when(van.oil_change)}` : ''} warn={sev(van.oil_change) >= 2} /><Go tab="vans" label="Open Vans & Locations" /></div>
+  if (sel === 'van') return <VanPanel van={van} onGo={onGo} setLocations={setLocations} />
   if (!b) return null
   if (b.kind === 'laptop') return (
     <div>
@@ -231,9 +277,15 @@ function VanHeader({ van, kit, setLocations }) {
         <F k="plate" label="Plate" ph="ABC1234" />
         <F k="vin" label="VIN" ph="17 characters" />
         <F k="reg_exp" label="Registration" type="date" />
-        <F k="insurance" label="Insurance" type="date" />
-        <F k="oil_change" label="Oil change due" type="date" />
+        <F k="insurance_exp" label="Insurance exp" type="date" />
+        <F k="odometer" label="Odometer (mi)" type="number" ph="current reading" />
       </div>
+      {(() => { const ms = maintStatus(van).filter(m => m.last).sort((a, b) => b.sev - a.sev || (a.daysUntil ?? 9999) - (b.daysUntil ?? 9999)); const odo = vanOdometer(van); return (
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 10, fontSize: 12 }}>
+          <span style={{ color: MUTED }}>🔧 Next service:</span>
+          {ms.length ? ms.slice(0, 3).map(m => <span key={m.type} style={{ fontWeight: 700, color: m.sev === 3 ? RED : m.sev === 2 ? '#b45309' : GREEN }}>{m.type} {m.text}</span>) : <span style={{ color: MUTED }}>no service logged yet — tap the van tile to log one</span>}
+          {odo ? <span style={{ color: MUTED, marginLeft: 'auto' }}>{odo.toLocaleString()} mi</span> : null}
+        </div>) })()}
     </div>
   )
 }
@@ -277,7 +329,7 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
         <div style={{ position: 'sticky', top: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16, minHeight: 120 }}>
             {sel && <button onClick={() => setSel('')} style={{ float: 'right', fontSize: 11, color: MUTED, background: 'none', border: 0, cursor: 'pointer' }}>✕ close</button>}
-            <Panel van={van} kit={kit} sel={sel} onGo={onGo} />
+            <Panel van={van} kit={kit} sel={sel} onGo={onGo} setLocations={setLocations} />
           </div>
           <VanSubs van={van} kit={kit} onGo={onGo} />
         </div>

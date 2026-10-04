@@ -1,6 +1,7 @@
 import LaptopSetupTab from './ops/LaptopSetupTab.jsx'
 import VanMapTab from './ops/VanMapTab.jsx'
 import DueTab from './ops/DueTab.jsx'
+import { MAINT_TYPES, MAINT_INTERVALS, maintStatus, vanOdometer } from './ops/maint.js'
 import { useState, useEffect, useRef } from 'react'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -125,16 +126,6 @@ const SEED_ASSETS = [
   { id: 't26', name: 'J2534 Interface',                      cat: 'Small Tool', location: 'van-2', sn: '',                sub_exp: '',           nickname: '', notes: '' },
 ]
 
-const MAINT_TYPES = ['Oil Change', 'Tires', 'Tire Rotation', 'Brakes', 'Inspection', 'Registration', 'Repair', 'Wrap', 'Tint', 'Electrical', 'Transmission', 'Coolant', 'Battery', 'Other']
-const MAINT_INTERVALS = {
-  'Oil Change':    { miles: 5000,  months: 6 },
-  'Tire Rotation': { miles: 7500,  months: 6 },
-  'Tires':         { miles: 50000, months: 48 },
-  'Brakes':        { miles: 40000, months: 36 },
-  'Inspection':    { miles: null,  months: 12 },
-  'Transmission':  { miles: 60000, months: 48 },
-  'Coolant':       { miles: 30000, months: 24 },
-}
 
 const ASSET_CATS = ['Cal Frame', 'Scanner', 'Full Kit', 'Cal Target', 'Cal Mat', 'Cal Stand', 'Small Tool', 'Tablet', 'Specialty', 'Other']
 const LOC_TYPES  = ['van', 'center', 'office', 'storage']
@@ -750,6 +741,8 @@ function VanDetail({ location, setLocations, techs, assets, onBack }) {
             <F label="Registration exp"><In type="date" value={vanForm.reg_exp} onChange={v => vf({ reg_exp: v })} /></F>
             <F label="GPS serial / IMEI"><In value={vanForm.gps} onChange={v => vf({ gps: v })} /></F>
             <F label="Insurance"><In value={vanForm.insurance} onChange={v => vf({ insurance: v })} placeholder="Carrier / policy #" /></F>
+            <F label="Insurance exp"><In type="date" value={vanForm.insurance_exp || ''} onChange={v => vf({ insurance_exp: v })} /></F>
+            <F label="Odometer (mi)"><In type="number" value={vanForm.odometer || ''} onChange={v => vf({ odometer: v })} placeholder="current reading" /></F>
             <F label="Notes" span2><In value={vanForm.notes} onChange={v => vf({ notes: v })} /></F>
           </Grid2>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
@@ -1454,7 +1447,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
 
   // Tab badges that mean something (Mark 2026-10-04): vans on the map, items due or overdue
   // within 60 days, live subscriptions, laptops + tablets, gear, runbooks.
-  const dueCount = (() => { const ds = [...oem.filter(x => x.status !== 'inactive' && kindOf(x) !== 'pass').map(x => renewalOf(x)), ...assets.map(a => a.sub_exp), ...locations.flatMap(l => [l.reg_exp, l.insurance, l.oil_change])].map(days).filter(n => n !== null); return ds.filter(n => n <= 60).length })()
+  const dueCount = (() => { const ds = [...oem.filter(x => x.status !== 'inactive' && kindOf(x) !== 'pass').map(x => renewalOf(x)), ...assets.map(a => a.sub_exp), ...locations.flatMap(l => [l.reg_exp, l.insurance_exp, l.oil_change])].map(days).filter(n => n !== null); const m = locations.filter(l => l.type === 'van').flatMap(l => maintStatus(l)).filter(x => x.sev >= 2).length; return ds.filter(n => n <= 60).length + m })()
   const tabletCount = assets.filter(a => a.cat === 'Tablet' || (a.cat === 'Scanner' && /ms9\d\d|mk9\d\d|im6\d\d|maxisys|tablet/i.test(a.name || ''))).length
   const counts = { map: locations.filter(l => l.type === 'van').length, due: dueCount, vans: locations.length, assets: assets.length, laptops: laptops.length + tabletCount, oem: oem.filter(x => x.status !== 'inactive').length, setup: 4 }
 

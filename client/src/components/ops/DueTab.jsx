@@ -1,6 +1,7 @@
 // 📋 Due (Mark 2026-10-03): everything on the Ops page that has a date, in one
 // list, soonest first — subscription renewals, van registration, insurance and
 // oil changes, equipment subscriptions. The Monday-morning page.
+import { maintStatus } from './maint.js'
 const BRAND = '#CD4419', INK = '#1a1a1a', MUTED = '#8a847e'
 const days = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null
 const addMonths = (d, m) => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); x.setMonth(x.getMonth() + Number(m || 12)); return x.toISOString().slice(0, 10) }
@@ -13,10 +14,12 @@ export function dueItems({ locations, assets, laptops, oem }) {
   for (const a of assets) if (a.sub_exp) out.push({ kind: a.cat === 'Tablet' ? 'Tablet subscription' : 'Equipment subscription', name: a.nickname ? `${a.name} "${a.nickname}"` : a.name, where: vanName(a.location), date: a.sub_exp, tab: 'assets' })
   for (const v of locations) {
     if (v.reg_exp) out.push({ kind: 'Registration', name: v.name, where: v.name, date: v.reg_exp, tab: 'vans' })
-    if (v.insurance) out.push({ kind: 'Insurance', name: v.name, where: v.name, date: v.insurance, tab: 'vans' })
+    if (v.insurance_exp) out.push({ kind: 'Insurance', name: v.name, where: v.name, date: v.insurance_exp, tab: 'vans' })
     if (v.oil_change) out.push({ kind: 'Oil change', name: v.name, where: v.name, date: v.oil_change, tab: 'vans' })
+    // 🔧 interval services: due by date and/or miles
+    if (v.type === 'van') for (const m of maintStatus(v)) if (m.last) out.push({ kind: `🔧 ${m.type}`, name: v.name, where: v.name, date: m.dueDate || '', tab: 'map', extra: m.milesLeft !== null ? (m.milesLeft < 0 ? `${Math.abs(m.milesLeft).toLocaleString()} mi over` : `${m.milesLeft.toLocaleString()} mi left`) : (m.dueMiles ? `at ${m.dueMiles.toLocaleString()} mi` : ''), forceN: m.milesLeft !== null && m.milesLeft < 0 ? -1 : null })
   }
-  return out.map(i => ({ ...i, n: days(i.date) }))
+  return out.map(i => ({ ...i, n: i.forceN != null && (days(i.date) === null || days(i.date) > i.forceN) ? i.forceN : days(i.date) }))
 }
 
 export default function DueTab({ locations, assets, laptops, oem, onGo, q = '' }) {
@@ -47,7 +50,7 @@ export default function DueTab({ locations, assets, laptops, oem, onGo, q = '' }
               <button key={k} onClick={() => onGo(i.tab)} style={{ textAlign: 'left', display: 'flex', alignItems: 'center', gap: 10, background: 'white', border: '1px solid #ebe7e2', borderLeft: `4px solid ${fg}`, borderRadius: 8, padding: '8px 12px', cursor: 'pointer' }}>
                 <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 4, background: bg, color: fg, whiteSpace: 'nowrap' }}>{fmt(i)}</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: INK, flex: 1, minWidth: 0 }}>{i.name}<span style={{ fontWeight: 400, color: MUTED }}> · {i.kind}{i.where && i.where !== i.name ? ` · ${i.where}` : ''}</span></span>
-                <span style={{ fontSize: 12, color: MUTED, fontFamily: 'IBM Plex Mono, monospace' }}>{i.date}</span>
+                <span style={{ fontSize: 12, color: MUTED, fontFamily: 'IBM Plex Mono, monospace' }}>{i.date}{i.extra ? ` · ${i.extra}` : ''}</span>
                 <span style={{ color: BRAND, fontWeight: 700 }}>›</span>
               </button>
             ))}
