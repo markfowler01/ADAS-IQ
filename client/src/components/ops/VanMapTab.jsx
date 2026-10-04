@@ -138,23 +138,72 @@ function Panel({ van, kit, sel, onGo }) {
   return null
 }
 
-export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo }) {
+const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+// The standard kit every van starts with (Mark 2026-10-03: "add new vans with the same
+// set ups"). Serials and dates get filled in as the gear is bought.
+const STANDARD_KIT = [
+  { name: 'Autel MS909 Tablet', cat: 'Tablet' },
+  { name: 'Autel MA600 ADAS Frame', cat: 'Cal Frame' },
+  { name: 'Calibration targets', cat: 'Cal Target' },
+  { name: 'Calibration mats', cat: 'Cal Mat' },
+  { name: 'Target stands', cat: 'Cal Stand' },
+]
+
+function NewVan({ techs, count, onCreate, onClose }) {
+  const [name, setName] = useState(`Van ${count + 1}`)
+  const [tech, setTech] = useState('')
+  const [kit, setKit] = useState(true)
+  const inp = { width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #e0ddd8', fontSize: 13, background: 'white' }
+  return (
+    <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 14, marginBottom: 12, maxWidth: 520 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: INK, marginBottom: 8 }}>🚐 New van</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        <div><div style={{ fontSize: 11, color: MUTED, marginBottom: 3 }}>Name</div><input value={name} onChange={e => setName(e.target.value)} style={inp} /></div>
+        <div><div style={{ fontSize: 11, color: MUTED, marginBottom: 3 }}>Tech</div><select value={tech} onChange={e => setTech(e.target.value)} style={inp}><option value="">Unassigned</option>{techs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+      </div>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12, color: '#444', marginTop: 10 }}>
+        <input type="checkbox" checked={kit} onChange={e => setKit(e.target.checked)} style={{ marginTop: 2 }} />
+        <span>Set it up with the standard kit: Shop laptop, Euro laptop, Autel tablet, MA600 frame, targets, mats and stands. Serials, dates and subscriptions get filled in as you go.</span>
+      </label>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+        <button onClick={onClose} style={{ fontSize: 12, fontWeight: 700, padding: '7px 12px', borderRadius: 7, border: '1px solid #e0ddd8', background: 'white', cursor: 'pointer' }}>Cancel</button>
+        <button onClick={() => name.trim() && onCreate({ name: name.trim(), tech, kit })} style={{ fontSize: 12, fontWeight: 700, padding: '7px 12px', borderRadius: 7, border: 0, background: BRAND, color: 'white', cursor: 'pointer' }}>Create van</button>
+      </div>
+    </div>
+  )
+}
+
+export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo, setLocations, setLaptops, setAssets }) {
+  const [adding, setAdding] = useState(false)
+  function createVan({ name, tech, kit }) {
+    const id = `van-${uid()}`, n = locations.filter(l => l.type === 'van').length + 1
+    setLocations(p => [...p, { id, name, type: 'van', tech, vin: '', plate: '', gps: '', year: '', make: '', model: '', color: '', insurance: '', reg_exp: '', oil_change: '', notes: '' }])
+    if (kit) {
+      setLaptops(p => [...p,
+        { id: `lap-${uid()}`, name: `TECH-LAPTOP-${n}`, build: 'Build 2', tech, role: 'shop', location: id, passcode: '', login: '', teamviewer: '', fca_sn: '', license: '', notes: 'Shop laptop — Ford, GM, Asian makes', oem_creds: [], sw_versions: [] },
+        { id: `lap-${uid()}`, name: `TECH-LAPTOP-EURO-${n}`, build: 'Build 1', tech, role: 'euro', location: id, passcode: '', login: '', teamviewer: '', fca_sn: '', license: '', notes: 'Euro laptop — BMW, Mercedes, VW/Audi, Volvo', oem_creds: [], sw_versions: [] }])
+      setAssets(p => [...p, ...STANDARD_KIT.map(k => ({ id: `t-${uid()}`, name: k.name, cat: k.cat, location: id, sn: '', sub_exp: '', nickname: '', notes: `${name} standard kit` }))])
+    }
+    setAdding(false); setVanId(id); setSel('')
+  }
   const vans = locations.filter(l => l.type === 'van')
   const [vanId, setVanId] = useState(vans[0]?.id || '')
   const [sel, setSel] = useState('')
   const van = vans.find(v => v.id === vanId) || vans[0]
   const kits = useMemo(() => Object.fromEntries(vans.map(v => [v.id, kitOf(v, { assets, laptops, oem, techs, locations })])), [vans, assets, laptops, oem, techs, locations])
-  if (!van) return <div style={{ fontSize: 13, color: MUTED }}>No vans yet — add one on Vans & Locations.</div>
-  const kit = kits[van.id]
+  const kit = van ? kits[van.id] : null
   return (
     <div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+      {adding && <NewVan techs={techs} count={vans.length} onCreate={createVan} onClose={() => setAdding(false)} />}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
         {vans.map(v => { const k = kits[v.id]; const on = v.id === van.id; return (
           <button key={v.id} onClick={() => { setVanId(v.id); setSel('') }} style={{ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 999, border: `1.5px solid ${on ? BRAND : '#e0ddd8'}`, background: on ? BRAND : 'white', color: on ? 'white' : '#555', cursor: 'pointer' }}>
             🚐 {v.name}{k.tech ? ` · ${k.tech.name.split(' ')[0]}` : ''}{k.issues ? <span style={{ marginLeft: 6, background: on ? 'white' : '#fde8e8', color: RED, borderRadius: 999, padding: '0 6px', fontSize: 11 }}>{k.issues}</span> : null}
           </button>) })}
+        {setLocations && <button onClick={() => setAdding(true)} style={{ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 999, border: '1.5px dashed #c9c3bc', background: 'white', color: '#555', cursor: 'pointer' }}>+ New van</button>}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(260px, 1fr)', gap: 14, alignItems: 'start' }}>
+      {!van && <div style={{ fontSize: 13, color: MUTED }}>No vans yet — tap + New van.</div>}
+      {van && <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.25fr) minmax(260px, 1fr)', gap: 14, alignItems: 'start' }}>
         <div style={{ background: '#f9f8f7', borderRadius: 14, padding: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4, flexWrap: 'wrap', gap: 6 }}>
             <span style={{ fontSize: 15, fontWeight: 700, color: INK }}>{van.name}{kit.tech ? ` · ${kit.tech.name}` : ''}</span>
@@ -166,7 +215,7 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
         <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16, minHeight: 180, position: 'sticky', top: 12 }}>
           <Panel van={van} kit={kit} sel={sel} onGo={onGo} />
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

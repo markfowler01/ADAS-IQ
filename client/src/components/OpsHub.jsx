@@ -1356,7 +1356,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
           ))}
         </div>
 
-        {tab === 'map'     && <VanMapTab  locations={locations} assets={assets} laptops={laptops} oem={oem} techs={techs} onGo={setTab} />}
+        {tab === 'map'     && <VanMapTab  locations={locations} assets={assets} laptops={laptops} oem={oem} techs={techs} onGo={setTab} setLocations={setLocations} setLaptops={setLaptops} setAssets={setAssets} />}
         {tab === 'vans'    && <VansTab    locations={locations} setLocations={setLocations} techs={techs} assets={assets} />}
         {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} />}
         {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} />}
