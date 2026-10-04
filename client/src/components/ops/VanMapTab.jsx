@@ -36,6 +36,8 @@ function kitOf(van, { assets, laptops, oem, techs, locations }) {
   const shop = mine.find(l => roleOf(l) === 'shop') || null, euro = mine.find(l => roleOf(l) === 'euro') || null
   const extra = mine.filter(l => l !== shop && l !== euro)
   const here = assets.filter(a => a.location === van.id)
+  const lastCheck = (van.checks || []).slice().sort((x, y) => String(y.at).localeCompare(String(x.at)))[0] || null
+  const missing = new Set(lastCheck?.missing || [])
   const tablet = here.find(a => a.cat === 'Tablet') || here.find(a => a.cat === 'Scanner' && TABLET.test(a.name || '')) || null
   const gear = here.filter(a => a !== tablet)
   const groups = GEAR_ORDER.map(cat => ({ cat, items: gear.filter(a => a.cat === cat) })).filter(g => g.items.length)
@@ -46,10 +48,11 @@ function kitOf(van, { assets, laptops, oem, techs, locations }) {
     { k: 'lap-euro', kind: 'laptop', label: 'Euro laptop', item: euro, sub: euro ? euro.name : '+ assign', s: lapSev(euro), subs: euro ? subsFor(euro) : [] },
     ...extra.map((l, i) => ({ k: `lap-x${i}`, kind: 'laptop', label: 'Laptop', item: l, sub: l.name, s: lapSev(l), subs: subsFor(l) })),
   ]
-  const tab = { k: 'tablet', kind: 'tablet', label: 'Tablet', item: tablet, sub: tablet ? tablet.name : '+ assign', s: tablet ? sev(tablet.sub_exp) : 0 }
-  const gearBoxes = groups.map(g => ({ k: `gear-${g.cat}`, kind: 'gear', label: g.cat, items: g.items, sub: g.items.length === 1 ? (g.items[0].nickname || g.items[0].name) : `${g.items.length} items`, s: Math.max(0, ...g.items.map(a => sev(a.sub_exp))) }))
+  const tab = { k: 'tablet', kind: 'tablet', label: 'Tablet', item: tablet, sub: tablet ? (missing.has(tablet.id) ? 'MISSING at last check' : tablet.name) : '+ assign', s: tablet ? (missing.has(tablet.id) ? 3 : sev(tablet.sub_exp)) : 0 }
+  const gearBoxes = groups.map(g => ({ k: `gear-${g.cat}`, kind: 'gear', label: g.cat, items: g.items, sub: g.items.some(a => missing.has(a.id)) ? `${g.items.filter(a => missing.has(a.id)).length} missing` : (g.items.length === 1 ? (g.items[0].nickname || g.items[0].name) : `${g.items.length} items`), s: Math.max(0, ...g.items.map(a => missing.has(a.id) ? 3 : sev(a.sub_exp))) }))
   const issues = [...slots, tab, ...gearBoxes].filter(b => b.s >= 2).length + (vanSev >= 2 ? 1 : 0)
-  return { tech, slots, tab, gearBoxes, vanSev, issues, passes }
+  const cost12 = (van.maintenance || []).filter(r => r.date && new Date(r.date) >= new Date(Date.now() - 365 * 86400000)).reduce((t, r) => t + (Number(r.cost) || 0), 0)
+  return { tech, slots, tab, gearBoxes, vanSev, issues: issues + (missing.size ? 1 : 0), passes, lastCheck, missing, cost12 }
 }
 
 const W = 360
@@ -196,7 +199,8 @@ function GearPanel({ van, b, locations, onGo, onTransfer }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>{a.nickname ? `${a.name} "${a.nickname}"` : a.name}</div>
-                <div style={{ fontSize: 11, color: sev(a.sub_exp) >= 2 ? RED : MUTED }}>{[a.sn, a.sub_exp ? `sub ${when(a.sub_exp)}` : '', a.notes].filter(Boolean).join(' · ')}</div>
+                <div style={{ fontSize: 11, color: sev(a.sub_exp) >= 2 ? RED : MUTED }}>{[a.bin, a.sn, a.sub_exp ? `sub ${when(a.sub_exp)}` : '', a.tag ? `🏷 ${a.tag}` : '', a.notes].filter(Boolean).join(' · ')}</div>
+                {b.missingIds?.has(a.id) && <div style={{ fontSize: 11, fontWeight: 700, color: RED }}>❗ Missing at the last check</div>}
                 {last && <div style={{ fontSize: 11, color: '#7c3aed' }}>↔ from {nm(last.from)} · {last.by || 'someone'} · {String(last.at).slice(0, 10)}</div>}
               </div>
               {onTransfer && others.length > 0 && moving !== a.id && <button onClick={() => { setMoving(a.id); setTo(others[0].id); setNote('') }} style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', border: 0, borderRadius: 6, padding: '5px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}>↔ Transfer</button>}
@@ -228,6 +232,53 @@ function RecentTransfers({ assets, locations }) {
     <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16 }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: INK, marginBottom: 8 }}>↔ Recent transfers</div>
       {rows.map((t, i) => <div key={i} style={{ fontSize: 12, padding: '5px 0', borderBottom: '1px solid #f1ede9', color: '#444' }}><b style={{ color: INK }}>{t.item}</b> · {nm(t.from)} → {nm(t.to)} · {t.by || 'someone'} · {String(t.at).slice(0, 10)}{t.note ? <span style={{ color: MUTED }}> · "{t.note}"</span> : null}</div>)}
+    </div>
+  )
+}
+
+// ✅ Weekly van check (Mark 2026-10-04, the Whip Around idea): five vehicle points,
+// the odometer, every tool on the van marked present or missing, notes. Saved on the
+// van; missing gear lights the tiles and shows in Due. Also used for a handover.
+const VEHICLE_POINTS = [['tires', 'Tires + pressure'], ['fluids', 'Oil + fluids'], ['lights', 'Lights + wipers'], ['body', 'Body + glass damage'], ['clean', 'Clean + gear secured']]
+function VanCheck({ van, assets, user, techs, handover = null, onDone, onClose, setLocations, onNote }) {
+  const items = assets.filter(a => a.location === van.id)
+  const [present, setPresent] = useState(() => Object.fromEntries(items.map(a => [a.id, true])))
+  const [pts, setPts] = useState(() => Object.fromEntries(VEHICLE_POINTS.map(([k]) => [k, true])))
+  const [odo, setOdo] = useState(vanOdometer(van) || '')
+  const [notes, setNotes] = useState('')
+  const [toTech, setToTech] = useState(handover?.to || '')
+  const missing = items.filter(a => !present[a.id]).map(a => a.id)
+  const bad = VEHICLE_POINTS.filter(([k]) => !pts[k]).map(([, l]) => l)
+  const save = () => {
+    const rec = { id: `c-${Date.now().toString(36)}`, at: new Date().toISOString(), by: user?.name || user?.email || '', odometer: odo ? Number(odo) : null, vehicle: pts, missing, notes, handover: handover ? { from: van.tech || '', to: toTech } : null }
+    setLocations(p => p.map(l => l.id === van.id ? { ...l, checks: [...(l.checks || []), rec].slice(-60), odometer: Math.max(Number(l.odometer) || 0, Number(odo) || 0) || l.odometer, ...(handover && toTech ? { tech: toTech } : {}) } : l))
+    const who = techs.find(t => t.id === toTech)?.name
+    if (onNote) onNote(handover ? `🤝 ${van.name} handed to ${who || 'unassigned'} by ${rec.by || 'someone'} · ${missing.length} missing · ${bad.length ? `issues: ${bad.join(', ')}` : 'vehicle OK'}` : `✅ ${van.name} weekly check by ${rec.by || 'someone'} · ${missing.length ? `${missing.length} missing` : 'all gear present'} · ${bad.length ? `issues: ${bad.join(', ')}` : 'vehicle OK'}${odo ? ` · ${Number(odo).toLocaleString()} mi` : ''}`)
+    onDone()
+  }
+  const Tog = ({ on, onClick, yes = 'Present', no = 'Missing' }) => <button onClick={onClick} style={{ fontSize: 11, fontWeight: 700, padding: '4px 10px', borderRadius: 999, border: 0, cursor: 'pointer', background: on ? '#dcfce7' : '#fee2e2', color: on ? '#166534' : '#b91c1c', minWidth: 76 }}>{on ? `✓ ${yes}` : `✕ ${no}`}</button>
+  return (
+    <div style={{ background: 'white', border: `2px solid ${BRAND}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: INK }}>{handover ? `🤝 Hand over ${van.name}` : `✅ ${van.name} weekly check`}</div>
+        <div style={{ fontSize: 12, color: MUTED }}>{user?.name || ''} · {new Date().toLocaleDateString()}</div>
+      </div>
+      {handover && <div style={{ marginTop: 8 }}><div style={{ fontSize: 11, color: MUTED, marginBottom: 3 }}>Hand to</div><select value={toTech} onChange={e => setToTech(e.target.value)} style={{ fontSize: 13, padding: '6px 8px', borderRadius: 6, border: '1px solid #e0ddd8', width: '100%' }}><option value="">Unassigned</option>{techs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>}
+      <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>Vehicle</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 6 }}>
+        {VEHICLE_POINTS.map(([k, l]) => <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: INK, padding: '4px 0' }}><span>{l}</span><Tog on={pts[k]} onClick={() => setPts(p => ({ ...p, [k]: !p[k] }))} yes="OK" no="Issue" /></div>)}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: INK, padding: '4px 0', gap: 8 }}><span>Odometer</span><input type="number" value={odo} onChange={e => setOdo(e.target.value)} placeholder="miles" style={{ width: 110, fontSize: 13, padding: '4px 8px', borderRadius: 6, border: '1px solid #e0ddd8', textAlign: 'right' }} /></div>
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>Gear on {van.name} · {items.length} · tap anything that isn't there</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 4 }}>
+        {items.map(a => <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, color: INK, padding: '4px 0', borderBottom: '1px solid #f1ede9', gap: 8 }}><span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.nickname ? `${a.name} "${a.nickname}"` : a.name}{a.bin ? <span style={{ color: MUTED }}> · {a.bin}</span> : null}</span><Tog on={present[a.id]} onClick={() => setPresent(p => ({ ...p, [a.id]: !p[a.id] }))} /></div>)}
+        {!items.length && <div style={{ fontSize: 12, color: MUTED }}>No gear listed on this van yet.</div>}
+      </div>
+      <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes (damage, what's low, anything odd)" style={{ width: '100%', marginTop: 10, fontSize: 13, padding: '7px 10px', borderRadius: 7, border: '1px solid #e0ddd8' }} />
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+        <button onClick={onClose} style={{ fontSize: 12, fontWeight: 700, padding: '8px 12px', borderRadius: 7, border: '1px solid #e0ddd8', background: 'white', cursor: 'pointer' }}>Cancel</button>
+        <button onClick={save} style={{ fontSize: 12, fontWeight: 700, padding: '8px 14px', borderRadius: 7, border: 0, background: missing.length || bad.length ? '#b45309' : GREEN, color: 'white', cursor: 'pointer' }}>{handover ? 'Sign the handover' : 'Save check'}{missing.length ? ` · ${missing.length} missing` : ''}{bad.length ? ` · ${bad.length} issue${bad.length === 1 ? '' : 's'}` : ''}</button>
+      </div>
     </div>
   )
 }
@@ -290,7 +341,7 @@ function Panel({ van, kit, sel, onGo, setLocations, locations, onTransfer }) {
       <Go tab={b.item ? 'oem' : 'laptops'} label={b.item ? 'Open OEM Software' : 'Open Laptops'} />
     </div>)
   if (b.kind === 'tablet') return <div><H t={b.item ? b.item.name : 'Tablet — empty slot'} s={b.item ? `${b.item.cat}${b.item.nickname ? ` · "${b.item.nickname}"` : ''}` : 'add the Autel tablet to this van on Tools & Equipment'} />{b.item && <><Line l="Serial" v={b.item.sn} /><Line l="Subscription" v={b.item.sub_exp ? `${b.item.sub_exp} · ${when(b.item.sub_exp)}` : 'no date yet'} warn={sev(b.item.sub_exp) >= 2} />{b.item.notes && <Line l="Notes" v={b.item.notes} />}</>}<Go tab="assets" label="Open Tools & Equipment" /></div>
-  if (b.kind === 'gear' || b.kind === 'tools') return <GearPanel van={van} b={b} locations={locations || []} onGo={onGo} onTransfer={onTransfer} />
+  if (b.kind === 'gear' || b.kind === 'tools') return <GearPanel van={van} b={{ ...b, missingIds: kit.missing }} locations={locations || []} onGo={onGo} onTransfer={onTransfer} />
   return null
 }
 
@@ -362,7 +413,7 @@ function VanSubs({ van, kit, onGo }) {
 
 // The van's own facts at the top (Mark 2026-10-03: "add all of this at the top"):
 // plate, VIN, registration, insurance, oil change — editable in place, saved to the van.
-function VanHeader({ van, kit, setLocations }) {
+function VanHeader({ van, kit, setLocations, onCheck, onHandover }) {
   const save = (k, v) => setLocations && setLocations(p => p.map(l => l.id === van.id ? { ...l, [k]: v } : l))
   const F = ({ k, label, type = 'text', ph = '' }) => {
     const v = van[k] || ''
@@ -380,7 +431,12 @@ function VanHeader({ van, kit, setLocations }) {
     <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: '12px 16px', marginBottom: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
         <div style={{ fontSize: 17, fontWeight: 800, color: INK }}>🚐 {van.name}{kit.tech ? <span style={{ fontWeight: 500, color: '#555' }}> · {kit.tech.name}</span> : null}{[van.year, van.make, van.model].filter(Boolean).length ? <span style={{ fontSize: 12, color: MUTED, marginLeft: 8 }}>{[van.year, van.make, van.model].filter(Boolean).join(' ')}</span> : null}</div>
-        <div style={{ fontSize: 12, fontWeight: 700, color: kit.issues ? '#b45309' : GREEN }}>{kit.issues ? `${kit.issues} thing${kit.issues === 1 ? '' : 's'} need attention` : 'All current'}</div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: kit.issues ? '#b45309' : GREEN }}>{kit.issues ? `${kit.issues} thing${kit.issues === 1 ? '' : 's'} need attention` : 'All current'}</span>
+          {kit.cost12 > 0 && <span style={{ fontSize: 11, color: MUTED }}>· ${kit.cost12.toLocaleString()} maintenance, 12 mo</span>}
+          {setLocations && <button onClick={onCheck} style={{ fontSize: 12, fontWeight: 700, color: 'white', background: kit.lastCheck && (Date.now() - new Date(kit.lastCheck.at)) < 7 * 86400000 ? GREEN : BRAND, border: 0, borderRadius: 7, padding: '6px 10px', cursor: 'pointer' }}>✅ Van check{kit.lastCheck ? ` · ${Math.floor((Date.now() - new Date(kit.lastCheck.at)) / 86400000)}d ago` : ' · never'}</button>}
+          {setLocations && <button onClick={onHandover} style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', border: 0, borderRadius: 7, padding: '6px 10px', cursor: 'pointer' }}>🤝 Hand over</button>}
+        </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
         <F k="plate" label="Plate" ph="ABC1234" />
@@ -403,6 +459,7 @@ function VanHeader({ van, kit, setLocations }) {
 
 export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo, setLocations, setLaptops, setAssets, onTransfer = null, user = null }) {
   const [adding, setAdding] = useState(false)
+  const [checking, setChecking] = useState(null)   // 'check' | 'handover'
   function createVan({ name, tech, kit }) {
     const id = `van-${uid()}`, n = locations.filter(l => l.type === 'van').length + 1
     setLocations(p => [...p, { id, name, type: 'van', tech, vin: '', plate: '', gps: '', year: '', make: '', model: '', color: '', insurance: '', reg_exp: '', oil_change: '', notes: '' }])
@@ -431,7 +488,21 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
         {setLocations && <button onClick={() => setAdding(true)} style={{ fontSize: 12, fontWeight: 700, padding: '6px 12px', borderRadius: 999, border: '1.5px dashed #c9c3bc', background: 'white', color: '#555', cursor: 'pointer' }}>+ New van</button>}
       </div>
       {!van && <div style={{ fontSize: 13, color: MUTED }}>No vans yet — tap + New van.</div>}
-      {van && <VanHeader key={van.id} van={van} kit={kit} setLocations={setLocations} />}
+      {vans.length > 1 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10, marginBottom: 12 }}>
+          {vans.map(v => { const k = kits[v.id]; const on = v.id === van?.id; const ms = maintStatus(v).filter(m => m.last).sort((a, b) => b.sev - a.sev || (a.daysUntil ?? 9999) - (b.daysUntil ?? 9999))[0]; const chk = k.lastCheck ? Math.floor((Date.now() - new Date(k.lastCheck.at)) / 86400000) : null; const strip = k.issues ? (k.vanSev === 3 || k.missing.size ? RED : '#b45309') : GREEN; return (
+            <div key={v.id} onClick={() => { setVanId(v.id); setSel('') }} style={{ background: 'white', border: `1.5px solid ${on ? BRAND : '#ebe7e2'}`, borderRadius: 12, overflow: 'hidden', cursor: 'pointer' }}>
+              <div style={{ height: 4, background: strip }} />
+              <div style={{ padding: '8px 12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}><span style={{ fontSize: 14, fontWeight: 800, color: INK }}>🚐 {v.name}</span><span style={{ fontSize: 11, color: MUTED }}>{k.tech ? k.tech.name.split(' ')[0] : 'no tech'}</span></div>
+                <div style={{ fontSize: 11, color: MUTED, marginTop: 3 }}>{vanOdometer(v) ? `${vanOdometer(v).toLocaleString()} mi` : 'no odometer'} · {chk === null ? 'never checked' : chk === 0 ? 'checked today' : `checked ${chk}d ago`}{k.missing.size ? ` · ${k.missing.size} missing` : ''}</div>
+                <div style={{ fontSize: 11, marginTop: 2, color: k.issues ? strip : GREEN, fontWeight: 600 }}>{k.issues ? `${k.issues} need attention` : 'All current'}{ms ? ` · ${ms.type} ${ms.text}` : ''}</div>
+              </div>
+            </div>) })}
+        </div>
+      )}
+      {van && checking && <VanCheck van={van} assets={assets} user={user} techs={techs} handover={checking === 'handover' ? { to: '' } : null} setLocations={setLocations} onDone={() => setChecking(null)} onClose={() => setChecking(null)} onNote={msg => apiFetch(`${API_BASE}/api/ops/transfer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item: msg, from: '', to: '', note: '' }) }).catch(() => {})} />}
+      {van && <VanHeader key={van.id} van={van} kit={kit} setLocations={setLocations} onCheck={() => setChecking('check')} onHandover={() => setChecking('handover')} />}
       {van && <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.15fr) minmax(300px, 1fr)', gap: 14, alignItems: 'start' }}>
         <div style={{ background: '#f9f8f7', borderRadius: 14, padding: 12 }}>
           <VanSvg van={van} kit={kit} sel={sel} onPick={setSel} />

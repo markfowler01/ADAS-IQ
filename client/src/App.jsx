@@ -123,6 +123,12 @@ function MainApp() {
   // stripped from the URL.
   useEffect(() => {
     try {
+      const scan = new URLSearchParams(window.location.search).get('scan')
+      if (scan) {   // 🏷 QR label on a tool → Ops → Equipment, searched to that tool (2026-10-04)
+        sessionStorage.setItem('adas_ops_scan', scan)
+        setScreen('ops')
+        const u = new URL(window.location.href); u.searchParams.delete('scan'); window.history.replaceState({}, '', u)
+      }
       const openJob = new URLSearchParams(window.location.search).get('job')
       if (openJob) {   // 📲 tech assignment text → open that card on the board (2026-09-23)
         sessionStorage.setItem('adas_open_job', openJob)

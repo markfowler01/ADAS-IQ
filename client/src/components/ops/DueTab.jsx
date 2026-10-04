@@ -11,6 +11,8 @@ export function dueItems({ locations, assets, laptops, oem }) {
   const vanName = id => locations.find(l => l.id === id)?.name || ''
   const out = []
   for (const s of oem) { if (s.status === 'inactive' || s.kind === 'pass') continue; const d = renewalOf(s); out.push({ kind: 'Subscription', name: s.name, where: vanName(s.location), date: d, tab: 'oem', cost: s.cost }) }
+  for (const a of assets) if (a.cat === 'Consumable' && a.min !== '' && a.min != null && Number(a.qty || 0) < Number(a.min)) out.push({ kind: '🧴 Low stock', name: `${a.name} (${a.qty || 0} left, reorder below ${a.min})`, where: vanName(a.location), date: '', tab: 'assets', forceN: 3 })
+  for (const v of locations) if (v.type === 'van') { const last = (v.checks || []).slice().sort((x, y) => String(y.at).localeCompare(String(x.at)))[0]; const d = last ? Math.floor((Date.now() - new Date(last.at)) / 86400000) : null; if (d === null || d >= 7) out.push({ kind: '✅ Weekly van check', name: v.name, where: v.name, date: '', tab: 'map', extra: d === null ? 'never done' : `last ${d}d ago`, forceN: d === null || d >= 14 ? -1 : 2 }); if (last?.missing?.length) out.push({ kind: '❗ Missing gear', name: `${v.name}: ${last.missing.length} item${last.missing.length === 1 ? '' : 's'} missing at the last check`, where: v.name, date: '', tab: 'map', forceN: -1 }) }
   for (const a of assets) if (a.sub_exp) out.push({ kind: a.cat === 'Tablet' ? 'Tablet subscription' : 'Equipment subscription', name: a.nickname ? `${a.name} "${a.nickname}"` : a.name, where: vanName(a.location), date: a.sub_exp, tab: 'assets' })
   for (const v of locations) {
     if (v.reg_exp) out.push({ kind: 'Registration', name: v.name, where: v.name, date: v.reg_exp, tab: 'vans' })

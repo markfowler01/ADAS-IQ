@@ -127,4 +127,29 @@ router.get('/doc/:fileId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🏷 QR labels (Mark 2026-10-04): a printable sheet, one label per tool, the QR opens
+// the app on that tool. ?van=<id> for one van's gear. Avery 5160-ish, 30 per page.
+router.get('/labels', async (req, res) => {
+  try {
+    const QRCode = (await import('qrcode')).default
+    const [assets, locations] = await Promise.all([readKey(req, 'assets'), readKey(req, 'locations')])
+    const van = String(req.query.van || '')
+    const list = (assets.value || []).filter(a => !van || a.location === van)
+    const vanName = id => (locations.value || []).find(l => l.id === id)?.name || 'Spare'
+    const base = `${req.protocol}://${req.get('host')}/app/?scan=`
+    const cells = []
+    for (const a of list) {
+      const png = await QRCode.toDataURL(base + encodeURIComponent(a.id), { width: 160, margin: 0, color: { dark: '#1a1a1a', light: '#ffffff' } })
+      cells.push(`<div class="l"><img src="${png}"><div class="t"><b>${String(a.name).replace(/</g, '&lt;')}</b>${a.nickname ? `<div>"${String(a.nickname).replace(/</g, '&lt;')}"</div>` : ''}<div class="m">${[a.sn, vanName(a.location), a.bin].filter(Boolean).map(x => String(x).replace(/</g, '&lt;')).join(' · ')}</div><div class="m">Absolute ADAS</div></div></div>`)
+    }
+    res.set('Content-Type', 'text/html').send(`<!doctype html><html><head><meta charset="utf-8"><title>Tool labels</title><style>
+      @page { size: letter; margin: 0.5in 0.19in } body { font-family: -apple-system, Helvetica, Arial, sans-serif; margin: 0 }
+      .g { display: grid; grid-template-columns: repeat(3, 2.625in); grid-auto-rows: 1in; column-gap: 0.125in }
+      .l { display: flex; align-items: center; gap: 8px; padding: 6px 8px; box-sizing: border-box; overflow: hidden; border: 1px dashed #ddd }
+      .l img { width: 0.8in; height: 0.8in; flex: none } .t { font-size: 10px; line-height: 1.25; min-width: 0 } .t b { font-size: 11px; display: block } .m { color: #555; font-size: 9px }
+      @media print { .l { border: 0 } .hint { display: none } }
+    </style></head><body><p class="hint" style="padding:8px 12px;font-size:12px;color:#555">${cells.length} labels · Avery 5160 (30 per sheet) · File → Print. Scanning a label opens the tool in the app.</p><div class="g">${cells.join('')}</div></body></html>`)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export default router

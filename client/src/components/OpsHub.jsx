@@ -127,7 +127,7 @@ const SEED_ASSETS = [
 ]
 
 
-const ASSET_CATS = ['Cal Frame', 'Scanner', 'Full Kit', 'Cal Target', 'Cal Mat', 'Cal Stand', 'Small Tool', 'Tablet', 'Specialty', 'Other']
+const ASSET_CATS = ['Cal Frame', 'Scanner', 'Full Kit', 'Cal Target', 'Cal Mat', 'Cal Stand', 'Small Tool', 'Tablet', 'Consumable', 'Specialty', 'Other']
 const LOC_TYPES  = ['van', 'center', 'office', 'storage']
 const BUILD_TYPES = ['Build 1', 'Build 2', 'Both', 'Other']
 
@@ -927,7 +927,10 @@ function AssetsTab({ assets, setAssets, locations, q = '', onTransfer = null }) 
             <FilterPill key={l.id} active={filterLoc === l.id} onClick={() => setFilterLoc(l.id)}>{l.name}</FilterPill>
           ))}
         </Row>
-        <Btn primary onClick={openAdd}>+ Add asset</Btn>
+        <Row gap={6}>
+          <Btn onClick={async () => { try { const r = await apiFetch(`${API_BASE}/api/ops/labels${filterLoc !== 'all' ? `?van=${encodeURIComponent(filterLoc)}` : ''}`); const b = await r.blob(); const u = URL.createObjectURL(b); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60000) } catch (e) { alert(e.message) } }}>🏷 Print labels</Btn>
+          <Btn primary onClick={openAdd}>+ Add asset</Btn>
+        </Row>
       </div>
       <Row gap={5} style={{ marginBottom: 14 }}>
         <FilterPill active={filterCat === 'all'} onClick={() => setFilterCat('all')}>All types</FilterPill>
@@ -957,6 +960,9 @@ function AssetsTab({ assets, setAssets, locations, q = '', onTransfer = null }) 
                 </div>
               </div>
               <div style={{ padding: '8px 11px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {a.bin && meta('Home', a.bin)}
+                {a.tag && meta('Tracker', `🏷 ${a.tag}`)}
+                {a.cat === 'Consumable' && meta('On hand', `${a.qty ?? '?'}${a.min != null && a.min !== '' ? ` · reorder below ${a.min}` : ''}`)}
                 {a.sn && meta('S/N', a.sn)}
                 {a.sub_exp && meta('Subscription', `${a.sub_exp}${days(a.sub_exp) !== null ? (days(a.sub_exp) < 0 ? ` · ${Math.abs(days(a.sub_exp))}d ago` : ` · in ${days(a.sub_exp)}d`) : ''}`)}
                 {a.notes && <div style={{ fontSize: 11, color: '#888' }}>{a.notes}</div>}
@@ -998,6 +1004,9 @@ function AssetsTab({ assets, setAssets, locations, q = '', onTransfer = null }) 
             <F label="Assigned to"><Sel value={form.location} onChange={v => f({ location: v })} options={locOpts} /></F>
             <F label="Serial / part number"><In value={form.sn} onChange={v => f({ sn: v })} placeholder="e.g. CSC0802/03" /></F>
             <F label="Nickname"><In value={form.nickname} onChange={v => f({ nickname: v })} /></F>
+            <F label="Home in the van"><In value={form.bin || ''} onChange={v => f({ bin: v })} placeholder="Shelf 2 · bin C" /></F>
+            <F label="Tracker tag (Milwaukee TICK / ONE-KEY)"><In value={form.tag || ''} onChange={v => f({ tag: v })} placeholder="TICK id or ONE-KEY name — add later" /></F>
+            {form.cat === 'Consumable' && <><F label="Quantity on hand"><In type="number" value={form.qty ?? ''} onChange={v => f({ qty: v })} /></F><F label="Reorder when below"><In type="number" value={form.min ?? ''} onChange={v => f({ min: v })} /></F></>}
             <F label="Subscription bought on"><In type="date" value={form.sub_purchased || ''} onChange={v => f({ sub_purchased: v, sub_exp: v ? addMonths(v, form.sub_term || 12) : form.sub_exp })} /></F>
             <F label="Subscription term"><Sel value={String(form.sub_term || 12)} onChange={v => f({ sub_term: Number(v), sub_exp: form.sub_purchased ? addMonths(form.sub_purchased, Number(v)) : form.sub_exp })} options={TERMS.map(([v, l]) => ({ v: String(v), l }))} /></F>
             <F label="Renews on" span2>{form.sub_purchased ? <div style={{ fontSize: 13, padding: '7px 0' }}>{addMonths(form.sub_purchased, form.sub_term || 12)} — set from the purchase date and term (Autel tablets and the IM608 carry a one-year subscription)</div> : <In type="date" value={form.sub_exp} onChange={v => f({ sub_exp: v })} />}</F>
@@ -1401,7 +1410,8 @@ const TABS = [
 
 export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
   const [tab, setTab] = useState('map')
-  const [q, setQ] = useState('')   // 🔎 one search across every tab (Mark 2026-10-04)
+  const [q, setQ] = useState(() => { try { const v = sessionStorage.getItem('adas_ops_scan'); if (v) { sessionStorage.removeItem('adas_ops_scan'); return v } } catch {} return '' })   // 🔎 one search across every tab; a scanned QR label lands here
+  useEffect(() => { try { if (q && assets.some(a => a.id === q)) setTab('assets') } catch {} }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared on the server (2026-10-03). The browser copy is a cache + the photos;
   // the first load pushes any real edits that only ever lived in this browser.
