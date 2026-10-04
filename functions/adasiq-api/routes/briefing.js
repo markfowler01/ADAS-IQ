@@ -1199,7 +1199,6 @@ function buildSpokenScript(b, big3, tr, triage, vanOps = []) {
     parts.push('Sales this month by tech.')
     tr.rows.forEach(([t, amt]) => parts.push(`${t}, ${spoken(amt)}.`))
   }
-  }
   for (const l of (vanOps || [])) parts.push(toSpoken(l))   // 🚐 van ops due (2026-10-04)
   if (triage?.needsYou?.length) {
     parts.push(`In your inbox, ${triage.total} unread, and ${triage.needsYou.length} need you.`)
