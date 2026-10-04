@@ -4,7 +4,8 @@
 // area holds whatever gear that van actually carries (every van is different).
 // Red / amber dots = something on that item is expired / due inside 60 days.
 // Tap anything → details on the right, with a way into the tab that edits it.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { API_BASE, apiFetch } from '../../utils/api.js'
 import { MAINT_TYPES, maintStatus, maintSev, vanOdometer, milestoneStatus, milestoneType } from './maint.js'
 
 const BRAND = '#CD4419', INK = '#1a1a1a', MUTED = '#8a847e', LINE = '#888780'
@@ -138,7 +139,9 @@ function VanPanel({ van, onGo, setLocations }) {
       <Line l="Plate" v={van.plate} /><Line l="VIN" v={van.vin} />
       <Line l="Registration" v={van.reg_exp ? `${van.reg_exp} · ${when(van.reg_exp)}` : ''} warn={sev(van.reg_exp) >= 2} />
       <Line l="Insurance" v={[van.insurance, van.insurance_exp ? `${van.insurance_exp} · ${when(van.insurance_exp)}` : ''].filter(Boolean).join(' · ')} warn={sev(van.insurance_exp) >= 2} />
+      {van.insurance_phone && <Line l="Insurance phone" v={<a href={`tel:${van.insurance_phone}`} style={{ color: BRAND }}>{van.insurance_phone}</a>} />}
       <Line l="Odometer" v={vanOdometer(van) ? `${vanOdometer(van).toLocaleString()} mi` : ''} />
+      <Glovebox van={van} />
       <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>Service schedule</div>
       {ms.map(m => <Line key={m.type} l={m.type} v={m.last ? `${m.text} · last ${m.last.date}` : 'no record yet'} warn={m.sev >= 2} />)}
       <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>30k · 60k · 90k milestones</div>
@@ -225,6 +228,45 @@ function RecentTransfers({ assets, locations }) {
     <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16 }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: INK, marginBottom: 8 }}>↔ Recent transfers</div>
       {rows.map((t, i) => <div key={i} style={{ fontSize: 12, padding: '5px 0', borderBottom: '1px solid #f1ede9', color: '#444' }}><b style={{ color: INK }}>{t.item}</b> · {nm(t.from)} → {nm(t.to)} · {t.by || 'someone'} · {String(t.at).slice(0, 10)}{t.note ? <span style={{ color: MUTED }}> · "{t.note}"</span> : null}</div>)}
+    </div>
+  )
+}
+
+// 📄 Digital glovebox: the van's documents in WorkDrive (insurance card, policy,
+// registration, title, inspection, receipts). Open any one on the phone at a stop.
+const DOC_KINDS = [['insurance_card', '🪪 Insurance card'], ['policy', '📑 Insurance policy'], ['registration', '📋 Registration'], ['title', '📜 Title'], ['inspection', '🔍 Inspection'], ['receipt', '🧾 Receipt'], ['other', '📄 Other']]
+function Glovebox({ van }) {
+  const [files, setFiles] = useState(null)
+  const [err, setErr] = useState('')
+  const [kind, setKind] = useState('insurance_card')
+  const [busy, setBusy] = useState(false)
+  const load = () => apiFetch(`${API_BASE}/api/ops/vans/${van.id}/docs?name=${encodeURIComponent(van.name)}`).then(r => r.json()).then(d => { if (d.error) setErr(d.error); else setFiles(d.files || []) }).catch(e => setErr(e.message))
+  useEffect(() => { setFiles(null); setErr(''); load() }, [van.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  async function upload(e) {
+    const f = e.target.files?.[0]; e.target.value = ''; if (!f) return
+    setBusy(true); setErr('')
+    try { const fd = new FormData(); fd.append('file', f, f.name); fd.append('kind', kind); fd.append('name', van.name); const r = await apiFetch(`${API_BASE}/api/ops/vans/${van.id}/docs`, { method: 'POST', body: fd }); const d = await r.json(); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); await load() }
+    catch (e2) { setErr(e2.message) } finally { setBusy(false) }
+  }
+  async function open(f) {
+    try { const r = await apiFetch(`${API_BASE}/api/ops/doc/${f.id}?name=${encodeURIComponent(f.name)}`); const b = await r.blob(); const u = URL.createObjectURL(b); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60000) } catch (e2) { setErr(e2.message) }
+  }
+  const label = f => { const k = DOC_KINDS.find(x => x[0] === f.kind); const parts = String(f.name).split('__'); return { k: k ? k[1] : '📄', date: parts[1] || '', nm: parts.slice(2).join('__') || f.name } }
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>📄 Glovebox</div>
+      {err && <div style={{ fontSize: 12, color: RED }}>{err}</div>}
+      {files === null && !err && <div style={{ fontSize: 12, color: MUTED }}>Loading…</div>}
+      {files && !files.length && <div style={{ fontSize: 12, color: MUTED }}>Nothing filed yet. Add the insurance card and registration so they're on every phone.</div>}
+      {files && files.map(f => { const l = label(f); return (
+        <div key={f.id} onClick={() => open(f)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid #f1ede9', cursor: 'pointer' }}>
+          <span style={{ fontSize: 13, color: INK, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}><b>{l.k}</b> · {l.nm}</span>
+          <span style={{ fontSize: 11, color: MUTED, whiteSpace: 'nowrap' }}>{l.date} · open ↗</span>
+        </div>) })}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}>
+        <select value={kind} onChange={e => setKind(e.target.value)} style={{ fontSize: 12, padding: '5px 8px', borderRadius: 6, border: '1px solid #e0ddd8', flex: 1 }}>{DOC_KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        <label style={{ fontSize: 12, fontWeight: 700, color: 'white', background: busy ? '#aaa' : BRAND, borderRadius: 7, padding: '6px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }}>{busy ? 'Uploading…' : '+ Add (photo or PDF)'}<input type="file" accept="image/*,application/pdf" onChange={upload} disabled={busy} style={{ display: 'none' }} /></label>
+      </div>
     </div>
   )
 }
@@ -344,6 +386,8 @@ function VanHeader({ van, kit, setLocations }) {
         <F k="plate" label="Plate" ph="ABC1234" />
         <F k="vin" label="VIN" ph="17 characters" />
         <F k="reg_exp" label="Registration" type="date" />
+        <F k="insurance" label="Insurance · carrier / policy #" ph="Progressive · 9823-114" />
+        <F k="insurance_phone" label="Insurance · agent / claims phone" type="tel" ph="(425) 555-0100" />
         <F k="insurance_exp" label="Insurance exp" type="date" />
         <F k="odometer" label="Odometer (mi)" type="number" ph="current reading" />
       </div>

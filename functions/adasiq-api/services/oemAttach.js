@@ -93,7 +93,7 @@ async function workdriveId(req, row, token) {
 // HR → Team folder (people.js) once and kept for the life of the instance.
 const PEOPLE_FOLDER_ID = 'mniqhb081c583db4e4b54ae1a007f31f84c1b'
 let _cc = ''
-async function walkPath(path, token) {
+export async function walkPath(path, token) {
   const H = { Authorization: `Zoho-oauthtoken ${token}` }
   const parentOf = async id => (await axios.get(`https://workdrive.zoho.com/api/v1/files/${id}`, { headers: H, timeout: 15000 })).data?.data?.attributes?.parent_id || ''
   if (!_cc) _cc = await parentOf(await parentOf(PEOPLE_FOLDER_ID))

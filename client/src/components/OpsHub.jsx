@@ -742,6 +742,7 @@ function VanDetail({ location, setLocations, techs, assets, onBack }) {
             <F label="GPS serial / IMEI"><In value={vanForm.gps} onChange={v => vf({ gps: v })} /></F>
             <F label="Insurance"><In value={vanForm.insurance} onChange={v => vf({ insurance: v })} placeholder="Carrier / policy #" /></F>
             <F label="Insurance exp"><In type="date" value={vanForm.insurance_exp || ''} onChange={v => vf({ insurance_exp: v })} /></F>
+            <F label="Insurance agent / claims phone"><In value={vanForm.insurance_phone || ''} onChange={v => vf({ insurance_phone: v })} placeholder="(425) 555-0100" /></F>
             <F label="Odometer (mi)"><In type="number" value={vanForm.odometer || ''} onChange={v => vf({ odometer: v })} placeholder="current reading" /></F>
             <F label="Notes" span2><In value={vanForm.notes} onChange={v => vf({ notes: v })} /></F>
           </Grid2>

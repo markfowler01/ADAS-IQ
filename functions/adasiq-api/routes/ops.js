@@ -3,6 +3,7 @@
 // in each person's browser, and the OEM dates were placeholders). One AppConfig
 // row per section: ops_locations, ops_assets, ops_laptops, ops_oem.
 import express from 'express'
+import multer from 'multer'
 import catalyst from 'zcatalyst-sdk-node'
 
 const router = express.Router()
@@ -74,6 +75,55 @@ router.post('/clean-placeholder-dates', async (req, res) => {
       if (!dry && out.assets.length) await app(req).datastore().table('AppConfig').updateRow({ ROWID: a.row.ROWID, config_value: JSON.stringify(next) })
     }
     res.json({ ok: true, dry, cleared: out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// 📄 Digital glovebox (Mark 2026-10-04: "insurance docs and numbers"): each van's
+// documents live in WorkDrive under Command Center → 01_Ops → Vans → <van>. The
+// folder id is remembered in AppConfig vandocs_<vanId>.
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } })
+async function vanFolder(req, vanId, vanName, token) {
+  const a = app(req); const key = `vandocs_${vanId}`
+  const r = await a.zcql().executeZCQLQuery(`SELECT config_value FROM AppConfig WHERE config_key = '${key}' LIMIT 1`)
+  const cached = r?.[0]?.AppConfig?.config_value; if (cached) return String(cached)
+  const { walkPath } = await import('../services/oemAttach.js')
+  const { createFolderUnder } = await import('../services/workdrive.js')
+  let vans = await walkPath('Vans', token)
+  if (!vans) { const ops = await walkPath('', token); if (!ops) throw new Error('01_Ops folder not found in WorkDrive'); vans = (await createFolderUnder(ops, 'Vans', token)).folderId }
+  let mine = await walkPath(`Vans/${vanName}`, token)
+  if (!mine) mine = (await createFolderUnder(vans, vanName, token)).folderId
+  await a.datastore().table('AppConfig').insertRow({ config_key: key, config_value: String(mine) }).catch(() => {})
+  return String(mine)
+}
+const KINDS = { insurance_card: 'Insurance card', policy: 'Insurance policy', registration: 'Registration', title: 'Title', inspection: 'Inspection', receipt: 'Receipt', other: 'Document' }
+router.get('/vans/:id/docs', async (req, res) => {
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { listChildren } = await import('../services/workdrive.js')
+    const fid = await vanFolder(req, String(req.params.id), String(req.query.name || `Van ${req.params.id}`), token)
+    const files = await listChildren(fid, token, { folders: false, max: 500 })
+    res.json({ ok: true, folder: fid, files: files.map(f => ({ id: f.id, name: f.name, size: f.size, created: f.created, kind: Object.keys(KINDS).find(k => String(f.name).startsWith(`${k}__`)) || 'other' })).sort((x, y) => String(y.created).localeCompare(String(x.created))) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/vans/:id/docs', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'no file' })
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { uploadFileToFolder } = await import('../services/workdrive.js')
+    const fid = await vanFolder(req, String(req.params.id), String(req.body?.name || `Van ${req.params.id}`), token)
+    const kind = KINDS[req.body?.kind] ? req.body.kind : 'other'
+    const clean = String(req.file.originalname || 'file').replace(/[^\w .()\-]+/g, '_').slice(0, 120)
+    const name = `${kind}__${new Date().toISOString().slice(0, 10)}__${clean}`
+    const up = await uploadFileToFolder(fid, name, req.file.buffer, token, req.file.mimetype || 'application/octet-stream')
+    res.json({ ok: true, file: { id: up?.fileId || up?.id || '', name }, by: req.user?.name || '' })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/doc/:fileId', async (req, res) => {
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const token = await getAccessToken()
+    const { downloadFile } = await import('../services/workdrive.js')
+    const f = await downloadFile(String(req.params.fileId), token)
+    res.set({ 'Content-Type': f.contentType || 'application/octet-stream', 'Content-Disposition': `inline; filename="${String(req.query.name || 'document').replace(/"/g, '')}"`, 'Cache-Control': 'private, max-age=300' }).send(f.buffer)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 

@@ -760,6 +760,14 @@ router.post('/ops/clean-placeholder-dates', async (req, res) => {
   req.url = `/clean-placeholder-dates${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`
   return ops(req, res, () => res.status(404).json({ error: 'no route' }))
 })
+router.get('/van-ops/due', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const V = await import('../services/vanOps.js'); res.json({ due: await V.vanOpsDue(req), brief: await V.vanOpsForBrief(req) }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/van-ops/remind', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const V = await import('../services/vanOps.js'); res.json(await V.maybeVanOpsReminders(req)) } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/shops/customers', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {
