@@ -5,7 +5,7 @@
 // Red / amber dots = something on that item is expired / due inside 60 days.
 // Tap anything → details on the right, with a way into the tab that edits it.
 import { useMemo, useState } from 'react'
-import { MAINT_TYPES, maintStatus, maintSev, vanOdometer } from './maint.js'
+import { MAINT_TYPES, maintStatus, maintSev, vanOdometer, milestoneStatus, milestoneType } from './maint.js'
 
 const BRAND = '#CD4419', INK = '#1a1a1a', MUTED = '#8a847e', LINE = '#888780'
 const RED = '#c62828', AMBER = '#f9a825', GREEN = '#1a7336'
@@ -141,6 +141,17 @@ function VanPanel({ van, onGo, setLocations }) {
       <Line l="Odometer" v={vanOdometer(van) ? `${vanOdometer(van).toLocaleString()} mi` : ''} />
       <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>Service schedule</div>
       {ms.map(m => <Line key={m.type} l={m.type} v={m.last ? `${m.text} · last ${m.last.date}` : 'no record yet'} warn={m.sev >= 2} />)}
+      <div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>30k · 60k · 90k milestones</div>
+      {milestoneStatus(van).filter(m => !m.done || m.miles <= (vanOdometer(van) || 0) + 30000).map(m => (
+        <div key={m.miles} style={{ padding: '5px 0', borderBottom: '1px solid #f1ede9' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 13 }}>
+            <span style={{ color: MUTED }}>{m.miles / 1000}k service</span>
+            <span style={{ fontWeight: 600, color: m.done ? GREEN : m.sev === 3 ? RED : m.sev === 2 ? '#b45309' : INK }}>{m.done ? '✓ ' : ''}{m.text}</span>
+          </div>
+          {!m.done && m.sev >= 2 && <div style={{ fontSize: 11, color: '#555', marginTop: 2 }}>{m.items.join(' · ')}</div>}
+          {!m.done && m.sev >= 2 && setLocations && <button onClick={() => { setRec(r => ({ ...r, type: milestoneType(m.miles) })); setLogging(true) }} style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: BRAND, background: 'white', border: `1px solid ${BRAND}`, borderRadius: 6, padding: '3px 8px', cursor: 'pointer' }}>Log the {m.miles / 1000}k service</button>}
+        </div>
+      ))}
       {recent.length > 0 && <><div style={{ fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '12px 0 4px' }}>Recent</div>
         {recent.map(r => <Line key={r.id} l={`${r.date} · ${r.type}`} v={`${r.mileage ? Number(r.mileage).toLocaleString() + ' mi' : ''}${r.cost ? ` · $${Number(r.cost).toLocaleString()}` : ''}${r.vendor ? ` · ${r.vendor}` : ''}`} />)}</>}
       {setLocations && !logging && <button onClick={() => setLogging(true)} style={{ marginTop: 12, marginRight: 8, fontSize: 12, fontWeight: 700, color: 'white', background: BRAND, border: 0, borderRadius: 7, padding: '7px 12px', cursor: 'pointer' }}>🔧 Log a service</button>}

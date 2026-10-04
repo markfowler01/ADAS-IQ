@@ -1,7 +1,7 @@
 // 🔧 Van maintenance, shared by the van map, the Due list and the Vans tab
 // (Mark 2026-10-04: "build this into the system"). A service is due by time OR
 // by miles, whichever comes first; the van's odometer makes the miles side work.
-export const MAINT_TYPES = ['Oil Change', 'Tires', 'Tire Rotation', 'Brakes', 'Inspection', 'Registration', 'Repair', 'Wrap', 'Tint', 'Electrical', 'Transmission', 'Coolant', 'Battery', 'Other']
+export const MAINT_TYPES = ['Milestone 30k', 'Milestone 60k', 'Milestone 90k', 'Milestone 120k', 'Milestone 150k', 'Oil Change', 'Tires', 'Tire Rotation', 'Brakes', 'Inspection', 'Registration', 'Repair', 'Wrap', 'Tint', 'Electrical', 'Transmission', 'Coolant', 'Battery', 'Other']
 export const MAINT_INTERVALS = {
   'Oil Change':    { miles: 5000,  months: 6 },
   'Tire Rotation': { miles: 7500,  months: 6 },
@@ -10,6 +10,26 @@ export const MAINT_INTERVALS = {
   'Inspection':    { miles: null,  months: 12 },
   'Transmission':  { miles: 60000, months: 48 },
   'Coolant':       { miles: 30000, months: 24 },
+}
+// Ford severe-duty milestones for a working Transit. A service record of type
+// "Milestone 30k" (etc.) marks one done. Due inside 1,000 mi; overdue once past.
+export const MILESTONES = [
+  { miles: 30000, items: ['Engine oil + filter', 'Brake pads, rotors, fluid', 'Tire rotation + wear', 'Cabin + engine air filters', 'Battery test', 'Belts, hoses, coolant level', 'Suspension + steering check', 'Wipers, lights, horn'] },
+  { miles: 60000, items: ['Everything from 30k', 'Transmission fluid', 'Coolant flush', 'Spark plugs (if due)', 'Differential + transfer case fluid', 'Fuel filter (diesel)', 'Brake fluid flush'] },
+  { miles: 90000, items: ['Everything from 30k', 'Tires (likely due)', 'Drive belt', 'Shocks + struts', 'Exhaust + mounts', 'Wheel bearings + CV boots'] },
+  { miles: 120000, items: ['Everything from 60k', 'Timing components per Ford', 'Water pump + thermostat check'] },
+  { miles: 150000, items: ['Everything from 30k', 'Transmission service', 'Full cooling system'] },
+]
+export const milestoneType = m => `Milestone ${m / 1000}k`
+export function milestoneStatus(van) {
+  const odo = vanOdometer(van)
+  const recs = van.maintenance || []
+  return MILESTONES.map(m => {
+    const done = recs.find(r => String(r.type || '').toLowerCase() === milestoneType(m.miles).toLowerCase())
+    const left = odo ? m.miles - odo : null
+    const sev = done ? 0 : left === null ? 0 : left < 0 ? 3 : left <= 1000 ? 2 : 1
+    return { ...m, done, left, sev, text: done ? `done ${done.date}${done.mileage ? ` at ${Number(done.mileage).toLocaleString()} mi` : ''}` : left === null ? 'enter the odometer' : left < 0 ? `${Math.abs(left).toLocaleString()} mi past due` : `${left.toLocaleString()} mi away` }
+  })
 }
 const days = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null
 const addMonths = (d, m) => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); x.setMonth(x.getMonth() + Number(m || 0)); return x.toISOString().slice(0, 10) }
@@ -45,4 +65,4 @@ export function maintStatus(van) {
 }
 
 /** The van's worst maintenance state (0 none/unknown · 1 fine · 2 due soon · 3 overdue). */
-export const maintSev = van => Math.max(0, ...maintStatus(van).map(m => m.sev))
+export const maintSev = van => Math.max(0, ...maintStatus(van).map(m => m.sev), ...milestoneStatus(van).map(m => m.sev))

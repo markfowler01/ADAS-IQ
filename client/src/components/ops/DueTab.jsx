@@ -1,7 +1,7 @@
 // 📋 Due (Mark 2026-10-03): everything on the Ops page that has a date, in one
 // list, soonest first — subscription renewals, van registration, insurance and
 // oil changes, equipment subscriptions. The Monday-morning page.
-import { maintStatus } from './maint.js'
+import { maintStatus, milestoneStatus } from './maint.js'
 const BRAND = '#CD4419', INK = '#1a1a1a', MUTED = '#8a847e'
 const days = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null
 const addMonths = (d, m) => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); x.setMonth(x.getMonth() + Number(m || 12)); return x.toISOString().slice(0, 10) }
@@ -17,6 +17,7 @@ export function dueItems({ locations, assets, laptops, oem }) {
     if (v.insurance_exp) out.push({ kind: 'Insurance', name: v.name, where: v.name, date: v.insurance_exp, tab: 'vans' })
     if (v.oil_change) out.push({ kind: 'Oil change', name: v.name, where: v.name, date: v.oil_change, tab: 'vans' })
     // 🔧 interval services: due by date and/or miles
+    if (v.type === 'van') for (const m of milestoneStatus(v)) if (!m.done && m.sev >= 1) out.push({ kind: `🔧 ${m.miles / 1000}k service`, name: v.name, where: v.name, date: '', tab: 'map', extra: m.text, forceN: m.sev === 3 ? -1 : m.sev === 2 ? 7 : 90 })
     if (v.type === 'van') for (const m of maintStatus(v)) if (m.last) out.push({ kind: `🔧 ${m.type}`, name: v.name, where: v.name, date: m.dueDate || '', tab: 'map', extra: m.milesLeft !== null ? (m.milesLeft < 0 ? `${Math.abs(m.milesLeft).toLocaleString()} mi over` : `${m.milesLeft.toLocaleString()} mi left`) : (m.dueMiles ? `at ${m.dueMiles.toLocaleString()} mi` : ''), forceN: m.milesLeft !== null && m.milesLeft < 0 ? -1 : null })
   }
   return out.map(i => ({ ...i, n: i.forceN != null && (days(i.date) === null || days(i.date) > i.forceN) ? i.forceN : days(i.date) }))
