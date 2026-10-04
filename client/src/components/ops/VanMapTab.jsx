@@ -25,8 +25,12 @@ function kitOf(van, { assets, laptops, oem, techs, locations }) {
   const roleOf = l => l.role || (/euro/i.test(l.name || '') ? 'euro' : 'shop')
   // A subscription belongs to a van (Mark: "the OE subscriptions go with each van"): by its
   // van field first, else by the tech who drives it. Euro-make software sits on the Euro laptop.
-  const onVan = s => s.status !== 'inactive' && (s.location ? s.location === van.id : s.tech === van.tech)
+  // Shared subscriptions (one per OEM, everyone uses it) show on every van; per-van ones
+  // only on theirs; day passes are listed separately and never light a tile.
+  const kindOf = s => s.kind || (s.location ? 'van' : 'shared')
+  const onVan = s => s.status !== 'inactive' && kindOf(s) !== 'pass' && (kindOf(s) === 'van' ? s.location === van.id : true)
   const subsFor = l => oem.filter(s => s.device ? s.device === l.id : (onVan(s) && (roleOf(l) === 'euro') === EURO.test(s.name || '')))
+  const passes = oem.filter(s => s.status !== 'inactive' && kindOf(s) === 'pass')
   const shop = mine.find(l => roleOf(l) === 'shop') || null, euro = mine.find(l => roleOf(l) === 'euro') || null
   const extra = mine.filter(l => l !== shop && l !== euro)
   const here = assets.filter(a => a.location === van.id)
@@ -43,7 +47,7 @@ function kitOf(van, { assets, laptops, oem, techs, locations }) {
   const tab = { k: 'tablet', kind: 'tablet', label: 'Tablet', item: tablet, sub: tablet ? tablet.name : '+ assign', s: tablet ? sev(tablet.sub_exp) : 0 }
   const gearBoxes = groups.map(g => ({ k: `gear-${g.cat}`, kind: 'gear', label: g.cat, items: g.items, sub: g.items.length === 1 ? (g.items[0].nickname || g.items[0].name) : `${g.items.length} items`, s: Math.max(0, ...g.items.map(a => sev(a.sub_exp))) }))
   const issues = [...slots, tab, ...gearBoxes].filter(b => b.s >= 2).length + (vanSev >= 2 ? 1 : 0)
-  return { tech, slots, tab, gearBoxes, vanSev, issues }
+  return { tech, slots, tab, gearBoxes, vanSev, issues, passes }
 }
 
 const W = 360
@@ -184,6 +188,7 @@ function VanSubs({ van, kit, onGo }) {
         <div style={{ fontSize: 12, color: MUTED }}>{total} subscription{total === 1 ? '' : 's'}{cost ? ` · $${cost.toLocaleString()} per term` : ''}</div>
       </div>
       {!total && <div style={{ fontSize: 13, color: MUTED }}>None tied to this van yet. On the Subscriptions tab, set "Van it runs on" for each one.</div>}
+      {kit.passes.length > 0 && <div style={{ fontSize: 12, color: MUTED, marginBottom: 8 }}>🎟 Bought as a day pass when a job needs it: {kit.passes.map(p => p.name).join(', ')}</div>}
       {groups.map(g => g.subs.length > 0 && (
         <div key={g.title} style={{ marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: MUTED, margin: '6px 0 4px' }}>💻 {g.title}</div>
@@ -264,15 +269,18 @@ export default function VanMapTab({ locations, assets, laptops, oem, techs, onGo
       </div>
       {!van && <div style={{ fontSize: 13, color: MUTED }}>No vans yet — tap + New van.</div>}
       {van && <VanHeader key={van.id} van={van} kit={kit} setLocations={setLocations} />}
-      {van && <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {van && <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.15fr) minmax(300px, 1fr)', gap: 14, alignItems: 'start' }}>
         <div style={{ background: '#f9f8f7', borderRadius: 14, padding: 12 }}>
           <VanSvg van={van} kit={kit} sel={sel} onPick={setSel} />
           <div style={{ fontSize: 11, color: MUTED, marginTop: 6 }}>Green light = current · amber = due within 60 days · red = expired · gray = no date entered yet</div>
         </div>
-        {sel && <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16 }}>
-          <Panel van={van} kit={kit} sel={sel} onGo={onGo} />
-        </div>}
-        <VanSubs van={van} kit={kit} onGo={onGo} />
+        <div style={{ position: 'sticky', top: 12, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ background: 'white', border: '1px solid #ebe7e2', borderRadius: 12, padding: 16, minHeight: 120 }}>
+            {sel && <button onClick={() => setSel('')} style={{ float: 'right', fontSize: 11, color: MUTED, background: 'none', border: 0, cursor: 'pointer' }}>✕ close</button>}
+            <Panel van={van} kit={kit} sel={sel} onGo={onGo} />
+          </div>
+          <VanSubs van={van} kit={kit} onGo={onGo} />
+        </div>
       </div>}
     </div>
   )

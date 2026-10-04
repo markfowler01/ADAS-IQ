@@ -157,7 +157,13 @@ const days = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null
 const TERMS = [[1, '1 month'], [3, '3 months'], [6, '6 months'], [12, '1 year'], [24, '2 years'], [36, '3 years']]
 const addMonths = (d, m) => { if (!d) return ''; const x = new Date(d + 'T12:00:00'); x.setMonth(x.getMonth() + Number(m || 12)); return x.toISOString().slice(0, 10) }
 const todayStr = () => new Date().toISOString().slice(0, 10)
-const renewalOf = s => s.purchased ? addMonths(s.purchased, s.term_months || 12) : (s.renewal || '')
+const renewalOf = s => s.kind === 'pass' ? '' : (s.purchased ? addMonths(s.purchased, s.term_months || 12) : (s.renewal || ''))
+// Subscription kinds (Mark 2026-10-04): one shared annual sub per OEM that everyone uses
+// (Ford), a per-van sub only where a laptop truly has its own, and OEMs bought as a
+// 1-day / 3-day pass when a job needs it — those have no renewal clock, only spend.
+const SUB_KINDS = [['shared', 'Shared — one subscription, everyone uses it'], ['van', 'Per van — this van\'s laptop only'], ['pass', 'Day pass — bought when a job needs it']]
+const kindOf = s => s.kind || (s.location ? 'van' : 'shared')
+const passSpend = (s, months = 12) => { const cut = new Date(); cut.setMonth(cut.getMonth() - months); return (s.passes || []).filter(x => x.date && new Date(x.date) >= cut).reduce((t, x) => t + (Number(x.cost) || 0), 0) }
 
 const statusOf = (d, base = 'active') => {
   if (base === 'inactive') return 'inactive'
@@ -174,6 +180,7 @@ const STATUS = {
   expired:  { bg: '#fde8e8', fg: '#9b1c1c', label: 'Expired' },
   inactive: { bg: '#f1efea', fg: '#5f5e5a', label: 'Inactive' },
   nodate:   { bg: '#f1efea', fg: '#8a847e', label: 'No date yet' },
+  pass:     { bg: '#eef2ff', fg: '#4338ca', label: 'Day pass' },
 }
 
 function Chip({ status }) {
@@ -352,13 +359,13 @@ function Alerts({ oem }) {
   const [open, setOpen] = useState(false)
   const alerts = []
   oem.forEach(s => {
-    if (s.status === 'inactive') return
+    if (s.status === 'inactive' || kindOf(s) === 'pass') return
     const n = days(renewalOf(s))
     if (n === null) return
     if (n < 0)      alerts.push({ name: s.name, msg: `expired ${Math.abs(n)}d ago`, err: true })
     else if (n <= 60) alerts.push({ name: s.name, msg: `renews in ${n}d`, err: n <= 14 })
   })
-  const undated = oem.filter(s => !renewalOf(s) && s.status !== 'inactive').length
+  const undated = oem.filter(s => !renewalOf(s) && s.status !== 'inactive' && kindOf(s) !== 'pass').length
   const expired = alerts.filter(a => a.err).length, soon = alerts.length - expired
   if (!alerts.length) return (
     <div style={{ background: undated ? '#f1efea' : '#e6f4ea', borderRadius: 8, padding: '8px 14px', fontSize: 12, color: undated ? '#5f5e5a' : '#1a7336', marginBottom: 14 }}>{undated ? `${undated} subscription${undated === 1 ? ' has' : 's have'} no renewal date yet — enter the purchase date on Subscriptions and the counters run from it.` : 'All subscriptions current.'}</div>
@@ -1165,10 +1172,11 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
   const f = v => setForm(p => ({ ...p, ...v }))
   const techOpts = [{ v: '', l: 'Unassigned' }, ...techs.map(t => ({ v: t.id, l: t.name }))]
 
-  function openAdd() { setForm({ id: uid(), name: '', build: 'Build 2', tech: '', location: '', purchased: '', term_months: 12, renewal: '', cost: 0, username: '', portal: '', twofa: '', notes: '', status: 'active', history: [] }); setEditId(null); setModal(true) }
+  function openAdd() { setForm({ id: uid(), name: '', build: 'Build 2', tech: '', kind: 'shared', location: '', pass_1: '', pass_3: '', passes: [], purchased: '', term_months: 12, renewal: '', cost: 0, username: '', portal: '', twofa: '', notes: '', status: 'active', history: [] }); setEditId(null); setModal(true) }
   function openEdit(s) { setForm({ ...s }); setEditId(s.id); setModal(true) }
   function save() {
-    const out = { ...form, term_months: Number(form.term_months) || 12 }
+    const out = { ...form, term_months: Number(form.term_months) || 12, kind: form.kind || 'shared' }
+    if (out.kind !== 'van') out.location = ''
     out.renewal = renewalOf(out)
     if (editId) setOem(p => p.map(s => s.id === editId ? out : s))
     else setOem(p => [...p, out])
@@ -1182,32 +1190,41 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
     setOem(p => p.map(x => x.id === s.id ? { ...x, purchased: t, renewal: addMonths(t, term), status: 'active', history: [...(x.history || []), { purchased: x.purchased || '', renewal: x.renewal || '', cost: x.cost || 0, renewed_on: t }] } : x))
   }
 
+  const [passFor, setPassFor] = useState(null)   // subscription id getting a pass logged
+  const [pf, setPf] = useState({ date: todayStr(), days: 1, cost: '', ro: '' })
+  function logPass() {
+    const s = oem.find(x => x.id === passFor); if (!s) return
+    const cost = pf.cost !== '' ? Number(pf.cost) : Number(pf.days === 3 ? s.pass_3 : s.pass_1) || 0
+    setOem(p => p.map(x => x.id === passFor ? { ...x, passes: [...(x.passes || []), { date: pf.date, days: Number(pf.days), cost, ro: pf.ro }] } : x))
+    setPassFor(null); setPf({ date: todayStr(), days: 1, cost: '', ro: '' })
+  }
   const live = oem.filter(s => s.status !== 'inactive')
-  const totalCost = live.reduce((s, x) => s + (Number(x.cost) || 0), 0)
-  const stOf = s => statusOf(renewalOf(s), s.status)
+  const totalCost = live.filter(x => kindOf(x) !== 'pass').reduce((s, x) => s + (Number(x.cost) || 0), 0)
+  const passTotal = live.filter(x => kindOf(x) === 'pass').reduce((t, x) => t + passSpend(x), 0)
+  const stOf = s => kindOf(s) === 'pass' ? 'pass' : statusOf(renewalOf(s), s.status)
   const filtered  = filter === 'all' ? oem : oem.filter(s => stOf(s) === filter)
 
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0,1fr))', gap: 8, marginBottom: 14 }}>
-        <StatCard label="Subscriptions" value={live.length} sub={oem.length > live.length ? `${oem.length - live.length} inactive` : ''} />
-        <StatCard label="Annual cost"   value={'$' + totalCost.toLocaleString()} sub="active, per year" />
-        <StatCard label="Renewing ≤60d" value={live.filter(s => stOf(s) === 'expiring').length} />
-        <StatCard label="Expired"       value={live.filter(s => stOf(s) === 'expired').length} />
+        <StatCard label="Subscriptions" value={live.filter(x => kindOf(x) !== 'pass').length} sub={`${live.filter(x => kindOf(x) === 'pass').length} by day pass`} />
+        <StatCard label="Annual cost"   value={'$' + totalCost.toLocaleString()} sub="subscriptions, per year" />
+        <StatCard label="Day passes"    value={'$' + passTotal.toLocaleString()} sub="spent, last 12 months" />
+        <StatCard label="Renewing ≤60d" value={live.filter(s => stOf(s) === 'expiring').length} sub={`${live.filter(s => stOf(s) === 'expired').length} expired`} />
         <StatCard label="No date yet"   value={live.filter(s => stOf(s) === 'nodate').length} sub="enter the purchase date" />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
         <Row gap={5}>
-          {['all', 'active', 'expiring', 'expired', 'nodate'].map(s => (
+          {['all', 'active', 'expiring', 'expired', 'nodate', 'pass'].map(s => (
             <FilterPill key={s} active={filter === s} onClick={() => setFilter(s)}>
-              {s === 'all' ? 'All' : s === 'nodate' ? 'No date' : s === 'expiring' ? 'Renewing soon' : s.charAt(0).toUpperCase() + s.slice(1)}
+              {s === 'all' ? 'All' : s === 'nodate' ? 'No date' : s === 'expiring' ? 'Renewing soon' : s === 'pass' ? 'Day passes' : s.charAt(0).toUpperCase() + s.slice(1)}
             </FilterPill>
           ))}
         </Row>
         <Btn primary onClick={openAdd}>+ Add subscription</Btn>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {[...locations.filter(l => l.type === 'van').map(l => [l.id, `🚐 ${l.name}`]), ['', 'Not tied to a van']].flatMap(([vid, title]) => { const list = filtered.filter(x => (x.location || '') === vid); return list.length ? [{ _h: title, _n: list.length, id: `h-${vid}` }, ...list] : [] }).map(s => s._h ? <div key={s.id} style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', margin: '10px 0 2px' }}>{s._h} · {s._n}</div> : (() => {
+        {[['shared', '🌐 Shared — everyone uses these', x => kindOf(x) === 'shared'], ...locations.filter(l => l.type === 'van').map(l => [l.id, `🚐 ${l.name} only`, x => kindOf(x) === 'van' && x.location === l.id]), ['van-none', '🚐 Per van, van not set', x => kindOf(x) === 'van' && !locations.some(l => l.id === x.location)], ['pass', '🎟 Day passes — bought when a job needs them', x => kindOf(x) === 'pass']].flatMap(([vid, title, fn]) => { const list = filtered.filter(fn); return list.length ? [{ _h: title, _n: list.length, id: `h-${vid}` }, ...list] : [] }).map(s => s._h ? <div key={s.id} style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', margin: '10px 0 2px' }}>{s._h} · {s._n}</div> : (() => {
           const renewal = renewalOf(s)
           const st   = statusOf(renewal, s.status)
           const n    = days(renewal)
@@ -1237,7 +1254,11 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
                     {s.portal  && <a href={s.portal} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: BRAND }}>Portal ↗</a>}
                     {s.twofa   && <span style={{ fontSize: 11, background: '#fef3c7', color: '#92400e', padding: '1px 7px', borderRadius: 4, fontWeight: 600 }}>2FA: {s.twofa}</span>}
                   </Row>
-                  {s.status !== 'inactive' && (
+                  {s.status !== 'inactive' && kindOf(s) === 'pass' && (() => { const ps = (s.passes || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date))); const yr = ps.filter(x => x.date && new Date(x.date) >= new Date(Date.now() - 365 * 86400000)); return (
+                    <div style={{ marginTop: 7, fontSize: 12, color: '#555' }}>
+                      🎟 {yr.length} pass{yr.length === 1 ? '' : 'es'} in 12 months · ${passSpend(s).toLocaleString()}{ps[0] ? ` · last ${ps[0].date} (${ps[0].days}-day${ps[0].ro ? `, RO ${ps[0].ro}` : ''})` : ' · none logged yet'}{s.pass_1 || s.pass_3 ? ` · 1-day $${s.pass_1 || '?'} · 3-day $${s.pass_3 || '?'}` : ''}
+                    </div>) })()}
+                  {s.status !== 'inactive' && kindOf(s) !== 'pass' && (
                     <div style={{ marginTop: 7 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, fontWeight: 700, color: st === 'expired' ? '#b71c1c' : st === 'expiring' ? '#7d5a00' : st === 'nodate' ? '#8a847e' : '#1a7336' }}>
                         <span>⏱ {countdown}</span>{pct !== null && <span style={{ fontWeight: 500, color: '#888' }}>{pct}% of the term used</span>}
@@ -1248,6 +1269,7 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
                   {s.notes && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{s.notes}</div>}
                 </div>
                 <Row gap={5} style={{ flexShrink: 0 }}>
+                  {kindOf(s) === 'pass' && <Btn small primary onClick={() => { setPassFor(s.id); setPf({ date: todayStr(), days: 1, cost: s.pass_1 || '', ro: '' }) }}>+ Log pass</Btn>}
                   {(st === 'expired' || st === 'expiring') && <Btn small primary onClick={() => renewed(s)}>✓ Renewed</Btn>}
                   <Btn small onClick={() => openEdit(s)}>Edit</Btn>
                   <Btn small danger onClick={() => del(s.id)}>×</Btn>
@@ -1257,17 +1279,33 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
           )
         })())}
       </div>
+      {passFor && (
+        <Modal title={`Log a day pass · ${oem.find(x => x.id === passFor)?.name || ''}`} onClose={() => setPassFor(null)}>
+          <Grid2>
+            <F label="Date"><In type="date" value={pf.date} onChange={v => setPf(p => ({ ...p, date: v }))} /></F>
+            <F label="Length"><Sel value={String(pf.days)} onChange={v => { const d = Number(v); const s0 = oem.find(x => x.id === passFor); setPf(p => ({ ...p, days: d, cost: (d === 3 ? s0?.pass_3 : s0?.pass_1) || p.cost })) }} options={[{ v: '1', l: '1-day pass' }, { v: '3', l: '3-day pass' }]} /></F>
+            <F label="Cost ($)"><In type="number" value={pf.cost} onChange={v => setPf(p => ({ ...p, cost: v }))} /></F>
+            <F label="RO / job (optional)"><In value={pf.ro} onChange={v => setPf(p => ({ ...p, ro: v }))} placeholder="CH11819" /></F>
+          </Grid2>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
+            <Btn onClick={() => setPassFor(null)}>Cancel</Btn>
+            <Btn primary onClick={logPass}>Log pass</Btn>
+          </div>
+        </Modal>
+      )}
       {modal && (
         <Modal title={editId ? 'Edit subscription' : 'Add OEM subscription'} onClose={() => setModal(false)}>
           <Grid2>
             <F label="Software name" span2><In value={form.name} onChange={v => f({ name: v })} placeholder="Ford IDS / FDRS" /></F>
             <F label="Build"><Sel value={form.build} onChange={v => f({ build: v })} options={BUILD_TYPES} /></F>
             <F label="Assigned tech"><Sel value={form.tech} onChange={v => f({ tech: v })} options={techOpts} /></F>
-            <F label="Van it runs on" span2><Sel value={form.location || ''} onChange={v => f({ location: v })} options={vanOpts} /></F>
-            <F label="Purchased on"><In type="date" value={form.purchased || ''} onChange={v => f({ purchased: v })} /></F>
+            <F label="How we buy it" span2><Sel value={form.kind || 'shared'} onChange={v => f({ kind: v })} options={SUB_KINDS.map(([v, l]) => ({ v, l }))} /></F>
+            {(form.kind || 'shared') === 'van' && <F label="Van it runs on" span2><Sel value={form.location || ''} onChange={v => f({ location: v })} options={vanOpts} /></F>}
+            {form.kind === 'pass' && <><F label="1-day pass ($)"><In type="number" value={form.pass_1 || ''} onChange={v => f({ pass_1: v })} /></F><F label="3-day pass ($)"><In type="number" value={form.pass_3 || ''} onChange={v => f({ pass_3: v })} /></F></>}
+            {form.kind !== 'pass' && <><F label="Purchased on"><In type="date" value={form.purchased || ''} onChange={v => f({ purchased: v })} /></F>
             <F label="Term"><Sel value={String(form.term_months || 12)} onChange={v => f({ term_months: Number(v) })} options={TERMS.map(([v, l]) => ({ v: String(v), l }))} /></F>
             <F label="Renews on" span2><div style={{ fontSize: 13, padding: '7px 0', color: form.purchased ? '#1a1a1a' : '#8a847e' }}>{form.purchased ? `${addMonths(form.purchased, form.term_months || 12)} — set from the purchase date and term` : 'Enter the purchase date and the renewal date is set from it'}</div></F>
-            <F label="Cost per term ($)"><In type="number" value={form.cost} onChange={v => f({ cost: v })} /></F>
+            <F label="Cost per term ($)"><In type="number" value={form.cost} onChange={v => f({ cost: v })} /></F></>}
             <F label="Status"><Sel value={form.status || 'active'} onChange={v => f({ status: v })} options={[{ v: 'active', l: 'Active' }, { v: 'inactive', l: 'Inactive (not counted)' }]} /></F>
             <F label="Username / login" span2><In value={form.username} onChange={v => f({ username: v })} /></F>
             <F label="Portal URL" span2><In value={form.portal} onChange={v => f({ portal: v })} placeholder="https://" /></F>
@@ -1345,7 +1383,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
 
   // Tab badges that mean something (Mark 2026-10-04): vans on the map, items due or overdue
   // within 60 days, live subscriptions, laptops + tablets, gear, runbooks.
-  const dueCount = (() => { const ds = [...oem.filter(x => x.status !== 'inactive').map(x => renewalOf(x)), ...assets.map(a => a.sub_exp), ...locations.flatMap(l => [l.reg_exp, l.insurance, l.oil_change])].map(days).filter(n => n !== null); return ds.filter(n => n <= 60).length })()
+  const dueCount = (() => { const ds = [...oem.filter(x => x.status !== 'inactive' && kindOf(x) !== 'pass').map(x => renewalOf(x)), ...assets.map(a => a.sub_exp), ...locations.flatMap(l => [l.reg_exp, l.insurance, l.oil_change])].map(days).filter(n => n !== null); return ds.filter(n => n <= 60).length })()
   const tabletCount = assets.filter(a => a.cat === 'Tablet' || (a.cat === 'Scanner' && /ms9\d\d|mk9\d\d|im6\d\d|maxisys|tablet/i.test(a.name || ''))).length
   const counts = { map: locations.filter(l => l.type === 'van').length, due: dueCount, vans: locations.length, assets: assets.length, laptops: laptops.length + tabletCount, oem: oem.filter(x => x.status !== 'inactive').length, setup: 4 }
 

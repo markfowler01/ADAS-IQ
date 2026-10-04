@@ -9,7 +9,7 @@ const renewalOf = s => s.purchased ? addMonths(s.purchased, s.term_months || 12)
 export function dueItems({ locations, assets, laptops, oem }) {
   const vanName = id => locations.find(l => l.id === id)?.name || ''
   const out = []
-  for (const s of oem) { if (s.status === 'inactive') continue; const d = renewalOf(s); out.push({ kind: 'Subscription', name: s.name, where: vanName(s.location), date: d, tab: 'oem', cost: s.cost }) }
+  for (const s of oem) { if (s.status === 'inactive' || s.kind === 'pass') continue; const d = renewalOf(s); out.push({ kind: 'Subscription', name: s.name, where: vanName(s.location), date: d, tab: 'oem', cost: s.cost }) }
   for (const a of assets) if (a.sub_exp) out.push({ kind: a.cat === 'Tablet' ? 'Tablet subscription' : 'Equipment subscription', name: a.nickname ? `${a.name} "${a.nickname}"` : a.name, where: vanName(a.location), date: a.sub_exp, tab: 'assets' })
   for (const v of locations) {
     if (v.reg_exp) out.push({ kind: 'Registration', name: v.name, where: v.name, date: v.reg_exp, tab: 'vans' })
