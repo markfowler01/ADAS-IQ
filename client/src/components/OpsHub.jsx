@@ -1,4 +1,5 @@
 import LaptopSetupTab from './ops/LaptopSetupTab.jsx'
+import VanMapTab from './ops/VanMapTab.jsx'
 import { useState, useEffect, useRef } from 'react'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -990,14 +991,15 @@ function AssetsTab({ assets, setAssets, locations }) {
 
 // ── LAPTOPS TAB ───────────────────────────────────────────────────────────────
 
-function LaptopsTab({ laptops, setLaptops, techs }) {
+function LaptopsTab({ laptops, setLaptops, techs, locations = [] }) {
+  const vanOpts = [{ v: '', l: 'Not in a van (spare)' }, ...locations.filter(l => l.type === 'van').map(l => ({ v: l.id, l: l.name }))]
   const [modal, setModal]   = useState(false)
   const [form, setForm]     = useState({})
   const [editId, setEditId] = useState(null)
   const f = v => setForm(p => ({ ...p, ...v }))
   const techOpts = [{ v: '', l: 'Unassigned' }, ...techs.map(t => ({ v: t.id, l: t.name }))]
 
-  function openAdd() { setForm({ id: uid(), name: '', build: 'Build 2', tech: '', passcode: '', login: '', teamviewer: '', fca_sn: '', license: '', notes: '', oem_creds: [], sw_versions: [] }); setEditId(null); setModal(true) }
+  function openAdd() { setForm({ id: uid(), name: '', build: 'Build 2', tech: '', role: 'shop', location: '', passcode: '', login: '', teamviewer: '', fca_sn: '', license: '', notes: '', oem_creds: [], sw_versions: [] }); setEditId(null); setModal(true) }
   function openEdit(l) { setForm({ ...l, oem_creds: l.oem_creds || [], sw_versions: l.sw_versions || [] }); setEditId(l.id); setModal(true) }
   function save() {
     if (editId) setLaptops(p => p.map(l => l.id === editId ? form : l))
@@ -1069,6 +1071,8 @@ function LaptopsTab({ laptops, setLaptops, techs }) {
             <F label="Name"><In value={form.name} onChange={v => f({ name: v })} placeholder="OEM Laptop 1" /></F>
             <F label="Build type"><Sel value={form.build} onChange={v => f({ build: v })} options={BUILD_TYPES} /></F>
             <F label="Assigned tech"><Sel value={form.tech} onChange={v => f({ tech: v })} options={techOpts} /></F>
+            <F label="Role in the van"><Sel value={form.role || 'shop'} onChange={v => f({ role: v })} options={[{ v: 'shop', l: 'Shop laptop (Ford, GM, Asian)' }, { v: 'euro', l: 'Euro laptop (BMW, Mercedes, VW)' }, { v: 'other', l: 'Other' }]} /></F>
+            <F label="Van"><Sel value={form.location || ''} onChange={v => f({ location: v })} options={vanOpts} /></F>
             <F label="Login / account"><In value={form.login} onChange={v => f({ login: v })} placeholder="Local / email" /></F>
             <F label="Passcode"><In value={form.passcode} onChange={v => f({ passcode: v })} /></F>
             <F label="TeamViewer ID"><In value={form.teamviewer} onChange={v => f({ teamviewer: v })} /></F>
@@ -1120,7 +1124,8 @@ function LaptopsTab({ laptops, setLaptops, techs }) {
 
 // ── OEM SOFTWARE TAB ──────────────────────────────────────────────────────────
 
-function OEMTab({ oem, setOem, techs }) {
+function OEMTab({ oem, setOem, techs, locations = [] }) {
+  const vanOpts = [{ v: '', l: 'Not tied to a van' }, ...locations.filter(l => l.type === 'van').map(l => ({ v: l.id, l: l.name }))]
   const [modal, setModal]   = useState(false)
   const [form, setForm]     = useState({})
   const [editId, setEditId] = useState(null)
@@ -1128,7 +1133,7 @@ function OEMTab({ oem, setOem, techs }) {
   const f = v => setForm(p => ({ ...p, ...v }))
   const techOpts = [{ v: '', l: 'Unassigned' }, ...techs.map(t => ({ v: t.id, l: t.name }))]
 
-  function openAdd() { setForm({ id: uid(), name: '', build: 'Build 2', tech: '', purchased: '', term_months: 12, renewal: '', cost: 0, username: '', portal: '', twofa: '', notes: '', status: 'active', history: [] }); setEditId(null); setModal(true) }
+  function openAdd() { setForm({ id: uid(), name: '', build: 'Build 2', tech: '', location: '', purchased: '', term_months: 12, renewal: '', cost: 0, username: '', portal: '', twofa: '', notes: '', status: 'active', history: [] }); setEditId(null); setModal(true) }
   function openEdit(s) { setForm({ ...s }); setEditId(s.id); setModal(true) }
   function save() {
     const out = { ...form, term_months: Number(form.term_months) || 12 }
@@ -1190,6 +1195,7 @@ function OEMTab({ oem, setOem, techs }) {
                     <span style={{ fontSize: 10, fontWeight: 600, background: '#f5f3f0', color: '#888', padding: '1px 7px', borderRadius: 4, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{s.build}</span>
                   </Row>
                   <Row gap={14}>
+                    {s.location && <Meta label="Van" value={locations.find(l => l.id === s.location)?.name || s.location} />}
                     {tech      && <Meta label="Tech"   value={tech.name} />}
                     {s.cost > 0 && <Meta label="Cost"  value={'$' + Number(s.cost).toLocaleString() + '/yr'} />}
                     {s.purchased && <Meta label="Bought" value={s.purchased} />}
@@ -1225,6 +1231,7 @@ function OEMTab({ oem, setOem, techs }) {
             <F label="Software name" span2><In value={form.name} onChange={v => f({ name: v })} placeholder="Ford IDS / FDRS" /></F>
             <F label="Build"><Sel value={form.build} onChange={v => f({ build: v })} options={BUILD_TYPES} /></F>
             <F label="Assigned tech"><Sel value={form.tech} onChange={v => f({ tech: v })} options={techOpts} /></F>
+            <F label="Van it runs on" span2><Sel value={form.location || ''} onChange={v => f({ location: v })} options={vanOpts} /></F>
             <F label="Purchased on"><In type="date" value={form.purchased || ''} onChange={v => f({ purchased: v })} /></F>
             <F label="Term"><Sel value={String(form.term_months || 12)} onChange={v => f({ term_months: Number(v) })} options={TERMS.map(([v, l]) => ({ v: String(v), l }))} /></F>
             <F label="Renews on" span2><div style={{ fontSize: 13, padding: '7px 0', color: form.purchased ? '#1a1a1a' : '#8a847e' }}>{form.purchased ? `${addMonths(form.purchased, form.term_months || 12)} — set from the purchase date and term` : 'Enter the purchase date and the renewal date is set from it'}</div></F>
@@ -1248,6 +1255,7 @@ function OEMTab({ oem, setOem, techs }) {
 // ── ROOT ──────────────────────────────────────────────────────────────────────
 
 const TABS = [
+  { id: 'map',     label: 'Van map' },           // 🚐 the van outline, everything in it clickable (Mark 2026-10-03)
   { id: 'vans',    label: 'Vans & Locations' },
   { id: 'assets',  label: 'Tools & Equipment' },
   { id: 'laptops', label: 'Laptops' },
@@ -1256,7 +1264,7 @@ const TABS = [
 ]
 
 export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
-  const [tab, setTab] = useState('vans')
+  const [tab, setTab] = useState('map')
 
   // Shared on the server (2026-10-03). The browser copy is a cache + the photos;
   // the first load pushes any real edits that only ever lived in this browser.
@@ -1348,11 +1356,12 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
           ))}
         </div>
 
+        {tab === 'map'     && <VanMapTab  locations={locations} assets={assets} laptops={laptops} oem={oem} techs={techs} onGo={setTab} />}
         {tab === 'vans'    && <VansTab    locations={locations} setLocations={setLocations} techs={techs} assets={assets} />}
         {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} />}
-        {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} />}
+        {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} />}
         {tab === 'setup'   && <LaptopSetupTab />}
-        {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} />}
+        {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} locations={locations} />}
       </div>
     </div>
   )
