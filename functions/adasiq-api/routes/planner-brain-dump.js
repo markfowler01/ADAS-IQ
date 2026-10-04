@@ -31,6 +31,24 @@ OUTPUT FORMAT — raw JSON only (no markdown, no preamble):
 If a slot has no content, return "" or [] for that slot.`
 
 // POST /api/planner/brain-dump — public (planner is a separate app, no auth)
+// 🅿 Parked ideas — see services/parked.js. Used by the planner, the Siri
+// shortcut (POST /api/planner/park) and the SMS capture.
+router.get('/parked', async (req, res) => {
+  try { const { listParked } = await import('../services/parked.js'); res.json({ ok: true, parked: await listParked(req, { open: String(req.query.all || '') !== '1' }) }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/park', async (req, res) => {
+  try {
+    const { addParked } = await import('../services/parked.js')
+    const text = req.body?.text ?? req.body?.Body ?? req.query?.text ?? ''
+    const item = await addParked(req, text, String(req.body?.via || req.query?.via || 'shortcut').slice(0, 20))
+    if (!item) return res.status(400).json({ error: 'nothing to park' })
+    res.json({ ok: true, item, reply: 'Parked ✓ — it will be in tomorrow morning\'s briefing.' })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/parked/:id', async (req, res) => {
+  try { const { setParked } = await import('../services/parked.js'); res.json({ ok: true, item: await setParked(req, String(req.params.id), String(req.body?.status || 'done')) }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.post('/brain-dump', async (req, res) => {
   try {
     const text = (req.body?.text || '').trim()

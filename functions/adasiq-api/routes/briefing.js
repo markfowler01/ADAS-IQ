@@ -1111,7 +1111,9 @@ export async function planDay(req, b) {
       safe('coach-ledger', () => listDays(req, { limit: 10 })).then(d => d || []),
     ])
 
+    let parked = []; try { parked = (await (await import('../services/parked.js')).listParked(req)).slice(0, 12).map(x => x.text) } catch { parked = [] }
     const proposal = await withTimeout('big3', proposeBig3(req, {
+      parked,
       goals: ctx.goals,
       coachingNotes: ctx.coaching_notes,
       recentDays,
@@ -1187,7 +1189,7 @@ async function stampSent(req) {
 // The script Ada reads. Same order as the written brief: affirmation, the
 // brief itself, then the Big 3 — so hearing it and reading it feel like one
 // thing rather than two.
-function buildSpokenScript(b, big3, tr, triage, vanOps = []) {
+function buildSpokenScript(b, big3, tr, triage, vanOps = [], parkedLine = '') {
   // Everything that is written for a screen goes through toSpoken() first.
   // formatVoiceMorning() is already spoken-formatted; the affirmation and the
   // Big 3 are not, and were being read out with their punctuation and
@@ -1200,6 +1202,7 @@ function buildSpokenScript(b, big3, tr, triage, vanOps = []) {
     tr.rows.forEach(([t, amt]) => parts.push(`${t}, ${spoken(amt)}.`))
   }
   for (const l of (vanOps || [])) parts.push(toSpoken(l))   // 🚐 van ops due (2026-10-04)
+  if (parkedLine) parts.push(toSpoken(parkedLine))             // 🅿 things he parked since yesterday
   if (triage?.needsYou?.length) {
     parts.push(`In your inbox, ${triage.total} unread, and ${triage.needsYou.length} need you.`)
     triage.needsYou.forEach(x => parts.push(`${toSpoken(x.who)}. ${toSpoken(x.what)}.`))
@@ -1461,7 +1464,8 @@ router.post('/render-audio', async (req, res) => {
     const tr = techRevenue(b.jobs, b.revenue)
     const triage = await safe('triage', async () => triageInbox(req, { messages: await getUnreadSummaries() }))
     let vanOps = []; try { vanOps = await (await import('../services/vanOps.js')).vanOpsForBrief(req) } catch { vanOps = [] }
-    const out = await publishAdaVoice(buildSpokenScript(b, big3, tr, triage, vanOps), ptDate(), { slot: 'morning' })
+    let parkedLine = ''; try { parkedLine = await (await import('../services/parked.js')).parkedForBrief(req) } catch { parkedLine = '' }
+    const out = await publishAdaVoice(buildSpokenScript(b, big3, tr, triage, vanOps, parkedLine), ptDate(), { slot: 'morning' })
     if (out?.name) {
       const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
       try { await seg.update('ada_audio_' + ptDate(), out.name) }

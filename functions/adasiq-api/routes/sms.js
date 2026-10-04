@@ -333,6 +333,17 @@ router.post('/', async (req, res) => {
     const sid  = String(req.body.MessageSid || '')
     const numMedia = parseInt(req.body.NumMedia || '0', 10) || 0
 
+    // 🅿 Mark texting his own shop line = park an idea (2026-10-04). Reply and stop:
+    // nothing in Cliq, no forward, no thread.
+    try {
+      const markCell = normalizePhoneUS(cfg.MARK_PHONE_NUMBER || '')
+      if (markCell && from === markCell && body && numMedia === 0) {
+        const { addParked } = await import('../services/parked.js')
+        const item = await addParked(req, body, 'sms')
+        if (item) return res.type('text/xml').send(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Parked ✓ — "${item.text.slice(0, 80).replace(/[<&]/g, '')}". It'll be in tomorrow's briefing.</Message></Response>`)
+      }
+    } catch (e) { console.warn('[sms park]', e.message) }
+
     // Twilio POSTs MediaUrl0/MediaContentType0 pairs for each attachment.
     // We store the raw Twilio URLs plus a proxied path — the frontend
     // fetches via our proxy (which adds Basic auth) so images display

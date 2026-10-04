@@ -104,7 +104,7 @@ Return raw JSON only. No preamble, no markdown fence.
   "note": "one sentence to Mark on why these three, in plain language"
 }`
 
-export async function proposeBig3(req, { goals, recentDays, coachingNotes, todayContext }) {
+export async function proposeBig3(req, { goals, recentDays, coachingNotes, todayContext, parked = [] }) {
   // `reported` is load-bearing. Without it the model reads an unchecked box on
   // a day Mark was never asked about as evidence he ducked the task — which it
   // did on day one, telling him he'd "pushed the calls two days running" when
@@ -139,6 +139,9 @@ export async function proposeBig3(req, { goals, recentDays, coachingNotes, today
     '',
     '## Coaching notes from the last weekly review',
     coachingNotes || '(none yet)',
+    '',
+    '## Things he parked (ideas he captured on the go — strong Big 3 candidates, in his own words)',
+    parked.length ? parked.map(t => `- ${t}`).join('\n') : '(nothing parked)',
   ].join('\n')
 
   const res = await client().messages.create({
