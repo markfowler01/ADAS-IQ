@@ -1000,7 +1000,9 @@ function AssetsTab({ assets, setAssets, locations }) {
             <F label="Assigned to"><Sel value={form.location} onChange={v => f({ location: v })} options={locOpts} /></F>
             <F label="Serial / part number"><In value={form.sn} onChange={v => f({ sn: v })} placeholder="e.g. CSC0802/03" /></F>
             <F label="Nickname"><In value={form.nickname} onChange={v => f({ nickname: v })} /></F>
-            <F label="Subscription expiry"><In type="date" value={form.sub_exp} onChange={v => f({ sub_exp: v })} /></F>
+            <F label="Subscription bought on"><In type="date" value={form.sub_purchased || ''} onChange={v => f({ sub_purchased: v, sub_exp: v ? addMonths(v, form.sub_term || 12) : form.sub_exp })} /></F>
+            <F label="Subscription term"><Sel value={String(form.sub_term || 12)} onChange={v => f({ sub_term: Number(v), sub_exp: form.sub_purchased ? addMonths(form.sub_purchased, Number(v)) : form.sub_exp })} options={TERMS.map(([v, l]) => ({ v: String(v), l }))} /></F>
+            <F label="Renews on" span2>{form.sub_purchased ? <div style={{ fontSize: 13, padding: '7px 0' }}>{addMonths(form.sub_purchased, form.sub_term || 12)} — set from the purchase date and term (Autel tablets and the IM608 carry a one-year subscription)</div> : <In type="date" value={form.sub_exp} onChange={v => f({ sub_exp: v })} />}</F>
             <F label="Status"><Sel value={form.status} onChange={v => f({ status: v })} options={['active', 'inactive']} /></F>
             <F label="Notes" span2><In value={form.notes} onChange={v => f({ notes: v })} /></F>
           </Grid2>
@@ -1175,7 +1177,7 @@ function LaptopsTab({ laptops, setLaptops, techs, locations = [], assets = [], s
 
 // ── OEM SOFTWARE TAB ──────────────────────────────────────────────────────────
 
-function OEMTab({ oem, setOem, techs, locations = [] }) {
+function OEMTab({ oem, setOem, techs, locations = [], assets = [], setAssets = () => {} }) {
   const vanOpts = [{ v: '', l: 'Not tied to a van' }, ...locations.filter(l => l.type === 'van').map(l => ({ v: l.id, l: l.name }))]
   const [modal, setModal]   = useState(false)
   const [form, setForm]     = useState({})
@@ -1284,7 +1286,43 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
             </div>
           )
         }
-        const lanes = LANES.map(([id, label, fg, bg]) => ({ id, label, fg, bg, items: oem.filter(s => stOf(s) === id || (id === 'inactive' && s.status === 'inactive' && stOf(s) !== 'pass')) })).filter(l => l.items.length || ['nodate', 'active', 'expiring', 'expired'].includes(l.id))
+        // 📱 Device subscriptions (Autel tablet calibration package, IM608 locksmith) live on the
+        // Equipment record but belong in these lanes too (Mark 2026-10-04).
+        const devSubs = assets.filter(a => a.sub_exp || a.sub_purchased || /ms9\d\d|mk9\d\d|im6\d\d|maxisys|tablet/i.test(a.name || '') || a.cat === 'Tablet')
+        const devSt = a => a.sub_exp ? statusOf(a.sub_exp) : 'nodate'
+        const devRenewed = a => { const t = todayStr(), term = Number(a.sub_term) || 12; if (!confirm(`Mark ${a.name} renewed today? The next renewal becomes ${addMonths(t, term)}.`)) return; setAssets(p => p.map(x => x.id === a.id ? { ...x, sub_purchased: t, sub_exp: addMonths(t, term) } : x)) }
+        const DeviceCard = ({ a }) => {
+          const st = devSt(a), n = days(a.sub_exp), term = Number(a.sub_term) || 12
+          const total = a.sub_purchased && a.sub_exp ? Math.max(1, Math.ceil((new Date(a.sub_exp) - new Date(a.sub_purchased)) / 86400000)) : null
+          const pct = total && n !== null ? Math.min(100, Math.max(0, Math.round(((total - n) / total) * 100))) : null
+          const meta = (l, v) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}><span style={{ color: '#888' }}>{l}</span><span style={{ color: '#1a1a1a', fontWeight: 600, textAlign: 'right' }}>{v}</span></div>
+          return (
+            <div style={{ background: 'white', borderRadius: 12, border: '1px solid #ebebeb', boxShadow: '0 1px 2px rgba(0,0,0,.05)', overflow: 'hidden' }}>
+              <div style={{ background: '#1e4fb3', padding: '8px 12px' }}>
+                <div style={{ color: 'white', fontWeight: 700, fontSize: 13, lineHeight: 1.25 }}>{a.name}{a.nickname ? <span style={{ fontWeight: 400, opacity: .85 }}> · "{a.nickname}"</span> : null}</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, background: 'rgba(255,255,255,0.22)', color: 'white', padding: '1px 7px', borderRadius: 999 }}>📱 Device · {a.cat}</span>
+                  <span style={{ fontSize: 10, background: 'rgba(255,255,255,0.22)', color: 'white', padding: '1px 7px', borderRadius: 999 }}>🚐 {locations.find(l => l.id === a.location)?.name || 'spare'}</span>
+                </div>
+              </div>
+              <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {a.sn && meta('S/N', a.sn)}
+                {a.sub_purchased && meta('Bought', a.sub_purchased)}
+                {meta('Renews', a.sub_exp || 'no date yet')}
+                {n !== null && <div style={{ marginTop: 2 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: st === 'expired' ? '#b71c1c' : st === 'expiring' ? '#7d5a00' : '#1a7336' }}>⏱ {n < 0 ? `Expired ${Math.abs(n)}d ago` : n === 0 ? 'Renews today' : `Renews in ${n}d`}</div>
+                  {pct !== null && <div style={{ height: 4, background: '#eee', borderRadius: 3, marginTop: 3, overflow: 'hidden' }}><div style={{ width: `${pct}%`, height: '100%', background: st === 'expired' ? '#c62828' : st === 'expiring' ? '#f9a825' : '#1a7336' }} /></div>}
+                </div>}
+                <div style={{ fontSize: 11, color: '#888' }}>{/im6/i.test(a.name || '') ? 'Locksmith / programming subscription' : 'Calibration + software updates'} — edit the dates on Equipment.</div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  {(st === 'expired' || st === 'expiring') && <Btn small primary onClick={() => devRenewed(a)}>✓ Renewed</Btn>}
+                </div>
+              </div>
+            </div>
+          )
+        }
+        const lanes = LANES.map(([id, label, fg, bg]) => ({ id, label, fg, bg,
+          items: [...oem.filter(s => stOf(s) === id || (id === 'inactive' && s.status === 'inactive' && stOf(s) !== 'pass')), ...devSubs.filter(a => devSt(a) === id).map(a => ({ ...a, _device: true, id: `dev-${a.id}` }))] })).filter(l => l.items.length || ['nodate', 'active', 'expiring', 'expired'].includes(l.id))
         return (
           <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, alignItems: 'flex-start' }}>
             {lanes.map(l => (
@@ -1294,7 +1332,7 @@ function OEMTab({ oem, setOem, techs, locations = [] }) {
                   <span style={{ fontSize: 11, fontWeight: 700, background: l.bg, color: l.fg, borderRadius: 999, padding: '1px 8px' }}>{l.items.length}</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {l.items.sort((x, y) => (days(renewalOf(x)) ?? 99999) - (days(renewalOf(y)) ?? 99999)).map(s => <SubCard key={s.id} s={s} />)}
+                  {l.items.sort((x, y) => (days(x._device ? x.sub_exp : renewalOf(x)) ?? 99999) - (days(y._device ? y.sub_exp : renewalOf(y)) ?? 99999)).map(s => s._device ? <DeviceCard key={s.id} a={{ ...s, id: s.id.replace(/^dev-/, '') }} /> : <SubCard key={s.id} s={s} />)}
                   {!l.items.length && <div style={{ fontSize: 11, color: '#aaa', padding: '6px 6px 10px' }}>Nothing here</div>}
                 </div>
               </div>
@@ -1460,7 +1498,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
         {tab === 'assets'  && <AssetsTab  assets={assets}       setAssets={setAssets}       locations={locations} />}
         {tab === 'laptops' && <LaptopsTab laptops={laptops}     setLaptops={setLaptops}     techs={techs} locations={locations} assets={assets} setAssets={setAssets} />}
         {tab === 'setup'   && <LaptopSetupTab />}
-        {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} locations={locations} />}
+        {tab === 'oem'     && <OEMTab     oem={oem}            setOem={setOem}             techs={techs} locations={locations} assets={assets} setAssets={setAssets} />}
       </div>
     </div>
   )
