@@ -1470,7 +1470,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
   // within 60 days, live subscriptions, laptops + tablets, gear, runbooks.
   const dueCount = (() => { const ds = [...oem.filter(x => x.status !== 'inactive' && kindOf(x) !== 'pass').map(x => renewalOf(x)), ...assets.map(a => a.sub_exp), ...locations.flatMap(l => [l.reg_exp, l.insurance_exp, l.oil_change])].map(days).filter(n => n !== null); const m = locations.filter(l => l.type === 'van').flatMap(l => maintStatus(l)).filter(x => x.sev >= 2).length; return ds.filter(n => n <= 60).length + m })()
   const tabletCount = assets.filter(a => a.cat === 'Tablet' || (a.cat === 'Scanner' && /ms9\d\d|mk9\d\d|im6\d\d|maxisys|tablet/i.test(a.name || ''))).length
-  const counts = { map: locations.filter(l => l.type === 'van').length, due: dueCount, vans: locations.length, assets: assets.length, laptops: laptops.length + tabletCount, oem: oem.filter(x => x.status !== 'inactive').length, setup: 5 }
+  const counts = { map: locations.filter(l => l.type === 'van').length, due: dueCount, vans: locations.length, assets: assets.length, laptops: laptops.length + tabletCount, oem: oem.filter(x => x.status !== 'inactive').length, setup: 6 }
 
   return (
     <div style={{ background: 'white', minHeight: '100vh' }}>
