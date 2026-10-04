@@ -11,7 +11,7 @@ Zoho Assist unattended access lets the office or a senior tech see and drive a f
 | APKMirror Installer | Installs the bundled (.apkm) Zoho app on a tablet with no Play Store | WorkDrive · Absolute ADAS Command Center > 01_Ops > Autel Setup > Zoho Assist, or [APKMirror Installer (Official)](https://www.apkmirror.com/apk/apkmirror/apkmirror-installer-official/) |
 | Zoho Assist Customer App | The agent that keeps the tablet reachable | Same folder, 1.48 bundle (1.37.2 plain APK as a fallback), or [Customer App - Zoho Assist on APKMirror](https://www.apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/) |
 | Zoho Assist Universal Add-on | Turns view-only into full remote control | Same folder |
-| Zoho Assist console | Where you enroll, name, connect and manage tablets | assist.zoho.com, or the Zoho Assist phone app |
+| Zoho Assist console | Where you enroll, name, connect and manage tablets | https://assist.zoho.com/portal/absoluteadas/app/home, or the Zoho Assist phone app |
 
 Two rules. We already pay for Zoho Assist, so no TeamViewer for Autel's built-in Remote Desk. And the only safe sources for these files are our WorkDrive folder and APKMirror, where they are verified as signed by Zoho. Never pull Zoho apps from any other APK site.
 
@@ -125,5 +125,5 @@ Use these instead of swiping where you can.
 
 - **Every 3 months:** download the newest Customer App bundle from [APKMirror](https://www.apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/), replace the file in the WorkDrive folder and put the new version number in the file name. On each tablet, install it over the old one with APKMirror Installer. Enrollment and permissions carry over.
 - **After any app update:** check that Accessibility > Zoho Assist Universal Add-on is still On.
-- **When a tablet is retired or replaced:** delete it from Unattended Access in the console at assist.zoho.com, so it doesn't clutter the list or hold a license slot.
+- **When a tablet is retired or replaced:** delete it from Unattended Access in the console at https://assist.zoho.com/portal/absoluteadas/app/home, so it doesn't clutter the list or hold a license slot.
 - **Security:** only the files in our WorkDrive folder, or fresh from APKMirror ([APKMirror Installer](https://www.apkmirror.com/apk/apkmirror/apkmirror-installer-official/) · [Customer App - Zoho Assist](https://www.apkmirror.com/apk/zoho-corporation/customer-app-zoho-assist/)). Nothing from any other APK site.

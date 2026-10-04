@@ -70,6 +70,6 @@ Zoho One includes only a handful of unattended devices. The tablets need them, b
 
 ## Retiring a device
 
-- [ ] Delete it from Unattended Access in the console at assist.zoho.com so it frees its slot and stops cluttering the list.
+- [ ] Delete it from Unattended Access in the console at https://assist.zoho.com/portal/absoluteadas/app/home so it frees its slot and stops cluttering the list.
 - [ ] Uninstall the Zoho Assist apps on the device if it is being handed on or sold.
 - [ ] Update the Ops Hub laptop or tool list so the asset shows where it went.

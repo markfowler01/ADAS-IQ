@@ -1323,7 +1323,7 @@ export default function OpsHub({ user, onLogout, currentScreen, onNavigate }) {
         </div>
         {/* Device consoles (Mark 2026-10-03): where the laptops and tablets are managed */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {[['ManageEngine MDM', 'https://mdm.manageengine.com/webclient', 'Enroll, patch and manage the laptops and tablets'], ['Zoho Assist', 'https://assist.zoho.com', 'Remote into a laptop or tablet']].map(([l, u, t]) => (
+          {[['ManageEngine MDM', 'https://mdm.manageengine.com/webclient', 'Enroll, patch and manage the laptops and tablets'], ['Zoho Assist', 'https://assist.zoho.com/portal/absoluteadas/app/home', 'Remote into a laptop or tablet — our Absolute ADAS portal']].map(([l, u, t]) => (
             <a key={u} href={u} target="_blank" rel="noreferrer" title={t} style={{ fontSize: 11, fontWeight: 700, color: 'white', background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.25)', borderRadius: 6, padding: '4px 9px', textDecoration: 'none', whiteSpace: 'nowrap' }}>🖥 {l} ↗</a>
           ))}
         </div>
