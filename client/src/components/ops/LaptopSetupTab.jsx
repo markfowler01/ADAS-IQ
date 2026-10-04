@@ -109,7 +109,7 @@ export default function LaptopSetupTab() {
       {[
         { id: 'shop', title: 'Shop Laptop Setup Runbook', sub: 'Ford and GM machine · TECH-LAPTOP-1, TECH-LAPTOP-2…', md: shopRunbook },
         { id: 'euro', title: 'Tech Laptop Euro Setup Runbook', sub: 'BMW, Mercedes, VW/Audi, Volvo, JLR · TECH-LAPTOP-EURO-1…', md: euroRunbook },
-        { id: 'newvan', title: 'New Van Runbook', sub: 'ProMaster 2500 high roof · finance, wrap, shelving and tool kits ordered day 0 · set up, label, inventory', md: newVanRunbook },
+        { id: 'newvan', title: 'New Van Runbook', sub: 'ProMaster 2500 high roof · shelving + kits ordered day 0 (2 wk) · wrap 2 days + tint · build-out a few weeks', md: newVanRunbook },
         { id: 'vanops', title: 'Van Ops Runbook', sub: 'Weekly van check · moving tools · labels · services and reminders · glovebox · handover', md: vanOpsRunbook },
         { id: 'assist', title: 'Zoho Assist Console Runbook', sub: 'Device groups by type, teams by role, naming, license slots, retiring a device', md: assistRunbook },
         { id: 'tablet', title: 'Autel Tablet Remote Access Runbook', sub: 'Zoho Assist unattended access · MS909, IM608 and other Android Autel units', md: tabletRunbook },
