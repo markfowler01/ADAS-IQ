@@ -939,47 +939,59 @@ function AssetsTab({ assets, setAssets, locations }) {
         ))}
       </Row>
 
-      {Object.entries(byLoc).map(([locId, items]) => {
-        const loc = locations.find(l => l.id === locId)
+      {/* 🗂 Kanban like the CRM (Mark 2026-10-04): one lane per van plus Spare; drag a card
+          to another lane to move the gear. */}
+      {(() => {
+        const lanes = [...locations.map(l => ({ id: l.id, label: l.name, items: filtered.filter(a => a.location === l.id) })), { id: '', label: 'Spare / shop', items: filtered.filter(a => !a.location || !locations.some(l => l.id === a.location)) }]
+          .filter(l => filterLoc === 'all' || l.id === filterLoc)
+        const CAT_COLOR = { 'Cal Frame': '#157347', 'Cal Target': '#157347', 'Cal Mat': '#157347', 'Cal Stand': '#157347', 'Full Kit': '#157347', 'Scanner': '#1e4fb3', 'Tablet': '#1e4fb3', 'Small Tool': '#4b5563', 'Specialty': '#4b5563', 'Other': '#4b5563' }
+        const move = (id, loc) => setAssets(p => p.map(a => a.id === id ? { ...a, location: loc } : a))
+        const AssetCard = ({ a }) => {
+          const st = statusOf(a.sub_exp)
+          const meta = (l, v) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}><span style={{ color: '#888' }}>{l}</span><span style={{ color: '#1a1a1a', fontWeight: 600, textAlign: 'right', fontFamily: l === 'S/N' ? 'IBM Plex Mono, monospace' : 'inherit' }}>{v}</span></div>
+          return (
+            <div draggable onDragStart={e => { e.dataTransfer.setData('text/plain', a.id); e.dataTransfer.effectAllowed = 'move' }} onClick={() => openEdit(a)}
+              style={{ background: 'white', borderRadius: 12, border: '1px solid #ebebeb', boxShadow: '0 1px 2px rgba(0,0,0,.05)', cursor: 'grab', overflow: 'hidden' }}>
+              <div style={{ background: CAT_COLOR[a.cat] || BRAND, padding: '7px 11px' }}>
+                <div style={{ color: 'white', fontWeight: 700, fontSize: 13, lineHeight: 1.25, wordBreak: 'break-word' }}>{a.name}{a.nickname ? <span style={{ fontWeight: 400, opacity: .85 }}> · "{a.nickname}"</span> : null}</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 3 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, background: 'rgba(255,255,255,0.22)', color: 'white', padding: '1px 7px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{a.cat}</span>
+                  {a.sub_exp && st !== 'nodate' && <span style={{ fontSize: 10, fontWeight: 700, background: STATUS[st].bg, color: STATUS[st].fg, padding: '1px 7px', borderRadius: 999 }}>{STATUS[st].label}</span>}
+                </div>
+              </div>
+              <div style={{ padding: '8px 11px', display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {a.sn && meta('S/N', a.sn)}
+                {a.sub_exp && meta('Subscription', `${a.sub_exp}${days(a.sub_exp) !== null ? (days(a.sub_exp) < 0 ? ` · ${Math.abs(days(a.sub_exp))}d ago` : ` · in ${days(a.sub_exp)}d`) : ''}`)}
+                {a.notes && <div style={{ fontSize: 11, color: '#888' }}>{a.notes}</div>}
+                <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+                  <select value={a.location || ''} onChange={e => move(a.id, e.target.value)} title="Move" style={{ fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1px solid #e0ddd8', background: 'white', color: '#444', flex: 1 }}>
+                    <option value="">Spare / shop</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
+                  <Btn small onClick={() => openEdit(a)}>Edit</Btn>
+                  <Btn small danger onClick={() => del(a.id)}>×</Btn>
+                </div>
+              </div>
+            </div>
+          )
+        }
         return (
-          <div key={locId} style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid #ebebeb' }}>
-              {loc ? loc.name : 'Unassigned'} — {items.length} item{items.length !== 1 ? 's' : ''}
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {items.map(a => {
-                const st = statusOf(a.sub_exp, a.status)
-                const n  = days(a.sub_exp)
-                return (
-                  <Card key={a.id}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <Row gap={7} style={{ marginBottom: 4 }}>
-                          <span style={{ fontWeight: 500, fontSize: 13 }}>{a.name}</span>
-                          <span style={{ fontSize: 10, fontWeight: 600, background: '#f5f3f0', color: '#888', padding: '1px 7px', borderRadius: 4, letterSpacing: '0.04em', textTransform: 'uppercase' }}>{a.cat}</span>
-                          {a.sub_exp && <Chip status={st} />}
-                        </Row>
-                        <Row gap={12}>
-                          {a.sn       && <Meta label="S/N"      value={a.sn} />}
-                          {a.nickname && <Meta label="Nickname" value={a.nickname} />}
-                          {a.sub_exp  && <Meta label="Sub exp"  value={`${a.sub_exp}${n !== null && n >= 0 && n <= 90 ? ` (${n}d)` : n !== null && n < 0 ? ' — EXPIRED' : ''}`} warn={n !== null && n <= 60} />}
-                        </Row>
-                        {a.notes && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{a.notes}</div>}
-                      </div>
-                      <Row gap={5} style={{ flexShrink: 0 }}>
-                        <Btn small onClick={() => openEdit(a)}>Edit</Btn>
-                        <Btn small danger onClick={() => del(a.id)}>×</Btn>
-                      </Row>
-                    </div>
-                  </Card>
-                )
-              })}
-            </div>
+          <div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8, alignItems: 'flex-start' }}>
+            {lanes.map(l => (
+              <div key={l.id || 'spare'} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) move(id, l.id) }}
+                style={{ flex: '0 0 260px', background: '#f5f3f0', borderRadius: 12, padding: 8, minHeight: 160 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 6px 8px' }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#1a1a1a' }}>{l.id ? '🚐 ' : '🏭 '}{l.label}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, background: 'white', color: '#555', borderRadius: 999, padding: '1px 8px' }}>{l.items.length}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {l.items.map(a => <AssetCard key={a.id} a={a} />)}
+                  {!l.items.length && <div style={{ fontSize: 11, color: '#aaa', padding: '6px 6px 10px' }}>Drop gear here</div>}
+                </div>
+              </div>
+            ))}
           </div>
         )
-      })}
-      {filtered.length === 0 && <div style={{ textAlign: 'center', padding: '2rem', color: '#888', fontSize: 13 }}>No assets match this filter.</div>}
-
+      })()}
       {modal && (
         <Modal title={editId ? 'Edit asset' : 'Add asset'} onClose={() => setModal(false)}>
           <Grid2>
