@@ -60,53 +60,50 @@ const GEAR_ICON = { 'Cal Frame': '🎯', 'Cal Target': '🎯', 'Cal Mat': '🧹'
 const light = s => (s === 3 ? '#ef4444' : s === 2 ? '#f59e0b' : s === 1 ? '#22c55e' : '#6b7280')
 
 function VanSvg({ van, kit, sel, onPick }) {
-  const boxes = []
-  let y = 150
-  const row = (list, h) => { const n = list.length, gap = 10, w = (216 - gap * (n - 1)) / n; list.forEach((b, i) => boxes.push({ ...b, x: 72 + i * (w + gap), y, w, h })); y += h + 12 }
-  const lapRows = []; for (let i = 0; i < kit.slots.length; i += 2) lapRows.push(kit.slots.slice(i, i + 2))
-  lapRows.forEach(r => row(r, 66))
-  boxes.push({ ...kit.tab, x: 126, y, w: 108, h: 56 }); y += 70
-  const small = kit.gearBoxes.filter(g => g.label === 'Small Tool' || g.label === 'Scanner' || g.label === 'Other')
+  // Mark's van graphic (2026-10-03) is the backdrop: 512 × 768, cargo floor x 112–398,
+  // y 222–690, the cab's dash card at y 130–197. Tiles are laid out inside the floor and
+  // shrink to fit when a van carries a lot of gear.
+  const X0 = 112, X1 = 398, Y0 = 222, Y1 = 690, GAP = 10
+  const rows = []
+  const push = (list, h) => rows.push({ list, h })
+  for (let i = 0; i < kit.slots.length; i += 2) push(kit.slots.slice(i, i + 2), 66)
+  push([kit.tab], 56)
+  const small = kit.gearBoxes.filter(g => ['Small Tool', 'Scanner', 'Other'].includes(g.label))
   const big = kit.gearBoxes.filter(g => !small.includes(g))
-  if (big.length) { row([big[0]], 56); for (let i = 1; i < big.length; i += 2) row(big.slice(i, i + 2), 66) }
-  if (small.length) row([{ k: 'gear-small', kind: 'tools', label: small.length === 1 ? small[0].label : 'Small tools and scanner', items: small.flatMap(g => g.items), sub: `${small.reduce((t, g) => t + g.items.length, 0)} items`, s: Math.max(0, ...small.map(g => g.s)) }], 50)
-  if (!kit.gearBoxes.length) row([{ k: 'gear-none', kind: 'none', label: 'No gear listed yet', sub: 'add it on Tools & Equipment', s: 0 }], 48)
-  row([{ k: 'van', kind: 'van', label: `${van.name} · plate, reg, oil`, sub: '', s: kit.vanSev }], 44)
-  const H = y + 40
-  const bodyBottom = H - 22
+  if (big.length) { push([big[0]], 56); for (let i = 1; i < big.length; i += 2) push(big.slice(i, i + 2), 66) }
+  if (small.length) push([{ k: 'gear-small', kind: 'tools', label: small.length === 1 ? small[0].label : 'Small tools and scanner', items: small.flatMap(g => g.items), sub: `${small.reduce((t, g) => t + g.items.length, 0)} items`, s: Math.max(0, ...small.map(g => g.s)) }], 50)
+  if (!kit.gearBoxes.length) push([{ k: 'gear-none', kind: 'none', label: 'No gear listed yet', sub: 'add it on Tools & Equipment', s: 0 }], 48)
+  push([{ k: 'van', kind: 'van', label: `${van.name} · plate, reg, oil`, sub: '', s: kit.vanSev }], 44)
+  const need = rows.reduce((t, r) => t + r.h, 0) + GAP * (rows.length - 1)
+  const k = Math.min(1, (Y1 - Y0) / need)
+  const boxes = []
+  let y = Y0
+  for (const r of rows) {
+    const h = r.h * k, n = r.list.length, w = r.list[0]?.kind === 'tablet' ? 120 : (X1 - X0 - GAP * (n - 1)) / n
+    const x0 = r.list[0]?.kind === 'tablet' ? (X0 + X1) / 2 - 60 : X0
+    r.list.forEach((b, i) => boxes.push({ ...b, x: x0 + i * (w + GAP), y, w, h }))
+    y += h + GAP * k
+  }
+  const fs = k < 0.85 ? 0.85 : 1
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', maxWidth: 440, margin: '0 auto' }} role="img" aria-label={`${van.name} kit map`}>
-      <rect x="0" y="0" width={W} height={H} rx="18" fill="#0f1115" />
-      {/* body */}
-      <path d={`M58 44 Q58 12 92 12 H268 Q302 12 302 44 V${bodyBottom - 18} Q302 ${bodyBottom} 284 ${bodyBottom} H76 Q58 ${bodyBottom} 58 ${bodyBottom - 18} Z`} fill="#e9eaee" stroke="#f8f9fb" strokeWidth="2" />
-      {/* windshield + cab */}
-      <path d="M78 42 Q80 22 100 22 H260 Q280 22 282 42 L276 60 H84 Z" fill="#1b2430" />
-      <rect x="66" y="64" width="228" height="62" rx="8" fill="#1f2630" />
-      <rect x="92" y="78" width="54" height="40" rx="8" fill="#2a3340" /><rect x="214" y="78" width="54" height="40" rx="8" fill="#2a3340" />
-      <circle cx="119" cy="98" r="11" fill="none" stroke="#3b4653" strokeWidth="3" />
-      {/* mirrors + wheels */}
-      <rect x="40" y="52" width="18" height="12" rx="3" fill="#1f2630" /><rect x="302" y="52" width="18" height="12" rx="3" fill="#1f2630" />
-      {[[52, 110], [296, 110], [52, bodyBottom - 90], [296, bodyBottom - 90]].map(([x, yy], i) => <rect key={i} x={x} y={yy} width="12" height="44" rx="5" fill="#111418" />)}
-      {/* cargo floor */}
-      <rect x="64" y="136" width="232" height={bodyBottom - 148} rx="10" fill="#15181d" />
-      {/* tail lights */}
-      <rect x="66" y={bodyBottom - 8} width="40" height="5" rx="2" fill="#dc2626" /><rect x="254" y={bodyBottom - 8} width="40" height="5" rx="2" fill="#dc2626" />
-      {/* cab: the tech */}
+    <svg viewBox="0 0 512 768" width="100%" style={{ display: 'block', maxWidth: 470, margin: '0 auto', borderRadius: 14 }} role="img" aria-label={`${van.name} kit map`}>
+      <image href={import.meta.env.BASE_URL + 'van-map.png'} x="0" y="0" width="512" height="768" />
       <g onClick={() => onPick('tech')} style={{ cursor: 'pointer' }}>
-        <rect x="118" y="100" width="124" height="34" rx="8" fill={sel === 'tech' ? '#3b2a8a' : '#2b2f6b'} stroke={sel === 'tech' ? '#CD4419' : '#6f6ae0'} strokeWidth="1.5" />
-        <circle cx="136" cy="117" r="10" fill="none" stroke="#bfc3ff" strokeWidth="2" />
-        <text x="136" y="121" textAnchor="middle" fontSize="9" fontWeight="700" fill="#e3e5ff">{kit.tech ? kit.tech.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase() : '+'}</text>
-        <text x="154" y="114" fontSize="11" fontWeight="700" fill="#ffffff">{kit.tech ? kit.tech.name.split(' ')[0] : 'No tech'}</text>
-        <text x="154" y="127" fontSize="9" fill="#bfc3ff">CAB</text>
-        <circle cx="232" cy="110" r="4" fill={kit.tech ? '#22c55e' : '#6b7280'} />
+        <rect x="162" y="132" width="188" height="62" rx="12" fill={sel === 'tech' ? '#3b2a8a' : '#1e3f8f'} stroke={sel === 'tech' ? '#CD4419' : '#4f8cf0'} strokeWidth="2" />
+        <circle cx="194" cy="163" r="18" fill="#1d4ed8" stroke="#8fb5ff" strokeWidth="2" />
+        <text x="194" y="168" textAnchor="middle" fontSize="13" fontWeight="700" fill="#ffffff">{kit.tech ? kit.tech.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase() : '+'}</text>
+        <text x="224" y="159" fontSize="15" fontWeight="700" fill="#ffffff">{kit.tech ? `${kit.tech.name.split(' ')[0]} tech` : 'No tech'}</text>
+        <text x="224" y="177" fontSize="11" fill="#bcd3ff">CAB</text>
+        <text x="334" y="169" textAnchor="middle" fontSize="16" fill="#8fb5ff">›</text>
+        <circle cx="338" cy="142" r="4" fill={kit.tech ? '#22c55e' : '#6b7280'} />
       </g>
-      {boxes.map(b => { const t = TILE[b.kind] || TILE.gear; const icon = b.kind === 'gear' ? (GEAR_ICON[b.label] || t.icon) : t.icon; const on = sel === b.k; const wide = b.w > 150; return (
+      {boxes.map(b => { const t = TILE[b.kind] || TILE.gear; const icon = b.kind === 'gear' ? (GEAR_ICON[b.label] || t.icon) : t.icon; const on = sel === b.k; const wide = b.w > 170; const cx = b.x + b.w / 2; return (
         <g key={b.k} onClick={() => b.kind !== 'none' && onPick(b.k)} style={{ cursor: b.kind === 'none' ? 'default' : 'pointer' }}>
-          <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="9" fill={t.fill} stroke={on ? '#CD4419' : t.edge} strokeWidth={on ? 2.5 : 1.2} />
+          <rect x={b.x} y={b.y} width={b.w} height={b.h} rx="12" fill={t.fill} stroke={on ? '#CD4419' : t.edge} strokeWidth={on ? 3 : 1.5} />
           {wide
-            ? <><text x={b.x + 18} y={b.y + b.h / 2 + 6} fontSize="18">{icon}</text><text x={b.x + 46} y={b.y + (b.sub ? b.h / 2 - 1 : b.h / 2 + 4)} fontSize="12" fontWeight="700" fill={t.text}>{b.label}</text>{b.sub && <text x={b.x + 46} y={b.y + b.h / 2 + 14} fontSize="10.5" fill={t.sub}>{String(b.sub).slice(0, 34)}</text>}</>
-            : <><text x={b.x + b.w / 2} y={b.y + 24} textAnchor="middle" fontSize="18">{icon}</text><text x={b.x + b.w / 2} y={b.y + b.h - (b.sub ? 20 : 10)} textAnchor="middle" fontSize="11.5" fontWeight="700" fill={t.text}>{b.label}</text>{b.sub && <text x={b.x + b.w / 2} y={b.y + b.h - 8} textAnchor="middle" fontSize="9.5" fill={t.sub}>{String(b.sub).slice(0, 22)}</text>}</>}
-          {b.kind !== 'none' && <circle cx={b.x + b.w - 9} cy={b.y + 9} r="4" fill={light(b.s)} />}
+            ? <><text x={b.x + 22} y={b.y + b.h / 2 + 8} fontSize={22 * fs}>{icon}</text><text x={b.x + 62} y={b.y + (b.sub ? b.h / 2 - 1 : b.h / 2 + 5)} fontSize={15 * fs} fontWeight="700" fill={t.text}>{b.label}</text>{b.sub && <text x={b.x + 62} y={b.y + b.h / 2 + 17} fontSize={12 * fs} fill={t.sub}>{String(b.sub).slice(0, 36)}</text>}</>
+            : <><text x={cx} y={b.y + 28 * fs} textAnchor="middle" fontSize={22 * fs}>{icon}</text><text x={cx} y={b.y + b.h - (b.sub ? 22 : 10)} textAnchor="middle" fontSize={14 * fs} fontWeight="700" fill={t.text}>{b.label}</text>{b.sub && <text x={cx} y={b.y + b.h - 8} textAnchor="middle" fontSize={11 * fs} fill={t.sub}>{String(b.sub).slice(0, 24)}</text>}</>}
+          {b.kind !== 'none' && <><text x={b.x + b.w - 16} y={b.y + b.h / 2 + 6} textAnchor="middle" fontSize="16" fill={t.sub}>›</text><circle cx={b.x + b.w - 11} cy={b.y + 11} r="4.5" fill={light(b.s)} /></>}
         </g>
       ) })}
     </svg>
