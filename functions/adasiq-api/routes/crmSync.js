@@ -765,7 +765,7 @@ router.post('/config/set', express.json(), async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {
     const key = String(req.body?.key || ''), value = String(req.body?.value ?? '')
-    if (!['notion_parked_db'].includes(key)) return res.status(400).json({ error: 'key not allowed here' })
+    if (!['notion_parked_db', 'huddle_tech_goals', 'huddle_playlist', 'huddle_meeting_link', 'huddle_channel', 'huddle_room_token', 'deals_channel'].includes(key)) return res.status(400).json({ error: 'key not allowed here' })
     const app = catalyst.initialize(req, { type: 'advancedio' })
     const r = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`)
     const row = r?.[0]?.AppConfig
@@ -800,6 +800,110 @@ router.get('/shops/customers', async (req, res) => {
     if (req.query.debug) return res.json(await C.debugCustomer(req, String(req.query.debug)))
     res.json(await C.customerReport(req))
   } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 🛠 Fix one CRM row from the shell (Mark 2026-10-05, Carstar at 272nd was invisible):
+// name / stage / type only, on Mark's explicit go. Stage change stamps stage_changed_at.
+router.post('/shops/set', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { getAllShops, updateShop } = await import('./shops.js')
+    const id = String(req.body?.id || ''); const cur = (await getAllShops(req)).find(s => String(s.id) === id)
+    if (!cur) return res.status(404).json({ error: 'no such shop' })
+    const patch = {}
+    if (req.body.shop_name) patch.shop_name = String(req.body.shop_name).slice(0, 120)
+    if (req.body.pipeline_stage) { patch.pipeline_stage = String(req.body.pipeline_stage); if (patch.pipeline_stage !== cur.pipeline_stage) patch.stage_changed_at = new Date().toISOString() }
+    if (req.body.customer_type) { let br = cur.billing_rules || {}; if (typeof br === 'string') { try { br = JSON.parse(br) } catch { br = {} } } patch.billing_rules = { ...br, customer_type: String(req.body.customer_type) } }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'nothing to set' })
+    const updated = await updateShop(req, id, { ...cur, ...patch })
+    res.json({ ok: true, before: { name: cur.shop_name, stage: cur.pipeline_stage }, after: { name: updated.shop_name, stage: updated.pipeline_stage, type: patch.billing_rules?.customer_type || '' } })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 🧪 Recent scrubs incl. benchmark runs (Mark 2026-10-05 "rerun this"): the
+// required list per row, so an accuracy test can be read from the shell.
+router.get('/scrubs/recent', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const { listScrubs, getScrub } = await import('../services/scrubStore.js')
+    const src = String(req.query.source || ''), limit = Math.min(Number(req.query.limit) || 5, 30)
+    const r = await listScrubs(req, { q: String(req.query.q || ''), limit: 200, includeBench: true })
+    const rows = (r?.scrubs || r?.rows || r || []).filter(x => !src || String(x.source || x.scrub_source || '').startsWith(src)).slice(0, limit)
+    const out = []
+    for (const x of rows) {
+      const full = req.query.full ? await getScrub(req, x.id || x.ROWID) : null
+      out.push({ id: x.id || x.ROWID, at: x.at || x.scrub_at, source: x.source || x.scrub_source, vehicle: x.vehicle || x.scrub_vehicle, ro: x.ro || x.scrub_ro, required: x.required_names || x.scrub_required_names || '', status: x.status || x.scrub_status,
+        ...(full ? { calibrations: (full.payload?.calibrations || []).map(c => ({ name: c.calibration_name, type: c.cal_type, enabled: c.enabled !== false, lines: c.line_references || '', guard: c._guard || '' })) } : {}) })
+    }
+    res.json({ count: out.length, scrubs: out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// ☎️ Phone Setup from the shell on Mark's explicit go (2026-10-05: Kat's +63 number
+// into the ring cascade). Only the two cascade keys; everything else stays in the UI.
+router.post('/phone/set', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const key = String(req.body?.key || ''), value = String(req.body?.value ?? '').trim()
+    if (!['KAT_PHONE_NUMBER', 'CASCADE_ORDER', 'JAYDEN_PHONE_NUMBER', 'MARK_PHONE_NUMBER', 'SHOP_LAT', 'SHOP_LNG', 'CLOCK_IN_GEOFENCE_MI', 'AFTER_HOURS_START', 'AFTER_HOURS_END'].includes(key)) return res.status(400).json({ error: 'key not allowed here' })
+    const P = await import('../services/phoneConfig.js')
+    const next = await P.setPhoneConfigValue(req, key, value)
+    res.json({ ok: true, key, value, cascade: next.CASCADE_ORDER || '', kat: next.KAT_PHONE_NUMBER || '' })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 📞 Live-call debug (2026-10-05): what the transfer bar would show, raw.
+router.get('/voice/live', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const L = await import('../services/liveCalls.js'); res.json({ live: await L.listLive(req), events: (await L.recentEvents(req)).slice(-20) }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/phone/get', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const P = await import('../services/phoneConfig.js'); const cfg = await P.resolvePhoneConfig(req)
+    const keys = ['CASCADE_ORDER', 'KAT_PHONE_NUMBER', 'MARK_PHONE_NUMBER', 'JAYDEN_PHONE_NUMBER', 'SHOP_LAT', 'SHOP_LNG', 'SERVICE_RADIUS_MI', 'CLOCK_IN_GEOFENCE_MI', 'AFTER_HOURS_START', 'AFTER_HOURS_END', 'DESK_PHONE_ON']
+    res.json(Object.fromEntries(keys.map(k => [k, cfg[k] ?? ''])))
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/jobs/find', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const J = await import('./jobs.js'); const q = String(req.query.q || '').toLowerCase()
+    const all = await J.readJobsPublic(req)
+    const hits = all.filter(j => [j.invoice_number, j.quote_number, j.vin, j.shop_name, j.vehicle, j.id].some(v => String(v || '').toLowerCase().includes(q))).slice(0, 10)
+    res.json({ count: hits.length, jobs: hits.map(j => ({ id: j.id, shop: j.shop_name, vehicle: j.vehicle, vin: j.vin, status: j.status, invoice: j.invoice_number, quote: j.quote_number, scheduled: j.scheduled_date, technician: j.technician, created: j.created_at, notes: String(j.notes || '').slice(0, 200) })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/jobs/set-vin', express.json(), async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const J = await import('./jobs.js'); const id = String(req.body?.id || ''), vin = String(req.body?.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    if (vin.length !== 17) return res.status(400).json({ error: 'vin must be 17 chars' })
+    const job = (await J.readJobsPublic(req)).find(j => String(j.id) === id); if (!job) return res.status(404).json({ error: 'job not found' })
+    const upd = await J.updateJobPublic(req, id, { ...job, vin, notes: `🔧 VIN corrected ${job.vin || '(blank)'} → ${vin} by Claude 2026-10-06 (report went out on the wrong car)\n${job.notes || ''}`.slice(0, 9000) })
+    res.json({ ok: true, id, before: job.vin, after: upd.vin })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 💼 Deals automations (2026-10-08): 6 AM due list → Cliq (+ Ada reads /api/deals/due), daily sweep.
+router.post('/deals/morning', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const D = await import('../services/deals.js'); const l = await D.dueList(req)
+    const { postToCliqChannel } = await import('../services/cliq.js')
+    const ch = (await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery("SELECT config_value FROM AppConfig WHERE config_key = 'deals_channel' LIMIT 1"))?.[0]?.AppConfig?.config_value || 'technicians'
+    if (l.open) await postToCliqChannel(ch, D.formatDue(l))
+    res.json({ ok: true, posted: !!l.open, channel: ch, due: l.due.length, overdue: l.overdue.length })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 💼 Sales block nudge (Mark: Tue/Wed/Thu 08:00–12:00): push to Mark "Sales block — tap to start" with the queue size; launchd fires it at 08:00.
+router.post('/deals/sales-block', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try {
+    const D = await import('../services/deals.js'); const qd = await D.salesQueue(req, { owner: 'Mark' })
+    const { sendPushToAll } = await import('./push.js')
+    const r = await sendPushToAll(req, { title: '💼 Sales block — tap to start', body: `${qd.count} in your queue · ${qd.totals.overdue} overdue · ${qd.totals.today} due today · ${qd.totals.nearby} near today's jobs`, url: '/app/index.html?sales=1', tag: 'sales-block' }, s => /mark|mf@/i.test(String(s.user || '')))
+    res.json({ ok: true, queue: qd.count, pushed: r.sent })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/deals/sweep', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const D = await import('../services/deals.js'); res.json({ ok: true, ...(await D.dailySweep(req)) }) } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/shops/duplicates', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
@@ -962,7 +1066,7 @@ router.get('/books/find-in-doc', async (req, res) => {
     const needle = String(req.query.q || '').toLowerCase(), hits = []
     const walk = (o, path) => { if (o && typeof o === 'object') { for (const [k, v] of Object.entries(o)) walk(v, `${path}.${k}`) } else if (String(o).toLowerCase().includes(needle)) hits.push({ path, value: String(o).slice(0, 300) }) }
     walk(doc, kind)
-    res.json({ number: doc.invoice_number || doc.estimate_number, hits, custom_fields: (doc.custom_fields || []).map(c => ({ id: c.customfield_id, label: c.label, value: String(c.value || '').slice(0, 200) })), documents: (doc.documents || []).map(d => ({ id: d.document_id, name: d.file_name })) })
+    res.json({ number: doc.invoice_number || doc.estimate_number, documents: (doc.documents || []).map(x => ({ id: x.document_id, name: x.file_name })), hits, custom_fields: (doc.custom_fields || []).map(c => ({ id: c.customfield_id, label: c.label, value: String(c.value || '').slice(0, 200) })), documents: (doc.documents || []).map(d => ({ id: d.document_id, name: d.file_name })) })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
 })
 router.post('/books/fix-doc', express.json({ limit: '30mb' }), async (req, res) => {
@@ -1458,6 +1562,55 @@ router.post('/scrubs/attach-file', (req, res) => {
       res.json({ ok: true, id, file: fname })
     } catch (e) { res.status(500).json({ error: e.message, id }) }
   })
+})
+
+// ── 🗂 WorkDrive housekeeping (Mark 2026-10-09: "organize my WorkDrive"). Cron secret.
+//   GET  /workdrive/ls?id=<folder>      children (id, name, is_folder)
+//   GET  /workdrive/info?id=<file>      name + parent_id (walk up to find roots)
+//   POST /workdrive/ops { ops:[ {op:'mkdir',parent,name} | {op:'move',id,to} | {op:'rename',id,name} | {op:'trash',id} ] }
+//        runs in order, stops at ~24s (gateway cap) and returns { done, results } so the caller resumes.
+//        mkdir is idempotent (exact-name child reused) and returns the folder id; later ops may
+//        reference an earlier mkdir with to:'$<index>' / parent:'$<index>'.
+const wdGuard = (req, res) => { const secret = process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026'; if (String(req.headers['x-cron-secret'] || '').trim() !== secret) { res.status(401).json({ error: 'Unauthorized' }); return false } return true }
+router.get('/workdrive/ls', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try { const { getAccessToken } = await import('../services/zoho.js'); const { listChildren } = await import('../services/workdrive.js'); res.json({ ok: true, items: await listChildren(String(req.query.id || ''), await getAccessToken()) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/workdrive/info', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const axios = (await import('axios')).default
+    const r = await axios.get(`https://www.zohoapis.com/workdrive/api/v1/files/${String(req.query.id || '')}`, { headers: { Authorization: `Zoho-oauthtoken ${await getAccessToken()}`, Accept: 'application/vnd.api+json' }, timeout: 15000 })
+    const a = r.data?.data?.attributes || {}
+    res.json({ ok: true, id: r.data?.data?.id, name: a.name, parent_id: a.parent_id, is_folder: a.is_folder, type: a.type, library_id: a.library_id, team_id: a.team_id })
+  } catch (e) { res.status(e.response?.status || 500).json({ error: e.message, body: e.response?.data }) }
+})
+router.post('/workdrive/ops', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  const ops = Array.isArray(req.body?.ops) ? req.body.ops : []
+  if (!ops.length || ops.length > 300) return res.status(400).json({ error: 'ops: 1..300 required' })
+  const t0 = Date.now(), results = []
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const W = await import('../services/workdrive.js'); const token = await getAccessToken()
+    const ref = v => { const m = /^\$(\d+)$/.exec(String(v || '')); return m ? (results[Number(m[1])]?.id || '') : String(v || '') }
+    for (let i = 0; i < ops.length; i++) {
+      if (Date.now() - t0 > 24000) break
+      const o = ops[i] || {}
+      try {
+        if (o.op === 'mkdir') {
+          const parent = ref(o.parent); const kids = await W.listChildren(parent, token, { folders: true })
+          const hit = kids.find(k => k.name === String(o.name))
+          if (hit) results.push({ i, op: 'mkdir', ok: true, id: hit.id, existed: true, name: o.name })
+          else { const f = await W.createFolderUnder(parent, String(o.name), token); results.push({ i, op: 'mkdir', ok: !!f?.folderId, id: f?.folderId || '', name: o.name }) }
+        } else if (o.op === 'move') { await W.moveFile(ref(o.id), ref(o.to), token); results.push({ i, op: 'move', ok: true, id: ref(o.id) }) }
+        else if (o.op === 'rename') { await W.renameFile(ref(o.id), String(o.name), token); results.push({ i, op: 'rename', ok: true, id: ref(o.id) }) }
+        else if (o.op === 'trash') { await W.trashFile(ref(o.id), token); results.push({ i, op: 'trash', ok: true, id: ref(o.id) }) }
+        else results.push({ i, op: o.op, ok: false, error: 'unknown op' })
+      } catch (e) { results.push({ i, op: o.op, ok: false, error: e.message.slice(0, 300) }) }
+    }
+    res.json({ ok: true, done: results.length, total: ops.length, ms: Date.now() - t0, results })
+  } catch (e) { res.status(500).json({ error: e.message, results }) }
 })
 
 export default router
