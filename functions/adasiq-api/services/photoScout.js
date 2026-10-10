@@ -155,8 +155,8 @@ Privacy/safety — flag anything that must NOT be posted as-is:
 - a person's face (techs are OK only if the photo is clearly about the work, but still flag it)
 - another company's sign, logo or branding prominent (body shop name, insurer) — flag it, the shop may not want to be shown
 For every readable licence plate, VIN, customer name/RO/claim number, person's face, or prominent other-company sign/logo,
-give a box in "blur": [x0,y0,x1,y1] as fractions of the image width/height (0 = left/top, 1 = right/bottom), drawn generously around it.
-Empty array if nothing needs blurring.
+give a box in "blur": [x0,y0,x1,y1] in PIXELS of this image (it is __W__ x __H__ px; 0,0 = top-left), tight around the item itself.
+Look carefully: front plates often sit low on the bumper, partly hidden behind a target stand. Empty array if nothing needs blurring.
 Return ONLY raw JSON:
 {"score":<1-10 final post-worthiness, judged as if the blur below were already applied>,
  "safe":<true if it can be posted as-is or with the suggested crop, false if it needs blurring or can't be used>,
@@ -167,6 +167,11 @@ Return ONLY raw JSON:
  "subject":"<what the photo shows, e.g. 'front radar target set up on a 2023 Subaru Outback'>",
  "angle":"<the post angle in 3-6 words, e.g. 'Radar aim takes a laser'>",
  "caption":"<one or two sentence caption in the brand voice, no hashtags>"}`
+
+const CHECK_PROMPT = `Privacy check before a business posts this photo publicly. Look closely at the whole image, including small and partly hidden areas.
+Is ANY of these still readable: a licence plate's characters, a VIN, a customer name/RO/claim number, or a recognisable human face?
+(Blurred/pixelated blocks are fine. Car make badges are fine.)
+The image is __W__ x __H__ px. Return ONLY raw JSON: {"readable":<true|false>,"items":[{"what":"plate|vin|face|text","box":[x0,y0,x1,y1]}]}  (box in pixels, empty if none)`
 
 async function look(model, prompt, jpeg, maxTokens) {
   const msg = await client().messages.create({
@@ -239,11 +244,13 @@ export async function scout(req, { days = 3, max = MAX_PER_RUN, dry = false } = 
 async function judgeAndFile(req, token, { file, folder, jpeg, score, details, out }) {
   const W = await import('./workdrive.js')
   let safe = false, blur = []
+  const dims = await sharp(jpeg).metadata()
+  const toFrac = b => ({ what: b.what, box: [b.box[0] / dims.width, b.box[1] / dims.height, b.box[2] / dims.width, b.box[3] / dims.height] })
   if (score >= 6) {
-    const j = await look(JUDGE_MODEL, JUDGE_PROMPT, jpeg, 700).catch(() => null); out.judged++; await addSpend(req, COST.judge)
+    const j = await look(JUDGE_MODEL, JUDGE_PROMPT.replace('__W__', dims.width).replace('__H__', dims.height), jpeg, 700).catch(() => null); out.judged++; await addSpend(req, COST.judge)
     if (j) {
       score = Number(j.score) || score
-      blur = Array.isArray(j.blur) ? j.blur.filter(b => Array.isArray(b?.box) && b.box.length === 4) : []
+      blur = Array.isArray(j.blur) ? j.blur.filter(b => Array.isArray(b?.box) && b.box.length === 4 && b.box.every(Number.isFinite)).map(toFrac) : []
       safe = j.safe === true || (j.safe_after_blur === true && blur.length > 0)
       details = { ...details, issues: j.issues || [], crop: j.crop || '', subject: j.subject || '', angle: j.angle || '', caption: j.caption || '', blur_boxes: blur.map(b => ({ what: b.what, box: b.box })) }
     }
@@ -255,14 +262,30 @@ async function judgeAndFile(req, token, { file, folder, jpeg, score, details, ou
   if (isPick || (isMaybe && needsBlur)) {
     try {
       const { buffer, contentType } = await W.downloadFile(file.id, token)
-      const body = needsBlur ? await blurRegions(buffer, blur) : await clean(buffer)   // re-encoded = no GPS/EXIF
+      let body = needsBlur ? await blurRegions(buffer, blur) : await clean(buffer)   // re-encoded = no GPS/EXIF
+      // 🔍 Verify the blur actually covers everything (2026-10-09: the first pass put a Camry's
+      // box on the grille and left the plate readable). Up to two fix-up rounds, else hold it.
+      if (needsBlur) {
+        let ok = false
+        for (let round = 0; round < 3 && !ok; round++) {
+          const small = await sharp(body).resize({ width: 1024, height: 1024, fit: 'inside' }).jpeg({ quality: 85 }).toBuffer(); const sd = await sharp(small).metadata()
+          const c = await look(JUDGE_MODEL, CHECK_PROMPT.replace('__W__', sd.width).replace('__H__', sd.height), small, 300).catch(() => null); await addSpend(req, COST.judge)
+          if (c && c.readable === false) { ok = true; break }
+          const more = (c?.items || []).filter(b => Array.isArray(b?.box) && b.box.length === 4 && b.box.every(Number.isFinite)).map(b => ({ what: b.what, box: [b.box[0] / sd.width, b.box[1] / sd.height, b.box[2] / sd.width, b.box[3] / sd.height] }))
+          if (!more.length || round === 2) break
+          body = await blurRegions(body, more); blur = [...blur, ...more]
+        }
+        details.blur_verified = ok; details.blur_boxes = blur.map(b => ({ what: b.what, box: b.box.map(v => Math.round(v * 1000) / 1000) }))
+        if (!ok) throw Object.assign(new Error('blur could not be verified, held back'), { held: true })
+      }
       const dest = isPick ? await picksFolder(req, token) : await maybeFolder(req, token)
       pickId = (await W.uploadFileToFolder(dest, pickName(score, folder.name, details.angle, 'x.jpg'), body, token, 'image/jpeg'))?.fileId || ''
       details.copy_in = isPick ? 'picks' : 'maybe'; if (needsBlur) details.blurred = true
       if (isPick) out.picked.push({ score, folder: folder.name, angle: details.angle, caption: details.caption, blurred: needsBlur })
-    } catch (e) { details.copy_error = e.message.slice(0, 160) }
+    } catch (e) { details.copy_error = e.message.slice(0, 160); if (e.held) { safe = false; out.picked = out.picked.filter(p => p.folder !== folder.name || p.angle !== details.angle) } }
   }
-  return { row: { ps_score: score, ps_safe: safe ? 'yes' : 'no', ps_state: isPick ? 'pick' : isMaybe ? 'maybe' : 'skip', ps_details: JSON.stringify(details).slice(0, 9500), ps_pick_file_id: pickId } }
+  const finalPick = isPick && safe, finalMaybe = !finalPick && safe && score >= PICK_SCORE - 1
+  return { row: { ps_score: score, ps_safe: safe ? 'yes' : 'no', ps_state: finalPick ? 'pick' : finalMaybe ? 'maybe' : 'skip', ps_details: JSON.stringify(details).slice(0, 9500), ps_pick_file_id: pickId } }
 }
 
 /** Second chance for good shots held back for privacy (score ≥ 6, not safe): judge again with blur. */
