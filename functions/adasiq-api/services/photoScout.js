@@ -247,7 +247,8 @@ async function judgeAndFile(req, token, { file, folder, jpeg, score, details, ou
   const dims = await sharp(jpeg).metadata()
   const toFrac = b => ({ what: b.what, box: [b.box[0] / dims.width, b.box[1] / dims.height, b.box[2] / dims.width, b.box[3] / dims.height] })
   if (score >= 6) {
-    const j = await look(JUDGE_MODEL, JUDGE_PROMPT.replace('__W__', dims.width).replace('__H__', dims.height), jpeg, 700).catch(() => null); out.judged++; await addSpend(req, COST.judge)
+    const vehicle = String(folder.name || '').split(' — ').slice(-1)[0].replace(/\s\d{2}-\d{2}-\d{4}.*$/, '').trim()
+    const j = await look(JUDGE_MODEL, JUDGE_PROMPT.replace('__W__', dims.width).replace('__H__', dims.height) + (vehicle ? `\nThe job record says this vehicle is a ${vehicle}. Use that exact year/make/model in subject and caption (no trim), never a guess from the photo.` : ''), jpeg, 700).catch(() => null); out.judged++; await addSpend(req, COST.judge)
     if (j) {
       score = Number(j.score) || score
       blur = Array.isArray(j.blur) ? j.blur.filter(b => Array.isArray(b?.box) && b.box.length === 4 && b.box.every(Number.isFinite)).map(toFrac) : []
