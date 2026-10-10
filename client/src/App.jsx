@@ -39,7 +39,9 @@ import RecruitingScreen from './pages/RecruitingScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
 import WorkDriveCleanup from './pages/WorkDriveCleanup'
+import PhotoScout from './pages/PhotoScout'
 import SoftphonePanel from './components/SoftphonePanel'
+import LiveCallBar from './components/LiveCallBar'
 import TimeClockReview from './components/TimeClockReview'
 import MorningClockIn from './components/MorningClockIn'
 import HRPolicyScreen from './pages/HRPolicyScreen'
@@ -69,6 +71,7 @@ import ScalingScreen from './components/ScalingScreen'
 import TechToday from './pages/TechToday'
 import DispatchMap from './pages/DispatchMap'
 import LiveDay from './pages/LiveDay'
+import MeetingRoom from './pages/MeetingRoom'
 
 // Top-level route check: public pay page and customer portal bypass the main auth flow.
 function getTopLevelRoute() {
@@ -140,6 +143,20 @@ function MainApp() {
         sessionStorage.setItem('adas_estimator_open', ptBack)
         setScreen('estimator')
         const u = new URL(window.location.href); u.searchParams.delete('partstech_return'); window.history.replaceState({}, '', u)
+      }
+      if (new URLSearchParams(window.location.search).get('photoscout')) {   // 📸 Photo Scout Cliq link (2026-10-09)
+        setScreen('photo-scout')
+        const u = new URL(window.location.href); u.searchParams.delete('photoscout'); window.history.replaceState({}, '', u)
+      }
+      const salesQ = new URLSearchParams(window.location.search).get('sales')
+      if (salesQ) {   // 💼 "Sales block in 10 min" push → Live Day with Sales Mode open (2026-10-08)
+        sessionStorage.setItem('adas_sales_mode', '1'); setScreen('live')
+        const u = new URL(window.location.href); u.searchParams.delete('sales'); window.history.replaceState({}, '', u)
+      }
+      const caller = new URLSearchParams(window.location.search).get('caller')
+      if (caller) {   // 📇 "Incoming call" push → caller card (2026-10-05)
+        sessionStorage.setItem('adas_open_caller', caller)
+        const u = new URL(window.location.href); u.searchParams.delete('caller'); u.searchParams.delete('live'); window.history.replaceState({}, '', u)
       }
       const thread = new URLSearchParams(window.location.search).get('thread')
       if (thread) {
@@ -281,6 +298,9 @@ function MainApp() {
     return <LoadingSplash />
   }
 
+  // 🔥 GET SOME! Meeting room — tokened page, no login (launchd opens it in Chrome at 7:40).
+  const meetingToken = (() => { try { return new URLSearchParams(window.location.search).get('meeting') || '' } catch { return '' } })()
+  if (meetingToken) return <MeetingRoom token={meetingToken} />
   if (!user) {
     if (isDemo) return <DemoLandingScreen onLogin={(u) => { setUser(u); setLoading(false) }} />
     return <LoginScreen authError={authError} authErrMsg={authErrMsg} />
@@ -307,6 +327,9 @@ function MainApp() {
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'white' }}>
+      {/* 📞 Live-call bar: who is on the 844 right now + one-tap transfer (Mark 2026-10-05).
+          Everyone incl. techs — Jayden is in the ring cascade. */}
+      {!isDemo && <LiveCallBar user={user} onNavigate={handleNavigate} />}
       {/* Browser softphone — stays MOUNTED app-wide so an incoming call
           pops its banner on any screen, but the idle controls (on-duty
           toggle + dialer) live on the SMS page: all phone + text in one
@@ -425,6 +448,9 @@ function MainApp() {
       )}
       {screen === 'books' && (
         <BooksScreen onBack={() => setScreen('upload')} {...navProps} />
+      )}
+      {screen === 'photo-scout' && (
+        <PhotoScout {...navProps} />
       )}
       {screen === 'ops' && (
         <OpsHub {...navProps} />

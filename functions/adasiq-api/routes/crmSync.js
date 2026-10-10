@@ -1605,6 +1605,12 @@ router.get('/workdrive/spaces', async (req, res) => {
     res.json(out)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// POST /photo-scout?days=&max=&dry=1 — run the Photo Scout now (cron secret). dry=1 counts candidates, no AI spend.
+router.post('/photo-scout', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try { const { scout } = await import('../services/photoScout.js'); res.json({ ok: true, ...(await scout(req, { days: Math.min(Number(req.query.days) || 3, 3650), max: Math.min(Number(req.query.max) || 24, 60), dry: req.query.dry === '1' })) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.post('/workdrive/ops', async (req, res) => {
   if (!wdGuard(req, res)) return
   const ops = Array.isArray(req.body?.ops) ? req.body.ops : []

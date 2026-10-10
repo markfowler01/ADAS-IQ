@@ -107,6 +107,11 @@ import briefingRouter, { sendDailyBriefing, planDay, buildBriefingForPlan } from
 import eveningRouter, { sendEveningCheckin } from './routes/eveningCheckin.js'
 import coachRouter, { runWeeklyReview, computeWeekPlan, deliverWeekPlan, runFridayQ, runFamilyDevotional } from './routes/coach.js'
 
+// 🔤 Brand fonts for every sharp/librsvg render (2026-10-06): librsvg ignores @font-face,
+// so point fontconfig at assets/fonts. Must be set before the first SVG text render.
+{ const __p = (await import('path')).default, __u = await import('url'); const __dir = __p.join(__p.dirname(__u.fileURLToPath(import.meta.url)), 'assets', 'fonts'); process.env.FONTCONFIG_PATH = process.env.FONTCONFIG_PATH || __dir; process.env.FONTCONFIG_FILE = process.env.FONTCONFIG_FILE || __p.join(__dir, 'fonts.conf') }
+
+
 // Fix #2 — Warn loudly if session secret is using insecure default
 if (!process.env.SESSION_SECRET) {
   console.warn('⚠️  SESSION_SECRET is not set — using insecure default. Set this env var in production.')
@@ -280,11 +285,15 @@ app.use('/api/zoho-mirror', requireAuth, requireStaff, zohoMirrorRouter)
 app.use('/api/ar', requireAuth, requireStaff, arRouter)
 app.use('/api/cron/ar', arCronRouter)
 app.use('/api/pipeline', requireAuth, requireStaff, pipelineRouter)
+// 💼 Deals + Sales Mode (2026-10-08) — techs included (Jayden sells)
+app.use('/api/photo-scout', requireAuth, requireStaff, async (req, res, next) => { try { const m = await import('./routes/photoScout.js'); return m.default(req, res, next) } catch (e) { res.status(500).json({ error: e.message }) } })   // 📸 Photo Scout review
+app.use('/api/deals', requireAuth, async (req, res, next) => { try { const m = await import('./routes/deals.js'); return m.default(req, res, next) } catch (e) { res.status(500).json({ error: e.message }) } })
 app.use('/api/cron/pipeline', pipelineCronRouter)
 app.use('/api/recruit', requireAuth, requireStaff, recruitRouter)
 // Public website intake form (absoluteadas.com/careers) — no auth, honeypot inside.
 app.use('/api/public/recruit', recruitPublicRouter)
-app.use('/api/public/report', publicReportRouter)   // 🌐 online report with "Why?" popups (signed per-scrub link)
+app.use('/api/public/report', publicReportRouter)
+app.use('/api/public/huddle', async (req, res, next) => { try { const m = await import('./routes/publicHuddle.js'); return m.default(req, res, next) } catch (e) { res.status(500).json({ error: e.message }) } })   // 🔥 GET SOME! Meeting graphic (tokened)   // 🌐 online report with "Why?" popups (signed per-scrub link)
 app.use('/api/public/shop-answers', shopAnswersPublicRouter)   // 📝 welcome questionnaire (signed per-shop link)
 app.use('/api/public/booking', bookingPublicRouter)  // website: book a calibration / Revenue Snapshot
 app.use('/api/public/tsb', tsbPublicRouter)  // token-checked photo streaming
@@ -318,6 +327,8 @@ app.use('/webhooks/twilio/voice',
   voiceWebhookRouter,
 )
 app.use('/api/voicemails', requireAuth, voicemailsAuthRouter)
+// 📞 live-call bar + transfer (2026-10-05) — techs included, Jayden is in the cascade
+app.use('/api/voice', requireAuth, async (req, res, next) => { try { const { voiceLiveRouter } = await import('./routes/voiceLive.js'); return voiceLiveRouter(req, res, next) } catch (e) { res.status(500).json({ error: e.message }) } })
 app.use('/api/calls', requireAuth, callsAuthRouter)
 app.use('/api/phone-config', requireAuth, requireStaff, phoneConfigRouter)
 

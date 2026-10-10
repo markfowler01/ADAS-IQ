@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import FeedbackModal from './FeedbackModal'
+import VendorRail from './VendorRail.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -51,6 +52,7 @@ const MORE_GROUPS = [
     { id: 'rules',     label: 'Calibration Rules' , icon: '⚙️' },
     { id: 'item-map',  label: 'Item Mapping', adminOnly: true , icon: '🔗' },
     { id: 'wd-cleanup', label: 'WorkDrive Cleanup', ownerOnly: true , icon: '🧹' },
+    { id: 'photo-scout', label: 'Photo Scout', adminOnly: true , icon: '📸' },
     { id: 'messages',  label: 'Messages' , icon: '✉️' },
   ]},
   { label: 'Admin', links: [
@@ -151,11 +153,12 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
         </a>
       </div>
     )}
+    <div className="sticky top-0 z-30">
     <header style={{ backgroundColor: 'white', borderBottom: '1px solid #ebebeb' }}>
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
 
         {/* Left: Logo */}
-        <div className="flex items-center gap-2.5 cursor-pointer flex-shrink-0" onClick={() => navigate('upload')}>
+        <div className="flex items-center gap-2.5 cursor-pointer flex-shrink-0" onClick={() => navigate('live')}>
           <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-8 h-8 object-contain" />
           <span className="text-base font-extrabold tracking-tight" style={{ color: '#1a1a1a' }}>
             Absolute <span style={{ color: ORANGE }}>ADAS</span>
@@ -234,32 +237,6 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
             )}
           </div>
         </nav>
-
-        {/* Reference-tool shortcuts — same four links as the Live Day
-            header, one click from anywhere (Mark 2026-07-11). Desktop
-            only; wide screens (lg) so the primary nav never crowds. */}
-        <div className="hidden lg:flex items-center gap-1 flex-shrink-0">
-          <a href="https://my.alldata.com/migrate/#/home" target="_blank" rel="noopener noreferrer"
-            className="text-[11px] px-2 py-1 rounded-md font-semibold"
-            style={{ backgroundColor: '#1e40af', color: 'white' }}
-            title="Open AllData">AllData</a>
-          <a href="https://ops.kinetic.auto/id/" target="_blank" rel="noopener noreferrer"
-            className="text-[11px] px-2 py-1 rounded-md font-semibold"
-            style={{ backgroundColor: '#0e7490', color: 'white' }}
-            title="Open Kinetic">Kinetic</a>
-          <a href="https://portal.1sourceadas.com/" target="_blank" rel="noopener noreferrer"
-            className="text-[11px] px-2 py-1 rounded-md font-semibold"
-            style={{ backgroundColor: '#15803d', color: 'white' }}
-            title="Open 1Source ADAS — our scrubber (Mark 2026-09-30)">1Source</a>
-          <a href="https://dh.identifix.com/Default/LogOnIdentifix?sessionTerminated=True" target="_blank" rel="noopener noreferrer"
-            className="text-[11px] px-2 py-1 rounded-md font-semibold"
-            style={{ backgroundColor: '#7c2d12', color: 'white' }}
-            title="Open Identifix">Identifix</a>
-          <a href="https://opusccp.com/" target="_blank" rel="noopener noreferrer"
-            className="text-[11px] px-2 py-1 rounded-md font-semibold"
-            style={{ backgroundColor: '#4c1d95', color: 'white' }}
-            title="Open Opus CCP">Opus CCP</a>
-        </div>
 
         {/* Right: Avatar + actions + mobile hamburger */}
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -451,6 +428,8 @@ export default function Navbar({ user, onLogout, currentScreen, onNavigate }) {
         </div>
       )}
     </header>
+    {user && <VendorRail onNavigate={navigate} />}
+    </div>
 
     {showFeedback && (
       <FeedbackModal user={user} onClose={() => setShowFeedback(false)} />

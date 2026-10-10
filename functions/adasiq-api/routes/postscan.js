@@ -252,9 +252,11 @@ router.post('/run', async (req, res) => {
 
         try {
           const buffer = await downloadAccountAttachment(mailToken, accountId, folderId, messageId, attachmentId)
-          await uploadFileToFolder(folder.folderId, filename, buffer, wdToken)
+          const up = await uploadFileToFolder(folder.folderId, filename, buffer, wdToken)
           console.log(`[postscan] Uploaded "${filename}" to folder "${folder.folderName}"`)
           uploadedCount++
+          // 🔬 Scan lifecycle: tick the car's pre/post box and attach the PDF to its invoice (2026-10-08).
+          try { const L = await import('../services/scanLifecycle.js'); const r = await L.recordScanPdf(req, folder.matchedRO || roNumber, { fileId: up?.fileId || '', name: filename, buffer }); console.log(`[postscan] scan record: ${JSON.stringify(r)}`) } catch (e) { console.warn('[postscan] scan record failed (non-fatal):', e.message) }
         } catch (uploadErr) {
           console.error(`[postscan] Upload failed for "${filename}":`, uploadErr.message)
           errors.push({ subject, roNumber, filename, error: uploadErr.message })
@@ -291,6 +293,34 @@ router.post('/run', async (req, res) => {
   } catch (e) {
     console.warn('[postscan] morning-kickoff piggyback failed (non-fatal):', e.message)
   }
+  // 💼 Deals: 6 AM due list (06:00–07:30 PT) and the daily sweep (20:00–21:59 PT), once a day each.
+  try {
+    const hourPT = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(new Date())) % 24
+    const day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
+    const appD = (await import('zcatalyst-sdk-node')).default.initialize(req, { type: 'advancedio' })
+    const once = async (key, fn) => { const st = await appD.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key}' LIMIT 1`); if (st?.length) return; await appD.datastore().table('AppConfig').insertRow({ config_key: key, config_value: new Date().toISOString() }).catch(() => {}); await Promise.race([fn(), new Promise(r => setTimeout(r, 15000))]) }
+    const D = await import('../services/deals.js')
+    if (hourPT >= 6 && hourPT <= 7) await once(`deals_morning:${day}`, async () => { const l = await D.dueList(req); if (!l.open) return; const { postToCliqChannel } = await import('../services/cliq.js'); const ch = (await appD.zcql().executeZCQLQuery("SELECT config_value FROM AppConfig WHERE config_key = 'deals_channel' LIMIT 1"))?.[0]?.AppConfig?.config_value || 'technicians'; await postToCliqChannel(ch, D.formatDue(l)) })
+    if (hourPT >= 20 && hourPT <= 21) await once(`deals_sweep:${day}`, () => D.dailySweep(req))
+  } catch (e) { console.warn('[postscan] deals piggyback (non-fatal):', e.message) }
+  // 📸 Photo Scout piggyback (Mark 2026-10-09) — 20:00–05:00 PT, one pass per hour, capped $3/day.
+  try { const { maybeScout } = await import('../services/photoScout.js'); await Promise.race([maybeScout(req), new Promise(r => setTimeout(r, 25000))]) } catch (e) { console.warn('[postscan] photo scout piggyback (non-fatal):', e.message) }
+  // 🗄 Auto-archive complete scrubs after the 7-day grace (once a day, 20:00–21:59 PT).
+  try {
+    const hourPT = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(new Date())) % 24
+    if (hourPT >= 20 && hourPT <= 21) {
+      const day = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
+      const appC = (await import('zcatalyst-sdk-node')).default.initialize(req, { type: 'advancedio' })
+      const stamp = await appC.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = 'scrub_autoarchive:${day}' LIMIT 1`)
+      if (!stamp?.length) {
+        await appC.datastore().table('AppConfig').insertRow({ config_key: `scrub_autoarchive:${day}`, config_value: new Date().toISOString() }).catch(() => {})
+        const L = await import('../services/scanLifecycle.js'); const r = await Promise.race([L.autoArchiveCompleted(req), new Promise(res => setTimeout(() => res({ timeout: true }), 15000))])
+        console.log(`[postscan] auto-archive: ${JSON.stringify(r)}`)
+      }
+    }
+  } catch (e) { console.warn('[postscan] auto-archive (non-fatal):', e.message) }
+  // 🌅 Morning Huddle backup trigger (07:25–08:45 PT, once/day) — launchd + GitHub are primary.
+  try { const { maybeSendHuddle, maybePostHuddle } = await import('../services/morningHuddle.js'); await Promise.race([maybeSendHuddle(req), new Promise(r => setTimeout(r, 20000))]); await Promise.race([maybePostHuddle(req), new Promise(r => setTimeout(r, 15000))]) } catch (e) { console.warn('[postscan] huddle piggyback (non-fatal):', e.message) }
 
   // Schedule-digest piggyback (Mark 2026-08-10) — 6am PT daily calendar
   // digest to #dispatch (today/tomorrow/10-day/unconfirmed/overdue/
