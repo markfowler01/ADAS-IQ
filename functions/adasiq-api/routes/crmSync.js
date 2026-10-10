@@ -1586,6 +1586,25 @@ router.get('/workdrive/info', async (req, res) => {
     res.json({ ok: true, id: r.data?.data?.id, name: a.name, parent_id: a.parent_id, is_folder: a.is_folder, type: a.type, library_id: a.library_id, team_id: a.team_id })
   } catch (e) { res.status(e.response?.status || 500).json({ error: e.message, body: e.response?.data }) }
 })
+// GET /workdrive/spaces?team=<team_id> → team folders (workspaces) + the token owner's private space ("My Folders")
+router.get('/workdrive/spaces', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const { getAccessToken } = await import('../services/zoho.js'); const axios = (await import('axios')).default
+    const H = { Authorization: `Zoho-oauthtoken ${await getAccessToken()}`, Accept: 'application/vnd.api+json' }
+    const API = 'https://www.zohoapis.com/workdrive/api/v1'; const team = String(req.query.team || '')
+    const out = { ok: true, workspaces: [], privatespace: null, errors: [] }
+    try { const r = await axios.get(`${API}/teams/${team}/workspaces`, { headers: H, timeout: 15000 }); out.workspaces = (r.data?.data || []).map(w => ({ id: w.id, name: w.attributes?.name })) } catch (e) { out.errors.push('workspaces: ' + (e.response?.status || '') + ' ' + JSON.stringify(e.response?.data || e.message).slice(0, 200)) }
+    try {
+      const me = await axios.get(`${API}/teams/${team}/currentuser`, { headers: H, timeout: 15000 })
+      const memberId = me.data?.data?.id
+      const ps = await axios.get(`${API}/users/${memberId}/privatespace`, { headers: H, timeout: 15000 })
+      const d = Array.isArray(ps.data?.data) ? ps.data.data[0] : ps.data?.data
+      out.privatespace = { id: d?.id, name: d?.attributes?.name, owner: me.data?.data?.attributes?.email_id || me.data?.data?.attributes?.display_name }
+    } catch (e) { out.errors.push('privatespace: ' + (e.response?.status || '') + ' ' + JSON.stringify(e.response?.data || e.message).slice(0, 200)) }
+    res.json(out)
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.post('/workdrive/ops', async (req, res) => {
   if (!wdGuard(req, res)) return
   const ops = Array.isArray(req.body?.ops) ? req.body.ops : []
