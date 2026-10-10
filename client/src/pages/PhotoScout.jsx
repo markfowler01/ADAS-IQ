@@ -46,7 +46,7 @@ export default function PhotoScout() {
         <h1 className="text-2xl font-extrabold" style={{ color: INK }}>📸 Photo Scout</h1>
         <button onClick={run} disabled={running} className="text-sm font-extrabold rounded-xl px-4 py-2 text-white disabled:opacity-60" style={{ backgroundColor: ORANGE }}>{running ? 'Scouting…' : '🔎 Scout now'}</button>
       </div>
-      <p className="text-sm mb-3" style={{ color: '#666' }}>Every night the scout looks at the calibration setup shots in the job folders, keeps the ones worth posting, and checks them for plates, VINs, faces and shop logos. Picks are also copied to WorkDrive → 00_Brand Assets → 04_Photos → 03_Calibrations → ✨ Social picks.</p>
+      <p className="text-sm mb-3" style={{ color: '#666' }}>Every night the scout looks at the calibration setup shots in the job folders, keeps the ones worth posting, and checks them for plates, VINs, faces and shop logos. Plates, VINs and faces are blurred automatically. Picks and anything you approve are copied (GPS stripped) to WorkDrive → 00_Brand Assets → 04_Photos → 03_Calibrations → ✨ Social picks.</p>
       {note && <div className="rounded-xl px-3 py-2 mb-3 text-sm font-semibold" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>{note}</div>}
       <div className="flex gap-2 flex-wrap mb-4">
         {TABS.map(t => <button key={t.id} onClick={() => setTab(t.id)} className="text-sm font-bold rounded-full px-3 py-1.5" style={tab === t.id ? { backgroundColor: INK, color: '#fff' } : { backgroundColor: '#fff', color: INK, border: '1px solid #e0dbd6' }}>{t.label}</button>)}
@@ -60,6 +60,7 @@ export default function PhotoScout() {
                 <Thumb fileId={r.pick_file_id || r.file_id} />
                 <span className="absolute top-2 left-2 text-sm font-extrabold rounded-full px-2.5 py-1" style={{ backgroundColor: r.score >= 9 ? '#166534' : r.score >= 7 ? ORANGE : '#6b7280', color: '#fff' }}>⭐ {r.score}/10</span>
                 {!r.safe && <span className="absolute top-2 right-2 text-xs font-bold rounded-full px-2 py-1" style={{ backgroundColor: '#fee2e2', color: '#991b1b' }}>⚠ needs blur</span>}
+                {r.blurred && <span className="absolute top-2 right-2 text-xs font-bold rounded-full px-2 py-1" style={{ backgroundColor: '#eef2ff', color: '#3730a3' }} title="Plate / VIN / faces blurred on this copy">🫥 blurred</span>}
               </div>
               <div className="p-3 flex flex-col gap-1.5 flex-1">
                 <div className="text-sm font-extrabold" style={{ color: INK }}>{r.angle || r.what || 'Calibration shot'}</div>

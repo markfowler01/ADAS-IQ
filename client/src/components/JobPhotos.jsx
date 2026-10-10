@@ -23,7 +23,7 @@ export const SLOTS = [
   { key: 'rf',         n: 4, label: 'Right front corner',         short: 'RF corner',  hint: 'Same shot from the passenger headlight.' },
   { key: 'rr',         n: 5, label: 'Right rear corner',          short: 'RR corner',  hint: 'Passenger tail light. Whole car in.' },
   { key: 'lr',         n: 6, label: 'Left rear corner',           short: 'LR corner',  hint: 'Driver tail light. Whole car in.' },
-  { key: 'setup',      n: 7, label: 'Calibration setup',          short: 'Setup',      hint: 'Targets, rig, tablet. Snap as many as you want.', multi: true },
+  { key: 'setup',      n: 7, label: 'Calibration setup',          short: 'Setup',      hint: 'Targets, rig, tablet. Snap as many as you want. 📸 For one good one: step back so the whole target and front of the car fit, keep the plate out of frame, hold the phone level.', multi: true },
   { key: 'odo_after',  n: 8, label: 'Cluster — odometer after calibration', short: 'Odo after', hint: 'After the test drive. Needs more than 1 mile over the first shot.' },
 ]
 export const MIN_MILES = 1.0
@@ -784,7 +784,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
             </div>
           )}
           {noCluster
-            ? <div className="px-3 py-2 text-xs font-bold" style={{ borderTop: '1px solid #f1ede9', backgroundColor: '#f0f9ff', color: '#0369a1' }}>🔧 Repair-shop job — no cluster shots, test drive or tire check needed.</div>
+            ? <div className="px-3 py-2 text-xs font-bold" style={{ borderTop: '1px solid #f1ede9', backgroundColor: '#e6f4f4', color: '#1F8B8B' }}>🔧 Repair-shop job — no cluster shots, test drive or tire check needed.</div>
             : <div className="px-3 py-2 text-xs font-bold" style={{ borderTop: '1px solid #f1ede9', backgroundColor: prog.miles.ok ? '#dcfce7' : '#fff', color: prog.miles.ok ? GREEN : (prog.miles.delta != null ? RED : '#888') }}>
             🚗 Test drive: {prog.miles.delta == null ? 'need both odometer shots' : `${prog.miles.delta} mi ${prog.miles.ok ? '✓' : `— need more than ${MIN_MILES}`}`}
           </div>}
@@ -795,7 +795,7 @@ export function JobPhotosSheet({ job: initialJob, onClose, onJobUpdated, onCompl
             {/* Tires no longer block here (2026-09-30): they default to 36/36 on the Ready checks. */}
             <button type="button" onClick={() => onComplete && onComplete(job, undefined, pendingPayload)}
               className="w-full rounded-xl py-3 text-sm font-bold text-white"
-              style={{ backgroundColor: '#7e22ce' }}>
+              style={{ backgroundColor: '#0A0A0A' }}>
               {prog.complete ? '🟢 Continue → Ready to Invoice'
                 : coveredByPhone ? `🟢 Continue → Ready to Invoice (${onPhone.length} photo${onPhone.length === 1 ? '' : 's'} still uploading — fine)`
                 : `🟢 Continue → Ready to Invoice (${prog.missing.length} photo${prog.missing.length === 1 ? '' : 's'} still owed)`}

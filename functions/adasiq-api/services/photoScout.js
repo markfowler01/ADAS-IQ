@@ -63,10 +63,29 @@ export async function listScout(req, { state = '', limit = 200 } = {}) {
   return (r || []).map(x => { const o = x[TABLE]; let d = {}; try { d = JSON.parse(o.ps_details || '{}') } catch { /* fine */ } return { id: o.ROWID, file_id: o.ps_file_id, folder_id: o.ps_folder_id, folder: o.ps_folder_name, file: o.ps_file_name, score: Number(o.ps_score) || 0, safe: o.ps_safe === 'yes', state: o.ps_state, pick_file_id: o.ps_pick_file_id, scored_at: o.ps_scored_at, ...d } })
 }
 export async function setState(req, rowId, state) {
-  if (!['pick', 'maybe', 'approved', 'used', 'rejected', 'skip'].includes(state)) throw Object.assign(new Error('bad state'), { status: 400 })
-  await catalyst.initialize(req).datastore().table(TABLE).updateRow({ ROWID: String(rowId), ps_state: state })
+  if (!['pick', 'maybe', 'approved', 'used', 'rejected', 'skip', 'held'].includes(state)) throw Object.assign(new Error('bad state'), { status: 400 })
+  const patch = { ROWID: String(rowId), ps_state: state }
+  // 👍 Approve puts the photo in ✨ Social picks (Mark 2026-10-09): a blurred Maybe copy moves
+  // up from the Maybe subfolder; a photo with no copy yet gets the original copied in.
+  if (state === 'approved') {
+    const r = (await catalyst.initialize(req).zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${Number(rowId)} LIMIT 1`).catch(() => []))?.[0]?.[TABLE]
+    if (r) {
+      let d = {}; try { d = JSON.parse(r.ps_details || '{}') } catch { /* fine */ }
+      const { getAccessToken } = await import('./zoho.js'); const W = await import('./workdrive.js'); const token = await getAccessToken()
+      const picks = await picksFolder(req, token)
+      if (r.ps_pick_file_id && d.copy_in === 'maybe') { await W.moveFile(r.ps_pick_file_id, picks, token); d.copy_in = 'picks' }
+      else if (!r.ps_pick_file_id) {
+        const { buffer, contentType } = await W.downloadFile(r.ps_file_id, token)
+        patch.ps_pick_file_id = (await W.uploadFileToFolder(picks, pickName(r.ps_score, r.ps_folder_name, d.angle, 'x.jpg'), await clean(buffer), token, 'image/jpeg'))?.fileId || ''
+        d.copy_in = 'picks'
+      }
+      patch.ps_details = JSON.stringify(d).slice(0, 9500)
+    }
+  }
+  await catalyst.initialize(req).datastore().table(TABLE).updateRow(patch)
   return { ok: true }
 }
+const pickName = (score, folderName, angle, fileName) => `${score} · ${String(folderName || '').split(' — ').slice(-1)[0].slice(0, 60)} · ${String(angle || 'calibration').slice(0, 40)}.${(String(fileName || '').split('.').pop() || 'jpg').toLowerCase()}`.replace(/[\\/:*?"<>|]+/g, ' ')
 
 // ── WorkDrive ───────────────────────────────────────────────────
 async function picksFolder(req, token) {
@@ -80,6 +99,40 @@ async function picksFolder(req, token) {
   const id = ck.find(k => /social picks/i.test(k.name))?.id || (await W.createFolderUnder(cal, '✨ Social picks', token)).folderId
   await cfgSet(req, 'photo_scout_picks_folder', id)
   return id
+}
+async function maybeFolder(req, token) {
+  const cached = await cfgGet(req, 'photo_scout_maybe_folder'); if (cached?.value) return cached.value
+  const W = await import('./workdrive.js'); const picks = await picksFolder(req, token)
+  const id = (await W.listChildren(picks, token, { folders: true })).find(k => /maybe/i.test(k.name))?.id || (await W.createFolderUnder(picks, '🤔 Maybe (blurred copies)', token)).folderId
+  await cfgSet(req, 'photo_scout_maybe_folder', id)
+  return id
+}
+
+// ── 🫥 privacy blur (Mark 2026-10-09: "build it") ───────────────
+// Boxes come from the judge as fractions of the image (0–1). Each is padded, then the region
+// is pixelated + blurred so a plate/VIN/face can't be read back, and composited onto the
+// full-resolution original.
+// Upright, full-size, no metadata (iPhone shots carry the shop's GPS location).
+const clean = buffer => sharp(buffer).rotate().jpeg({ quality: 92 }).toBuffer()
+
+export async function blurRegions(buffer, boxes = []) {
+  const base = sharp(buffer).rotate()
+  const { data, info } = await base.toBuffer({ resolveWithObject: true })
+  const W = info.width, H = info.height
+  const layers = []
+  for (const b of boxes) {
+    let [x0, y0, x1, y1] = (b?.box || b || []).map(Number)
+    if (![x0, y0, x1, y1].every(Number.isFinite)) continue
+    if (x1 < x0) [x0, x1] = [x1, x0]; if (y1 < y0) [y0, y1] = [y1, y0]
+    const pw = Math.max((x1 - x0) * 0.3, 0.02), ph = Math.max((y1 - y0) * 0.45, 0.02)
+    const left = Math.max(0, Math.floor((x0 - pw) * W)), top = Math.max(0, Math.floor((y0 - ph) * H))
+    const width = Math.min(W - left, Math.ceil((x1 - x0 + 2 * pw) * W)), height = Math.min(H - top, Math.ceil((y1 - y0 + 2 * ph) * H))
+    if (width < 4 || height < 4) continue
+    const tiny = await sharp(data).extract({ left, top, width, height }).resize(Math.max(2, Math.round(width / 24)), Math.max(2, Math.round(height / 24)), { fit: 'fill' }).toBuffer()
+    const block = await sharp(tiny).resize(width, height, { fit: 'fill', kernel: 'nearest' }).blur(Math.max(3, Math.min(width, height) / 18)).toBuffer()
+    layers.push({ input: block, left, top })
+  }
+  return sharp(data).composite(layers).jpeg({ quality: 90 }).toBuffer()
 }
 
 // ── the two looks ───────────────────────────────────────────────
@@ -101,9 +154,14 @@ Privacy/safety — flag anything that must NOT be posted as-is:
 - licence plate readable, VIN readable, customer name/RO/claim number, phone screen with customer data
 - a person's face (techs are OK only if the photo is clearly about the work, but still flag it)
 - another company's sign, logo or branding prominent (body shop name, insurer) — flag it, the shop may not want to be shown
+For every readable licence plate, VIN, customer name/RO/claim number, person's face, or prominent other-company sign/logo,
+give a box in "blur": [x0,y0,x1,y1] as fractions of the image width/height (0 = left/top, 1 = right/bottom), drawn generously around it.
+Empty array if nothing needs blurring.
 Return ONLY raw JSON:
-{"score":<1-10 final post-worthiness>,
+{"score":<1-10 final post-worthiness, judged as if the blur below were already applied>,
  "safe":<true if it can be posted as-is or with the suggested crop, false if it needs blurring or can't be used>,
+ "blur":[{"what":"plate|vin|face|text|logo","box":[x0,y0,x1,y1]}],
+ "safe_after_blur":<true if blurring exactly those boxes makes it postable; false if something else rules it out>,
  "issues":["short phrases, empty if none"],
  "crop":"<how to crop/straighten, or 'none'>",
  "subject":"<what the photo shows, e.g. 'front radar target set up on a 2023 Subaru Outback'>",
@@ -159,23 +217,9 @@ export async function scout(req, { days = 3, max = MAX_PER_RUN, dry = false } = 
       try { const { buffer } = await W.downloadFile(file.id, token); jpeg = await sharp(buffer).rotate().resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer() }
       catch (e) { await saveRow(req, { ps_file_id: file.id, ps_folder_id: f.id, ps_folder_name: f.name.slice(0, 250), ps_file_name: file.name.slice(0, 250), ps_score: 0, ps_safe: 'no', ps_state: 'error', ps_details: JSON.stringify({ error: e.message.slice(0, 200) }), ps_scored_at: new Date().toISOString() }); continue }
       const s = await look(SCREEN_MODEL, SCREEN_PROMPT, jpeg, 120).catch(() => null); out.screened++; await addSpend(req, COST.screen)
-      let score = Number(s?.score) || 0, details = { what: s?.what || '' }, safe = false
-      if (score >= 6) {
-        const j = await look(JUDGE_MODEL, JUDGE_PROMPT, jpeg, 500).catch(() => null); out.judged++; await addSpend(req, COST.judge)
-        if (j) { score = Number(j.score) || score; safe = j.safe === true; details = { ...details, issues: j.issues || [], crop: j.crop || '', subject: j.subject || '', angle: j.angle || '', caption: j.caption || '' } }
-      }
-      const isPick = score >= PICK_SCORE && safe
-      let pickId = ''
-      if (isPick) {
-        try {
-          pickFolder = pickFolder || await picksFolder(req, token)
-          const { buffer, contentType } = await W.downloadFile(file.id, token)
-          const name = `${score} · ${f.name.split(' — ').slice(-1)[0].slice(0, 60)} · ${(details.angle || 'calibration').slice(0, 40)}.${(file.name.split('.').pop() || 'jpg').toLowerCase()}`.replace(/[\\/:*?"<>|]+/g, ' ')
-          pickId = (await W.uploadFileToFolder(pickFolder, name, buffer, token, contentType || 'image/jpeg'))?.fileId || ''
-          out.picked.push({ score, folder: f.name, angle: details.angle, caption: details.caption })
-        } catch (e) { details.copy_error = e.message.slice(0, 160) }
-      }
-      await saveRow(req, { ps_file_id: file.id, ps_folder_id: f.id, ps_folder_name: f.name.slice(0, 250), ps_file_name: file.name.slice(0, 250), ps_score: score, ps_safe: safe ? 'yes' : 'no', ps_state: isPick ? 'pick' : (safe && score >= PICK_SCORE - 1 ? 'maybe' : 'skip'), ps_details: JSON.stringify(details).slice(0, 9500), ps_pick_file_id: pickId, ps_scored_at: new Date().toISOString() })
+      let score = Number(s?.score) || 0
+      const res = await judgeAndFile(req, token, { file, folder: f, jpeg, score, details: { what: s?.what || '' }, out })
+      await saveRow(req, { ps_file_id: file.id, ps_folder_id: f.id, ps_folder_name: f.name.slice(0, 250), ps_file_name: file.name.slice(0, 250), ...res.row, ps_scored_at: new Date().toISOString() })
     }
     if (!dry && budget > 0) markDone(f.id, f.modified)   // inner loop finished this folder
   }
@@ -191,9 +235,60 @@ export async function scout(req, { days = 3, max = MAX_PER_RUN, dry = false } = 
   return out
 }
 
+// Opus look (when the screen says ≥ 6) → blur if needed → copy into Social picks / Maybe.
+async function judgeAndFile(req, token, { file, folder, jpeg, score, details, out }) {
+  const W = await import('./workdrive.js')
+  let safe = false, blur = []
+  if (score >= 6) {
+    const j = await look(JUDGE_MODEL, JUDGE_PROMPT, jpeg, 700).catch(() => null); out.judged++; await addSpend(req, COST.judge)
+    if (j) {
+      score = Number(j.score) || score
+      blur = Array.isArray(j.blur) ? j.blur.filter(b => Array.isArray(b?.box) && b.box.length === 4) : []
+      safe = j.safe === true || (j.safe_after_blur === true && blur.length > 0)
+      details = { ...details, issues: j.issues || [], crop: j.crop || '', subject: j.subject || '', angle: j.angle || '', caption: j.caption || '', blur_boxes: blur.map(b => ({ what: b.what, box: b.box })) }
+    }
+  }
+  const needsBlur = safe && blur.length > 0
+  const isPick = score >= PICK_SCORE && safe
+  const isMaybe = !isPick && safe && score >= PICK_SCORE - 1
+  let pickId = ''
+  if (isPick || (isMaybe && needsBlur)) {
+    try {
+      const { buffer, contentType } = await W.downloadFile(file.id, token)
+      const body = needsBlur ? await blurRegions(buffer, blur) : await clean(buffer)   // re-encoded = no GPS/EXIF
+      const dest = isPick ? await picksFolder(req, token) : await maybeFolder(req, token)
+      pickId = (await W.uploadFileToFolder(dest, pickName(score, folder.name, details.angle, 'x.jpg'), body, token, 'image/jpeg'))?.fileId || ''
+      details.copy_in = isPick ? 'picks' : 'maybe'; if (needsBlur) details.blurred = true
+      if (isPick) out.picked.push({ score, folder: folder.name, angle: details.angle, caption: details.caption, blurred: needsBlur })
+    } catch (e) { details.copy_error = e.message.slice(0, 160) }
+  }
+  return { row: { ps_score: score, ps_safe: safe ? 'yes' : 'no', ps_state: isPick ? 'pick' : isMaybe ? 'maybe' : 'skip', ps_details: JSON.stringify(details).slice(0, 9500), ps_pick_file_id: pickId } }
+}
+
+/** Second chance for good shots held back for privacy (score ≥ 6, not safe): judge again with blur. */
+export async function rejudgeHeld(req, { max = 8 } = {}) {
+  const { getAccessToken } = await import('./zoho.js'); const W = await import('./workdrive.js'); const token = await getAccessToken()
+  const out = { judged: 0, picked: [], maybe: 0, still_held: 0, spend_today: 0 }
+  const rows = (await catalyst.initialize(req).zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ps_score >= 6 AND ps_safe = 'no' AND ps_state = 'skip' LIMIT ${Math.min(Number(max) || 8, 20)}`).catch(() => [])).map(x => x[TABLE])
+  for (const r of rows) {
+    if (/^SMS Photos/i.test(r.ps_folder_name || '')) { await catalyst.initialize(req).datastore().table(TABLE).updateRow({ ROWID: r.ROWID, ps_state: 'rejected' }); continue }
+    if (await spentToday(req) > DAILY_CAP_USD) break
+    let d = {}; try { d = JSON.parse(r.ps_details || '{}') } catch { /* fine */ }
+    const { buffer } = await W.downloadFile(r.ps_file_id, token)
+    const jpeg = await sharp(buffer).rotate().resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer()
+    const res = await judgeAndFile(req, token, { file: { id: r.ps_file_id, name: r.ps_file_name }, folder: { name: r.ps_folder_name }, jpeg, score: 6, details: { what: d.what || '' }, out })
+    const st = res.row.ps_state === 'skip' ? 'held' : res.row.ps_state
+    if (st === 'maybe') out.maybe++; if (st === 'held') out.still_held++
+    await catalyst.initialize(req).datastore().table(TABLE).updateRow({ ROWID: r.ROWID, ...res.row, ps_state: st, ps_scored_at: new Date().toISOString() })
+  }
+  out.spend_today = await spentToday(req)
+  if (out.picked.length) await announce(req, out.picked).catch(() => {})
+  return out
+}
+
 async function announce(req, picked) {
   const { postToCliqChannel, SALES_CHANNEL } = await import('./cliq.js')
-  const lines = picked.slice(0, 6).map(p => `• *${p.score}/10* · ${p.angle || p.folder}\n   _${p.caption || ''}_`).join('\n')
+  const lines = picked.slice(0, 6).map(p => `• *${p.score}/10*${p.blurred ? ' 🫥' : ''} · ${p.angle || p.folder}\n   _${p.caption || ''}_`).join('\n')
   await postToCliqChannel(SALES_CHANNEL, `📸 *Photo Scout* found ${picked.length} post-worthy calibration shot${picked.length === 1 ? '' : 's'}\n${lines}\nThey're in 00_Brand Assets → 04_Photos → 03_Calibrations → ✨ Social picks. Review: https://app.adas-iq.com/app/?photoscout=1`)
 }
 
