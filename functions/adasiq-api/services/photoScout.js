@@ -130,20 +130,28 @@ export async function scout(req, { days = 3, max = MAX_PER_RUN, dry = false } = 
   const since = Date.now() - days * 86400000
   const out = { folders: 0, candidates: 0, screened: 0, judged: 0, picked: [], skipped_cap: false, spend_today: 0 }
   const folders = (await W.listChildren(JOB_ROOT, token, { folders: true }))
-    .filter(f => !/^530 Planner Backups|^ADAS IQ Backups|^CCC Inbox|^Scrub Library|test/i.test(f.name))
+    .filter(f => !/^530 Planner Backups|^ADAS IQ Backups|^CCC Inbox|^Scrub Library|^SMS Photos|^Absolute ADAS Candidates|^TSB|test/i.test(f.name))
     .filter(f => Number(f.modified || f.created || 0) >= since || days >= 3650)
     .sort((a, b) => Number(b.modified || 0) - Number(a.modified || 0))
   let budget = max; let pickFolder = ''
+  // Folders already fully scouted at their current modified time are skipped without a
+  // WorkDrive call (a full re-list of every folder per batch tripped WorkDrive's 429 limit).
+  let done = {}; try { done = JSON.parse((await cfgGet(req, 'photo_scout_folders_done'))?.value || '{}') } catch { done = {} }
+  const markDone = (id, mod) => { done[id] = Number(mod || 0) }
+  try {
   for (const f of folders) {
     if (budget <= 0) break
+    if (done[f.id] && done[f.id] === Number(f.modified || 0)) continue
     out.folders++
     const files = (await W.listChildren(f.id, token, { folders: false })).filter(x => IMG.test(x.name) && (/^07 setup/i.test(x.name) || !SLOT_NAME.test(x.name)))
-    if (!files.length) continue
+    if (!files.length) { markDone(f.id, f.modified); continue }
     const seen = await seenInFolder(req, f.id)
+    if (files.every(x => seen.has(x.id))) { markDone(f.id, f.modified); continue }
+    let left = 0
     for (const file of files) {
       if (budget <= 0) break
       if (seen.has(file.id)) continue
-      out.candidates++
+      out.candidates++; left++
       if (dry) { budget--; continue }
       if (await spentToday(req) > DAILY_CAP_USD) { out.skipped_cap = true; budget = 0; break }
       budget--
@@ -169,6 +177,14 @@ export async function scout(req, { days = 3, max = MAX_PER_RUN, dry = false } = 
       }
       await saveRow(req, { ps_file_id: file.id, ps_folder_id: f.id, ps_folder_name: f.name.slice(0, 250), ps_file_name: file.name.slice(0, 250), ps_score: score, ps_safe: safe ? 'yes' : 'no', ps_state: isPick ? 'pick' : (safe && score >= PICK_SCORE - 1 ? 'maybe' : 'skip'), ps_details: JSON.stringify(details).slice(0, 9500), ps_pick_file_id: pickId, ps_scored_at: new Date().toISOString() })
     }
+    if (!dry && budget > 0) markDone(f.id, f.modified)   // inner loop finished this folder
+  }
+  } catch (e) {
+    if (e.response?.status === 429 || /429/.test(e.message)) out.rate_limited = true   // stop quietly; next run resumes
+    else throw e
+  } finally {
+    const keep = Object.fromEntries(Object.entries(done).filter(([id]) => folders.some(f => f.id === id)))
+    if (!dry) await cfgSet(req, 'photo_scout_folders_done', JSON.stringify(keep)).catch(() => {})
   }
   out.spend_today = await spentToday(req)
   if (out.picked.length) await announce(req, out.picked).catch(() => {})
