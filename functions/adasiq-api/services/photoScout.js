@@ -63,7 +63,7 @@ export async function listScout(req, { state = '', limit = 200 } = {}) {
   return (r || []).map(x => { const o = x[TABLE]; let d = {}; try { d = JSON.parse(o.ps_details || '{}') } catch { /* fine */ } return { id: o.ROWID, file_id: o.ps_file_id, folder_id: o.ps_folder_id, folder: o.ps_folder_name, file: o.ps_file_name, score: Number(o.ps_score) || 0, safe: o.ps_safe === 'yes', state: o.ps_state, pick_file_id: o.ps_pick_file_id, scored_at: o.ps_scored_at, ...d } })
 }
 export async function setState(req, rowId, state) {
-  if (!['pick', 'approved', 'used', 'rejected', 'skip'].includes(state)) throw Object.assign(new Error('bad state'), { status: 400 })
+  if (!['pick', 'maybe', 'approved', 'used', 'rejected', 'skip'].includes(state)) throw Object.assign(new Error('bad state'), { status: 400 })
   await catalyst.initialize(req).datastore().table(TABLE).updateRow({ ROWID: String(rowId), ps_state: state })
   return { ok: true }
 }
@@ -167,7 +167,7 @@ export async function scout(req, { days = 3, max = MAX_PER_RUN, dry = false } = 
           out.picked.push({ score, folder: f.name, angle: details.angle, caption: details.caption })
         } catch (e) { details.copy_error = e.message.slice(0, 160) }
       }
-      await saveRow(req, { ps_file_id: file.id, ps_folder_id: f.id, ps_folder_name: f.name.slice(0, 250), ps_file_name: file.name.slice(0, 250), ps_score: score, ps_safe: safe ? 'yes' : 'no', ps_state: isPick ? 'pick' : 'skip', ps_details: JSON.stringify(details).slice(0, 9500), ps_pick_file_id: pickId, ps_scored_at: new Date().toISOString() })
+      await saveRow(req, { ps_file_id: file.id, ps_folder_id: f.id, ps_folder_name: f.name.slice(0, 250), ps_file_name: file.name.slice(0, 250), ps_score: score, ps_safe: safe ? 'yes' : 'no', ps_state: isPick ? 'pick' : (safe && score >= PICK_SCORE - 1 ? 'maybe' : 'skip'), ps_details: JSON.stringify(details).slice(0, 9500), ps_pick_file_id: pickId, ps_scored_at: new Date().toISOString() })
     }
   }
   out.spend_today = await spentToday(req)

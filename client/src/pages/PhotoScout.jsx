@@ -6,6 +6,7 @@ import { API_BASE, apiFetch } from '../utils/api.js'
 const ORANGE = '#CD4419', INK = '#1a1a1a'
 const TABS = [
   { id: 'pick', label: '✨ New picks' },
+  { id: 'maybe', label: '🤔 Maybe' },
   { id: 'approved', label: '👍 Approved' },
   { id: 'used', label: '📣 Posted' },
   { id: 'rejected', label: '🚫 Passed' },
