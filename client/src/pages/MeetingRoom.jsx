@@ -18,13 +18,20 @@ export default function MeetingRoom({ token }) {
   const [err, setErr] = useState('')
   const [started, setStarted] = useState(false)
   const [musicOn, setMusicOn] = useState(true)
+  const musicOnRef = useRef(true)
   const [playing, setPlaying] = useState(false)       // Spotify actually playing (playback_update)
   const [autoBlocked, setAutoBlocked] = useState(false) // browser refused autoplay → show the music button
   const [flash, setFlash] = useState(false)
   const [fallbackEmbed, setFallbackEmbed] = useState(false)   // Spotify's iframe API blocked (extension) → plain embed
   const [tick, setTick] = useState(0)
   const startedRef = useRef(false)
+  useEffect(() => { musicOnRef.current = musicOn }, [musicOn])
   const ctrl = useRef(null)          // Spotify EmbedController
+  // 🔀 Shuffle queue (Mark 2026-10-12): every track from every playlist, shuffled, songs from the
+  // last few mornings pushed to the back, played one full song at a time through the controller.
+  const queue = useRef([]); const qi = useRef(0); const advancing = useRef(false)
+  const [tracksReady, setTracksReady] = useState(false)
+  const [nowPlaying, setNowPlaying] = useState(null)
   const embedEl = useRef(null)
 
   const load = async () => {
@@ -37,14 +44,41 @@ export default function MeetingRoom({ token }) {
   }
   useEffect(() => { load(); const t = setInterval(load, 5 * 60 * 1000); return () => clearInterval(t) }, [token])
   useEffect(() => { const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t) }, [])
+  useEffect(() => {
+    if (!room?.playlist || tracksReady) return
+    let done = false; const finish = () => { if (!done) { done = true; setTracksReady(true) } }
+    fetch(`${API_BASE}/api/public/huddle/room/${encodeURIComponent(token)}/tracks`).then(r => r.json()).then(j => {
+      const list = (j.tracks || []).filter(t => t?.uri)
+      for (let i = list.length - 1; i > 0; i--) { const k = Math.floor(Math.random() * (i + 1)); [list[i], list[k]] = [list[k], list[i]] }
+      let recent = []; try { recent = JSON.parse(localStorage.getItem('gs_recent_tracks') || '[]') } catch { recent = [] }
+      const rs = new Set(recent); queue.current = [...list.filter(t => !rs.has(t.uri)), ...list.filter(t => rs.has(t.uri))]
+      finish()
+    }).catch(finish)
+    const t = setTimeout(finish, 4000); return () => clearTimeout(t)
+  }, [room?.playlist])
+  const remember = uri => { try { const r = JSON.parse(localStorage.getItem('gs_recent_tracks') || '[]').filter(x => x !== uri); r.push(uri); localStorage.setItem('gs_recent_tracks', JSON.stringify(r.slice(-60))) } catch { /* private mode */ } }
+  const playAt = i => {
+    const c = ctrl.current, q = queue.current; if (!c || !q.length) return
+    qi.current = ((i % q.length) + q.length) % q.length; const t = q[qi.current]
+    advancing.current = true; setNowPlaying(t); remember(t.uri)
+    try { c.loadUri(t.uri); c.play() } catch { /* fine */ }
+    setTimeout(() => { advancing.current = false }, 4000)
+  }
+  const skip = () => { setMusicOn(true); playAt(qi.current + 1) }
 
   // Spotify iFrame API → a controller we can pause from the Start button.
   useEffect(() => {
-    const id = todaysPlaylist(room?.playlist); if (!id || !embedEl.current || ctrl.current) return
+    const id = todaysPlaylist(room?.playlist); if (!id || !tracksReady || !embedEl.current || ctrl.current) return
+    const first = queue.current[0]
     window.onSpotifyIframeApiReady = (IFrameAPI) => {
-      IFrameAPI.createController(embedEl.current, { uri: `spotify:playlist:${id}`, width: '100%', height: 152, theme: 'dark' }, c => {
+      IFrameAPI.createController(embedEl.current, { uri: first ? first.uri : `spotify:playlist:${id}`, width: '100%', height: 152, theme: 'dark' }, c => {
         ctrl.current = c
-        c.addListener('playback_update', e => { const paused = !!e?.data?.isPaused; setPlaying(!paused); if (!paused) setAutoBlocked(false) })
+        if (first) { qi.current = 0; setNowPlaying(first); remember(first.uri) }
+        c.addListener('playback_update', e => {
+          const d = e?.data || {}; const paused = !!d.isPaused; setPlaying(!paused); if (!paused) setAutoBlocked(false)
+          // song finished → next shuffled song (unless the meeting has started and the music is off)
+          if (queue.current.length && !advancing.current && d.duration > 0 && d.position >= d.duration - 1200 && !(startedRef.current && !musicOnRef.current)) playAt(qi.current + 1)
+        })
         // Music starts on its own ~10 min ahead (Mark 2026-10-06). Chrome allows sound
         // without a click only once it trusts the site (installed as a Chrome app, or used
         // a few mornings); until then the big button is one click.
@@ -56,7 +90,7 @@ export default function MeetingRoom({ token }) {
     // No controller after 5 s (script blocked by an extension, or Spotify slow) → plain embed so the music is at least one click away.
     const t = setTimeout(() => { if (!ctrl.current) { setFallbackEmbed(true); setAutoBlocked(true) } }, 5000)
     return () => clearTimeout(t)
-  }, [room?.playlist])
+  }, [room?.playlist, tracksReady])
 
   const start = () => { if (startedRef.current) return; startedRef.current = true; setStarted(true); setMusicOn(false); try { ctrl.current?.pause() } catch {} ; setFlash(true); setTimeout(() => setFlash(false), 1800) }
   const playMusic = () => { setMusicOn(true); try { ctrl.current?.play() } catch {} ; setAutoBlocked(false) }
@@ -106,6 +140,10 @@ export default function MeetingRoom({ token }) {
             ? <iframe title="Spotify" src={`https://open.spotify.com/embed/playlist/${todaysPlaylist(room?.playlist)}?utm_source=generator&theme=0`} width="100%" height="152" frameBorder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="eager" style={{ display: 'block' }} />
             : <div ref={embedEl} />}
         </div>
+        {!fallbackEmbed && queue.current.length > 0 && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 6, fontSize: 12 }}>
+          <span style={{ opacity: 0.75, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>🔀 Shuffle · {queue.current.length} songs{nowPlaying ? ` · ${nowPlaying.title} – ${nowPlaying.artist}` : ''}</span>
+          <button onClick={skip} style={{ flexShrink: 0, padding: '4px 10px', fontSize: 12, fontWeight: 800, color: 'white', background: 'rgba(255,255,255,0.14)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 8, cursor: 'pointer' }}>⏭ Skip</button>
+        </div>}
         {fallbackEmbed && <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>Spotify's player script was blocked (ad blocker?). Press ▶ on the player, and allow open.spotify.com in the blocker so it can start by itself.</div>}
         {!todaysPlaylist(room?.playlist) && room && <div style={{ fontSize: 12, opacity: 0.6, marginTop: 6 }}>No playlist set — add a Spotify playlist link in settings.</div>}
       </div>
