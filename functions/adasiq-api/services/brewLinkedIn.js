@@ -503,8 +503,9 @@ export async function commentOnLinkedInPost(shareUrn, text) {
 // only carries w_member_social, LinkedIn answers 403 and the caller reports it.
 async function liGet(path, params = {}) {
   const token = await getAccessToken()
-  const res = await axios.get(`${LI_API}${path}`, {
-    params,
+  // Rest.li 2.0 wants URNs fully encoded; axios leaves ':' raw, so build the query by hand.
+  const qs = Object.entries(params).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')
+  const res = await axios.get(`${LI_API}${path}${qs ? `?${qs}` : ''}`, {
     headers: { Authorization: `Bearer ${token}`, 'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': '202608' },
     timeout: 15000,
     validateStatus: s => s < 500,
