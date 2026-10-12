@@ -14,6 +14,7 @@
 import path from 'path'
 import { fileURLToPath } from 'url'
 import sharp from 'sharp'
+import Anthropic from '@anthropic-ai/sdk'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const FONTS = path.join(HERE, '..', 'assets', 'fonts')
@@ -86,6 +87,34 @@ async function fitHeadline(headline, { boxW, boxH, maxPx = 112, minPx = 52, maxL
   return { ...(await textImage({ text: headline, font: F.serif, px: minPx, color: INK, width: boxW, align: 'centre', lineHeight: HEADLINE_LH })), px: minPx }
 }
 
+/**
+ * Turn the email subject into a front-page headline for the cover. Subjects
+ * are written for opens ("California Glass Act Live: ADAS Calibration Rules
+ * Just Changed"); the cover should read like news (Mark, 2026-10-11).
+ * Same facts only. Any failure or a reply that breaks the rules → subject.
+ */
+export async function toCoverHeadline(subject) {
+  const original = String(subject || '').replace(/\s+/g, ' ').trim()
+  if (!original || !process.env.ANTHROPIC_API_KEY) return original
+  try {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const msg = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 100,
+      system: `You are the front-page editor of a trade newspaper for collision repair shop owners. Rewrite the given email subject line as a newspaper headline.
+RULES: 5 to 10 words. Headline capitalization: capitalize words of 4+ letters, keep a, an, the, and, but, or, for, nor, to, of, on, in, at, by lowercase unless first. Lead with who did what: a concrete active verb in present tense (Makes, Requires, Bans, Cuts, Adds) rather than a vague one (Updates, Changes, Impacts, Affects) whenever the subject supports it. Use ONLY facts stated in the subject; never add numbers, names, dates or claims. No colon labels like "X Live:" or "Breaking:", no questions, no em dashes, no exclamation marks, no quotes, no hashtags, no emojis. Output ONLY the headline.`,
+      messages: [{ role: 'user', content: original }],
+    })
+    const h = String(msg.content?.[0]?.text || '').replace(/^["'\s]+|["'\s.]+$/g, '').replace(/\s+/g, ' ')
+    const words = h.split(' ').filter(Boolean).length
+    if (!h || words < 4 || words > 12 || h.length > 90 || /[:!?\u2014#"]|\n/.test(h)) return original
+    return h
+  } catch (e) {
+    console.warn('[brew cover headline] using subject:', e.message)
+    return original
+  }
+}
+
 function datelineParts(issueNumber, dateISO) {
   let dateLabel = ''
   if (dateISO) {
@@ -115,9 +144,10 @@ function cupSvg(x, y, s) {
 /**
  * @returns {Promise<{ok: true, buffer: Buffer, mimeType: string, prompt: string} | {ok: false, error: string}>}
  */
-export async function renderBrewCover({ issueNumber, dateISO, headline }) {
+export async function renderBrewCover({ issueNumber, dateISO, headline, rewrite = true }) {
   try {
-    const safeHeadline = String(headline || '').replace(/\s+/g, ' ').trim().slice(0, 160)
+    const coverText = rewrite ? await toCoverHeadline(headline) : headline
+    const safeHeadline = String(coverText || '').replace(/\s+/g, ' ').trim().slice(0, 160)
     if (!safeHeadline) return { ok: false, error: 'headline required' }
 
     // ── Masthead: cup + ADAS BREW, centered as one group ─────────────────
@@ -191,6 +221,7 @@ export async function renderBrewCover({ issueNumber, dateISO, headline }) {
       buffer,
       mimeType: 'image/png',
       prompt: `code-rendered cover (no AI text) · headline ${hl.px}px`,
+      headline_used: safeHeadline,
     }
   } catch (e) {
     return { ok: false, error: `cover render failed: ${e.message}` }

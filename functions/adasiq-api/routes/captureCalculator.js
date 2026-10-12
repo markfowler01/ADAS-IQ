@@ -5951,9 +5951,11 @@ captureCalcRouter.get('/debug/brew-cover-preview', async (req, res) => {
     issueNumber: String(req.query.issue || '105'),
     dateISO: String(req.query.date || new Date().toISOString().slice(0, 10)),
     headline: String(req.query.headline || 'California Glass Act Live: ADAS Calibration Rules Just Changed'),
+    rewrite: req.query.raw !== '1',
   })
   if (!r.ok) return res.status(500).json(r)
-  res.set('Content-Type', 'image/png').set('Cache-Control', 'no-store').send(r.buffer)
+  res.set('Content-Type', 'image/png').set('Cache-Control', 'no-store')
+    .set('X-Cover-Headline', encodeURIComponent(r.headline_used || '')).send(r.buffer)
 })
 
 // Replace an already-published Brew issue cover with the code-rendered one
@@ -5971,6 +5973,73 @@ captureCalcRouter.get('/debug/brew-cover-recommit', async (req, res) => {
     if (!r.ok) return res.status(500).json(r)
     const c = await commitBinaryFile({ path: `brew/images/issue-${issue}.png`, buffer: r.buffer, message: `Brew Issue #${issue} cover: code-rendered (fixes AI misspelling)` })
     res.json({ ok: Boolean(c?.ok), raw_url: c?.rawUrl, error: c?.error })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// Replace a published Brew social post's cover with the code-rendered one
+// (Mark approved 2026-10-11). FB: post corrected image + original caption,
+// signup comment, THEN delete the old post — only once the new one is live.
+// IG: post corrected image (Graph API cannot delete IG media; the old one
+// comes down by hand). Also re-commits the archive/email image. One-shot
+// per fb_id via cache guard so a retry can never double-post.
+//   GET /debug/brew-post-replace?fb_id=&ig_id=&issue=&date=&headline=&strip=
+captureCalcRouter.get('/debug/brew-post-replace', async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const fbId = String(req.query.fb_id || '').trim()
+    const igId = String(req.query.ig_id || '').trim()
+    const issue = String(req.query.issue || '').trim()
+    const headline = String(req.query.headline || '').trim()
+    const strip = String(req.query.strip || '').trim()
+    if (!fbId || !igId || !/^\d+$/.test(issue) || !headline) return res.status(400).json({ ok: false, error: 'fb_id, ig_id, issue, headline required' })
+    const GUARD = `brew_swap_${fbId.split("_").pop()}`
+    const prior = await cacheGet(segment, GUARD, null)
+    if (prior) return res.json({ ok: true, already_done: true, ...prior })
+    await cacheSet(segment, GUARD, { started_at: new Date().toISOString() })
+
+    const axios = (await import('axios')).default
+    const sharpLib = (await import('sharp')).default
+    const G = 'https://graph.facebook.com/v22.0'
+    const token = process.env.FB_PAGE_ACCESS_TOKEN
+    const { renderBrewCover } = await import('../services/brewCoverRender.js')
+    const { uploadImageToCloudinary } = await import('../services/cloudinaryImage.js')
+    const { commitBinaryFile } = await import('../services/brewArchive.js')
+    const { postToFacebookPage, postToInstagram, commentOnFacebookPost, deleteFacebookPagePost } = await import('../services/metaPosting.js')
+    const out = {}
+
+    const cover = await renderBrewCover({ issueNumber: issue, dateISO: String(req.query.date || ''), headline, rewrite: false })
+    if (!cover.ok) return res.status(500).json(cover)
+    const jpg = await sharpLib(cover.buffer).jpeg({ quality: 92 }).toBuffer()
+    const up = await uploadImageToCloudinary({ buffer: jpg, publicId: `brew-issue-${issue}-cover-v2` })
+    if (!up.ok) return res.status(500).json({ ok: false, error: `cloudinary: ${up.error}` })
+    out.image_url = up.url
+
+    const c = await commitBinaryFile({ path: `brew/images/issue-${issue}.png`, buffer: cover.buffer, message: `Brew Issue #${issue} cover: code-rendered headline` })
+    out.archive = c?.ok ? 'recommitted' : `failed: ${c?.error}`
+
+    const clean = s => strip ? String(s || '').split(` ${strip}`).join('') : String(s || '')
+    const fbOld = await axios.get(`${G}/${fbId}`, { params: { fields: 'message', access_token: token }, timeout: 15000, validateStatus: s => s < 500 })
+    const igOld = await axios.get(`${G}/${igId}`, { params: { fields: 'caption', access_token: token }, timeout: 15000, validateStatus: s => s < 500 })
+    if (!fbOld.data?.message || !igOld.data?.caption) return res.status(500).json({ ok: false, error: 'could not read original captions', fb: fbOld.data?.error, ig: igOld.data?.error })
+
+    const fbNew = await postToFacebookPage({ imageUrl: up.url, caption: clean(fbOld.data.message) })
+    out.facebook_new = fbNew?.ok ? fbNew.id : `failed: ${fbNew?.error}`
+    if (fbNew?.ok && fbNew.id) {
+      await commentOnFacebookPost({ postId: fbNew.id, message: 'Sign up for ADAS Brew → absoluteadas.com/brew' }).catch(() => {})
+      const del = await deleteFacebookPagePost({ postId: fbId })
+      out.facebook_old = del?.ok ? 'deleted' : `delete failed: ${del?.error}`
+    } else {
+      out.facebook_old = 'kept (new post failed)'
+    }
+
+    const igNew = await postToInstagram({ imageUrl: up.url, caption: clean(igOld.data.caption) })
+    out.instagram_new = igNew?.ok ? igNew.id : `failed: ${igNew?.error}`
+    out.instagram_old = 'Graph API cannot delete IG media; remove by hand'
+
+    await cacheSet(segment, GUARD, { done_at: new Date().toISOString(), ...out })
+    res.json({ ok: true, ...out })
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
