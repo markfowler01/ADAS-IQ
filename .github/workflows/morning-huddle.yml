@@ -1,0 +1,24 @@
+name: GET SOME! Meeting graphic (backup trigger)
+
+# Mark 2026-10-06: the GET SOME! Meeting graphic is emailed to Mark at 7:40 AM
+# Pacific, Mon–Fri, ahead of the 8:00 meeting (moved 2026-10-12). Primary trigger is launchd on
+# Mark's Mac (com.markfowler.get-some-meeting). GitHub fires crons late, so this
+# is scheduled just before and the app refuses to send before 07:25 PT and never
+# sends twice in a day.
+on:
+  schedule:
+    - cron: '30 14 * * 1-5'   # 7:30 AM PDT
+    - cron: '30 15 * * 1-5'   # 7:30 AM PST
+  workflow_dispatch:
+jobs:
+  huddle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire the huddle (app gate decides)
+        run: |
+          while [ "$(TZ=America/Los_Angeles date +%H%M)" -lt "0730" ]; do sleep 20; done
+          code=$(curl -sS -o /tmp/h.json -w '%{http_code}' --max-time 150 -X POST \
+            -H "x-cron-secret: ${{ secrets.BRIEFING_CRON_SECRET }}" \
+            https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/cron/daily-greeting/huddle)
+          echo "http=$code"; head -c 400 /tmp/h.json; echo
+          [ "$code" = "200" ] || exit 1

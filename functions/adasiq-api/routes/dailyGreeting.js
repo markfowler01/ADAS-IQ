@@ -464,4 +464,39 @@ router.post('/run', requireCronSecret, async (req, res) => {
   }
 })
 
+// 🌅 Morning Huddle (Mark 2026-10-06) — graphic emailed to Mark at 7:40 PT (meeting 8:00 since 2026-10-12).
+//   POST /huddle            send (gate: weekday, ≥07:35 PT, once/day; ?force=1 bypasses)
+//   GET  /huddle.png        render only (?date=YYYY-MM-DD) — preview
+//   GET  /huddle/data       the numbers behind it
+router.post('/huddle', requireCronSecret, async (req, res) => {
+  try { const { sendHuddle } = await import('../services/morningHuddle.js'); res.json(await sendHuddle(req, { force: req.query.force === '1', ...(req.query.to ? { to: String(req.query.to), cc: '' } : {}) })) }
+  catch (e) { console.error('[huddle]', e.message); res.status(500).json({ error: e.message }) }
+})
+router.post('/huddle/post', requireCronSecret, async (req, res) => {
+  try { const { postHuddle } = await import('../services/morningHuddle.js'); res.json(await postHuddle(req, { force: req.query.force === '1' })) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/huddle/fonts', requireCronSecret, async (req, res) => {
+  try {
+    const fs = await import('fs/promises'); const path = await import('path'); const { fileURLToPath } = await import('url')
+    const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'fonts')
+    const files = await fs.readdir(dir); const sizes = {}; for (const f of files) sizes[f] = (await fs.stat(path.join(dir, f))).size
+    if (req.query.test) {
+      const sharp = (await import('sharp')).default
+      const mk = (await fs.readFile(path.join(dir, 'PermanentMarker-Regular.ttf'))).toString('base64')
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="200"><style>@font-face{font-family:'Marker';src:url(data:font/ttf;base64,${mk}) format('truetype');}</style><rect width="900" height="200" fill="#111"/><text x="20" y="130" font-family="Permanent Marker, Marker" font-size="110" fill="white">GET SOME!!!</text></svg>`
+      return res.type('image/png').send(await sharp(Buffer.from(svg)).png().toBuffer())
+    }
+    res.json({ dir, files: sizes })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/huddle.png', requireCronSecret, async (req, res) => {
+  try { const M = await import('../services/morningHuddle.js'); const data = await M.buildHuddleData(req, req.query.date ? { dateStr: String(req.query.date) } : {}); const png = await M.renderHuddlePng(req, data); res.type('image/png').send(png) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.get('/huddle/data', requireCronSecret, async (req, res) => {
+  try { const M = await import('../services/morningHuddle.js'); res.json(await M.buildHuddleData(req, req.query.date ? { dateStr: String(req.query.date) } : {})) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+export { rosterFromDirectory, invoiceBelongsToTech }
 export default router
