@@ -6045,6 +6045,66 @@ captureCalcRouter.get('/debug/brew-post-replace', async (req, res) => {
   }
 })
 
+// LinkedIn half of the Issue #105 swap (Mark: "also linked in", 2026-10-11).
+// Posts the corrected cover + caption, adds the usual Brew CTA comment, then
+// tries to find and delete the old post (needs read scope on the token —
+// if LinkedIn refuses the listing, the old post comes down by hand).
+// One-shot per issue via cache guard.
+//   POST /debug/brew-li-repost  {issue, date, headline, text, old_prefix}
+captureCalcRouter.post('/debug/brew-li-repost', async (req, res) => {
+  try {
+    const segment = getSegment(req)
+    const { issue, date, headline, text, old_prefix } = req.body || {}
+    if (!/^\d+$/.test(String(issue || '')) || !headline || !text || !old_prefix) return res.status(400).json({ ok: false, error: 'issue, headline, text, old_prefix required' })
+    const GUARD = `brew_li_swap_${issue}`
+    const prior = await cacheGet(segment, GUARD, null)
+    if (prior) return res.json({ ok: true, already_done: true, ...prior })
+    await cacheSet(segment, GUARD, { started_at: new Date().toISOString() })
+
+    const axios = (await import('axios')).default
+    const { renderBrewCover } = await import('../services/brewCoverRender.js')
+    const { postImageToLinkedIn, commentOnLinkedInPost, pickLiCommentVariant, getAccessToken } = await import('../services/brewLinkedIn.js')
+    const out = {}
+
+    const cover = await renderBrewCover({ issueNumber: String(issue), dateISO: String(date || ''), headline: String(headline), rewrite: false })
+    if (!cover.ok) return res.status(500).json(cover)
+    const r = await postImageToLinkedIn({ imageBuffer: cover.buffer, text: String(text) })
+    if (!r?.ok || !r.id) {
+      await cacheSet(segment, GUARD, { done_at: new Date().toISOString(), linkedin_new: `failed: ${r?.error}` })
+      return res.json({ ok: false, linkedin_new: `failed: ${r?.error}` })
+    }
+    out.linkedin_new = r.id
+    await commentOnLinkedInPost(r.id, pickLiCommentVariant(Number(issue))).catch(() => {})
+
+    // Find + delete the old post (only after the new one is live).
+    try {
+      const token = await getAccessToken()
+      const urn = process.env.LINKEDIN_USER_URN
+      const H = { Authorization: `Bearer ${token}`, 'X-Restli-Protocol-Version': '2.0.0' }
+      const list = await axios.get(`https://api.linkedin.com/v2/ugcPosts?q=authors&authors=List(${encodeURIComponent(urn)})&count=50`, { headers: H, timeout: 20000, validateStatus: s => s < 500 })
+      if (list.status >= 400) {
+        out.linkedin_old = `could not list posts (HTTP ${list.status}) — delete by hand`
+      } else {
+        const textOf = p => p?.specificContent?.['com.linkedin.ugc.ShareContent']?.shareCommentary?.text || ''
+        const old = (list.data?.elements || []).find(p => p.id !== r.id && textOf(p).trim().startsWith(String(old_prefix)))
+        if (!old) {
+          out.linkedin_old = 'not found in recent posts — delete by hand'
+        } else {
+          const del = await axios.delete(`https://api.linkedin.com/v2/ugcPosts/${encodeURIComponent(old.id)}`, { headers: H, timeout: 20000, validateStatus: s => s < 500 })
+          out.linkedin_old = del.status < 300 ? `deleted ${old.id}` : `delete failed HTTP ${del.status} — delete by hand`
+        }
+      }
+    } catch (e) {
+      out.linkedin_old = `lookup error (${e.message}) — delete by hand`
+    }
+
+    await cacheSet(segment, GUARD, { done_at: new Date().toISOString(), ...out })
+    res.json({ ok: true, ...out })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 // List one PT day's Facebook Page posts + Instagram media (ids, permalinks,
 // caption start, image) — read-only.   GET /debug/social-posts-on?date=2026-10-01
 captureCalcRouter.get('/debug/social-posts-on', async (req, res) => {
