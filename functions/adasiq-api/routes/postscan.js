@@ -303,6 +303,8 @@ router.post('/run', async (req, res) => {
     if (hourPT >= 6 && hourPT <= 7) await once(`deals_morning:${day}`, async () => { const l = await D.dueList(req); if (!l.open) return; const { postToCliqChannel } = await import('../services/cliq.js'); const ch = (await appD.zcql().executeZCQLQuery("SELECT config_value FROM AppConfig WHERE config_key = 'deals_channel' LIMIT 1"))?.[0]?.AppConfig?.config_value || 'technicians'; await postToCliqChannel(ch, D.formatDue(l)) })
     if (hourPT >= 20 && hourPT <= 21) await once(`deals_sweep:${day}`, () => D.dailySweep(req))
   } catch (e) { console.warn('[postscan] deals piggyback (non-fatal):', e.message) }
+  // 📨 Knock piggyback (Mark 2026-10-12) — Monday Autel Remote Expert email; GitHub's late Monday cron never landed after week 1.
+  try { const { maybeKnock } = await import('./remoteExpertApply.js'); await Promise.race([maybeKnock(req), new Promise(r => setTimeout(r, 20000))]) } catch (e) { console.warn('[postscan] knock piggyback (non-fatal):', e.message) }
   // 📸 Photo Scout piggyback (Mark 2026-10-09) — 20:00–05:00 PT, one pass per hour, capped $3/day.
   try { const { maybeScout } = await import('../services/photoScout.js'); await Promise.race([maybeScout(req), new Promise(r => setTimeout(r, 25000))]) } catch (e) { console.warn('[postscan] photo scout piggyback (non-fatal):', e.message) }
   // 🗄 Auto-archive complete scrubs after the 7-day grace (once a day, 20:00–21:59 PT).

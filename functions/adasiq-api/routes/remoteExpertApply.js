@@ -199,53 +199,57 @@ function daysBetween(isoA, isoB) {
 }
 
 // ── Route ───────────────────────────────────────────────────────────────────
-router.all('/', heartbeatAttempt(CRON_NAME), requireCronSecret, async (req, res) => {
-  const dry   = ['1', 'true'].includes(String(req.query.dry || ''))
-  const force = ['1', 'true'].includes(String(req.query.force || ''))
+// The send itself, shared by the cron route and the hourly piggyback (Mark 2026-10-12: only
+// knock #1 ever went out — GitHub fired the Monday cron 40+ min late and the "wrong-DST
+// twin" guard made every late run quit, so the app now drives it from its own hourly tick).
+export async function knock(req, { dry = false, force = false } = {}) {
   const app   = catalyst.initialize(req)
   const today = todayPT()
+  const state = await readState(app)
+  const n = (state.count || 0) + 1
+  const email = composeEmail(n, today)
+  const varied = await varyEmail(email.text, n)
+  email.text = varied.text
+  email.html = toHtml(varied.text)
+  email.variant = varied.variant
+  if (varied.reason) email.fallback_reason = varied.reason
 
+  if (dry) return { ok: true, dry: true, would_send: !!TO_ADDRESS, state: { count: state.count, last_sent: state.last_sent }, email }
+  if (!TO_ADDRESS) return { ok: false, status: 400, error: 'REMOTE_EXPERT_APPLY_TO is not set — no recipient, nothing sent' }
+  if (!force && state.last_sent && daysBetween(state.last_sent, new Date().toISOString()) < MIN_DAYS_BETWEEN_SENDS) {
+    return { ok: true, skipped: `sent ${state.last_sent}, under ${MIN_DAYS_BETWEEN_SENDS}-day spacing`, count: state.count }
+  }
   try {
-    const state = await readState(app)
-    const n = (state.count || 0) + 1
-    const email = composeEmail(n, today)
-    const varied = await varyEmail(email.text, n)
-    email.text = varied.text
-    email.html = toHtml(varied.text)
-    email.variant = varied.variant
-    if (varied.reason) email.fallback_reason = varied.reason
-
-    if (dry) {
-      return res.json({ ok: true, dry: true, would_send: !!TO_ADDRESS, state: { count: state.count, last_sent: state.last_sent }, email })
-    }
-    if (!TO_ADDRESS) {
-      return res.status(400).json({ ok: false, error: 'REMOTE_EXPERT_APPLY_TO is not set — no recipient, nothing sent' })
-    }
-    if (!force && state.last_sent && daysBetween(state.last_sent, new Date().toISOString()) < MIN_DAYS_BETWEEN_SENDS) {
-      return res.json({ ok: true, skipped: `sent ${state.last_sent}, under ${MIN_DAYS_BETWEEN_SENDS}-day spacing`, count: state.count })
-    }
-
     const token = await getMailAccessToken()
     const accountId = await getMailAccountIdFor(token, FROM_ADDRESS)
     await sendMail(token, accountId, { to: TO_ADDRESS, subject: email.subject, body: email.html })
-
     const sentAt = new Date().toISOString()
     await writeState(app, { ...state, count: n, last_sent: sentAt, history: [...(state.history || []), { at: sentAt, subject: email.subject, variant: email.variant }] })
     await stampSuccess(req, CRON_NAME, { count: n, variant: email.variant })
-
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
       `📨 Knock #${n}: weekly Autel Remote Expert application sent to ${TO_ADDRESS} from ${FROM_ADDRESS} (${email.variant === 'claude' ? 'fresh wording' : 'base copy'}). ` +
       `It's in your Zoho Sent folder. If they reply, this keeps going until you tell me to stop.`
     ).catch(() => {})
-
-    return res.json({ ok: true, sent: true, count: n, to: TO_ADDRESS, at: sentAt, subject: email.subject, variant: email.variant })
+    return { ok: true, sent: true, count: n, to: TO_ADDRESS, at: sentAt, subject: email.subject, variant: email.variant }
   } catch (e) {
     console.error('[remote-expert-apply] failed:', e.response?.data || e.message)
-    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `⚠️ Knock: weekly Remote Expert application did NOT send — ${e.message}`
-    ).catch(() => {})
-    return res.status(500).json({ ok: false, error: e.message })
+    await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⚠️ Knock: weekly Remote Expert application did NOT send — ${e.message}`).catch(() => {})
+    return { ok: false, status: 500, error: e.message }
   }
+}
+
+/** Hourly piggyback: Mondays from 8:00 AM Eastern (05:00 PT) until noon PT, once (5-day guard). */
+export async function maybeKnock(req) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', hour12: false }).formatToParts(new Date()).map(p => [p.type, p.value]))
+  const hourET = Number(parts.hour) % 24
+  if (parts.weekday !== 'Mon' || hourET < 8 || hourET > 15) return { skipped: 'window' }
+  return knock(req)
+}
+
+// ── Route ───────────────────────────────────────────────────────────────────
+router.all('/', heartbeatAttempt(CRON_NAME), requireCronSecret, async (req, res) => {
+  const r = await knock(req, { dry: ['1', 'true'].includes(String(req.query.dry || '')), force: ['1', 'true'].includes(String(req.query.force || '')) })
+  res.status(r.status || 200).json(r)
 })
 
 export default router

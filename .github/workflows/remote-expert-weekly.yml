@@ -7,8 +7,8 @@ name: Knock — weekly Autel Remote Expert application
 #
 # GitHub fires crons late and DST moves 8 AM ET between 12:00 and 13:00 UTC,
 # so two crons are scheduled 10 min early and the job waits for 08:00 ET.
-# The wrong-DST twin lands ~08:50 ET and exits. The route itself also
-# refuses to send twice inside 5 days, so nothing can double-send.
+# The route refuses to send twice inside 5 days, so the DST twin and the app's own
+# hourly Monday piggyback (primary since 2026-10-12) can never double-send.
 on:
   schedule:
     - cron: '50 11 * * 1'   # 7:50 AM EDT
@@ -33,7 +33,7 @@ jobs:
           MODE="${{ inputs.mode || 'send' }}"
           if [ "${{ github.event_name }}" = "schedule" ]; then
             now=$(TZ=America/New_York date +%H%M)
-            if [ "$now" -gt "0830" ]; then echo "wrong-DST twin ($now ET), exiting"; exit 0; fi
+            if [ "$now" -gt "1500" ]; then echo "too late in the day ($now ET), exiting"; exit 0; fi   # late GitHub starts still send; the route's 5-day guard stops the DST twin (2026-10-12)
             while [ "$(TZ=America/New_York date +%H%M)" -lt "0800" ]; do sleep 20; done
           fi
           Q=""; [ "$MODE" = "dry" ] && Q="?dry=1"
