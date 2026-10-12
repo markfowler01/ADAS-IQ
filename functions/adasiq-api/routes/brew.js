@@ -20,12 +20,12 @@ import { buildAndPublishVoiceMemo } from '../services/voiceMemo.js'
 import { generateCarrierOfWeek } from '../services/carrierOfWeek.js'
 import { sendCampaign, campaignsConfigured } from '../services/brewCampaigns.js'
 import { sendBroadcast, resendConfigured } from '../services/brewResend.js'
-import { postToLinkedIn, postImageToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost, pickLiCommentVariant } from '../services/brewLinkedIn.js'
+import { postToLinkedIn, postImageToLinkedIn, digestToLinkedInPost, linkedInConfigured, commentOnLinkedInPost, pickLiCommentVariant, brewFirstComment, brewIssueUrl, listMyLinkedInPosts, listLinkedInComments, editLinkedInComment } from '../services/brewLinkedIn.js'
 import { syncNewsletterSubscriberToCrm } from '../services/zohoCrm.js'
 import { commitFile, commitBinaryFile, deleteFile, wrapIssueHtmlForArchive, renderArchiveIndex, githubConfigured, getMaxArchivedIssueNumber } from '../services/brewArchive.js'
 import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { generateCoverImage, generateTipCardImage, nanoBananaConfigured } from '../services/nanoBanana.js'
-import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia } from '../services/metaPosting.js'
+import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia, listFacebookPagePosts, readFacebookPostComments, editFacebookComment } from '../services/metaPosting.js'
 
 const router = express.Router()
 
@@ -1070,6 +1070,73 @@ cronRouter.post('/_prep-bonus', requireCronSecretFlex, async (req, res) => {
 
 cronRouter.use(requireCronSecret)
 
+// Fix the first comment on an issue that already posted (Mark 2026-10-12).
+// Edits the existing first comment in place so the issue link stays first;
+// posts a fresh comment only when no first comment exists. Instagram is never
+// touched (link comments got the account banned 2026-07-03).
+//   POST /api/cron/brew/first-comment?issue=112[&date=2026-10-12][&li_urn=urn:li:activity:...][&dry=1]
+cronRouter.post('/first-comment', async (req, res) => {
+  const issue = Number(req.query.issue)
+  if (!issue) return res.status(400).json({ error: 'pass ?issue=<number>' })
+  const date = String(req.query.date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }))
+  const dry = req.query.dry === '1'
+  const out = { issue, date, dry, page_live: await waitForIssuePage(issue, 5000) }
+  if (!out.page_live) return res.json({ ...out, error: 'issue page is not live yet; nothing changed' })
+  const isOurCta = t => /absoluteadas\.com\/brew\b(?!\/issues)/.test(t) && !t.includes(brewIssueUrl(issue))
+  const isFixed = t => t.includes(brewIssueUrl(issue))
+  try {
+    const row = await readRunStatus(req, date).catch(() => null)
+    out.run = row ? { started_at: row.started_at, finished_at: row.finished_at, linkedin: row.linkedin, facebook: row.facebook } : null
+  } catch { /* diagnostics only */ }
+
+  // Facebook
+  try {
+    const posts = await listFacebookPagePosts({ limit: 15 })
+    const post = (posts.posts || []).find(p => String(p.created_time || '').startsWith(date) && /ADAS Brew is published by Absolute ADAS/.test(p.message || ''))
+    if (!post) out.facebook = { ok: false, error: posts.ok ? `no Brew post on ${date}` : posts.error }
+    else {
+      const cs = await readFacebookPostComments({ postId: post.id, limit: 50 })
+      const ours = (cs.comments || []).slice().reverse().find(c => isOurCta(c.message || '') || isFixed(c.message || ''))
+      const text = brewFirstComment(issue, 'facebook')
+      if (ours && isFixed(ours.message)) out.facebook = { ok: true, post: post.id, already: true }
+      else if (dry) out.facebook = { ok: true, post: post.id, would: ours ? `edit ${ours.id}` : 'add comment', text }
+      else if (ours) out.facebook = { post: post.id, comment: ours.id, action: 'edit', ...(await editFacebookComment({ commentId: ours.id, message: text })) }
+      else out.facebook = { post: post.id, action: 'add', ...(await commentOnFacebookPost({ postId: post.id, message: text })) }
+    }
+  } catch (e) { out.facebook = { ok: false, error: e.message } }
+
+  // LinkedIn
+  try {
+    let urn = String(req.query.li_urn || '').trim()
+    if (!urn) {
+      const lp = await listMyLinkedInPosts(10)
+      if (!lp.ok) out.linkedin_lookup = lp
+      const dayStart = Date.parse(`${date}T00:00:00-07:00`), dayEnd = dayStart + 86400000
+      const todays = (lp.posts || []).filter(p => p.createdAt >= dayStart && p.createdAt < dayEnd)
+      for (const p of todays) {
+        const cs = await listLinkedInComments(p.id)
+        if ((cs.comments || []).some(c => isOurCta(c.text) || isFixed(c.text))) { urn = p.id; break }
+      }
+      if (!urn && lp.ok) out.linkedin_lookup = { ok: false, error: `no Brew post found among ${todays.length} posts on ${date}` }
+    }
+    if (!urn) out.linkedin = { ok: false, error: 'post not found; pass &li_urn= from the post link' }
+    else {
+      const cs = await listLinkedInComments(urn)
+      const text = brewFirstComment(issue, 'linkedin')
+      const ours = (cs.comments || []).find(c => isOurCta(c.text) || isFixed(c.text))
+      if (!cs.ok) out.linkedin_comments = cs
+      if (ours && isFixed(ours.text)) out.linkedin = { ok: true, post: urn, already: true }
+      else if (dry) out.linkedin = { ok: true, post: urn, would: ours ? `edit ${ours.id}` : 'add comment', text }
+      else if (ours) out.linkedin = { post: urn, comment: ours.id, action: 'edit', ...(await editLinkedInComment(urn, ours.id, text)) }
+      else if (cs.ok) out.linkedin = { post: urn, action: 'add', ...(await commentOnLinkedInPost(urn, text)) }
+      else out.linkedin = { ok: false, post: urn, error: 'cannot read comments, so not adding a second one blind; add &force_add=1 to post anyway' }
+      if (!dry && !ours && !cs.ok && req.query.force_add === '1') out.linkedin = { post: urn, action: 'add', ...(await commentOnLinkedInPost(urn, text)) }
+    }
+  } catch (e) { out.linkedin = { ok: false, error: e.message } }
+
+  res.json(out)
+})
+
 cronRouter.post('/fetch', async (req, res) => {
   try {
     const out = await runFetch(req)
@@ -1308,6 +1375,23 @@ async function writeIssuesManifest(req, manifest) {
   // No-op — manifest is derived from BrewIssues table. Use dsUpsertIssue to add
   // entries. Kept for backward compatibility.
   return
+}
+
+/**
+ * Wait for the issue page to answer on absoluteadas.com (GitHub Pages builds
+ * a minute or two after the commit). Polls a cache-busted URL so a 404 never
+ * gets cached on the real link. Gives up after maxMs (the run lock is 15 min).
+ */
+async function waitForIssuePage(issueNumber, maxMs = 90000) {
+  const until = Date.now() + maxMs
+  for (;;) {
+    try {
+      const r = await fetch(`${brewIssueUrl(issueNumber)}?live=${Date.now()}`, { signal: AbortSignal.timeout(8000) })
+      if (r.ok) return true
+    } catch { /* keep polling */ }
+    if (Date.now() + 10000 > until) return false
+    await new Promise(resolve => setTimeout(resolve, 10000))
+  }
 }
 
 /**
@@ -1904,10 +1988,27 @@ async function executeDailyPipeline(req) {
     }
   }
 
+  // 5a. ARCHIVE starts here (it used to start in step 6) so the issue page is
+  // building on GitHub Pages while the social posts go out. The first comment
+  // on LinkedIn and Facebook links to that page (Mark 2026-10-12), so both
+  // comments wait until it answers. Nothing else in the run waits on it.
+  const archivePromise = !isStepOk(status.archive)
+    ? publishIssueToArchive(req, { issueNumber, dateISO: isoDate, subject: rendered.subject, html: rendered.html })
+        .catch(e => ({ ok: false, error: e.message }))
+    : Promise.resolve(null)
+  let issuePageCheck = null
+  const issuePageReady = () => (issuePageCheck ||= archivePromise
+    .then(r => (r === null || r?.ok) ? waitForIssuePage(issueNumber) : false)
+    .catch(() => false))
+  const firstComment = async channel => (await issuePageReady())
+    ? brewFirstComment(issueNumber, channel)
+    : (channel === 'linkedin' ? pickLiCommentVariant(issueNumber) : 'Sign up for ADAS Brew → absoluteadas.com/brew')
+  let liPostId = null
+
   // 5b. LINKEDIN POST — prefer the photo buffer (moody documentary, better
   // scroll-stop in the feed). Fall back to the cover URL if photo gen failed,
-  // then text-only as a last resort. Auto-comment the rotating Hormozi CTA
-  // on the fresh post.
+  // then text-only as a last resort. The first comment (issue link + rotating
+  // CTA) goes on in step 6b once the issue page is live.
   if (!isStepOk(status.linkedin) && typeof liText === 'string') {
     try {
       let r
@@ -1919,8 +2020,8 @@ async function executeDailyPipeline(req) {
         r = await postToLinkedIn({ text: liText })
       }
       if (r?.ok && r.id) {
-        const commentText = pickLiCommentVariant(issueNumber)
-        await commentOnLinkedInPost(r.id, commentText).catch(e => console.warn('[brew linkedin comment]', e.message))
+        liPostId = r.id
+        console.log(`[brew linkedin] issue ${issueNumber} posted ${r.id}`)
         await updateRunStatus(req, dateISO, { linkedin: 'ok' })
         status.linkedin = 'ok'
       } else {
@@ -1936,21 +2037,16 @@ async function executeDailyPipeline(req) {
     status.linkedin = 'failed:draft returned null'
   }
 
-  // 6. PARALLEL STAGE B: archive HTML commit + FB post + IG post
-  const archivePromise = !isStepOk(status.archive)
-    ? publishIssueToArchive(req, { issueNumber, dateISO: isoDate, subject: rendered.subject, html: rendered.html })
-        .catch(e => ({ ok: false, error: e.message }))
-    : Promise.resolve(null)
-
+  // 6. PARALLEL STAGE B: archive HTML commit (started in 5a) + FB post + IG post
   const caption = buildSocialCaption(digest)
-  const signupComment = 'Sign up for ADAS Brew → absoluteadas.com/brew'
 
   const fbPromise = (!isStepOk(status.facebook) && imageUrl)
     ? (async () => {
         try {
           const r = await postToFacebookPage({ imageUrl, caption })
           if (r?.ok && r.id) {
-            await commentOnFacebookPost({ postId: r.id, message: signupComment }).catch(() => {})
+            console.log(`[brew facebook] issue ${issueNumber} posted ${r.id}`)
+            await commentOnFacebookPost({ postId: r.id, message: await firstComment('facebook') }).catch(() => {})
             return { ok: true, id: r.id }
           }
           return { ok: false, error: r?.error || 'unknown' }
@@ -1987,6 +2083,12 @@ async function executeDailyPipeline(req) {
   if (igResult !== null) {
     await updateRunStatus(req, dateISO, { instagram: igResult.ok ? 'ok' : `failed:${igResult.error}` })
     status.instagram = igResult.ok ? 'ok' : `failed:${igResult.error}`
+  }
+
+  // 6b. LinkedIn first comment: issue link + rotating CTA, after the page is live.
+  if (liPostId) {
+    const c = await commentOnLinkedInPost(liPostId, await firstComment('linkedin')).catch(e => ({ ok: false, error: e.message }))
+    if (!c?.ok) console.warn('[brew linkedin comment]', c?.error || 'unknown')
   }
 
   // 7. Mark complete if everything is ok

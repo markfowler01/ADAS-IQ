@@ -153,6 +153,24 @@ export async function commentOnInstagramMedia({ mediaId, message }) {
  * @param {number} [args.limit=100]
  * @returns {Promise<{ok: true, comments: Array} | {ok: false, error: string}>}
  */
+/** Edit a Page comment in place (keeps its spot as the first comment). */
+export async function editFacebookComment({ commentId, message }) {
+  if (!facebookConfigured()) return { ok: false, error: 'FB not configured' }
+  if (!commentId) return { ok: false, error: 'commentId required' }
+  const { pageToken } = envBundle()
+  try {
+    const res = await axios.post(`${GRAPH_API}/${commentId}`, null, {
+      params: { message: String(message || '').slice(0, 8000), access_token: pageToken },
+      timeout: 20000,
+      validateStatus: s => s < 500,
+    })
+    if (res.status >= 400 || res.data?.error) return { ok: false, error: res.data?.error?.message || `HTTP ${res.status}` }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e.message || 'request failed' }
+  }
+}
+
 export async function readFacebookPostComments({ postId, limit = 100 }) {
   if (!facebookConfigured()) {
     return { ok: false, error: 'FB not configured' }

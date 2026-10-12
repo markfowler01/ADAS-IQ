@@ -6027,7 +6027,8 @@ captureCalcRouter.get('/debug/brew-post-replace', async (req, res) => {
     const fbNew = await postToFacebookPage({ imageUrl: up.url, caption: clean(fbOld.data.message) })
     out.facebook_new = fbNew?.ok ? fbNew.id : `failed: ${fbNew?.error}`
     if (fbNew?.ok && fbNew.id) {
-      await commentOnFacebookPost({ postId: fbNew.id, message: 'Sign up for ADAS Brew → absoluteadas.com/brew' }).catch(() => {})
+      const { brewFirstComment } = await import('../services/brewLinkedIn.js')
+      await commentOnFacebookPost({ postId: fbNew.id, message: brewFirstComment(issue, 'facebook') }).catch(() => {})
       const del = await deleteFacebookPagePost({ postId: fbId })
       out.facebook_old = del?.ok ? 'deleted' : `delete failed: ${del?.error}`
     } else {
@@ -6063,7 +6064,7 @@ captureCalcRouter.post('/debug/brew-li-repost', async (req, res) => {
 
     const axios = (await import('axios')).default
     const { renderBrewCover } = await import('../services/brewCoverRender.js')
-    const { postImageToLinkedIn, commentOnLinkedInPost, pickLiCommentVariant, getAccessToken } = await import('../services/brewLinkedIn.js')
+    const { postImageToLinkedIn, commentOnLinkedInPost, brewFirstComment, getAccessToken } = await import('../services/brewLinkedIn.js')
     const out = {}
 
     const cover = await renderBrewCover({ issueNumber: String(issue), dateISO: String(date || ''), headline: String(headline), rewrite: false })
@@ -6074,7 +6075,7 @@ captureCalcRouter.post('/debug/brew-li-repost', async (req, res) => {
       return res.json({ ok: false, linkedin_new: `failed: ${r?.error}` })
     }
     out.linkedin_new = r.id
-    await commentOnLinkedInPost(r.id, pickLiCommentVariant(Number(issue))).catch(() => {})
+    await commentOnLinkedInPost(r.id, brewFirstComment(Number(issue), 'linkedin')).catch(() => {})
 
     // Find + delete the old post (only after the new one is live).
     try {

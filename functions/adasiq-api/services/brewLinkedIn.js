@@ -158,6 +158,23 @@ export function pickLiCommentVariant(issueNumber) {
   return LI_HORMOZI_COMMENT_VARIANTS[n % LI_HORMOZI_COMMENT_VARIANTS.length]
 }
 
+export const brewIssueUrl = issueNumber => `https://absoluteadas.com/brew/issues/${issueNumber}`
+
+/**
+ * First comment on every Brew post (Mark 2026-10-12: "add the first comment
+ * a link to that newsletter on my website"). The issue link leads; the
+ * subscribe line follows. LinkedIn keeps its rotating CTA, Facebook keeps its
+ * signup line. Instagram gets NO link comment (account was banned 2026-07-03
+ * for link-drop first comments).
+ */
+export function brewFirstComment(issueNumber, channel = 'linkedin') {
+  const read = `Read the full issue: ${brewIssueUrl(issueNumber)}`
+  const subscribe = channel === 'linkedin'
+    ? pickLiCommentVariant(issueNumber)
+    : 'Sign up for ADAS Brew → absoluteadas.com/brew'
+  return `${read}\n\n${subscribe}`
+}
+
 const LI_SYSTEM_PROMPT = `You are writing today's LinkedIn post for ADAS Brew, a daily newsletter about ADAS, calibration, and collision repair technology. The post goes to Mark Fowler's personal LinkedIn profile. Your reader is a busy shop owner, estimator, or technician scrolling LinkedIn between jobs. You have 3 seconds to hook them (the "…see more" cutoff on mobile decides whether they open the post). Earn it.
 
 ## Voice and Persona
@@ -478,4 +495,52 @@ export async function commentOnLinkedInPost(shareUrn, text) {
   } catch (err) {
     return { ok: false, error: err.message }
   }
+}
+
+
+// ─── Lookup + edit (used by /api/cron/brew/first-comment to fix a posted issue) ───
+// These need read access to Mark's own posts and comments. If the app's token
+// only carries w_member_social, LinkedIn answers 403 and the caller reports it.
+async function liGet(path, params = {}) {
+  const token = await getAccessToken()
+  const res = await axios.get(`${LI_API}${path}`, {
+    params,
+    headers: { Authorization: `Bearer ${token}`, 'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': '202608' },
+    timeout: 15000,
+    validateStatus: s => s < 500,
+  })
+  return { status: res.status, data: res.data }
+}
+
+export async function listMyLinkedInPosts(count = 5) {
+  if (!isConfigured()) return { ok: false, error: 'LinkedIn not configured' }
+  const e = envBundle()
+  const r = await liGet('/rest/posts', { q: 'author', author: e.userUrn, count, sortBy: 'CREATED' })
+  if (r.status >= 400) return { ok: false, status: r.status, error: r.data?.message || `HTTP ${r.status}` }
+  return { ok: true, posts: (r.data?.elements || []).map(p => ({ id: p.id, createdAt: p.createdAt, text: String(p.commentary || '').slice(0, 120) })) }
+}
+
+export async function listLinkedInComments(postUrn) {
+  if (!isConfigured()) return { ok: false, error: 'LinkedIn not configured' }
+  const r = await liGet(`/rest/socialActions/${encodeURIComponent(postUrn)}/comments`)
+  if (r.status >= 400) return { ok: false, status: r.status, error: r.data?.message || `HTTP ${r.status}` }
+  return { ok: true, comments: (r.data?.elements || []).map(c => ({ id: c.id, urn: c.commentUrn || c.$URN, actor: c.actor, text: c.message?.text || '' })) }
+}
+
+export async function editLinkedInComment(postUrn, commentId, text) {
+  if (!isConfigured()) return { ok: false, error: 'LinkedIn not configured' }
+  const token = await getAccessToken()
+  const e = envBundle()
+  const res = await axios.post(
+    `${LI_API}/rest/socialActions/${encodeURIComponent(postUrn)}/comments/${encodeURIComponent(commentId)}`,
+    { patch: { message: { $set: { text: String(text).slice(0, 1250) } } } },
+    {
+      params: { actor: e.userUrn },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0', 'LinkedIn-Version': '202608' },
+      timeout: 15000,
+      validateStatus: s => s < 500,
+    }
+  )
+  if (res.status >= 400) return { ok: false, status: res.status, error: res.data?.message || `HTTP ${res.status}` }
+  return { ok: true }
 }
