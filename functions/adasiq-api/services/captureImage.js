@@ -551,31 +551,32 @@ export async function generateCaptureImage({ headline, draftId }, opts = {}) {
   const t0 = Date.now()
 
   try {
-    const res = await axios.post(
-      `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseModalities: ['IMAGE'] },
-      },
-      {
-        params: { key: apiKey },
-        timeout: 60000,
-        validateStatus: s => s < 500,
-      }
-    )
-    if (res.status >= 300) {
-      const err = `Gemini ${res.status}: ${JSON.stringify(res.data).slice(0, 300)}`
-      if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: err.slice(0, 200), latency_ms: Date.now() - t0 })
-      return { ok: false, error: err }
+    // Raw photo must carry NO AI-drawn text — the headline is typeset below.
+    const { generateWithoutText } = await import('./aiImageTextGuard.js')
+    const gen = await generateWithoutText(async () => {
+      const res = await axios.post(
+        `${API_BASE}/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { responseModalities: ['IMAGE'] },
+        },
+        {
+          params: { key: apiKey },
+          timeout: 60000,
+          validateStatus: s => s < 500,
+        }
+      )
+      if (res.status >= 300) return { ok: false, error: `Gemini ${res.status}: ${JSON.stringify(res.data).slice(0, 300)}` }
+      const parts = res.data?.candidates?.[0]?.content?.parts || []
+      const imgPart = parts.find(p => p.inlineData?.data)
+      if (!imgPart) return { ok: false, error: 'no image part in response' }
+      return { ok: true, buffer: Buffer.from(imgPart.inlineData.data, 'base64') }
+    }, { label: 'capture image' })
+    if (!gen.ok) {
+      if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: String(gen.error).slice(0, 200), latency_ms: Date.now() - t0 })
+      return { ok: false, error: gen.error }
     }
-    const parts = res.data?.candidates?.[0]?.content?.parts || []
-    const imgPart = parts.find(p => p.inlineData?.data)
-    if (!imgPart) {
-      const err = 'no image part in response'
-      if (opts.segment) await appendAudit(opts.segment, { draftId, headline: safeHeadline, ok: false, error: err, latency_ms: Date.now() - t0 })
-      return { ok: false, error: err }
-    }
-    const rawBuffer = Buffer.from(imgPart.inlineData.data, 'base64')
+    const rawBuffer = gen.buffer
 
     // Composite the headline + brand footer over the raw photo. The footer
     // layout matches the newsletter tip-card exactly (logo + "Absolute"/"ADAS"

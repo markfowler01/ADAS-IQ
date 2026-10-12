@@ -1851,7 +1851,6 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     const segment = getSegment(req)
     const { draftVanPost, todayDayName } = await import('../services/vanPostDrafter.js')
     const { pickNextVanPhoto } = await import('../services/vanPhotoLibrary.js')
-    const { generateVanSceneImage } = await import('../services/nanoBanana.js')
     const { commitBinaryFile } = await import('../services/brewArchive.js')
 
     const dayName = String(req.query.dayName || todayDayName())
@@ -1934,11 +1933,10 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
     //         the site repo) placed onto a generated background with a ground
     //         shadow. Van authenticity guaranteed by construction, so no
     //         vision verification needed.
-    //      b. SCENE-GEN — Gemini image-to-image + Claude-vision wrap verify
-    //         (2 attempts). Usually fails verification; kept as second shot.
+    //      b. (removed 2026-10-11 — AI-redrawn wrap lettering)
     //      c. REAL PHOTO — Mark's untouched upload. Always authentic.
     //    Then stamp the locked dark brand footer on whichever image wins.
-    const { compositeVanFooter, compositeVanOnBackground, verifyVanWrap, verifyImageSane } = await import('../services/vanImageComposite.js')
+    const { compositeVanFooter, compositeVanOnBackground, verifyImageSane } = await import('../services/vanImageComposite.js')
     const { generateVanBackground } = await import('../services/nanoBanana.js')
     const { fetchBinaryFile } = await import('../services/brewArchive.js')
     let imageUrl = cachedContent?.image_url || null
@@ -1965,22 +1963,10 @@ captureCalcRouter.all('/van/draft-day', heartbeatAttempt('van_post'), requireCro
         }
       }
 
-      // (b) Scene-gen path with wrap verification.
-      for (let attempt = 1; attempt <= 2 && !finalBuffer; attempt++) {
-        const gen = await generateVanSceneImage({
-          vanPhotoBuffer: vanPhoto.buffer,
-          vanPhotoMime: vanPhoto.mimeType,
-          scenePrompt: draft.image_prompt,
-        }).catch(e => ({ ok: false, error: e.message }))
-        if (!gen?.ok) { imageError = gen?.error || 'scene gen failed'; continue }
-        const verdict = await verifyVanWrap(gen.buffer, gen.mimeType).catch(e => ({ ok: false, issues: [e.message] }))
-        if (verdict.ok) {
-          finalBuffer = gen.buffer
-          imageSource = `scene:${vanPhoto.name} (verified, attempt ${attempt})`
-        } else {
-          console.warn('[van verify] attempt', attempt, 'failed:', verdict.issues.join('; '))
-        }
-      }
+      // (b) SCENE-GEN REMOVED 2026-10-11: Gemini image-to-image redraws the
+      //     wrap lettering ("MONILE ADAS CALIBRATIOI" 2026-07-05) and the
+      //     vision verify is a probabilistic net. AI never draws letters on
+      //     a published image — composite or the real photo, nothing else.
 
       // (c) Authenticity fallback: the real photo as-is.
       if (!finalBuffer) {
@@ -3483,20 +3469,19 @@ captureCalcRouter.get('/debug/fb-delete-post', async (req, res) => {
 // Run the FULL van image pipeline (real photo → scene gen → wrap verify →
 // footer stamp → hosted URL) WITHOUT enqueueing or posting anything.
 // Mark uses this to eyeball a sample before trusting the daily cron.
-//   GET /debug/van-image-test?day=Mon        (scene-gen + verify + footer)
-//   GET /debug/van-image-test?raw=1          (skip scene gen: real photo + footer only)
+//   GET /debug/van-image-test?day=Mon        (cutout composite + footer — the daily path)
+//   GET /debug/van-image-test?raw=1          (real photo + footer only)
 captureCalcRouter.get('/debug/van-image-test', async (req, res) => {
   try {
     const segment = getSegment(req)
     const { draftVanPost, todayDayName } = await import('../services/vanPostDrafter.js')
     const { pickNextVanPhoto } = await import('../services/vanPhotoLibrary.js')
-    const { generateVanSceneImage } = await import('../services/nanoBanana.js')
-    const { compositeVanFooter, verifyVanWrap } = await import('../services/vanImageComposite.js')
+    const { compositeVanFooter } = await import('../services/vanImageComposite.js')
     const { commitBinaryFile } = await import('../services/brewArchive.js')
 
     const dayName = String(req.query.day || todayDayName())
     const rawOnly = req.query.raw === '1'
-    const wantComposite = req.query.mode === 'composite'
+    const wantComposite = !rawOnly
 
     const vanPhoto = await pickNextVanPhoto(segment, cacheGet, cacheSet)
     if (!vanPhoto) return res.json({ ok: false, error: 'no van photos in the WorkDrive folder yet' })
@@ -3516,18 +3501,6 @@ captureCalcRouter.get('/debug/van-image-test', async (req, res) => {
       if (!bg?.ok) return res.json({ ok: false, error: `background gen failed: ${bg?.error}` })
       buffer = await compositeVanOnBackground({ cutoutBuffer: cutout.buffer, backgroundBuffer: bg.buffer })
       source = `composite:${vanPhoto.name}`
-    } else if (!rawOnly) {
-      const draft = await draftVanPost({ dayName, targetDate: new Date().toISOString() })
-      const gen = await generateVanSceneImage({
-        vanPhotoBuffer: vanPhoto.buffer, vanPhotoMime: vanPhoto.mimeType, scenePrompt: draft.image_prompt,
-      })
-      if (gen?.ok) {
-        verdict = await verifyVanWrap(gen.buffer, gen.mimeType).catch(e => ({ ok: false, issues: [e.message] }))
-        if (verdict.ok) { buffer = gen.buffer; source = `scene:${vanPhoto.name}` }
-        else source = `real-photo:${vanPhoto.name} (scene REJECTED by verifier)`
-      } else {
-        source = `real-photo:${vanPhoto.name} (scene gen error: ${gen?.error})`
-      }
     }
     const stamped = await compositeVanFooter(buffer)
     const path = `capture-images/van-test-${Date.now().toString(36)}.jpg`
@@ -5966,6 +5939,69 @@ captureCalcRouter.post('/leads/purge', requireCronSecretFlex, express.json({ lim
   } catch (e) {
     console.error('[leads purge]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message, detail: e.response?.data })
+  }
+})
+
+// Brew cover preview — code-rendered (no AI text), no secret needed: it only
+// returns a PNG, nothing is sent, posted, or stored.
+//   GET /debug/brew-cover-preview?issue=105&date=2026-10-01&headline=...
+captureCalcRouter.get('/debug/brew-cover-preview', async (req, res) => {
+  const { renderBrewCover } = await import('../services/brewCoverRender.js')
+  const r = await renderBrewCover({
+    issueNumber: String(req.query.issue || '105'),
+    dateISO: String(req.query.date || new Date().toISOString().slice(0, 10)),
+    headline: String(req.query.headline || 'California Glass Act Live: ADAS Calibration Rules Just Changed'),
+  })
+  if (!r.ok) return res.status(500).json(r)
+  res.set('Content-Type', 'image/png').set('Cache-Control', 'no-store').send(r.buffer)
+})
+
+// Replace an already-published Brew issue cover with the code-rendered one
+// (same repo path the email + archive load from). Old bytes stay in git
+// history. Used 2026-10-11 to fix Issue #105's AI misspelling.
+//   GET /debug/brew-cover-recommit?issue=105&date=2026-10-01&headline=...
+captureCalcRouter.get('/debug/brew-cover-recommit', async (req, res) => {
+  try {
+    const issue = String(req.query.issue || '').trim()
+    const headline = String(req.query.headline || '').trim()
+    if (!/^\d+$/.test(issue) || !headline) return res.status(400).json({ ok: false, error: 'issue (number) and headline required' })
+    const { renderBrewCover } = await import('../services/brewCoverRender.js')
+    const { commitBinaryFile } = await import('../services/brewArchive.js')
+    const r = await renderBrewCover({ issueNumber: issue, dateISO: String(req.query.date || ''), headline })
+    if (!r.ok) return res.status(500).json(r)
+    const c = await commitBinaryFile({ path: `brew/images/issue-${issue}.png`, buffer: r.buffer, message: `Brew Issue #${issue} cover: code-rendered (fixes AI misspelling)` })
+    res.json({ ok: Boolean(c?.ok), raw_url: c?.rawUrl, error: c?.error })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// List one PT day's Facebook Page posts + Instagram media (ids, permalinks,
+// caption start, image) — read-only.   GET /debug/social-posts-on?date=2026-10-01
+captureCalcRouter.get('/debug/social-posts-on', async (req, res) => {
+  try {
+    const axios = (await import('axios')).default
+    const date = String(req.query.date || '').trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ ok: false, error: 'date=YYYY-MM-DD required' })
+    const since = Math.floor(new Date(`${date}T00:00:00-07:00`).getTime() / 1000)
+    const until = since + 86400
+    const G = 'https://graph.facebook.com/v22.0'
+    const fb = await axios.get(`${G}/${process.env.FB_PAGE_ID}/posts`, {
+      params: { since, until, limit: 25, fields: 'id,created_time,permalink_url,message,full_picture', access_token: process.env.FB_PAGE_ACCESS_TOKEN },
+      timeout: 20000, validateStatus: s => s < 500,
+    })
+    const ig = await axios.get(`${G}/${process.env.IG_BUSINESS_USER_ID}/media`, {
+      params: { limit: 40, fields: 'id,timestamp,permalink,caption,media_url', access_token: process.env.FB_PAGE_ACCESS_TOKEN },
+      timeout: 20000, validateStatus: s => s < 500,
+    })
+    const inDay = t => { const ms = Date.parse(t); return ms >= since * 1000 && ms < until * 1000 }
+    res.json({
+      ok: true,
+      facebook: fb.status < 400 ? (fb.data?.data || []).map(p => ({ id: p.id, at: p.created_time, url: p.permalink_url, text: String(p.message || '').slice(0, 90), image: p.full_picture })) : { error: fb.data?.error?.message },
+      instagram: ig.status < 400 ? (ig.data?.data || []).filter(m => inDay(m.timestamp)).map(m => ({ id: m.id, at: m.timestamp, url: m.permalink, text: String(m.caption || '').slice(0, 90), image: m.media_url })) : { error: ig.data?.error?.message },
+    })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
   }
 })
 
