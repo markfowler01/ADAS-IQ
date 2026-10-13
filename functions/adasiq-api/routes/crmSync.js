@@ -1605,6 +1605,21 @@ router.get('/workdrive/spaces', async (req, res) => {
     res.json(out)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// POST /team-text { who: 'kat'|'jayden'|'mark', body } — text a team member from the business line
+// (cron secret). Number comes from phone_config, never from the request.
+router.post('/team-text', express.json(), async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const who = String(req.body?.who || '').toLowerCase(); const body = String(req.body?.body || '').trim()
+    if (!['kat', 'jayden', 'mark'].includes(who) || !body) return res.status(400).json({ error: 'who (kat|jayden|mark) and body required' })
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js'); const cfg = await resolvePhoneConfig(req)
+    const to = cfg?.[`${who.toUpperCase()}_PHONE_NUMBER`] || process.env[`${who.toUpperCase()}_PHONE_NUMBER`] || ''
+    if (!to) return res.status(400).json({ error: `no number on file for ${who}` })
+    const { sendSMS } = await import('../services/comms.js')
+    const r = await sendSMS(req, { to, body, category: 'team' })
+    res.json({ ok: !!r.sent, who, to_last4: String(to).slice(-4), ...r })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // POST /tsb-post-test?id=<tsb id>&via=link — send a TSB bulletin to Mark's private alert channel (cron secret).
 router.post('/tsb-post-test', async (req, res) => {
   if (!wdGuard(req, res)) return
