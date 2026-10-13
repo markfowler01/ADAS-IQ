@@ -5847,6 +5847,68 @@ captureCalcRouter.post('/from-the-van/hard-delete', requireCronSecretFlex, expre
 //
 //   POST /api/capture-calc/from-the-van/silent-remove  (cron-secret)
 //   Body: { emails: ['x@y.com', ...], reason?: 'competitor sweep' }
+// From the Van audience audit (Mark 2026-10-13: the Van is for collision and
+// auto repair shop customers). Matches every subscriber to a CRM shop by
+// email, then by company domain, and reports who is outside that rule, plus
+// the customer contacts not on the list yet. Read-only.
+//   GET /from-the-van/audit[?format=csv]
+//   POST /from-the-van/backfill-customers?confirm=1   (adds the missing customer contacts; new addresses only)
+async function vanAudit(req) {
+  const { getAllShops } = await import('./shops.js')
+  const { shopType, vanEligible, shopContacts, VAN_SHOP_TYPES } = await import('../services/vanShopSync.js')
+  const [van, shops] = await Promise.all([listVanSubscribers(), getAllShops(req)])
+  const GENERIC = /@(gmail|yahoo|hotmail|outlook|aol|icloud|me|mac|comcast|msn|live|att|sbcglobal|frontier|centurylink|q|earthlink|protonmail|ymail)\./i
+  const byEmail = new Map(), byDomain = new Map()
+  for (const sh of shops) for (const c of shopContacts(sh)) {
+    if (!byEmail.has(c.email)) byEmail.set(c.email, sh)
+    const dom = c.email.split('@')[1]
+    if (!GENERIC.test(c.email) && dom && !byDomain.has(dom)) byDomain.set(dom, sh)
+  }
+  const vanEmails = new Set(van.contacts.map(c => String(c.email || '').toLowerCase()))
+  const rows = []
+  for (const c of van.contacts) {
+    if (c.unsubscribed) continue
+    const e = String(c.email || '').toLowerCase()
+    const sh = byEmail.get(e) || (!GENERIC.test(e) && byDomain.get(e.split('@')[1]))
+    const type = sh ? shopType(sh) : ''
+    const stage = sh ? String(sh.pipeline_stage || '') : ''
+    const category = !sh ? 'not in CRM'
+      : vanEligible(sh) ? 'customer · collision or repair'
+      : VAN_SHOP_TYPES.has(type) ? 'prospect · collision or repair'
+      : type ? `${type.replace('_', ' ')}` : 'shop with no type set'
+    rows.push({ email: e, name: [c.first_name, c.last_name].filter(Boolean).join(' '), shop: sh?.shop_name || '', type: type || '', stage, category, matched_by: !sh ? '' : byEmail.get(e) ? 'email' : 'domain' })
+  }
+  const missing = []
+  for (const sh of shops) if (vanEligible(sh)) for (const c of shopContacts(sh)) if (!vanEmails.has(c.email)) missing.push({ ...c, shop: sh.shop_name })
+  const counts = rows.reduce((m, r) => (m[r.category] = (m[r.category] || 0) + 1, m), {})
+  return { subscribed: rows.length, unsubscribed: van.contacts.length - rows.length, counts, rows, missing_customer_contacts: missing, eligible_shops: shops.filter(vanEligible).length }
+}
+captureCalcRouter.get('/from-the-van/audit', requireCronSecretFlex, async (req, res) => {
+  try {
+    const a = await vanAudit(req)
+    if (req.query.format === 'csv') {
+      const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
+      res.set('Content-Type', 'text/csv; charset=utf-8')
+      return res.send(['email,name,shop,type,stage,category,matched_by', ...a.rows.map(r => [r.email, r.name, r.shop, r.type, r.stage, r.category, r.matched_by].map(esc).join(','))].join('\n'))
+    }
+    res.json({ ok: true, subscribed: a.subscribed, unsubscribed: a.unsubscribed, counts: a.counts, eligible_shops: a.eligible_shops, missing_customer_contacts: a.missing_customer_contacts })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.post('/from-the-van/backfill-customers', requireCronSecretFlex, async (req, res) => {
+  try {
+    if (req.query.confirm !== '1') return res.status(400).json({ ok: false, error: 'pass ?confirm=1' })
+    const { addVanSubscriberIfNew } = await import('../services/fromTheVan.js')
+    const a = await vanAudit(req)
+    const out = []
+    for (const c of a.missing_customer_contacts) {
+      const r = await addVanSubscriberIfNew(c).catch(e => ({ ok: false, error: e.message }))
+      out.push({ email: c.email, shop: c.shop, added: !!r.added, exists: !!r.exists, error: r.ok ? null : r.error })
+      await new Promise(r2 => setTimeout(r2, 600))   // Resend allows ~2 requests a second
+    }
+    res.json({ ok: true, added: out.filter(o => o.added).length, results: out })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 captureCalcRouter.post('/from-the-van/silent-remove', requireCronSecretFlex, express.json({ limit: '32kb' }), async (req, res) => {
   try {
     const emails = (req.body?.emails || []).map(e => String(e).trim().toLowerCase()).filter(Boolean)

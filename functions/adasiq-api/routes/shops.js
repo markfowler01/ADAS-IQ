@@ -126,6 +126,15 @@ async function getAllShops(req) {
 // Exported for the dispatch-map feature (geocoding cron, map data endpoint).
 export { getAllShops, insertShop, updateShop, deleteShop }
 
+// From the Van: a collision or auto repair shop that is a customer gets the
+// weekly issue (Mark 2026-10-13). Adds new addresses only, bounded to 8s, never throws.
+async function vanSync(shop) {
+  try {
+    const { syncShopToVan } = await import('../services/vanShopSync.js')
+    return await Promise.race([syncShopToVan(shop), new Promise(r => setTimeout(() => r({ timeout: true }), 8000))])
+  } catch (e) { console.log('[van sync]', e.message); return null }
+}
+
 async function insertShop(req, shopData) {
   const table = getTable(req)
   const row = shopToRow({ ...shopData, created_at: shopData.created_at || new Date().toISOString() })
@@ -441,6 +450,7 @@ router.post('/:id/mark-customer', async (req, res) => {
   try {
     const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
     const upd = await updateShop(req, shop.id, { ...shop, pipeline_stage: 'active', stage_changed_at: new Date().toISOString() })
+    await vanSync(upd)
     try { await postToCliqChannel(DISPATCH_CHANNEL, `⭐ *${shop.shop_name}* marked a current customer (was "${shop.pipeline_stage}") — it sends us cars (${req.user?.name || 'staff'})`) } catch { /* fine */ }
     res.json({ ok: true, shop: upd })
   } catch (e) { res.status(500).json({ error: e.message }) }
@@ -653,6 +663,7 @@ router.post('/quick', async (req, res) => {
       try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'new_shop', title: `New shop: ${shop.shop_name}`, body: `${b3.CUSTOMER_TYPES[ctype].label} · added by ${by} · checklist on the CRM card`, skipCliq: true, skipTechChannel: true }) } catch { /* fine */ }
     }
     console.log(`[shops quick] ${created ? 'created' : 'matched'} ${shop.shop_name} (${ctype}, ${pay}) by ${by} → Books ${books?.contact_id || books?.error}`)
+    await vanSync(shop)
     res.json({ ok: true, created, shop: { id: shop.id, shop_name: shop.shop_name, region: shop.region }, contact_id: books?.contact_id || '', contact_name: books?.contact_name || shop.shop_name, books_error: books?.error || '' })
   } catch (e) { console.error('[shops quick]', e.message); res.status(500).json({ error: e.message }) }
 })
@@ -712,6 +723,7 @@ router.put('/:id/billing', async (req, res) => {
     const pay = b3.PAY_MODES[req.body?.pay_mode] ? req.body.pay_mode : b3.CUSTOMER_TYPES[ctype].pay
     const rules = b3.normalizeRules(br.big3) || b3.DEFAULT_RULES
     const r = await b3.saveBig3(req, shop.shop_name, rules, req.user?.name || req.user?.email || '', { shop, customer_type: ctype, discount_pct: pct, pay_mode: pay, silent: true })
+    try { await vanSync(rowToShop(await getTable(req).getRow(String(req.params.id)))) } catch { /* van sync is best-effort */ }
     console.log(`[billing] ${shop.shop_name}: ${ctype} · ${pct}% · ${pay} (by ${req.user?.name || '?'})`)
     res.json({ ok: true, ...r, customer_type: ctype, discount_pct: pct, pay_mode: pay })
   } catch (e) { console.error('[shops billing PUT]', req.params.id, e.message); res.status(500).json({ error: e.message }) }
@@ -853,6 +865,7 @@ router.post('/', async (req, res) => {
     // "New shop" form (Mark 2026-09-23: "built into both add-a-shop processes").
     if (['active', 'second_active'].includes(String(body.pipeline_stage || '')) && !body.billing_rules?.new_shop) body.billing_rules = { ...(body.billing_rules || {}), new_shop: newShopChecklist(req.user?.name || req.user?.email || '') }
     let shop = await insertShop(req, body)
+    await vanSync(shop)
     if (shop.billing_rules?.new_shop) { try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'onboarding', title: `New shop: ${shop.shop_name}`, body: 'New Shop checklist started — W-9, insurers, sign-off, terms, Kinetic, ADAS Maps (CRM → Billing).', skipCliq: true, skipTechChannel: true }) } catch { /* fine */ } }
     if (shop.billing_rules?.new_shop) { try { const { sendShopWelcome } = await import('../services/shopWelcome.js'); const w = await sendShopWelcome(req, shop, { by: req.user?.name || 'app' }); if (w.sent) shop = (await getAllShops(req)).find(x => String(x.id) === String(shop.id)) || shop } catch (e) { console.log('[welcome] on create failed:', e.message) } }
     res.status(201).json(shop)
@@ -945,6 +958,7 @@ router.put('/:id', async (req, res) => {
       merged.billing_rules = { ...(merged.billing_rules || {}), new_shop: newShopChecklist(req.user?.name || req.user?.email || '') }; seededChecklist = true
     }
     const updated = await updateShop(req, req.params.id, merged)
+    await vanSync(updated)
     res.json(updated)
   } catch (err) {
     console.error('[shops PUT]', err.message)
@@ -960,6 +974,7 @@ router.patch('/:id', async (req, res) => {
     const merged = await autoZone({ ...current, ...req.body })
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) merged.stage_changed_at = new Date().toISOString()
     const updated = await updateShop(req, req.params.id, merged)
+    await vanSync(updated)
 
     // New customer with no Big 3 rule → ask for it once (Mark 2026-09-10).
     if (req.body.pipeline_stage && /^(active|second_active|active2)$/.test(req.body.pipeline_stage) && !/^(active|second_active|active2)$/.test(current.pipeline_stage || '')) {

@@ -169,6 +169,30 @@ export async function unsubscribeVanContact(email) {
  * @param {boolean} [sub.unsubscribed]
  * @returns {Promise<{ok, id?, email?, error?}>}
  */
+/**
+ * Add a contact ONLY if Resend has never seen the address. An existing contact
+ * is left exactly as it is, so someone who unsubscribed or was silently
+ * removed is never signed back up. Used by the CRM auto-subscribe
+ * (services/vanShopSync.js). Mark 2026-10-13.
+ */
+export async function addVanSubscriberIfNew({ email, firstName, lastName }) {
+  const clean = String(email || '').trim().toLowerCase()
+  if (!clean) return { ok: false, error: 'email required' }
+  try {
+    const audienceId = await getVanAudienceId()
+    const lookup = await axios.get(
+      `${RESEND_API}/audiences/${audienceId}/contacts/${encodeURIComponent(clean)}`,
+      { headers: auth(), timeout: 10000, validateStatus: s => s < 500 }
+    )
+    if (lookup.status >= 200 && lookup.status < 300) return { ok: true, exists: true, unsubscribed: lookup.data?.unsubscribed === true, email: clean }
+    if (lookup.status !== 404) return { ok: false, error: `Resend lookup ${lookup.status}` }
+    const r = await addVanSubscriber({ email: clean, firstName, lastName })
+    return r.ok ? { ...r, added: !r.duplicate } : r
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+}
+
 export async function addVanSubscriber({ email, firstName, lastName, unsubscribed = false }) {
   if (!email) return { ok: false, error: 'email required' }
   try {
