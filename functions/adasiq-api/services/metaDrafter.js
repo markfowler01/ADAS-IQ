@@ -22,6 +22,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { sanitizeAiOutput } from './textSanitize.js'
 import { scoreDraft } from './voiceScorer.js'
 import { MAGIC_LANTERN_LIBRARY, MAGIC_LANTERN_ROUTING_BLOCK } from './magicLanternLibrary.js'
+import { withCalibrationFacts } from './calibrationFacts.js'
 
 const MIN_VOICE_SCORE = 70
 const MAX_RETRIES = 2
@@ -439,7 +440,7 @@ export async function draftUnifiedDailyPost({ story, caseStudy = '', type, targe
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1500,
-    system: UNIFIED_SYSTEM_PROMPT,
+    system: withCalibrationFacts(UNIFIED_SYSTEM_PROMPT),
     messages: [{ role: 'user', content: userMsg }],
   })
   const raw = (msg.content?.[0]?.text || '').trim()
@@ -466,7 +467,7 @@ export async function draftUnifiedDailyPost({ story, caseStudy = '', type, targe
       const retry = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1500,
-        system: UNIFIED_SYSTEM_PROMPT,
+        system: withCalibrationFacts(UNIFIED_SYSTEM_PROMPT),
         messages: [
           { role: 'user', content: userMsg },
           { role: 'assistant', content: JSON.stringify({ headline, body, image_prompt: imagePrompt }) },
@@ -499,7 +500,7 @@ export async function draftUnifiedDailyPost({ story, caseStudy = '', type, targe
       const retry = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1500,
-        system: UNIFIED_SYSTEM_PROMPT,
+        system: withCalibrationFacts(UNIFIED_SYSTEM_PROMPT),
         messages: [
           { role: 'user', content: userMsg },
           { role: 'assistant', content: JSON.stringify({ headline, body, image_prompt: imagePrompt }) },
@@ -536,10 +537,10 @@ export async function draftMetaSlot({ channel, day, type, story, caseStudy = '',
   if (!story || story.trim().length < 40) throw new Error('story is required')
   if (!['facebook', 'instagram', 'tiktok', 'youtube'].includes(channel)) throw new Error(`unknown channel: ${channel}`)
 
-  const system = channel === 'facebook'  ? FB_SYSTEM_PROMPT
+  const system = withCalibrationFacts(channel === 'facebook'  ? FB_SYSTEM_PROMPT
     :          channel === 'instagram' ? IG_SYSTEM_PROMPT
     :          channel === 'tiktok'    ? TT_SYSTEM_PROMPT
-    :          /* youtube */             YT_SYSTEM_PROMPT
+    :          /* youtube */             YT_SYSTEM_PROMPT)
   const typePrompt = channel === 'facebook'  ? FB_TYPE_PROMPTS[type]
     :              channel === 'instagram' ? IG_TYPE_PROMPTS[type]
     :              channel === 'tiktok'    ? TT_TYPE_PROMPTS[type]

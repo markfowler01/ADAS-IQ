@@ -20,6 +20,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { sanitizeAiOutput } from './textSanitize.js'
 import { scoreDraft } from './voiceScorer.js'
+import { withCalibrationFacts } from './calibrationFacts.js'
 
 const MIN_VOICE_SCORE = 82
 const MAX_RETRIES = 2
@@ -137,7 +138,7 @@ export async function draftVanPost({ dayName, targetDate = null } = {}) {
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1200,
-    system: VAN_SYSTEM_PROMPT,
+    system: withCalibrationFacts(VAN_SYSTEM_PROMPT),
     messages: [{ role: 'user', content: userMsg }],
   })
   const raw = (msg.content?.[0]?.text || '').trim()
@@ -161,7 +162,7 @@ export async function draftVanPost({ dayName, targetDate = null } = {}) {
       const retry = await client.messages.create({
         model: 'claude-sonnet-4-6',
         max_tokens: 1200,
-        system: VAN_SYSTEM_PROMPT,
+        system: withCalibrationFacts(VAN_SYSTEM_PROMPT),
         messages: [
           { role: 'user', content: userMsg },
           { role: 'assistant', content: JSON.stringify({ headline, body, image_prompt: imagePrompt }) },

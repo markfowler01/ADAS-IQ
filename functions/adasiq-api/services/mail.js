@@ -271,6 +271,20 @@ export async function saveDraftReply(token, accountId, { to, subject, body, inRe
   return res.data?.data || res.data || {}
 }
 
+/**
+ * Search an account's mail (Zoho searchKey syntax, e.g. "entire:Ford" or
+ * "subject:Ford camera"). Read-only.
+ */
+export async function searchMessages(token, accountId, searchKey, limit = 25) {
+  const res = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/search`, {
+    headers: mailHeaders(token),
+    params: { searchKey, limit },
+    timeout: 15000,
+    transformResponse: [safeParseMailResponse],
+  })
+  return res.data?.data || []
+}
+
 // Send an email from Mark's account.
 export async function sendMail(token, accountId, { to, subject, body, cc }) {
   const res = await axios.post(

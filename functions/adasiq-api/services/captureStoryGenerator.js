@@ -14,6 +14,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { sanitizeAiOutput } from './textSanitize.js'
+import { withCalibrationFacts } from './calibrationFacts.js'
 
 function getClient() {
   return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -127,7 +128,7 @@ Return just the story body, starting with [COMPOSITE] on its own line.`
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 800,
-    system: SYSTEM_PROMPT,
+    system: withCalibrationFacts(SYSTEM_PROMPT),
     messages: [{ role: 'user', content: userMsg }],
   })
   const raw = (msg.content?.[0]?.text || '').trim()

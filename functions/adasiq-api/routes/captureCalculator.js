@@ -5985,6 +5985,30 @@ captureCalcRouter.get('/debug/brew-cover-recommit', async (req, res) => {
 // comes down by hand). Also re-commits the archive/email image. One-shot
 // per fb_id via cache guard so a retry can never double-post.
 //   GET /debug/brew-post-replace?fb_id=&ig_id=&issue=&date=&headline=&strip=
+// Read-only: search Mark's Zoho inbox (mark@ by default) and read one message.
+// Used 2026-10-13 to find the reply that caught the Ford camera error in Van #12.
+//   GET /debug/mark-mail-search?q=entire:Ford[&account=mark@absoluteadas.com]
+//   GET /debug/mark-mail-search?folder=<folderId>&id=<messageId>   (full content)
+captureCalcRouter.get('/debug/mark-mail-search', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { getMailAccessToken, getMailAccountIdFor, searchMessages, getMessageContent } = await import('../services/mail.js')
+    const token = await getMailAccessToken()
+    const accountId = await getMailAccountIdFor(token, String(req.query.account || 'mark@absoluteadas.com'))
+    if (req.query.id && req.query.folder) {
+      const c = await getMessageContent(token, accountId, String(req.query.folder), String(req.query.id))
+      const text = String(c.content || '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<br\s*\/?>|<\/p>|<\/div>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+      return res.json({ ok: true, accountId, text: text.slice(0, 6000) })
+    }
+    const list = await searchMessages(token, accountId, String(req.query.q || 'entire:Ford'), Number(req.query.limit) || 25)
+    res.json({ ok: true, accountId, count: list.length, messages: list.map(m => ({
+      id: m.messageId, folder: m.folderId, from: m.fromAddress || m.sender, to: m.toAddress, subject: m.subject,
+      date: m.receivedTime ? new Date(Number(m.receivedTime)).toISOString() : null, summary: String(m.summary || '').slice(0, 200),
+    })) })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.response?.data?.data?.errorCode || e.message })
+  }
+})
+
 captureCalcRouter.get('/debug/brew-post-replace', async (req, res) => {
   try {
     const segment = getSegment(req)

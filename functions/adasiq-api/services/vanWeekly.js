@@ -24,6 +24,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import crypto from 'crypto'
 import { getVal, setVal, deleteVal, readChunkedArray, writeChunkedArray } from './vanDatastore.js'
+import { withCalibrationFacts, fordGmStaticCameraViolation } from './calibrationFacts.js'
 
 // ─── HMAC signing for approve / kill URLs ─────────────────────────────────
 function hmacSecret() {
@@ -244,7 +245,7 @@ export async function draftWeeklyIssue({ caseNote, issueNumber, forcedAskType, r
     const resp = await client().messages.create({
       model: 'claude-opus-4-8',
       max_tokens: 1800,
-      system: VAN_MASTER_PROMPT,
+      system: withCalibrationFacts(VAN_MASTER_PROMPT),
       messages: [{ role: 'user', content }],
     })
     const text = resp.content?.map(b => b.text).filter(Boolean).join('') || ''
@@ -342,6 +343,8 @@ export function validateVanDraft(parsed, { forbiddenVehicles = new Set(), forbid
   if (!/ask your cal shop this week/i.test(body)) v.push('missing the bolded "Ask your cal shop this week:" line with a quoted question')
   if (!/subrogation|\bRO\b|comeback|denied|guess wh(?:o|ose)|your name/i.test(body)) v.push('missing the consequence closer (subrogation / RO gets pulled / comeback / denied)')
   if (!/\bthe van\b/i.test(body)) v.push('missing the van-personality outro line')
+  const fordGm = fordGmStaticCameraViolation(`${subject}\n${body}`, String(parsed.vehicle || ''))
+  if (fordGm) v.push(fordGm)
   if (/—/.test(subject + body)) v.push('contains an em dash (hard rule: none)')
   if (/!/.test(subject + body)) v.push('contains an exclamation point (hard rule: none)')
   return v

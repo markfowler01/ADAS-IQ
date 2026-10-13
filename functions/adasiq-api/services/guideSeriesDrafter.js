@@ -12,6 +12,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import catalyst from 'zcatalyst-sdk-node'
 import { getVal, setVal } from './vanDatastore.js'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from './cliq.js'
+import { CALIBRATION_FACTS } from './calibrationFacts.js'
 
 const CHECKLIST = 'https://absoluteadas.com/checklist'      // full https so LinkedIn and Facebook make it tappable
 const GUIDE = 'https://absoluteadas.com/estimator-guide'
@@ -109,6 +110,7 @@ export async function draftNextSeriesPost(req, { dateStr, dry = false }) {
     model: 'claude-opus-4-8',
     max_tokens: 900,
     system: `${VOICE}
+${CALIBRATION_FACTS}
 You draft ONE social post for a daily series called "When does this car need a calibration?" for estimators. Output ONLY JSON:
 {"kicker": "UPPERCASE LABEL, 2 TO 6 WORDS", "headline": "one plain sentence, 6 to 11 words, ends with a period", "body": "3 short paragraphs separated by blank lines, 55 to 110 words total, last paragraph starts with 'Ask your cal shop:' and is one question in quotes", "ig": "the same idea in 2 short paragraphs, 35 to 70 words"}
 The headline must not repeat any headline in the AVOID list. Do not add a sign-off, links or a call to action; those are appended.`,

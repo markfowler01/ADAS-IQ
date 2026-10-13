@@ -16,6 +16,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { sanitizeAiOutput } from './textSanitize.js'
 import { scoreDraft } from './voiceScorer.js'
+import { withCalibrationFacts } from './calibrationFacts.js'
 
 const MIN_VOICE_SCORE = 70   // Brief: re-draft anything below 70
 const MAX_RETRIES = 2        // Brief: max 3 retries total (first attempt + 2 retries)
@@ -133,7 +134,7 @@ export async function draftLinkedInWeek({ story, caseStudy = '', angle = '' } = 
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 4000,
-    system: SYSTEM_PROMPT,
+    system: withCalibrationFacts(SYSTEM_PROMPT),
     messages: [{ role: 'user', content: userMsg }],
   })
 
@@ -248,7 +249,7 @@ export async function draftSlotVariants({ day, story, caseStudy = '', angle = ''
   const msg = await client.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 2500,
-    system: SYSTEM_PROMPT,
+    system: withCalibrationFacts(SYSTEM_PROMPT),
     messages: [{ role: 'user', content: userMsg }],
   })
   const raw = (msg.content?.[0]?.text || '').trim()
@@ -294,7 +295,7 @@ async function redraftOne({ client, originalPrompt, draft, slate, type, day }) {
     const msg = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
-      system: SYSTEM_PROMPT,
+      system: withCalibrationFacts(SYSTEM_PROMPT),
       messages: [
         { role: 'user', content: originalPrompt },
         { role: 'assistant', content: JSON.stringify({ drafts: [{ day, type, headline: draft.headline, body: draft.body }] }) },
