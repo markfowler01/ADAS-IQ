@@ -19,7 +19,7 @@ import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { readJobsPublic } from './jobs.js'
 import { todayPT } from '../services/dispatch.js'
-import { postToCliqChannel, DISPATCH_CHANNEL, TECHNICIANS_CHANNEL } from '../services/cliq.js'
+import { postToCliqChannel, DISPATCH_CHANNEL, TECHNICIANS_CHANNEL, AA_JOBS_CHANNEL } from '../services/cliq.js'   // tech board → AA Job Notifications (Mark 2026-10-13)
 
 const router = express.Router()
 const TABLE = 'AppConfig'
@@ -401,7 +401,7 @@ export async function maybeFireScheduleDigest(req) {
     // Tech-facing "today's board" — only posts when something is
     // actually scheduled today; a quiet day posts nothing.
     if (digest.techText) {
-      await postToCliqChannel(TECHNICIANS_CHANNEL, digest.techText)
+      await postToCliqChannel(AA_JOBS_CHANNEL, digest.techText)
         .catch(e => console.warn('[sched-digest] tech post failed:', e.message))
     }
     // Bell for Kat: today's scheduled requests need jobs created (Mark
@@ -435,7 +435,7 @@ router.post('/digest-run', async (req, res) => {
   try {
     const digest = await buildScheduleDigest(req)
     await postToCliqChannel(DISPATCH_CHANNEL, digest.text)
-    if (digest.techText) await postToCliqChannel(TECHNICIANS_CHANNEL, digest.techText)
+    if (digest.techText) await postToCliqChannel(AA_JOBS_CHANNEL, digest.techText)
     res.json({ ok: true, tech_posted: !!digest.techText, ...digest.counts })
   } catch (err) {
     res.status(500).json({ error: err.message })

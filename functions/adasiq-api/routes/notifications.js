@@ -353,10 +353,9 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
 
         // Also post to #technicians channel for needs_dispatch + job_dispatched events.
         // skipTechChannel lets a multi-recipient event post to the channel only once.
-        const postedTechChannel = isRichJob && !skipTechChannel
-        if (postedTechChannel) {
-          await postToCliqChannel(TECHNICIANS_CHANNEL, cliqMsg)
-        }
+        // Mark 2026-10-13: job notices stay out of the Absolute ADAS chat — jobs.js already posts
+        // needs-dispatch / dispatched to AA Job Notifications (#aajobs), so no second post here.
+        const postedTechChannel = false && isRichJob && !skipTechChannel
 
         console.log(`[notifications] Cliq sent to "${to}"${postedTechChannel ? ' + #technicians' : ''}`)
       } catch (e) {

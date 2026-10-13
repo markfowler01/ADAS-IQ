@@ -327,7 +327,7 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
   // release the claim so the hourly sweep tries again.
   const results = {
     mark: await cliqTry('Mark alert channel', () => postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg)),
-    technicians: await cliqTry('#technicians', () => postToCliqChannel(TECHNICIANS_CHANNEL, techMsg)),
+    // Invoiced notices live in AA Job Notifications (#aajobs, aaMsg below), not the Absolute ADAS chat (Mark 2026-10-13).
     aajobs: await cliqTry('#aajobs', () => postToCliqChannel(AA_JOBS_CHANNEL, aaMsg)),
     dispatch: await cliqTry('#dispatch', () => postToCliqChannel(DISPATCH_CHANNEL, dispatchMsg)),
   }
