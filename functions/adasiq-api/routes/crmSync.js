@@ -1605,6 +1605,16 @@ router.get('/workdrive/spaces', async (req, res) => {
     res.json(out)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// POST /tsb-post-test?id=<tsb id>&via=link — send a TSB bulletin to Mark's private alert channel (cron secret).
+router.post('/tsb-post-test', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const T = await import('./tsb.js'); const { MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+    const all = await T.readAllTsbs(req); const tsb = all.find(t => String(t.id) === String(req.query.id)) || all.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0]
+    if (!tsb) return res.status(404).json({ error: 'no TSBs' })
+    res.json({ title: tsb.title, ...(await T.postTsbToChannel(req, tsb, { reason: 'update', channelId: MARK_ALERT_CHANNEL_ID })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // POST /photo-scout?days=&max=&dry=1 — run the Photo Scout now (cron secret). dry=1 counts candidates, no AI spend.
 router.post('/photo-scout', async (req, res) => {
   if (!wdGuard(req, res)) return

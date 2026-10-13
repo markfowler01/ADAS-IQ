@@ -10,8 +10,8 @@ const ORANGE = '#CD4419'
 const CATEGORIES = [
   { id: 'calibration', label: '🎯 Calibration', color: '#CD4419', bg: '#fdf3ef' },
   { id: 'keys',        label: '🔑 Keys',        color: '#a16207', bg: '#fefce8' },
-  { id: 'cloning',     label: '🧬 Cloning',     color: '#7e22ce', bg: '#fdf4ff' },
-  { id: 'general',     label: '💡 General',     color: '#1d4ed8', bg: '#eff6ff' },
+  { id: 'cloning',     label: '🧬 Cloning',     color: '#0A0A0A', bg: '#f5f3f0' },
+  { id: 'general',     label: '💡 General',     color: '#0A0A0A', bg: '#f5f3f0' },
 ]
 const catOf = id => CATEGORIES.find(c => c.id === id) || CATEGORIES[3]
 
@@ -189,6 +189,18 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
                       }}
                         className="text-xs font-bold rounded-lg px-3 py-1.5"
                         style={{ backgroundColor: '#fdf3ef', color: ORANGE }}>📄 Official PDF</button>
+                      <button onClick={async e => {
+                        e.stopPropagation()
+                        showToast('📣 Posting to the Absolute ADAS channel…')
+                        try {
+                          const r = await apiFetch(`${API_BASE}/api/tsb/${t.id}/post`, { method: 'POST' })
+                          const j = await r.json().catch(() => ({}))
+                          if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`)
+                          showToast(`✅ ${j.number} posted to the channel`)
+                        } catch (err) { showToast(`Post failed: ${err.message}`) }
+                      }}
+                        className="text-xs font-bold rounded-lg px-3 py-1.5"
+                        style={{ backgroundColor: '#eef6ff', color: '#1d4ed8' }} title="Send the bulletin PDF (with photos) to the techs' Cliq channel">📣 Post to channel</button>
                       <button onClick={e => { e.stopPropagation(); setEditTsb(t) }}
                         className="text-xs font-bold rounded-lg px-3 py-1.5"
                         style={{ backgroundColor: '#f5f3f0', color: '#555' }}>✎ Edit</button>
@@ -212,7 +224,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
           tsb={editTsb}
           onClose={() => { setShowNew(false); setEditTsb(null) }}
           onSaved={(msg, saved) => {
-            showToast(msg)
+            showToast(saved?._posted?.ok ? `${msg} · 📣 posted to the channel` : msg)
             load()
             // New TSB → reopen in edit mode so photos can be attached.
             if (showNew && saved) { setShowNew(false); setEditTsb(saved) }
@@ -255,7 +267,7 @@ function TsbModal({ tsb, onClose, onSaved }) {
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      onSaved(isEdit ? '✅ TSB updated' : '✅ TSB saved — add photos below', j.tsb)
+      onSaved(isEdit ? '✅ TSB updated' : '✅ TSB saved — add photos below, then 📣 Post to channel to resend with photos', { ...j.tsb, _posted: j.posted })
     } catch (e) { setError(e.message) }
     finally { setSaving(false) }
   }
@@ -365,7 +377,7 @@ function CloningCoverage() {
           <button key={v} onClick={() => setType(v)}
             className="text-xs font-bold rounded-full px-3 py-1.5"
             style={type === v
-              ? { backgroundColor: '#7e22ce', color: 'white' }
+              ? { backgroundColor: '#0A0A0A', color: 'white' }
               : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>{label}</button>
         ))}
         {stats?.tools && (
@@ -414,7 +426,7 @@ function CloningCoverage() {
           style={{ border: '1px solid #e0dbd6', backgroundColor: scanning ? '#f5f3f0' : 'white', color: '#555' }}
         >{scanning ? '🔍…' : '📷 Scan ECU'}</button>
       </div>
-      {scanDetail && <p className="text-[11px] mb-2" style={{ color: '#7e22ce' }}>🤖 {scanDetail}</p>}
+      {scanDetail && <p className="text-[11px] mb-2" style={{ color: '#0A0A0A' }}>🤖 {scanDetail}</p>}
       <div className="mb-2" />
       {!q.trim() && (
         <p className="text-sm text-center py-10" style={{ color: '#aaa' }}>
@@ -440,7 +452,7 @@ function CloningCoverage() {
                       {r.method && <MethodBadge method={r.method} />}
                     </div>
                     <p className="text-xs mt-0.5" style={{ color: '#666' }}>
-                      <span style={{ color: '#7e22ce', fontWeight: 700 }}>{r.system}</span>
+                      <span style={{ color: '#0A0A0A', fontWeight: 700 }}>{r.system}</span>
                       {r.mcu && <span> · {r.mcu}</span>}
                       {r.caps && <span> · {r.caps}</span>}
                       {r.other && <span> · {r.other}</span>}
@@ -453,7 +465,7 @@ function CloningCoverage() {
                     </p>
                     <p className="text-xs mt-0.5" style={{ color: '#666' }}>
                       {r.engine && <span>{r.engine} · </span>}
-                      {r.ecu && <span className="font-bold" style={{ color: '#7e22ce' }}>ECU {r.ecu}</span>}
+                      {r.ecu && <span className="font-bold" style={{ color: '#0A0A0A' }}>ECU {r.ecu}</span>}
                       {r.micro && <span> · {r.micro}</span>}
                       {r.methods && <span> · {r.methods}</span>}
                     </p>
@@ -490,7 +502,7 @@ function MethodBadge({ method }) {
     : m.includes('BOOT')
       ? { bg: '#fef2f2', color: '#dc2626' }
       : m.includes('OBD')
-        ? { bg: '#eff6ff', color: '#1d4ed8' }
+        ? { bg: '#f5f3f0', color: '#0A0A0A' }
         : { bg: '#fff7ed', color: '#c2410c' }
   const icon = m.includes('BOOT') ? '🧪' : m.includes('OBD') && !m.includes('BENCH') ? '🔌' : '🔧'
   return (
@@ -694,7 +706,7 @@ function OemDocs() {
       <div className="flex gap-1.5 overflow-x-auto pb-2 mb-3" style={{ scrollbarWidth: 'none' }}>
         {['all', ...oems].map(o => (
           <button key={o} onClick={() => setOem(o)} className="text-xs font-bold rounded-full px-3 py-1.5 flex-shrink-0"
-            style={oem === o ? { backgroundColor: '#1d4ed8', color: 'white' } : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>
+            style={oem === o ? { backgroundColor: '#0A0A0A', color: 'white' } : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>
             {o === 'all' ? `All (${docs.length})` : o}
           </button>
         ))}
@@ -707,7 +719,7 @@ function OemDocs() {
             <div key={d.id} className="rounded-xl p-3" style={{ backgroundColor: 'white', border: '1px solid #e0dbd6' }}>
               <button onClick={() => setOpenId(open ? null : d.id)} className="w-full text-left">
                 <div className="flex items-start justify-between gap-2">
-                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 flex-shrink-0" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>{d.oem || 'OEM'}</span>
+                  <span className="text-[11px] font-bold rounded-full px-2 py-0.5 flex-shrink-0" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>{d.oem || 'OEM'}</span>
                   <span className="text-[10px] flex-shrink-0" style={{ color: '#aaa' }}>{d.published_date || ''}</span>
                 </div>
                 <p className="text-sm font-bold mt-1" style={{ color: '#1a1a1a' }}>{d.title}</p>
@@ -717,7 +729,7 @@ function OemDocs() {
                 <>
                   <p className="text-xs mt-1.5 whitespace-pre-wrap" style={{ color: '#333' }}>{d.summary}</p>
                   {d.notes && <p className="text-xs mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}><b>How we use it:</b> {d.notes}</p>}
-                  {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1d4ed8' }}>📄 Open the PDF ↗</a>}
+                  {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0A0A0A' }}>📄 Open the PDF ↗</a>}
                 </>
               )}
             </div>
@@ -733,7 +745,7 @@ function AskBox() {
   const [q, setQ] = useState('')
   const [busy, setBusy] = useState(false)
   const [ans, setAns] = useState(null)
-  const catOf2 = id => (({ calibration: '#CD4419', keys: '#a16207', cloning: '#7e22ce', general: '#1d4ed8' })[id] || '#1d4ed8')
+  const catOf2 = id => (({ calibration: '#CD4419', keys: '#a16207', cloning: '#0A0A0A', general: '#0A0A0A' })[id] || '#0A0A0A')
 
   async function ask() {
     const question = q.trim()
@@ -775,8 +787,8 @@ function AskBox() {
           {ans.cited_docs?.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
               {ans.cited_docs.map(d => (
-                <a key={d.id} href={d.url} target="_blank" rel="noreferrer" className="rounded-lg px-3 py-2 block" style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe' }}>
-                  <p className="text-xs font-bold" style={{ color: '#1d4ed8' }}>📋 {d.oem} — {d.title}</p>
+                <a key={d.id} href={d.url} target="_blank" rel="noreferrer" className="rounded-lg px-3 py-2 block" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e8e4e0' }}>
+                  <p className="text-xs font-bold" style={{ color: '#0A0A0A' }}>📋 {d.oem} — {d.title}</p>
                   <p className="text-[11px]" style={{ color: '#64748b' }}>{d.published_date || ''} · what the manufacturer requires · tap to open the PDF</p>
                 </a>
               ))}

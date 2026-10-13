@@ -246,7 +246,9 @@ router.post('/', async (req, res) => {
       created_at: new Date().toISOString(),
     }
     await writeTsb(req, tsb)
-    res.json({ ok: true, tsb })
+    let posted = null
+    try { posted = await Promise.race([postTsbToChannel(req, tsb), new Promise(r => setTimeout(() => r({ ok: false, error: 'timeout' }), 15000))]) } catch (e) { posted = { ok: false, error: e.message } }
+    res.json({ ok: true, tsb, posted })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
@@ -290,13 +292,10 @@ router.delete('/:id', async (req, res) => {
 // ── Official bulletin PDF (Mark 2026-09-05: "look very official") ───────
 // Numbered AA-TSB-<year>-<seq>; the number is assigned on first export
 // and stored on the TSB so it never changes.
-router.post('/:id/pdf', async (req, res) => {
-  try {
-    const tsbs = await readAllTsbs(req)
-    const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
-    if (!tsb) return res.status(404).json({ error: 'TSB not found' })
-
-    if (!tsb.number) {
+// Build the official bulletin PDF. Assigns the AA-TSB number on first use (stored, never changes).
+export async function buildTsbPdf(req, tsb, tsbs = null) {
+  tsbs = tsbs || await readAllTsbs(req)
+  if (!tsb.number) {
       const year = new Date(tsb.created_at || Date.now()).getFullYear()
       const seqs = tsbs.map(t => {
         const m = /AA-TSB-\d{4}-(\d+)/.exec(t.number || '')
@@ -387,7 +386,15 @@ router.post('/:id/pdf', async (req, res) => {
         M, fy + 34, { width: W - M * 2 })
     doc.end()
 
-    const buf = await donePdf
+    return donePdf
+}
+
+router.post('/:id/pdf', async (req, res) => {
+  try {
+    const tsbs = await readAllTsbs(req)
+    const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
+    if (!tsb) return res.status(404).json({ error: 'TSB not found' })
+    const buf = await buildTsbPdf(req, tsb, tsbs)
     res.type('application/pdf')
     res.setHeader('Content-Disposition', `attachment; filename="${tsb.number}.pdf"`)
     res.send(buf)
@@ -397,156 +404,47 @@ router.post('/:id/pdf', async (req, res) => {
   }
 })
 
-
-// ── Ask the TSB brain (Mark 2026-09-07, Phase 2) ────────────────────────
-// Pre-filter TSBs by the question's words (keeps the prompt small), let
-// Claude answer in plain language, and cite the TSBs it leaned on so the
-// client can render those cards under the answer.
-router.post('/ask', async (req, res) => {
+// 📣 Post the bulletin PDF to the techs' Cliq channel (Mark 2026-10-12: "when [someone] creates a
+// TSB tip I want it posted in PDF form to the technicians channel"). Uploads the PDF as a file;
+// if Cliq refuses the upload, posts a message with a link to the PDF instead.
+const TSB_CHANNEL = 'technicians'   // the "Absolute ADAS" channel
+const PUBLIC_BASE = 'https://app.adas-iq.com/server/adasiq-api'   // our own domain, never the raw Catalyst host
+export async function postTsbToChannel(req, tsb, { reason = 'new', channelId = '' } = {}) {   // channelId = test to a private channel
+  const tsbs = await readAllTsbs(req)
+  const cur = tsbs.find(t => String(t.id) === String(tsb.id)) || tsb
+  const buf = await buildTsbPdf(req, cur, tsbs)
+  const vehicle = [cur.year_from && cur.year_to && cur.year_from !== cur.year_to ? `${cur.year_from}–${cur.year_to}` : (cur.year_from || cur.year_to || ''), cur.make, cur.model].filter(Boolean).join(' ')
+  const head = `📖 *${reason === 'update' ? 'Updated TSB' : 'New TSB'} · ${cur.number}*${cur.author ? ` from ${cur.author}` : ''}\n*${cur.title}*${vehicle ? ` · ${vehicle}` : ''} · ${String(cur.category || 'general')}${(cur.photos || []).length ? ` · 📷 ${cur.photos.length}` : ''}`
+  const { getCliqAccessToken, postToCliqChannel } = await import('../services/cliq.js')
   try {
-    const question = String(req.body?.question || '').trim()
-    if (!question) return res.status(400).json({ error: 'Ask a question.' })
-    const [all, docs] = await Promise.all([readAllTsbs(req), readOemDocs(req)])
-    if (!all.length && !docs.length) return res.json({ answer: 'No TSBs in the library yet — write the first one.', cited: [] })
-
-    // Rank by how many question words hit each TSB; always keep a floor
-    // so a loosely-worded question still gets the newest tips as context.
-    const words = question.toLowerCase().split(/\s+/).filter(w => w.length > 2)
-    const scored = all.map(t => {
-      const hay = [t.title, t.body, t.make, t.model, t.year_from, t.year_to, t.tools, t.category].join(' ').toLowerCase()
-      return { t, score: words.reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0) }
-    }).sort((a, b) => b.score - a.score || String(b.t.created_at || '').localeCompare(String(a.t.created_at || '')))
-    const shortlist = (scored.some(x => x.score > 0) ? scored.filter(x => x.score > 0) : scored).slice(0, 10).map(x => x.t)
-    // OEM statements ranked the same way — an OEM requirement outranks shop
-    // lore when a tech is arguing a line item, so they get their own block.
-    const dScored = docs.map(d => {
-      const hay = [d.oem, d.title, d.summary, d.notes, d.type].join(' ').toLowerCase()
-      return { d, score: words.reduce((n, w) => n + (hay.includes(w) ? 1 : 0), 0) }
-    }).sort((a, b) => b.score - a.score || String(b.d.published_date || '').localeCompare(String(a.d.published_date || '')))
-    const docShort = dScored.filter(x => x.score > 0).slice(0, 5).map(x => x.d)
-
-    const context = shortlist.map((t, i) =>
-      `[${i + 1}] ${t.number || `TSB-${t.id}`} — ${t.title}\n` +
-      `    Category: ${t.category} · Vehicles: ${[t.year_from && t.year_to ? `${t.year_from}-${t.year_to}` : (t.year_from || t.year_to || ''), t.make, t.model].filter(Boolean).join(' ') || 'all'}` +
-      `${t.tools ? ` · Tools: ${t.tools}` : ''}\n    ${String(t.body).replace(/\s+/g, ' ').slice(0, 500)}`
-    ).join('\n\n')
-    const docContext = docShort.map((d, i) =>
-      `[D${i + 1}] ${d.oem} — ${d.title}${d.published_date ? ` (${d.published_date})` : ''}\n    ${String(d.summary).replace(/\s+/g, ' ').slice(0, 700)}${d.notes ? `\n    How we use it: ${String(d.notes).replace(/\s+/g, ' ').slice(0, 300)}` : ''}`
-    ).join('\n\n')
-
-    const Anthropic = (await import('@anthropic-ai/sdk')).default
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 25000, maxRetries: 1 })
-    const msg = await client.messages.create({
-      model: 'claude-haiku-4-5',
-      max_tokens: 500,
-      messages: [{ role: 'user', content:
-        `You are the Absolute ADAS shop knowledge assistant. Answer the technician's question using ONLY the TSBs below. ` +
-        `Be direct and practical, like a senior tech giving a quick answer at the bay. If a TSB applies, name it by its number. ` +
-        `If none of the TSBs actually answer the question, say so plainly and suggest they write one.\n\n` +
-        `After your answer, add a line exactly like: CITED: [1, 3] listing the bracket numbers you used (or CITED: [] if none), ` +
-        `and a second line CITEDOEM: [D1] for any OEM documents you used (or CITEDOEM: []).\n\n` +
-        `QUESTION: ${question}\n\nTSBs (what our techs learned):\n${context || '(none)'}` +
-        `${docContext ? `\n\nOEM POSITION STATEMENTS (what the manufacturer requires — this outranks shop lore when a shop or adjuster is pushing back; name the document and its date):\n${docContext}` : ''}` }],
-    })
-    let answer = (msg.content || []).map(b => b.text || '').join('').trim()
-    let cited = []
-    const m = answer.match(/CITED:\s*\[([^\]]*)\]/i)
-    if (m) {
-      cited = m[1].split(',').map(x => parseInt(x.trim(), 10)).filter(n => n >= 1 && n <= shortlist.length)
-      answer = answer.replace(/CITED:\s*\[[^\]]*\]/i, '').trim()
-    }
-    let citedDocs = []
-    const dm = answer.match(/CITEDOEM:\s*\[([^\]]*)\]/i)
-    if (dm) {
-      citedDocs = [...new Set(dm[1].split(',').map(x => parseInt(String(x).replace(/[^0-9]/g, ''), 10)).filter(n => n >= 1 && n <= docShort.length))].map(n => docShort[n - 1]).filter(Boolean)
-      answer = answer.replace(/CITEDOEM:\s*\[[^\]]*\]/i, '').trim()
-    }
-    const citedTsbs = [...new Set(cited)].map(n => shortlist[n - 1]).filter(Boolean)
-    res.json({ answer, cited: citedTsbs, cited_docs: citedDocs })
+    const FormData = (await import('form-data')).default
+    const fd = new FormData()
+    fd.append('file', buf, { filename: `${cur.number} ${String(cur.title || '').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60)}.pdf`, contentType: 'application/pdf' })
+    fd.append('comments', JSON.stringify([head.replace(/\*/g, '')]))
+    const token = await getCliqAccessToken()
+    const target = channelId ? `channels/${channelId}` : `channelsbyname/${TSB_CHANNEL}`
+    await axios.post(`https://cliq.zoho.com/company/883116359/api/v2/${target}/files`, fd, { headers: { ...fd.getHeaders(), Authorization: `Zoho-oauthtoken ${token}` }, timeout: 20000, maxBodyLength: Infinity })
+    return { ok: true, via: 'file', number: cur.number }
   } catch (e) {
-    console.error('[tsb ask]', e.message)
-    res.status(500).json({ error: e.message || 'Ask failed.' })
+    console.warn('[tsb post] file upload refused, posting a link:', e.response?.status, JSON.stringify(e.response?.data || e.message).slice(0, 200))
+    if (!cur.share_key) { cur.share_key = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2); await writeTsb(req, cur) }
+    // Clean, labelled link (Mark 2026-10-12: "make it look nice and professional") — never a bare URL.
+    const msg = `${head}\n[📄 Open ${cur.number} (PDF)](${PUBLIC_BASE}/api/public/tsb/${cur.number}.pdf?k=${cur.share_key})`
+    if (channelId) { const { postToCliqChannelById } = await import('../services/cliq.js'); await postToCliqChannelById(channelId, msg) } else await postToCliqChannel(TSB_CHANNEL, msg)
+    return { ok: true, via: 'link', number: cur.number, upload_error: e.response?.status || e.message }
   }
-})
-
-// ── Photos (Mark 2026-09-07: "pics in the list and on the PDF") ─────────
-// Stored in a dedicated WorkDrive folder; bytes are streamed back
-// through /api/tsb/photo/:fileId so <img> tags and the PDF generator
-// can both render them (WorkDrive share links don't hotlink).
-const photoUpload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 },
-  fileFilter(req, file, cb) {
-    if (!file.mimetype.startsWith('image/')) cb(new Error('Only image files are accepted'))
-    else cb(null, true)
-  },
-})
-
-async function ensureTsbFolder(req, wdToken) {
-  const app = catalyst.initialize(req)
-  const r = await cfgRow(app, 'tsb_photos_folder_id')
-  const saved = r?.config_value ? String(r.config_value).replace(/"/g, '') : ''
-  if (saved) return saved
-  const { createJobFolder } = await import('../services/workdrive.js')
-  const f = await createJobFolder('Absolute ADAS TSB Photos', wdToken)
-  const id = f?.folderId
-  if (id) await cfgSet(app, 'tsb_photos_folder_id', id)
-  return id
 }
 
-router.post('/:id/photo', (req, res) => {
-  photoUpload.single('image')(req, res, async (err) => {
-    if (err) return res.status(400).json({ error: err.message })
-    if (!req.file) return res.status(400).json({ error: 'No image provided' })
-    try {
-      const tsbs = await readAllTsbs(req)
-      const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
-      if (!tsb) return res.status(404).json({ error: 'TSB not found' })
-      const { getAccessToken } = await import('../services/zoho.js')
-      const wdToken = await getAccessToken()
-      const folderId = await ensureTsbFolder(req, wdToken)
-      if (!folderId) return res.status(500).json({ error: 'Could not create the TSB photos folder in WorkDrive.' })
-      const ext = (req.file.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg')
-      const filename = `TSB-${tsb.number || tsb.id}-${Date.now()}.${ext}`
-      const { uploadFileToFolder } = await import('../services/workdrive.js')
-      const fileId = wdId(await uploadFileToFolder(folderId, filename, req.file.buffer, wdToken, req.file.mimetype))
-      tsb.photos = Array.isArray(tsb.photos) ? tsb.photos : []
-      tsb.photos.push({ file_id: fileId, name: filename, mime: req.file.mimetype })
-      await writeTsb(req, tsb)
-      res.json({ ok: true, photo: { file_id: fileId, name: filename } })
-    } catch (e) {
-      console.error('[tsb photo]', e.message)
-      res.status(500).json({ error: e.message })
-    }
-  })
-})
-
-router.delete('/:id/photo/:fileId', async (req, res) => {
+// POST /api/tsb/:id/post — re-post (e.g. after adding photos).
+router.post('/:id/post', async (req, res) => {
   try {
-    const tsbs = await readAllTsbs(req)
-    const tsb = tsbs.find(t => String(t.id) === String(req.params.id))
+    const tsb = (await readAllTsbs(req)).find(t => String(t.id) === String(req.params.id))
     if (!tsb) return res.status(404).json({ error: 'TSB not found' })
-    tsb.photos = (tsb.photos || []).filter(p => String(p.file_id) !== String(req.params.fileId))
-    await writeTsb(req, tsb)
-    res.json({ ok: true })
+    res.json(await postTsbToChannel(req, tsb, { reason: 'update' }))
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
-async function fetchWdFile(fileId) {
-  const { getAccessToken } = await import('../services/zoho.js')
-  const wdToken = await getAccessToken()
-  const r = await axios.get(`https://workdrive.zoho.com/api/v1/download/${fileId}`, {
-    headers: { Authorization: `Zoho-oauthtoken ${wdToken}` },
-    responseType: 'arraybuffer', timeout: 25000, maxContentLength: 30 * 1024 * 1024,
-  })
-  return { buf: Buffer.from(r.data), mime: r.headers['content-type'] || 'image/jpeg' }
-}
 
-// GET /photo/:fileId?t=<auth token> — <img> tags can't send headers, so
-// the token rides the query string; verified the same way as the header.
-// Photos are served from /api/public/tsb/photo/:fileId?t=<token> — the
-// staff mount's requireAuth can't see a query token, and <img> tags
-// can't send headers.
 export const tsbPublicRouter = express.Router()
 tsbPublicRouter.get('/photo/:fileId', async (req, res) => {
   try {
@@ -556,6 +454,17 @@ tsbPublicRouter.get('/photo/:fileId', async (req, res) => {
     res.setHeader('Cache-Control', 'private, max-age=86400')
     res.type(mime).send(buf)
   } catch (e) { console.log('[tsb photo]', e.response?.status, e.message); res.status(404).json({ error: 'Photo not found' }) }
+})
+
+// GET /api/public/tsb/:id.pdf?k=<share key> — the link posted to Cliq when a file upload is refused.
+tsbPublicRouter.get('/:id.pdf', async (req, res) => {
+  try {
+    const tsbs = await readAllTsbs(req)
+    const tsb = tsbs.find(t => String(t.id) === String(req.params.id) || String(t.number || '') === String(req.params.id))
+    if (!tsb || !tsb.share_key || String(req.query.k || '') !== tsb.share_key) return res.status(404).json({ error: 'not found' })
+    const buf = await buildTsbPdf(req, tsb, tsbs)
+    res.type('application/pdf'); res.setHeader('Content-Disposition', `inline; filename="${tsb.number}.pdf"`); res.send(buf)
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 export default router
