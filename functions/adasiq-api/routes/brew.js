@@ -1382,7 +1382,7 @@ async function writeIssuesManifest(req, manifest) {
  * a minute or two after the commit). Polls a cache-busted URL so a 404 never
  * gets cached on the real link. Gives up after maxMs (the run lock is 15 min).
  */
-async function waitForIssuePage(issueNumber, maxMs = 90000) {
+async function waitForIssuePage(issueNumber, maxMs = 240000) {
   const until = Date.now() + maxMs
   for (;;) {
     try {
@@ -1997,8 +1997,16 @@ async function executeDailyPipeline(req) {
         .catch(e => ({ ok: false, error: e.message }))
     : Promise.resolve(null)
   let issuePageCheck = null
+  // Pages took ~3 min on 2026-10-13 (commit 13:01:27Z, live 13:04:34Z), so
+  // wait up to 4 min. Once the commit landed the page is coming either way,
+  // so the link goes in even if the wait runs out; only a failed commit
+  // falls back to the subscribe-only comment.
   const issuePageReady = () => (issuePageCheck ||= archivePromise
-    .then(r => (r === null || r?.ok) ? waitForIssuePage(issueNumber) : false)
+    .then(async r => {
+      if (!(r === null || r?.ok)) return false
+      await waitForIssuePage(issueNumber, 240000)
+      return true
+    })
     .catch(() => false))
   const firstComment = async channel => (await issuePageReady())
     ? brewFirstComment(issueNumber, channel)
