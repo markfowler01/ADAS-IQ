@@ -1226,9 +1226,28 @@ async function dsUpsertIssue(req, issue) {
 //
 // Strong consistency via Data Store (not cache) so the marker survives across
 // cron invocations and Catalyst worker recycles. Created manually via Catalyst
-// console: table `brew_run_status` with columns dateISO, issueNumber, email,
-// image, image_commit, archive, linkedin, facebook, instagram, started_at,
-// completed_at (see project notes for full schema).
+// console: table `brew_run_status` with columns dateISO (unique), issueNumber,
+// email, image, image_commit, archive, linkedin, facebook, instagram,
+// started_at, finished_at, completed_at (see project notes for full schema).
+//
+// started_at / finished_at / completed_at are Catalyst *datetime* columns.
+// They reject ISO strings ("Invalid input value for started_at. datetime
+// value expected"), which is why no row was written on any day through
+// 2026-10-13 and the run lock never engaged. They take 'YYYY-MM-DD HH:mm:ss'
+// and hand it back verbatim, so we store UTC in that shape. Callers keep
+// passing and getting back ISO strings; the conversion lives here only.
+const RUN_STATUS_DATETIME_COLS = ['started_at', 'finished_at', 'completed_at']
+
+function toCatalystDateTime(v) {
+  const d = new Date(v)
+  return isNaN(d) ? null : d.toISOString().slice(0, 19).replace('T', ' ')
+}
+
+function fromCatalystDateTime(v) {
+  if (!v) return null
+  const d = new Date(String(v).replace(' ', 'T').replace(/:(\d{3})$/, '.$1') + 'Z')
+  return isNaN(d) ? null : d.toISOString()
+}
 
 function getRunStatusTable(req) {
   return catalyst.initialize(req, { type: 'advancedio' }).datastore().table('brew_run_status')
@@ -1238,27 +1257,34 @@ function safeStatusVal(s) {
   return String(s || '').slice(0, 250)
 }
 
+// Throws on a Datastore error, returns null only when there is no row.
+// The email guard needs to tell those two apart.
+async function readRunStatusStrict(req, dateISO) {
+  const app = catalyst.initialize(req)
+  const dateStr = String(dateISO || '').replace(/'/g, '')
+  const result = await app.zcql().executeZCQLQuery(`SELECT * FROM brew_run_status WHERE dateISO = '${dateStr}'`)
+  if (!result || result.length === 0) return null
+  const row = result[0].brew_run_status
+  return {
+    rowid: String(row.ROWID),
+    dateISO: row.dateISO || '',
+    issueNumber: Number(row.issueNumber || 0),
+    email: row.email || null,
+    image: row.image || null,
+    image_commit: row.image_commit || null,
+    archive: row.archive || null,
+    linkedin: row.linkedin || null,
+    facebook: row.facebook || null,
+    instagram: row.instagram || null,
+    started_at: fromCatalystDateTime(row.started_at),
+    finished_at: fromCatalystDateTime(row.finished_at),
+    completed_at: fromCatalystDateTime(row.completed_at),
+  }
+}
+
 async function readRunStatus(req, dateISO) {
   try {
-    const app = catalyst.initialize(req)
-    const dateStr = String(dateISO || '').replace(/'/g, '')
-    const result = await app.zcql().executeZCQLQuery(`SELECT * FROM brew_run_status WHERE dateISO = '${dateStr}'`)
-    if (!result || result.length === 0) return null
-    const row = result[0].brew_run_status
-    return {
-      rowid: String(row.ROWID),
-      dateISO: row.dateISO || '',
-      issueNumber: Number(row.issueNumber || 0),
-      email: row.email || null,
-      image: row.image || null,
-      image_commit: row.image_commit || null,
-      archive: row.archive || null,
-      linkedin: row.linkedin || null,
-      facebook: row.facebook || null,
-      instagram: row.instagram || null,
-      started_at: row.started_at || null,
-      completed_at: row.completed_at || null,
-    }
+    return await readRunStatusStrict(req, dateISO)
   } catch (e) {
     console.warn('[brew_run_status read]', e.message)
     return null
@@ -1270,12 +1296,13 @@ async function initRunStatus(req, { dateISO, issueNumber }) {
     const existing = await readRunStatus(req, dateISO)
     if (existing) return existing
     const table = getRunStatusTable(req)
+    const startedAt = new Date().toISOString()
     const row = await table.insertRow({
       dateISO: String(dateISO).slice(0, 10),
       issueNumber: Number(issueNumber || 0),
-      started_at: new Date().toISOString(),
+      started_at: toCatalystDateTime(startedAt),
     })
-    return { rowid: String(row.ROWID), dateISO, issueNumber, email: null, image: null, image_commit: null, archive: null, linkedin: null, facebook: null, instagram: null, started_at: row.started_at, completed_at: null }
+    return { rowid: String(row.ROWID), dateISO, issueNumber, email: null, image: null, image_commit: null, archive: null, linkedin: null, facebook: null, instagram: null, started_at: startedAt, finished_at: null, completed_at: null }
   } catch (e) {
     console.warn('[brew_run_status init]', e.message)
     return null
@@ -1289,7 +1316,9 @@ async function updateRunStatus(req, dateISO, patch) {
     const table = getRunStatusTable(req)
     const cleanPatch = {}
     for (const [k, v] of Object.entries(patch || {})) {
-      cleanPatch[k] = safeStatusVal(v)
+      if (RUN_STATUS_DATETIME_COLS.includes(k)) cleanPatch[k] = toCatalystDateTime(v)
+      else if (typeof v === 'number') cleanPatch[k] = v
+      else cleanPatch[k] = safeStatusVal(v)
     }
     await table.updateRow({ ROWID: existing.rowid, ...cleanPatch })
     return { ...existing, ...patch }
@@ -1297,6 +1326,51 @@ async function updateRunStatus(req, dateISO, patch) {
     console.warn('[brew_run_status update]', e.message)
     return null
   }
+}
+
+// ─── Once-a-day email guard ───────────────────────────────────────────────
+// The status row alone can't be trusted to stop a second send: through
+// 2026-10-13 every write to it failed silently. So before the email step we
+// check three independent records, and any one of them saying "sent" (or
+// "sending") is enough to skip:
+//   1. brew_run_status.email — 'ok', or the 'sending:' write-ahead marker
+//   2. BrewIssues.sent_at for today — stamped right after every real send
+//   3. a write-ahead Cache marker — survives a Datastore outage
+// `unknown` is true when neither Datastore record could be read. /run still
+// sends in that case (the daily issue must go out); /run-bonus does not.
+const BREW_EMAIL_MARKER_KEY = 'brew_email_marker'
+
+async function emailAlreadySentToday(req, dateISO) {
+  const errors = []
+  let readable = 0
+  try {
+    const row = await readRunStatusStrict(req, dateISO)
+    readable++
+    if (row && (isStepOk(row.email) || /^sending/.test(row.email || ''))) {
+      return { sent: true, reason: `brew_run_status email=${row.email}` }
+    }
+  } catch (e) { errors.push(`brew_run_status: ${e.message}`) }
+  try {
+    const dateStr = String(dateISO || '').replace(/'/g, '')
+    const rows = await catalyst.initialize(req).zcql()
+      .executeZCQLQuery(`SELECT issue_number, sent_at FROM BrewIssues WHERE sent_at LIKE '${dateStr}*'`)
+    readable++
+    const hit = (rows || []).map(r => r.BrewIssues).find(r => String(r?.sent_at || '').startsWith(dateStr))
+    if (hit) return { sent: true, reason: `BrewIssues #${hit.issue_number} sent_at ${hit.sent_at}` }
+  } catch (e) { errors.push(`BrewIssues: ${e.message}`) }
+  try {
+    const marker = await cacheGet(getHandoffSegment(req), BREW_EMAIL_MARKER_KEY, null)
+    if (marker && marker.dateISO === dateISO) {
+      return { sent: true, reason: `cache marker ${marker.state} at ${marker.at}` }
+    }
+  } catch (e) { errors.push(`cache: ${e.message}`) }
+  return { sent: false, unknown: readable === 0, reason: errors.join('; ') }
+}
+
+// Never throws: a Cache hiccup must not block or fail the daily send.
+async function setEmailMarker(req, marker) {
+  try { await cacheSet(getHandoffSegment(req), BREW_EMAIL_MARKER_KEY, marker) }
+  catch (e) { console.warn('[brew email marker]', e.message) }
 }
 
 function isStepOk(val) {
@@ -1804,9 +1878,14 @@ async function alertCronFailure(label, detail) {
 // crashes releases the lock and /run-bonus can still retry the day —
 // the first version of this lock never released and would have silently
 // removed the retry.
+//
+// The lock is only as good as the status row. Until 2026-10-13 the row was
+// never written (see RUN_STATUS_DATETIME_COLS), so the lock never engaged.
+// emailAlreadySentToday() is the backstop that keeps a broken row from ever
+// becoming a second send.
 const RUN_LOCK_MS = 15 * 60 * 1000
 
-async function runDailyPipelineLocked(req) {
+async function runDailyPipelineLocked(req, { retry = false } = {}) {
   const dateISO = new Date().toISOString().slice(0, 10)
   const existing = await readRunStatus(req, dateISO)
   const startedAt = existing?.started_at ? Date.parse(existing.started_at) : 0
@@ -1817,15 +1896,19 @@ async function runDailyPipelineLocked(req) {
     err.code = 'BREW_RUN_LOCKED'
     throw err
   }
-  await updateRunStatus(req, dateISO, { started_at: new Date().toISOString() })
+  // Take the lock before the ~15s digest build. On the first run of the day
+  // there is no row to update yet, so create it here (issueNumber is filled
+  // in once the digest is built).
+  if (existing) await updateRunStatus(req, dateISO, { started_at: new Date().toISOString() })
+  else await initRunStatus(req, { dateISO, issueNumber: 0 })
   try {
-    return await executeDailyPipeline(req)
+    return await executeDailyPipeline(req, { retry })
   } finally {
     await updateRunStatus(req, dateISO, { finished_at: new Date().toISOString() }).catch(() => {})
   }
 }
 
-async function executeDailyPipeline(req) {
+async function executeDailyPipeline(req, { retry = false } = {}) {
   const dateISO = new Date().toISOString().slice(0, 10)
   const segment = getHandoffSegment(req)
 
@@ -1872,14 +1955,38 @@ async function executeDailyPipeline(req) {
       dateISO, issueNumber, email: null, image: null, image_commit: null,
       archive: null, linkedin: null, facebook: null, instagram: null,
     }
+  } else if (!status.issueNumber && issueNumber) {
+    await updateRunStatus(req, dateISO, { issueNumber: Number(issueNumber) })
+    status.issueNumber = issueNumber
   }
 
-  // 3. EMAIL — sequential, must succeed before continuing
-  if (!isStepOk(status.email)) {
+  // 3. EMAIL — sequential, at most once per day (see emailAlreadySentToday)
+  const prior = isStepOk(status.email) ? null : await emailAlreadySentToday(req, dateISO)
+  if (prior?.sent) {
+    // Already out, or a send started and never reported back. Never twice.
+    console.warn(`[brew email] ${dateISO} already sent, not resending (${prior.reason})`)
+    const rowSaysOk = /email=ok$/.test(prior.reason)
+    if (/^BrewIssues/.test(prior.reason)) await updateRunStatus(req, dateISO, { email: 'ok' })
+    status.email = rowSaysOk || /^BrewIssues/.test(prior.reason) ? 'ok' : `skipped:${prior.reason}`
+    if (!rowSaysOk) {
+      alertCronFailure('email not resent', `${dateISO}: ${prior.reason}. Skipped the email step so nobody gets the issue twice.`)
+    }
+  } else if (prior?.unknown && retry) {
+    status.email = `failed:not retried, could not read send records (${prior.reason})`
+    alertCronFailure('email NOT retried', `${dateISO}: couldn't read brew_run_status or BrewIssues (${prior.reason}), so the retry didn't send. If the issue didn't go out this morning, send it by hand.`)
+  } else if (prior) {
+    let sendingAt = null
     try {
       const subs = await readSubscribers(req)
       const validSubs = (subs || []).filter(s => s && s.email)
       if (validSubs.length === 0) throw new Error('No subscribers')
+      // Write-ahead markers: if this run dies mid-send, a retry sees these
+      // and skips instead of sending again. A failed marker write doesn't
+      // stop today's send.
+      const at = new Date().toISOString()
+      await updateRunStatus(req, dateISO, { email: `sending:${at}` })
+      await setEmailMarker(req, { dateISO, issueNumber, state: 'sending', at })
+      sendingAt = at
       // Pass subscriber objects (not just emails) so sendBroadcast can
       // substitute {{firstName}} placeholder per recipient.
       const sendResult = await sendBroadcast({
@@ -1891,6 +1998,7 @@ async function executeDailyPipeline(req) {
       if (sendResult.status === 'sent' || sendResult.status === 'partial' || sendResult.status === 'queued') {
         await updateRunStatus(req, dateISO, { email: 'ok' })
         status.email = 'ok'
+        await setEmailMarker(req, { dateISO, issueNumber, state: 'sent', at: new Date().toISOString() })
         // Bookkeeping (records in BrewIssues table for stats)
         try {
           const seg2 = getSegment(req)
@@ -1905,12 +2013,22 @@ async function executeDailyPipeline(req) {
           })
         } catch (e) { console.warn('[pipeline bookkeeping]', e.message) }
       } else {
+        // status 'error' means zero sent, so a retry is safe: clear the markers.
         await updateRunStatus(req, dateISO, { email: `failed:${sendResult.error || 'send error'}` })
+        await setEmailMarker(req, null)
         status.email = `failed:${sendResult.error || 'send error'}`
       }
     } catch (e) {
-      await updateRunStatus(req, dateISO, { email: `failed:${e.message}` })
-      status.email = `failed:${e.message}`
+      if (sendingAt) {
+        // Threw mid-send: some subscribers may already have it. Keep the
+        // 'sending' markers so no retry sends again.
+        status.email = `sending:${sendingAt} threw ${e.message}`
+        await updateRunStatus(req, dateISO, { email: status.email })
+        alertCronFailure('email send threw', `${dateISO}: ${e.message}. Some subscribers may have it; retries will not resend.`)
+      } else {
+        await updateRunStatus(req, dateISO, { email: `failed:${e.message}` })
+        status.email = `failed:${e.message}`
+      }
     }
   }
 
@@ -2206,9 +2324,10 @@ cronRouter.post('/run-bonus', async (req, res) => {
     }
 
     // /run either never ran today, or partially failed. Run the pipeline.
-    // It's idempotent — only retries steps that aren't already ok.
+    // It's idempotent — only retries steps that aren't already ok, and the
+    // email step won't send if any record shows today's issue went out.
     try {
-      const result = await runDailyPipelineLocked(req)
+      const result = await runDailyPipelineLocked(req, { retry: true })
       res.json({ retry: true, ...result })
     } catch (e) {
       if (e.code === 'BREW_RUN_LOCKED') {
@@ -2222,4 +2341,53 @@ cronRouter.post('/run-bonus', async (req, res) => {
     alertCronFailure('run-bonus threw', e.message)
     res.status(500).json({ error: e.message })
   }
+})
+
+// Read-only: what the run tracker and the once-a-day email guard see for a
+// date. Safe any time — never sends, never writes.
+//   GET /api/cron/brew/run-status[?date=2026-10-13]
+cronRouter.get('/run-status', async (req, res) => {
+  const dateISO = String(req.query.date || new Date().toISOString().slice(0, 10)).slice(0, 10)
+  const out = { dateISO }
+  try { out.row = await readRunStatusStrict(req, dateISO) } catch (e) { out.row_error = e.message }
+  out.email_guard = await emailAlreadySentToday(req, dateISO)
+  res.json(out)
+})
+
+// Dry path for the tracker itself: init → update (incl. datetime columns)
+// → read back → lock math → email guard, all on a fake 1999-01-01 row that
+// is deleted at the end. Touches nothing else; never sends.
+//   POST /api/cron/brew/_run-status-selftest
+cronRouter.post('/_run-status-selftest', async (req, res) => {
+  const dateISO = '1999-01-01'
+  const out = { dateISO, steps: {} }
+  const cleanup = async () => {
+    const row = await readRunStatus(req, dateISO)
+    if (row) await getRunStatusTable(req).deleteRow(row.rowid)
+  }
+  try {
+    await cleanup()
+    const t0 = new Date().toISOString()
+    out.steps.init = await initRunStatus(req, { dateISO, issueNumber: 0 })
+    out.steps.guard_before = await emailAlreadySentToday(req, dateISO)
+    out.steps.update = await updateRunStatus(req, dateISO, { issueNumber: 999, email: `sending:${t0}`, finished_at: '1999-01-01T00:00:00.000Z' })
+    const row = await readRunStatusStrict(req, dateISO)
+    out.steps.read = row
+    const startedAt = Date.parse(row?.started_at || '')
+    const finishedAt = Date.parse(row?.finished_at || '')
+    out.steps.lock_held = startedAt > finishedAt && (Date.now() - startedAt) < RUN_LOCK_MS
+    out.steps.guard_after = await emailAlreadySentToday(req, dateISO)
+    await updateRunStatus(req, dateISO, { finished_at: new Date(Date.now() + 1000).toISOString() })
+    const row2 = await readRunStatusStrict(req, dateISO)
+    out.steps.lock_released = Date.parse(row2?.finished_at || '') > Date.parse(row2?.started_at || '')
+    out.ok = Boolean(out.steps.init?.rowid) && out.steps.guard_before?.sent === false &&
+      row?.issueNumber === 999 && Math.abs(startedAt - Date.parse(t0)) < 60000 &&
+      out.steps.lock_held === true && out.steps.guard_after?.sent === true && out.steps.lock_released === true
+  } catch (e) {
+    out.ok = false
+    out.error = e.message
+  } finally {
+    try { await cleanup(); out.cleaned_up = !(await readRunStatusStrict(req, dateISO)) } catch (e) { out.cleanup_error = e.message }
+  }
+  res.json(out)
 })
