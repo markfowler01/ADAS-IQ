@@ -1605,6 +1605,15 @@ router.get('/workdrive/spaces', async (req, res) => {
     res.json(out)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// GET /cliq/channels — name, unique name and id of every Cliq channel the app's login can see (cron secret).
+router.get('/cliq/channels', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const { getCliqAccessToken } = await import('../services/cliq.js'); const axios = (await import('axios')).default
+    const r = await axios.get('https://cliq.zoho.com/company/883116359/api/v2/channels', { params: { limit: 100 }, headers: { Authorization: `Zoho-oauthtoken ${await getCliqAccessToken()}` }, timeout: 15000 })
+    res.json({ ok: true, channels: (r.data?.channels || []).map(c => ({ name: c.name, unique_name: c.unique_name, channel_id: c.channel_id, members: c.participant_count })) })
+  } catch (e) { res.status(e.response?.status || 500).json({ error: e.message, body: e.response?.data }) }
+})
 // POST /team-text { who: 'kat'|'jayden'|'mark', body } — text a team member from the business line
 // (cron secret). Number comes from phone_config, never from the request.
 router.post('/team-text', express.json(), async (req, res) => {
