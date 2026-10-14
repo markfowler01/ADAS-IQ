@@ -3,6 +3,7 @@ import { EstimateFirstPill } from './books/Big3Rules.jsx'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import CustomersView from './crm/CustomersView.jsx'
 import { typeBadge, shopTypeOf } from './crm/shopType.js'
+import DealsBoard from './crm/DealsBoard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel } from './crmConstants.js'
 import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, DiscoverModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
@@ -230,9 +231,9 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
         {/* Action row: call · text · directions · website */}
         <div className="flex gap-1.5 mb-2 flex-wrap">
           {phone && <Btn href={`tel:${phone}`} bg="#dcfce7" fg="#15803d" title={phone}>📞 Call</Btn>}
-          {phone && <Btn href={`sms:${phone}`} bg="#e8f0fe" fg="#1d4ed8" title={phone}>💬 Text</Btn>}
+          {phone && <Btn href={`sms:${phone}`} bg="#e6f4f4" fg="#1F8B8B" title={phone}>💬 Text</Btn>}
           {directions && <Btn href={directions} bg="#fff7ed" fg="#c2410c" title="Open in Google Maps">🧭 Directions</Btn>}
-          {website && <Btn href={website} bg="#f3e8ff" fg="#7c3aed" title={website}>🌐 Site</Btn>}
+          {website && <Btn href={website} bg="#e8e4e0" fg="#0A0A0A" title={website}>🌐 Site</Btn>}
           {!phone && !directions && <span className="text-xs" style={{ color: '#bbb' }}>No phone or address yet</span>}
         </div>
         {phone && <p className="text-xs mb-1.5 font-medium" style={{ color: '#15803d' }}>{phone}</p>}
@@ -243,7 +244,7 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
             <span className="text-xs min-w-0 truncate"><b style={{ color: '#1a1a1a' }}>{p.name || 'Contact'}</b>{p.title ? <span style={{ color: '#888' }}> · {p.title}</span> : null}{p.phone ? <span style={{ color: '#888' }}> · {p.phone}</span> : null}</span>
             <span className="flex gap-1 flex-shrink-0">
               {p.phone && <a href={`tel:${p.phone}`} onClick={stop} className="text-[11px] font-bold px-1.5 rounded" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>📞</a>}
-              {p.email && <a href={`mailto:${p.email}`} onClick={stop} className="text-[11px] font-bold px-1.5 rounded" style={{ backgroundColor: '#ede9fe', color: '#7c3aed' }}>✉️</a>}
+              {p.email && <a href={`mailto:${p.email}`} onClick={stop} className="text-[11px] font-bold px-1.5 rounded" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>✉️</a>}
             </span>
           </div>
         ))}
@@ -253,16 +254,16 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
         <div className="flex flex-wrap gap-1 mb-1.5">
           {shop.estimated_monthly && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>~${shop.estimated_monthly}/mo</span>}
           {shop.volume_potential && <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>volume {shop.volume_potential}</span>}
-          {drps.slice(0, 4).map(d => <span key={d} className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>DRP {d}</span>)}
+          {drps.slice(0, 4).map(d => <span key={d} className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>DRP {d}</span>)}
           {shop.referral_source && <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>via {shop.referral_source}</span>}
           {calCount > 0 && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#fff7ed', color: '#c2410c' }}>🔧 {calCount} cal{calCount !== 1 ? 's' : ''}</span>}
-          {shop.kinetic_in_bed && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f3e8ff', color: '#7c3aed' }}>🛻 Kinetic in Bed</span>}
+          {shop.kinetic_in_bed && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5e8e3', color: '#CD4419' }}>🛻 Kinetic in Bed</span>}
           {shop.pipeline_stage === 'active' && <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>✅ Active customer</span>}
         </div>
 
         {/* Where things stand */}
         {(shop.next_action || followupInfo) && (
-          <div className="text-xs mb-1.5 px-2 py-1.5 rounded-lg" style={{ backgroundColor: followupInfo?.urgent ? '#fee2e2' : '#eff6ff', color: followupInfo?.urgent ? '#b91c1c' : '#1d4ed8' }}>
+          <div className="text-xs mb-1.5 px-2 py-1.5 rounded-lg" style={{ backgroundColor: followupInfo?.urgent ? '#fee2e2' : '#f5e8e3', color: followupInfo?.urgent ? '#b91c1c' : '#CD4419' }}>
             {followupInfo && <b>📅 {followupInfo.label}</b>}{followupInfo && shop.next_action ? ' · ' : ''}{shop.next_action ? `→ ${shop.next_action}` : ''}
           </div>
         )}
@@ -275,7 +276,7 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
             <div className="flex flex-wrap items-center gap-1.5 mt-1 mb-1">
               {reasons.map(r => <span key={r} className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', border: '1px solid #fecaca' }}>{r}</span>)}
               {reasons.length === 0 && shop.pipeline_stage === 'denied' && <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fee2e2', color: '#b91c1c' }}>🚫 Not interested right now</span>}
-              {shop.pipeline_stage === 'active2' && !shop.denied_to && <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }}>🔄 Backup · tag their primary</span>}
+              {shop.pipeline_stage === 'active2' && !shop.denied_to && <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#e6f4f4', color: '#1F8B8B' }}>🔄 Backup · tag their primary</span>}
               {shop.denied_to && <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f9f8f7', color: '#444', border: '1px solid #e0dbd6' }}>🏢 Uses {shop.denied_to}</span>}
             </div>
           )
@@ -429,7 +430,7 @@ function DuplicatesPanel({ user, onClose, onOpenShop, onMerged }) {
                     <span className="flex items-center gap-1 flex-shrink-0 text-[10px] font-bold">
                       {isKeep && canMerge && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>KEEP</span>}
                       <span className="px-1.5 py-0.5 rounded" style={s.active ? { backgroundColor: '#16a34a', color: 'white' } : { backgroundColor: '#f5f3f0', color: '#666' }}>{s.active ? '✓ CUSTOMER' : (s.stage || '—')}</span>
-                      {s.books && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>📚 Books</span>}
+                      {s.books && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>📚 Books</span>}
                       {s.has_rules && <span className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fdf3ef', color: '#CD4419' }}>🧾 rules</span>}
                       {canMerge && !isKeep && <label className="flex items-center gap-1 font-normal" style={{ color: '#666' }}><input type="checkbox" checked={!out} onChange={e => setSkip(x => ({ ...x, [`${g.key}|${s.id}`]: !e.target.checked }))} />merge</label>}
                     </span>
@@ -456,7 +457,7 @@ function NoteLine({ line }) {
     <div className="text-xs mb-1 flex flex-wrap items-center gap-1" style={{ color: '#666' }}>
       {text && <span className="break-words">· {text}</span>}
       {[...new Set(urls)].map(u => (
-        <a key={u} href={u} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f3e8ff', color: '#7c3aed' }} title={u}>{label(u)} ↗</a>
+        <a key={u} href={u} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }} title={u}>{label(u)} ↗</a>
       ))}
     </div>
   )
@@ -480,15 +481,18 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   // categories as the billing"). Collision / Auto repair / Dealer are CRM shops by
   // their billing type (no type yet = collision, same default as billing); Retail =
   // the people in Repair customers.
-  const [crmMode, setCrmModeState] = useState(() => { try { const m = localStorage.getItem('adas_crm_mode') || 'collision'; return ({ shops: 'collision', repair: 'retail' })[m] || m } catch { return 'collision' } })
+  const [crmMode, setCrmModeState] = useState(() => { try { const once = sessionStorage.getItem('adas_crm_mode_once'); if (once) { sessionStorage.removeItem('adas_crm_mode_once'); return once } const m = localStorage.getItem('adas_crm_mode') || 'collision'; return ({ shops: 'collision', repair: 'retail' })[m] || m } catch { return 'collision' } })
   const setCrmMode = m => { setCrmModeState(m); try { localStorage.setItem('adas_crm_mode', m) } catch {} }
   const [allShops,      setShops]         = useState([])
   const [dupOpen,       setDupOpen]       = useState(false)
   // Customers (active / active2) live in ⭐ Customers, not the pipeline (Mark 2026-10-03).
-  const shops = crmMode === 'retail' || crmMode === 'customers' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode && !CUSTOMER_STAGES.includes(sh.pipeline_stage))
+  const shops = crmMode === 'retail' || crmMode === 'customers' || crmMode === 'deals' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode && !CUSTOMER_STAGES.includes(sh.pipeline_stage))
+  // Counters (customers of N shops, ✅ per zone) count EVERY shop of this type, customers included —
+  // the board above hides customers in prospect mode, which made every zone read ✅ 0 (Mark 2026-10-14).
+  const countShops = crmMode === 'retail' || crmMode === 'customers' || crmMode === 'deals' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode)
   const modeToggle = (
     <div className="inline-flex rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
-      {[['customers', '⭐ Customers'], ['collision', '🏢 Collision shops'], ['repair_shop', '🔧 Auto repair shops'], ['dealer', '🚗 Dealers'], ['retail', '🙂 Retail customers']].map(([m, l]) => (
+      {[['deals', '💼 Deals'], ['customers', '⭐ Customers'], ['collision', '🏢 Collision shops'], ['repair_shop', '🔧 Auto repair shops'], ['dealer', '🚗 Dealers'], ['retail', '🙂 Retail customers']].map(([m, l]) => (
         <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1 whitespace-nowrap" style={{ backgroundColor: crmMode === m ? ORANGE : 'transparent', color: crmMode === m ? 'white' : '#666' }}>{l}{m === 'customers' && allShops.length ? ` · ${allShops.filter(sh => CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : m !== 'retail' && m !== 'customers' && allShops.length ? ` · ${allShops.filter(sh => typeOfShop(sh) === m && !CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : ''}</button>
       ))}
     </div>
@@ -528,6 +532,19 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [showBroadcast, setShowBroadcast] = useState(false)
   const [showVanContact, setShowVanContact] = useState(false)
   const [showNewCustomer, setShowNewCustomer] = useState(false)
+  const [newShopPhone, setNewShopPhone] = useState('')
+  // Hand-offs from the caller card (2026-10-05): open this shop / create one with this phone.
+  useEffect(() => {
+    try {
+      const p = sessionStorage.getItem('adas_new_shop_phone'); if (p) { sessionStorage.removeItem('adas_new_shop_phone'); setNewShopPhone(p); setShowNewCustomer(true) }
+    } catch {}
+  }, [])
+  useEffect(() => {
+    try {
+      const id = sessionStorage.getItem('adas_open_shop'); if (!id || !allShops.length) return
+      const sh = allShops.find(x => String(x.id) === String(id)); if (sh) { sessionStorage.removeItem('adas_open_shop'); setDetailShop(sh) }
+    } catch {}
+  }, [allShops])
   const [syncing,       setSyncing]       = useState(false)
   const [calCounts,     setCalCounts]     = useState({})
 
@@ -641,6 +658,22 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
     return acc
   }, {})
 
+  // 🔎 Search finds EVERY shop, not just this tab (Mark 2026-10-05: "I can't find
+  // Carstar 272 in our CRM" — it was a customer, so it lived on ⭐ Customers, and a
+  // shop in an unknown stage showed nowhere). Anything the search matches outside
+  // the current tab / stage list is shown in a strip with where it lives + Open.
+  const TAB_LABEL = { customers: '⭐ Customers', collision: '🏢 Collision shops', repair_shop: '🔧 Auto repair shops', dealer: '🚗 Dealers' }
+  const elsewhere = (() => {
+    const q = search.trim().toLowerCase(); if (!q) return []
+    const shown = new Set(filtered.map(s => s.id))
+    const known = new Set(STAGES.map(s => s.id))
+    return allShops.filter(s => !shown.has(s.id) && ((s.shop_name || '').toLowerCase().includes(q) || (s.address || '').toLowerCase().includes(q) || (s.people || []).some(p => (p.name || '').toLowerCase().includes(q)))).slice(0, 12).map(s => {
+      const st = STAGES.find(x => x.id === s.pipeline_stage)
+      const tab = CUSTOMER_STAGES.includes(s.pipeline_stage) ? 'customers' : typeOfShop(s)
+      return { shop: s, tab, tabLabel: TAB_LABEL[tab], stage: st, stageLabel: st ? `${st.emoji} ${st.label}` : `⚠ unknown stage "${s.pipeline_stage || ''}"`, hidden: !known.has(s.pipeline_stage), tb: typeBadge(shopTypeOf(s)) }
+    })
+  })()
+
   // Kanban only shows non-lost stages; Lost appears in mobile list + filter pill
   const kanbanStages = STAGES.filter(s => s.id !== 'lost' && !CUSTOMER_STAGES.includes(s.id))
 
@@ -650,6 +683,12 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
       <CustomersView modeToggle={modeToggle} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) setDetailShop(sh) }}
         onMarkCustomer={async id => { const r = await apiFetch(`${API_BASE}/api/shops/${id}/mark-customer`, { method: 'POST' }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setShops(prev => prev.map(s => String(s.id) === String(id) ? { ...s, pipeline_stage: 'active' } : s)) }} />
       {detailShop && <ShopDetailPanel shop={detailShop} user={user} onClose={() => setDetailShop(null)} onSave={handleSave} onDelete={handleDelete} />}
+    </div>
+  )
+  if (crmMode === 'deals') return (
+    <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
+      <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      <DealsBoard user={user} modeToggle={modeToggle} shops={allShops} />
     </div>
   )
   if (crmMode === 'retail') return (
@@ -801,7 +840,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
         {/* Stats bar */}
         {!loading && !error && <StatsBar shops={shops} />}
         {!loading && !error && <SetupBanner shops={shops} isOwner={isOwnerUser(user)} onApplied={n => { setToast(`🗺 Zones and owners set on ${n} shops`); fetchShops() }} />}
-        {!loading && !error && <InPlayBar shops={shops} isOwner={isOwnerUser(user)} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} onPickStage={st => { setStageFilter(stageFilter === st ? '' : st); setRegionFilter(''); setOwnerFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} />}
+        {!loading && !error && <InPlayBar shops={countShops} isOwner={isOwnerUser(user)} gridOpen={gridOpen} onToggleGrid={() => setGridOpen(o => !o)} onMonday={() => setMondayOpen(true)} onDiscover={() => setDiscoverOpen(true)} onPickStage={st => { setStageFilter(stageFilter === st ? '' : st); setRegionFilter(''); setOwnerFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} />}
         {!loading && !error && filtered.length === 0 && shops.length > 0 && (
           <div className="rounded-xl px-3 py-2 mb-3 text-sm flex items-center justify-between gap-2 flex-wrap" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', color: '#92400e' }}>
             <span>No shops match {[regionFilter && (regionFilter === 'unzoned' ? 'No zone' : zoneLabel(regionFilter)), ownerFilter, stageFilter && (STAGES.find(x => x.id === stageFilter)?.label), showOverdue && 'Overdue', staleOnly && 'Gone quiet', compFilter && `uses ${compFilter}`, big3Only && 'No Big 3 rule', search.trim() && `"${search.trim()}"`].filter(Boolean).join(' + ') || 'these filters'}.</span>
@@ -848,7 +887,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
           })}
 
           {/* Zone + owner filters (2026-09-15) */}
-          {ZONES.map(z => { const inZone = shops.filter(sh => zoneOf(sh) === z.id); const n = inZone.length; const cust = inZone.filter(sh => sh.pipeline_stage === 'active').length; return (
+          {ZONES.map(z => { const inZone = countShops.filter(sh => zoneOf(sh) === z.id); const n = inZone.length; const cust = inZone.filter(sh => sh.pipeline_stage === 'active').length; return (
             <button key={z.id} onClick={() => { setRegionFilter(regionFilter === z.id ? '' : z.id); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }}
               className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
               style={regionFilter === z.id ? { backgroundColor: '#e0e7ff', color: '#3730a3', border: '1px solid #a5b4fc' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
@@ -878,6 +917,24 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
           <div className="px-4 py-3 rounded-xl text-sm mb-4"
             style={{ backgroundColor: '#fff0ed', border: '1px solid #e8c5b0', color: ORANGE }}>
             Could not load pipeline: {error}
+          </div>
+        )}
+
+        {!loading && !error && elsewhere.length > 0 && (
+          <div className="rounded-xl px-3 py-2 mb-3 text-sm" style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fcd34d' }}>
+            <div className="text-[11px] font-bold mb-1" style={{ color: '#92400e' }}>🔎 Also found outside this tab</div>
+            <div className="flex flex-col gap-1">
+              {elsewhere.map(e => (
+                <div key={e.shop.id} className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold" style={{ color: '#1a1a1a' }}>{e.shop.shop_name}</span>
+                  <span className="text-[10px] font-bold px-1.5 rounded-full" style={{ backgroundColor: 'white', color: e.tb.color, border: `1px solid ${e.tb.color}` }}>{e.tb.label}</span>
+                  <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full" style={e.stage ? { backgroundColor: e.stage.bg, color: e.stage.color } : { backgroundColor: '#fee2e2', color: '#b91c1c' }}>{e.stageLabel}</span>
+                  <span className="text-[11px] text-gray-500">{e.hidden ? 'shows on no tab until its stage is fixed' : `lives on ${e.tabLabel}`}</span>
+                  <button onClick={() => setDetailShop(e.shop)} className="text-[11px] font-bold px-2 py-0.5 rounded text-white" style={{ backgroundColor: ORANGE }}>Open</button>
+                  {!e.hidden && e.tab !== crmMode && <button onClick={() => setCrmMode(e.tab)} className="text-[11px] font-bold px-2 py-0.5 rounded" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>Go to {e.tabLabel}</button>}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1048,7 +1105,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
       {/* Van Contact Modal — CRM row + Van newsletter enrollment in one submit */}
       {showNewCustomer && (
         <NewCustomerModal
-          onClose={() => setShowNewCustomer(false)}
+          initialPhone={newShopPhone}
+          onClose={() => { setShowNewCustomer(false); setNewShopPhone('') }}
           onCreated={() => fetchShops()}
         />
       )}
