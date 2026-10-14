@@ -91,13 +91,29 @@ export async function getTwilioClient(cfg) {
         To: opts.to, From: opts.from, Body: opts.body,
       }).then(d => ({ sid: d.sid, ...d })),
     },
-    calls: {
-      create: (opts) => twilioPost(accountSid, authToken, 'Calls', {
-        To: opts.to, From: opts.from, Url: opts.url, Method: opts.method || 'POST',
-        StatusCallback: opts.statusCallback, StatusCallbackMethod: opts.statusCallbackMethod || 'POST',
-        StatusCallbackEvent: opts.statusCallbackEvent, Timeout: opts.timeout,
-      }).then(d => ({ sid: d.sid, ...d })),
-    },
+    // client.calls(sid).update({ twiml | url | status }) redirects a LIVE call (transfer / warm
+    // transfer / take back) — the shim never had it, so every transfer threw "client.calls is not
+    // a function" and dropped the caller (Mark + Kat 2026-10-14). client.calls.create stays as before.
+    calls: Object.assign(
+      (callSid) => ({
+        fetch: async () => {
+          const r = await axios.get(`${TWILIO_BASE}/${accountSid}/Calls/${encodeURIComponent(String(callSid))}.json`, { auth: twilioAuth(accountSid, authToken), timeout: 15000, validateStatus: () => true })
+          if (r.status < 200 || r.status >= 300) { const e = new Error(r.data?.message || `Twilio ${r.status}`); e.twilioStatus = r.status; e.twilioBody = r.data; throw e }
+          const d = r.data || {}
+          return { ...d, sid: d.sid, status: d.status, parentCallSid: d.parent_call_sid, from: d.from, to: d.to, direction: d.direction, duration: d.duration }
+        },
+        update: (opts = {}) => twilioPost(accountSid, authToken, `Calls/${encodeURIComponent(String(callSid))}`, {
+          Twiml: opts.twiml, Url: opts.url, Method: opts.url ? (opts.method || 'POST') : undefined, Status: opts.status,
+        }).then(d => ({ sid: d.sid, ...d })),
+      }),
+      {
+        create: (opts) => twilioPost(accountSid, authToken, 'Calls', {
+          To: opts.to, From: opts.from, Url: opts.url, Twiml: opts.twiml, Method: opts.url ? (opts.method || 'POST') : undefined,
+          StatusCallback: opts.statusCallback, StatusCallbackMethod: opts.statusCallbackMethod || 'POST',
+          StatusCallbackEvent: opts.statusCallbackEvent, Timeout: opts.timeout,
+        }).then(d => ({ sid: d.sid, ...d })),
+      },
+    ),
   }
 }
 
@@ -106,22 +122,31 @@ export function twilioConfigured(cfg) {
   return !!(accountSid && authToken)
 }
 
-// Normalize any US phone into E.164 (+1XXXXXXXXXX). Accepts 10 digits,
-// 11-with-leading-1, or already-E.164. Returns null on obvious junk.
+// Normalize a phone into E.164. US is the default: 10 digits or 11-with-leading-1
+// → +1XXXXXXXXXX. International (Mark 2026-10-05, a team member in the Philippines):
+// anything written with a leading "+" passes through, and a bare 12–15 digit number
+// that does not start with 1 is taken as country code + number (+63 917 123 4567).
+// "0917…" local formats are NOT guessed — store those with the + and country code.
+// Returns null on obvious junk.
 export function normalizePhoneUS(input) {
   if (!input) return null
-  const digits = String(input).replace(/\D/g, '')
+  const raw = String(input).trim()
+  const digits = raw.replace(/\D/g, '')
+  if (/^\+/.test(raw) || /^00\d/.test(raw)) { const d = raw.startsWith('00') ? digits.slice(2) : digits; return d.length >= 8 && d.length <= 15 ? `+${d}` : null }
   if (digits.length === 10) return `+1${digits}`
   if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
   if (digits.length === 12 && digits.startsWith('01')) return `+${digits.slice(1)}`
-  if (String(input).startsWith('+') && digits.length >= 10) return `+${digits}`
+  if (digits.length >= 12 && digits.length <= 15 && !digits.startsWith('1') && !digits.startsWith('0')) return `+${digits}`
   return null
 }
+export const isUSNumber = e164 => /^\+1\d{10}$/.test(String(e164 || ''))
 
-// Human display — "(425) 555-1234". Falls back to raw input if not US.
+// Human display — "(425) 555-1234" for US; international stays E.164 with a space
+// after the country code ("+63 9171234567").
 export function formatPhonePretty(input) {
   const e = normalizePhoneUS(input)
   if (!e) return String(input || '')
+  if (!isUSNumber(e)) { const m = e.match(/^\+(1|7|2\d|3\d|4\d|5\d|6\d|8\d|9\d|\d{3})(\d+)$/); return m ? `+${m[1]} ${m[2]}` : e }
   const d = e.slice(2) // strip "+1"
   return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6, 10)}`
 }
