@@ -125,12 +125,13 @@ async function deleteSubscriptionRow(req, rowid) {
 // Broadcast to every subscribed device. Exported for sms.js (inbound
 // texts). Never throws — push is best-effort on top of Cliq + forward.
 // Dead subscriptions (404/410 from the push service) are pruned.
-export async function sendPushToAll(req, { title, body, url, tag }) {
+export async function sendPushToAll(req, { title, body, url, tag }, only = null) {
   try {
     const { publicKey, privateKey } = await ensureVapidKeys(req)
     const webpush = await getWebPush()
     webpush.setVapidDetails(VAPID_SUBJECT, publicKey, privateKey)
-    const subs = await readAllSubscriptions(req)
+    let subs = await readAllSubscriptions(req)
+    if (typeof only === 'function') subs = subs.filter(s => { try { return !!only(s) } catch { return false } })   // e.g. only the person on a call
     if (subs.length === 0) return { sent: 0, total: 0 }
     const payload = JSON.stringify({ title, body, url, tag })
     let sent = 0

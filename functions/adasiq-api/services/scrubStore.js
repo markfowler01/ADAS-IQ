@@ -119,6 +119,7 @@ export async function saveScrub(req, { jobId, data, source = 'button', by = '', 
     }))
     const vehicle = str(data?.vehicle || [data?.year, data?.make, data?.model].filter(Boolean).join(' '), 200)
     const names = required.map(c => sensorName(c)).filter(Boolean)
+    try { const { applyShopResolve } = await import('./shopResolve.js'); await applyShopResolve(req, data) } catch (e) { console.warn('[scrubs] shop resolve skipped:', e.message) }
 
     const row = {
       scrub_job_id: str(jobId, 64),
@@ -187,7 +188,7 @@ const LIST_COLS = 'ROWID, scrub_job_id, scrub_shop, scrub_vehicle, scrub_year, s
  * Search the library. `q` is matched in JS against the prepared haystack,
  * because ZCQL LIKE does not match on this datastore.
  */
-export async function listScrubs(req, { q = '', make = '', shop = '', sensor = '', limit = 60, maxScan = 1000, includeBench = false } = {}) {
+export async function listScrubs(req, { q = '', make = '', shop = '', sensor = '', limit = 60, maxScan = 1000, includeBench = false, archived = false } = {}) {
   const needle = String(q || '').trim().toLowerCase()
   const wantMake = String(make || '').trim().toLowerCase()
   const wantShop = String(shop || '').trim().toLowerCase()
@@ -200,13 +201,14 @@ export async function listScrubs(req, { q = '', make = '', shop = '', sensor = '
       scanned += page.length
       for (const r of page) {
         if (!includeBench && String(r.scrub_source || '').startsWith('benchmark')) continue   // accuracy test runs never show in the library
+        if ((String(r.scrub_status || '') === 'archived') !== !!archived) continue            // 🗄 archived cars live on their own tab
         const hay = String(r.scrub_search || '').toLowerCase()
         if (needle && !hay.includes(needle)) continue
         if (wantMake && String(r.scrub_make || '').toLowerCase() !== wantMake) continue
         if (wantShop && !String(r.scrub_shop || '').toLowerCase().includes(wantShop)) continue
         if (wantSensor && !String(r.scrub_required_names || '').toLowerCase().includes(wantSensor)) continue
         out.push(shape(r))
-        if (out.length >= limit) return { scrubs: out, scanned, truncated: true }
+        if (out.length >= limit) { await attachResolvedShops(req, out); return { scrubs: out, scanned, truncated: true } }
       }
       if (page.length < PAGE) break
     }
@@ -214,7 +216,67 @@ export async function listScrubs(req, { q = '', make = '', shop = '', sensor = '
     console.warn('[scrubs] list failed:', e.message)
     return { scrubs: out, scanned, error: e.message }
   }
+  await attachResolvedShops(req, out)
   return { scrubs: out, scanned, truncated: false }
+}
+
+async function attachResolvedShops(req, rows) {
+  if (!rows.length) return
+  try {
+    const { resolveShop, shopKey } = await import('./shopResolve.js')
+    const printed = [...new Set(rows.map(s => s.shop).filter(Boolean))]
+    const hits = new Map()
+    for (const name of printed) {
+      const r = await resolveShop(req, name, { remember: true })
+      if (r.shop && shopKey(r.name) !== shopKey(name)) hits.set(name, r)
+    }
+    const writes = []
+    for (const s of rows) {
+      const r = hits.get(s.shop)
+      if (!r) continue
+      s.shopPrinted = s.shop
+      s.shop = r.name
+      s.shopId = r.shop.id
+      writes.push(updateScrubShopName(req, s.id, { shop: r.name, printed: s.shopPrinted }).catch(() => {}))
+    }
+    if (writes.length) await Promise.all(writes)
+  } catch (e) { console.warn('[scrubs] shop attach skipped:', e.message) }
+}
+
+export async function updateScrubShopName(req, id, { shop, printed = '' } = {}) {
+  const rowId = String(id || '').trim()
+  if (!/^\d{1,25}$/.test(rowId) || !shop) return { ok: false }
+  const s = await getScrubRaw(req, rowId)
+  if (!s) return { ok: false, error: 'not found' }
+  const payload = s.payload && typeof s.payload === 'object' ? { ...s.payload } : {}
+  payload._shopPrinted = payload._shopPrinted || printed || s.shop
+  payload.shop = shop
+  const search = [shop, s.vehicle, s.vin, s.ro, s.claim, s.insurer, s.requiredNames]
+    .filter(Boolean).join(' ').toLowerCase().slice(0, CHUNK)
+  await ds(req).datastore().table(TABLE).updateRow({
+    ROWID: rowId,
+    scrub_shop: str(shop, 200),
+    scrub_search: search,
+    ...chunkPayload(JSON.stringify(payload)),
+  })
+  return { ok: true, id: rowId, shop }
+}
+
+async function getScrubRaw(req, id) {
+  const rowId = String(id || '').trim()
+  if (!/^\d{1,25}$/.test(rowId)) return null
+  const rows = await ds(req).zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE ROWID = ${rowId} LIMIT 1`)
+  const r = (rows || []).map(x => x[TABLE] || x)[0]
+  if (!r) return null
+  let payload = null
+  try { payload = JSON.parse(joinPayload(r)) } catch { payload = null }
+  return { ...shape(r), payload }
+}
+
+export async function backfillResolvedShops(req, { limit = 400 } = {}) {
+  const { scrubs } = await listScrubs(req, { limit, maxScan: 800 })
+  const remapped = scrubs.filter(s => s.shopPrinted && s.shopPrinted !== s.shop)
+  return { ok: true, scanned: scrubs.length, remapped: remapped.length, shops: [...new Set(remapped.map(s => `${s.shopPrinted} → ${s.shop}`))] }
 }
 
 function shape(r) {
@@ -274,7 +336,20 @@ export async function getScrub(req, id) {
     if (!r) return null
     let payload = null
     try { payload = JSON.parse(joinPayload(r)) } catch { payload = null }
-    return { ...shape(r), oemRefs: r.scrub_oem_refs || '', error: r.scrub_error || '', payload }
+    const out = { ...shape(r), oemRefs: r.scrub_oem_refs || '', error: r.scrub_error || '', payload }
+    try {
+      const printed = out.shop
+      const { applyShopResolve } = await import('./shopResolve.js')
+      await applyShopResolve(req, out, { remember: true })
+      if (out.shop && printed && out.shop !== printed) {
+        if (out.payload && typeof out.payload === 'object') {
+          out.payload._shopPrinted = out.payload._shopPrinted || printed
+          out.payload.shop = out.shop
+        }
+        await updateScrubShopName(req, out.id, { shop: out.shop, printed }).catch(() => {})
+      }
+    } catch { /* listing still works with the printed name */ }
+    return out
   } catch (e) {
     console.warn('[scrubs] get failed:', e.message)
     return null
@@ -385,7 +460,7 @@ export async function refreshFromCard(req, scrubId) {
  * it, so the report can show which calls were the scrubber's and which
  * were the estimator's.
  */
-export async function updateScrubCalibrations(req, scrubId, cals, { by = '' } = {}) {
+export async function updateScrubCalibrations(req, scrubId, cals, { by = '', skipLearn = false } = {}) {
   const s = await getScrub(req, scrubId)
   if (!s) return { ok: false, error: 'not found' }
   const clean = (Array.isArray(cals) ? cals : []).filter(c => c && (c.calibration_name || c.sensor)).map(c => ({
@@ -397,6 +472,13 @@ export async function updateScrubCalibrations(req, scrubId, cals, { by = '' } = 
   }))
   if (!clean.length) return { ok: false, error: 'at least one calibration line is required' }
   const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const before = Array.isArray(p.calibrations) ? p.calibrations : (s.sensors || []).map(x => ({ calibration_name: x.n, enabled: !!x.r, trigger: x.g, line_references: x.l }))
+  if (!skipLearn) {
+    try {
+      const { recordEditDiff } = await import('./scrubLearn.js')
+      await recordEditDiff(req, before, clean, { by, make: s.make || p.make, year: s.year || p.year, vin: s.vin, scrub_id: s.id })
+    } catch (e) { console.warn('[scrubs] learn from edit skipped:', e.message) }
+  }
   const payload = { ...p, calibrations: clean, _edited_by: by || 'staff', _edited_at: nowIso() }
   const patch = {
     ROWID: s.id,
@@ -408,6 +490,91 @@ export async function updateScrubCalibrations(req, scrubId, cals, { by = '' } = 
   await ds(req).datastore().table(TABLE).updateRow(patch)
   console.log(`[scrubs] ${s.id} edited by ${by || 'staff'}: ${patch.scrub_required_count}/${clean.length} required`)
   return { ok: true, id: s.id, sensors: clean.length, required: patch.scrub_required_count }
+}
+
+/** 🗄 Archive a scrub (Mark 2026-10-07: "purge cars that never got completed or never got
+ *  on site … and a button to resurrect"). Nothing is deleted: scrub_status becomes
+ *  'archived', the previous status + reason + who live in payload.archive, and every
+ *  archive/resurrect is appended to payload.archive_log. */
+export async function archiveScrub(req, scrubId, { reason = '', by = '', auto = false } = {}) {
+  const s = await getScrub(req, scrubId)
+  if (!s) return { ok: false, error: 'not found' }
+  if (s.status === 'archived') return { ok: true, id: s.id, already: true }
+  const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const entry = { action: 'archive', at: nowIso(), by: str(by || (auto ? 'auto' : 'staff'), 80), reason: str(reason, 160), auto: !!auto, prev_status: s.status || 'ok' }
+  const payload = { ...p, archive: entry, archive_log: [...(Array.isArray(p.archive_log) ? p.archive_log : []), entry].slice(-20) }
+  const patch = { ROWID: s.id, scrub_status: 'archived', ...chunkPayload(JSON.stringify(payload)) }
+  delete patch._overflow
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  return { ok: true, id: s.id, archive: entry }
+}
+export async function resurrectScrub(req, scrubId, { by = '' } = {}) {
+  const s = await getScrub(req, scrubId)
+  if (!s) return { ok: false, error: 'not found' }
+  if (s.status !== 'archived') return { ok: true, id: s.id, already: true }
+  const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const prev = p.archive?.prev_status || 'ok'
+  const entry = { action: 'resurrect', at: nowIso(), by: str(by || 'staff', 80) }
+  const payload = { ...p, archive_log: [...(Array.isArray(p.archive_log) ? p.archive_log : []), entry].slice(-20) }
+  delete payload.archive
+  const patch = { ROWID: s.id, scrub_status: prev === 'archived' ? 'ok' : prev, ...chunkPayload(JSON.stringify(payload)) }
+  delete patch._overflow
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  return { ok: true, id: s.id, status: patch.scrub_status }
+}
+
+/** 🔬 Scan lifecycle record (Mark 2026-10-07): lives INSIDE scrub_reports as the entry
+ *  {kind:'scans', pre:{...}, post:{...}} so the list (LIST_COLS is at ZCQL's 30-column
+ *  cap) can colour cards without the payload. pre/post = { done_at, by, invoice_number,
+ *  invoice_id, estimate_number, estimate_id, mode ('charge'|'included'|'off'), pdf }. */
+export function scansOf(scrub) {
+  const e = (Array.isArray(scrub?.reports) ? scrub.reports : []).find(r => r && r.kind === 'scans')
+  return { pre: { ...(e?.pre || {}) }, post: { ...(e?.post || {}) }, completed_at: e?.completed_at || '' }
+}
+export function scanState(scrub) {
+  const sc = scansOf(scrub)
+  const preDone = !!sc.pre.done_at, preInv = !!(sc.pre.invoice_number || sc.pre.mode === 'included' || sc.pre.mode === 'off')
+  const postDone = !!sc.post.done_at, postInv = !!(sc.post.invoice_number || sc.post.mode === 'included' || sc.post.mode === 'off')
+  if (preDone && preInv && postDone && postInv) return 'complete'
+  if (postDone) return 'post_done'
+  if (preDone && preInv) return 'pre_invoiced'
+  if (preDone) return 'pre_done'
+  return 'none'
+}
+export async function writeScans(req, scrubId, scans) {
+  const s = await getScrub(req, scrubId)
+  if (!s) return { ok: false, error: 'not found' }
+  const others = (Array.isArray(s.reports) ? s.reports : []).filter(r => r && r.kind !== 'scans')
+  const entry = { kind: 'scans', pre: scans.pre || {}, post: scans.post || {}, completed_at: scans.completed_at || '' }
+  const st = scanState({ reports: [entry] })
+  if (st === 'complete' && !entry.completed_at) entry.completed_at = nowIso()
+  if (st !== 'complete') entry.completed_at = ''
+  const reports = [...others, entry]
+  const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const patch = { ROWID: s.id, scrub_reports: JSON.stringify(reports).slice(0, CHUNK), ...chunkPayload(JSON.stringify({ ...p, scans: entry })) }
+  delete patch._overflow
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  return { ok: true, id: s.id, scans: entry, state: st }
+}
+/** Newest scrub rows for an RO (post-scan PDFs arrive by RO#). */
+export async function scrubsByRo(req, ro) {
+  const r = String(ro || '').replace(/'/g, '').trim(); if (!r) return []
+  const rows = await ds(req).zcql().executeZCQLQuery(`SELECT ${LIST_COLS} FROM ${TABLE} WHERE scrub_ro = '${r}' ORDER BY CREATEDTIME DESC LIMIT 5`)
+  return (rows || []).map(x => x[TABLE] || x).map(shape)
+}
+
+/** Per-report Full Service override: 'on' | 'off' | '' (follow the CRM). */
+export async function setScrubFsOverride(req, scrubId, override, { by = '' } = {}) {
+  const s = await getScrub(req, scrubId)
+  if (!s) return { ok: false, error: 'not found' }
+  const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const payload = { ...p }
+  if (override === 'on' || override === 'off') { payload.fs_override = override; payload.fs_override_by = str(by, 80); payload.fs_override_at = nowIso() }
+  else { delete payload.fs_override; delete payload.fs_override_by; delete payload.fs_override_at }
+  const patch = { ROWID: s.id, ...chunkPayload(JSON.stringify(payload)) }
+  delete patch._overflow
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  return { ok: true, id: s.id, fs_override: payload.fs_override || '' }
 }
 
 const STAGES = ['scrubbed', 'quote_requested', 'requested', 'quoted', 'job', 'invoiced', 'paid']   // requested = a tech asked for the job from the scrub (2026-09-30)

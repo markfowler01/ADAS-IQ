@@ -38,8 +38,65 @@ const SWS_ANY_COLLISION = /honda|acura|mazda|nissan|infiniti/i   // Nissan/Infin
 // Makes whose statements require the camera after a wheel alignment.
 const CAM_AFTER_ALIGN = /^(?!.*(honda|acura)).*/i   // every make after an alignment (Mark 2026-10-02) EXCEPT Honda/Acura: Honda's job aid + ALLDATA say camera/radar are NOT required after an alignment
 
-/** One Haiku read: which lines carry which trigger words. */
+const EMPTY_HITS = () => ({
+  windshield: [], windshield_excluded: [], front_bumper: [], rear_bumper: [],
+  rear_bumper_rpr: [], alignment: [], battery: [], seat_airbag: [], liftgate: [],
+  mirror: [], radar_sensor: [], camera: [], headlamp: [], fender: [],
+  structural: [], grille: [], front_door: [], module_repl: [], park_sensor: [],
+  srs_deploy: [], b_pillar: [],
+})
+
+/** Instant line categorizer from CCC text — same buckets as the Haiku pass, no model. */
+export function triggerLinesFromText(text) {
+  const hits = EMPTY_HITS()
+  if (!text) return hits
+  const push = (k, n) => { if (n && !hits[k].includes(n)) hits[k].push(n) }
+  for (const row of String(text).split(/\r?\n/)) {
+    const m = row.match(/^\s*(\d+)\s+((?:[#*<>]+\s+)*\S.*)$/)
+    if (!m) continue
+    const n = m[1]
+    const body = m[2].toLowerCase().replace(/\s+/g, ' ')
+    const opRepl = /\b(repl|r&r|r&i|subl|o\/h)\b/.test(body)
+    const opRi = /\b(r&i|repl|r&r|o\/h)\b/.test(body)
+    const opRpr = /\brpr\b/.test(body)
+    const glassOut = opRepl && /(windshield|w\/shield|windscreen|\bw\/s\b)/.test(body)
+      && !/(liftgate|back glass|rear (window|glass)|quarter glass|door glass|mirror glass|sunroof|moonroof)/.test(body)
+    const wsWord = /(windshield|w\/shield|windscreen|\bw\/s\b)/.test(body)
+    const wsKeep = /(mask|protect|cover|tape|plastic|chip|polish|denib|tint|urethane|molding|cowl|wiper|washer)/.test(body)
+    if (glassOut && !wsKeep) push('windshield', n)
+    else if (wsWord && (wsKeep || !opRepl)) push('windshield_excluded', n)
+    if (/(front bumper|front fascia)/.test(body) && !/(bracket|absorber|impact bar|reinforcement|lamp|trim|grille|add for)/.test(body)) {
+      if (opRi) push('front_bumper', n)
+      else if (opRpr) { /* front bumper repair is not a radar-aim trigger by itself */ }
+    }
+    if (/(rear bumper|rear fascia)/.test(body) && !/(bracket|absorber|impact bar|reinforcement|lamp|trim|add for)/.test(body)) {
+      if (opRi) push('rear_bumper', n)
+      else if (opRpr) push('rear_bumper_rpr', n)
+    }
+    if (/\b(align|alignment|4[- ]wheel)\b/.test(body) || /steering system reset/.test(body)) push('alignment', n)
+    if (/\bbattery\b/.test(body) && /\b(d&r|r&i|disconnect|remove)\b/.test(body)) push('battery', n)
+    if (/(passenger seat|seat cushion|seat track|seat belt|pretensioner|air ?bag|\bsrs\b)/.test(body)) push('seat_airbag', n)
+    if (/(liftgate|tailgate|trunk lid|decklid)/.test(body) && (opRi || /adjust/.test(body))) push('liftgate', n)
+    if (/\b(mirror|outside mirror|door mirror)\b/.test(body) && opRi && !/mirror (glass|cover|cap)/.test(body)) push('mirror', n)
+    if (/(radar|millimeter|distronic|acc sensor|adaptive cruise sensor)/.test(body) && !/(park|pdc|ultrasonic|proximity|distance sensor)/.test(body)) push('radar_sensor', n)
+    if (/\bcamera\b/.test(body)) push('camera', n)
+    if (/(headlamp|headlight)/.test(body) && opRi && !/(bulb|aim labor|aiming)/.test(body)) push('headlamp', n)
+    if (/\bfender\b/.test(body) && !/(liner|molding|flare|rear)/.test(body) && (opRi || opRpr || /adjust/.test(body))) push('fender', n)
+    if (/(quarter panel|rocker|pillar|rail|apron|floor pan|rear body|roof panel|wheelhouse)/.test(body) && (/\b(repl|section)/.test(body) || (opRpr && /[1-9]\.\d/.test(body)))) push('structural', n)
+    if (/(bumper reinforcement|impact bar|door shell|core support|radiator support)/.test(body) && opRepl) push('structural', n)
+    if (/(grille|grille emblem)/.test(body) && opRi && !/(molding|refn|blnd)/.test(body)) push('grille', n)
+    if (/(front door|door shell|door assy|door assembly)/.test(body) && !/rear door/.test(body) && (opRi || opRpr || /adjust/.test(body))) push('front_door', n)
+    if (/\b(module|ecu|sdm|gateway)\b/.test(body) && /\brepl\b/.test(body)) push('module_repl', n)
+    if (/(park(ing)? (aid |distance )?sensor|ultrasonic|pdc|parktronic|sonar)/.test(body) && (opRi || /transfer/.test(body))) push('park_sensor', n)
+    if (/(air ?bag|pretensioner)/.test(body) && /\brepl\b/.test(body)) push('srs_deploy', n)
+    if (/(b-?pillar|center pillar)/.test(body)) push('b_pillar', n)
+  }
+  return hits
+}
+
+/** One Haiku read: which lines carry which trigger words. Text path uses triggerLinesFromText instead. */
 export async function triggerLines(base64Pdf, { text = '' } = {}) {
+  if (text && String(text).length >= 400) return triggerLinesFromText(text)
   const msg = await client().messages.create({
     model: 'claude-haiku-4-5', max_tokens: 1200,
     messages: [{ role: 'user', content: [
@@ -114,6 +171,8 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
   const cals = data.calibrations
   const make = String(data.make || ''), year = Number(data.year || 0)
   const per = (m, s) => `${m || 'OEM'} OEM position statement and ALLDATA ADAS procedure${s ? ' — ' + s : ''}`
+  // Raw text of one numbered estimate line (CCC: "3 # Subl Seat Weight Sensor 1 100.00") — '' when we have no text.
+  const lineRaw = n => { if (!text) return ''; const num = String(n).replace(/\D/g, ''); if (!num) return ''; for (const row of String(text).split(/\r?\n/)) { const m = row.match(/^\s*(\d+)\s+((?:[#*<>]+\s+)*\S.*)$/); if (m && m[1] === num) return m[2] } return '' }
 
   // 0. Normalise the inventory before any rule fires (Mark, 2026-09-29).
   //    a) Blind spot is ONE calibration for the whole system, billed once —
@@ -477,7 +536,11 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
   //     "equipped" guess is not proof. Only judged when we have the estimate text.
   if (text) {
     const AV_PROOF = /surround[- ]?vision|surround[- ]?view|around[- ]?view|360[°º]?[- ]?(degree[- ]?)?(camera|view|vision)|bird'?s?[- ]?eye|multi[- ]?view camera|panoramic view (monitor|camera)|top[- ]?view camera|overhead (view )?camera|side view camera|hd surround/i
-    const hasAv = AV_PROOF.test(text)
+    // A bumper / mirror "Add for front camera" / "add for side camera" line is the MOTOR
+    // add-on for a car that HAS the surround-view camera there (2019 AMG GT 53 RO 33607,
+    // line 12 "Add for front camera", 2026-10-05: Kinetic required it, we demoted it).
+    const AV_ADDFOR = /add[- ]?(?:for|'l)\s+(?:front|side|surround|360)[- ]?(?:view\s*)?camera/i
+    const hasAv = AV_PROOF.test(text) || AV_ADDFOR.test(text)
     for (const av of cals.filter(c => /around view|surround|360|bird|multi[- ]?view/i.test(String(c.calibration_name || '')))) {
       if (av.enabled === true && !hasAv && !av._fs) {
         Object.assign(av, { enabled: false, line_references: '', equipped: 'unknown', _guard: 'if-equipped', justification: 'Not required — the estimate shows no surround-view (Around View / 360) camera system on this vehicle. If it is equipped, the Around View calibration is required after this repair — confirm at pre-scan.' })
@@ -517,12 +580,35 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
       out.demoted = [...(out.demoted || []), 'Front Radar (windshield only)']
     }
   }
+  // 7d. Front Windshield Camera only when something actually disturbs it: the glass out,
+  //     the camera itself replaced, a wheel alignment / suspension or steering operation,
+  //     or a make rule that set it (those carry _guard). A bumper / grille / front radar
+  //     job alone does not re-aim the windshield camera on any OEM we carry — Mercedes-Benz
+  //     ADAS guide: "the camera has to be re-calibrated if the windshield is replaced, the
+  //     camera is replaced or the suspension is modified" (RO 33607 2026-10-05: we billed
+  //     it on a bumper-only AMG GT; Kinetic did not).
+  {
+    const fwc = cals.find(c => /windshield camera|front camera|forward camera|multipurpose|lane depart/i.test(String(c.calibration_name || '')) && !/around|surround|360|side|rear|back/i.test(String(c.calibration_name || '')))
+    if (fwc && fwc.enabled === true && !fwc._guard && !fwc._fs) {
+      const camHit = lines(hits.camera).some(n => /windshield|w\/s|multipurpose|multi-purpose|forward|lane|mpc|front view camera unit|camera unit/i.test(lineRaw(n)))
+      const disturbed = ws.length || al.length || camHit || lines(hits.structural).length || /\b(strut|control arm|knuckle|subframe|steering (gear|rack|column)|tie rod|suspension|ride height)\b/i.test(JSON.stringify(cals.map(c => c.trigger || '')) + ' ' + (text || '').slice(0, 20000))
+      if (!disturbed) {
+        const mb = /mercedes|benz/i.test(make)
+        Object.assign(fwc, { enabled: false, trigger: '', line_references: '', _guard: 'demoted',
+          justification: mb ? 'Not required — Mercedes-Benz: the multifunction camera is re-calibrated only if the windshield is replaced, the camera is replaced or the suspension is modified. None of those operations is on this estimate (front bumper / grille / radar work does not disturb the windshield camera). Confirm at pre-scan.'
+            : `Not required — the windshield camera is re-aimed when the windshield is replaced, the camera is replaced, or an alignment / suspension / steering operation is performed. None of those is on this estimate; a bumper, grille or front radar job does not disturb the windshield camera on ${make || 'this make'}. Confirm at pre-scan.` })
+        out.demoted = [...(out.demoted || []), 'Front Windshield Camera (nothing disturbs it)']
+      }
+    }
+  }
   // 7b. 🔑 Module programming (Mark 2026-10-02): "any module replaced … programming will
   //     need to be added … every make and model except Toyota and Honda." One line,
   //     "Module Programming and Reflash - <Make>" (the Books item; body shops get the
   //     Collision twin), quantity = modules replaced, each module named.
   {
-    const mods = lines(hits.module_repl)
+    // Never from a sublet or a non-replace line (RO 33607 2026-10-05: "# Subl Seat Weight
+    // Sensor" was counted as a module replaced and a programming line went on the report).
+    const mods = lines(hits.module_repl).filter(n => { const r = lineRaw(n); if (!r) return true; if (/\bsubl(et)?\b/i.test(r)) return false; return /\b(repl|r&r|replace)\b/i.test(r) })
     if (mods.length && make && !/toyota|lexus|honda|acura/i.test(make)) {
       const MAKES = { chevrolet: 'Chevrolet', chevy: 'Chevrolet', gmc: 'GMC', buick: 'Buick', cadillac: 'Cadillac', ford: 'Ford', lincoln: 'Lincoln', dodge: 'Dodge', chrysler: 'Chrysler', jeep: 'Jeep', ram: 'Ram', fiat: 'Fiat', 'alfa romeo': 'Alfa Romeo', alfa: 'Alfa Romeo', audi: 'Audi', volkswagen: 'Volkswagen', vw: 'Volkswagen', bmw: 'BMW', mini: 'MINI', 'mercedes-benz': 'Mercedes-Benz', mercedes: 'Mercedes-Benz', porsche: 'Porsche', volvo: 'Volvo', 'land rover': 'Land Rover', jaguar: 'Jaguar', nissan: 'Nissan', infiniti: 'Infiniti', hyundai: 'Hyundai', kia: 'Kia', genesis: 'Genesis', mazda: 'Mazda', subaru: 'Subaru', mitsubishi: 'Mitsubishi', tesla: 'Tesla', rivian: 'Rivian' }
       const mk = MAKES[String(make).toLowerCase().trim()] || Object.entries(MAKES).find(([k]) => String(make).toLowerCase().includes(k))?.[1] || make

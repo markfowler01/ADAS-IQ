@@ -2,13 +2,14 @@ import express from 'express'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { getAccessToken, listCustomers } from '../services/zoho.js'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
 const ZOHO_API_BASE = 'https://www.zohoapis.com/books/v3'
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

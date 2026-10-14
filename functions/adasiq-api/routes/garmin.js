@@ -2,6 +2,7 @@ import { Router } from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import garminPkg from 'garmin-connect'
 import Anthropic from '@anthropic-ai/sdk'
+import { durable } from '../services/durableKV.js'
 
 const { GarminConnect } = garminPkg
 const router = Router()
@@ -125,7 +126,7 @@ router.post('/sync', async (req, res) => {
     catch (e) { data.errors.push('suggestion: ' + e.message) }
 
     const payload = { ...data, suggestion, syncedAt: Date.now() }
-    const segment = catalyst.initialize(req).cache().segment()
+    const segment = durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
     await cacheSet(segment, `garmin_data_${dateStr}`, payload)
     await cacheSet(segment, 'garmin_latest_date', dateStr)
     res.json({ ok: true, date: dateStr, hasSleep: !!data.sleep, hasActivity: !!data.activity, hasSuggestion: !!suggestion, errors: data.errors })
@@ -196,7 +197,7 @@ router.get('/activities', async (req, res) => {
 
 router.get('/today', async (req, res) => {
   try {
-    const segment = catalyst.initialize(req).cache().segment()
+    const segment = durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
     const date = req.query.date || (await cacheGet(segment, 'garmin_latest_date'))
     if (!date) return res.json({ ok: true, data: null, message: 'No Garmin data synced yet' })
     const data = await cacheGet(segment, `garmin_data_${date}`)
@@ -215,7 +216,7 @@ router.get('/debug', async (req, res) => {
     env_anthropic: !!process.env.ANTHROPIC_API_KEY,
   }
   try {
-    const segment = catalyst.initialize(req).cache().segment()
+    const segment = durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
     out.latest_date = await cacheGet(segment, 'garmin_latest_date')
     if (out.latest_date) {
       const data = await cacheGet(segment, `garmin_data_${out.latest_date}`)

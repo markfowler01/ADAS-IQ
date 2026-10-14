@@ -120,15 +120,23 @@ export async function customerReport(req) {
 // the newest mirror rows, so a wrong number can be traced in one call.
 export async function debugCustomer(req, name) {
   const { getAllShops } = await import('../routes/shops.js')
-  const shop = (await getAllShops(req)).find(s => String(s.shop_name).toLowerCase().includes(name.toLowerCase()))
+  const all = await getAllShops(req)
+  const q = name.toLowerCase()
+  // Every CRM row that matches, with where it lives (Mark 2026-10-05: "I can't find
+  // Carstar 272 in our CRM") — stage + type decide which tab (if any) shows it.
+  const matches = all.filter(s => String(s.shop_name).toLowerCase().includes(q) || String(s.address || '').toLowerCase().includes(q)).map(s => {
+    let br = s.billing_rules || {}; if (typeof br === 'string') { try { br = JSON.parse(br) } catch { br = {} } }
+    return { id: s.id, name: s.shop_name, stage: s.pipeline_stage || '', type: br.customer_type || '', created_at: s.created_at || '', referral_source: s.referral_source || '', region: s.region || '', zone: s.zone || '', assigned_to: s.assigned_to || '', books: s.zoho_contact_id || '', activities: (s.activities || []).length, notes: String(s.notes || '').slice(0, 160) }
+  })
+  const shop = all.find(s => String(s.shop_name).toLowerCase().includes(q))
   const now = new Date(); const since = new Date(now.getFullYear(), now.getMonth() - 12, 1).toISOString().slice(0, 10)
   const inv = await invoicesSince(req, since)
   const newest = [...inv].sort((a, b) => String(b.inv_date).localeCompare(String(a.inv_date))).slice(0, 8).map(i => ({ date: i.inv_date, customer_id: i.customer_id, name: i.customer_name, status: i.inv_status, total: i.inv_total }))
-  if (!shop) return { found: false, invoices_read: inv.length, newest }
+  if (!shop) return { found: false, matches, invoices_read: inv.length, newest }
   const byId = inv.filter(i => String(i.customer_id) === String(shop.zoho_contact_id || '-'))
   const byNm = inv.filter(i => loose(i.customer_name) === loose(shop.shop_name))
   const show = l => [...l].sort((a, b) => String(b.inv_date).localeCompare(String(a.inv_date))).slice(0, 6).map(i => ({ date: i.inv_date, customer_id: i.customer_id, name: i.customer_name, status: i.inv_status }))
   const probe = String(name).toLowerCase().replace(/[^a-z0-9]/g, '')
   const names = [...new Set(inv.filter(i => String(i.customer_name).toLowerCase().replace(/[^a-z0-9]/g, '').includes(probe)).map(i => `${i.customer_name} [${i.customer_id}] newest ${[...inv].filter(x => x.customer_id === i.customer_id).map(x => String(x.inv_date)).sort().pop()}`))]
-  return { shop: { id: shop.id, name: shop.shop_name, zoho_contact_id: shop.zoho_contact_id || '' }, loose_name: loose(shop.shop_name), invoices_read: inv.length, by_id: { count: byId.length, newest: show(byId) }, by_name: { count: byNm.length, newest: show(byNm) }, books_names_like: names.slice(0, 10), newest_in_mirror: newest }
+  return { shop: { id: shop.id, name: shop.shop_name, zoho_contact_id: shop.zoho_contact_id || '' }, matches, loose_name: loose(shop.shop_name), invoices_read: inv.length, by_id: { count: byId.length, newest: show(byId) }, by_name: { count: byNm.length, newest: show(byNm) }, books_names_like: names.slice(0, 10), newest_in_mirror: newest }
 }

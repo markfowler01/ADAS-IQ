@@ -99,7 +99,18 @@ export async function generateADASIQPdf(jobData = {}) {
   try {
     const req = globalThis.__catalystReq
     const fs = await import('./fullService.js')
-    const r = req && jobData.shop ? await fs.readFullService(req, jobData.shop) : null
+    let r = req && jobData.shop ? await fs.readFullService(req, jobData.shop) : null
+    // Per-report override lives on the scrub (Mark 2026-10-07) — explicit, or looked up by scrub / job.
+    let ov = jobData._fsOverride
+    if (r && ov === undefined && req) {
+      try {
+        const S = await import('./scrubStore.js')
+        let sid = jobData._scrubId || ''
+        if (!sid && jobData._jobId) sid = (await S.scrubsForJob(req, jobData._jobId))?.[0]?.id || ''
+        if (sid) ov = (await S.getScrub(req, sid))?.payload?.fs_override || ''
+      } catch { ov = '' }
+    }
+    if (r && ov) r = fs.applyFsOverride(r, ov)
     cals = fs.tagRows((cals || []).map(c => ({ ...c })), r?.rules, { collision: r ? r.collision : true })
   } catch { /* untagged rows print as plain calibrations */ }
   // 📎 The OEM documents the justifications cite → numbered attachments (Mark 2026-10-02).

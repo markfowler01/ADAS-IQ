@@ -13,6 +13,7 @@
 
 import crypto from 'crypto'
 import catalyst from 'zcatalyst-sdk-node'
+import { durable } from './durableKV.js'
 
 const QUEUE_KEY = 'capture_approval_queue'
 const TOKEN_TTL_DAYS = 14
@@ -23,7 +24,7 @@ const TOKEN_TTL_DAYS = 14
 // tree wipe — this shim restores compatibility for both call styles.)
 function asSegment(reqOrSegment) {
   if (reqOrSegment && typeof reqOrSegment.getValue === 'function') return reqOrSegment
-  return catalyst.initialize(reqOrSegment).cache().segment()
+  return durable(catalyst.initialize(reqOrSegment).cache().segment(), catalyst.initialize(reqOrSegment))
 }
 
 function getSecret() {

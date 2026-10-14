@@ -43,12 +43,13 @@ import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID, cliqUrlButton } from '../
 import { heartbeatAttempt, stampSuccess, readAllHeartbeats, reportCronFailure } from '../services/cronHeartbeat.js'
 import axios from 'axios'
 import crypto from 'crypto'
+import { durable } from '../services/durableKV.js'
 
 export const captureCalcRouter = express.Router()
 
 // ─── Cache + IP rate-limit ──────────────────────────────────────────────────
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 function isNotFound(e) {
   return e?.statusCode === 404 || e?.errorInfo?.statusCode === 404

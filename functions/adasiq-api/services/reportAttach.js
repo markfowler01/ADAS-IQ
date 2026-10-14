@@ -143,8 +143,37 @@ export async function attachToBooks(token, kind, id, { name, buffer }) {
  * Attach the job's report PDF(s) to the given Books documents.
  * targets: [{ kind: 'estimates'|'invoices', id }]. Returns { attached: [names], errors: [] }.
  */
+// The VIN printed on the Books document itself (custom field / any 17-char VIN in its JSON).
+async function booksDocVin(token, kind, id) {
+  try {
+    const r = await axios.get(`${API}/${kind}/${id}`, { headers: H(token), params: org(), timeout: 15000, validateStatus: s => s < 500 })
+    const doc = r.data?.estimate || r.data?.invoice || {}
+    const vins = [...new Set((JSON.stringify({ ...doc, documents: undefined }).toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/g) || []).filter(v => /\d/.test(v) && /[A-Z]/.test(v)))]
+    return vins[0] || ''
+  } catch { return '' }
+}
+// The VIN on the newest scrub for this card (the estimate we actually read).
+async function scrubVinFor(req, job) {
+  try { const { scrubsForJob } = await import('./scrubStore.js'); const s = (await scrubsForJob(req, job.id))?.[0]; return String(s?.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '') } catch { return '' }
+}
+
 export async function attachJobReports(req, token, job, targets) {
   const out = { attached: [], errors: [] }
+  // 🔒 2026-10-06 (Avon ABS 20755 / 20746: the job cards carried sample VINs, the generated
+  // report inherited them and the "built from this job" bypass attached them to documents
+  // for other cars). The CAR is whatever the Books document / the scrub says. If the card
+  // disagrees, nothing is generated or attached, and Bill it shows exactly why.
+  const jobVin = String(job.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  let truth = ''
+  for (const t of targets.filter(t => t && t.id)) { truth = await booksDocVin(token, t.kind, t.id); if (truth) break }
+  if (!truth) truth = await scrubVinFor(req, job)
+  if (truth && jobVin.length === 17 && truth !== jobVin) {
+    out.vin_mismatch = { job: jobVin, document: truth }
+    out.errors.push(`🔒 NOT attached — the job card says VIN ${jobVin} but the estimate/invoice is for ${truth}. Fix the VIN on the card, then Bill it again.`)
+    try { const { postToCliqChannel, DISPATCH_CHANNEL } = await import('./cliq.js'); await postToCliqChannel(DISPATCH_CHANNEL, `🔒 *Report NOT attached* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — the card's VIN (${jobVin}) is not the car on the Books document (${truth}). Fix the card's VIN and re-run Bill it.`) } catch { /* fine */ }
+    return out
+  }
+  if (truth && jobVin.length !== 17) job = { ...job, vin: truth }   // card had no VIN: the report carries the document's
   let files = []
   try { files = await findJobReportPdfs(req, job) } catch (e) { out.errors.push(`folder: ${e.message}`); return out }
   try { files = await ensureAbsoluteReport(req, job, files) } catch (e) { out.errors.push(`absolute report: ${e.message}`) }

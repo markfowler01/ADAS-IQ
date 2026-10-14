@@ -1,4 +1,5 @@
 import express from 'express'
+import catalyst from 'zcatalyst-sdk-node'
 import multer from 'multer'
 import { extractFromPdf } from '../services/claude.js'
 import { crossReferenceRules, saveCalibrationAsRule } from '../services/calibrationRulesService.js'
@@ -170,45 +171,116 @@ const RIVIAN_BASE_ITEMS = [
 // Shared scrub (2026-09-24): the upload screen AND the email intake run the
 // same extractor + rules DB + Rivian base lines + auto-learn, so a CCC
 // estimate that arrives by email is scrubbed exactly like one Kat uploads.
-export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by = '', source = 'upload', file = {}, keep = true, pdfType = '', make = '', textMode = true, effort = '' } = {}) {   // textMode default ON (benchmark 2026-09-30: recall 96% vs 93% on page images, far cheaper; scans fall back)
-  // 📋 Hand the scrubber what the manufacturers actually publish, so a
-  // required/not-required call is grounded in the OEM's own words and the
-  // justification can cite it by name (Mark 2026-09-24).
-  let oemRefs = '', refsFor = null
-  try {
-    const { oemReferenceBlock } = await import('../services/positionStatements.js')
-    oemRefs = await oemReferenceBlock(req, {})
-    refsFor = make => oemReferenceBlock(req, { make })   // called once the make is known
-  } catch { oemRefs = '' }
-  // ⚡ The guard's line-by-line read doesn't depend on the main read — start it
-  // now so both run at once (was one after the other). Skipped for Kinetic reports.
-  const t0 = Date.now()
-  // 🧪 textMode (benchmark 2026-09-30): read the estimate's own text instead of
-  // page images — only when the PDF really has text; otherwise the normal read.
-  let estText = ''
-  if (textMode && !/kinetic|report/i.test(pdfType || '')) {
-    try { const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default; estText = ((await pdf(buffer)).text || '').trim() } catch { estText = '' }
-    if (estText.length < 800) estText = ''
+// 🔁 One scrub per CCC (Mark 2026-10-08: "duplicates are costing me money"). Before any
+// AI call: the same PDF bytes (sha1), the same estimate version for the same VIN + RO,
+// or the same VIN + RO scrubbed in the last 6 hours → hand back the existing scrub.
+// `force` (owner's "Scrub again") is the only way past it. Keys persist in AppConfig.
+const _cfgGet = async (req, key) => { try { const r = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(`SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`); return r?.[0]?.AppConfig?.config_value || '' } catch { return '' } }
+const _cfgPut = async (req, key, value) => { try { const app = catalyst.initialize(req, { type: 'advancedio' }); const r = await app.zcql().executeZCQLQuery(`SELECT ROWID FROM AppConfig WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`); if (r?.length) return; await app.datastore().table('AppConfig').insertRow({ config_key: key.slice(0, 100), config_value: String(value) }) } catch { /* best effort */ } }
+function estimateKeyFromText(text) {
+  const t = String(text || '')
+  const vin = (t.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/g) || []).find(v => /\d/.test(v) && /[A-Z]/.test(v)) || ''
+  const ro = (t.match(/RO\s*(?:Number|#|No\.?)?\s*[:#]?\s*([A-Z0-9-]{3,20})/i) || [])[1] || ''
+  const sup = (t.match(/Supplement\s*(?:of\s*Record\s*)?(\d+)/i) || [])[1]
+  const ver = sup ? `S${sup}` : /Preliminary|Estimate/i.test(t) ? 'E' : 'X'
+  return vin && ro ? { vin, ro: ro.toUpperCase(), ver, key: `scrub_est:${vin}:${ro.toUpperCase()}:${ver}` } : null
+}
+async function findDuplicateScrub(req, buffer, { estText = '', pdfType = '' } = {}) {
+  const S = await import('../services/scrubStore.js')
+  const sha1 = (await import('crypto')).createHash('sha1').update(buffer).digest('hex')
+  const byHash = await _cfgGet(req, `scrub_sha1:${sha1}`)
+  if (byHash) { const s = await S.getScrub(req, byHash); if (s?.payload) return { scrub: s, sha1, why: 'same PDF' } }
+  let est = null
+  if (!/kinetic|report/i.test(pdfType || '') && estText) {
+    est = estimateKeyFromText(estText)
+    if (est) {
+      const byEst = await _cfgGet(req, est.key)
+      if (byEst) { const s = await S.getScrub(req, byEst); if (s?.payload) return { scrub: s, sha1, est, why: `same estimate (${est.ver === 'E' ? 'original' : 'supplement ' + est.ver.slice(1)}) for this VIN + RO` } }
+      try {
+        const rows = (await S.scrubsByRo(req, est.ro)).filter(r => String(r.vin || '').toUpperCase() === est.vin && r.status !== 'archived' && Date.now() - new Date(r.at).getTime() < 6 * 3600 * 1000)
+        if (rows[0]) { const s = await S.getScrub(req, rows[0].id); if (s?.payload) return { scrub: s, sha1, est, why: 'same VIN + RO scrubbed in the last 6 hours' } }
+      } catch { /* fine */ }
+    }
   }
+  return { scrub: null, sha1, est }
+}
+
+function headerFromText(t) {
+  const s = String(t || '')
+  const vin = (s.toUpperCase().match(/\b[A-HJ-NPR-Z0-9]{17}\b/g) || []).find(v => /\d/.test(v) && /[A-Z]/.test(v)) || ''
+  const ro = (s.match(/RO\s*(?:Number|#|No\.?)?\s*[:#]?\s*([A-Z0-9-]{3,20})/i) || [])[1] || ''
+  const ym = s.match(/\b((?:19|20)\d{2})\s+([A-Z][A-Za-z]+(?:[- ][A-Z][a-z]+)?)\s+([A-Z0-9][A-Za-z0-9-]+)/)
+  return { vin, ro, year: ym?.[1] || '', make: ym?.[2] || '', model: ym?.[3] || '' }
+}
+
+export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by = '', source = 'upload', file = {}, keep = true, pdfType = '', make = '', textMode = true, effort = '', force = false, strictKind = false } = {}) {
+  const t0 = Date.now()
+  const wait = ms => new Promise(r => setTimeout(r, ms))
+  // ONE pdf-parse — used for classify, duplicate check, the main read, and the guard.
+  let estText = ''
+  if (!/kinetic|report/i.test(pdfType || '')) {
+    try { const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default; estText = ((await pdf(buffer)).text || '').trim() } catch { estText = '' }
+  }
+  const { classifyFromText, guessMakeFromText } = await import('../services/claude.js')
+  const classified = classifyFromText(estText) || {}
+  if (!make) make = classified.make || guessMakeFromText(estText) || ''
+  if (!pdfType) {
+    if (classified.kind === 'REPORT') pdfType = 'KINETIC'
+    else if (classified.kind === 'CCC' || classified.kind === 'ESTIMATE') pdfType = 'CCC'
+  }
+  if (classified.kind === 'ABSOLUTE') keep = false
+  if (strictKind) {
+    if (classified.kind === 'ABSOLUTE') { const e = new Error('That is one of our own Absolute ADAS reports — upload the shop\'s estimate instead.'); e.kind = 'ABSOLUTE'; throw e }
+    if (classified.kind && !['CCC', 'ESTIMATE', 'REPORT'].includes(classified.kind)) { const e = new Error(`That does not look like an estimate or a calibration report (read as ${String(classified.kind).toLowerCase()}).`); e.kind = classified.kind; throw e }
+  }
+
+  const dup = await findDuplicateScrub(req, buffer, { estText, pdfType })
+  if (dup.scrub && !force) {
+    console.log(`[scrub 🔁] reused ${dup.scrub.id} (${dup.why}) — no AI spend · source ${source}`)
+    const p = { ...(dup.scrub.payload || {}) }
+    return { ...p, calibrations: Array.isArray(p.calibrations) ? p.calibrations : [], vin: p.vin || dup.scrub.vin, ro_number: p.ro_number || dup.scrub.ro, vehicle: p.vehicle || dup.scrub.vehicle, shop: p.shop || dup.scrub.shop, _scrubId: dup.scrub.id, _reused: true, _reusedWhy: dup.why, _reusedAt: dup.scrub.at, _pdfType: p._pdfType || 'CCC', _elapsed_ms: Date.now() - t0 }
+  }
+  const _dupKeys = { sha1: dup.sha1, est: dup.est }
+  const textReady = !!(textMode && estText.length >= 800 && !/kinetic|report/i.test(pdfType || ''))
+  const header = headerFromText(estText)
+  const mk = make || header.make || ''
+
+  // Kick off everything that does not need the main read. VIN and OEM refs
+  // get a short head start; we do not wait on NHTSA if the cache is cold.
+  let oemP = Promise.resolve('')
+  try { const { oemReferenceBlock } = await import('../services/positionStatements.js'); oemP = oemReferenceBlock(req, { make: mk }).catch(() => '') } catch { oemP = Promise.resolve('') }
+  let vinP = Promise.resolve(null)
+  if (textReady) { try { const V = await import('../services/estimator/vin.js'); vinP = V.vinEquipment(req, V.findVinInText(estText)).catch(() => null) } catch { vinP = Promise.resolve(null) } }
   let hitsPromise = null
   if (!/kinetic|report/i.test(pdfType || '')) {
-    const { triggerLines } = await import('../services/scrubGuard.js')
-    hitsPromise = estText ? triggerLines('', { text: estText }) : triggerLines(buffer.toString('base64')); hitsPromise.catch(() => {})
+    const { triggerLines, triggerLinesFromText } = await import('../services/scrubGuard.js')
+    hitsPromise = textReady ? Promise.resolve(triggerLinesFromText(estText)) : triggerLines(buffer.toString('base64'))
+    hitsPromise.catch(() => {})
   }
+  const fileP = (keep && !file?.id && buffer?.length)
+    ? fileEstimateCopy(req, buffer, { name: file?.name, data: { year: header.year, make: mk, model: header.model, ro_number: header.ro } }).catch(e => { console.warn('[extract] estimate copy not filed:', e.message); return {} })
+    : Promise.resolve(file || {})
+
+  const [refs, equip] = await Promise.all([
+    Promise.race([oemP, wait(700).then(() => '')]),
+    Promise.race([vinP, wait(400).then(() => null)]),
+  ])
+
   let data
-  if (estText) {
+  if (textReady) {
     const { extractFromCccText } = await import('../services/claude.js')
-    let equip = null
-    try { const V = await import('../services/estimator/vin.js'); equip = await V.vinEquipment(req, V.findVinInText(estText)) } catch { equip = null }
-    const mk = make || equip?.make || ''   // the VIN names the make when the file check couldn't
-    let refs = oemRefs; try { if (refsFor && mk) refs = (await refsFor(mk)) || oemRefs } catch { /* generic */ }
-    data = await extractFromCccText(`${equip ? equip.block + '\n\n' : ''}${estText.slice(0, 120000)}`, { oemRefs: refs, effort })
+    data = await extractFromCccText(`${equip ? equip.block + '\n\n' : ''}${estText.slice(0, 50000)}`, { oemRefs: refs || '', effort })
     data._textMode = true
     if (equip) data.vin_equipment = equip.summary
   } else {
-    data = await extractFromPdf(buffer, { oemRefs, refsFor, pdfType, make, effort })
+    data = await extractFromPdf(buffer, { oemRefs: refs || '', pdfType, make: mk, effort })
   }
-  console.log(`[scrub ⏱] main read ${Math.round((Date.now() - t0) / 1000)}s`)
+  if (!data.vin_equipment) {
+    try { const late = await Promise.race([vinP, wait(20).then(() => null)]); if (late) data.vin_equipment = late.summary } catch { /* fine */ }
+  }
+  data._kind = classified.kind || ''
+  data._ourReport = classified.kind === 'ABSOLUTE'
+  console.log(`[scrub ⏱] main read ${Math.round((Date.now() - t0) / 1000)}s${data._fast ? ' · fast' : ''}`)
 
   // 🛡️ Hard rules in code under the judgment call (benchmark night 2026-09-28):
   // a replaced windshield means the camera, a front bumper off a Mercedes
@@ -218,6 +290,8 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   if (String(data?._pdfType || '').toUpperCase() === 'CCC' && !data._demo) {
     try { const { guardScrub } = await import('../services/scrubGuard.js'); await guardScrub(data, buffer.toString('base64'), { hitsPromise, text: estText || '' }); console.log(`[scrub ⏱] + guard ${Math.round((Date.now() - t0) / 1000)}s`) }
     catch (e) { console.warn('[extract] guard skipped:', e.message) }
+    try { const { applyLessons } = await import('../services/scrubLearn.js'); const L = await applyLessons(req, data); if (L.applied?.length) console.log(`[scrub ⏱] + learn ${L.applied.length}`) }
+    catch (e) { console.warn('[extract] learn skipped:', e.message) }
   }
 
   // Fallback: if no RO number found, use last 8 digits of VIN
@@ -293,23 +367,31 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
     // now. Never blocks the scrub: a failed upload just leaves the link off.
     let filed = file || {}
     if (!filed.id && buffer?.length) {
-      try { filed = await fileEstimateCopy(req, buffer, { name: filed.name, data }) } catch (e) { console.warn('[extract] estimate copy not filed:', e.message) }
+      try { filed = await fileP } catch (e) { console.warn('[extract] estimate copy not filed:', e.message); filed = {} }
     }
     data._scrubId = (await saveScrub(req, { jobId, data, source, by, file: filed })).id || ''
     data._estimateFileId = filed.id || ''
+    if (data._scrubId) {
+      await _cfgPut(req, `scrub_sha1:${_dupKeys.sha1}`, data._scrubId)
+      const est = _dupKeys.est || (data.vin && data.ro_number ? { key: `scrub_est:${String(data.vin).toUpperCase()}:${String(data.ro_number).toUpperCase()}:X` } : null)
+      if (est?.key) await _cfgPut(req, est.key, data._scrubId)
+    }
   }
-  console.log(`[scrub ⏱] total ${Math.round((Date.now() - t0) / 1000)}s`)
-  // ⏱ Keep the last 30 scrub timings in AppConfig 'scrub_timings' for the speed study.
-  try {
-    const app = (await import('zcatalyst-sdk-node')).default.initialize(req, { type: 'advancedio' })
-    const rec = { at: new Date().toISOString(), car: String(data?.vehicle || [data?.year, data?.make, data?.model].filter(Boolean).join(' ')).slice(0, 50), mode: data?._textMode ? 'text' : 'pdf', total: Date.now() - t0, main: data?._usage?.ms || null, outTok: data?._usage?.out || null, inTok: data?._usage?.in || null, cacheRead: data?._usage?.cacheRead || null, thinkingChars: data?._usage?.thinkingChars || null, jsonChars: data?._usage?.jsonChars || null, textChars: estText.length }
-    const r = await app.zcql().executeZCQLQuery("SELECT ROWID, config_value FROM AppConfig WHERE config_key = 'scrub_timings' LIMIT 1")
-    const row = r?.[0]?.AppConfig
-    const list = [rec, ...(() => { try { return JSON.parse(row?.config_value || '[]') } catch { return [] } })()].slice(0, 30)
-    if (row) await app.datastore().table('AppConfig').updateRow({ ROWID: row.ROWID, config_value: JSON.stringify(list) })
-    else await app.datastore().table('AppConfig').insertRow({ config_key: 'scrub_timings', config_value: JSON.stringify(list) })
-  } catch (e) { console.warn('[scrub ⏱] timing save failed:', e.message) }
-  try { const { flush } = await import('../services/spend.js'); await flush(req) } catch { /* never block */ }
+  data._elapsed_ms = Date.now() - t0
+  console.log(`[scrub ⏱] total ${Math.round(data._elapsed_ms / 1000)}s`)
+  // ⏱ Keep the last 30 scrub timings — skip when we are already at the 10s budget.
+  if (Date.now() - t0 < 9500) {
+    try {
+      const app = (await import('zcatalyst-sdk-node')).default.initialize(req, { type: 'advancedio' })
+      const rec = { at: new Date().toISOString(), car: String(data?.vehicle || [data?.year, data?.make, data?.model].filter(Boolean).join(' ')).slice(0, 50), mode: data?._textMode ? 'text' : 'pdf', fast: !!data?._fast, total: Date.now() - t0, main: data?._usage?.ms || null, outTok: data?._usage?.out || null, inTok: data?._usage?.in || null, cacheRead: data?._usage?.cacheRead || null, thinkingChars: data?._usage?.thinkingChars || null, jsonChars: data?._usage?.jsonChars || null, textChars: estText.length }
+      const r = await app.zcql().executeZCQLQuery("SELECT ROWID, config_value FROM AppConfig WHERE config_key = 'scrub_timings' LIMIT 1")
+      const row = r?.[0]?.AppConfig
+      const list = [rec, ...(() => { try { return JSON.parse(row?.config_value || '[]') } catch { return [] } })()].slice(0, 30)
+      if (row) await app.datastore().table('AppConfig').updateRow({ ROWID: row.ROWID, config_value: JSON.stringify(list) })
+      else await app.datastore().table('AppConfig').insertRow({ config_key: 'scrub_timings', config_value: JSON.stringify(list) })
+    } catch (e) { console.warn('[scrub ⏱] timing save failed:', e.message) }
+    try { const { flush } = await import('../services/spend.js'); await flush(req) } catch { /* never block */ }
+  }
   return data
 }
 
@@ -363,21 +445,15 @@ router.post('/', (req, res, next) => {
   }
 
   try {
-    // Our own Absolute ADAS report may be re-read here (Kat rebuilds a job
-    // from it), but it is not a scrub of anything and must not enter the
-    // library as one (a Sienna report landed as a 4-calibration "scrub" on
-    // 2026-09-29). Classify first; file only real estimates and reports.
-    let kind = ''
-    try { const { detectPdfKind } = await import('../services/claude.js'); ({ kind } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = '' }
-    const ours = kind === 'ABSOLUTE'
+    // Classify happens inside the scrub from the same PDF parse — no extra
+    // Haiku call. Our own Absolute ADAS reports are extracted but not filed.
     const data = await scrubPdfBuffer(req, req.file.buffer, {
       source: 'upload',
       by: req.user?.name || req.user?.email || '',
       file: { name: req.file.originalname || '' },
-      keep: !ours,
-      ...(kind === 'REPORT' ? { pdfType: 'KINETIC' } : kind === 'CCC' || kind === 'ESTIMATE' ? { pdfType: 'CCC' } : {}),
+      force: req.body?.force === '1' || req.query.force === '1',
+      effort: ['low', 'medium', 'high'].includes(req.body?.effort) ? req.body.effort : (req.query.effort || ''),
     })
-    if (ours) data._ourReport = true
 
     res.json(data)
   } catch (err) {

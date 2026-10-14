@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
+import { durable } from '../services/durableKV.js'
 
 const router = Router()
 
@@ -13,7 +14,7 @@ const CACHE_KEY_LAST_SYNC = 'obsidian_last_sync'
 const GH_API = 'https://api.github.com'
 
 async function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 async function readToken(segment) {

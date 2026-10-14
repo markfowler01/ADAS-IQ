@@ -409,6 +409,37 @@ router.post('/clock-in', async (req, res) => {
     const open = entries.find(e => e.user_id === userId && !e.clock_out)
     if (open) return res.status(409).json({ error: 'Already clocked in', entry: open })
 
+    // Technicians: no GPS, no punch (Mark 2026-10-05: "technicians cannot punch in
+    // without location enabled"), and the punch has to land inside the fence around
+    // the shop when CLOCK_IN_GEOFENCE_MI is set ("Jayden is only punching in at my house").
+    if (req.user?.role === 'technician') {
+      const loc = req.body?.location
+      const lat = Number(loc?.lat), lng = Number(loc?.lng)
+      if (!loc || !Number.isFinite(lat) || !Number.isFinite(lng) || (!lat && !lng)) {
+        return res.status(400).json({ code: 'location_required', error: 'Location is required to punch in. Turn on Location for the Absolute ADAS app (Settings → Apps → Chrome / Absolute ADAS → Permissions → Location → Allow), then try again.' })
+      }
+      try {
+        const { resolvePhoneConfig } = await import('../services/phoneConfig.js')
+        const cfg = await resolvePhoneConfig(req)
+        const fence = Number(cfg.CLOCK_IN_GEOFENCE_MI) || 0, slat = Number(cfg.SHOP_LAT), slng = Number(cfg.SHOP_LNG)
+        if (fence > 0 && slat && slng) {
+          const toRad = x => x * Math.PI / 180
+          const dLat = toRad(lat - slat), dLng = toRad(lng - slng)
+          const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(slat)) * Math.cos(toRad(lat)) * Math.sin(dLng / 2) ** 2
+          const miles = 3959 * 2 * Math.asin(Math.sqrt(a))
+          // GPS accuracy is forgiven: a phone that says "±80 m" standing at the door is still at the door.
+          const slack = Math.min(0.25, (Number(loc.accuracy) || 0) / 1609)
+          if (miles > fence + slack) {
+            try {
+              const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
+              await Promise.race([postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⛔ *Punch-in blocked* — ${getUserName(req)} tried to clock in ${miles < 1 ? `${Math.round(miles * 5280)} ft` : `${miles.toFixed(1)} mi`} from the shop (fence ${fence} mi).\n📍 https://maps.google.com/?q=${lat},${lng}`), new Promise(r => setTimeout(r, 1500))])
+            } catch { /* never blocks the response */ }
+            return res.status(403).json({ code: 'outside_geofence', miles: Math.round(miles * 10) / 10, error: `You're ${miles < 1 ? `${Math.round(miles * 5280)} ft` : `${miles.toFixed(1)} miles`} from the shop. Punch in when you get there.` })
+          }
+        }
+      } catch (e) { console.warn('[clock-in fence]', e.message) }
+    }
+
     const now = new Date().toISOString()
     const entry = {
       id: newId(),

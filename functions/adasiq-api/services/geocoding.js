@@ -9,12 +9,13 @@
 
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
+import { durable } from './durableKV.js'
 
 export const GEOCACHE_KEY = 'absolute_adas_geocache'
 export const TECH_CONFIG_KEY = 'absolute_adas_tech_config'
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

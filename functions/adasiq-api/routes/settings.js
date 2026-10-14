@@ -1,12 +1,13 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 const CACHE_KEY = 'adas_iq_settings'
 
 function getSegment(req) {
   const app = catalyst.initialize(req)
-  return app.cache().segment()
+  return durable(app.cache().segment(), app)
 }
 
 function isNotFound(e) {

@@ -48,7 +48,14 @@ router.post('/', upload.single('image'), async (req, res) => {
     const cleaned = String(parsed?.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
     const vin = cleaned.match(VIN_RE)?.[0] || ''
     if (!vin) return res.status(422).json({ error: 'No full 17-character VIN found in that photo.' })
-    res.json({ vin })
+    // Textbook sample VINs the model falls back to when the photo is unreadable
+    // (2026-10-06: JT2BF18K5M0025798 and 2G1FB1E39D1240124 landed on two Avon cards and
+    // their reports went out on the wrong invoices). Never accept one.
+    const SAMPLE_VINS = new Set(['JT2BF18K5M0025798', '2G1FB1E39D1240124', '1HGCM82633A004352', '1HGBH41JXMN109186', '5YJSA1E26HF000337', 'WBA3A5C51CF256291', '1FTFW1ET5EKE12345', 'JH4KA7561PC008269', '2HGFB2F5XEH542858', '1G1YY22G965105430'])
+    if (SAMPLE_VINS.has(vin)) return res.status(422).json({ error: 'That came back as a textbook sample VIN, not this car. Take a closer, straight-on shot of the door-jamb sticker.' })
+    const YEAR = { A: 2010, B: 2011, C: 2012, D: 2013, E: 2014, F: 2015, G: 2016, H: 2017, J: 2018, K: 2019, L: 2020, M: 2021, N: 2022, P: 2023, R: 2024, S: 2025, T: 2026, V: 2027, W: 2028, X: 2029, Y: 2030, 1: 2001, 2: 2002, 3: 2003, 4: 2004, 5: 2005, 6: 2006, 7: 2007, 8: 2008, 9: 2009 }
+    const modelYear = YEAR[vin[9]] || null
+    res.json({ vin, model_year: modelYear, ...(modelYear && modelYear < 2010 ? { warning: `Decodes as a ${modelYear} — double-check the sticker before you save it.` } : {}) })
   } catch (err) {
     console.error('[extract-vin-image]', err.message)
     res.status(500).json({ error: err.message || 'VIN extraction failed.' })

@@ -22,7 +22,7 @@ import {
   getAllMailAccounts, getInboxFolderId,
 } from '../services/mail.js'
 import { extractCommitments } from '../services/commitmentExtractor.js'
-import { persist as persistCommits, listOpen, complete as completeCommit, migrateFromCache, dedupe as dedupeCommits, assignNums } from '../services/commitments.js'
+import { persist as persistCommits, listOpen, complete as completeCommit, migrateFromCache, dedupe as dedupeCommits, assignNums, pendingMention, markMentioned } from '../services/commitments.js'
 import { proposeBig3 } from '../services/dayCoach.js'
 import { recordPlan, listDays, getDay, upsertDay } from '../services/dayLedger.js'
 import { readContext } from './coach.js'
@@ -47,6 +47,7 @@ import { MORNING_POOL, pickUnused, nextCategory } from '../services/closing.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { getTwilioClient, twilioConfigured, pickFromNumber } from '../services/twilio.js'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 // Fallback only. The authoritative goal is the stored monthly goal
@@ -307,7 +308,7 @@ const commitKey = c => `${c.person}|${c.text}`.toLowerCase().replace(/\s+/g, ' '
 // only because /commitments/migrate reads the same cache key it wrote.
 async function persistCommitments(req, fresh) {
   try {
-    const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+    const seg = durable(catalyst.initialize(req, { type: 'advancedio' }).cache().segment(), catalyst.initialize(req, { type: 'advancedio' }))
     let store = { items: [] }
     try {
       const raw = await seg.getValue(COMMIT_CACHE_KEY)
@@ -382,13 +383,19 @@ async function buildBriefing(req, { only, mode = 'morning' } = {}) {
   const completedToday = jobs.filter(j => j.status === 'complete' &&
     (String(j.completed_at || j.updated_at || '').slice(0, 10) === today))
   const followups = shops.filter(s => s.next_followup && s.next_followup <= today)
+  // Anything handed to Zoho ToDo yesterday gets exactly one mention this
+  // morning, then its row is retired. Marked BEFORE the brief renders so a
+  // retry or a second run can never say it twice.
+  const todoAdded = (await safe('todo-mention', () => pendingMention(req, today))) || []
+  if (todoAdded.length) await safe('todo-mark', () => markMentioned(req, todoAdded))
+
   const dueToday = commitments.filter(c => c.due === today)
   const dueTomorrow = commitments.filter(c => c.due === tomorrow)
   const overdue = commitments.filter(c => c.due && c.due < today)
   const outbound = commitments.filter(c => c.direction === 'outbound')
 
   return {
-    today, tomorrow, mode, jobs, revenue, shops, commitments, todaysJobs, tomorrowsJobs,
+    today, tomorrow, mode, jobs, revenue, shops, commitments, todoAdded, todaysJobs, tomorrowsJobs,
     jaden, jadenToday, openJobs, completedToday,
     followups, dueToday, dueTomorrow, overdue, outbound, events, tomorrowEvents, timings,
     sources: { cliqBlocks: cliqBlocks.length, emailBlocks: emailBlocks.length, crmError: lastCrmError, cliqProbe: lastCliqProbe },
@@ -497,14 +504,13 @@ function formatFull(b, pace) {
     b.events.slice(0, 8).forEach(e => L.push(`- ${e.start || ''} ${e.title}`.trim()))
   }
   L.push('')
-  L.push(`Commitments: ${b.dueToday.length} due today, ${b.overdue.length} overdue, ${b.commitments.length} open.`)
-  // Numbered, because the number is the whole point: he texts "done 3" instead
-  // of typing the commitment back. Only the ones that need him today.
-  const actionable = [...b.overdue, ...b.dueToday].filter((c, i, a) => a.findIndex(x => x.key === c.key) === i)
-  for (const c of actionable.slice(0, 8)) {
-    L.push(`  ${c.n}. ${c.person}: ${c.text}${c.due && c.due < b.today ? ' (overdue)' : ''}`)
+  // One line, once. Ada no longer tracks these: they live in Zoho ToDo now and
+  // completion happens there. Mentioning them twice would rebuild the backlog
+  // she just got out of.
+  if (b.todoAdded?.length) {
+    L.push('', `Added to your Zoho ToDo: ${b.todoAdded.length}.`)
+    for (const t of b.todoAdded.slice(0, 10)) L.push(`  ${t.todo_title || t.text}`)
   }
-  if (actionable.length) L.push('Reply "done 3" to close one.')
   if (b.dueToday.length) { L.push(''); L.push('Due today:'); b.dueToday.slice(0, 10).forEach(c => L.push(`- ${c.person}: ${c.text}`)) }
   if (b.overdue.length) { L.push(''); L.push('Overdue:'); b.overdue.slice(0, 10).forEach(c => L.push(`- ${c.person}: ${c.text} (was ${c.due})`)) }
   if (b.outbound.length) { L.push(''); L.push('Your promises:'); b.outbound.slice(0, 8).forEach(c => L.push(`- ${c.text}${c.due ? ` (by ${c.due})` : ''}`)) }
@@ -709,23 +715,10 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   }
   // Birthdays first — they are dated and they expire. Overdue contacts are a
   // standing condition and can wait behind them.
-  // Tap to close. A link, not a button or a form, so it works in Apple Mail,
-  // Gmail, Outlook and the Cliq preview without anything being installed.
-  const doneUrl = n => `${SELF_BASE}/api/briefing/done/${n}?k=${encodeURIComponent((process.env.BRIEFING_CRON_SECRET || process.env.MORNING_CRON_SECRET || 'morning-2026').trim())}`
-  const commitHtml = (() => {
-    const act = [...(b.overdue || []), ...(b.dueToday || [])].filter((c, i, a) => a.findIndex(x => x.key === c.key) === i)
-    if (!act.length) return ''
-    return act.slice(0, 8).map(c => `
-      <tr>
-        <td style="padding:0 0 11px 0;font:400 15px/22px ${SANS};color:${INK};">
-          <strong style="font-weight:600;">${esc(c.person)}</strong> &mdash; ${esc(c.text)}
-          ${c.due && c.due < b.today ? `<span style="color:${ACCENT};"> overdue</span>` : ''}
-        </td>
-        <td style="padding:0 0 11px 14px;white-space:nowrap;vertical-align:top;">
-          <a href="${doneUrl(c.n)}" style="font:600 13px/22px ${SANS};color:${ACCENT};text-decoration:none;border:1px solid ${ACCENT};border-radius:4px;padding:3px 11px;">Done</a>
-        </td>
-      </tr>`).join('')
-  })()
+  // No Done buttons any more. Zoho ToDo owns completion, so a second place to
+  // tick something off would only create disagreement about what is finished.
+  const todoHtml = (b.todoAdded || []).length ? (b.todoAdded || []).slice(0, 10).map(t =>
+    line(esc(t.todo_title || t.text))).join('') : ''
 
   const crewHtml = crew && !crew.error ? [
     line(crew.late?.length ? `${crew.working} of ${crew.total} working.` : `All ${crew.total} working.`,
@@ -855,7 +848,7 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   ${holdHtml ? block('The Hold', holdHtml) : ''}
   ${recruitHtml ? block('Recruiting', recruitHtml) : ''}
   ${shopsHtml ? block('Shops', shopsHtml) : ''}
-  ${commitHtml ? block('Needs you', `<table role="presentation" cellpadding="0" cellspacing="0" width="100%">${commitHtml}</table>`) : ''}
+  ${todoHtml ? block('Added to your Zoho ToDo', todoHtml) : ''}
   ${crewHtml ? block('The crew', crewHtml) : ''}
   ${prog ? block('Sales against goal', progressHtml(prog, SANS, INK, SOFT, ACCENT, GOOD)) : ''}
   ${block('Cash', cashHtml)}
@@ -913,7 +906,7 @@ function ord(n) {
 const CLOSING_KEY = 'closing_history'
 
 async function buildClosing(req, { data, pool }) {
-  const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+  const seg = durable(catalyst.initialize(req, { type: 'advancedio' }).cache().segment(), catalyst.initialize(req, { type: 'advancedio' }))
   let hist = { affirmations: [], categories: [] }
   try {
     const v = await seg.getValue(CLOSING_KEY)
@@ -1172,7 +1165,7 @@ const SENT_KEY = 'briefing_sent_stamp'
 async function alreadySentToday(req) {
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
-    const v = await app.cache().segment().getValue(SENT_KEY)
+    const v = await durable(app.cache().segment(), app).getValue(SENT_KEY)
     return v ? String(typeof v === 'string' ? JSON.parse(v).date : v.date) === ptDate() : false
   } catch { return false }
 }
@@ -1180,7 +1173,7 @@ async function alreadySentToday(req) {
 async function stampSent(req) {
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
-    const seg = app.cache().segment()
+    const seg = durable(app.cache().segment(), app)
     const val = JSON.stringify({ date: ptDate(), at: new Date().toISOString() })
     try { await seg.update(SENT_KEY, val) } catch { await seg.put(SENT_KEY, val, 48) }
   } catch (e) { console.warn('[briefing stamp]', e.message) }
@@ -1189,7 +1182,7 @@ async function stampSent(req) {
 // The script Ada reads. Same order as the written brief: affirmation, the
 // brief itself, then the Big 3 — so hearing it and reading it feel like one
 // thing rather than two.
-function buildSpokenScript(b, big3, tr, triage, vanOps = [], parkedLine = '') {
+function buildSpokenScript(b, big3, tr, triage, vanOps = [], parkedLine = '', dealsLine = '') {
   // Everything that is written for a screen goes through toSpoken() first.
   // formatVoiceMorning() is already spoken-formatted; the affirmation and the
   // Big 3 are not, and were being read out with their punctuation and
@@ -1203,6 +1196,7 @@ function buildSpokenScript(b, big3, tr, triage, vanOps = [], parkedLine = '') {
   }
   for (const l of (vanOps || [])) parts.push(toSpoken(l))   // 🚐 van ops due (2026-10-04)
   if (parkedLine) parts.push(toSpoken(parkedLine))             // 🅿 things he parked since yesterday
+  if (dealsLine) parts.push(toSpoken(dealsLine))               // 💼 sales next steps due / overdue (2026-10-08)
   if (triage?.needsYou?.length) {
     parts.push(`In your inbox, ${triage.total} unread, and ${triage.needsYou.length} need you.`)
     triage.needsYou.forEach(x => parts.push(`${toSpoken(x.who)}. ${toSpoken(x.what)}.`))
@@ -1342,7 +1336,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   // added the brief crossed the 30s gateway cap and 408'd — sending nothing.
   // The brief now just reads whatever the render step recorded.
   const audio = await safe('audio-lookup', async () => {
-    const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+    const seg = durable(catalyst.initialize(req, { type: 'advancedio' }).cache().segment(), catalyst.initialize(req, { type: 'advancedio' }))
     const name = await seg.getValue('ada_audio_' + ptDate())
     if (!name) return null
     return { name: String(name), url: `https://absoluteadas.com/audio/${String(name)}` }
@@ -1350,7 +1344,7 @@ export async function sendDailyBriefing(req, { dry = false, only, kickoff: doKic
   if (audio?.name) {
     try {
       const app = catalyst.initialize(req, { type: 'advancedio' })
-      const seg = app.cache().segment()
+      const seg = durable(app.cache().segment(), app)
       try { await seg.update('ada_audio_' + ptDate(), audio.name) }
       catch { await seg.put('ada_audio_' + ptDate(), audio.name, 48) }
     } catch (e) { console.warn('[ada audio stamp]', e.message) }
@@ -1465,9 +1459,10 @@ router.post('/render-audio', async (req, res) => {
     const triage = await safe('triage', async () => triageInbox(req, { messages: await getUnreadSummaries() }))
     let vanOps = []; try { vanOps = await (await import('../services/vanOps.js')).vanOpsForBrief(req) } catch { vanOps = [] }
     let parkedLine = ''; try { parkedLine = await (await import('../services/parked.js')).parkedForBrief(req) } catch { parkedLine = '' }
-    const out = await publishAdaVoice(buildSpokenScript(b, big3, tr, triage, vanOps, parkedLine), ptDate(), { slot: 'morning' })
+    let dealsLine = ''; try { const D = await import('../services/deals.js'); dealsLine = D.spokenDue(await D.dueList(req)) } catch { dealsLine = '' }
+    const out = await publishAdaVoice(buildSpokenScript(b, big3, tr, triage, vanOps, parkedLine, dealsLine), ptDate(), { slot: 'morning' })
     if (out?.name) {
-      const seg = catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+      const seg = durable(catalyst.initialize(req, { type: 'advancedio' }).cache().segment(), catalyst.initialize(req, { type: 'advancedio' }))
       try { await seg.update('ada_audio_' + ptDate(), out.name) }
       catch { await seg.put('ada_audio_' + ptDate(), out.name, 48) }
     }
@@ -1646,7 +1641,7 @@ router.get('/mail-debug', async (req, res) => {
 router.post('/commitments/purge', async (req, res) => {
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
-    const seg = app.cache().segment()
+    const seg = durable(app.cache().segment(), app)
     const payload = JSON.stringify([])
     try { await seg.update(COMMIT_CACHE_KEY, payload) } catch { await seg.put(COMMIT_CACHE_KEY, payload, 48) }
     res.json({ ok: true, purged: true })
@@ -1730,7 +1725,7 @@ router.get('/audio', async (req, res) => {
     // 'ada-morning-<date>-sage.mp3' sorts above a newer hashed name and gets
     // served instead. The publisher records the exact filename; read that.
     const app = catalyst.initialize(req, { type: 'advancedio' })
-    const seg = app.cache().segment()
+    const seg = durable(app.cache().segment(), app)
     let name = null
     try {
       const v = await seg.getValue('ada_audio_' + date)
@@ -1825,6 +1820,35 @@ router.get('/done/:n', async (req, res) => {
 router.get('/commitments', async (req, res) => {
   try { res.json({ ok: true, open: await listOpen(req) }) }
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+// Does the ToDo handoff actually work? Checks auth and the create call
+// without waiting for a real commitment to come along.
+// Read-only: what is actually sitting in Zoho ToDo right now.
+router.get('/commitments/todo-list', async (req, res) => {
+  try {
+    const { listTodos } = await import('../services/todoPush.js')
+    if (req.query.probe === '1') {
+      const { probeTodoSources } = await import('../services/todoPush.js')
+      return res.json({ ok: true, sources: await probeTodoSources() })
+    }
+    if (req.query.raw === '1') {
+      const { default: axios } = await import('axios')
+      const { rawTodoResponse } = await import('../services/todoPush.js')
+      return res.json({ ok: true, raw: await rawTodoResponse() })
+    }
+    const all = await listTodos({ includeDone: req.query.all === '1' })
+    res.json({ ok: true, count: all.length, sample: all.slice(0, 400).map(t => ({
+      id: t.id || t.taskId || t.zuid || null, title: t.title || t.subject || '', status: t.status, due: t.dueDate || null })) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+router.post('/commitments/todo-test', async (req, res) => {
+  try {
+    const { createTodo } = await import('../services/todoPush.js')
+    const made = await createTodo({ text: req.query.title || 'Ada handoff test — safe to delete', direction: 'outbound' })
+    res.json({ ok: true, created: made })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
 router.post('/commitments/assign-nums', async (req, res) => {

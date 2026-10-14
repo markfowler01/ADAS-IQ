@@ -85,16 +85,19 @@ router.post('/upload', (req, res) => {
       try { await seg.put(lockKey, JSON.stringify({ state: 'running', at: Date.now() }), 1) } catch { /* no lock, scrub anyway */ }
     }
     try {
-      const { detectPdfKind } = await import('../services/claude.js')
-      let kind = 'OTHER', make = ''
-      try { ({ kind, make } = await detectPdfKind(req.file.buffer.toString('base64'))) } catch { kind = 'OTHER' }
       const unlock = async () => { if (seg) { try { await seg.delete(lockKey) } catch { /* fine */ } } }
-      if (kind === 'ABSOLUTE') { await unlock(); return res.status(400).json({ error: 'That is one of our own Absolute ADAS reports — upload the shop\'s estimate instead.', kind }) }
-      if (!['CCC', 'ESTIMATE', 'REPORT'].includes(kind)) { await unlock(); return res.status(400).json({ error: `That does not look like an estimate or a calibration report (read as ${kind.toLowerCase()}).`, kind }) }
       const { scrubPdfBuffer } = await import('./extract.js')
-      const data = await scrubPdfBuffer(req, req.file.buffer, { learn: true, source: 'upload', by: who(req), file: { name }, pdfType: kind === 'REPORT' ? 'KINETIC' : 'CCC', make })
-      const scrubs = await scrubsForJob(req, '').catch(() => [])
-      const out = { ok: true, kind, name, scrubId: data?._scrubId || '', vehicle: data?.vehicle || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length }
+      const force = req.body?.force === '1' || req.query.force === '1'
+      let data
+      try {
+        data = await scrubPdfBuffer(req, req.file.buffer, { learn: true, source: 'upload', by: who(req), file: { name }, force, strictKind: true })
+      } catch (e) {
+        await unlock()
+        if (e.kind) return res.status(400).json({ error: e.message, kind: e.kind })
+        throw e
+      }
+      const kind = data?._kind || 'CCC'
+      const out = { ok: true, kind, name, scrubId: data?._scrubId || '', vehicle: data?.vehicle || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length, duplicate: !!data?._reused, duplicate_why: data?._reusedWhy || '', scrubbed_at: data?._reusedAt || '', elapsed_ms: data?._elapsed_ms || null }
       if (seg) { try { await seg.put(lockKey, JSON.stringify({ state: 'done', at: Date.now(), result: out }), 1) } catch { /* fine */ } }
       res.json(out)
     } catch (e) {
@@ -105,12 +108,26 @@ router.post('/upload', (req, res) => {
 })
 
 // ── The library ─────────────────────────────────────────────────────────────
+router.get('/lessons', async (req, res) => {
+  try {
+    const { listLessons } = await import('../services/scrubLearn.js')
+    const lessons = await listLessons(req)
+    res.json({ count: lessons.length, active: lessons.filter(l => l.active).length, lessons })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/stats', async (req, res) => {
   res.json(await scrubStats(req))
 })
 
 router.get('/job/:id', async (req, res) => {
   res.json({ scrubs: await scrubsForJob(req, req.params.id) })
+})
+
+router.post('/resolve-shops', async (req, res) => {
+  try {
+    const { backfillResolvedShops } = await import('../services/scrubStore.js')
+    res.json(await backfillResolvedShops(req, { limit: Math.min(Number(req.body?.limit) || 400, 1000) }))
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 router.get('/', async (req, res) => {
@@ -120,6 +137,7 @@ router.get('/', async (req, res) => {
       make: req.query.make || '',
       shop: req.query.shop || '',
       sensor: req.query.sensor || '',
+      archived: req.query.archived === '1',
       limit: Math.min(Number(req.query.limit) || 60, 1000),   // the library groups by shop + archive client-side
     })
     res.json(r)
@@ -200,6 +218,7 @@ router.get('/:id/pdf', async (req, res) => {
     const { generateADASIQPdf } = await import('../services/pdf.js')
     const buffer = await generateADASIQPdf({
       _scrubId: s.id,
+      _fsOverride: p.fs_override || '',
       shop: s.shop || p.shop || '',
       ro_number: s.ro || p.ro_number || '',
       insurer: s.insurer || p.insurer || '',
@@ -235,6 +254,47 @@ router.post('/:id/from-card', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// One-tap feedback on a line (Mark 2026-10-09): miss = we should have
+// required it, extra = we should not have. Flips the line and stores a
+// lesson so the next similar car gets the same call.
+router.post('/:id/feedback', express.json(), async (req, res) => {
+  try {
+    const s = await getScrub(req, req.params.id)
+    if (!s) return res.status(404).json({ error: 'not found' })
+    const actionIn = String(req.body?.action || '').toLowerCase()
+    if (actionIn === 'confirm') {
+      return res.json({ ok: true, confirmed: true, scrub: s })
+    }
+    const action = actionIn === 'extra' || actionIn === 'drop' ? 'drop' : 'require'
+    const sensor = String(req.body?.sensor || req.body?.name || '').trim()
+    if (!sensor) return res.status(400).json({ error: 'sensor required' })
+    const { recordLesson, canonSensor } = await import('../services/scrubLearn.js')
+    const name = canonSensor(sensor)
+    const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+    const cals = Array.isArray(p.calibrations) ? p.calibrations.map(c => ({ ...c })) : (s.sensors || []).map(x => ({
+      calibration_name: x.n, cal_type: x.t || '', trigger: x.g || '', line_references: x.l || '', enabled: !!x.r, justification: '',
+    }))
+    let row = cals.find(c => canonSensor(c.calibration_name || c.sensor) === name)
+    if (!row) {
+      row = { calibration_name: name, cal_type: '', trigger: String(req.body?.trigger || ''), line_references: String(req.body?.lines || ''), enabled: action === 'require', justification: 'Added from feedback.', _added: true, _by: who(req) }
+      cals.push(row)
+    } else {
+      row.enabled = action === 'require'
+      row._edited = true
+      row._by = who(req)
+      if (req.body?.trigger) row.trigger = String(req.body.trigger)
+      if (req.body?.lines) row.line_references = String(req.body.lines)
+    }
+    const lesson = await recordLesson(req, {
+      action, sensor: name, make: s.make || p.make, year: s.year || p.year,
+      vin: s.vin, scrub_id: s.id, by: who(req),
+      trigger: row.trigger, lines: row.line_references, note: String(req.body?.note || ''),
+    })
+    const r = await updateScrubCalibrations(req, s.id, cals, { by: who(req), skipLearn: true })
+    if (!r.ok) return res.status(400).json(r)
+    res.json({ ok: true, lesson: lesson.lesson, scrub: await getScrub(req, s.id) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // ✏️ Save hand-edited calibration lines (added / toggled / rewritten).
 router.put('/:id/calibrations', async (req, res) => {
   try {
@@ -326,6 +386,44 @@ router.post('/:id/alldata', express.json(), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🔬 Scan lifecycle (Mark 2026-10-07/08). GET preview = what billing the pre-scan would do;
+// POST { which: 'pre'|'post', done: true|false, emails? } ticks the box — pre + rule charge
+// bills on the spot (one line, both documents emailed).
+router.get('/:id/scan/preview', async (req, res) => {
+  try { const s = await getScrub(req, req.params.id); if (!s) return res.status(404).json({ error: 'not found' }); const L = await import('../services/scanLifecycle.js'); res.json(await L.preScanPreview(req, s)) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/scan', async (req, res) => {
+  try {
+    const L = await import('../services/scanLifecycle.js')
+    const r = await L.markScan(req, req.params.id, String(req.body?.which || 'pre'), { done: req.body?.done !== false, by: who(req), emails: Array.isArray(req.body?.emails) ? req.body.emails : null })
+    res.json({ ...r, scrub: await getScrub(req, req.params.id) })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, preview: e.preview || undefined }) }
+})
+// 🗄 Archive / resurrect (Mark 2026-10-07). Body { reason } on archive.
+router.post('/:id/archive', async (req, res) => {
+  try { const { archiveScrub } = await import('../services/scrubStore.js'); const r = await archiveScrub(req, req.params.id, { reason: String(req.body?.reason || ''), by: who(req) }); if (!r.ok) return res.status(404).json(r); res.json(r) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/resurrect', async (req, res) => {
+  try { const { resurrectScrub } = await import('../services/scrubStore.js'); const r = await resurrectScrub(req, req.params.id, { by: who(req) }); if (!r.ok) return res.status(404).json(r); res.json(r) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 🔁 Full Service for THIS report only (Mark 2026-10-07). Body { override: 'on' | 'off' | '' }.
+// The CRM rule is untouched; returns the effective rules so the screen can redraw.
+router.post('/:id/full-service-override', async (req, res) => {
+  try {
+    const ov = String(req.body?.override || '')
+    if (!['on', 'off', ''].includes(ov)) return res.status(400).json({ error: "override must be 'on', 'off' or ''" })
+    const { setScrubFsOverride } = await import('../services/scrubStore.js')
+    const r = await setScrubFsOverride(req, req.params.id, ov, { by: who(req) })
+    if (!r.ok) return res.status(404).json(r)
+    const fs = await import('../services/fullService.js')
+    const s = await getScrub(req, req.params.id)
+    const eff = await fs.readFullServiceForScrub(req, s)
+    res.json({ ok: true, fs_override: r.fs_override, rules: eff.rules, on: eff.on, collision: eff.collision, set: eff.set, shop_id: eff.shop_id })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/:id', async (req, res) => {
   const s = await getScrub(req, req.params.id)
   if (!s) return res.status(404).json({ error: 'not found' })

@@ -387,7 +387,11 @@ export async function importNextPositionStatement(req) {
  * matching make gets its full summary, everyone else a one-liner, so the
  * prompt stays small enough to ride along with no extra Claude call.
  */
+const _oemBlockCache = new Map()
 export async function oemReferenceBlock(req, { make = '' } = {}) {
+  const cacheKey = canonicalOem(make) || '*'
+  const cached = _oemBlockCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < 10 * 60 * 1000) return cached.val
   try {
     const rows = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(
       `SELECT doc_oem, doc_type, doc_title, doc_summary, doc_notes, doc_published_date FROM ${TABLE} LIMIT 300`)
@@ -400,6 +404,8 @@ export async function oemReferenceBlock(req, { make = '' } = {}) {
     const parts = []
     if (mine.length) parts.push(`What ${canonicalOem(make)} itself publishes (use these first, cite them by name):\n${mine.map(d => line(d, true)).join('\n')}`)
     if (rest.length) parts.push(`Other manufacturers' statements on file (only relevant if this vehicle is one of them):\n${rest.slice(0, 60).map(d => line(d, false)).join('\n')}`)
-    return parts.join('\n\n')
+    const val = parts.join('\n\n')
+    _oemBlockCache.set(cacheKey, { at: Date.now(), val })
+    return val
   } catch (e) { console.warn('[pos-stmt] reference block failed:', e.message); return '' }
 }

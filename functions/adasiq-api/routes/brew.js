@@ -26,12 +26,13 @@ import { commitFile, commitBinaryFile, deleteFile, wrapIssueHtmlForArchive, rend
 import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
 import { generateCoverImage, generateTipCardImage, nanoBananaConfigured } from '../services/nanoBanana.js'
 import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia, listFacebookPagePosts, readFacebookPostComments, editFacebookComment } from '../services/metaPosting.js'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
 // ─── Cache helpers ──────────────────────────────────────────────────────────
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 // Explicit named segment for cross-cron handoffs. The default segment can
 // scope inconsistently across cron-triggered vs HTTP-triggered calls — an

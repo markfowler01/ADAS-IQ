@@ -55,6 +55,8 @@ export const PHONE_CONFIG_KEYS = [
     help: 'e.g. -122.2021. Blank = check off.' },
   { key: 'SERVICE_RADIUS_MI',      label: 'Clock-in flag radius (mi)', secret: false, required: false,
     help: 'Clock-ins farther than this from the shop get a quiet Cliq note. Default 60.' },
+  { key: 'CLOCK_IN_GEOFENCE_MI',   label: 'Tech punch-in fence (mi)', secret: false, required: false,
+    help: 'Technicians can only punch IN within this many miles of the shop latitude/longitude (Mark 2026-10-05). Blank or 0 = off. 0.3 ≈ 500 m.' },
   { key: 'DESK_PHONE_ON',          label: 'Desk softphone on duty',  secret: false, required: false,
     help: '"true" = browser rings before the cell cascade. Toggled from the phone widget.' },
   { key: 'TWILIO_API_KEY_SID',     label: 'Twilio API key SID',      secret: true,  required: false,

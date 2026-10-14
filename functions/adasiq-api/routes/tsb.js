@@ -247,7 +247,7 @@ router.post('/', async (req, res) => {
     }
     await writeTsb(req, tsb)
     let posted = null
-    try { posted = await Promise.race([postTsbToChannel(req, tsb), new Promise(r => setTimeout(() => r({ ok: false, error: 'timeout' }), 15000))]) } catch (e) { posted = { ok: false, error: e.message } }
+    try { posted = await postTsbToChannel(req, tsb) } catch (e) { posted = { ok: false, error: e.message } }
     res.json({ ok: true, tsb, posted })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
@@ -407,32 +407,43 @@ router.post('/:id/pdf', async (req, res) => {
 // 📣 Post the bulletin PDF to the techs' Cliq channel (Mark 2026-10-12: "when [someone] creates a
 // TSB tip I want it posted in PDF form to the technicians channel"). Uploads the PDF as a file;
 // if Cliq refuses the upload, posts a message with a link to the PDF instead.
-const TSB_CHANNEL = 'technicians'   // the "Absolute ADAS" channel
-const PUBLIC_BASE = 'https://app.adas-iq.com/server/adasiq-api'   // our own domain, never the raw Catalyst host
-export async function postTsbToChannel(req, tsb, { reason = 'new', channelId = '' } = {}) {   // channelId = test to a private channel
+const TSB_CHANNEL = 'technicians'
+const TSB_CHANNEL_ID = 'O6015142000000681005'
+const PUBLIC_BASE = process.env.API_PUBLIC_BASE || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+export async function postTsbToChannel(req, tsb, { reason = 'new', channelId = '' } = {}) {
+  const { TECHNICIANS_CHANNEL, getCliqAccessToken, postToCliqChannel, postToCliqChannelById } = await import('../services/cliq.js')
   const tsbs = await readAllTsbs(req)
   const cur = tsbs.find(t => String(t.id) === String(tsb.id)) || tsb
   const buf = await buildTsbPdf(req, cur, tsbs)
   const vehicle = [cur.year_from && cur.year_to && cur.year_from !== cur.year_to ? `${cur.year_from}–${cur.year_to}` : (cur.year_from || cur.year_to || ''), cur.make, cur.model].filter(Boolean).join(' ')
   const head = `📖 *${reason === 'update' ? 'Updated TSB' : 'New TSB'} · ${cur.number}*${cur.author ? ` from ${cur.author}` : ''}\n*${cur.title}*${vehicle ? ` · ${vehicle}` : ''} · ${String(cur.category || 'general')}${(cur.photos || []).length ? ` · 📷 ${cur.photos.length}` : ''}`
-  const { getCliqAccessToken, postToCliqChannel } = await import('../services/cliq.js')
-  try {
-    const FormData = (await import('form-data')).default
-    const fd = new FormData()
-    fd.append('file', buf, { filename: `${cur.number} ${String(cur.title || '').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60)}.pdf`, contentType: 'application/pdf' })
-    fd.append('comments', JSON.stringify([head.replace(/\*/g, '')]))
-    const token = await getCliqAccessToken()
-    const target = channelId ? `channels/${channelId}` : `channelsbyname/${TSB_CHANNEL}`
-    await axios.post(`https://cliq.zoho.com/company/883116359/api/v2/${target}/files`, fd, { headers: { ...fd.getHeaders(), Authorization: `Zoho-oauthtoken ${token}` }, timeout: 20000, maxBodyLength: Infinity })
-    return { ok: true, via: 'file', number: cur.number }
-  } catch (e) {
-    console.warn('[tsb post] file upload refused, posting a link:', e.response?.status, JSON.stringify(e.response?.data || e.message).slice(0, 200))
-    if (!cur.share_key) { cur.share_key = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2); await writeTsb(req, cur) }
-    // Clean, labelled link (Mark 2026-10-12: "make it look nice and professional") — never a bare URL.
-    const msg = `${head}\n[📄 Open ${cur.number} (PDF)](${PUBLIC_BASE}/api/public/tsb/${cur.number}.pdf?k=${cur.share_key})`
-    if (channelId) { const { postToCliqChannelById } = await import('../services/cliq.js'); await postToCliqChannelById(channelId, msg) } else await postToCliqChannel(TSB_CHANNEL, msg)
-    return { ok: true, via: 'link', number: cur.number, upload_error: e.response?.status || e.message }
+  const token = await getCliqAccessToken()
+  const FormData = (await import('form-data')).default
+  const filename = `${cur.number} ${String(cur.title || 'bulletin').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 60)}.pdf`
+  const targets = channelId
+    ? [`channels/${channelId}`]
+    : [`channels/${TSB_CHANNEL_ID}`, `channelsbyname/${TECHNICIANS_CHANNEL || TSB_CHANNEL}`]
+  let lastErr = null
+  for (const target of targets) {
+    try {
+      const fd = new FormData()
+      fd.append('file', buf, { filename, contentType: 'application/pdf' })
+      fd.append('comments', head.replace(/\*/g, ''))
+      await axios.post(`https://cliq.zoho.com/company/883116359/api/v2/${target}/files`, fd, {
+        headers: { ...fd.getHeaders(), Authorization: `Zoho-oauthtoken ${token}` },
+        timeout: 18000, maxBodyLength: Infinity,
+      })
+      return { ok: true, via: 'file', number: cur.number, target }
+    } catch (e) {
+      lastErr = e
+      console.warn('[tsb post] file upload failed:', target, e.response?.status, JSON.stringify(e.response?.data || e.message).slice(0, 200))
+    }
   }
+  if (!cur.share_key) { cur.share_key = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2); await writeTsb(req, cur) }
+  const msg = `${head}\n[📄 Open ${cur.number} (PDF)](${PUBLIC_BASE}/api/public/tsb/${encodeURIComponent(cur.number)}.pdf?k=${cur.share_key})`
+  if (channelId) await postToCliqChannelById(channelId, msg)
+  else await postToCliqChannel(TECHNICIANS_CHANNEL || TSB_CHANNEL, msg)
+  return { ok: true, via: 'link', number: cur.number, upload_error: lastErr?.response?.status || lastErr?.message }
 }
 
 // POST /api/tsb/:id/post — re-post (e.g. after adding photos).

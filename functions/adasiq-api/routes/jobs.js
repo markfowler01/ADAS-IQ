@@ -549,6 +549,16 @@ router.post('/', async (req, res) => {
     // Needs Dispatch step. Tech-requested cards (via_request) keep
     // their job_requested status for the Waiting-for-Kat flow.
     const body = { ...req.body }
+    if (body.shop_name && body.customer_kind !== 'retail') {
+      try {
+        const { resolveShop } = await import('../services/shopResolve.js')
+        const r = await resolveShop(req, body.shop_name, { remember: true })
+        if (r.shop) {
+          body.shop_name = r.name
+          if (body.customer && body.customer.kind === 'shop') body.customer.name = r.name
+        }
+      } catch (e) { console.warn('[jobs POST] shop resolve skipped:', e.message) }
+    }
     // A request is only a request when it says so (via_request). Anything
     // else asking for job_requested — a created job with a Books quote,
     // an old client, a stray default — is filed at Needs Dispatch
@@ -709,12 +719,17 @@ router.put('/:id', async (req, res) => {
     // body is merged over the stored row, and the links that tie a card to
     // Books / WorkDrive are never blanked by a save.
     const updated = await updateJob(req, req.params.id, req.body)
+    const working = s => /^(need_dispatch|dispatched_|pending_parts|ready_invoice)/.test(s || '')
+    if (working(updated.status) && !working(prevStatus)) {
+      try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, updated.id, 'job') } catch (e) { console.warn('[jobs] scrub → job:', e.message) }
+    }
     if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') await writePcsiStory(req, updated)
     if (req.body.cash_quoted && String(cur?.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
     if (req.body.status === 'complete' && prevStatus !== 'complete') {
       logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
       logJobHistory(req, updated, 'complete')
+      import('../services/deals.js').then(D => D.onJobCompleted(req, updated)).catch(e => console.warn('[deals job hook]', e.message))   // 💼 first job → 7-day follow-up; second → Won
     }
     if (req.body.invoiced === true || req.body.invoiced === 'true') {
       logJobHistory(req, updated, 'invoiced')
@@ -826,12 +841,19 @@ router.patch('/:id', async (req, res) => {
     }
 
     const updated = await updateJob(req, req.params.id, merged)
+    // 🟠 Scrub list "active job": when the card leaves Requested / Quoted for a
+    // working column, the linked scrub gets the orange outline (Mark 2026-10-09).
+    const working = s => /^(need_dispatch|dispatched_|pending_parts|ready_invoice)/.test(s || '')
+    if (working(updated.status) && !working(currentJob.status)) {
+      try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, updated.id, 'job') } catch (e) { console.warn('[jobs] scrub → job:', e.message) }
+    }
     if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') await writePcsiStory(req, updated)
     if (req.body.cash_quoted && String(currentJob.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
     if (req.body.status === 'complete' && currentJob.status !== 'complete') {
       logCompletion(req, updated).catch(e => console.warn('[completions]', e.message))
       logJobHistory(req, updated, 'complete')
+      import('../services/deals.js').then(D => D.onJobCompleted(req, updated)).catch(e => console.warn('[deals job hook]', e.message))   // 💼 first job → 7-day follow-up; second → Won
     }
     if (req.body.invoiced === true && !currentJob.invoiced) {
       logJobHistory(req, updated, 'invoiced')
@@ -1842,6 +1864,24 @@ router.post('/:id/photo-slot', upload.single('photo'), async (req, res) => {
 // POST /api/jobs/:id/photos/reconcile — the sheet calls this when a tech
 // opens a card that still shows shots owed, so a set that's already in the
 // folder clears on the spot instead of at the next hourly pass.
+// 🗑 Drop a card from the owed-photos list (Mark 2026-10-05: "put a delete button
+// on this card so we can delete them if needed" — a Test job sat there). Clears the
+// _pending flag only; the job, its invoice and any photos already in the folder are
+// untouched. Logged on the slots as _waived so we know who dropped it and why.
+router.post('/:id/photos/waive', async (req, res) => {
+  try {
+    const job = rowToJob(await getTable(req).getRow(req.params.id))
+    if (!job) return res.status(404).json({ error: 'Job not found' })
+    const slots = parsePhotoSlots(job.photo_slots) || {}
+    if (!slots._pending) return res.json({ ok: true, already: true })
+    const who = req.user?.techName || req.user?.name || req.user?.email || 'staff'
+    slots._waived = { at: new Date().toISOString(), by: who, was: slots._pending, reason: String(req.body?.reason || '').slice(0, 200) }
+    delete slots._pending
+    const updated = await updateJob(req, job.id, { ...job, photo_slots: JSON.stringify(slots) })
+    try { await postToCliqChannel(DISPATCH_CHANNEL, `🗑 *Photos owed dropped* · ${job.shop_name || 'Job'}${job.vehicle ? ' · ' + job.vehicle : ''} — ${who} removed it from the owed list${slots._waived.reason ? ` (${slots._waived.reason})` : ''}.`) } catch { /* non-critical */ }
+    res.json({ ok: true, job: updated })
+  } catch (e) { console.warn('[photos waive]', e.message); res.status(500).json({ error: e.message }) }
+})
 router.post('/:id/photos/reconcile', async (req, res) => {
   try {
     const job = rowToJob(await getTable(req).getRow(req.params.id))

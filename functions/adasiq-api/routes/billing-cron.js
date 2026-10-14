@@ -1,6 +1,7 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { createNotification } from './notification-helper.js'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 const CHUNK_SIZE = 30
@@ -8,7 +9,7 @@ const CHUNK_SIZE = 30
 // ── Cache helpers (same pattern as books.js) ────────────────────────────────
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

@@ -286,7 +286,7 @@ export async function searchMessages(token, accountId, searchKey, limit = 25) {
 }
 
 // Send an email from Mark's account.
-export async function sendMail(token, accountId, { to, subject, body, cc }) {
+export async function sendMail(token, accountId, { to, subject, body, cc, attachments }) {
   const res = await axios.post(
     `${MAIL_API}/accounts/${accountId}/messages`,
     {
@@ -296,6 +296,7 @@ export async function sendMail(token, accountId, { to, subject, body, cc }) {
       subject,
       content:     body,
       mailFormat:  'html',
+      ...(Array.isArray(attachments) && attachments.length ? { attachments } : {}),   // [{storeName, attachmentPath, attachmentName}] from /messages/attachments
     },
     {
       headers: { ...mailHeaders(token), 'Content-Type': 'application/json' },

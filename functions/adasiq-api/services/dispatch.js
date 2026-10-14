@@ -13,11 +13,12 @@
 
 import catalyst from 'zcatalyst-sdk-node'
 import { readGeocache, readTechConfig, normalizeKey } from './geocoding.js'
+import { durable } from './durableKV.js'
 
 export const JOB_STATE_KEY = 'absolute_adas_job_state'
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

@@ -239,21 +239,30 @@ export async function detectPdfMeta(base64Pdf) {
 // 💵 Free first (Mark 2026-10-02 "run leaner"): most files say what they are in
 // their own text. Only a scan or an unknown layout pays for the Haiku read.
 const KIND_MAKES = ['Mercedes-Benz', 'Land Rover', 'Alfa Romeo', 'Acura', 'Audi', 'BMW', 'Buick', 'Cadillac', 'Chevrolet', 'Chrysler', 'Dodge', 'Fiat', 'Ford', 'Genesis', 'GMC', 'Honda', 'Hyundai', 'Infiniti', 'Jaguar', 'Jeep', 'Kia', 'Lexus', 'Lincoln', 'Lucid', 'Mazda', 'Mini', 'Mitsubishi', 'Nissan', 'Polestar', 'Porsche', 'Ram', 'Rivian', 'Subaru', 'Tesla', 'Toyota', 'Volkswagen', 'Volvo']
+/** Free classify from already-extracted PDF text — no second parse, no Haiku. */
+export function classifyFromText(text) {
+  if (!text || String(text).length < 300) return null
+  const head = String(text).slice(0, 6000)
+  let kind = ''
+  if (/^\s*Calibration Identification Report/i.test(head)) kind = 'REPORT'
+  else if (/Absolute ADAS/i.test(head) && /Calibration (&|and) Diagnostic Report/i.test(head)) kind = 'ABSOLUTE'
+  else if (/Workfile ID|CCC ONE|CCC Intelligent Solutions|Estimate of Record|CCC Pathways/i.test(text)) kind = 'CCC'
+  else if (/\b(INVOICE|REMITTANCE|STATEMENT OF ACCOUNT|AMOUNT DUE)\b/.test(head) && !/estimate/i.test(head)) kind = 'INVOICE'
+  if (!kind) return null
+  const yearMake = (String(text).match(/\b(?:19|20)\d{2}\s+([A-Z][A-Za-z]+(?:[- ][A-Z][a-z]+)?)/g) || []).map(x => x.replace(/^\d{4}\s+/, ''))
+  const make = KIND_MAKES.find(m => yearMake.some(y => y.toLowerCase().replace(' ', '-') === m.toLowerCase() || y.toLowerCase().startsWith(m.toLowerCase()))) || ''
+  return { kind, make, raw: 'text' }
+}
+export function guessMakeFromText(text) {
+  const hit = classifyFromText(text)
+  if (hit?.make) return hit.make
+  const yearMake = (String(text || '').match(/\b(?:19|20)\d{2}\s+([A-Z][A-Za-z]+(?:[- ][A-Z][a-z]+)?)/g) || []).map(x => x.replace(/^\d{4}\s+/, ''))
+  return KIND_MAKES.find(m => yearMake.some(y => y.toLowerCase().replace(' ', '-') === m.toLowerCase() || y.toLowerCase().startsWith(m.toLowerCase()))) || ''
+}
 async function detectPdfKindFromText(base64Pdf) {
   let text = ''
   try { const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default; text = ((await pdf(Buffer.from(base64Pdf, 'base64'), { max: 2 })).text || '') } catch { return null }
-  if (text.length < 300) return null   // a scan — let the model look
-  const head = text.slice(0, 6000)
-  let kind = ''
-  if (/^\s*Calibration Identification Report/i.test(head)) kind = 'REPORT'   // Kinetic's report opens with its title
-  else if (/Absolute ADAS/i.test(head) && /Calibration (&|and) Diagnostic Report/i.test(head)) kind = 'ABSOLUTE'
-  else if (/Workfile ID|CCC ONE|CCC Intelligent Solutions|Estimate of Record|CCC Pathways/i.test(text)) kind = 'CCC'   // every CCC estimate prints its Workfile ID
-  else if (/\b(INVOICE|REMITTANCE|STATEMENT OF ACCOUNT|AMOUNT DUE)\b/.test(head) && !/estimate/i.test(head)) kind = 'INVOICE'
-  if (!kind) return null
-  // The vehicle line ("2020 BMW X7 …") names the make; a shop or insurer name can't fool it.
-  const yearMake = (text.match(/\b(?:19|20)\d{2}\s+([A-Z][A-Za-z]+(?:[- ][A-Z][a-z]+)?)/g) || []).map(x => x.replace(/^\d{4}\s+/, ''))
-  const make = KIND_MAKES.find(m => yearMake.some(y => y.toLowerCase().replace(' ', '-') === m.toLowerCase() || y.toLowerCase().startsWith(m.toLowerCase()))) || ''
-  return { kind, make, raw: 'text' }
+  return classifyFromText(text)
 }
 
 export async function detectPdfKind(base64Pdf) {
@@ -290,6 +299,22 @@ export async function detectPdfKind(base64Pdf) {
  * @param {Buffer} pdfBuffer
  * @returns {Promise<Object>} parsed JSON matching Kinetic extractor format
  */
+function fillJustifications(data) {
+  const make = String(data?.make || 'OEM').trim() || 'OEM'
+  for (const c of data.calibrations || []) {
+    if (String(c.justification || '').trim().length > 40) continue
+    const sys = String(c.calibration_name || c.sensor || 'This system').trim()
+    if (c.enabled === true) {
+      const why = c.trigger
+        ? `${c.trigger}${c.line_references ? ` (line ${c.line_references})` : ''} disturbs this sensor and requires recalibration.`
+        : 'Collision repair operations on this estimate disturb this sensor and require recalibration.'
+      c.justification = `${sys} calibration required per ${make} OEM position statement and ALLDATA ADAS procedure following collision repair. ${why} Failure to calibrate presents a safety liability and does not meet ${make} OEM repair standards.`
+    } else {
+      c.justification = `${sys} calibration not required for this repair — the estimate contains no operations that disturb this sensor per ${make} OEM position statement and ALLDATA ADAS procedure.`
+    }
+  }
+}
+
 export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', effort = '' } = {}) {
   // text = the estimate as structured lines (CCC Secure Share BMS data, 2026-09-30) —
   // same rulebook, same checks, no page images to read (faster + cheaper).
@@ -298,14 +323,17 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', ef
     ? { type: 'text', text: `CCC ONE ESTIMATE (structured data from CCC Secure Share; each line: line number | operation | description | part type | labor hours | notes):\n\n${text}` }
     : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Pdf } }
 
+  // ⚡ Fast is the default (Mark 2026-10-09: "10 secs or less"). Sonnet + no
+  // thinking + empty justifications (filled in code) is the 10s path. Pass
+  // effort: 'medium' or 'high' to go back to Opus + adaptive thinking.
+  const thorough = /^(medium|high)$/i.test(effort)
   const tMain = Date.now()
   const message = await getClient().messages.create({
-    model: 'claude-opus-4-7',  // best model + adaptive thinking: this is a judgment task (Kinetic benchmark 2026-09-24)
-    max_tokens: 16000,
-    thinking: { type: 'adaptive' },
-    // ⚡ 'medium' by default (Mark 2026-10-02 "yes lets go"): benchmark v8m on 50 cars = recall 94%
-    // vs 93% at high, ~35s vs ~55s a scrub. Pass effort: 'high' to go back for one call.
-    output_config: { effort: effort || 'medium' },
+    model: thorough ? 'claude-opus-4-7' : 'claude-sonnet-4-6',
+    max_tokens: thorough ? 16000 : 4500,
+    ...(thorough
+      ? { thinking: { type: 'adaptive' }, output_config: { effort: effort || 'medium' } }
+      : {}),
     // ⚡ Cached: the rulebook is the same every scrub — faster start, ~10% of the input price on a hit (2026-09-30).
     system: [
       { type: 'text', text: CCC_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
@@ -318,7 +346,9 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', ef
         estimateBlock,
         {
           type: 'text',
-          text: `Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations.${oemRefs ? ' Use the OEM document library in your instructions.' : ''} Return raw JSON only.`,
+          text: thorough
+            ? `Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations.${oemRefs ? ' Use the OEM document library in your instructions.' : ''} Return raw JSON only.`
+            : `Analyze this CCC ONE collision estimate. Identify all ADAS calibrations required based on the vehicle equipment and repair operations.${oemRefs ? ' Use the OEM document library in your instructions.' : ''} Return raw JSON only. FAST: leave justification, note, links and document_links empty — we fill justifications in code. Keep every sensor, enabled, trigger, line_references, equipped, cal_type, calibration_name.`,
         },
       ],
     }],
@@ -328,7 +358,7 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', ef
   const cleaned = raw.replace(/^```(?:json)?\n?/i, '').replace(/\n?```$/i, '').trim()
   // ⏱ Speed study (Mark 2026-10-02 "PDF scrubs … way too slow"): what the main read cost.
   const u = message.usage || {}
-  const _usage = { ms: Date.now() - tMain, in: u.input_tokens || 0, out: u.output_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, thinkingChars: (message.content || []).filter(b => b.type === 'thinking').reduce((n, b) => n + String(b.thinking || '').length, 0), jsonChars: cleaned.length }
+  const _usage = { ms: Date.now() - tMain, in: u.input_tokens || 0, out: u.output_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0, thinkingChars: (message.content || []).filter(b => b.type === 'thinking').reduce((n, b) => n + String(b.thinking || '').length, 0), jsonChars: cleaned.length, fast: !thorough }
 
   let parsed
   try {
@@ -338,9 +368,11 @@ export async function extractFromCccPdf(pdfBuffer, { oemRefs = '', text = '', ef
     throw new Error(`Claude returned invalid JSON: ${cleaned.slice(0, 200)}`)
   }
   parsed.calibrations = Array.isArray(parsed.calibrations) ? parsed.calibrations.map(c => ({ ...c, enabled: c.enabled === true, line_references: c.line_references || null, links: [] })) : []
+  fillJustifications(parsed)
 
   // Tag as CCC so the extract route can cross-reference rules DB
   parsed._pdfType = 'CCC'
+  parsed._fast = !thorough
   // Build repair text and equipment text for rules matching (from calibrations triggers)
   parsed._repairText = (parsed.calibrations || []).map(c => c.trigger || '').join(' ')
   parsed._vehicleEquipment = (parsed.calibrations || []).map(c => c.calibration_name || '').join(' ')

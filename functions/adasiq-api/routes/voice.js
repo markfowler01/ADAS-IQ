@@ -283,9 +283,13 @@ function nextCascadeTwiML(req, order) {
   for (let i = order; i < targets.length; i++) {
     if (targets[i].number || targets[i].client) {
       const url = `${baseUrl(req)}${targets[i].afterUrl}`
+      // statusCallback (2026-10-05): the live-call bar needs to know the moment this
+      // leg is answered and when it ends — Twilio only tells us via the noun's callback.
+      const legCb = `${baseUrl(req)}/webhooks/twilio/voice/leg-status?who=${encodeURIComponent(targets[i].key)}`
+      const cbAttrs = `statusCallback="${esc(legCb)}" statusCallbackMethod="POST" statusCallbackEvent="answered completed"`
       const noun = targets[i].client
-        ? `<Client>${esc(targets[i].client)}</Client>`
-        : `<Number url="${esc(whisperUrl)}">${esc(targets[i].number)}</Number>`
+        ? `<Client ${cbAttrs}>${esc(targets[i].client)}</Client>`
+        : `<Number url="${esc(whisperUrl)}" ${cbAttrs}>${esc(targets[i].number)}</Number>`
       // record="record-from-answer" captures both sides after answer;
       // recordingStatusCallback fires when the file is finalized.
       // Desk (browser) legs ring a bit longer than cells — no telco
@@ -397,18 +401,24 @@ router.post('/', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
   try {
     const from = normalizePhoneUS(req.body.From) || String(req.body.From || '')
     const pushWork = (async () => {
-      let who = ''
+      let who = '', c = null
       try {
         const { findContactByPhone } = await import('../services/crmContacts.js')
-        const c = await findContactByPhone(req, from)
+        c = await findContactByPhone(req, from)
         who = [c?.contact_name, c?.shop_name].filter(Boolean).join(' · ')
       } catch { /* number-only is fine */ }
       const { sendPushToAll } = await import('./push.js')
       const pretty = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3')
+      // Ring-time live row (2026-10-05): the bar shows "Ringing · shop" before anyone
+      // answers, so the person who picks up opens the app to a bar already there.
+      try {
+        const L = await import('../services/liveCalls.js')
+        await L.setLive(req, String(req.body.CallSid || ''), { who: '', status: 'ringing', from, from_pretty: pretty || from, to: normalizePhoneUS(req.body.To) || String(req.body.To || ''), line: classifyTwilioNumber(req.body.To, req.phoneCfg), caller_name: c?.contact_name || '', shop_name: c?.shop_name || '', shop_id: c?.shop_id || '', answered_at: new Date().toISOString() })
+      } catch (e) { console.warn('[voice live ring]', e.message) }
       await sendPushToAll(req, {
         title: `📞 Incoming call${who ? ' — ' + who : ''}`,
         body: `${pretty || from} is calling the 844 line now`,
-        url: `/app/index.html?thread=${encodeURIComponent(from)}`,
+        url: `/app/index.html?caller=${encodeURIComponent(from)}`,
         tag: `call-${String(req.body.CallSid || '').slice(-10)}`,
       })
     })()
@@ -486,11 +496,144 @@ router.post('/client-outgoing', requireTwilioSignature, safeVoiceHandler(async (
 router.post('/whisper', requireTwilioSignature, (req, res) => {
   // Shortened to just the business name per Mark 2026-07-10 ("something
   // a little quicker"). The ?line= param still arrives if we ever want
-  // the line callout back.
+  // the line callout back. ?xfer=<key> (2026-10-05) = a transfer: say who sent it.
+  const XFER_NAMES = { mark: 'Mark', kat: 'Kat', jayden: 'Jayden', desk: 'the desk' }
+  const xfer = XFER_NAMES[String(req.query.xfer || '').toLowerCase()] || ''
+  const warm = String(req.query.warm || '') === '1'
   res.type('text/xml').send(xml(
-    `<Response><Say voice="Polly.Matthew">Absolute A D A S.</Say></Response>`
+    `<Response><Say voice="Polly.Matthew">Absolute A D A S.${xfer ? (warm ? ` ${xfer} is on the line to hand you a caller.` : ` Transfer from ${xfer}.`) : ''}</Say></Response>`
   ))
 })
+
+// ── Live-call tracking + transfer (Mark 2026-10-05: the Grasshopper "##") ──────────
+// POST /leg-status — Twilio's statusCallback on each cascade / transfer leg.
+// 'in-progress' = answered → remember the live call (keyed by the CALLER's parent
+// CallSid) and push the answering person a "Transfer →" notification. 'completed'
+// (or busy / no-answer / failed) = that leg is over → forget it.
+router.post('/leg-status', requireTwilioSignature, async (req, res) => {
+  res.status(200).send('OK')   // never make Twilio wait on us
+  try {
+    const L = await import('../services/liveCalls.js')
+    const parent = String(req.body.ParentCallSid || '')
+    const status = String(req.body.CallStatus || '').toLowerCase()
+    const who = String(req.query.who || '').toLowerCase()
+    const xferFrom = String(req.query.xfer || '').toLowerCase()
+    const consult = String(req.query.consult || '')   // warm transfer: this leg is the TARGET inside the consult call; `consult` = the caller's sid
+    L.logEvent(req, { who, status, parent, leg: String(req.body.CallSid || ''), from: String(req.body.From || ''), to: String(req.body.To || ''), xfer: xferFrom, consult }).catch(() => {})
+    if (consult) {
+      if (status === 'in-progress') await L.patchLive(req, consult, { target_leg_sid: String(req.body.CallSid || ''), target_answered_at: new Date().toISOString() })
+      return
+    }
+    if (!parent) return
+    if (status === 'in-progress') {
+      const from = normalizePhoneUS(req.body.From) || String(req.body.From || '')   // caller-ID passthrough = the customer's number
+      const to = normalizePhoneUS(req.body.To) || String(req.body.To || '')
+      let caller_name = '', shop_name = '', shop_id = ''
+      try { const { findContactByPhone } = await import('../services/crmContacts.js'); const c = await findContactByPhone(req, from); caller_name = c?.contact_name || c?.name || ''; shop_name = c?.shop_name || ''; shop_id = c?.shop_id || '' } catch { /* number only */ }
+      const from_pretty = from.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3')
+      const row = await L.setLive(req, parent, { who, status: 'live', from, from_pretty, to, leg_sid: String(req.body.CallSid || ''), line: classifyTwilioNumber(req.body.To, req.phoneCfg), caller_name, shop_name, shop_id, transferred_from: xferFrom || '', transferring_to: '', answered_at: new Date().toISOString() })
+      // Auto-log on the shop's CRM timeline (Mark 2026-10-05 plan step 4).
+      if (shop_id || shop_name) L.logShopActivity(req, { shopId: shop_id, shopName: shop_name, text: `📞 Call answered by ${L.KEY_NAMES[who] || who || 'us'}${xferFrom ? ` (transfer from ${L.KEY_NAMES[xferFrom] || xferFrom})` : ''} · ${from_pretty}`, by: 'phone' }).catch(() => {})
+      // Push to the person who answered (owner gets everything) so the bar is one tap away.
+      try {
+        const { sendPushToAll } = await import('./push.js')
+        const label = [caller_name, shop_name].filter(Boolean).join(' · ') || from_pretty || from
+        const mine = s => { const k = L.cascadeKeyFor({ email: s.user, name: s.user }); return k === who || k === 'mark' || (who === 'desk' && k) }
+        await Promise.race([sendPushToAll(req, { title: `📞 On a call — ${label}`, body: 'Tap to transfer → Mark · Jayden · Kat · Voicemail', url: '/app/index.html?live=1', tag: `live-${parent.slice(-10)}` }, mine), new Promise(r => setTimeout(r, 4000))])
+      } catch (e) { console.warn('[leg-status push]', e.message) }
+      console.log(`[voice live] ${who} answered ${row.from_pretty || row.from} (${parent})`)
+    } else if (['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(status)) {
+      const cur = await L.getLive(req, parent)
+      // Nobody has answered yet and this leg just didn't pick up: the cascade moves on — keep the "ringing" row.
+      if (cur && cur.status === 'ringing' && status !== 'completed') return
+      if (cur && status === 'completed' && cur.who === who && (cur.shop_id || cur.shop_name)) { const secs = parseInt(req.body.CallDuration || '0', 10) || 0; L.logShopActivity(req, { shopId: cur.shop_id, shopName: cur.shop_name, text: `📞 Call with ${L.KEY_NAMES[who] || who} · ${secs >= 60 ? `${Math.round(secs / 60)} min` : `${secs}s`}`, by: 'phone' }).catch(() => {}) }
+      // A transfer in flight: the old leg ending is expected — keep the row until the new leg reports.
+      if (cur && cur.transferring_to && cur.who !== who && !xferFrom) return
+      if (cur && cur.transferring_to && who === cur.who && status === 'completed' && !xferFrom) return
+      await L.clearLive(req, parent)
+      console.log(`[voice live] ${who} leg ${status} (${parent})`)
+    }
+  } catch (e) { console.warn('[leg-status]', e.message) }
+})
+
+// TwiML that moves the CALLER to someone else. Used by /api/voice/transfer via
+// client.calls(parentSid).update({ twiml }). The person who was on the call drops
+// because the <Dial> they were bridged in is replaced. No answer in 20s → voicemail.
+export function cascadeNumbers(cfg = {}) {
+  return {
+    jayden: normalizePhoneUS(cfg.JAYDEN_PHONE_NUMBER || process.env.JAYDEN_PHONE_NUMBER || '+14257379022'),
+    mark:   normalizePhoneUS(cfg.MARK_PHONE_NUMBER   || process.env.MARK_PHONE_NUMBER   || ''),
+    kat:    normalizePhoneUS(cfg.KAT_PHONE_NUMBER    || process.env.KAT_PHONE_NUMBER    || ''),
+  }
+}
+// Park / join the warm-transfer conference `xfer-<parentSid>`. The caller sits in it
+// with start=false (hold music) until someone joins with start=true.
+export function conferenceTwiML(sid, { start = false, endOnExit = false, say = '' } = {}) {
+  return `<Response>${say ? `<Say voice="Polly.Matthew">${esc(say)}</Say>` : ''}<Dial><Conference beep="false" startConferenceOnEnter="${start ? 'true' : 'false'}" endConferenceOnExit="${endOnExit ? 'true' : 'false'}">xfer-${esc(sid)}</Conference></Dial></Response>`
+}
+export function transferTwiML(req, { to, fromKey = '', callerNumber = '', lineType = '' }) {
+  const cfg = req.phoneCfg || {}
+  const base = baseUrl(req)
+  if (to === 'voicemail') return `<Response><Say voice="Polly.Matthew">One moment, please.</Say><Redirect method="POST">${esc(base)}/webhooks/twilio/voice/voicemail</Redirect></Response>`
+  const numbers = cascadeNumbers(cfg)
+  if (to !== 'desk' && !numbers[to]) return ''
+  const legCb = `${base}/webhooks/twilio/voice/leg-status?who=${encodeURIComponent(to)}&xfer=${encodeURIComponent(fromKey)}`
+  const cbAttrs = `statusCallback="${esc(legCb)}" statusCallbackMethod="POST" statusCallbackEvent="answered completed"`
+  const whisperUrl = `${base}/webhooks/twilio/voice/whisper?line=${encodeURIComponent(lineType)}&xfer=${encodeURIComponent(fromKey)}`
+  const noun = to === 'desk' ? `<Client ${cbAttrs}>aa-desk</Client>` : `<Number url="${esc(whisperUrl)}" ${cbAttrs}>${esc(numbers[to])}</Number>`
+  return `
+<Response>
+  <Say voice="Polly.Matthew">One moment, transferring you.</Say>
+  <Dial timeout="${to === 'desk' ? 15 : 20}"
+        action="${esc(base)}/webhooks/twilio/voice/after-transfer"
+        method="POST"
+        callerId="${esc(callerNumber || '')}"
+        record="record-from-answer"
+        recordingStatusCallback="${esc(base)}/webhooks/twilio/voice/recording-done"
+        recordingStatusCallbackEvent="completed">
+    ${noun}
+  </Dial>
+</Response>`.trim()
+}
+// ── Warm transfer (Mark 2026-10-05 "yes build it") ──────────────────────────────
+// The caller is parked in conference xfer-<sid> (hold music). Twilio places a NEW
+// call to the transferring person; its TwiML (/consult) dials the target so the two
+// of them talk privately. Then the app says Complete (target joins the caller, the
+// consult call hangs up) or Take back (the transferring person joins the caller
+// instead). Target no-answer → the transferring person is reconnected automatically.
+router.post('/consult', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
+  const cfg = req.phoneCfg || {}, base = baseUrl(req)
+  const sid = String(req.query.sid || ''), to = String(req.query.to || '').toLowerCase(), fromKey = String(req.query.from || '').toLowerCase()
+  const NAMES = { mark: 'Mark', kat: 'Kat', jayden: 'Jayden', desk: 'the desk' }
+  const numbers = cascadeNumbers(cfg)
+  const legCb = `${base}/webhooks/twilio/voice/leg-status?who=${encodeURIComponent(to)}&consult=${encodeURIComponent(sid)}`
+  const cbAttrs = `statusCallback="${esc(legCb)}" statusCallbackMethod="POST" statusCallbackEvent="answered completed"`
+  const whisperUrl = `${base}/webhooks/twilio/voice/whisper?xfer=${encodeURIComponent(fromKey)}&warm=1`
+  const noun = to === 'desk' ? `<Client ${cbAttrs}>aa-desk</Client>` : `<Number url="${esc(whisperUrl)}" ${cbAttrs}>${esc(numbers[to] || '')}</Number>`
+  res.type('text/xml').send(xml(`
+<Response>
+  <Say voice="Polly.Matthew">Your caller is on hold. Connecting you to ${esc(NAMES[to] || to)}.</Say>
+  <Dial timeout="${to === 'desk' ? 15 : 20}" action="${esc(base)}/webhooks/twilio/voice/consult-done?sid=${encodeURIComponent(sid)}" method="POST">
+    ${noun}
+  </Dial>
+</Response>`.trim()))
+}, 'consult'))
+// The consult <Dial> ended. Completed (they talked, then Complete / Take back moved
+// a leg, or someone hung up) → hang up this consult call. No answer / busy → put
+// the transferring person straight back with the caller.
+router.post('/consult-done', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
+  const sid = String(req.query.sid || ''), status = String(req.body.DialCallStatus || '').toLowerCase()
+  try { const L = await import('../services/liveCalls.js'); const cur = await L.getLive(req, sid); if (cur && cur.status === 'consulting' && status !== 'completed') await L.patchLive(req, sid, { status: 'live', transferring_to: '', consult_sid: '', target_leg_sid: '' }) } catch { /* fine */ }
+  if (status === 'completed' || status === 'answered') return res.type('text/xml').send(xml('<Response><Hangup/></Response>'))
+  res.type('text/xml').send(xml(conferenceTwiML(sid, { start: true, endOnExit: true, say: 'They did not answer. Reconnecting you to your caller.' })))
+}, 'consult-done'))
+
+// After a transfer <Dial>: answered-and-done → hang up; anyone else → voicemail.
+router.post('/after-transfer', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
+  const status = String(req.body.DialCallStatus || '').toLowerCase()
+  if (status === 'completed' || status === 'answered') return res.type('text/xml').send(xml('<Response><Hangup/></Response>'))
+  res.type('text/xml').send(xml(fallbackVoicemailTwiML(req)))
+}, 'after-transfer'))
 
 // ── POST /webhooks/twilio/voice/voicemail ───────────────────────────────────
 // Records the voicemail. Twilio calls transcription webhook when done.
@@ -741,6 +884,13 @@ router.post('/status', requireTwilioSignature, async (req, res) => {
     const from    = normalizePhoneUS(req.body.From) || String(req.body.From || '')
     const to      = normalizePhoneUS(req.body.To)   || String(req.body.To   || '')
     const durSec  = parseInt(req.body.CallDuration || '0', 10) || 0
+    if (['completed', 'busy', 'no-answer', 'failed', 'canceled'].includes(status)) {
+      try {
+        const L = await import('../services/liveCalls.js'); const cur = await L.getLive(req, callSid)
+        if (cur?.consult_sid) { try { const { getTwilioClient } = await import('../services/twilio.js'); const client = await getTwilioClient(req.phoneCfg); await client.calls(cur.consult_sid).update({ status: 'completed' }) } catch { /* already gone */ } }
+        await L.clearLive(req, callSid)
+      } catch { /* fine */ }
+    }
 
     await upsertCall(req, {
       call_sid: callSid,

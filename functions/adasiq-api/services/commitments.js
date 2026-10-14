@@ -8,6 +8,7 @@
 // So: durable Datastore rows, an explicit done path, and a stable short number
 // per item so he can act on one from a text without typing its text back.
 import catalyst from 'zcatalyst-sdk-node'
+import { createTodo, titleFor } from './todoPush.js'
 
 const TABLE = 'OpsCommitments'
 const CACHE_KEY = 'ops_commitments'      // legacy store — still read, for migration
@@ -105,11 +106,26 @@ export async function persist(req, fresh, today) {
       due: c.due || null, source: c.source || 'cliq', first_seen: today,
       num: nextNum([...byKey.values()]),   // permanent, never reused
     }
-    await writeRow(app, item, 'open', null).catch(e => console.warn('[commitments write]', e.message))
-    byKey.set(key, { ...item, status: 'open' })
+    // Hand it to Zoho ToDo. If that fails we keep the row as 'pending' and try
+    // again next run rather than dropping a real commitment on the floor.
+    let status = 'pending'
+    try {
+      const made = await createTodo(item)
+      item.todo_id = made.id
+      item.todo_title = made.title
+      item.pushed_on = today
+      status = 'pushed'
+    } catch (e) {
+      console.warn('[todo push]', e.message)
+      item.push_error = String(e.message).slice(0, 180)
+    }
+    await writeRow(app, item, status, null).catch(e => console.warn('[commitments write]', e.message))
+    byKey.set(key, { ...item, status })
   }
 
-  return numbered([...byKey.values()].filter(i => i.status === 'open'))
+  // What the brief should mention: pushed to ToDo, not yet mentioned. Said
+  // once, the next morning, then never again.
+  return [...byKey.values()].filter(i => i.status === 'pushed')
 }
 
 async function writeRow(app, item, status, rowid) {
@@ -201,6 +217,25 @@ export async function dedupe(req, { dry = true } = {}) {
   return { dry, before: open.length, after: keep.length, merged: merge.length,
            examples: merge.slice(0, 10).map(m => ({ person: m.from.person, dropped: m.from.text, kept: m.into.text })) }
 }
+
+/** Pushed yesterday or earlier and never mentioned. These get one line. */
+export async function pendingMention(req, today) {
+  const all = (await dsList(req, { includeDone: true })) || []
+  return all.filter(i => i.status === 'pushed' && i.pushed_on && i.pushed_on < today)
+}
+
+/** Said it once. Never bring it up again. */
+export async function markMentioned(req, items) {
+  if (!items?.length) return 0
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  let n = 0
+  for (const it of items) {
+    try { await writeRow(app, { ...it, mentioned_on: today0() }, 'mentioned', it.ROWID); n++ }
+    catch (e) { console.warn('[markMentioned]', e.message) }
+  }
+  return n
+}
+const today0 = () => new Date().toISOString().slice(0, 10)
 
 /**
  * Give every existing row a permanent num. Ordered by first_seen then key so

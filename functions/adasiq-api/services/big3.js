@@ -78,12 +78,18 @@ export function describeRules(rules) {
 }
 
 export async function findShopByName(req, name) {
+  if (!String(name || '').trim()) return null
+  try {
+    const { resolveShop } = await import('./shopResolve.js')
+    const r = await resolveShop(req, name)
+    if (r.shop) return r.shop
+  } catch (e) { console.warn('[big3] shop resolve failed, falling back:', e.message) }
   const k = shopKeyOf(name)
   if (!k) return null
   const shops = await getAllShops(req)
   const aliasesOf = s => { let br = s.billing_rules; if (typeof br === 'string') { try { br = JSON.parse(br) } catch { br = {} } } return Array.isArray(br?.aliases) ? br.aliases : [] }
   return shops.find(s => shopKeyOf(s.shop_name) === k)
-    || shops.find(s => aliasesOf(s).some(a => shopKeyOf(a) === k))      // a merged shop's old names (2026-10-02)
+    || shops.find(s => aliasesOf(s).some(a => shopKeyOf(a) === k))
     || shops.find(s => loose(s.shop_name) && loose(s.shop_name) === loose(name))
     || null
 }

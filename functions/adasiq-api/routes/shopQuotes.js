@@ -523,6 +523,7 @@ router.post('/:id/status', async (req, res) => {
             }).format(new Date())
           }
           await updateJobPublic(req, job.id, patch)
+          try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, job.id, 'job') } catch (e) { console.warn('[shop-quotes] scrub → job:', e.message) }
         }
       } catch (e) { console.warn('[shop-quotes] approve routing failed:', e.message) }
       await onQuoteApproved(req, q).catch(e => console.warn('[shop-quotes approve hook]', e.message))

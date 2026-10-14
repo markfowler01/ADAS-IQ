@@ -3,6 +3,7 @@ import crypto from 'crypto'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
 import Stripe from 'stripe'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
@@ -24,7 +25,7 @@ function stripeConfigured() {
 // ── Cache helpers ────────────────────────────────────────────────────────────
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {
@@ -145,8 +146,15 @@ function makeMagicLink(req, shop) {
 }
 
 // Portal session token (30 days)
-function makeSessionToken(shop) {
-  return signToken({ type: 'portal', shop_id: shop.id, email: (shop.email || '').toLowerCase() })
+function makeSessionToken(shop, user = null) {
+  return signToken({
+    type: 'portal',
+    shop_id: shop.id,
+    email: (user?.email || shop.email || '').toLowerCase(),
+    user_id: user?.id || '',
+    username: user?.username || '',
+    role: user?.role || '',
+  })
 }
 
 // Per-invoice pay token (never expires — gets embedded in the PDF sent to customer)
@@ -176,9 +184,16 @@ async function requirePortalAuth(req, res, next) {
   }
   try {
     const shops = await readShops(req)
-    const shop = shops.find(s => s.id === data.shop_id)
+    const shop = shops.find(s => String(s.id) === String(data.shop_id))
     if (!shop) return res.status(404).json({ error: 'Shop not found' })
     req.portalShop = shop
+    req.portalUser = null
+    if (data.user_id) {
+      const { usersOf } = await import('../services/portalUsers.js')
+      const user = usersOf(shop).find(u => String(u.id) === String(data.user_id))
+      if (!user || user.active === false) return res.status(401).json({ error: 'This login is turned off' })
+      req.portalUser = user
+    }
     next()
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -187,20 +202,36 @@ async function requirePortalAuth(req, res, next) {
 
 // ── Shop invoice lookup ──────────────────────────────────────────────────────
 
-function invoicesForShop(allInvoices, shop) {
-  const shopName = (shop.shop_name || '').toLowerCase().trim()
-  return allInvoices.filter(inv => {
-    if (inv.crm_shop_id && inv.crm_shop_id === shop.id) return true
-    const customerName = (inv.customer_name || '').toLowerCase().trim()
-    if (customerName && shopName && customerName === shopName) return true
-    // Also match if the shop's billing_contact_email matches the invoice customer_email
-    const billingEmail = (shop.billing_rules?.billing_contact_email || shop.email || '').toLowerCase()
-    if (billingEmail && (inv.customer_email || '').toLowerCase() === billingEmail) return true
-    return false
-  })
+async function invoicesForShop(req, allInvoices, shop) {
+  const { ownsInvoice, ownsNameResolved } = await import('../services/portalShop.js')
+  const out = []
+  for (const inv of allInvoices) {
+    if (ownsInvoice(shop, inv) || await ownsNameResolved(req, shop, inv.customer_name)) out.push(inv)
+  }
+  return out
 }
 
 // ── Public endpoints (no auth) ───────────────────────────────────────────────
+
+router.post('/login', async (req, res) => {
+  try {
+    const username = String(req.body?.username || '').trim()
+    const password = String(req.body?.password || '')
+    if (!username || !password) return res.status(400).json({ error: 'Username and password required' })
+    const { loginPortalUser, publicUser } = await import('../services/portalUsers.js')
+    const r = await loginPortalUser(req, username, password)
+    if (!r.ok) return res.status(r.status || 401).json({ error: r.error })
+    const token = makeSessionToken(r.shop, r.user)
+    res.json({
+      token,
+      shop: { id: r.shop.id, shop_name: r.shop.shop_name, email: r.shop.email, phone: r.shop.phone, address: r.shop.address },
+      user: publicUser(r.user, r.shop),
+    })
+  } catch (e) {
+    console.error('[portal] login failed:', e)
+    res.status(500).json({ error: e.message })
+  }
+})
 
 // Request a magic link
 router.post('/request-access', async (req, res) => {
@@ -276,6 +307,7 @@ router.post('/verify-token', async (req, res) => {
 
 router.get('/me', requirePortalAuth, async (req, res) => {
   const shop = req.portalShop
+  const { publicUser } = await import('../services/portalUsers.js')
   res.json({
     id: shop.id,
     shop_name: shop.shop_name,
@@ -283,13 +315,39 @@ router.get('/me', requirePortalAuth, async (req, res) => {
     phone: shop.phone,
     address: shop.address,
     billing_contact: shop.billing_rules?.billing_contact_name || shop.contact_name,
+    user: publicUser(req.portalUser, shop),
   })
+})
+
+router.get('/savings', requirePortalAuth, async (req, res) => {
+  try {
+    const { shopSavings } = await import('../services/portalShop.js')
+    const all = await readInvoices(req)
+    const mine = await invoicesForShop(req, all, req.portalShop)
+    res.json(await shopSavings(req, req.portalShop, mine))
+  } catch (e) {
+    console.error('[portal] savings', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+router.post('/change-password', requirePortalAuth, async (req, res) => {
+  try {
+    if (!req.portalUser) return res.status(400).json({ error: 'This login is a magic link — set a username on the shop first.' })
+    const { changePassword, publicUser } = await import('../services/portalUsers.js')
+    const r = await changePassword(req, req.portalShop, req.portalUser.id, { current: req.body?.current || '', next: req.body?.next || '' })
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.error })
+    const token = makeSessionToken(req.portalShop, { ...req.portalUser, ...r.user, must_change: false })
+    res.json({ ok: true, user: publicUser(r.user, req.portalShop), token })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
 })
 
 router.get('/invoices', requirePortalAuth, async (req, res) => {
   try {
     const all = await readInvoices(req)
-    const mine = invoicesForShop(all, req.portalShop)
+    const mine = await invoicesForShop(req, all, req.portalShop)
 
     // Normalize for portal display — don't expose internal fields
     const trimmed = mine.map(inv => ({
@@ -326,7 +384,7 @@ router.get('/invoices', requirePortalAuth, async (req, res) => {
 router.get('/invoices/:id', requirePortalAuth, async (req, res) => {
   try {
     const all = await readInvoices(req)
-    const mine = invoicesForShop(all, req.portalShop)
+    const mine = await invoicesForShop(req, all, req.portalShop)
     const inv = mine.find(i => i.id === req.params.id)
     if (!inv) return res.status(404).json({ error: 'Not found' })
     res.json(inv)
@@ -349,7 +407,7 @@ router.get('/invoices/:id/pdf', async (req, res) => {
     if (!shop) return res.status(404).json({ error: 'Shop not found' })
 
     const all = await readInvoices(req)
-    const mine = invoicesForShop(all, shop)
+    const mine = await invoicesForShop(req, all, shop)
     const inv = mine.find(i => i.id === req.params.id)
     if (!inv) return res.status(404).json({ error: 'Not found' })
 
@@ -465,7 +523,7 @@ router.get('/invoices/:id/pdf', async (req, res) => {
 router.post('/invoices/:id/pay', requirePortalAuth, async (req, res) => {
   try {
     const all = await readInvoices(req)
-    const mine = invoicesForShop(all, req.portalShop)
+    const mine = await invoicesForShop(req, all, req.portalShop)
     const inv = mine.find(i => i.id === req.params.id)
     if (!inv) return res.status(404).json({ error: 'Not found' })
 
@@ -726,7 +784,7 @@ async function createCheckoutSession(req, inv, { paymentMethod = 'card', payerEm
 router.post('/invoices/:id/stripe-checkout', requirePortalAuth, async (req, res) => {
   try {
     const all = await readInvoices(req)
-    const mine = invoicesForShop(all, req.portalShop)
+    const mine = await invoicesForShop(req, all, req.portalShop)
     const inv = mine.find(i => i.id === req.params.id)
     if (!inv) return res.status(404).json({ error: 'Not found' })
 
@@ -894,126 +952,87 @@ router.get('/stripe/status', (req, res) => {
   res.json({ configured: stripeConfigured() })
 })
 
-// ── Portal self-dispatch: shops submit new job requests ──────────────────────
+// ── Portal cars / quotes / real board (Mark 2026-10-09) ──────────────────────
 
-// Shop jobs helpers — matches the jobs.js storage pattern
-async function readJobs(req) {
-  const segment = getSegment(req)
+router.get('/scrubs', requirePortalAuth, async (req, res) => {
   try {
-    const meta = await cacheGet(segment, 'adas_jobs_meta', null)
-    if (meta && meta.chunks > 0) {
-      const parts = await Promise.all(
-        Array.from({ length: meta.chunks }, (_, i) =>
-          cacheGet(segment, `adas_jobs_chunk_${i}`, [])
-        )
-      )
-      return parts.flat()
-    }
-    return (await cacheGet(segment, 'adas_jobs', [])) || []
-  } catch { return [] }
-}
-
-async function writeJobs(req, jobs) {
-  const segment = getSegment(req)
-  // Jobs aren't always chunked — use the same pattern as existing code.
-  // Write both keys for backward compatibility.
-  const CHUNK_SIZE = 30
-  const chunks = []
-  for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
-    chunks.push(jobs.slice(i, i + CHUNK_SIZE))
+    const { listShopScrubs } = await import('../services/portalShop.js')
+    res.json({ scrubs: await listShopScrubs(req, req.portalShop) })
+  } catch (e) {
+    console.error('[portal] scrubs', e)
+    res.status(500).json({ error: e.message })
   }
-  if (chunks.length === 0) chunks.push([])
-  for (let i = 0; i < chunks.length; i++) {
-    await cacheSet(segment, `adas_jobs_chunk_${i}`, chunks[i])
-  }
-  await cacheSet(segment, 'adas_jobs_meta', {
-    chunks: chunks.length, total: jobs.length, updated: new Date().toISOString(),
-  })
-}
+})
 
-// List shop's own jobs (for "My Jobs" tab in portal)
-router.get('/my-jobs', requirePortalAuth, async (req, res) => {
+router.get('/scrubs/:id', requirePortalAuth, async (req, res) => {
   try {
-    const jobs = await readJobs(req)
-    const shop = req.portalShop
-    const shopName = (shop.shop_name || '').toLowerCase()
-    const mine = jobs.filter(j => {
-      if (j.crm_shop_id === shop.id) return true
-      if ((j.shop_name || '').toLowerCase() === shopName) return true
-      return false
-    })
-    mine.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
-    res.json(mine.map(j => ({
-      id: j.id,
-      ro_number: j.ro_number,
-      status: j.status,
-      vehicle: { year: j.year, make: j.make, model: j.model, vin: j.vin },
-      calibrations: j.calibrations || [],
-      scheduled_date: j.scheduled_date,
-      technician: j.technician,
-      notes: j.notes,
-      created_at: j.created_at,
-      completed_at: j.completed_at,
-      submitted_via_portal: j.submitted_via_portal,
-    })))
+    const { getShopScrub } = await import('../services/portalShop.js')
+    const hit = await getShopScrub(req, req.portalShop, req.params.id)
+    if (!hit) return res.status(404).json({ error: 'Car not found' })
+    res.json(hit.public)
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
 
-// Submit a new job request via the portal
+router.post('/scrubs/:id/instant-quote', requirePortalAuth, async (req, res) => {
+  try {
+    const { requestFromScrub } = await import('../services/portalShop.js')
+    const r = await requestFromScrub(req, req.portalShop, req.portalUser, req.params.id, 'quote')
+    res.status(r.status || 200).json(r)
+  } catch (e) {
+    console.error('[portal] instant-quote', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+router.post('/scrubs/:id/request-job', requirePortalAuth, async (req, res) => {
+  try {
+    const { requestFromScrub } = await import('../services/portalShop.js')
+    const r = await requestFromScrub(req, req.portalShop, req.portalUser, req.params.id, 'job')
+    res.status(r.status || 200).json(r)
+  } catch (e) {
+    console.error('[portal] request-job', e)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+router.get('/estimates', requirePortalAuth, async (req, res) => {
+  try {
+    const { listShopEstimates } = await import('../services/portalShop.js')
+    res.json({ estimates: await listShopEstimates(req, req.portalShop) })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+router.get('/my-jobs', requirePortalAuth, async (req, res) => {
+  try {
+    const { listShopJobs, shopJobView } = await import('../services/portalShop.js')
+    const mine = await listShopJobs(req, req.portalShop)
+    res.json(mine.map(j => {
+      const view = shopJobView(j)
+      const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
+      return {
+        id: j.id,
+        ro_number: j.ro_number || j.quote_number || '',
+        vehicle: { year: j.year, make: j.make, model: j.model, vin: j.vin, label: vehicle },
+        calibrations: j.calibrations || [],
+        created_at: j.created_at,
+        quote_number: j.quote_number || '',
+        ...view,
+      }
+    }))
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 router.post('/submit-job', requirePortalAuth, async (req, res) => {
   try {
-    const shop = req.portalShop
-    const jobs = await readJobs(req)
-
-    const body = req.body || {}
-    const newJob = {
-      id: `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      shop_name: shop.shop_name,
-      shop_address: shop.address || '',
-      crm_shop_id: shop.id,
-      ro_number: (body.ro_number || '').trim(),
-      year: (body.year || '').trim(),
-      make: (body.make || '').trim(),
-      model: (body.model || '').trim(),
-      vin: (body.vin || '').trim(),
-      insurer: (body.insurer || '').trim(),
-      calibrations: Array.isArray(body.calibrations) ? body.calibrations
-        : typeof body.calibrations === 'string' ? [body.calibrations] : [],
-      damage_points: Array.isArray(body.damage_points) ? body.damage_points : [],
-      notes: (body.notes || '').trim(),
-      requested_by_name: (body.requested_by_name || '').trim(),
-      requested_by_phone: (body.requested_by_phone || '').trim(),
-      requested_date: body.requested_date || '',  // shop's preferred date
-      status: 'needs_dispatch',   // lands in the "Need to Dispatch" column
-      submitted_via_portal: true,
-      technician: '',
-      dispatched: false,
-      created_at: new Date().toISOString(),
-    }
-
-    jobs.unshift(newJob)
-    await writeJobs(req, jobs)
-
-    // Notify admin of new portal request
-    try {
-      const segment = getSegment(req)
-      const notifs = await cacheGet(segment, 'notifications', []) || []
-      notifs.unshift({
-        id: `notif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        to: 'admin',
-        type: 'portal_job_submitted',
-        title: `📥 New job from ${shop.shop_name}`,
-        body: `${[newJob.year, newJob.make, newJob.model].filter(Boolean).join(' ')}${newJob.ro_number ? ` · RO# ${newJob.ro_number}` : ''}${newJob.insurer ? ` · ${newJob.insurer}` : ''}`,
-        link: '/app/?screen=kanban',
-        read: false,
-        created_at: new Date().toISOString(),
-      })
-      await cacheSet(segment, 'notifications', notifs.slice(0, 200))
-    } catch (e) { console.warn('[portal] notif write failed:', e.message) }
-
-    res.json({ ok: true, job: newJob })
+    const { requestManualJob } = await import('../services/portalShop.js')
+    const r = await requestManualJob(req, req.portalShop, req.portalUser, req.body || {})
+    res.json(r)
   } catch (e) {
     console.error('[portal] submit-job failed:', e)
     res.status(500).json({ error: e.message })

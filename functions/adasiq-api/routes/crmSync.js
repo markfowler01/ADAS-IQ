@@ -1605,6 +1605,32 @@ router.get('/workdrive/spaces', async (req, res) => {
     res.json(out)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// POST /durable/backfill — copy every durable key that is sitting in the cache right now into the
+// DurableKV table (cron secret). Safe to re-run; keys already saved are left alone.
+router.post('/durable/backfill', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const { durable, kvGet } = await import('../services/durableKV.js')
+    const app = catalyst.initialize(req); const raw = app.cache().segment(); const seg = durable(raw, app)
+    const fixed = ['books_counter', 'books_expenses', 'books_deposits', 'books_services', 'books_invoices_meta', 'payroll_runs', 'payroll_settings', 'bonus_config', 'bonus_payouts',
+      'mileage_trips_meta', 'mileage_settings', 'quotes', 'declined_calibrations', 'adas_jobs', 'adas_jobs_meta', 'nps_responses', 'capture_calc_submissions', 'partnership_audit_requests',
+      'audit_tool_submissions', 'tool_quote_submissions', 'comms_log', 'announcements', 'org_open_seats', 'adas_iq_settings', 'adas_iq_branding', 'adas_iq_notifications',
+      'absolute_adas_job_state', 'absolute_adas_tech_config', 'van_inventory', 'pm_projects', 'pm_tasks', 'capture_approval_queue', 'pace_monthly_goal', 'brew_meta', 'brew_tips_queue',
+      'marketing_notified_comments', 'brew_email_marker', 'github_pat_secondbrain', 'week_plan', 'family_devo_passages', 'closing_history']
+    const chunked = ['books_invoices_chunk_', 'mileage_trips_chunk_', 'adas_jobs_chunk_']
+    const keys = [...fixed]; for (const p of chunked) for (let i = 0; i < 60; i++) keys.push(p + i)
+    const saved = [], already = [], emptyKeys = []
+    for (const k of keys) {
+      let inCache = null; try { inCache = await raw.getValue(k) } catch { inCache = null }
+      if (inCache === null || inCache === undefined || inCache === '') { if (!k.includes('_chunk_')) emptyKeys.push(k); continue }
+      const before = await kvGet(app, k).catch(() => null)
+      if (before) { already.push(k); continue }
+      await seg.getValue(k)   // read-through backfills it
+      saved.push(`${k} (${String(inCache).length} chars)`)
+    }
+    res.json({ ok: true, saved, already, empty_in_cache: emptyKeys })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // GET /cliq/channels — name, unique name and id of every Cliq channel the app's login can see (cron secret).
 router.get('/cliq/channels', async (req, res) => {
   if (!wdGuard(req, res)) return

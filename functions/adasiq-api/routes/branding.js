@@ -1,5 +1,6 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 const CACHE_KEY = 'adas_iq_branding'
@@ -9,8 +10,8 @@ const DEFAULTS = {
   tagline: 'Mobile ADAS Calibration Services',
   logo_url: '',
   primary_color: '#CD4419',
-  secondary_color: '#1a1a1a',
-  accent_color: '#2563eb',
+  secondary_color: '#0A0A0A',
+  accent_color: '#B33A15',
   phone: '',
   email: '',
   website: 'absoluteadas.com',
@@ -23,7 +24,7 @@ const DEFAULTS = {
 
 function getSegment(req) {
   const app = catalyst.initialize(req)
-  return app.cache().segment()
+  return durable(app.cache().segment(), app)
 }
 
 function isNotFound(e) {
@@ -35,7 +36,11 @@ async function getBranding(req) {
     const seg = getSegment(req)
     const item = await seg.get(CACHE_KEY)
     const stored = item?.cache_value ? JSON.parse(item.cache_value) : {}
-    return { ...DEFAULTS, ...stored }
+    const merged = { ...DEFAULTS, ...stored }
+    // Old default accent was Tailwind blue. Map it to website orange-hover.
+    if (String(merged.accent_color || '').toLowerCase() === '#2563eb') merged.accent_color = DEFAULTS.accent_color
+    if (String(merged.secondary_color || '').toLowerCase() === '#1a1a1a') merged.secondary_color = DEFAULTS.secondary_color
+    return merged
   } catch (e) {
     if (isNotFound(e)) return { ...DEFAULTS }
     return { ...DEFAULTS }

@@ -18,10 +18,11 @@ import { commitBinaryFile } from '../services/brewArchive.js'
 import { postToFacebookPage, postToInstagram, facebookConfigured, instagramConfigured, commentOnFacebookPost, commentOnInstagramMedia, readFacebookPostComments, listFacebookPagePosts } from '../services/metaPosting.js'
 import { postImageToLinkedIn, commentOnLinkedInPost, linkedInConfigured } from '../services/brewLinkedIn.js'
 import { postToCliqUser, postToCliqChannel, TECH_CLIQ_IDS } from '../services/cliq.js'
+import { durable } from '../services/durableKV.js'
 
 // ─── Cache helpers (same shape as brew.js) ──────────────────────────────────
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 // Named handoff segment shared with brew.js. Must match getHandoffSegment()
 // in brew.js or brew_today_digest reads will return null.

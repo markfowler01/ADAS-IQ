@@ -1,12 +1,13 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
 // ── Cache helpers ────────────────────────────────────────────────────────────
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

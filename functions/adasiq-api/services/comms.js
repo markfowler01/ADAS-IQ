@@ -4,9 +4,10 @@
 import catalyst from 'zcatalyst-sdk-node'
 import axios from 'axios'
 import { getMailAccessToken, getMailAccountId, sendMail } from './mail.js'
+import { durable } from './durableKV.js'
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

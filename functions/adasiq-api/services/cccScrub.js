@@ -91,8 +91,10 @@ export async function scrubCccItem(req, item) {
     const { triggerLines, guardScrub } = await import('./scrubGuard.js')
     const hitsPromise = triggerLines('', { text }); hitsPromise.catch(() => {})
     const { extractFromCccText } = await import('./claude.js')
-    let equip = null
-    try { equip = await (await import('./estimator/vin.js')).vinEquipment(req, e.vin && e.vin.length === 17 ? e.vin : '') } catch { equip = null }
+    const vinP = (e.vin && e.vin.length === 17)
+      ? import('./estimator/vin.js').then(V => V.vinEquipment(req, e.vin)).catch(() => null)
+      : Promise.resolve(null)
+    const equip = await Promise.race([vinP, new Promise(r => setTimeout(() => r(null), 400))])
     data = await extractFromCccText(`${equip ? equip.block + '\n\n' : ''}${text}`, { oemRefs })
     if (equip) data.vin_equipment = equip.summary
     // CCC's own fields beat anything read back by the model.

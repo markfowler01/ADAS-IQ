@@ -11,12 +11,13 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } from '../services/cliq.js'
+import { durable } from '../services/durableKV.js'
 
 export const toolQuoteRouter = express.Router()
 
 // ─── Cache helpers ──────────────────────────────────────────────────────────
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 function isNotFound(e) {
   return e?.statusCode === 404 || e?.errorInfo?.statusCode === 404

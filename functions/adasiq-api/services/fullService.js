@@ -112,3 +112,18 @@ export function tagRows(cals, rules, { collision = true } = {}) {
   }
   return keep
 }
+
+// 🔁 Per-report override (Mark 2026-10-07: "toggle Full Service on or off live on the
+// report … but remember whatever their account is set up as in the CRM"). The CRM rule
+// is the account default and is never touched; `scrub.payload.fs_override` = 'on' | 'off'
+// bends THIS report (PDF, online report, quote lines) only.
+export function applyFsOverride(r, override) {
+  if (!r || !override || !r.collision) return r
+  if (override === 'off') return { ...r, on: false, override, rules: Object.fromEntries(FULL_SERVICE.map(f => [f.key, 'off'])) }
+  if (override === 'on') return { ...r, on: true, override, rules: Object.fromEntries(FULL_SERVICE.map(f => [f.key, r.set?.[f.key] || FS_DEFAULT])) }
+  return r
+}
+export async function readFullServiceForScrub(req, scrub) {
+  const r = await readFullService(req, scrub?.shop || scrub?.payload?.shop || '')
+  return applyFsOverride(r, scrub?.payload?.fs_override || '')
+}

@@ -10,6 +10,7 @@ import { getAccessToken as getWdToken } from '../services/zoho.js'
 import { getAllRules } from '../services/calibrationRulesService.js'
 import { isCashCustomer, cashCapFor, cashCapLine, CASH_MAX_OUT_OF_POCKET } from '../services/cashPricing.js'
 import { readJobsPublic, updateJobPublic } from './jobs.js'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
@@ -277,7 +278,7 @@ export async function generateAndUploadReport(req, { job, invoices, ruledOut = [
 // ── Cache helpers ────────────────────────────────────────────────────────────
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

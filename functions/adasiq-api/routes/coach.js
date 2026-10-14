@@ -23,6 +23,7 @@ import { sendSMS } from '../services/comms.js'
 import { ptDate } from '../services/ptDate.js'
 import { getMarkPhone } from '../services/markPhone.js'
 import { gatherWeekAhead } from './briefing.js'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
@@ -39,7 +40,7 @@ router.use((req, res, next) => {
 
 function segment(req) {
   const app = catalyst.initialize(req, { type: 'advancedio' })
-  return app.cache().segment()
+  return durable(app.cache().segment(), app)
 }
 
 export async function readContext(req) {

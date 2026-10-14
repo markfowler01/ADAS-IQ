@@ -39,7 +39,7 @@ export async function reportData(req, scrubId, { withDocs = true } = {}) {
   let cals = (s.payload?.calibrations || []).map(c => ({ ...c }))
   try {
     const fs = await import('./fullService.js')
-    const r = s.shop ? await fs.readFullService(req, s.shop) : null
+    const r = s.shop ? await fs.readFullServiceForScrub(req, s) : null   // honours the per-report override
     cals = fs.tagRows(cals, r?.rules, { collision: r ? r.collision : true })
   } catch { /* plain rows */ }
   // 🧾 PCSI + pre/post scans sit in the Operations table like any calibration

@@ -467,6 +467,28 @@ export function collisionTwin(item, allItems) {
   return (allItems || []).find(i => String(i.name).trim().toLowerCase() === want) || null
 }
 
+
+// Standard description for every module-programming line (Mark 2026-10-05). Insurers
+// paid nothing on "Program ACC Radar" with no description; the line has to say WHY
+// programming is a separate operation: a replacement module has no software from the
+// factory and is loaded after it is installed.
+export function programmingDescription(cal, make = '') {
+  const name = String(cal?.calibration_name || cal?.name || '')
+  let module = name.replace(/^\s*program(ming)?\s*(of|the)?\s*/i, '').replace(/^\s*module programming( and reflash)?\s*-?\s*/i, '').replace(/\breflash\b|\bcoding\b/ig, '').replace(/\s+/g, ' ').trim()
+  if (!module || new RegExp(`^${String(make).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i').test(module) || /^(module|calibration)$/i.test(module)) {
+    const t = String(cal?.trigger || '').match(/(?:replaced|new)\s*[:\-—]?\s*([^.(]{3,60})/i)
+    module = (t && t[1].trim()) || 'control module'
+  }
+  if (!/module|sensor|camera|radar|unit|cluster|gateway/i.test(module)) module = `${module} module`
+  const lines = String(cal?.line_references || '').trim()
+  const mk = make || 'the OEM'
+  return [
+    `MODULE PROGRAMMING REQUIRED — ${module} replaced${lines ? ` (estimate line${lines.includes(',') || lines.includes('-') ? 's' : ''} ${lines})` : ''}.`,
+    `A replacement ${module} ships from the factory with no vehicle software or configuration loaded. After the sensor / control module is installed on the vehicle, the OEM software and the VIN-specific configuration must be installed with the OEM diagnostic tool before the module will communicate or operate, and before any related calibration can be performed.`,
+    `Programmed per ${mk} OEM service information. Not optional: an unprogrammed module leaves the system inoperative and sets fault codes. Billed once per module programmed.`,
+  ].join(' ')
+}
+
 export function aliasFor(calName) {
   const key = String(calName || '').trim().toLowerCase()
   // Rear blind spot is ONE item for every make and model (Mark 2026-09-30) —
@@ -828,8 +850,15 @@ export async function createDraftQuote({
       console.log(`[zoho] line removed in review: "${cal.calibration_name}"`)
       return null
     }
-    // If the technician provided a description (e.g. Diagnostic 1 / Mechanical notes), use it directly
+    // 🔑 Programming lines always carry the insurer-facing "why" (Mark 2026-10-05: "we did
+    // not get paid for these cause the descriptions are bad anytime there is a program
+    // module"). Template first, then whatever the tech or the scrub added.
+    const isProgramming = cal.cal_type === 'Programming' || /^\s*program(ming)?\b|module programming|reflash|\bcoding\b/i.test(String(cal.calibration_name || ''))
     let description = cal.description || ''
+    if (isProgramming) {
+      const tmpl = programmingDescription(cal, make)
+      description = description && !/ships from the factory/i.test(description) ? `${tmpl}\n${description}` : tmpl
+    }
     if (!description) {
       const parts = []
       if (cal.trigger)         parts.push(`Trigger: ${cal.trigger}`)

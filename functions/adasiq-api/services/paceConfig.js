@@ -13,6 +13,7 @@ import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { getAccessToken } from './zoho.js'
 import { deriveRatio } from './paceModel.js'
+import { durable } from './durableKV.js'
 
 const GOAL_KEY = 'pace_monthly_goal'
 const RATIO_KEY = 'pace_ratio'
@@ -20,7 +21,7 @@ export const DEFAULT_GOAL = 40000
 const DEFAULT_RATIO = 1.51   // measured Nov 2025 - Sep 2026, 633 invoices
 
 function seg(req) {
-  return catalyst.initialize(req, { type: 'advancedio' }).cache().segment()
+  return durable(catalyst.initialize(req, { type: 'advancedio' }).cache().segment(), catalyst.initialize(req, { type: 'advancedio' }))
 }
 
 async function read(req, key, fallback) {

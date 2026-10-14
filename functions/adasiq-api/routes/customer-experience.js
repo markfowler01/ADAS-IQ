@@ -4,11 +4,12 @@ import express from 'express'
 import crypto from 'crypto'
 import catalyst from 'zcatalyst-sdk-node'
 import { sendEmail, getBranding } from '../services/comms.js'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
 function getSegment(req) {
-  return catalyst.initialize(req).cache().segment()
+  return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req))
 }
 
 function isNotFound(e) {

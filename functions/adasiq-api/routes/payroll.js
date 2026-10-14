@@ -9,10 +9,11 @@
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
 import PDFDocument from 'pdfkit'
+import { durable } from '../services/durableKV.js'
 
 const router = express.Router()
 
-function getSegment(req) { return catalyst.initialize(req).cache().segment() }
+function getSegment(req) { return durable(catalyst.initialize(req).cache().segment(), catalyst.initialize(req)) }
 function isNotFound(e) { return e?.statusCode === 404 || e?.errorInfo?.statusCode === 404 }
 
 async function cacheSet(segment, key, value) {
