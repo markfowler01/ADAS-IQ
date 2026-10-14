@@ -116,8 +116,11 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const notCashDefault = p => (!cashMode && p === 'CP' ? offPool() : p)
   function toggleCash() {
     const next = !cashMode
+    cashTouched.current = true
     setCashMode(next)
     setPoolOverride(next ? 'CP' : offPool())
+    if (!next && insurerBlank && blankRule?.shop_id && !blankRule.mode) setLearnBlank(true)
+    if (next) setLearnBlank(false)
   }
   const [rowPrices, setRowPrices] = useState(null)          // name(lower) → {rate, needs_price}; _fixed_total
   const [creatingJob, setCreatingJob] = useState(false)
@@ -126,6 +129,37 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [invoiceError, setInvoiceError] = useState(null)
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [selectedSalesperson, setSelectedSalesperson] = useState(null)
+  // 🧾 Per-shop "no insurer on the estimate" rule (Mark 2026-10-14, Perfect Reflections): the blank →
+  // cash default only applies when the shop's rule is cash (or unset). 'standard' starts Cash OFF,
+  // 'ask' starts OFF with a banner. Kat's own tap always wins; the first time she flips Cash off on a
+  // blank-insurer job for a shop with no rule, she's offered to remember it.
+  const insurerBlank = !String(jobData?.insurer || '').trim()
+  const cashTouched = useRef(false)
+  const [blankRule, setBlankRule] = useState(null)        // { mode: ''|'cash'|'standard'|'ask', shop_id, shop_name }
+  const [learnBlank, setLearnBlank] = useState(false)
+  const [blankMsg, setBlankMsg] = useState('')
+  const ruleShopName = selectedCustomer?.name || jobData?.shop || ''
+  useEffect(() => {
+    if (!insurerBlank || techSaidCash(jobData) || !ruleShopName) return
+    let live = true
+    apiFetch(`${API_BASE}/api/shops/billing-by-name?name=${encodeURIComponent(ruleShopName)}`).then(r => r.json()).then(x => {
+      if (!live || !x?.found) return
+      const mode = x.blank_insurer || ''
+      setBlankRule({ mode, shop_id: x.shop_id, shop_name: x.shop_name })
+      if (!cashTouched.current && (mode === 'standard' || mode === 'ask')) { setCashMode(false); setPoolOverride('STD') }
+      if (!cashTouched.current && mode === 'cash') { setCashMode(true); setPoolOverride('CP') }
+    }).catch(() => {})
+    return () => { live = false }
+  }, [ruleShopName, insurerBlank]) // eslint-disable-line react-hooks/exhaustive-deps
+  async function rememberBlank(mode) {
+    if (!blankRule?.shop_id) { setLearnBlank(false); return }
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/rules/blank-insurer`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop_id: blankRule.shop_id, mode }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      setBlankRule(b => ({ ...b, mode })); setBlankMsg(`✓ Saved: ${blankRule.shop_name} estimates with no insurer now start on ${mode === 'standard' ? 'standard list' : mode}`)
+    } catch (e) { setBlankMsg(`✗ Not saved: ${e.message}`) }
+    setLearnBlank(false)
+  }
   // Job date (Mark 2026-09-03): the auto-created card was hardcoded to
   // TODAY, so jobs booked for a future day vanished off the scheduler.
   const [jobDate, setJobDate] = useState(() => jobData?._request?.scheduled_date || todayPT())
@@ -690,6 +724,26 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           </div>
         )}
 
+        {insurerBlank && blankRule?.mode === 'ask' && !cashTouched.current && (
+          <div className="rounded-xl px-3 py-2 mb-2 text-sm font-bold" style={{ backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+            ❓ No insurer on this estimate. {blankRule.shop_name} is set to ask: tap Swap to Cash for a cash job, or leave it off for standard list.
+          </div>
+        )}
+        {insurerBlank && blankRule?.mode === 'standard' && !cashMode && (
+          <div className="text-xs mb-1" style={{ color: '#555' }}>📋 No insurer on this estimate. {blankRule.shop_name} bills those on standard list, so Cash is off.</div>
+        )}
+        {learnBlank && (
+          <div className="rounded-xl px-3 py-2 mb-2 text-sm" style={{ backgroundColor: '#eef6ff', border: '1px solid #bfdbfe', color: '#1e3a8a' }}>
+            <div className="font-bold mb-1">Remember this for {blankRule?.shop_name}?</div>
+            <div className="text-xs mb-2">When their estimate has no insurer, start on standard list instead of cash.</div>
+            <div className="flex gap-2 flex-wrap">
+              <button type="button" onClick={() => rememberBlank('standard')} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#1d4ed8' }}>📋 Yes, always standard list</button>
+              <button type="button" onClick={() => rememberBlank('ask')} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>❓ Ask me each time</button>
+              <button type="button" onClick={() => setLearnBlank(false)} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ color: '#666' }}>Just this once</button>
+            </div>
+          </div>
+        )}
+        {blankMsg && <div className="text-xs mb-1 font-semibold" style={{ color: blankMsg.startsWith('✓') ? '#166534' : '#991b1b' }}>{blankMsg}</div>}
         {/* 💵 Swap to Cash — one tap either way */}
         <button type="button" onClick={toggleCash} disabled={submitting || creatingJob}
           className="w-full rounded-xl px-4 py-3 text-sm font-bold text-left flex items-center gap-3"
@@ -905,9 +959,9 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
                 disabled={selected.length === 0 || submitting || creatingJob}
                 className="w-full py-3 rounded-xl text-sm font-semibold transition-colors"
                 style={{
-                  backgroundColor: '#eff6ff',
-                  color: '#2563eb',
-                  border: '1.5px solid #bfdbfe',
+                  backgroundColor: '#f5f3f0',
+                  color: '#0A0A0A',
+                  border: '1.5px solid #e8e4e0',
                   opacity: selected.length === 0 || submitting || creatingJob ? 0.5 : 1,
                   cursor: selected.length === 0 || submitting || creatingJob ? 'not-allowed' : 'pointer',
                 }}
@@ -1098,10 +1152,10 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             </label>}
           </div>
         )}
-        <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bfdbfe' }}>
-          <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+        <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #e8e4e0' }}>
+          <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>
             <span>🏦 Insurance estimate{insurer ? ` · ${insurer}` : ''}</span>
-            <span className="text-xs font-semibold text-right" style={{ color: effective.some(l => l._edited) ? ORANGE : '#3b82f6' }}>{effective.some(l => l._edited) ? '✏️ edited' : 'tap a price to edit'}</span>
+            <span className="text-xs font-semibold text-right" style={{ color: effective.some(l => l._edited) ? ORANGE : '#1F8B8B' }}>{effective.some(l => l._edited) ? '✏️ edited' : 'tap a price to edit'}</span>
           </div>
           {effective.map((li, i) => (
             <div key={li._key} className="px-3 py-2 text-base"
@@ -1143,7 +1197,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
                 <div className="mt-1.5">
                   <button onClick={() => { setSwapOpen(swapOpen === li.requested ? null : li.requested); setSwapSearch('') }}
                     className="text-[10px] font-bold px-2 py-1 rounded-lg"
-                    style={{ backgroundColor: li._swapped ? '#1d4ed8' : '#f5f3f0', color: li._swapped ? 'white' : '#666' }}>
+                    style={{ backgroundColor: li._swapped ? '#0A0A0A' : '#f5f3f0', color: li._swapped ? 'white' : '#666' }}>
                     {li._swapped ? '✓ item set — change' : (li.learned_tier ? '✓ learned tier — change' : 'change tier / item')}
                   </button>
                   {swapOpen === li.requested && (
@@ -1198,7 +1252,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
         <div>
           <button onClick={() => { setAddOpen(o => !o); setSwapSearch('') }}
             className="w-full text-left rounded-lg px-3 py-2 text-base"
-            style={{ border: '1px dashed #93c5fd', color: '#1d4ed8', backgroundColor: '#f8fafc' }}>
+            style={{ border: '1px dashed #c4bfb8', color: '#0A0A0A', backgroundColor: '#f8fafc' }}>
             ＋ Add an item from the price list…
           </button>
           {addOpen && (
@@ -1255,12 +1309,12 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
             style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
           {quoteFirst ? (<>
             <button onClick={() => { sendRef.current = false; confirm() }} disabled={busy}
-              className="flex-1 rounded-xl py-3.5 text-sm font-bold" style={{ backgroundColor: 'white', color: '#1d4ed8', border: '1.5px solid #1d4ed8', opacity: busy ? .45 : 1 }}>
+              className="flex-1 rounded-xl py-3.5 text-sm font-bold" style={{ backgroundColor: 'white', color: '#0A0A0A', border: '1.5px solid #0A0A0A', opacity: busy ? .45 : 1 }}>
               Build, send later
             </button>
             <button onClick={() => { sendRef.current = true; confirm() }} disabled={busy || !sendTo?.length}
               className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white"
-              style={{ backgroundColor: '#1d4ed8', opacity: busy || !sendTo?.length ? .45 : 1 }}>
+              style={{ backgroundColor: '#0A0A0A', opacity: busy || !sendTo?.length ? .45 : 1 }}>
               {busy ? 'Building & sending…' : `📤 Build & send quote — $${Number(finalTotal).toFixed(2)}`}
             </button>
           </>) : (
@@ -1353,7 +1407,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
 
   if (phase === 'sent') return (
     <div className="text-sm font-semibold rounded-xl px-4 py-2.5 text-center"
-      style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1.5px solid #bfdbfe' }}>
+      style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1.5px solid #e8e4e0' }}>
       📤 Quote emailed — {msg}. It's on the Jobs board under Quotes Out.
     </div>
   )
@@ -1363,7 +1417,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
     <div className="flex flex-col gap-1.5">
       <button onClick={openReview} disabled={phase === 'loading' || phase === 'sending'}
         className="w-full py-3 rounded-xl font-bold text-white text-sm tracking-wide transition-opacity hover:opacity-90 disabled:opacity-60"
-        style={{ backgroundColor: '#1d4ed8' }}>
+        style={{ backgroundColor: '#0A0A0A' }}>
         {phase === 'loading' ? 'Loading lines…' : '📤 Send Quote to Shop'}
       </button>
       {phase === 'error' && (
@@ -1383,10 +1437,10 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
               <button onClick={() => setPhase('idle')} disabled={phase === 'sending'} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
             </div>
             <div className="px-5 py-4 overflow-y-auto space-y-3">
-              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bfdbfe' }}>
-                <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #e8e4e0' }}>
+                <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>
                   <span>📝 Quote {preview.estimate_number}</span>
-                  <span className="text-xs font-semibold" style={{ color: '#3b82f6' }}>every line the shop will see</span>
+                  <span className="text-xs font-semibold" style={{ color: '#1F8B8B' }}>every line the shop will see</span>
                 </div>
                 {preview.big4 && (
                   <div className="px-4 py-3" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#fafaf9' }}>
@@ -1436,7 +1490,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
                     {editBusy ? 'Updating the quote…' : '💾 Save changes to the quote'}
                   </button>
                 : <button onClick={send} disabled={phase === 'sending' || !preview.sent_to?.length}
-                    className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: '#1d4ed8', opacity: phase === 'sending' || !preview.sent_to?.length ? .45 : 1 }}>
+                    className="flex-[2] rounded-xl py-3.5 text-lg font-bold text-white" style={{ backgroundColor: '#0A0A0A', opacity: phase === 'sending' || !preview.sent_to?.length ? .45 : 1 }}>
                     {phase === 'sending' ? 'Sending…' : `📤 Send quote — $${Number(preview.total).toFixed(2)}`}
                   </button>}
             </div>
@@ -1537,10 +1591,10 @@ function JobSuccessCard({ result, onNavigate }) {
   const unmatched = result.unmatched_calibrations || []
   return (
     <div className="rounded-xl px-5 py-4 flex flex-col gap-3"
-      style={{ backgroundColor: '#eff6ff', border: '1.5px solid #93c5fd' }}>
+      style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #c4bfb8' }}>
       <div className="flex items-center gap-2">
         <span className="text-lg">✓</span>
-        <h3 className="font-bold" style={{ color: '#1d4ed8' }}>
+        <h3 className="font-bold" style={{ color: '#0A0A0A' }}>
           Job Drafted in Absolute ADAS Books
         </h3>
       </div>
@@ -1551,7 +1605,7 @@ function JobSuccessCard({ result, onNavigate }) {
         <SuccessField label="Status" value="Draft (not sent)" />
       </div>
       {shop && result.applied_billing_rules && (
-        <p className="text-xs" style={{ color: '#1d4ed8' }}>
+        <p className="text-xs" style={{ color: '#0A0A0A' }}>
           ✓ Matched CRM shop "{shop.shop_name}" — billing rules applied
           {inv.discount > 0 && ` · ${inv.discount_pct || ''}% discount = $${inv.discount.toFixed(2)}`}
         </p>
@@ -1576,17 +1630,17 @@ function JobSuccessCard({ result, onNavigate }) {
           <p className="mt-1.5">Add these to your Services catalog in Books so they price correctly next time.</p>
         </div>
       )}
-      <div className="flex gap-2 pt-2" style={{ borderTop: '1px solid #bfdbfe' }}>
+      <div className="flex gap-2 pt-2" style={{ borderTop: '1px solid #e8e4e0' }}>
         <button
           onClick={() => onNavigate && onNavigate('books')}
           className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white"
-          style={{ backgroundColor: '#2563eb' }}>
+          style={{ backgroundColor: '#0A0A0A' }}>
           Review in Books →
         </button>
         <button
           onClick={() => onNavigate && onNavigate('kanban')}
           className="flex-1 py-2.5 rounded-lg text-sm font-semibold"
-          style={{ backgroundColor: 'white', color: '#2563eb', border: '1.5px solid #bfdbfe' }}>
+          style={{ backgroundColor: 'white', color: '#0A0A0A', border: '1.5px solid #e8e4e0' }}>
           View Job Board
         </button>
       </div>

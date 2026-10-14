@@ -144,6 +144,15 @@ async function insertShop(req, shopData) {
 
 async function updateShop(req, rowId, updates) {
   const table = getTable(req)
+  const replaceUsers = updates && updates._replacePortalUsers
+  if (updates) delete updates._replacePortalUsers
+  if (!replaceUsers) {
+    try {
+      const cur = rowToShop(await table.getRow(String(rowId)))
+      const keep = cur.billing_rules?.portal_users
+      if (keep) updates.billing_rules = { ...(updates.billing_rules || cur.billing_rules || {}), portal_users: keep }
+    } catch { /* row missing — insert path */ }
+  }
   const row = { ROWID: String(rowId), ...shopToRow(updates) }
   const updated = await table.updateRow(row)
   return rowToShop(updated)
@@ -481,6 +490,27 @@ router.get('/duplicates', async (req, res) => {
   try { const { findShopDuplicates } = await import('../services/shopDupes.js'); res.json({ ok: true, ...(await findShopDuplicates(req)) }) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 🧾 "When the estimate has no insurer" — per shop (Mark 2026-10-14: Perfect Reflections sends CCC
+// estimates without the insurer, so the blank-insurer → cash default kept flipping their jobs to cash).
+//   cash     = Swap to Cash starts ON (CP pool, $700 cap) — the default for every shop
+//   standard = Swap to Cash starts OFF, standard list with the shop's usual discount / billing
+//   ask      = nothing pre-picked, the job screen asks
+// '' (unset) behaves like cash. A real "cash"/"customer pay" insurer is cash for every shop regardless.
+const BLANK_MODES = ['cash', 'standard', 'ask']
+router.put('/rules/blank-insurer', async (req, res) => {
+  try {
+    const mode = String(req.body?.mode || '')
+    if (!BLANK_MODES.includes(mode)) return res.status(400).json({ error: `mode must be ${BLANK_MODES.join(' | ')}` })
+    const b3 = await import('../services/big3.js')
+    const shop = req.body?.shop_id ? rowToShop(await getTable(req).getRow(String(req.body.shop_id))) : await b3.findShopByName(req, String(req.body?.name || ''))
+    if (!shop) return res.status(404).json({ error: 'No CRM shop by that name — add it in the CRM first so the rule has a home.' })
+    const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
+    const by = req.user?.techName || req.user?.name || req.user?.email || String(req.body?.by || 'app')
+    await updateShop(req, shop.id, { ...shop, billing_rules: { ...br, blank_insurer: mode, blank_insurer_set_by: by, blank_insurer_set_at: new Date().toISOString() } })
+    console.log(`[billing] ${shop.shop_name}: no-insurer estimates → ${mode} (by ${by})`)
+    res.json({ ok: true, shop_id: shop.id, shop_name: shop.shop_name, blank_insurer: mode })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/billing-by-name', async (req, res) => {
   try {
     const b3 = await import('../services/big3.js')
@@ -495,6 +525,7 @@ router.get('/billing-by-name', async (req, res) => {
     const twins = all.filter(x => x.id !== shop.id && key(x.shop_name) === key(shop.shop_name)).length
     res.json({ ok: true, found: true, name, shop_id: shop.id, shop_name: shop.shop_name, exact: key(shop.shop_name) === key(name), twins,
       rules: b3.withDefaults(r.rules), has_rule: !!r.rules, set_by: r.set_by || '', set_at: r.set_at || '',
+      blank_insurer: BLANK_MODES.includes(br.blank_insurer) ? br.blank_insurer : '', blank_insurer_set_by: br.blank_insurer_set_by || '',
       customer_type: br.customer_type || '', collision: !b3.NON_COLLISION.has(br.customer_type), discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
@@ -706,7 +737,7 @@ router.get('/:id/big3', async (req, res) => {
     const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
     const b3 = await import('../services/big3.js')
     const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
-    res.json({ ok: true, rules: b3.normalizeRules(br.big3), set_by: br.big3_set_by || '', set_at: br.big3_set_at || '', modes: b3.MODES, big3: b3.BIG3,
+    res.json({ ok: true, rules: b3.normalizeRules(br.big3), set_by: br.big3_set_by || '', set_at: br.big3_set_at || '', modes: b3.MODES, big3: b3.BIG3, blank_insurer: BLANK_MODES.includes(br.blank_insurer) ? br.blank_insurer : '', blank_insurer_set_by: br.blank_insurer_set_by || '',
       customer_type: br.customer_type || '', discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, pay_mode: br.pay_mode || '', types: b3.CUSTOMER_TYPES, pay_modes: b3.PAY_MODES })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
@@ -742,12 +773,32 @@ router.put('/:id/big3', async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
+    const { redactPortalSecrets } = await import('../services/portalUsers.js')
     const shops = await getAllShops(req)
-    res.json(shops)
+    res.json(shops.map(redactPortalSecrets))
   } catch (err) {
     console.error('[shops GET]', err.message)
     res.status(500).json({ error: err.message })
   }
+})
+
+router.get('/:id/portal-users', async (req, res) => {
+  const r = await (await import('../services/portalUsers.js')).listPortalUsers(req, req.params.id)
+  res.status(r.status || 200).json(r)
+})
+router.post('/:id/portal-users', async (req, res) => {
+  const by = req.user?.name || req.user?.email || ''
+  const r = await (await import('../services/portalUsers.js')).createPortalUser(req, req.params.id, req.body || {}, by)
+  res.status(r.status || (r.ok ? 201 : 400)).json(r)
+})
+router.patch('/:id/portal-users/:uid', async (req, res) => {
+  const by = req.user?.name || req.user?.email || ''
+  const r = await (await import('../services/portalUsers.js')).patchPortalUser(req, req.params.id, req.params.uid, req.body || {}, by)
+  res.status(r.status || 200).json(r)
+})
+router.delete('/:id/portal-users/:uid', async (req, res) => {
+  const r = await (await import('../services/portalUsers.js')).deletePortalUser(req, req.params.id, req.params.uid)
+  res.status(r.status || 200).json(r)
 })
 
 // POST /api/shops/van-contact
@@ -959,7 +1010,8 @@ router.put('/:id', async (req, res) => {
     }
     const updated = await updateShop(req, req.params.id, merged)
     await vanSync(updated)
-    res.json(updated)
+    const { redactPortalSecrets } = await import('../services/portalUsers.js')
+    res.json(redactPortalSecrets(updated))
   } catch (err) {
     console.error('[shops PUT]', err.message)
     res.status(500).json({ error: err.message })
@@ -975,6 +1027,7 @@ router.patch('/:id', async (req, res) => {
     if (req.body.pipeline_stage && req.body.pipeline_stage !== current.pipeline_stage) merged.stage_changed_at = new Date().toISOString()
     const updated = await updateShop(req, req.params.id, merged)
     await vanSync(updated)
+    const { redactPortalSecrets } = await import('../services/portalUsers.js')
 
     // New customer with no Big 3 rule → ask for it once (Mark 2026-09-10).
     if (req.body.pipeline_stage && /^(active|second_active|active2)$/.test(req.body.pipeline_stage) && !/^(active|second_active|active2)$/.test(current.pipeline_stage || '')) {
@@ -1011,7 +1064,7 @@ router.patch('/:id', async (req, res) => {
       })
     }
 
-    res.json(updated)
+    res.json(redactPortalSecrets(updated))
   } catch (err) {
     console.error('[shops PATCH]', err.message)
     res.status(500).json({ error: err.message })

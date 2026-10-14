@@ -20,7 +20,7 @@ export const BIG3 = [
 // Charge = the paid item, Included = the "(included)" $0 item.
 export const MODES = [
   { id: 'charge',   label: 'Charge',   color: '#15803d', bg: '#dcfce7' },
-  { id: 'included', label: 'Included', color: '#1d4ed8', bg: '#dbeafe' },
+  { id: 'included', label: 'Included', color: '#0A0A0A', bg: '#e8e4e0' },
   { id: 'off',      label: 'Off',      color: '#6b7280', bg: '#f3f4f6' },
 ]
 const LEGACY = { bill: 'charge', shop: 'included' }
@@ -73,7 +73,7 @@ export function DrpChips({ value = [], onChange, compact = false }) {
         {[...DRP_OPTIONS, ...extras].map(o => (
           <button key={o} type="button" onClick={() => toggle(o)}
             className={`${compact ? 'text-[10px] px-2 py-0.5' : 'text-[11px] px-2.5 py-1'} font-bold rounded-full`}
-            style={has(o) ? { backgroundColor: '#1d4ed8', color: 'white' } : { backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+            style={has(o) ? { backgroundColor: '#0A0A0A', color: 'white' } : { backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1px solid #e8e4e0' }}>
             {o}
           </button>
         ))}
@@ -102,13 +102,13 @@ export function DrpRules({ shop }) {
     } catch (e) { setMsg(`Couldn't save: ${e.message}`) } finally { setSaving(false) }
   }
   return (
-    <div className="rounded-xl p-4 mb-4" style={{ border: '1.5px solid #bfdbfe', backgroundColor: '#eff6ff' }}>
+    <div className="rounded-xl p-4 mb-4" style={{ border: '1.5px solid #e8e4e0', backgroundColor: '#f5f3f0' }}>
       <div className="flex items-center justify-between mb-2">
         <div>
           <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🏦 DRPs</div>
           <div className="text-xs" style={{ color: '#666' }}>Insurers this shop is direct-repair for — shows on their job cards</div>
         </div>
-        <button type="button" onClick={save} disabled={!dirty || saving} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1d4ed8', opacity: !dirty || saving ? .4 : 1 }}>{saving ? 'Saving…' : 'Save DRPs'}</button>
+        <button type="button" onClick={save} disabled={!dirty || saving} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0A0A0A', opacity: !dirty || saving ? .4 : 1 }}>{saving ? 'Saving…' : 'Save DRPs'}</button>
       </div>
       <DrpChips value={drps} onChange={v => { setDrps(v); setDirty(true) }} />
       {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
@@ -120,7 +120,7 @@ export function DrpBadge({ shopName, size = 'xs' }) {
   const entry = map[shopKeyOf(shopName)]
   if (!entry?.drps?.length) return null
   const cls = size === 'xs' ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'
-  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#dbeafe', color: '#1e40af' }} title="Direct-repair programs">🏦 DRP: {entry.drps.join(' · ')}</span>
+  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }} title="Direct-repair programs">🏦 DRP: {entry.drps.join(' · ')}</span>
 }
 
 // ── Rule map for card badges (one fetch per session, 5-min refresh) ─────
@@ -171,10 +171,45 @@ export function BillingPill({ shopName, size = 'xs' }) {
   const b = entry?.billing
   if (!b) return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: '#fef3c7', color: '#92400e' }} title="No customer type yet — the first Bill it will ask (collision / repair shop / dealer / retail).">🏢 type? (asks at Bill it)</span>
   const single = b.mode === 'single'
-  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: single ? '#e0f2fe' : '#ede9fe', color: single ? '#0369a1' : '#5b21b6' }} title={single ? 'One invoice, straight from the job' : 'Insurance invoice + cost invoice'}>🏢 {TYPE_SHORT[b.customer_type] || b.customer_type}{b.discount_pct != null ? ` · ${b.discount_pct}%` : ''}{b.customer_type === 'retail' ? ' · +10.1% tax' : ''} · {PAY_SHORT[b.pay_mode] || b.pay_mode || ''}</span>
+  return <span className={`${cls} font-bold rounded inline-block`} style={{ backgroundColor: single ? '#e6f4f4' : '#e8e4e0', color: single ? '#1F8B8B' : '#5b21b6' }} title={single ? 'One invoice, straight from the job' : 'Insurance invoice + cost invoice'}>🏢 {TYPE_SHORT[b.customer_type] || b.customer_type}{b.discount_pct != null ? ` · ${b.discount_pct}%` : ''}{b.customer_type === 'retail' ? ' · +10.1% tax' : ''} · {PAY_SHORT[b.pay_mode] || b.pay_mode || ''}</span>
 }
 
 // The three billing questions on the CRM card (Mark 2026-09-22).
+// 🧾 "When the estimate has no insurer" (Mark 2026-10-14). Saves on tap.
+function BlankInsurerRule({ shop, initial }) {
+  const [mode, setMode] = useState(initial || '')
+  const [msg, setMsg] = useState('')
+  useEffect(() => { setMode(initial || '') }, [initial])
+  const OPTS = [
+    { k: 'cash', label: '💵 Cash', sub: 'CP pricing · $700 max' },
+    { k: 'standard', label: '📋 Standard list', sub: 'their usual billing + discount' },
+    { k: 'ask', label: '❓ Ask me', sub: 'nothing pre-picked' },
+  ]
+  async function save(k) {
+    setMode(k); setMsg('Saving…')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/rules/blank-insurer`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop_id: shop.id, mode: k }) })
+      const x = await r.json(); if (!r.ok) throw new Error(x.error || `HTTP ${r.status}`)
+      setMsg('✓ Saved')
+    } catch (e) { setMsg(`✗ ${e.message}`) }
+  }
+  const cur = mode || 'cash'
+  return (
+    <div className="mt-3">
+      <div className="text-[11px] font-bold mb-1" style={{ color: '#555' }}>4 · When their estimate has no insurer {!mode && <span style={{ color: '#888', fontWeight: 400 }}>(default: cash)</span>}</div>
+      <div className="flex gap-1.5 flex-wrap">
+        {OPTS.map(o => (
+          <button key={o.k} type="button" onClick={() => save(o.k)} className="text-xs font-bold rounded-full px-3 py-1.5" title={o.sub}
+            style={cur === o.k ? { backgroundColor: '#1F8B8B', color: 'white' } : { backgroundColor: 'white', color: '#1F8B8B', border: '1px solid #bae6fd' }}>
+            {o.label} <span style={{ fontWeight: 400, opacity: 0.8 }}>· {o.sub}</span>
+          </button>
+        ))}
+      </div>
+      {msg && <div className="text-[11px] mt-1" style={{ color: msg.startsWith('✗') ? '#991b1b' : '#1F8B8B' }}>{msg}</div>}
+    </div>
+  )
+}
+
 export function BillingQuestions({ shop }) {
   const [d, setD] = useState(null)
   const [f, setF] = useState({ customer_type: '', discount_pct: '', pay_mode: '' })
@@ -195,13 +230,13 @@ export function BillingQuestions({ shop }) {
   }
   const complete = !!f.customer_type
   return (
-    <div className="rounded-xl p-4 mb-4" style={{ border: `1.5px solid ${complete ? '#bae6fd' : '#fde68a'}`, backgroundColor: complete ? '#f0f9ff' : '#fffbeb' }}>
+    <div className="rounded-xl p-4 mb-4" style={{ border: `1.5px solid ${complete ? '#bae6fd' : '#fde68a'}`, backgroundColor: complete ? '#e6f4f4' : '#fffbeb' }}>
       <div className="flex items-center justify-between mb-2 gap-2">
         <div>
           <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🏢 How we bill them</div>
           <div className="text-xs" style={{ color: '#666' }}>{complete ? `${types[f.customer_type]?.label || f.customer_type} · ${types[f.customer_type]?.mode === 'dual' ? 'insurance + cost invoice' : 'one invoice'}` : 'Not set — the first Bill it will ask. Answer here and it never asks.'}</div>
         </div>
-        <button type="button" onClick={save} disabled={saving || !f.customer_type} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0e7490', opacity: saving || !f.customer_type ? .4 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
+        <button type="button" onClick={save} disabled={saving || !f.customer_type} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1F8B8B', opacity: saving || !f.customer_type ? .4 : 1 }}>{saving ? 'Saving…' : 'Save'}</button>
       </div>
       <div className="text-[11px] font-bold mb-1" style={{ color: '#555' }}>1 · What kind of customer?</div>
       <div className="flex gap-1.5 flex-wrap mb-3">{Object.entries(types).map(([k, t]) => <button key={k} type="button" onClick={() => pick(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={f.customer_type === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{t.label}</button>)}</div>
@@ -209,13 +244,14 @@ export function BillingQuestions({ shop }) {
         <div>
           <div className="text-[11px] font-bold mb-1" style={{ color: '#555' }}>2 · Discount shown on their invoice</div>
           <div className="flex items-center gap-2"><input type="number" min="0" max="60" value={f.discount_pct} onChange={e => setF(x => ({ ...x, discount_pct: e.target.value }))} className="w-20 text-base font-bold rounded-md px-2 py-1 text-right" style={{ border: '1.5px solid #e0dbd6' }} /><span className="text-sm" style={{ color: '#555' }}>% off list · 0 = list price</span></div>
-          {f.customer_type === 'retail' && <div className="text-[11px] mt-1" style={{ color: '#0369a1' }}>Retail always adds 10.1% sales tax.</div>}
+          {f.customer_type === 'retail' && <div className="text-[11px] mt-1" style={{ color: '#1F8B8B' }}>Retail always adds 10.1% sales tax.</div>}
         </div>
         <div>
           <div className="text-[11px] font-bold mb-1" style={{ color: '#555' }}>3 · How do they pay?</div>
-          <div className="flex gap-1.5 flex-wrap">{Object.entries(pays).map(([k, l]) => <button key={k} type="button" onClick={() => setF(x => ({ ...x, pay_mode: k }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={f.pay_mode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l.split(' — ')[0]}</button>)}</div>
+          <div className="flex gap-1.5 flex-wrap">{Object.entries(pays).map(([k, l]) => <button key={k} type="button" onClick={() => setF(x => ({ ...x, pay_mode: k }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={f.pay_mode === k ? { backgroundColor: '#1F8B8B', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l.split(' — ')[0]}</button>)}</div>
         </div>
       </div>
+      <BlankInsurerRule shop={shop} initial={d.blank_insurer || ''} />
       {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
       <WelcomeEmailBox shop={shop} />
       <NewShopChecklist shop={shop} />
@@ -235,18 +271,18 @@ function NewShopChecklist({ shop }) {
     catch (e) { alert(e.message) } finally { setBusy('') }
   }
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
-  if (!cl) return <div className="mt-3 flex items-center gap-2 text-[11px]" style={{ color: '#888' }}>No new-shop checklist running. <button type="button" onClick={() => tick(null, 'start')} disabled={!!busy} className="font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#0e7490', border: '1px solid #0e7490' }}>▶ Start new-shop onboarding</button></div>
+  if (!cl) return <div className="mt-3 flex items-center gap-2 text-[11px]" style={{ color: '#888' }}>No new-shop checklist running. <button type="button" onClick={() => tick(null, 'start')} disabled={!!busy} className="font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#1F8B8B', border: '1px solid #1F8B8B' }}>▶ Start new-shop onboarding</button></div>
   const done = cl.items.filter(i => i.done).length
   return (
     <div className="mt-3 rounded-lg p-3" style={{ backgroundColor: 'white', border: '1px solid #bae6fd' }}>
-      <div className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: '#0369a1', fontFamily: 'IBM Plex Mono, monospace' }}>🆕 New-shop onboarding · {done}/{cl.items.length}{cl.completed_at ? ' · done' : ''}</div>
+      <div className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: '#1F8B8B', fontFamily: 'IBM Plex Mono, monospace' }}>🆕 New-shop onboarding · {done}/{cl.items.length}{cl.completed_at ? ' · done' : ''}</div>
       {cl.items.map(it => {
         const late = !it.done && it.due_date && it.due_date < today
         return (
           <label key={it.key} className="flex items-start gap-2 py-1 text-sm cursor-pointer" style={{ borderBottom: '1px solid #f3f3f3' }}>
             <input type="checkbox" checked={!!it.done} disabled={busy === it.key} onChange={() => tick(it.key)} className="mt-1" />
             <span className="flex-1" style={{ color: it.done ? '#999' : '#1a1a1a', textDecoration: it.done ? 'line-through' : 'none' }}>{it.label}
-              <span className="text-[10px] ml-1.5 font-bold rounded-full px-1.5 py-0.5" style={{ backgroundColor: it.owner === 'kat' ? '#faf5ff' : '#fff7ed', color: it.owner === 'kat' ? '#7e22ce' : '#b45309' }}>{it.owner === 'kat' ? 'Kat' : 'Mark'}</span>
+              <span className="text-[10px] ml-1.5 font-bold rounded-full px-1.5 py-0.5" style={{ backgroundColor: it.owner === 'kat' ? '#f5e8e3' : '#fff7ed', color: it.owner === 'kat' ? '#0A0A0A' : '#b45309' }}>{it.owner === 'kat' ? 'Kat' : 'Mark'}</span>
               {it.due_date && !it.done && <span className="text-[10px] ml-1" style={{ color: late ? '#b91c1c' : '#888' }}>{late ? `⚠ was due ${it.due_date}` : `by ${it.due_date}`}</span>}
             </span>
           </label>
@@ -365,14 +401,14 @@ export default function Big3Rules({ shop }) {
       <Big3Picker rules={rules} onChange={r => { setRules(r); setDirty(true) }} />
       {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('✓') ? '#15803d' : '#b91c1c' }}>{msg}</div>}
       <div className="mt-2 flex items-center gap-2 flex-wrap">
-        <button type="button" onClick={askHistory} disabled={suggesting} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+        <button type="button" onClick={askHistory} disabled={suggesting} className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: 'white', color: '#0A0A0A', border: '1px solid #e8e4e0' }}>
           {suggesting ? 'Reading Books…' : '🔍 Suggest from invoice history'}
         </button>
         {suggest?.error && <span className="text-[11px]" style={{ color: '#b91c1c' }}>{suggest.error}</span>}
         {suggest && !suggest.error && (suggest.suggested
           ? <>
               <span className="text-[11px]" style={{ color: '#555' }}>Last {suggest.invoices} invoice{suggest.invoices === 1 ? '' : 's'} say: {describeRules(suggest.suggested)}</span>
-              <button type="button" onClick={() => { setRules(suggest.suggested); setDirty(true) }} className="text-[11px] font-bold rounded-full px-2.5 py-1 text-white" style={{ backgroundColor: '#1d4ed8' }}>Use this</button>
+              <button type="button" onClick={() => { setRules(suggest.suggested); setDirty(true) }} className="text-[11px] font-bold rounded-full px-2.5 py-1 text-white" style={{ backgroundColor: '#0A0A0A' }}>Use this</button>
             </>
           : <span className="text-[11px]" style={{ color: '#888' }}>No invoices found in Books for this exact name.</span>)}
       </div>
@@ -514,11 +550,11 @@ export function FullServiceRules({ shop }) {
     } catch (e) { setMsg(e.message) } finally { setBusy('') }
   }
   return (
-    <div className="rounded-xl p-3 mb-3" style={{ border: '2px solid #0369a1', backgroundColor: '#f0f9ff' }}>
+    <div className="rounded-xl p-3 mb-3" style={{ border: '2px solid #1F8B8B', backgroundColor: '#e6f4f4' }}>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-sm font-extrabold" style={{ color: '#0369a1' }}>🧰 Full Service</div>
+        <div className="text-sm font-extrabold" style={{ color: '#1F8B8B' }}>🧰 Full Service</div>
         <button onClick={() => setOn(!d.on)} disabled={!!busy} className="rounded-full px-3 py-1.5 text-xs font-extrabold"
-          style={d.on ? { backgroundColor: '#0369a1', color: '#fff' } : { backgroundColor: '#e5e7eb', color: '#4b5563' }}>{busy === 'on' ? '…' : d.on ? '● ON' : '○ OFF'}</button>
+          style={d.on ? { backgroundColor: '#1F8B8B', color: '#fff' } : { backgroundColor: '#e5e7eb', color: '#4b5563' }}>{busy === 'on' ? '…' : d.on ? '● ON' : '○ OFF'}</button>
       </div>
       <div className="text-[11px] mb-2" style={{ color: '#555' }}>{d.on
         ? 'Follow-up work we do for this shop. The scrub always finds it; this decides who does each item. Ask = shown as an offer 💰.'
