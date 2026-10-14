@@ -52,8 +52,15 @@ const daysBetween = (a, b) => Math.floor((new Date(b) - new Date(a)) / 86400000)
 const esc = s => String(s || '').replace(/'/g, "''")
 
 /** Zone from an address: longest matching city name wins. */
+// The city part of "street, City, WA 98xxx, USA" — street names like "Pacific Hwy S" in Kent must not
+// match the town of Pacific (2026-10-14). Falls back to the whole string when there's no ", WA".
+export function cityPart(address) {
+  const parts = String(address || '').split(',').map(x => x.trim())
+  const i = parts.findIndex(p => /^(WA|Washington|OR|Oregon|ID|Idaho)\b/i.test(p))
+  return i > 0 ? parts[i - 1] : String(address || '')
+}
 export function zoneForAddress(address) {
-  const a = ` ${String(address || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
+  const a = ` ${cityPart(address).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
   let best = null
   for (const z of ZONES) for (const c of z.cities) if (a.includes(` ${c.replace(/[^a-z0-9 ]+/g, ' ')} `) && (!best || c.length > best.len)) best = { id: z.id, len: c.length }
   return best?.id || ''
@@ -65,7 +72,7 @@ export function regionForAddress(address) {
   // North Bothell / Mill Creek (98012, 98021) is Snohomish County → South County, not Eastside.
   if (/\bbothell\b/i.test(raw) && /\b980(12|21)\b/.test(raw)) return 'southcounty'
   const z = zoneForAddress(raw); if (z) return z
-  const a = ` ${raw.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
+  const a = ` ${cityPart(raw).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
   if (OUT_CITIES.some(c => a.includes(` ${c} `))) return OUT_OF_AREA
   if (/,\s*(OR|ID|CA|Oregon|Idaho)\b/.test(raw)) return OUT_OF_AREA
   return ''
