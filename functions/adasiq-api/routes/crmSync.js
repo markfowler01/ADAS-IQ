@@ -1644,7 +1644,7 @@ router.post('/shops/fill-addresses', async (req, res) => {
     const { getAllShops } = await import('./shops.js'); const P = await import('../services/pipeline.js')
     const apply = req.query.apply === '1', max = Math.min(Number(req.query.max) || 40, 120)
     const all = await getAllShops(req)
-    const todo = all.filter(s => !String(s.address || '').trim() || !/\d{5}/.test(String(s.address || ''))).slice(0, max)
+    const todo = all.filter(s => !/^test\b/i.test(String(s.shop_name || '')) && (!String(s.address || '').trim() || !/\d{5}/.test(String(s.address || '')))).slice(0, max)
     const token = await getAccessToken(); const H = { Authorization: `Zoho-oauthtoken ${token}` }; const org = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
     const norm = x => String(x || '').toLowerCase().replace(/\b(inc|llc|corp|ltd|co|the|llp|dba)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
     const fmt = b => { if (!b) return ''; const line = [b.address, b.street2].filter(Boolean).join(' ').trim(); const cs = [b.city, [b.state_code || b.state, b.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '); return line && b.city ? `${line}, ${cs}, USA` : '' }
@@ -1661,8 +1661,9 @@ router.post('/shops/fill-addresses', async (req, res) => {
       if (!address && process.env.GOOGLE_PLACES_API_KEY) {
         try {
           const r = await axios.post('https://places.googleapis.com/v1/places:searchText', { textQuery: `${sh.shop_name}, Washington`, maxResultCount: 3 }, { headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': process.env.GOOGLE_PLACES_API_KEY, 'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.nationalPhoneNumber' }, timeout: 10000 })
-          const words = norm(sh.shop_name).split(' ').filter(w => w.length > 2 && !['auto', 'body', 'shop', 'repair', 'collision', 'center', 'sales', 'automotive'].includes(w))
-          const p = (r.data?.places || []).find(x => /\bWA\b/.test(x.formattedAddress || '') && (words.length === 0 ? norm(x.displayName?.text) === norm(sh.shop_name) : words.every(w => norm(x.displayName?.text).includes(w))))
+          const words = norm(sh.shop_name).split(' ').filter(w => w.length > 2 && !['auto', 'body', 'bodyshop', 'shop', 'repair', 'collision', 'center', 'sales', 'automotive'].includes(w))
+          // A word can match the business name OR its address ("Maaco - Bellingham" is listed as "Maaco Auto Body Shop & Painting", Bellingham)
+          const p = (r.data?.places || []).find(x => /\bWA\b/.test(x.formattedAddress || '') && (words.length === 0 ? norm(x.displayName?.text) === norm(sh.shop_name) : words.every(w => norm(x.displayName?.text).includes(w) || norm(x.formattedAddress).includes(w)) && words.some(w => norm(x.displayName?.text).includes(w))))
           if (p) { address = p.formattedAddress; if (!phone) phone = p.nationalPhoneNumber || ''; source = 'Google' }
         } catch { /* none */ }
       }
