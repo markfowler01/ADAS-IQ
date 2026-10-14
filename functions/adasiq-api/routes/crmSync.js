@@ -1631,6 +1631,55 @@ router.post('/durable/backfill', async (req, res) => {
     res.json({ ok: true, saved, already, empty_in_cache: emptyKeys })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// POST /shops/fill-addresses?apply=1&max=40 — every shop gets a full mailing address (Mark 2026-10-14:
+// "so that later I can send mail and physical mail to them"). Blank addresses only, never overwrites.
+// Source 1: the shop's Zoho Books customer (billing address, plus email/phone if blank).
+// Source 2: Google Places by shop name in Washington (best match, name must agree).
+// Then the zone is set from the new address. Dry run by default.
+router.post('/shops/fill-addresses', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  const t0 = Date.now()
+  try {
+    const axios = (await import('axios')).default; const { getAccessToken } = await import('../services/zoho.js')
+    const { getAllShops } = await import('./shops.js'); const P = await import('../services/pipeline.js')
+    const apply = req.query.apply === '1', max = Math.min(Number(req.query.max) || 40, 120)
+    const all = await getAllShops(req)
+    const todo = all.filter(s => !String(s.address || '').trim() || !/\d{5}/.test(String(s.address || ''))).slice(0, max)
+    const token = await getAccessToken(); const H = { Authorization: `Zoho-oauthtoken ${token}` }; const org = { organization_id: process.env.ZOHO_ORGANIZATION_ID }
+    const norm = x => String(x || '').toLowerCase().replace(/\b(inc|llc|corp|ltd|co|the|llp|dba)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim()
+    const fmt = b => { if (!b) return ''; const line = [b.address, b.street2].filter(Boolean).join(' ').trim(); const cs = [b.city, [b.state_code || b.state, b.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '); return line && b.city ? `${line}, ${cs}, USA` : '' }
+    const out = []; const t = catalyst.initialize(req, { type: 'advancedio' }).datastore().table('CRMShops')
+    for (const sh of todo) {
+      if (Date.now() - t0 > 24000) break
+      let address = '', email = '', phone = '', source = ''
+      try {
+        let c = null
+        if (sh.zoho_contact_id) c = (await axios.get(`https://www.zohoapis.com/books/v3/contacts/${sh.zoho_contact_id}`, { headers: H, params: org, timeout: 10000 })).data?.contact
+        if (!c) { const l = (await axios.get('https://www.zohoapis.com/books/v3/contacts', { headers: H, params: { ...org, contact_name_contains: String(sh.shop_name).slice(0, 40) }, timeout: 10000 })).data?.contacts || []; const hit = l.find(x => norm(x.contact_name) === norm(sh.shop_name)) || (l.length === 1 ? l[0] : null); if (hit) c = (await axios.get(`https://www.zohoapis.com/books/v3/contacts/${hit.contact_id}`, { headers: H, params: org, timeout: 10000 })).data?.contact }
+        if (c) { address = fmt(c.billing_address) || fmt(c.shipping_address); email = c.email || ''; phone = c.phone || c.mobile || ''; if (address) source = 'Books' }
+      } catch (e) { /* fall through to Google */ }
+      if (!address && process.env.GOOGLE_PLACES_API_KEY) {
+        try {
+          const r = await axios.post('https://places.googleapis.com/v1/places:searchText', { textQuery: `${sh.shop_name}, Washington`, maxResultCount: 3 }, { headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': process.env.GOOGLE_PLACES_API_KEY, 'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.nationalPhoneNumber' }, timeout: 10000 })
+          const words = norm(sh.shop_name).split(' ').filter(w => w.length > 2 && !['auto', 'body', 'shop', 'repair', 'collision', 'center', 'sales', 'automotive'].includes(w))
+          const p = (r.data?.places || []).find(x => /\bWA\b/.test(x.formattedAddress || '') && (words.length === 0 ? norm(x.displayName?.text) === norm(sh.shop_name) : words.every(w => norm(x.displayName?.text).includes(w))))
+          if (p) { address = p.formattedAddress; if (!phone) phone = p.nationalPhoneNumber || ''; source = 'Google' }
+        } catch { /* none */ }
+      }
+      const row = { shop: sh.shop_name, stage: sh.pipeline_stage, address, source: source || 'not found' }
+      if (address) {
+        const patch = { ROWID: String(sh.id), address }
+        if (!String(sh.email || '').trim() && email) { patch.email = email; row.email = email }
+        if (!String(sh.phone || '').trim() && phone) patch.phone = phone
+        const region = P.regionForAddress(address); if (region && !P.ZONE_BY_ID[sh.region] && sh.region !== 'out') { patch.region = region; row.zone = region }
+        if (apply) await t.updateRow(patch)
+      }
+      out.push(row)
+    }
+    const missing = all.filter(s => !String(s.address || '').trim() || !/\d{5}/.test(String(s.address || ''))).length
+    res.json({ ok: true, missing_before: missing, checked: out.length, found: out.filter(r => r.address).length, applied: apply, rows: out })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // POST /pipeline/discover-add?city=Yakima&apply=1 — Google body-shop discovery for one city, added as
 // Targets with zone + owner (Mark 2026-10-14: "add in all the body shops from each of those areas").
 // Without apply=1 it only lists what it would add. Never touches shops already in the CRM.
