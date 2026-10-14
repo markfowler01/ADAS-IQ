@@ -15,11 +15,11 @@ router.get('/zones', (req, res) => res.json({ ok: true, zones: ZONES, stages: ST
 // CRM are filtered out. Nothing is written here — /api/shops/bulk does that
 // after Mark reviews the list.
 const COMPETITOR_RE = /calibrat|abs-c|avsc|hivecalib|adas\b|mobile diag|windshield|auto glass|glass repair|towing|tow\b|detail|tint|wrap|tire|muffler|transmission|oil change|lube|car wash|dealership|rental|u-haul|parts store|autozone|o'reilly|napa auto parts/i
-router.get('/discover', async (req, res) => {
-  try {
+// Shared by the review modal (GET /discover) and the cron bulk-add (crm-sync-cron /pipeline/discover-add).
+export async function discoverCity(req, city) {
     const apiKey = process.env.GOOGLE_PLACES_API_KEY
-    if (!apiKey) return res.status(500).json({ error: 'Google Places API key not configured' })
-    const city = String(req.query.city || '').trim(); if (!city) return res.status(400).json({ error: 'city required' })
+    if (!apiKey) throw Object.assign(new Error('Google Places API key not configured'), { status: 500 })
+    city = String(city || '').trim(); if (!city) throw Object.assign(new Error('city required'), { status: 400 })
     const axios = (await import('axios')).default
     const headers = { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.googleMapsUri,places.businessStatus,places.primaryType,places.types,nextPageToken' }
     const queries = [`auto body shop in ${city}, WA`, `collision repair center in ${city}, WA`]
@@ -53,7 +53,11 @@ router.get('/discover', async (req, res) => {
       out.push({ place_id: p.id, shop_name: name, address, phone: p.nationalPhoneNumber || '', website: p.websiteUri || '', google_maps_url: p.googleMapsUri || '', rating: p.rating || 0, reviews: p.userRatingCount || 0, zone: zoneOf({ region: '', address, shop_name: name }), in_crm: dup, city })
     }
     out.sort((a, b) => (b.reviews || 0) - (a.reviews || 0))
-    res.json({ ok: true, city, found: found.size, candidates: out.filter(c => !c.in_crm), already: out.filter(c => c.in_crm).length })
+    return { ok: true, city, found: found.size, candidates: out.filter(c => !c.in_crm), already: out.filter(c => c.in_crm).length }
+}
+router.get('/discover', async (req, res) => {
+  try {
+    res.json(await discoverCity(req, req.query.city))
   } catch (e) { fail(res, e, 'discover') }
 })
 router.get('/stats', async (req, res) => { try { res.json({ ok: true, ...stats(await shops(req)) }) } catch (e) { fail(res, e, 'stats') } })

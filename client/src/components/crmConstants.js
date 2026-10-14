@@ -3,12 +3,12 @@ export const ORANGE = '#CD4419'
 export const STAGES = [
   // Mark's own stages (2026-09-15). Ids stay what the app has always used so
   // every shop keeps its place; only the words and the order changed.
-  { id: 'target',     label: 'Not contacted',                    emoji: '🎯', color: '#7c3aed', bg: '#ede9fe' },
+  { id: 'target',     label: 'Not contacted',                    emoji: '🎯', color: '#0A0A0A', bg: '#e8e4e0' },
   { id: 'contacted',  label: 'Contacted',                        emoji: '📞', color: '#b45309', bg: '#fef3c7' },
-  { id: 'interested', label: 'Shown interest',                   emoji: '🤝', color: '#0e7490', bg: '#cffafe' },
-  { id: 'proposal',   label: 'High value offer · free demo',     emoji: '🎁', color: '#c2410c', bg: '#fff7ed' },
+  { id: 'interested', label: 'Shown interest',                   emoji: '🤝', color: '#1F8B8B', bg: '#e6f4f4' },
+  { id: 'proposal',   label: 'High value offer · free demo',     emoji: '🎁', color: '#CD4419', bg: '#f5e8e3' },
   { id: 'active',     label: 'Current customer',                 emoji: '✅', color: '#15803d', bg: '#dcfce7' },
-  { id: 'active2',    label: 'Own ADAS guy · we are backup',     emoji: '🔄', color: '#0369a1', bg: '#e0f2fe' },
+  { id: 'active2',    label: 'Own ADAS guy · we are backup',     emoji: '🔄', color: '#B33A15', bg: '#f5e8e3' },
   { id: 'denied',     label: 'Own ADAS guy · not interested',    emoji: '🚫', color: '#b91c1c', bg: '#fee2e2' },
   { id: 'lost',       label: 'Lost',                             emoji: '❌', color: '#6b7280', bg: '#f3f4f6' },
 ]
@@ -22,8 +22,8 @@ export const COMPETITOR_STAGES = ['active2', 'denied', 'lost']
 
 export const ACTIVITY_TYPES = [
   { id: 'call',    label: 'Call',    icon: '📞', color: '#15803d', bg: '#dcfce7' },
-  { id: 'visit',   label: 'Visit',   icon: '🚗', color: '#1d4ed8', bg: '#dbeafe' },
-  { id: 'email',   label: 'Email',   icon: '✉️',  color: '#7c3aed', bg: '#ede9fe' },
+  { id: 'visit',   label: 'Visit',   icon: '🚗', color: '#1F8B8B', bg: '#e6f4f4' },
+  { id: 'email',   label: 'Email',   icon: '✉️',  color: '#0A0A0A', bg: '#e8e4e0' },
   { id: 'meeting', label: 'Meeting', icon: '🤝', color: '#b45309', bg: '#fef3c7' },
   { id: 'note',    label: 'Note',    icon: '📝', color: '#6b7280', bg: '#f3f4f6' },
 ]
@@ -56,15 +56,25 @@ export const DEFAULT_COMPETITORS = [
 
 // Six I-5 zones, Bellingham → Olympia (2026-09-15). Stored in the shop's `region`.
 export const ZONES = [
-  { id: 'north',     label: 'North',       owner: 'Jayden', day: 'Mon' },
-  { id: 'snohomish', label: 'Snohomish',   owner: 'Jayden', day: 'Tue · Thu' },
-  { id: 'eastside',  label: 'Eastside',    owner: 'Mark',   day: 'Wed' },
-  { id: 'seattle',   label: 'Seattle',     owner: 'Mark',   day: 'Thu' },
-  { id: 'south',     label: 'South Sound', owner: 'Mark',   day: 'Fri (alt)' },
-  { id: 'olympia',   label: 'Olympia',     owner: 'Mark',   day: 'Fri (alt)' },
+  { id: 'north',       label: 'North',        owner: 'Jayden', day: 'Mon' },
+  { id: 'snohomish',   label: 'Snohomish',    owner: 'Jayden', day: 'Tue · Thu' },
+  { id: 'southcounty', label: 'South County', owner: 'Jayden', day: 'TBD' },
+  { id: 'eastside',    label: 'Eastside',     owner: 'Mark',   day: 'Wed' },
+  { id: 'seattle',     label: 'Seattle',      owner: 'Mark',   day: 'Thu' },
+  { id: 'south',       label: 'South Sound',  owner: 'Mark',   day: 'Fri (alt)' },
+  { id: 'olympia',     label: 'Olympia',      owner: 'Mark',   day: 'Fri (alt)' },
+  { id: 'kitsap',      label: 'Kitsap',       owner: 'Mark',   day: 'TBD' },
+  // 🌾 Eastern Washington growth areas (Mark 2026-10-14)
+  { id: 'tricities',   label: 'Tri-Cities',   owner: 'Mark',   day: 'East trip', east: true },
+  { id: 'spokane',     label: 'Spokane',      owner: 'Mark',   day: 'East trip', east: true },
+  { id: 'yakima',      label: 'Yakima',       owner: 'Mark',   day: 'East trip', east: true },
+  { id: 'wenatchee',   label: 'Wenatchee',    owner: 'Mark',   day: 'East trip', east: true },
+  { id: 'cleelum',     label: 'Cle Elum / Ellensburg', owner: 'Mark', day: 'East trip', east: true },
 ]
+// region 'out' = outside the I-5 territory (Mark 2026-10-14): kept, but no zone, owner or counts.
+export const OUT_OF_AREA = 'out'
 export const REGIONS = ZONES.map(z => z.id)
-export const zoneLabel = id => ZONES.find(z => z.id === id)?.label || id || ''
+export const zoneLabel = id => id === 'out' ? 'Out of area' : (ZONES.find(z => z.id === id)?.label || id || '')
 
 export const TEAM_MEMBERS = ['Mark', 'Jayden']
 

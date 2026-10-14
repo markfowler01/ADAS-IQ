@@ -638,7 +638,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
     if (showOverdue && !isOverdue(s) && !isDueToday(s)) return false
     if (stageFilter  && s.pipeline_stage !== stageFilter)  return false
     if (big3Only && !big3Missing.some(m => m.id === s.id)) return false
-    if (regionFilter && (regionFilter === 'unzoned' ? !!zoneOf(s) : zoneOf(s) !== regionFilter)) return false
+    if (regionFilter && (regionFilter === 'out' ? s.region !== 'out' : regionFilter === 'unzoned' ? (!!zoneOf(s) || s.region === 'out') : zoneOf(s) !== regionFilter)) return false
     if (ownerFilter && ownerOf(s) !== ownerFilter)          return false
     if (compFilter && (s.denied_to || s.lost_to || '') !== compFilter) return false
     if (staleOnly && !((staleDays(s) || 0) > 0 && s.pipeline_stage !== 'target')) return false
@@ -887,13 +887,14 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
           })}
 
           {/* Zone + owner filters (2026-09-15) */}
-          {ZONES.map(z => { const inZone = countShops.filter(sh => zoneOf(sh) === z.id); const n = inZone.length; const cust = inZone.filter(sh => sh.pipeline_stage === 'active').length; return (
-            <button key={z.id} onClick={() => { setRegionFilter(regionFilter === z.id ? '' : z.id); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }}
+          {ZONES.map((z, zi) => { const inZone = countShops.filter(sh => zoneOf(sh) === z.id); const n = inZone.length; const cust = inZone.filter(sh => sh.pipeline_stage === 'active').length; return (
+            <span key={z.id} className="contents">{z.east && !ZONES[zi - 1]?.east && <span className="text-[11px] font-extrabold flex-shrink-0 self-center px-1" style={{ color: '#b45309' }}>🌾 East WA</span>}<button onClick={() => { setRegionFilter(regionFilter === z.id ? '' : z.id); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }}
               className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
               style={regionFilter === z.id ? { backgroundColor: '#e0e7ff', color: '#3730a3', border: '1px solid #a5b4fc' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
               📍 {z.label} · <span style={{ color: '#15803d' }}>✅ {cust}</span> / {n}
-            </button>) })}
-          {shops.some(sh => !zoneOf(sh)) && <button onClick={() => { setRegionFilter(regionFilter === 'unzoned' ? '' : 'unzoned'); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={regionFilter === 'unzoned' ? { backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#f5f3f0', color: '#888' }}>📍 No zone ({shops.filter(sh => !zoneOf(sh)).length})</button>}
+            </button></span>) })}
+          {countShops.some(sh => sh.region === 'out') && <button onClick={() => { setRegionFilter(regionFilter === 'out' ? '' : 'out'); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={regionFilter === 'out' ? { backgroundColor: '#e5e7eb', color: '#374151', border: '1px solid #9ca3af' } : { backgroundColor: '#f5f3f0', color: '#888' }}>🚫 Out of area ({countShops.filter(sh => sh.region === 'out').length})</button>}
+          {shops.some(sh => !zoneOf(sh) && sh.region !== 'out') && <button onClick={() => { setRegionFilter(regionFilter === 'unzoned' ? '' : 'unzoned'); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0" style={regionFilter === 'unzoned' ? { backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fcd34d' } : { backgroundColor: '#f5f3f0', color: '#888' }}>📍 No zone ({shops.filter(sh => !zoneOf(sh) && sh.region !== 'out').length})</button>}
           {TEAM_MEMBERS.map(o => (
             <button key={o} onClick={() => { setOwnerFilter(ownerFilter === o ? '' : o); setStageFilter(''); setShowOverdue(false) }} className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
               style={ownerFilter === o ? { backgroundColor: '#dcfce7', color: '#166534', border: '1px solid #86efac' } : { backgroundColor: '#f5f3f0', color: '#888' }}>👤 {o}</button>

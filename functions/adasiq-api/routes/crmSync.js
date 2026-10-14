@@ -1631,6 +1631,49 @@ router.post('/durable/backfill', async (req, res) => {
     res.json({ ok: true, saved, already, empty_in_cache: emptyKeys })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// POST /pipeline/discover-add?city=Yakima&apply=1 — Google body-shop discovery for one city, added as
+// Targets with zone + owner (Mark 2026-10-14: "add in all the body shops from each of those areas").
+// Without apply=1 it only lists what it would add. Never touches shops already in the CRM.
+router.post('/pipeline/discover-add', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const { discoverCity } = await import('./pipeline.js'); const P = await import('../services/pipeline.js'); const { insertShop, getAllShops } = await import('./shops.js')
+    const d = await discoverCity(req, String(req.query.city || ''))
+    const have = new Set((await getAllShops(req)).map(s => String(s.shop_name || '').toLowerCase().trim()))
+    const rows = []
+    for (const c of d.candidates || []) {
+      const region = P.regionForAddress(c.address) || c.zone || ''
+      if (!region || have.has(String(c.shop_name).toLowerCase().trim())) continue
+      have.add(String(c.shop_name).toLowerCase().trim())
+      rows.push({ shop_name: c.shop_name, address: c.address, phone: c.phone || '', email: '', pipeline_stage: 'target', region, assigned_to: P.ZONE_BY_ID[region]?.owner || '', referral_source: 'Google',
+        notes: `Found by territory discovery ${new Date().toISOString().slice(0, 10)} · ${c.rating ? `${c.rating}★ (${c.reviews})` : 'no rating'}${c.website ? ` · ${c.website}` : ''}${c.google_maps_url ? ` · ${c.google_maps_url}` : ''}` })
+    }
+    let added = 0
+    if (req.query.apply === '1') for (const r of rows) { await insertShop(req, r); added++ }
+    res.json({ ok: true, city: d.city, google_found: d.found, already_in_crm: d.already, new: rows.length, added, by_zone: rows.reduce((m, r) => (m[r.region] = (m[r.region] || 0) + 1, m), {}), shops: rows.map(r => `${r.shop_name} · ${r.address.split(',').slice(-3, -1).join(',').trim()}`) })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+// POST /shops/rezone?apply=1 — set every shop's zone from its address (Mark 2026-10-14). Default is a
+// dry run listing the changes. Only region changes; a shop whose address names no known city is left alone.
+router.post('/shops/rezone', async (req, res) => {
+  if (!wdGuard(req, res)) return
+  try {
+    const P = await import('../services/pipeline.js'); const { getAllShops } = await import('./shops.js')
+    const shops = await getAllShops(req); const changes = []; const unknown = []
+    for (const sh of shops) {
+      const target = P.regionForAddress(sh.address) || (!String(sh.address || '').trim() && !sh.region ? P.zoneForAddress(sh.shop_name) : '')
+      if (!target) { if (!sh.region && String(sh.address || '').trim()) unknown.push(`${sh.shop_name} · ${String(sh.address).slice(0, 60)}`); continue }
+      if (target !== (sh.region || '')) changes.push({ id: String(sh.id), shop: sh.shop_name, stage: sh.pipeline_stage, from: sh.region || '', to: target, address: String(sh.address || '').slice(0, 70) })
+    }
+    let applied = 0
+    if (req.query.apply === '1') {
+      const t = catalyst.initialize(req, { type: 'advancedio' }).datastore().table('CRMShops')
+      for (const c of changes) { await t.updateRow({ ROWID: c.id, region: c.to }); applied++ }
+    }
+    const tally = {}; for (const c of changes) tally[`${c.from || '(none)'} → ${c.to}`] = (tally[`${c.from || '(none)'} → ${c.to}`] || 0) + 1
+    res.json({ ok: true, total: shops.length, changes: changes.length, applied, tally, list: changes, unknown_city: unknown })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 // GET /cliq/channels — name, unique name and id of every Cliq channel the app's login can see (cron secret).
 router.get('/cliq/channels', async (req, res) => {
   if (!wdGuard(req, res)) return

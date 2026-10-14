@@ -5,13 +5,28 @@
 import catalyst from 'zcatalyst-sdk-node'
 
 export const ZONES = [
-  { id: 'north',     label: 'North',       owner: 'Jayden', day: 'Mon',       cities: ['bellingham', 'ferndale', 'lynden', 'blaine', 'mount vernon', 'mt vernon', 'mt. vernon', 'burlington', 'anacortes', 'sedro-woolley', 'sedro woolley', 'oak harbor', 'stanwood', 'arlington', 'camano'] },
-  { id: 'snohomish', label: 'Snohomish',   owner: 'Jayden', day: 'Tue · Thu', cities: ['everett', 'marysville', 'lake stevens', 'lynnwood', 'snohomish', 'monroe', 'mukilteo', 'mill creek', 'edmonds', 'granite falls', 'sultan', 'gold bar'] },
-  { id: 'eastside',  label: 'Eastside',    owner: 'Mark',   day: 'Wed',       cities: ['kirkland', 'redmond', 'bellevue', 'bothell', 'woodinville', 'issaquah', 'sammamish', 'kenmore', 'mercer island', 'newcastle', 'duvall', 'carnation', 'snoqualmie', 'north bend'] },
-  { id: 'seattle',   label: 'Seattle',     owner: 'Mark',   day: 'Thu',       cities: ['seattle', 'shoreline', 'renton', 'kent', 'tukwila', 'burien', 'seatac', 'des moines', 'lake forest park', 'mountlake terrace', 'covington', 'maple valley'] },
-  { id: 'south',     label: 'South Sound', owner: 'Mark',   day: 'Fri (alt)', cities: ['auburn', 'federal way', 'tacoma', 'puyallup', 'sumner', 'fife', 'lakewood', 'university place', 'bonney lake', 'gig harbor', 'milton', 'edgewood', 'spanaway'] },
-  { id: 'olympia',   label: 'Olympia',     owner: 'Mark',   day: 'Fri (alt)', cities: ['lacey', 'olympia', 'tumwater', 'centralia', 'chehalis', 'yelm', 'dupont', 'shelton', 'rochester'] },
+  { id: 'north',       label: 'North',        owner: 'Jayden', day: 'Mon',       cities: ['bellingham', 'ferndale', 'lynden', 'blaine', 'nooksack', 'everson', 'mount vernon', 'mt vernon', 'mt. vernon', 'burlington', 'anacortes', 'sedro-woolley', 'sedro woolley', 'oak harbor', 'coupeville', 'langley', 'freeland', 'friday harbor', 'stanwood', 'arlington', 'camano'] },
+  { id: 'snohomish',   label: 'Snohomish',    owner: 'Jayden', day: 'Tue · Thu', cities: ['everett', 'marysville', 'lake stevens', 'snohomish', 'monroe', 'granite falls', 'sultan', 'gold bar'] },
+  // Mark 2026-10-14: Lynnwood / Edmonds / Mukilteo are Snohomish County but nowhere near Snohomish the city.
+  { id: 'southcounty', label: 'South County', owner: 'Jayden', day: 'TBD',       cities: ['lynnwood', 'edmonds', 'mukilteo', 'mountlake terrace', 'brier', 'mill creek'] },
+  { id: 'eastside',    label: 'Eastside',     owner: 'Mark',   day: 'Wed',       cities: ['kirkland', 'redmond', 'bellevue', 'bothell', 'woodinville', 'issaquah', 'sammamish', 'kenmore', 'mercer island', 'newcastle', 'duvall', 'carnation', 'snoqualmie', 'north bend'] },
+  { id: 'seattle',     label: 'Seattle',      owner: 'Mark',   day: 'Thu',       cities: ['seattle', 'shoreline', 'renton', 'kent', 'tukwila', 'burien', 'seatac', 'des moines', 'lake forest park', 'covington', 'maple valley'] },
+  { id: 'south',       label: 'South Sound',  owner: 'Mark',   day: 'Fri (alt)', cities: ['auburn', 'federal way', 'tacoma', 'puyallup', 'sumner', 'fife', 'lakewood', 'university place', 'bonney lake', 'gig harbor', 'milton', 'edgewood', 'spanaway', 'graham', 'buckley', 'pacific', 'algona', 'enumclaw', 'orting', 'steilacoom'] },
+  { id: 'olympia',     label: 'Olympia',      owner: 'Mark',   day: 'Fri (alt)', cities: ['lacey', 'olympia', 'tumwater', 'centralia', 'chehalis', 'yelm', 'dupont', 'shelton', 'rochester', 'tenino'] },
+  // 🌾 Eastern Washington growth areas (Mark 2026-10-14: "I do wanna grow in this area… the cities
+  // are spread out"). One area per hub; owner Mark until someone runs east.
+  { id: 'tricities',   label: 'Tri-Cities',   owner: 'Mark',   day: 'East trip', east: true, cities: ['kennewick', 'pasco', 'richland', 'west richland', 'benton city', 'burbank', 'prosser', 'walla walla', 'college place'] },
+  { id: 'spokane',     label: 'Spokane',      owner: 'Mark',   day: 'East trip', east: true, cities: ['spokane', 'spokane valley', 'liberty lake', 'cheney', 'airway heights', 'deer park', 'mead', 'pullman', 'colfax', 'wilbur', 'davenport'] },
+  { id: 'yakima',      label: 'Yakima',       owner: 'Mark',   day: 'East trip', east: true, cities: ['yakima', 'union gap', 'selah', 'sunnyside', 'grandview', 'wapato', 'toppenish', 'zillah', 'granger', 'moxee'] },
+  { id: 'wenatchee',   label: 'Wenatchee',    owner: 'Mark',   day: 'East trip', east: true, cities: ['wenatchee', 'east wenatchee', 'leavenworth', 'cashmere', 'chelan', 'moses lake', 'quincy', 'ephrata', 'othello', 'omak', 'okanogan', 'brewster'] },
+  { id: 'cleelum',     label: 'Cle Elum / Ellensburg', owner: 'Mark', day: 'East trip', east: true, cities: ['cle elum', 'roslyn', 'ellensburg', 'kittitas', 'easton'] },
+  // Mark 2026-10-14: Kitsap gets its own zone.
+  { id: 'kitsap',      label: 'Kitsap',       owner: 'Mark',   day: 'TBD',       cities: ['bremerton', 'poulsbo', 'silverdale', 'port orchard', 'bainbridge island', 'belfair', 'kingston', 'port gamble', 'hansville', 'gorst'] },
 ]
+// region = 'out' → out of the I-5 territory (Mark 2026-10-14): kept in the CRM, never in zone counts,
+// owner lists or Monday lists. These cities set it automatically.
+export const OUT_OF_AREA = 'out'
+export const OUT_CITIES = ['vancouver', 'battle ground', 'camas', 'washougal', 'ridgefield', 'longview', 'kelso', 'castle rock', 'aberdeen', 'hoquiam', 'montesano', 'port angeles', 'sequim', 'port townsend', 'forks']
 export const ZONE_BY_ID = Object.fromEntries(ZONES.map(z => [z.id, z]))
 export const OWNERS = ['Mark', 'Jayden']
 export const IN_PLAY_CAP = 10
@@ -43,7 +58,18 @@ export function zoneForAddress(address) {
   for (const z of ZONES) for (const c of z.cities) if (a.includes(` ${c.replace(/[^a-z0-9 ]+/g, ' ')} `) && (!best || c.length > best.len)) best = { id: z.id, len: c.length }
   return best?.id || ''
 }
-export function zoneOf(shop) { return ZONE_BY_ID[shop.region] ? shop.region : (zoneForAddress(shop.address) || zoneForAddress(shop.shop_name)) }
+export function zoneOf(shop) { if (shop.region === OUT_OF_AREA) return ''; return ZONE_BY_ID[shop.region] ? shop.region : (zoneForAddress(shop.address) || zoneForAddress(shop.shop_name)) }
+/** What the address says: a zone id, 'out' for a known far city, or '' (unknown). Non-WA states are out. */
+export function regionForAddress(address) {
+  const raw = String(address || ''); if (!raw.trim()) return ''
+  // North Bothell / Mill Creek (98012, 98021) is Snohomish County → South County, not Eastside.
+  if (/\bbothell\b/i.test(raw) && /\b980(12|21)\b/.test(raw)) return 'southcounty'
+  const z = zoneForAddress(raw); if (z) return z
+  const a = ` ${raw.toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
+  if (OUT_CITIES.some(c => a.includes(` ${c} `))) return OUT_OF_AREA
+  if (/,\s*(OR|ID|CA|Oregon|Idaho)\b/.test(raw)) return OUT_OF_AREA
+  return ''
+}
 export function ownerOf(shop) { if (OWNERS.includes(shop.assigned_to)) return shop.assigned_to; const z = ZONE_BY_ID[zoneOf(shop)]; return z ? z.owner : '' }
 
 /** Most recent touch: activity, last_contact, stage change, creation. */

@@ -63,7 +63,7 @@ async function autoZone(shop) {
   try {
     const pz = await import('../services/pipeline.js')
     const out = { ...shop }
-    if (!pz.ZONE_BY_ID[out.region]) { const z = pz.zoneForAddress(out.address) || pz.zoneForAddress(out.shop_name); if (z) out.region = z }
+    if (!pz.ZONE_BY_ID[out.region] && out.region !== pz.OUT_OF_AREA) { const z = pz.regionForAddress(out.address) || pz.zoneForAddress(out.shop_name); if (z) out.region = z }   // 'out' = far city (2026-10-14)
     if (!pz.OWNERS.includes(out.assigned_to) && pz.ZONE_BY_ID[out.region]) out.assigned_to = pz.ZONE_BY_ID[out.region].owner
     return out
   } catch { return shop }
