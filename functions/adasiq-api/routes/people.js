@@ -436,7 +436,7 @@ router.get('/onboarding', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 // What makes them pumped (phase 3): a video from Mark, the first-day plan.
-const WELCOME_DEFAULT = { kinetic_email: 'parisa.sayadi@kinetic.auto', video_url: '', note: "Welcome to the crew. You're here because you do it right the first time — that's the whole job. First week you ride with me, then you're loose. GET SOME!!!", first_day: { where: 'Meet at the van — I\'ll text you the shop address the night before.', time: '7:45 AM', bring: "Driver's license, water, work boots, a good attitude. Shirts are in the van." } }
+const WELCOME_DEFAULT = { kinetic_email: 'parisa.sayadi@kinetic.auto', video_url: '', note: "Welcome to the crew. You're here because you do it right the first time. That's the whole job. You'll ride along and train with me or one of our techs until you're ready to run on your own, and we'll go at the pace that's right for you. GET SOME!!!", first_day: { where: 'Meet at the van — I\'ll text you the shop address the night before.', time: '7:45 AM', bring: "Driver's license, water, and a good attitude. Wear professional work attire: blue jeans are fine with a nice shirt. We'll have some Absolute ADAS shirts for you." } }
 router.put('/onboarding/welcome', async (req, res) => {
   try {
     if (!isOwner(req)) return res.status(403).json({ error: 'Owners only' })
