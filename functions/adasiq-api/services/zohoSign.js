@@ -78,24 +78,32 @@ export async function isConfigured(force = false) {
  */
 export async function sendForSignature({ pdf, filename, recipientName, recipientEmail, subject, note, fields, expirationDays = 14 }) {
   const t = await token()
+  const why = (step, e) => { const d = e.response?.data; return new Error(`Zoho Sign ${step} failed: ${d?.message || d?.error || e.message}${d?.code ? ` (code ${d.code})` : ''}`) }
   const FormData = (await import('form-data')).default
   const fd = new FormData()
   fd.append('file', pdf, { filename, contentType: 'application/pdf' })
   fd.append('data', JSON.stringify({ requests: {
     request_name: subject, expiration_days: expirationDays, is_sequential: false, email_reminders: true, reminder_period: 3, notes: note || '',
-    actions: [{ action_type: 'SIGN', recipient_email: recipientEmail, recipient_name: recipientName, signing_order: 1, verify_recipient: false, private_notes: '' }],
+    actions: [{ action_type: 'SIGN', recipient_email: recipientEmail, recipient_name: recipientName, signing_order: 1, verify_recipient: false }],
   } }))
-  const created = await axios.post(`${SIGN}/requests`, fd, { headers: { ...hdr(t), ...fd.getHeaders() }, timeout: 30000, maxBodyLength: Infinity })
+  let created
+  try { created = await axios.post(`${SIGN}/requests`, fd, { headers: { ...hdr(t), ...fd.getHeaders() }, timeout: 30000, maxBodyLength: Infinity }) }
+  catch (e) { console.log('[sign] create error', JSON.stringify(e.response?.data || e.message).slice(0, 500)); throw why('create', e) }
   const reqObj = created.data?.requests
   if (!reqObj?.request_id) throw new Error(`Sign create failed: ${created.data?.message || 'no request id'}`)
   const request_id = reqObj.request_id, action_id = reqObj.actions?.[0]?.action_id, document_id = reqObj.document_ids?.[0]?.document_id
-  const fieldData = (fields || []).map((f, i) => ({
-    document_id, field_name: f.name || `${f.type}${i + 1}`, field_type_name: f.type, field_label: f.name || f.type, is_mandatory: true,
+  // Zoho Sign wants fields grouped by kind: signatures under image_fields, dates under date_fields.
+  const one = (f, i) => ({
+    document_id, action_id, field_name: f.name || `${f.type}${i + 1}`, field_type_name: f.type === 'Date' ? 'CustomDate' : f.type, field_label: f.name || f.type, is_mandatory: true,
     page_no: f.page || 0, x_coord: Math.round(f.x), y_coord: Math.round(f.y), abs_width: Math.round(f.w), abs_height: Math.round(f.h),
     ...(f.type === 'Date' ? { date_format: 'MM/dd/yyyy' } : {}),
-  }))
-  const submitBody = new URLSearchParams({ data: JSON.stringify({ requests: { actions: [{ action_id, action_type: 'SIGN', recipient_email: recipientEmail, recipient_name: recipientName, signing_order: 1, verify_recipient: false, fields: fieldData }] } }) })
-  const sub = await axios.post(`${SIGN}/requests/${request_id}/submit`, submitBody.toString(), { headers: { ...hdr(t), 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000 })
+  })
+  const grouped = { image_fields: [], date_fields: [], text_fields: [] }
+  ;(fields || []).forEach((f, i) => { const x = one(f, i); if (f.type === 'Date') grouped.date_fields.push(x); else if (f.type === 'Signature' || f.type === 'Initial') grouped.image_fields.push(x); else grouped.text_fields.push(x) })
+  const submitBody = new URLSearchParams({ data: JSON.stringify({ requests: { actions: [{ action_id, action_type: 'SIGN', recipient_email: recipientEmail, recipient_name: recipientName, signing_order: 1, verify_recipient: false, fields: grouped }] } }) })
+  let sub
+  try { sub = await axios.post(`${SIGN}/requests/${request_id}/submit`, submitBody.toString(), { headers: { ...hdr(t), 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 30000 }) }
+  catch (e) { console.log('[sign] submit error', JSON.stringify(e.response?.data || e.message).slice(0, 500)); throw why('submit', e) }
   if (sub.data?.status && sub.data.status !== 'success') throw new Error(`Sign submit failed: ${sub.data?.message || 'unknown'}`)
   return { request_id, action_id, document_id }
 }

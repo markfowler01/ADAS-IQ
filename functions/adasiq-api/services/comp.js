@@ -114,7 +114,9 @@ export function nextReview(c) {
   const open = (c.reviews || []).filter(r => !r.done && r.date).sort((a, b) => a.date.localeCompare(b.date))[0]
   if (open) return open
   if (c.start_date && c.review_after_days && !(c.reviews || []).some(r => r.label?.includes('90'))) {
-    const d = new Date(c.start_date + 'T12:00:00'); d.setDate(d.getDate() + c.review_after_days)
+    const d = new Date(c.start_date + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + c.review_after_days)
+    if (d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1)   // Saturday → Friday (same rule as the calendar booking)
+    if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1)   // Sunday → Monday
     const iso = d.toISOString().slice(0, 10)
     if (iso >= new Date().toISOString().slice(0, 10)) return { date: iso, label: `${c.review_after_days}-day review`, done: false }
   }
