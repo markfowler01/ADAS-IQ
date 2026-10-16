@@ -4,10 +4,11 @@
 // (minus private notes); everyone else sees the directory card.
 import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch, ORANGE } from '../books/shared'
-import { isOwnerUser } from '../../utils/identity.js'
+import { isOwnerUser, isMarkUser } from '../../utils/identity.js'
 import { Avatar } from './Directory.jsx'
+import PayBenefits from './PayBenefits.jsx'
 
-const GREEN = '#15803d', BLUE = '#1d4ed8', RED = '#b91c1c'
+const GREEN = '#15803d', BLUE = '#0A0A0A', RED = '#b91c1c'
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
 const h = n => `${Number(n || 0).toFixed(2)}h`
 const tel = p => `tel:${String(p || '').replace(/[^\d+]/g, '')}`
@@ -73,7 +74,7 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
             <div className="text-xs" style={{ color: '#888' }}>{m.department} · {m.employment === 'w2' ? 'W-2 employee' : m.employment === 'contractor' ? 'Contractor' : 'Owner'}{m.track === 'apprentice' ? ' · 🪜 apprentice' : ''}{m.active === false ? ' · inactive' : ''}</div>
             <div className="flex gap-1.5 flex-wrap mt-2">
               {m.phone && <a href={tel(m.phone)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#dcfce7', color: GREEN }}>📞 Call</a>}
-              {m.phone && <a href={sms(m.phone)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#dbeafe', color: BLUE }}>💬 Text</a>}
+              {m.phone && <a href={sms(m.phone)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#e8e4e0', color: BLUE }}>💬 Text</a>}
               {m.email && <a href={`mailto:${m.email}`} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>✉️ Email</a>}
               {(owner || me) && <button onClick={() => onEdit(m)} className="text-xs font-bold rounded-lg px-2.5 py-1.5 text-white" style={{ backgroundColor: ORANGE }}>✏️ {me && !owner ? 'Edit my card' : 'Edit'}</button>}
             </div>
@@ -92,6 +93,8 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
           {(owner || me) && m.emergency_contact?.name && <Row k="Emergency" v={`${m.emergency_contact.name}${m.emergency_contact.relationship ? ` (${m.emergency_contact.relationship})` : ''} · ${m.emergency_contact.phone || ''}`} />}
           {(owner || me) && <Row k="Personal phone" v={m.personal_phone} />}
         </Section>
+
+        {isMarkUser(user) && m.id && m.employment !== 'owner' && <PayBenefits m={m} />}
 
         {canSee && p?.hours && (
           <Section title={`This period · ${p.hours.period.label}`}>
@@ -135,7 +138,7 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
         )}
 
         {canSee && (
-          <Section title="Documents" right={<div className="flex gap-1">{m.workdrive_folder_url ? <a href={m.workdrive_folder_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: '#dbeafe', color: BLUE }}>📁 Open folder</a> : owner && <Small tone="orange" onClick={() => j(`/api/people/folder/${m.id}`, { method: 'POST' }).then(load).catch(e => alert(e.message))}>📁 Create folder</Small>}<label className="text-[11px] font-bold rounded-full px-2.5 py-1 cursor-pointer" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>{busy ? '⏫ …' : '⏫ Upload'}<input type="file" accept="image/*,.pdf" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) setDocName({ file: f, name: f.name.replace(/\.[^.]+$/, '') }) }} /></label>{owner && <Small tone="orange" onClick={() => { setAdding('document'); setForm({}) }}>＋ link</Small>}</div>}>
+          <Section title="Documents" right={<div className="flex gap-1">{m.workdrive_folder_url ? <a href={m.workdrive_folder_url} target="_blank" rel="noreferrer" className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ backgroundColor: '#e8e4e0', color: BLUE }}>📁 Open folder</a> : owner && <Small tone="orange" onClick={() => j(`/api/people/folder/${m.id}`, { method: 'POST' }).then(load).catch(e => alert(e.message))}>📁 Create folder</Small>}<label className="text-[11px] font-bold rounded-full px-2.5 py-1 cursor-pointer" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>{busy ? '⏫ …' : '⏫ Upload'}<input type="file" accept="image/*,.pdf" hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) setDocName({ file: f, name: f.name.replace(/\.[^.]+$/, '') }) }} /></label>{owner && <Small tone="orange" onClick={() => { setAdding('document'); setForm({}) }}>＋ link</Small>}</div>}>
             {docName && <div className="rounded-lg p-2 mb-2 flex gap-2 flex-wrap items-center" style={{ backgroundColor: '#fff5f0', border: `1px solid ${ORANGE}` }}><span className="text-xs" style={{ color: '#888' }}>{docName.file.name}</span><input value={docName.name} onChange={e => setDocName(d => ({ ...d, name: e.target.value }))} placeholder="What is this? (W-4, license, signed contract…)" className="text-sm rounded-lg px-2 py-1.5 flex-1 min-w-[160px]" style={inp} /><button onClick={async () => { setBusy(true); try { const fd = new FormData(); fd.append('file', docName.file, docName.file.name); fd.append('name', docName.name || docName.file.name); const r = await apiFetch(`${API_BASE}/api/people/folder/${m.id}/upload`, { method: 'POST', body: fd }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setDocName(null); await load() } catch (err) { alert(err.message) } finally { setBusy(false) } }} disabled={busy || !docName.name.trim()} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: GREEN }}>{busy ? '…' : 'Upload'}</button><button onClick={() => setDocName(null)} className="text-xs font-semibold px-2" style={{ color: '#888' }}>cancel</button></div>}
             {(m.documents || []).length === 0 && <div className="text-xs" style={{ color: '#999' }}>{me && !owner ? 'Nothing here yet. Upload a photo of your ID, W-4, or direct deposit form and it goes straight to your personnel folder.' : 'No documents yet. Upload from the phone, or paste WorkDrive links: W-4, I-9, direct deposit, signed handbook, contract.'}</div>}
             {(m.documents || []).map((d, i) => <div key={i} className="flex items-center justify-between gap-2 py-1 text-sm" style={{ borderBottom: '1px solid #f3f3f3' }}><a href={d.url} target="_blank" rel="noreferrer" className="font-semibold" style={{ color: BLUE }}>📎 {d.name}</a><span className="text-xs" style={{ color: '#888' }}>{d.added}{d.by ? ` · ${d.by.split(' ')[0]}` : ''}</span>{owner && <Small tone="red" onClick={() => patch({ documents: m.documents.filter((_, k) => k !== i) })}>remove</Small>}</div>)}
@@ -148,12 +151,12 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
           <Section title={`Skills ladder · ${p.ladder.pct}%${p.ladder.complete ? ' · complete' : ''}`} right={owner && p.ladder.complete && m.track === 'apprentice' && (promote
               ? <span className="flex gap-1 items-center"><span className="text-[11px] font-bold" style={{ color: '#1a1a1a' }}>Promote {m.name.split(' ')[0]} to technician?</span><button onClick={() => j(`/api/people/promote/${m.id}`, { method: 'POST' }).then(() => { setPromote(false); load(); onChanged && onChanged() }).catch(e => alert(e.message))} className="text-[11px] font-bold rounded-full px-2.5 py-1 text-white" style={{ backgroundColor: GREEN }}>Yes</button><button onClick={() => setPromote(false)} className="text-[11px] px-1" style={{ color: '#888' }}>no</button></span>
               : <Small tone="orange" onClick={() => setPromote(true)}>🎓 Promote to technician</Small>)}>
-            <div className="h-2 rounded-full mb-2" style={{ backgroundColor: '#f1ede9' }}><div className="h-2 rounded-full" style={{ width: `${p.ladder.pct}%`, backgroundColor: p.ladder.complete ? GREEN : '#7c3aed' }} /></div>
+            <div className="h-2 rounded-full mb-2" style={{ backgroundColor: '#f1ede9' }}><div className="h-2 rounded-full" style={{ width: `${p.ladder.pct}%`, backgroundColor: p.ladder.complete ? GREEN : '#0A0A0A' }} /></div>
             {p.ladder.rungs.map(r => (
               <div key={r.key} className="py-1.5" style={{ borderBottom: '1px solid #f3f3f3' }}>
                 <div className="flex items-center justify-between gap-2 text-sm">
                   <span style={{ color: r.complete ? GREEN : '#1a1a1a' }}>{r.complete ? '✅ ' : ''}{r.label}</span>
-                  <span className="flex items-center gap-2"><b className="tabular-nums" style={{ color: r.complete ? GREEN : '#7c3aed' }}>{r.done}/{r.need}</b>
+                  <span className="flex items-center gap-2"><b className="tabular-nums" style={{ color: r.complete ? GREEN : '#0A0A0A' }}>{r.done}/{r.need}</b>
                     {p.can_sign_off && (signoff?.key === r.key
                       ? <span className="flex gap-1 items-center"><input autoFocus value={signoff.note} onChange={e => setSignoff(x => ({ ...x, note: e.target.value }))} placeholder="which car / RO (optional)" className="text-xs rounded-lg px-2 py-1 w-40" style={inp} onKeyDown={e => { if (e.key === 'Escape') setSignoff(null) }} /><button onClick={() => { j(`/api/people/ladder/${m.id}/signoff`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key: r.key, note: signoff.note }) }).then(() => { setSignoff(null); load() }).catch(e => alert(e.message)) }} className="text-[11px] font-bold rounded-full px-2.5 py-1 text-white" style={{ backgroundColor: GREEN }}>✓ Sign</button><button onClick={() => setSignoff(null)} className="text-[11px] px-1" style={{ color: '#888' }}>×</button></span>
                       : <Small tone="orange" onClick={() => setSignoff({ key: r.key, note: '' })}>＋ sign off</Small>)}

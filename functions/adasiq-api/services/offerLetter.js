@@ -8,7 +8,7 @@ import PDFDocument from 'pdfkit'
 const COMPANY = { name: 'Absolute ADAS LLC', short: 'Absolute ADAS', line: 'Mobile ADAS Calibration & Diagnostics · Washington', owner: 'Mark Fowler', ownerTitle: 'Founder & Owner', email: 'mark@absoluteadas.com' }
 const money = n => `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const longDate = iso => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '(start date to be set)'
-const payLine = o => o.pay_type === 'salary' ? `${money(o.pay_rate)} per year, paid twice a month (the 1st and the 16th)` : o.pay_type === 'per_job' ? `${money(o.pay_rate)} per completed calibration job, paid twice a month (the 1st and the 16th)` : `${money(o.pay_rate)} per hour, paid twice a month (the 1st and the 16th). Hours over 40 in a week are paid at time and a half.`
+const payLine = o => o.pay_type === 'salary' ? `${money(o.pay_rate)} per year, paid twice a month (on the 6th and the 21st)` : o.pay_type === 'per_job' ? `${money(o.pay_rate)} per completed calibration job, paid twice a month (on the 6th and the 21st)` : `${money(o.pay_rate)} per hour, paid twice a month (on the 6th and the 21st). Hours over 40 in a week are paid at time and a half.`
 
 // ── W-2 offer letter ────────────────────────────────────────────────────
 function w2Text(c, o) {
@@ -50,7 +50,7 @@ function contractorText(c, o) {
  * → { pdf: Buffer, sign: { page, x, y, w, h }, date: { page, x, y, w, h } }
  * Coordinates are from the top-left of the page in points (what Zoho Sign wants).
  */
-export function buildOfferPdf(cand, offer) {
+export function buildOfferPdf(cand, offer, opts = {}) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'LETTER', margins: { top: 54, left: 60, right: 60, bottom: 60 } })
     const chunks = []; doc.on('data', c => chunks.push(c)); doc.on('error', reject)
@@ -62,10 +62,10 @@ export function buildOfferPdf(cand, offer) {
     doc.fillColor('#CD4419').fontSize(20).font('Helvetica-Bold').text(COMPANY.name)
     doc.fillColor('#666').fontSize(9).font('Helvetica').text(COMPANY.line).moveDown(0.8)
     doc.fillColor('#000').fontSize(10).text(new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })).moveDown(0.6)
-    doc.fontSize(14).font('Helvetica-Bold').text(contractor ? 'Independent Contractor Agreement' : 'Offer of Employment').moveDown(0.3)
+    doc.fontSize(14).font('Helvetica-Bold').text(opts.title || (contractor ? 'Independent Contractor Agreement' : 'Offer of Employment')).moveDown(0.3)
     doc.fontSize(10).font('Helvetica').text(`${cand.name}${cand.email ? ` · ${cand.email}` : ''}${cand.phone ? ` · ${cand.phone}` : ''}`).moveDown(0.6)
-    for (const block of (contractor ? contractorText : w2Text)(cand, offer)) {
-      if (Array.isArray(block)) { doc.font('Helvetica-Bold').fontSize(10).text(block[0]); doc.font('Helvetica').fontSize(9.5).text(block[1], { width: W, lineGap: 0.6 }).moveDown(0.35) }
+    for (const block of (opts.blocks || (contractor ? contractorText : w2Text)(cand, offer))) {
+      if (Array.isArray(block)) { doc.font('Helvetica-Bold').fontSize(10).text(block[0], { width: W }); doc.font('Helvetica').fontSize(9.5).text(block[1], { width: W, lineGap: 0.6 }).moveDown(0.35) }
       else doc.font('Helvetica').fontSize(9.5).text(block, { width: W, lineGap: 0.6 }).moveDown(0.35)
     }
     doc.moveDown(0.3)

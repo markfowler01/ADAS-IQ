@@ -52,6 +52,7 @@ import jobsRouter, { performSyncQuotes, readJobsPublic } from './routes/jobs.js'
 import todayRouter from './routes/today.js'
 import dispatchRouter from './routes/dispatch.js'
 import brewRouter, { cronRouter as brewCronRouter } from './routes/brew.js'
+import shopTalkRouter from './routes/shopTalk.js'
 import { tipsRouter as brewTipsRouter } from './routes/brewTips.js'
 import { auditRouter as auditToolRouter } from './routes/auditTool.js'
 import { toolQuoteRouter } from './routes/toolQuote.js'
@@ -89,6 +90,7 @@ import mileageRouter from './routes/mileage.js'
 import analyticsRouter from './routes/analytics.js'
 import projectsRouter from './routes/projects.js'
 import teamRouter from './routes/team.js'
+import compRouter from './routes/comp.js'
 import portalRouter, { handleStripeWebhook } from './routes/portal.js'
 import zohoImportRouter from './routes/zoho-import.js'
 import quotesRouter from './routes/quotes.js'
@@ -360,6 +362,7 @@ app.use('/api/workdrive-cleanup', requireAuth, (await import('./routes/workdrive
 app.use('/api/today', requireAuth, todayRouter)
 app.use('/api/dispatch', requireAuth, dispatchRouter)
 app.use('/api/brew', requireAuth, brewRouter)
+app.use('/api/shop-talk', requireAuth, requireOwner, shopTalkRouter)
 
 app.use('/api/feedback', requireAuth, feedbackRouter)
 
@@ -1124,6 +1127,7 @@ app.use('/api/mileage', requireAuth, mileageRouter)
 app.use('/api/analytics', requireAuth, analyticsRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/team', requireAuth, teamRouter)
+app.use('/api/comp', requireAuth, compRouter)
 // Portal routes have their OWN auth (portal session token), not the main app auth
 app.use('/api/portal', portalRouter)
 app.use('/api/zoho-import', requireAuth, zohoImportRouter)

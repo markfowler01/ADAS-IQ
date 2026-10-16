@@ -368,6 +368,15 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
   }
 
+  // 💵 Pay & Benefits: review reminders to Mark + pick up signed offer letters.
+  try {
+    const { maybeCompReminders } = await import('./comp.js')
+    const cr = await maybeCompReminders(req)
+    if (cr.reminders) console.log('[postscan] comp reminders:', cr.reminders)
+  } catch (e) {
+    console.warn('[postscan] comp piggyback failed (non-fatal):', e.message)
+  }
+
   // Nightly time clock backup — 8-10pm PT, datastore snapshot.
   // Own stamp inside. Email is not the copy.
   try {
