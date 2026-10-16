@@ -137,13 +137,27 @@ export default function PayBenefits({ m }) {
   // ── Read view ───────────────────────────────────────────────────────────
   const overdue = rec.next_review && rec.next_review.date < today()
   return (
-    <Wrap title="Pay & benefits · only you can see this" right={owner && <div className="flex gap-1"><Btn tone="line" onClick={() => setEdit(JSON.parse(JSON.stringify(c)))}>✏️ Edit</Btn></div>}>
+    <Wrap title="Pay & benefits · only you can see this" right={owner && <div className="flex gap-1"><Btn tone="line" onClick={() => { const e = JSON.parse(JSON.stringify(c)); e.reviews = (e.reviews || []).filter(r => !r.auto); setEdit(e) }}>✏️ Edit</Btn></div>}>
       {(rec.summary || []).map((r, i) => (
         <div key={i} className="flex gap-3 py-1.5 text-sm" style={{ borderBottom: '1px solid #f3f3f3' }}>
           <span className="w-20 shrink-0" style={{ color: '#888' }}>{r.k}</span>
           <span className="font-semibold" style={{ color: r.k === 'Next review' && overdue ? RED : '#1a1a1a' }}>{r.v}{r.k === 'Next review' && overdue ? ' · overdue' : ''}</span>
         </div>
       ))}
+      {(rec.checkins || []).length > 0 && (
+        <div className="mt-2 rounded-lg px-2.5 py-2" style={{ backgroundColor: '#f8f6f4' }}>
+          <div className="text-[10px] uppercase tracking-wider font-semibold mb-1" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>Check-ins · set automatically</div>
+          {rec.checkins.map(it => (
+            <div key={it.key} className="flex justify-between gap-2 text-sm py-0.5">
+              <span>{it.slot === 'coffee' ? '☕' : '🍺'} {it.label}</span>
+              <span className="text-xs font-semibold" style={{ color: it.status === 'booked' ? GREEN : it.status === 'failed' ? RED : '#999' }}>
+                {new Date(it.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}{it.status === 'booked' ? ` · ${it.slot === 'coffee' ? '7:00 AM' : '5:30 PM'} · on your calendar` : it.status === 'past' ? ' · already past' : it.status === 'failed' ? ' · could not book' : ''}
+              </span>
+            </div>
+          ))}
+          <div className="text-[11px] mt-1" style={{ color: '#888' }}>Move them in your Zoho calendar if the day doesn't work. A new start date re-books them.</div>
+        </div>
+      )}
       {owner && (
         <div className="mt-2">
           <div className="flex gap-1.5 flex-wrap items-center">

@@ -370,6 +370,9 @@ router.post('/run', async (req, res) => {
 
   // 💵 Pay & Benefits: review reminders to Mark + pick up signed offer letters.
   try {
+    const { maybeScheduleReviews } = await import('../services/reviewSchedule.js')
+    const rs = await maybeScheduleReviews(req)
+    if (rs.booked) console.log('[postscan] review check-ins booked:', rs.booked)
     const { maybeCompReminders } = await import('./comp.js')
     const cr = await maybeCompReminders(req)
     if (cr.reminders) console.log('[postscan] comp reminders:', cr.reminders)

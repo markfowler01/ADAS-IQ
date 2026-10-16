@@ -37,6 +37,15 @@ async function writeComp(req, id, c) { const { cfgWriteJson } = await cfg(); awa
 async function templates(req) { const { cfgReadJson } = await cfg(); const s = await cfgReadJson(req, TPL_KEY, null); return s && Object.keys(s).length ? s : DEFAULT_TEMPLATES }
 async function members(req) { const { readTeamMembers } = await import('./team.js'); return (await readTeamMembers(req)).filter(m => m.employment !== 'owner') }
 async function memberById(req, id) { return (await members(req)).find(m => m.id === id) || null }
+// Scheduled check-ins (services/reviewSchedule.js) count as upcoming reviews.
+async function withCheckins(req, m, c) {
+  if (!c) return c
+  const { readSchedule } = await import('../services/reviewSchedule.js')
+  const sch = await readSchedule(req, m.id).catch(() => null)
+  const extra = (sch?.items || []).filter(it => it.status === 'booked' && !(c.reviews || []).some(r => r.date === it.date))
+    .map(it => ({ date: it.date, label: it.label, done: false, auto: true, note: `${it.slot === 'coffee' ? 'Coffee before work' : 'Drinks after work'} ${it.start}` }))
+  return { ...c, reviews: [...(c.reviews || []), ...extra], _checkins: sch?.items || [] }
+}
 
 const view = (m, c) => {
   const base = { id: m.id, name: m.name, title: m.title, email: m.email, employment: m.employment, hire_date: m.hire_date, active: m.active !== false, has_comp: !!c }
@@ -60,7 +69,12 @@ router.get('/', async (req, res) => {
   try {
     const list = (await members(req)).filter(m => m.active !== false)
     const out = []
-    for (const m of list) out.push(view(m, await readComp(req, m.id)))
+    const { readSchedule } = await import('../services/reviewSchedule.js')
+    for (const m of list) {
+      const v = view(m, await withCheckins(req, m, await readComp(req, m.id)))
+      v.checkins = (await readSchedule(req, m.id).catch(() => null))?.items || []
+      out.push(v)
+    }
     res.json({ members: out, templates: await templates(req) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
@@ -74,7 +88,7 @@ router.put('/:id', async (req, res) => {
       const t = (await templates(req))[req.body.from_template]
       if (!t) return res.status(400).json({ error: 'No such package' })
       next = fromTemplate({ ...t, key: req.body.from_template }, m)
-    } else next = normalizeComp(req.body?.comp || {})
+    } else { const b = req.body?.comp || {}; next = normalizeComp({ ...b, reviews: (b.reviews || []).filter(r => !r.auto) }) }
     const prev = await readComp(req, m.id)
     next.letter = prev?.letter || null
     next.history = [...(prev?.history || []), { at: new Date().toISOString(), by: 'Mark', what: prev ? diffWords(prev, next) : 'Pay & benefits record created' }].slice(-25)
@@ -94,7 +108,7 @@ router.get('/:id/letter.pdf', async (req, res) => {
     const c = m && await readComp(req, m.id)
     if (!c) return res.status(404).json({ error: 'No pay & benefits record yet' })
     if (c.employment === 'contractor') return res.status(400).json({ error: 'Contractor agreements still go out from Recruiting.' })
-    const { pdf } = await buildLetter(m, c)
+    const { pdf } = await buildLetter(m, await withCheckins(req, m, c))
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('Content-Disposition', `inline; filename="Offer letter - ${m.name}.pdf"`)
@@ -115,7 +129,7 @@ router.post('/:id/send-letter', async (req, res) => {
     const probe = await sign.isConfigured()
     if (!probe.ok) return res.status(503).json({ error: `Zoho Sign isn't connected (${probe.why}).` })
     if (c.letter?.request_id && c.letter.status === 'inprogress') { try { await sign.recallRequest(c.letter.request_id, 'Replaced by an updated letter') } catch (e) { console.log('[comp] recall failed (continuing):', e.message) } }
-    const { pdf, sign: sig, date } = await buildLetter(m, c)
+    const { pdf, sign: sig, date } = await buildLetter(m, await withCheckins(req, m, c))
     const subject = `Offer letter — ${m.name} — Absolute ADAS`
     const r = await sign.sendForSignature({ pdf, filename: `${subject}.pdf`, recipientName: m.name, recipientEmail: m.email, subject,
       note: `Hi ${m.name.split(' ')[0]}, here's your updated offer letter with your pay and benefits. Sign on your phone. — Mark`,
@@ -169,6 +183,42 @@ router.get('/:id/signed.pdf', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ── 🧭 How I work: Mark's deep view ───────────────────────────────────
+const MPP = id => `mpp:${String(id).replace(/[^a-z0-9_]/gi, '')}`
+router.get('/:id/work-style', async (req, res) => {
+  try {
+    const m = await memberById(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    const { cfgReadJson } = await cfg()
+    const rec = await cfgReadJson(req, MPP(m.id), null)
+    if (!rec?.taken_at) return res.json({ taken: false })
+    const ws = await import('../services/workStyle.js')
+    res.json({ taken: true, taken_at: rec.taken_at, scores: rec.scores, drives: rec.drives, simple: rec.simple, deep: ws.deepReport(rec), ai: rec.ai || null, ai_at: rec.ai_at || null, traits: ws.TRAITS })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/work-style/ai', async (req, res) => {
+  try {
+    const m = await memberById(req, req.params.id)
+    const { cfgReadJson, cfgWriteJson } = await cfg()
+    const rec = m && await cfgReadJson(req, MPP(m.id), null)
+    if (!rec?.taken_at) return res.status(404).json({ error: 'Not taken yet' })
+    const ws = await import('../services/workStyle.js')
+    rec.ai = await ws.aiNarrative({ scores: rec.scores, drives: rec.drives, title: m.title })
+    rec.ai_at = new Date().toISOString()
+    await cfgWriteJson(req, MPP(m.id), rec)
+    res.json({ ai: rec.ai, ai_at: rec.ai_at })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.delete('/:id/work-style', async (req, res) => {
+  try {
+    const m = await memberById(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    const { cfgWriteJson } = await cfg()
+    await cfgWriteJson(req, MPP(m.id), null)
+    res.json({ ok: true })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // Hourly piggyback (no user — runs as the system): review reminders to
 // Mark's private alerts chat (names + dates only, never pay), and letter
 // status pickup. Each reminder fires once.
@@ -181,7 +231,7 @@ export async function maybeCompReminders(req) {
     const c = await readComp(req, m.id)
     if (!c) continue
     if (c.letter?.status === 'inprogress') { try { await checkLetter(req, m, c) } catch (e) { console.log('[comp] letter check', m.name, e.message) } }
-    const rv = nextReview(c)
+    const rv = nextReview(await withCheckins(req, m, c))
     if (!rv?.date) continue
     const days = Math.round((new Date(rv.date + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000)
     for (const [when, label] of [[14, 'in 2 weeks'], [0, 'TODAY']]) {

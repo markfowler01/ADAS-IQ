@@ -4,7 +4,7 @@
 // person's own WorkDrive folder with clear names.
 import { useEffect, useRef, useState } from 'react'
 
-const ORANGE = '#CD4419', GREEN = '#15803d', BLUE = '#1d4ed8', RED = '#b91c1c'
+const ORANGE = '#CD4419', GREEN = '#15803d', BLUE = '#0A0A0A', RED = '#b91c1c'
 const API = '/server/adasiq-api/api/public/onboard'
 const params = new URLSearchParams(window.location.search)
 const ID = params.get('onboard') || '', T = params.get('t') || ''
@@ -19,10 +19,10 @@ async function shrink(file, max = 1800) {
     return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' })
   } catch { return file }
 }
-const STEPS_W2 = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['w4', '4 · W-4'], ['deposit', '5 · Direct deposit'], ['sign', '6 · Sign'], ['training', '7 · Training'], ['van', '8 · Your van'], ['ask', '9 · Ask']]
-const STEPS_CONTRACTOR = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['van', '7 · Your van'], ['ask', '8 · Ask']]
+const STEPS_W2 = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['w4', '4 · W-4'], ['deposit', '5 · Direct deposit'], ['sign', '6 · Sign'], ['training', '7 · Training'], ['van', '8 · Your van'], ['workstyle', '🧭 How I work'], ['ask', '9 · Ask']]
+const STEPS_CONTRACTOR = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['docs', '3 · ID & documents'], ['deposit', '4 · Payout (Wise)'], ['sign', '5 · Sign'], ['training', '6 · Training'], ['van', '7 · Your van'], ['workstyle', '🧭 How I work'], ['ask', '8 · Ask']]
 // Existing staff catching up (Mark 2026-09-21): just the bits their file is missing.
-const STEPS_CATCHUP = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['sign', '3 · Sign'], ['ask', '4 · Ask']]
+const STEPS_CATCHUP = [['welcome', '👋 Welcome'], ['about', '1 · About you'], ['photo', '2 · Photo'], ['sign', '3 · Sign'], ['workstyle', '🧭 How I work'], ['ask', '4 · Ask']]
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
 const Btn = ({ children, onClick, disabled, tone = 'green', full = true }) => <button type="button" onClick={onClick} disabled={disabled} className={`${full ? 'w-full' : ''} rounded-2xl py-3.5 px-4 text-base font-extrabold text-white`} style={{ backgroundColor: tone === 'orange' ? ORANGE : tone === 'blue' ? BLUE : GREEN, opacity: disabled ? .5 : 1 }}>{children}</button>
 const ytEmbed = u => { const m = String(u || '').match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{6,})/); return m ? `https://www.youtube.com/embed/${m[1]}` : null }
@@ -32,8 +32,10 @@ export default function OnboardingScreen() {
   const [err, setErr] = useState('')
   const [step, setStep] = useState('welcome')
   const [msg, setMsg] = useState('')
+  const [ws, setWs] = useState(null)        // 🧭 How I work: { done, simple, items?, scale?, drives? }
+  const loadWs = () => call('/work-style').then(setWs).catch(() => setWs({ done: false, error: true }))
   const load = () => call('').then(x => { setD(x); if (!x.member.photo_url && x.member.emergency_contact?.name) setStep(s => s) }).catch(e => setErr(e.message))
-  useEffect(() => { if (!ID || !T) setErr('This link is missing its key. Ask Mark to resend it.'); else load() }, [])
+  useEffect(() => { if (!ID || !T) setErr('This link is missing its key. Ask Mark to resend it.'); else { load(); loadWs() } }, [])
   if (err) return <Shell><div className="rounded-2xl p-5 bg-white text-sm" style={{ color: RED, border: `1.5px solid #fecaca` }}>{err}</div></Shell>
   if (!d) return <Shell><div className="text-sm py-10 text-center" style={{ color: '#888' }}>Loading your onboarding…</div></Shell>
   const m = d.member
@@ -44,6 +46,7 @@ export default function OnboardingScreen() {
   const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), w4: has('w4'), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
   const hasVan = isTech && !!m.van
   done.van = !!m.van_handover?.at
+  done.workstyle = !!ws?.done
   const steps = (catchup ? STEPS_CATCHUP : contractor ? STEPS_CONTRACTOR : STEPS_W2).filter(([k]) => k !== 'van' || hasVan)
   const counted = steps.map(([k]) => k).filter(k => k !== 'ask' && k !== 'welcome')
   const pct = Math.round((counted.filter(k => done[k]).length / counted.length) * 100)
@@ -71,6 +74,7 @@ export default function OnboardingScreen() {
       {step === 'sign' && <Sign d={d} m={m} onDone={() => { load(); flash('✓ Signed and filed'); setStep('training') }} />}
       {step === 'training' && <Training d={d} onDone={load} />}
       {step === 'van' && <Van d={d} m={m} onDone={() => { load(); flash('✓ Van handover signed and filed') }} />}
+      {step === 'workstyle' && <WorkStyle ws={ws} onDone={r => { setWs(r); flash('✓ Thanks! Your results are below') }} />}
       {step === 'ask' && <Ask m={m} />}
       <div className="text-[11px] mt-6 text-center" style={{ color: '#999' }}>Your files go to a private folder only Mark and Kat can open. The app keeps none of your bank or Social Security numbers.</div>
     </Shell>
@@ -91,8 +95,8 @@ function Welcome({ d, m, onNext }) {
   const boss = crew.find(c => c.is_boss)
   return (
     <div>
-      <div className="rounded-2xl p-5 mb-3 text-white" style={{ background: 'linear-gradient(135deg, #CD4419, #b45309)' }}>
-        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>Absolute ADAS</div>
+      <div className="rounded-2xl p-5 mb-3 text-white" style={{ backgroundColor: '#0A0A0A' }}>
+        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ opacity: .85 }}>Absolute <span style={{ color: '#CD4419' }}>ADAS</span></div>
         <div className="text-2xl font-extrabold leading-tight mt-1">Welcome to the crew, {first}.</div>
         {days != null && <div className="text-sm mt-2" style={{ opacity: .95 }}>{days > 0 ? `${days} day${days === 1 ? '' : 's'} until your first day — ${new Date(m.hire_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.` : days === 0 ? "Today's the day." : 'You\'re in.'}</div>}
       </div>
@@ -425,6 +429,67 @@ function Training({ d, onDone }) {
     </Card>
   )
 }
+// 🧭 How I work — ~10 minutes. 60 statements (5 taps each), then pick what
+// drives you. They get back a short strengths summary; Mark gets the rest.
+function WorkStyle({ ws, onDone }) {
+  const [ans, setAns] = useState({})
+  const [page, setPage] = useState(0)
+  const [drives, setDrives] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const top = useRef(null)
+  if (!ws) return <Card title="🧭 How I work"><div className="text-sm" style={{ color: '#888' }}>Loading…</div></Card>
+  if (ws.done && ws.simple) return <WorkStyleResult s={ws.simple} />
+  if (ws.error || !ws.items) return <Card title="🧭 How I work"><div className="text-sm" style={{ color: RED }}>Couldn't load this step. Refresh and try again.</div></Card>
+  const PER = 10, pages = Math.ceil(ws.items.length / PER), onDrives = page === pages
+  const slice = ws.items.slice(page * PER, page * PER + PER)
+  const answered = Object.keys(ans).length, total = ws.items.length
+  const pageDone = slice.every(q => ans[q.id])
+  const go = n => { setPage(n); setTimeout(() => top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30) }
+  async function submit() {
+    setBusy(true); setErr('')
+    try { const r = await call('/work-style', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers: ans, drives }) }); onDone(r) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div ref={top}>
+      <Card title="🧭 How I work" sub="About 10 minutes. There are no right or wrong answers. Answer how you really are, not how you think you should be. This is for getting to know you, never for pay or job decisions.">
+        <div className="h-2 rounded-full mb-1" style={{ backgroundColor: '#f1ede9' }}><div className="h-2 rounded-full" style={{ width: `${Math.round((answered + (drives.length ? 1 : 0)) / (total + 1) * 100)}%`, backgroundColor: ORANGE }} /></div>
+        <div className="text-[11px]" style={{ color: '#888' }}>{onDrives ? 'Last step' : `Page ${page + 1} of ${pages}`} · {answered}/{total} answered</div>
+      </Card>
+      {!onDrives && slice.map(q => (
+        <div key={q.id} className="rounded-2xl p-3 mb-2 bg-white" style={{ border: `1.5px solid ${ans[q.id] ? '#86efac' : '#e8e4e0'}` }}>
+          <div className="text-sm font-semibold mb-2" style={{ color: '#1a1a1a' }}>{q.text}</div>
+          <div className="grid grid-cols-5 gap-1">
+            {ws.scale.map((lbl, i) => <button key={i} type="button" onClick={() => setAns(a => ({ ...a, [q.id]: i + 1 }))} className="rounded-lg py-2 text-[10px] font-bold leading-tight" style={ans[q.id] === i + 1 ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: '#f5f3f0', color: '#555' }}>{lbl}</button>)}
+          </div>
+        </div>
+      ))}
+      {onDrives && (
+        <Card title="What drives you?" sub="Pick the 2 that sound most like you.">
+          {ws.drives.map(d => { const on = drives.includes(d.t); return <button key={d.t} type="button" onClick={() => setDrives(x => on ? x.filter(t => t !== d.t) : x.length >= 2 ? [x[1], d.t] : [...x, d.t])} className="w-full text-left rounded-xl px-3 py-2.5 mb-1.5 text-sm font-semibold" style={on ? { backgroundColor: '#fff5f0', color: '#1a1a1a', border: `2px solid ${ORANGE}` } : { backgroundColor: 'white', color: '#444', border: '1.5px solid #e8e4e0' }}>{on ? '✓ ' : ''}{d.text}</button> })}
+        </Card>
+      )}
+      {err && <div className="text-sm mb-2" style={{ color: RED }}>{err}</div>}
+      <div className="flex gap-2">
+        {page > 0 && <Btn tone="blue" full={false} onClick={() => go(page - 1)}>‹ Back</Btn>}
+        <div className="flex-1">{onDrives
+          ? <Btn disabled={busy || drives.length < 1 || answered < total} onClick={submit}>{busy ? 'Saving…' : 'See my results →'}</Btn>
+          : <Btn tone="orange" disabled={!pageDone} onClick={() => go(page + 1)}>{pageDone ? 'Next →' : 'Answer all 10 to continue'}</Btn>}</div>
+      </div>
+    </div>
+  )
+}
+export function WorkStyleResult({ s }) {
+  return (
+    <Card title="🧭 How you work" sub={s.headline}>
+      {s.strengths.map(x => <div key={x.k} className="rounded-xl px-3 py-2 mb-1.5" style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0' }}><div className="text-sm font-extrabold" style={{ color: GREEN }}>{x.title}</div><div className="text-sm" style={{ color: '#1a1a1a' }}>{x.text}</div></div>)}
+      <div className="text-sm mt-2" style={{ color: '#333' }}>{s.style}</div>
+      {s.drive && <div className="text-sm mt-2 font-semibold" style={{ color: '#1a1a1a' }}>{s.drive}</div>}
+      <div className="text-[11px] mt-3" style={{ color: '#888' }}>{s.note}</div>
+    </Card>
+  )
+}
+
 function Ask({ m }) {
   const [q, setQ] = useState(''); const [log, setLog] = useState([]); const [busy, setBusy] = useState(false)
   async function ask() { const question = q.trim(); if (!question) return; setQ(''); setLog(l => [...l, { who: 'you', text: question }]); setBusy(true); try { const r = await call('/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) }); setLog(l => [...l, { who: 'buddy', text: r.answer }]) } catch (e) { setLog(l => [...l, { who: 'buddy', text: `Couldn't answer: ${e.message}` }]) } finally { setBusy(false) } }

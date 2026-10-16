@@ -755,4 +755,37 @@ router.get('/tasks/delegate', async (req, res) => {
   }
 })
 
+// ── Helpers for server-side scheduling (Pay & Benefits review check-ins,
+// Mark 2026-10-16). Same Zoho calendar as the routes above.
+function ptOffset(date) {
+  const year = parseInt(date.split('-')[0])
+  const t = new Date(date + 'T12:00:00')
+  return t >= getNthSunday(year, 2, 2) && t < getNthSunday(year, 10, 1) ? '0700' : '0800'
+}
+export async function calCreateEvent({ title, date, startTime, endTime, description = '', location = '', attendees = [] }) {
+  const token = await getAccessToken()
+  const d = date.replace(/-/g, ''), off = ptOffset(date)
+  const ev = { title, dateandtime: { start: `${d}T${startTime.replace(':', '')}00-${off}`, end: `${d}T${endTime.replace(':', '')}00-${off}`, timezone: 'America/Los_Angeles' } }
+  if (description) ev.description = description
+  if (location) ev.location = location
+  if (attendees.length) ev.attendees = attendees.map(email => ({ email, permission: 1, attendance: 1 }))
+  const resp = await axios.post(`${ZOHO_CALENDAR_API}/calendars/${CALENDAR_UID}/events`, `eventdata=${encodeURIComponent(JSON.stringify(ev))}`,
+    { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 20000 })
+  const created = resp.data.events?.[0]
+  return { uid: created?.uid || '', etag: created?.etag || '' }
+}
+export async function calDeleteEvent(uid, etag = '') {
+  const token = await getAccessToken()
+  await axios.delete(`${ZOHO_CALENDAR_API}/calendars/${CALENDAR_UID}/events/${uid}`, { headers: { Authorization: `Zoho-oauthtoken ${token}`, ...(etag ? { etag } : {}) }, timeout: 20000 })
+}
+// Busy blocks on Mark's work calendar for one PT day → [{ start:'HH:MM', end:'HH:MM' }]
+export async function calDayBusy(date) {
+  const token = await getAccessToken()
+  const off = parseInt(ptOffset(date).slice(0, 2), 10), pad = n => String(n).padStart(2, '0')
+  const next = new Date(date + 'T00:00:00'); next.setDate(next.getDate() + 1)
+  const range = JSON.stringify({ start: `${date.replace(/-/g, '')}T${pad(off)}0000Z`, end: `${next.toISOString().slice(0, 10).replace(/-/g, '')}T${pad(off)}0000Z` })
+  const resp = await axios.get(`${ZOHO_CALENDAR_API}/calendars/${CALENDAR_UID}/events`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { range }, timeout: 20000 })
+  return (resp.data.events || []).filter(e => !e.isallday).map(e => ({ start: parseZohoTime(e.dateandtime?.start || ''), end: parseZohoTime(e.dateandtime?.end || ''), title: e.title }))
+}
+
 export default router

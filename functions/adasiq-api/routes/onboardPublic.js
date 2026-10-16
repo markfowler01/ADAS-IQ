@@ -133,6 +133,34 @@ router.get('/:id', async (req, res) => {
   } catch (e) { console.error('[onboard get]', e.message); res.status(500).json({ error: e.message }) }
 })
 
+// ── 🧭 How I work (personality step) ──────────────────────────────────
+// Answers + scores live in Mark-only AppConfig `mpp:<id>`; the person only
+// ever gets back their short strengths summary. One take; Mark can reset.
+const mppKey = id => `mpp:${String(id).replace(/[^a-z0-9_]/gi, '')}`
+router.get('/:id/work-style', async (req, res) => {
+  try {
+    const g = await guard(req, res); if (!g) return
+    const ws = await import('../services/workStyle.js')
+    const rec = await cfgReadJson(req, mppKey(g.m.id), null)
+    res.json({ ok: true, done: !!rec?.taken_at, simple: rec?.simple || null, ...(rec?.taken_at ? {} : ws.questions()) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/work-style', async (req, res) => {
+  try {
+    const g = await guard(req, res); if (!g) return
+    const ws = await import('../services/workStyle.js')
+    const prev = await cfgReadJson(req, mppKey(g.m.id), null)
+    if (prev?.taken_at) return res.json({ ok: true, done: true, simple: prev.simple })
+    let r
+    try { r = ws.score(req.body?.answers || {}, req.body?.drives || []) } catch (e) { return res.status(400).json({ error: e.message }) }
+    const simple = ws.simpleSummary(r)
+    const answers = {}; for (const [k, v] of Object.entries(req.body?.answers || {})) if (/^[a-z]{1,2}\d{1,2}$/.test(k)) answers[k] = Number(v)
+    await cfgWriteJson(req, mppKey(g.m.id), { taken_at: new Date().toISOString(), answers, scores: r.scores, drives: r.drives, simple, version: 1 })
+    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `🧭 ${g.m.name} finished "How I work". The deep report is on their profile (only you can see it).`) } catch { /* fine */ }
+    res.json({ ok: true, done: true, simple })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // ── About you ────────────────────────────────────────────────────────
 router.post('/:id/profile', async (req, res) => {
   try {

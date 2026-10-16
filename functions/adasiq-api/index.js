@@ -91,6 +91,7 @@ import analyticsRouter from './routes/analytics.js'
 import projectsRouter from './routes/projects.js'
 import teamRouter from './routes/team.js'
 import compRouter from './routes/comp.js'
+import workStyleSelfRouter from './routes/workStyleSelf.js'
 import portalRouter, { handleStripeWebhook } from './routes/portal.js'
 import zohoImportRouter from './routes/zoho-import.js'
 import quotesRouter from './routes/quotes.js'
@@ -1128,6 +1129,7 @@ app.use('/api/analytics', requireAuth, analyticsRouter)
 app.use('/api/projects', requireAuth, projectsRouter)
 app.use('/api/team', requireAuth, teamRouter)
 app.use('/api/comp', requireAuth, compRouter)
+app.use('/api/workstyle', requireAuth, workStyleSelfRouter)
 // Portal routes have their OWN auth (portal session token), not the main app auth
 app.use('/api/portal', portalRouter)
 app.use('/api/zoho-import', requireAuth, zohoImportRouter)
