@@ -107,7 +107,8 @@ router.put('/:id', async (req, res) => {
 
 async function buildLetter(m, c) {
   const { buildOfferPdf } = await import('../services/offerLetter.js')
-  return buildOfferPdf({ name: m.name, email: m.email, phone: m.phone }, { employment: 'w2' }, { title: 'Offer of Employment: Pay & Benefits', blocks: compLetterBlocks(m, c) })
+  const k1099 = c.employment === 'contractor'
+  return buildOfferPdf({ name: m.name, email: m.email, phone: m.phone }, { employment: k1099 ? 'contractor' : 'w2' }, { title: k1099 ? 'Independent Contractor Agreement' : 'Offer of Employment: Pay & Benefits', blocks: compLetterBlocks(m, c) })
 }
 
 router.get('/:id/letter.pdf', async (req, res) => {
@@ -115,7 +116,6 @@ router.get('/:id/letter.pdf', async (req, res) => {
     const m = await memberById(req, req.params.id)
     const c = m && await readComp(req, m.id)
     if (!c) return res.status(404).json({ error: 'No pay & benefits record yet' })
-    if (c.employment === 'contractor') return res.status(400).json({ error: 'Contractor agreements still go out from Recruiting.' })
     const { pdf } = await buildLetter(m, await withCheckins(req, m, c))
     res.setHeader('Content-Type', 'application/pdf')
     res.setHeader('Cache-Control', 'no-store')
@@ -139,11 +139,14 @@ router.post('/:id/send-letter', async (req, res) => {
     }
     const { pdf, sign: sig, date } = await buildLetter(m, await withCheckins(req, m, c))
     const first = m.name.split(' ')[0]
-    const { env } = await es.createEnvelope(req, { kind: 'comp_letter', ref: m.id, subject: `Offer letter — ${m.name} — Absolute ADAS`, signer: { name: m.name, email: m.email, phone: m.personal_phone || m.phone || '' }, pdf, fields: { sign: sig, date },
-      invite: { sms: `Hey ${first}, it's Mark. Here's your updated offer letter with your pay and benefits all in one place. Read it and sign right on your phone:`, emailIntro: "Here's your updated offer letter with your pay and benefits all in one place. Read it over and sign right on your phone. It takes a minute." } })
+    const k1099 = c.employment === 'contractor', doc = k1099 ? 'contractor agreement' : 'offer letter'
+    const { env } = await es.createEnvelope(req, { kind: 'comp_letter', ref: m.id, subject: `${k1099 ? 'Contractor agreement' : 'Offer letter'} — ${m.name} — Absolute ADAS`, signer: { name: m.name, email: m.email, phone: m.personal_phone || m.phone || '' }, pdf, fields: { sign: sig, date },
+      invite: k1099
+        ? { sms: `Hey ${first}, it's Mark. Here's your contractor agreement with your pay and how we work together, all in one place. Read it and sign right on your phone:`, emailIntro: "Here's your contractor agreement with your pay and how we work together, all in one place. Read it over and sign right on your phone. It takes a minute." }
+        : { sms: `Hey ${first}, it's Mark. Here's your updated offer letter with your pay and benefits all in one place. Read it and sign right on your phone:`, emailIntro: "Here's your updated offer letter with your pay and benefits all in one place. Read it over and sign right on your phone. It takes a minute." } })
     const r = { request_id: env.id }
     c.letter = { request_id: r.request_id, status: 'inprogress', sent_at: new Date().toISOString(), via: 'app' }
-    c.history = [...c.history, { at: c.letter.sent_at, by: 'Mark', what: 'Offer letter sent to sign in the app' }].slice(-25)
+    c.history = [...c.history, { at: c.letter.sent_at, by: 'Mark', what: `${doc[0].toUpperCase() + doc.slice(1)} sent to sign in the app` }].slice(-25)
     await writeComp(req, m.id, c)
     res.json({ ok: true, letter: c.letter })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }

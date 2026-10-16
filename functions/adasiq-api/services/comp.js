@@ -32,7 +32,20 @@ export const DEFAULT_TEMPLATES = {
     review_after_days: 90,
     terms: { drug_free: true, at_will: true },
   },
+  // Remote 1099 contractors (Kat, Joyce): no benefits, no at-will/drug-free
+  // wording, paid by Wise. The letter switches to a contractor agreement.
+  remote_contractor: {
+    label: 'Remote contractor (1099)',
+    employment: 'contractor', pay_type: 'hourly', pay_rate: 0, hours_per_week: 40,
+    title: 'Operations & Billing Support (independent contractor)',
+    work_area: 'Remote',
+    bonuses: [],
+    benefits: { qsehra_monthly: 0, vacation_days: 0, vacation_wait_days: 90, vacation_carryover: false, vacation_notice_days: 14, sick_leave: 'none', paid_holidays: 0, company_van: false, tools_provided: false, training: true, phone: false, other: [] },
+    review_after_days: 0,
+    terms: { drug_free: false, at_will: false },
+  },
 }
+export const CONTRACTOR_PAYDAYS = 'the 1st and the 16th of each month, by Wise'
 
 const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d }
 const str = (v, max = 300) => String(v ?? '').slice(0, max)
@@ -43,7 +56,7 @@ export function normalizeComp(c = {}) {
   return {
     template: str(c.template || 'field_tech', 40),
     employment: ['w2', 'contractor'].includes(c.employment) ? c.employment : 'w2',
-    pay_type: ['hourly', 'salary', 'per_job'].includes(c.pay_type) ? c.pay_type : 'hourly',
+    pay_type: ['hourly', 'salary', 'monthly', 'per_job'].includes(c.pay_type) ? c.pay_type : 'hourly',
     pay_rate: num(c.pay_rate), hours_per_week: num(c.hours_per_week, 40),
     title: str(c.title, 120), work_area: str(c.work_area, 160),
     start_date: str(c.start_date, 10), effective_date: str(c.effective_date, 10),
@@ -73,12 +86,14 @@ export function normalizeComp(c = {}) {
 
 export function fromTemplate(tpl, member = {}) {
   const t = JSON.parse(JSON.stringify(tpl || DEFAULT_TEMPLATES.field_tech))
-  return normalizeComp({ ...t, template: t.key || 'field_tech', title: member.title || t.title, start_date: member.hire_date || '' })
+  return normalizeComp({ ...t, template: t.key || 'field_tech', title: t.employment === 'contractor' ? t.title : (member.title || t.title), start_date: member.hire_date || '' })
 }
 
 const $ = n => `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 })}`
 export function payLine(c) {
   if (c.pay_type === 'salary') return `${$(c.pay_rate)} per year`
+  if (c.pay_type === 'monthly') return `${$(c.pay_rate)} per month`
+  if (c.employment === 'contractor' && c.pay_type === 'hourly') return `${$(c.pay_rate)} per hour of work you invoice`
   if (c.pay_type === 'per_job') return `${$(c.pay_rate)} per completed calibration job`
   return `${$(c.pay_rate)} per hour`
 }
@@ -96,14 +111,15 @@ export function bonusLine(x) {
 // Plain-English list for the "My Pay & Benefits" card and the owner table.
 export function summarize(c) {
   const b = c.benefits, out = []
-  out.push({ k: 'Pay', v: `${payLine(c)}${c.pay_type === 'hourly' ? `, ${c.hours_per_week} hrs/week, overtime 1.5× past 40` : ''}` })
-  out.push({ k: 'Paydays', v: PAYDAYS })
+  const k1099 = c.employment === 'contractor'
+  out.push({ k: 'Pay', v: `${payLine(c)}${c.pay_type === 'hourly' && !k1099 ? `, ${c.hours_per_week} hrs/week, overtime 1.5× past 40` : ''}${k1099 ? ' · 1099 contractor' : ''}` })
+  out.push({ k: 'Paydays', v: k1099 ? CONTRACTOR_PAYDAYS : PAYDAYS })
   for (const x of c.bonuses) out.push({ k: 'Bonus', v: bonusLine(x) })
   if (b.qsehra_monthly) out.push({ k: 'Health', v: `Up to ${$(b.qsehra_monthly)}/month tax-free reimbursement (QSEHRA) toward their own health plan, with monthly premium proof.` })
   if (b.vacation_days) out.push({ k: 'Vacation', v: `${b.vacation_days} paid days a year, after ${b.vacation_wait_days} days. ${b.vacation_carryover ? 'Unused days carry over.' : "Unused days don't carry over."} Ask ${b.vacation_notice_days} days ahead.` })
   if (b.sick_leave === 'wa') out.push({ k: 'Sick leave', v: '1 hour for every 40 worked (WA law). Up to 40 unused hours carry over.' })
   if (b.paid_holidays) out.push({ k: 'Holidays', v: `${b.paid_holidays} paid holidays a year.` })
-  const perks = [b.company_van && 'company van for job travel', b.tools_provided && 'Autel equipment and tools', b.training && 'on-the-job ADAS training', b.phone && 'company phone', ...b.other].filter(Boolean)
+  const perks = [b.company_van && 'company van for job travel', b.tools_provided && 'Autel equipment and tools', b.training && (k1099 ? 'app + billing training' : 'on-the-job ADAS training'), b.phone && 'company phone', ...b.other].filter(Boolean)
   if (perks.length) out.push({ k: 'Provided', v: perks.join(' · ') })
   const next = nextReview(c)
   if (next) out.push({ k: 'Next review', v: `${next.label} on ${next.date}` })
@@ -137,7 +153,33 @@ export function diffWords(a = {}, b = {}) {
 
 // The offer letter's text, built from the record (W-2). Plain English,
 // same terms Mark used in Jayden's March letter. Blocks: string or [heading, body].
-export function compLetterBlocks(member, c, { owner = 'Mark Fowler', company = 'Absolute ADAS', newHire = false } = {}) {
+export function compLetterBlocks(member, c, opts = {}) {
+  return c.employment === 'contractor' ? contractorLetterBlocks(member, c, opts) : w2LetterBlocks(member, c, opts)
+}
+
+// Independent contractor agreement (Kat, Joyce). No benefits, no at-will
+// employment language; same plain-English voice as the W-2 letter.
+export function contractorLetterBlocks(member, c, { owner = 'Mark Fowler', company = 'Absolute ADAS', newHire = false } = {}) {
+  const first = String(member.preferred_name || member.name || '').split(' ')[0]
+  const longDate = iso => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '(to be set)'
+  const blocks = [
+    `Dear ${first},`,
+    newHire ? `This letter sets out the work ${company} is asking you to do as an independent contractor, what it pays, and how we work together.` : `This letter confirms your work with ${company} as an independent contractor: what you do, what it pays, and how we work together. It replaces any earlier agreement.`,
+    ['The work', `${c.title || member.title}, working with ${owner}, Owner. Work location: ${c.work_area || 'remote'}. You decide how and when the work gets done inside the deadlines we agree on, and you may use your own equipment. Start date: ${longDate(c.start_date)}.`],
+    ['Pay', `${payLine(c)}, paid on ${CONTRACTOR_PAYDAYS}.${c.effective_date && c.effective_date !== c.start_date ? ` This rate is effective ${longDate(c.effective_date)}.` : ''} You are responsible for your own taxes; ${company} does not withhold taxes and will issue a 1099 where required.`],
+  ]
+  if (c.bonuses.length) blocks.push(['Bonuses', c.bonuses.map(x => `${bonusLine(x)}${x.note ? ' ' + x.note : ''}`).join('\n')])
+  const extras = [c.benefits.training && 'Training on the Absolute ADAS app and our billing process.', ...c.benefits.other.map(o => o.endsWith('.') ? o : o + '.')].filter(Boolean)
+  if (extras.length) blocks.push(['What we provide', extras.join(' ')])
+  blocks.push(['Time records', 'Log your hours in the Absolute ADAS app on the day you work them. Your invoice for each pay period matches what is in the app.'])
+  blocks.push(['Not an employee', `This is a contractor relationship, not employment. You are not eligible for employee benefits, paid leave or workers' compensation from ${company}. You may work for others.`])
+  blocks.push(['Confidentiality', `Customer lists, shop relationships, pricing, insurer rules, and everything inside the Absolute ADAS app and Zoho stay confidential, during and after this agreement. Work you create for us belongs to ${company}.`])
+  blocks.push(['Ending it', "Either of us can end this agreement with 14 days' written notice. We pay for all work done up to the end date."])
+  blocks.push(newHire ? 'If this works for you, sign below. Your onboarding link arrives as soon as you do.' : 'If this is right, sign below. You will get a copy of the signed agreement for your records.')
+  return blocks
+}
+
+function w2LetterBlocks(member, c, { owner = 'Mark Fowler', company = 'Absolute ADAS', newHire = false } = {}) {
   const first = String(member.preferred_name || member.name || '').split(' ')[0]
   const b = c.benefits
   const longDate = iso => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '(to be set)'
