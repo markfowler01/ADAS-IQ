@@ -111,7 +111,7 @@ export default function PayrollScreen({ user, onLogout, currentScreen, onNavigat
     { id: 'hours', label: '⏱ Hours' },
     { id: 'current', label: 'Current Run' },
     { id: 'employees', label: 'Employees' },
-    ...(isMarkUser(user) ? [{ id: 'benefits', label: '💵 Pay & Benefits' }] : []),
+    ...(isMarkUser(user) ? [{ id: 'benefits', label: '👥 My people' }] : []),
     { id: 'history', label: `History`, count: runs.length || null },
     { id: 'settings', label: 'Settings' },
   ]

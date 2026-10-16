@@ -70,9 +70,17 @@ router.get('/', async (req, res) => {
     const list = (await members(req)).filter(m => m.active !== false)
     const out = []
     const { readSchedule } = await import('../services/reviewSchedule.js')
+    const { cfgReadJson } = await cfg()
     for (const m of list) {
       const v = view(m, await withCheckins(req, m, await readComp(req, m.id)))
       v.checkins = (await readSchedule(req, m.id).catch(() => null))?.items || []
+      const ws = await cfgReadJson(req, `mpp:${String(m.id).replace(/[^a-z0-9_]/gi, '')}`, null).catch(() => null)
+      v.work_style = ws?.taken_at ? { taken_at: ws.taken_at, top: ws.simple?.strengths?.[0]?.title || '', drives: ws.drives || [] } : null
+      const notes = await readNotes(req, m.id).catch(() => [])
+      v.notes_count = notes.length
+      v.last_note = sortNotes(notes.filter(n => !n.pinned))[0] || null
+      v.pinned = notes.filter(n => n.pinned).slice(0, 3)
+      v.next_checkin = (v.checkins || []).filter(x => x.status === 'booked' && x.date >= new Date().toISOString().slice(0, 10)).sort((a, b) => a.date.localeCompare(b.date))[0] || null
       out.push(v)
     }
     res.json({ members: out, templates: await templates(req) })
@@ -183,6 +191,60 @@ router.get('/:id/signed.pdf', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ── 🔒 Mark's notes: tips, tricks, things he knows about each person ──
+// Unlimited, chunked in DurableKV (`mpn:<memberId>`) — not exposed by any
+// other route. Each note: { id, at, tag, text, pinned }.
+export const NOTE_TAGS = { tip: '💡 Tip', life: '❤️ Life & family', win: '⭐ Win', concern: '⚠️ Concern', goal: '🎯 Goal', other: '🗒 Note' }
+const MPN = id => `mpn:${String(id).replace(/[^a-z0-9_]/gi, '')}`
+export async function readNotes(req, id) {
+  const catalyst = (await import('zcatalyst-sdk-node')).default
+  const { kvGet } = await import('../services/durableKV.js')
+  const raw = await kvGet(catalyst.initialize(req), MPN(id)).catch(() => null)
+  try { const v = JSON.parse(raw || '[]'); return Array.isArray(v) ? v : [] } catch { return [] }
+}
+async function writeNotes(req, id, notes) {
+  const catalyst = (await import('zcatalyst-sdk-node')).default
+  const { kvSet } = await import('../services/durableKV.js')
+  await kvSet(catalyst.initialize(req), MPN(id), JSON.stringify(notes))
+}
+const sortNotes = n => n.slice().sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0) || String(b.at).localeCompare(String(a.at)))
+router.get('/:id/notes', async (req, res) => {
+  try { res.json({ notes: sortNotes(await readNotes(req, req.params.id)), tags: NOTE_TAGS }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/notes', async (req, res) => {
+  try {
+    const m = await memberById(req, req.params.id)
+    if (!m) return res.status(404).json({ error: 'Not found' })
+    const text = String(req.body?.text || '').trim().slice(0, 4000)
+    if (!text) return res.status(400).json({ error: 'Write something first.' })
+    const tag = NOTE_TAGS[req.body?.tag] ? req.body.tag : 'other'
+    const notes = await readNotes(req, m.id)
+    notes.push({ id: `n_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, at: new Date().toISOString(), tag, text, pinned: !!req.body?.pinned })
+    await writeNotes(req, m.id, notes)
+    res.json({ notes: sortNotes(notes) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/:id/notes/:nid', async (req, res) => {
+  try {
+    const notes = await readNotes(req, req.params.id)
+    const n = notes.find(x => x.id === req.params.nid)
+    if (!n) return res.status(404).json({ error: 'Note not found' })
+    if (req.body?.text !== undefined) n.text = String(req.body.text).trim().slice(0, 4000)
+    if (req.body?.tag && NOTE_TAGS[req.body.tag]) n.tag = req.body.tag
+    if (req.body?.pinned !== undefined) n.pinned = !!req.body.pinned
+    n.edited_at = new Date().toISOString()
+    await writeNotes(req, req.params.id, notes)
+    res.json({ notes: sortNotes(notes) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.delete('/:id/notes/:nid', async (req, res) => {
+  try {
+    const notes = (await readNotes(req, req.params.id)).filter(x => x.id !== req.params.nid)
+    await writeNotes(req, req.params.id, notes)
+    res.json({ notes: sortNotes(notes) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // ── 🧭 How I work: Mark's deep view ───────────────────────────────────
 const MPP = id => `mpp:${String(id).replace(/[^a-z0-9_]/gi, '')}`
 router.get('/:id/work-style', async (req, res) => {
@@ -229,8 +291,27 @@ export async function maybeCompReminders(req) {
   const lines = []
   for (const m of (await members(req)).filter(x => x.active !== false)) {
     const c = await readComp(req, m.id)
+    if (c?.letter?.status === 'inprogress') { try { await checkLetter(req, m, c) } catch (e) { console.log('[comp] letter check', m.name, e.message) } }
+    // 📋 Prep brief the day before a booked check-in (talking points + pinned notes).
+    try {
+      const { readSchedule } = await import('../services/reviewSchedule.js')
+      const tomorrow = new Date(today + 'T12:00:00'); tomorrow.setDate(tomorrow.getDate() + 1)
+      const tk = tomorrow.toISOString().slice(0, 10)
+      for (const it of ((await readSchedule(req, m.id))?.items || []).filter(x => x.status === 'booked' && x.date === tk)) {
+        const k = `prep:${m.id}:${it.date}`
+        if (sent[k]) continue
+        const ws = await cfgReadJson(req, `mpp:${String(m.id).replace(/[^a-z0-9_]/gi, '')}`, null).catch(() => null)
+        const ws2 = ws?.taken_at ? (await import('../services/workStyle.js')).deepReport(ws) : null
+        const pts = ws2 ? ws2.talk[it.key === '90d' ? '90d' : '6mo'] : []
+        const notes = (await readNotes(req, m.id)).filter(n => n.pinned || ['concern', 'goal', 'life'].includes(n.tag)).slice(-5)
+        lines.push(`📋 *Tomorrow ${it.start === '07:00' ? '7:00 AM ☕ coffee' : '5:30 PM 🍺 drinks'} with ${m.name}* · ${it.label}` +
+          (pts.length ? `\n${pts.map(p => `   • ${p}`).join('\n')}` : '') +
+          (notes.length ? `\n   Your notes: ${notes.map(n => n.text.slice(0, 120)).join(' | ')}` : '') +
+          (ws ? '' : `\n   (${m.name.split(' ')[0]} hasn't taken How I work yet.)`))
+        sent[k] = today
+      }
+    } catch (e) { console.log('[comp] prep brief', m.name, e.message) }
     if (!c) continue
-    if (c.letter?.status === 'inprogress') { try { await checkLetter(req, m, c) } catch (e) { console.log('[comp] letter check', m.name, e.message) } }
     const rv = nextReview(await withCheckins(req, m, c))
     if (!rv?.date) continue
     const days = Math.round((new Date(rv.date + 'T12:00:00') - new Date(today + 'T12:00:00')) / 86400000)
@@ -240,7 +321,7 @@ export async function maybeCompReminders(req) {
     }
   }
   if (lines.length) {
-    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⭐ *Reviews coming up*\n${lines.join('\n')}`) } catch (e) { console.log('[comp] cliq', e.message) }
+    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `⭐ *Your people*\n${lines.join('\n')}`) } catch (e) { console.log('[comp] cliq', e.message) }
     await cfgWriteJson(req, 'mpb_reminders_sent', sent)
   }
   return { reminders: lines.length }

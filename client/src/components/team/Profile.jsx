@@ -8,6 +8,7 @@ import { isOwnerUser, isMarkUser } from '../../utils/identity.js'
 import { Avatar } from './Directory.jsx'
 import PayBenefits from './PayBenefits.jsx'
 import { SelfWorkStyle, MarkWorkStyle } from './WorkStyleCards.jsx'
+import MarkNotes from './MarkNotes.jsx'
 
 const GREEN = '#15803d', BLUE = '#0A0A0A', RED = '#b91c1c'
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
@@ -95,6 +96,7 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
           {(owner || me) && <Row k="Personal phone" v={m.personal_phone} />}
         </Section>
 
+        {isMarkUser(user) && m.id && m.employment !== 'owner' && <MarkNotes m={m} />}
         {isMarkUser(user) && m.id && m.employment !== 'owner' && <PayBenefits m={m} />}
         {isMarkUser(user) && m.id && m.employment !== 'owner' && <MarkWorkStyle m={m} />}
         {me && !isMarkUser(user) && <SelfWorkStyle />}

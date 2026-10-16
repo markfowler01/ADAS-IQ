@@ -184,39 +184,58 @@ export default function PayBenefits({ m }) {
   )
 }
 
-// Owner table: everyone side by side (Payroll → 💵 Benefits).
+// 👥 My people (Mark only): everyone at a glance, built for 50+ techs.
+// Search, next check-in, How I work, notes, pay, letter.
 export function PayBenefitsTable() {
   const [rows, setRows] = useState(null)
   const [err, setErr] = useState('')
+  const [q, setQ] = useState('')
+  const [sort, setSort] = useState('next')
   useEffect(() => { j('/api/comp').then(d => setRows(d.members)).catch(e => setErr(e.message)) }, [])
   if (err) return <div className="text-sm" style={{ color: RED }}>{err}</div>
   if (!rows) return <div className="text-sm" style={{ color: '#888' }}>Loading…</div>
   const money = n => `$${Number(n || 0).toLocaleString('en-US')}`
+  const fmt = d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+  const ql = q.toLowerCase()
+  const list = rows.filter(r => !ql || [r.name, r.title, r.last_note?.text, ...(r.pinned || []).map(p => p.text), r.work_style?.top].some(x => String(x || '').toLowerCase().includes(ql)))
+    .sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name) : sort === 'notes' ? (b.notes_count || 0) - (a.notes_count || 0) : String(a.next_checkin?.date || '9999').localeCompare(String(b.next_checkin?.date || '9999')))
+  const todo = { ws: rows.filter(r => !r.work_style).length, comp: rows.filter(r => !r.has_comp).length, letter: rows.filter(r => r.has_comp && !r.letter).length }
   return (
-    <div className="overflow-x-auto rounded-xl" style={{ border: '1px solid #e8e4e0' }}>
-      <table className="w-full text-sm" style={{ minWidth: 760 }}>
-        <thead><tr style={{ backgroundColor: '#f8f6f4', color: '#888' }} className="text-[11px] uppercase tracking-wider text-left">
-          {['Person', 'Pay', 'Bonuses', 'Health', 'Vacation', 'Perks', 'Next review', 'Letter'].map(h => <th key={h} className="px-3 py-2 font-semibold">{h}</th>)}
-        </tr></thead>
-        <tbody>{rows.map(r => {
-          const c = r.comp, b = c?.benefits
-          const lp = r.letter && LETTER[r.letter.status]
-          return (
-            <tr key={r.id} style={{ borderTop: '1px solid #f0ece8' }}>
-              <td className="px-3 py-2"><b>{r.name}</b><div className="text-[11px]" style={{ color: '#888' }}>{r.title}</div></td>
-              {!c ? <td colSpan={7} className="px-3 py-2 text-xs" style={{ color: '#b45309' }}>Not set up. Open their profile in Directory → Pay & benefits.</td> : <>
-                <td className="px-3 py-2 font-semibold whitespace-nowrap">{c.pay_type === 'hourly' ? `${money(c.pay_rate)}/hr` : c.pay_type === 'salary' ? `${money(c.pay_rate)}/yr` : `${money(c.pay_rate)}/job`}</td>
-                <td className="px-3 py-2 text-xs">{c.bonuses.map(x => x.kind === 'revenue_tiers' ? `Revenue ${x.tiers.map(t => t.pct + '%').join('/')} over ${money(x.threshold)}` : x.kind === 'new_shop' ? `${money(x.amount)} per new shop` : x.label).join(' · ') || '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{b.qsehra_monthly ? `${money(b.qsehra_monthly)}/mo` : '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap">{b.vacation_days ? `${b.vacation_days} days` : '—'}{b.paid_holidays ? ` + ${b.paid_holidays} hol.` : ''}</td>
-                <td className="px-3 py-2 text-xs">{[b.company_van && 'van', b.tools_provided && 'tools', b.training && 'training', b.phone && 'phone', ...(b.other || [])].filter(Boolean).join(', ') || '—'}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-xs" style={{ color: r.next_review && r.next_review.date < today() ? RED : '#1a1a1a' }}>{r.next_review ? `${r.next_review.date}` : '—'}</td>
-                <td className="px-3 py-2">{lp ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: lp[1], color: lp[2] }}>{lp[0]}</span> : <span className="text-[11px]" style={{ color: '#999' }}>not sent</span>}</td>
-              </>}
-            </tr>
-          )
-        })}</tbody>
-      </table>
+    <div>
+      <div className="flex flex-wrap gap-2 items-center mb-3">
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search people, notes, strengths…" className="text-sm rounded-lg px-3 py-2 flex-1 min-w-[200px]" style={inp} />
+        <select value={sort} onChange={e => setSort(e.target.value)} className="text-sm rounded-lg px-2 py-2" style={inp}><option value="next">Next check-in</option><option value="name">Name</option><option value="notes">Most notes</option></select>
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-3 text-[11px] font-bold">
+        <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: '#f5f3f0' }}>{rows.length} people</span>
+        {todo.ws > 0 && <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: '#fef3c7', color: AMBER }}>🧭 {todo.ws} haven't taken How I work</span>}
+        {todo.comp > 0 && <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: '#fef3c7', color: AMBER }}>💵 {todo.comp} without pay & benefits</span>}
+        {todo.letter > 0 && <span className="rounded-full px-2 py-0.5" style={{ backgroundColor: '#fef3c7', color: AMBER }}>✍️ {todo.letter} letters not sent</span>}
+      </div>
+      <div className="overflow-x-auto rounded-xl" style={{ border: '1px solid #e8e4e0' }}>
+        <table className="w-full text-sm" style={{ minWidth: 860 }}>
+          <thead><tr style={{ backgroundColor: '#f8f6f4', color: '#888' }} className="text-[11px] uppercase tracking-wider text-left">
+            {['Person', 'Next check-in', 'How they work', 'Your notes', 'Pay', 'Benefits', 'Letter'].map(h => <th key={h} className="px-3 py-2 font-semibold">{h}</th>)}
+          </tr></thead>
+          <tbody>{list.map(r => {
+            const c = r.comp, b = c?.benefits, lp = r.letter && LETTER[r.letter.status]
+            return (
+              <tr key={r.id} style={{ borderTop: '1px solid #f0ece8' }} className="align-top">
+                <td className="px-3 py-2"><b>{r.name}</b><div className="text-[11px]" style={{ color: '#888' }}>{r.title}{r.hire_date ? ` · since ${r.hire_date}` : ''}</div></td>
+                <td className="px-3 py-2 text-xs whitespace-nowrap">{r.next_checkin ? <>{r.next_checkin.slot === 'coffee' ? '☕' : '🍺'} {fmt(r.next_checkin.date)}<div style={{ color: '#888' }}>{r.next_checkin.label}</div></> : <span style={{ color: '#999' }}>—</span>}</td>
+                <td className="px-3 py-2 text-xs">{r.work_style ? <><b style={{ color: GREEN }}>{r.work_style.top}</b><div style={{ color: '#888' }}>taken {String(r.work_style.taken_at).slice(0, 10)}</div></> : <span style={{ color: AMBER }}>not taken</span>}</td>
+                <td className="px-3 py-2 text-xs" style={{ maxWidth: 260 }}>{(r.pinned || []).map(p => <div key={p.id}>📌 {p.text.slice(0, 80)}</div>)}{r.last_note && <div style={{ color: '#555' }}>{r.last_note.text.slice(0, 80)}</div>}{!r.notes_count && <span style={{ color: '#999' }}>—</span>}{r.notes_count > 0 && <div style={{ color: '#999' }}>{r.notes_count} note{r.notes_count === 1 ? '' : 's'}</div>}</td>
+                {!c ? <td colSpan={3} className="px-3 py-2 text-xs" style={{ color: AMBER }}>No pay & benefits record. Open their profile → Pay & benefits.</td> : <>
+                  <td className="px-3 py-2 font-semibold whitespace-nowrap">{c.pay_type === 'hourly' ? `${money(c.pay_rate)}/hr` : c.pay_type === 'salary' ? `${money(c.pay_rate)}/yr` : `${money(c.pay_rate)}/job`}</td>
+                  <td className="px-3 py-2 text-xs">{[b.qsehra_monthly && `${money(b.qsehra_monthly)}/mo health`, b.vacation_days && `${b.vacation_days} vac days`, c.bonuses.length && `${c.bonuses.length} bonus${c.bonuses.length > 1 ? 'es' : ''}`].filter(Boolean).join(' · ') || '—'}</td>
+                  <td className="px-3 py-2">{lp ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: lp[1], color: lp[2] }}>{lp[0]}</span> : <span className="text-[11px]" style={{ color: '#999' }}>not sent</span>}</td>
+                </>}
+              </tr>
+            )
+          })}</tbody>
+        </table>
+      </div>
+      <div className="text-[11px] mt-2" style={{ color: '#888' }}>Only your login sees this page. Tap a person in Directory for the full picture: notes, How they work, pay & benefits, check-ins.</div>
     </div>
   )
 }
