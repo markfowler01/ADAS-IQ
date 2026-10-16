@@ -774,7 +774,7 @@ export async function sendOnboardingInvite(req, m, by, mode = 'full') {
     try { const { sendTwilioSMS } = await import('../services/twilio.js'); const body = mode === 'catchup'
       ? `Hey ${first}, it's Mark. ${ops ? "You've been a huge part of building this, and I want your file to be as solid as the business you're helping run." : "I'm building out how we take care of our people as we grow, and I want to start with you."} Got 15 minutes on your phone? Add a photo, your emergency contact, sign the handbook, and take a quick "How I work" quiz. No right or wrong answers. It just helps me lead you better. Thanks for being part of this. ${link}`
       : `${first}, it's Mark. Welcome to the team, man. I'm pumped you're here. Here's your onboarding link. It takes about 30 minutes on your phone: photo, ID, direct deposit, a short training, and a "How I work" quiz so I can get to know how you tick. Any questions, call me. ${link}`
-      const r = await sendTwilioSMS({ to: to.sms, body }); out.sms = r?.ok ? { ok: true, to: to.sms } : { ok: false, error: r?.error || 'failed' } } catch (e) { out.sms = { ok: false, error: e.message } }
+      const r = await sendTwilioSMS({ to: to.sms, body, cfg: await (await import('../services/phoneConfig.js')).resolvePhoneConfig(req) }); out.sms = r?.ok ? { ok: true, to: to.sms } : { ok: false, error: r?.error || 'failed' } } catch (e) { out.sms = { ok: false, error: e.message } }
   }
   if (to.email) {
     try {
@@ -874,7 +874,7 @@ export async function maybePeopleNudges(req) {
         const first = m.preferred_name || firstName(m.name)
         const boss = members.find(x => x.user_id === m.reports_to)
         const to = m.personal_phone || m.phone
-        if (to) { const { sendTwilioSMS } = await import('../services/twilio.js'); await sendTwilioSMS({ to, body: `Morning ${first} — it's day one! ${w.first_day?.time ? `${w.first_day.time}. ` : ''}${w.first_day?.where || ''}${boss ? ` You're with ${boss.name}${boss.phone ? ` (${boss.phone})` : ''}.` : ''} ${w.first_day?.bring ? `Bring: ${w.first_day.bring}` : ''} GET SOME!!! — Mark` }) }
+        if (to) { const { sendTwilioSMS } = await import('../services/twilio.js'); await sendTwilioSMS({ cfg: await (await import('../services/phoneConfig.js')).resolvePhoneConfig(req), to, body: `Morning ${first} — it's day one! ${w.first_day?.time ? `${w.first_day.time}. ` : ''}${w.first_day?.where || ''}${boss ? ` You're with ${boss.name}${boss.phone ? ` (${boss.phone})` : ''}.` : ''} ${w.first_day?.bring ? `Bring: ${w.first_day.bring}` : ''} GET SOME!!! — Mark` }) }
         m.day1_texted_at = new Date().toISOString(); await saveMember(req, m)
         lines.push(`🚀 ${who} starts TODAY — day-one text sent`)
       } catch (e) { console.warn('[people] day-one text failed:', e.message) }
@@ -890,7 +890,7 @@ export async function maybePeopleNudges(req) {
             const link = await onboardingLink(req, m); const first = m.preferred_name || firstName(m.name)
             const msg = pct === 0 ? `Hi ${first}, it's Mark at Absolute ADAS — your onboarding link is waiting. About 20 minutes on your phone: ${link}` : `Hi ${first}, Mark here — you're ${pct}% through onboarding. A few minutes finishes it: ${link}`
             let ok = false
-            if (m.personal_phone || m.phone) { try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ to: m.personal_phone || m.phone, body: msg }); ok = !!r?.ok } catch {} }
+            if (m.personal_phone || m.phone) { try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ cfg: await (await import('../services/phoneConfig.js')).resolvePhoneConfig(req), to: m.personal_phone || m.phone, body: msg }); ok = !!r?.ok } catch {} }
             if (m.personal_email || m.email) { try { const { getMailAccessToken, getMailAccountId, sendMail } = await import('../services/mail.js'); const t = await getMailAccessToken(); await sendMail(t, await getMailAccountId(t), { to: m.personal_email || m.email, subject: pct === 0 ? 'Your Absolute ADAS onboarding link' : `You're ${pct}% through onboarding`, body: `<p>${msg.replace(link, `<a href="${link}">${link}</a>`)}</p><p>GET SOME!!!<br>— Mark</p>` }); ok = true } catch {} }
             m.onboarding_nudged = { ...(m.onboarding_nudged || {}), [key]: new Date().toISOString() }; await saveMember(req, m)
             lines.push(`📨 ${who}: day-${day} onboarding reminder ${ok ? 'sent' : 'attempted'} (${pct}% done)`)
@@ -974,7 +974,7 @@ export async function maybeWelcome(req, m) {
   const sms = `${first}, you're all set — onboarding is 100% done. 🎉 ${plan} See you ${start}. Questions: call Mark. GET SOME!!! — Mark`
   const out = { sms: null, email: null }
   const to = { sms: m.personal_phone || m.phone || '', email: m.personal_email || m.email || '' }
-  if (to.sms) { try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ to: to.sms, body: sms }); out.sms = !!r?.ok } catch (e) { out.sms = false } }
+  if (to.sms) { try { const { sendTwilioSMS } = await import('../services/twilio.js'); const r = await sendTwilioSMS({ to: to.sms, body: sms, cfg: await (await import('../services/phoneConfig.js')).resolvePhoneConfig(req) }); out.sms = !!r?.ok } catch (e) { out.sms = false } }
   if (to.email) {
     try {
       const { getMailAccessToken, getMailAccountId, sendMail } = await import('../services/mail.js')

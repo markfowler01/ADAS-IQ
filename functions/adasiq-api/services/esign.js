@@ -72,7 +72,7 @@ export async function createEnvelope(req, { kind, ref, subject, signer, pdf, fie
 async function deliver(req, env, { sms, emailIntro }) {
   const link = linkFor(req, env), first = env.signer.name.split(' ')[0], out = { sms: null, email: null }
   if (env.signer.phone) {
-    try { const { sendTwilioSMS } = await import('./twilio.js'); const r = await sendTwilioSMS({ to: env.signer.phone, body: `${sms || `Hey ${first}, it's Mark. Here's your letter from Absolute ADAS. Read it and sign right on your phone:`} ${link}` }); out.sms = r?.ok ? { ok: true, to: env.signer.phone } : { ok: false, error: r?.error || 'failed' } } catch (e) { out.sms = { ok: false, error: e.message } }
+    try { const { sendTwilioSMS } = await import('./twilio.js'); const cfg = await (await import('./phoneConfig.js')).resolvePhoneConfig(req); const r = await sendTwilioSMS({ cfg, to: env.signer.phone, body: `${sms || `Hey ${first}, it's Mark. Here's your letter from Absolute ADAS. Read it and sign right on your phone:`} ${link}` }); out.sms = r?.ok ? { ok: true, to: env.signer.phone } : { ok: false, error: r?.error || 'failed' } } catch (e) { out.sms = { ok: false, error: e.message } }
   }
   if (env.signer.email) {
     try {
