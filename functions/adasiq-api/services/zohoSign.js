@@ -63,7 +63,7 @@ let probe = { at: 0, ok: false, why: '' }
 export async function isConfigured(force = false) {
   if (!force && Date.now() - probe.at < 10 * 60000) return probe
   try {
-    const r = await axios.get(`${SIGN}/templates`, { headers: hdr(await token()), params: { page_size: 1 }, timeout: 15000, validateStatus: () => true })
+    const r = await axios.get(`${SIGN}/templates`, { headers: hdr(await token()), timeout: 15000, validateStatus: () => true })
     const ok = r.status === 200
     probe = { at: Date.now(), ok, why: ok ? '' : (r.data?.message || `HTTP ${r.status}`) }
   } catch (e) { probe = { at: Date.now(), ok: false, why: e.message } }
