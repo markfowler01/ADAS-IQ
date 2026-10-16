@@ -106,8 +106,20 @@ export async function ensureSchedule(req, m, { dryRun = false } = {}) {
 export async function maybeScheduleReviews(req) {
   const { readTeamMembers } = await import('../routes/team.js')
   const booked = []
+  const today = todayPT()
   for (const m of await readTeamMembers(req)) {
-    if (m.active === false || m.employment !== 'w2' || !m.hire_date) continue
+    // Left the company (or moved off W-2): cancel any future check-ins still on the calendar.
+    if (m.active === false || m.employment !== 'w2') {
+      const s = await readSchedule(req, m.id).catch(() => null)
+      const live = (s?.items || []).filter(it => it.status === 'booked' && it.date > today)
+      if (live.length) {
+        const cal = await import('../routes/calendar.js')
+        for (const it of live) { try { await cal.calDeleteEvent(it.event_uid, it.etag); it.status = 'cancelled'; it.cancelled_at = new Date().toISOString(); booked.push(`• ${m.name}: ${it.label} on ${it.date} cancelled (no longer an active W-2)`) } catch (e) { console.log('[reviews] cancel', m.name, e.message) } }
+        await writeSchedule(req, m.id, s)
+      }
+      continue
+    }
+    if (!m.hire_date) continue
     try {
       const r = await ensureSchedule(req, m)
       for (const it of r?.new || []) booked.push(`• ${m.name}: ${SLOTS[it.slot].emoji} ${it.label} ${it.status === 'booked' ? `booked ${it.date} ${it.start}` : `could not book (${it.error || it.status})`}`)
