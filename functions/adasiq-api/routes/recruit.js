@@ -433,13 +433,45 @@ router.get('/:id/offer', async (req, res) => {
   try { res.json({ ok: true, offer: await readOffer(req, req.params.id) }) } catch (e) { res.status(500).json({ error: e.message }) }
 })
 // Preview the letter as a PDF before sending (owner reads it on the phone).
+// 💵 W-2 offers come from a Pay & Benefits package (Mark 2026-10-16): one
+// letter with the real bonuses / health / vacation, and the signed terms
+// become the person's Pay & Benefits record automatically.
+async function compForOffer(req, o, pkg) {
+  const comp = await import('../services/comp.js')
+  const { cfgReadJson } = await import('./people.js')
+  const saved = await cfgReadJson(req, 'mpb_templates', null)
+  const all = saved && Object.keys(saved).length ? saved : comp.DEFAULT_TEMPLATES
+  const key = all[pkg] ? pkg : Object.keys(all)[0]
+  const c = comp.fromTemplate({ ...all[key], key }, { title: o.title, hire_date: o.start_date })
+  Object.assign(c, { pay_type: o.pay_type, pay_rate: o.pay_rate, start_date: o.start_date, effective_date: o.start_date, title: o.title || c.title })
+  if (o.region) c.work_area = `Mobile, home base ${o.region}`
+  if (o.bonus) c.bonuses = [...c.bonuses, { kind: 'other', label: o.bonus, note: '', threshold: 0, amount: 0, min_jobs: 0, tiers: [] }]
+  return comp.normalizeComp(c)
+}
+async function buildRecruitOffer(req, cand, o, pkg) {
+  const { buildOfferPdf } = await import('../services/offerLetter.js')
+  if (o.employment === 'contractor') return { ...(await buildOfferPdf(cand, o)), comp: null }
+  const c = await compForOffer(req, o, pkg)
+  const { compLetterBlocks } = await import('../services/comp.js')
+  return { ...(await buildOfferPdf(cand, o, { title: 'Offer of Employment', blocks: compLetterBlocks({ name: cand.name }, c, { newHire: true }) })), comp: c }
+}
+router.get('/packages', async (req, res) => {
+  try {
+    if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
+    const comp = await import('../services/comp.js')
+    const { cfgReadJson } = await import('./people.js')
+    const saved = await cfgReadJson(req, 'mpb_templates', null)
+    const all = saved && Object.keys(saved).length ? saved : comp.DEFAULT_TEMPLATES
+    res.json({ packages: Object.entries(all).map(([k, t]) => ({ key: k, label: t.label || k, summary: comp.summarize(comp.normalizeComp(t)).filter(x => !['Pay', 'Paydays', 'Next review'].includes(x.k)) })) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.post('/:id/offer/preview', async (req, res) => {
   try {
     if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
     const cand = (await readAll(req)).find(c => c.id === String(req.params.id))
     if (!cand) return res.status(404).json({ error: 'Candidate not found' })
-    const { buildOfferPdf } = await import('../services/offerLetter.js')
-    const { pdf } = await buildOfferPdf(cand, offerFromBody(req.body))
+    const { pdf } = await buildRecruitOffer(req, cand, offerFromBody(req.body), req.body?.package)
     res.set('Content-Type', 'application/pdf'); res.set('Content-Disposition', `inline; filename="Offer - ${cand.name}.pdf"`); res.send(pdf)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
@@ -461,12 +493,11 @@ router.post('/:id/offer/send', async (req, res) => {
     if (!probe.ok) return res.status(503).json({ error: `Zoho Sign isn't connected yet (${probe.why}). Mint a token with the ZohoSign scopes and set ZOHO_SIGN_REFRESH_TOKEN.` })
     const prev = await readOffer(req, cand.id)
     if (prev?.request_id && prev.status === 'inprogress') { try { await sign.recallRequest(prev.request_id, 'Replaced by a new offer') } catch (e) { console.log('[offer] recall failed (continuing):', e.message) } }
-    const { buildOfferPdf } = await import('../services/offerLetter.js')
-    const { pdf, sign: sig, date } = await buildOfferPdf(cand, o)
+    const { pdf, sign: sig, date, comp: offerComp } = await buildRecruitOffer(req, cand, o, req.body?.package)
     const subject = `${o.employment === 'contractor' ? 'Contractor agreement' : 'Offer letter'} — ${cand.name} — Absolute ADAS`
     const r = await sign.sendForSignature({ pdf, filename: `${subject}.pdf`, recipientName: cand.name, recipientEmail: cand.email, subject, note: `Hi ${cand.name.split(' ')[0]} — here's your ${o.employment === 'contractor' ? 'agreement' : 'offer'} from Absolute ADAS. Sign on your phone and your onboarding link follows. — Mark`,
       fields: [{ type: 'Signature', ...sig, name: 'Signature' }, { type: 'Date', ...date, name: 'Date signed' }] })
-    const offer = { ...o, request_id: r.request_id, action_id: r.action_id, document_id: r.document_id, status: 'inprogress', sent_at: new Date().toISOString(), sent_by: req.user?.name || '', candidate_name: cand.name, candidate_email: cand.email }
+    const offer = { ...o, comp: offerComp, package: req.body?.package || '', request_id: r.request_id, action_id: r.action_id, document_id: r.document_id, status: 'inprogress', sent_at: new Date().toISOString(), sent_by: req.user?.name || '', candidate_name: cand.name, candidate_email: cand.email }
     await writeOffer(req, cand.id, offer)
     if (cand.stage !== 'offer') await catalyst.initialize(req).datastore().table(TABLE).updateRow({ ROWID: cand.id, cand_stage: 'offer', cand_updated_at: new Date().toISOString() })
     try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📝 *Offer sent to ${cand.name}* via Zoho Sign — ${o.title}, ${o.employment === 'contractor' ? 'contractor' : 'W-2'}, starts ${o.start_date}. I'll file the signed copy and send their onboarding link the moment it comes back.`) } catch {}
@@ -521,6 +552,18 @@ export async function pollOffers(req) {
         const doc = await putFile(req, member, 'contract', '', pdf, 'application/pdf', '.pdf')
         member.signatures = { ...(member.signatures || {}), contract: { at: st.signed_at || new Date().toISOString(), file_id: doc.file_id, version: 'zoho-sign', request_id: o.request_id } }
         await saveMemberPublic(req, member)
+        // 💵 Signed W-2 terms become their Pay & Benefits record (never overwrite one Mark already made).
+        if (o.comp) {
+          try {
+            const comp = await import('../services/comp.js')
+            const key = `mpb:${String(member.id).replace(/[^a-z0-9_]/gi, '')}`
+            if (!(await cfgReadJson(req, key, null))) {
+              const c = comp.normalizeComp({ ...o.comp, letter: { request_id: o.request_id, status: 'completed', sent_at: o.sent_at, signed_at: st.signed_at || new Date().toISOString(), via: 'recruiting' } })
+              c.history = [{ at: new Date().toISOString(), by: 'Recruiting', what: 'Created from the signed offer letter' }]
+              await cfgWriteJson(req, key, c)
+            }
+          } catch (e) { console.log('[offer] pay & benefits seed failed:', e.message) }
+        }
       }
       if (cand && cand.stage !== 'hired') await app.datastore().table(TABLE).updateRow({ ROWID: candId, cand_stage: 'hired', cand_updated_at: new Date().toISOString() })
       await writeOffer(req, candId, { ...o, status: 'completed', signed_at: st.signed_at || new Date().toISOString(), filed: !!member })

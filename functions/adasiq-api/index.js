@@ -1,6 +1,8 @@
 import express from 'express'
 import { installAiSpendTracking } from './services/aiSpend.js'
 installAiSpendTracking()   // 💵 every Claude call priced by feature (Mark 2026-10-02 "run leaner")
+import { installConcurrencyRetry } from './services/concurrencyRetry.js'
+installConcurrencyRetry()  // 🔁 retry Catalyst 'Concurrency limit reached' instead of failing the screen
 import cors from 'cors'
 import cookieSession from 'cookie-session'
 import rateLimit from 'express-rate-limit'

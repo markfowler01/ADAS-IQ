@@ -135,14 +135,14 @@ export function diffWords(a = {}, b = {}) {
 
 // The offer letter's text, built from the record (W-2). Plain English,
 // same terms Mark used in Jayden's March letter. Blocks: string or [heading, body].
-export function compLetterBlocks(member, c, { owner = 'Mark Fowler', company = 'Absolute ADAS' } = {}) {
+export function compLetterBlocks(member, c, { owner = 'Mark Fowler', company = 'Absolute ADAS', newHire = false } = {}) {
   const first = String(member.preferred_name || member.name || '').split(' ')[0]
   const b = c.benefits
   const longDate = iso => iso ? new Date(iso + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '(to be set)'
   const perks = [b.company_van && 'A company van for all job-related travel in the service area.', b.tools_provided && 'Autel calibration equipment and all required tools.', b.training && 'On-the-job ADAS calibration training.', b.phone && 'A company phone.', ...b.other.map(o => o.endsWith('.') ? o : o + '.')].filter(Boolean)
   const blocks = [
     `Dear ${first},`,
-    `This letter confirms your job at ${company}: what it is, what it pays, and the benefits that come with it. It replaces any earlier offer letter.`,
+    newHire ? `We're glad to offer you a job at ${company}. Here is what the job is, what it pays, and the benefits that come with it.` : `This letter confirms your job at ${company}: what it is, what it pays, and the benefits that come with it. It replaces any earlier offer letter.`,
     ['Position', `${c.title || member.title}, full-time W-2 employee (${c.hours_per_week} hours a week), reporting to ${owner}, Owner. Work location: ${c.work_area || 'mobile, in our service area'}. Start date: ${longDate(c.start_date)}.`],
     ['Pay', `${payLine(c)}${c.pay_type === 'hourly' ? ` (about ${$(c.pay_rate * c.hours_per_week * 52)} a year at ${c.hours_per_week} hours a week)` : ''}, paid on ${PAYDAYS}. Hours over 40 in a workweek are paid at 1.5× your regular rate, per Washington law.${c.effective_date ? ` This rate is effective ${longDate(c.effective_date)}.` : ''}`],
   ]
@@ -162,6 +162,6 @@ export function compLetterBlocks(member, c, { owner = 'Mark Fowler', company = '
   blocks.push(['Company property', 'When your employment ends, return the van, keys, equipment, tools and any company devices on your last day. Unreturned property may be deducted from final pay as far as Washington law allows.'])
   if (c.terms.at_will) blocks.push(['At-will employment', 'Either of us can end employment at any time, with or without cause or notice. This letter is not a contract for a set period, and it is the whole agreement about your pay and benefits.'])
   blocks.push(['Equal opportunity', `${company} is an equal opportunity employer.`])
-  blocks.push('If this is right, sign below. You will get a copy of the signed letter for your records.')
+  blocks.push(newHire ? 'If this works for you, sign below. Your onboarding link arrives on your phone as soon as you do. We are looking forward to having you on the crew.' : 'If this is right, sign below. You will get a copy of the signed letter for your records.')
   return blocks
 }

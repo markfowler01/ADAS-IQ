@@ -11,8 +11,8 @@ const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
 const fileUrl = (id, dl) => `${API_BASE}/api/public/recruit/file/${id}?t=${encodeURIComponent(getToken())}${dl ? '&dl=1' : ''}`
 const STAGE_COLORS = {
-  new: '#CD4419', contacted: '#b45309', project: '#0f766e', phone_screen: '#1d4ed8', ride_along: '#7e22ce',
-  offer: '#0e7490', hired: '#15803d', did_not_hire: '#6b7280', do_not_hire: '#dc2626',
+  new: '#CD4419', contacted: '#b45309', project: '#1F8B8B', phone_screen: '#0A0A0A', ride_along: '#B33A15',
+  offer: '#b45309', hired: '#15803d', did_not_hire: '#888888', do_not_hire: '#b91c1c',
 }
 const daysSince = iso => { const d = new Date(iso); return isNaN(d) ? '' : Math.floor((Date.now() - d) / 86400000) }
 const digits = s => String(s || '').replace(/[^\d+]/g, '')
@@ -197,7 +197,7 @@ function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>{c.source || 'manual'}</span>
           {c.project_received_at
             ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={c.project_words_ok === 'yes' ? { backgroundColor: '#e6f4ea', color: '#15803d' } : { backgroundColor: '#fef2f2', color: '#dc2626' }}>{c.project_words_ok === 'yes' ? '✅ project' : '❌ words missing'}</span>
-            : c.project_sent_at ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#ecfeff', color: '#0e7490' }}>🧪 sent</span> : null}
+            : c.project_sent_at ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#ecfeff', color: '#1F8B8B' }}>🧪 sent</span> : null}
         </span>
         <span className="text-[10px]" style={{ color: '#aaa' }}>{showStage && stage ? `${stage.label} · ` : ''}{d === '' ? '' : d === 0 ? 'today' : `${d}d`}</span>
       </div>
@@ -226,7 +226,7 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
 
         <div className="flex gap-2 mb-3 flex-wrap">
           {c.phone && <a href={`tel:${digits(c.phone)}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>📞 Call</a>}
-          {c.phone && <a href={`sms:${digits(c.phone)}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>💬 Text</a>}
+          {c.phone && <a href={`sms:${digits(c.phone)}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1px solid #e8e4e0' }}>💬 Text</a>}
           {c.email && <a href={`mailto:${c.email}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>✉️ Email</a>}
           {c.resume_url && <a href={/^https?:/.test(c.resume_url) ? c.resume_url : fileUrl(c.resume_url, true)} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>📄 Resume</a>}
           <span className="ml-auto text-lg" title="Rating">
@@ -353,7 +353,8 @@ function OfferPanel({ c, onPatched }) {
   const [sign, setSign] = useState(null)      // {configured, why}
   const [offer, setOffer] = useState(undefined)
   const [open, setOpen] = useState(false)
-  const [f, setF] = useState({ employment: /billing|dispatch|office|admin|book|account|ops|contract/i.test(c.role || '') ? 'contractor' : 'w2', title: c.role || 'ADAS Calibration Technician', pay_type: 'hourly', pay_rate: '', start_date: '', region: c.city || '', bonus: '', schedule: '', duties: '' })
+  const [f, setF] = useState({ employment: /billing|dispatch|office|admin|book|account|ops|contract/i.test(c.role || '') ? 'contractor' : 'w2', title: c.role || 'ADAS Calibration Technician', pay_type: 'hourly', pay_rate: '', start_date: '', region: c.city || '', bonus: '', schedule: '', duties: '', package: '' })
+  const [pkgs, setPkgs] = useState([])        // 💵 Pay & Benefits packages (W-2 offers use one)
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
   const [tok, setTok] = useState('')
@@ -367,6 +368,7 @@ function OfferPanel({ c, onPatched }) {
     apiFetch(`${API_BASE}/api/recruit/${c.id}/offer`).then(r => r.json()).catch(() => ({ offer: null })),
   ]).then(([s, o]) => { setSign(s); setOffer(o.offer || null); if (o.offer) setF(x => ({ ...x, ...Object.fromEntries(Object.entries(o.offer).filter(([k]) => k in x)) })) })
   useEffect(() => { load() }, [c.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { apiFetch(`${API_BASE}/api/recruit/packages`).then(r => r.json()).then(d => { const list = d.packages || []; setPkgs(list); if (list[0]) setF(x => ({ ...x, package: x.package || list[0].key })) }).catch(() => {}) }, [])
   async function preview() {
     setBusy('preview'); setErr('')
     try { const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/offer/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) }); if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || `HTTP ${r.status}`) } const b = await r.blob(); const u = URL.createObjectURL(b); window.open(u, '_blank') } catch (e) { setErr(e.message) } finally { setBusy('') }
@@ -382,12 +384,12 @@ function OfferPanel({ c, onPatched }) {
   const status = offer?.status
   const STATUS = { inprogress: ['⏳ Waiting for signature', '#b45309', '#fffbeb'], completed: ['✅ Signed — filed + hired', '#15803d', '#dcfce7'], declined: ['❌ Declined', '#dc2626', '#fef2f2'], expired: ['⌛ Expired', '#6b7280', '#f5f3f0'], withdrawn: ['↩ Withdrawn', '#6b7280', '#f5f3f0'], recalled: ['↩ Recalled', '#6b7280', '#f5f3f0'] }
   return (
-    <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1.5px solid #0e7490' }}>
+    <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1.5px solid #1F8B8B' }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#0e7490' }}>📝 Offer · Zoho Sign</div>
+        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#1F8B8B' }}>📝 Offer · Zoho Sign</div>
         <div className="flex gap-1.5">
           {status === 'inprogress' && <button onClick={withdraw} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#dc2626', border: '1px solid #fecaca' }}>{busy === 'withdraw' ? '…' : 'Withdraw'}</button>}
-          {!open && <button onClick={() => setOpen(true)} disabled={sign && !sign.configured} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#0e7490', opacity: sign && !sign.configured ? .5 : 1 }}>{status === 'inprogress' ? 'Re-send' : status === 'completed' ? 'Send another' : 'Send offer'}</button>}
+          {!open && <button onClick={() => setOpen(true)} disabled={sign && !sign.configured} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#1F8B8B', opacity: sign && !sign.configured ? .5 : 1 }}>{status === 'inprogress' ? 'Re-send' : status === 'completed' ? 'Send another' : 'Send offer'}</button>}
         </div>
       </div>
       {sign && !sign.configured && (
@@ -396,11 +398,11 @@ function OfferPanel({ c, onPatched }) {
           <div style={{ color: '#7f1d1d' }}>Paste the Sign refresh token (from the Zoho API console, scopes ZohoSign.documents.ALL + ZohoSign.templates.ALL). It's stored in the app, shown back as the last 4 only.</div>
           <div className="flex gap-2 mt-2">
             <input value={tok} onChange={e => setTok(e.target.value)} placeholder="1000.xxxx.xxxx" type="password" autoComplete="off" className="flex-1 rounded-lg px-3 py-2 text-sm" style={input} />
-            <button onClick={saveToken} disabled={busy === 'token' || !tok.trim()} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0e7490', opacity: !tok.trim() ? .5 : 1 }}>{busy === 'token' ? 'Testing…' : 'Save + test'}</button>
+            <button onClick={saveToken} disabled={busy === 'token' || !tok.trim()} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1F8B8B', opacity: !tok.trim() ? .5 : 1 }}>{busy === 'token' ? 'Testing…' : 'Save + test'}</button>
           </div>
         </div>
       )}
-      {sign?.configured && <div className="text-[11px] mt-1" style={{ color: '#0e7490' }}>✓ Connected to Zoho Sign ({sign.token === 'app' ? 'token stored in the app' : sign.token === 'env' ? 'env var' : sign.token}).</div>}
+      {sign?.configured && <div className="text-[11px] mt-1" style={{ color: '#1F8B8B' }}>✓ Connected to Zoho Sign ({sign.token === 'app' ? 'token stored in the app' : sign.token === 'env' ? 'env var' : sign.token}).</div>}
       {offer && STATUS[status] && <div className="text-xs mt-2 px-2.5 py-2 rounded-lg font-semibold" style={{ backgroundColor: STATUS[status][2], color: STATUS[status][1] }}>{STATUS[status][0]} · {offer.title} · {offer.employment === 'contractor' ? 'contractor' : 'W-2'} · ${Number(offer.pay_rate).toLocaleString()} {offer.pay_type === 'salary' ? '/yr' : offer.pay_type === 'per_job' ? '/job' : '/hr'} · starts {offer.start_date} · sent {String(offer.sent_at || '').slice(0, 10)}{offer.signed_at ? ` · signed ${String(offer.signed_at).slice(0, 10)}` : ''}</div>}
       {open && (
         <div className="mt-3">
@@ -412,13 +414,20 @@ function OfferPanel({ c, onPatched }) {
             <input type="date" value={f.start_date} onChange={e => setF({ ...f, start_date: e.target.value })} className="rounded-lg px-3 py-2 text-sm" style={input} />
             <input value={f.region} onChange={e => setF({ ...f, region: e.target.value })} placeholder="Home base (Tacoma, Seattle…)" className="rounded-lg px-3 py-2 text-sm" style={input} />
           </div>
-          <input value={f.bonus} onChange={e => setF({ ...f, bonus: e.target.value })} placeholder="Bonus line (optional) — e.g. $500 after 90 days" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
+          {f.employment === 'w2' && pkgs.length > 0 && (() => { const pk = pkgs.find(x => x.key === f.package) || pkgs[0]; return (
+            <div className="rounded-lg p-2.5 mb-2" style={{ backgroundColor: 'white', border: '1px solid #99d6d6' }}>
+              <div className="flex items-center gap-2 mb-1"><span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#1F8B8B' }}>💵 Benefits package</span>
+                <select value={f.package} onChange={e => setF({ ...f, package: e.target.value })} className="rounded-lg px-2 py-1 text-xs flex-1" style={input}>{pkgs.map(x => <option key={x.key} value={x.key}>{x.label}</option>)}</select></div>
+              {pk.summary.map((x, i) => <div key={i} className="text-[11px] py-0.5" style={{ color: '#444' }}><b>{x.k}:</b> {x.v}</div>)}
+              <div className="text-[10px] mt-1" style={{ color: '#888' }}>The letter includes all of this. When they sign, it becomes their Pay & Benefits record.</div>
+            </div>) })()}
+          <input value={f.bonus} onChange={e => setF({ ...f, bonus: e.target.value })} placeholder={f.employment === 'w2' ? 'Extra bonus line (optional, on top of the package)' : 'Bonus line (optional) — e.g. $500 after 90 days'} className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
           <textarea value={f.duties} onChange={e => setF({ ...f, duties: e.target.value })} rows={2} placeholder="Duties (optional — leave blank for the standard tech / billing wording)" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
           <div className="text-[11px] mb-2" style={{ color: '#555' }}>Sent to <b>{c.email || 'no email on the card — add one first'}</b>. They sign on their phone; the signed PDF lands in their personnel folder, they're marked Hired, and the onboarding link goes out on its own.</div>
           {err && <div className="text-xs mb-2" style={{ color: '#dc2626' }}>{err}</div>}
           <div className="flex gap-2">
-            <button onClick={preview} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: 'white', color: '#0e7490', border: '1px solid #0e7490' }}>{busy === 'preview' ? '…' : '👁 Preview PDF'}</button>
-            <button onClick={send} disabled={!!busy || !f.pay_rate || !f.start_date || !c.email} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#0e7490', opacity: !f.pay_rate || !f.start_date || !c.email ? .5 : 1 }}>{busy === 'send' ? 'Sending…' : '📨 Send for signature'}</button>
+            <button onClick={preview} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: 'white', color: '#1F8B8B', border: '1px solid #1F8B8B' }}>{busy === 'preview' ? '…' : '👁 Preview PDF'}</button>
+            <button onClick={send} disabled={!!busy || !f.pay_rate || !f.start_date || !c.email} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1F8B8B', opacity: !f.pay_rate || !f.start_date || !c.email ? .5 : 1 }}>{busy === 'send' ? 'Sending…' : '📨 Send for signature'}</button>
             <button onClick={() => setOpen(false)} className="text-xs font-semibold px-2" style={{ color: '#888' }}>cancel</button>
           </div>
         </div>
