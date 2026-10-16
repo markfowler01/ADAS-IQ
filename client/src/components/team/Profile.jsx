@@ -185,7 +185,7 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
                   </>
                 ) : (
                   <>
-                    <div className="text-xs font-bold mb-1.5" style={{ color: '#1a1a1a' }}>{linkForm.mode === 'catchup' ? '🧩 Catch-up: photo + emergency contact + handbook signature (about 5 minutes)' : '📨 Full onboarding: photo, ID, deposit, handbook, training (about 20 minutes)'}</div>
+                    <div className="text-xs font-bold mb-1.5" style={{ color: '#1a1a1a' }}>{linkForm.mode === 'catchup' ? '🧩 Catch-up: photo + emergency contact + handbook signature + How I work (about 15 minutes)' : '📨 Full onboarding: photo, ID, deposit, handbook, training, How I work (about 30 minutes)'}</div>
                     <div className="text-[11px] mb-1.5" style={{ color: '#666' }}>Goes by text and email. Any older link stops working.</div>
                     <div className="flex gap-2 flex-wrap items-center">
                       <input value={linkForm.phone} onChange={e => setLinkForm(f => ({ ...f, phone: e.target.value }))} placeholder="Cell for the text (blank = email only)" className="text-sm rounded-lg px-2 py-1.5 flex-1 min-w-[180px]" style={inp} inputMode="tel" />
