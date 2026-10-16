@@ -421,12 +421,24 @@ router.put('/sign-token', async (req, res) => {
   try {
     if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
     const v = String(req.body?.token || '').trim()
-    if (v && !/^1000\.[0-9a-f]{32}\.[0-9a-f]{32}$/i.test(v)) return res.status(400).json({ error: 'That does not look like a Zoho refresh token (1000.xxxx.xxxx).' })
+    if (v && !/^1000\.[0-9a-f]{32}\.[0-9a-f]{32}$/i.test(v)) return res.status(400).json({ error: 'That does not look like a Zoho code or refresh token (1000.xxxx.xxxx).' })
     const sign = await import('../services/zohoSign.js')
-    const r = await sign.saveStoredToken(req, v)
-    const p = v ? await sign.isConfigured() : { ok: false, why: 'cleared' }
-    console.log(`[sign] token ${v ? 'saved …' + r.last4 : 'cleared'} by ${req.user?.name} → ${p.ok ? 'connected' : p.why}`)
-    res.json({ ok: true, last4: r.last4, configured: p.ok, why: p.why })
+    // Mark can paste either a refresh token or the one-time code from the Zoho
+    // API console's Self Client (same 1000.x.x shape). A code gets swapped for a
+    // refresh token here, with the app's own client id/secret, so he never
+    // handles the secret or runs a command.
+    let token = v, swapped = false
+    if (v) {
+      try {
+        const axios = (await import('axios')).default
+        const r0 = await axios.post('https://accounts.zoho.com/oauth/v2/token', new URLSearchParams({ grant_type: 'authorization_code', client_id: process.env.ZOHO_CLIENT_ID || '', client_secret: process.env.ZOHO_CLIENT_SECRET || '', code: v }).toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 })
+        if (r0.data?.refresh_token) { token = r0.data.refresh_token; swapped = true }
+      } catch { /* not a code — treat it as a refresh token */ }
+    }
+    const r = await sign.saveStoredToken(req, token)
+    const p = token ? await sign.isConfigured(true) : { ok: false, why: 'cleared' }
+    console.log(`[sign] token ${v ? 'saved …' + r.last4 + (swapped ? ' (from a one-time code)' : '') : 'cleared'} by ${req.user?.name} → ${p.ok ? 'connected' : p.why}`)
+    res.json({ ok: true, last4: r.last4, configured: p.ok, why: p.why, swapped })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/:id/offer', async (req, res) => {

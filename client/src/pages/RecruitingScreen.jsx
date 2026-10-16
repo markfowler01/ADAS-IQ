@@ -395,9 +395,9 @@ function OfferPanel({ c, onPatched }) {
       {sign && !sign.configured && (
         <div className="text-xs mt-2 px-2.5 py-2 rounded-lg" style={{ backgroundColor: '#fef2f2', color: '#b91c1c' }}>
           <div className="font-bold mb-1">Zoho Sign isn't connected — {sign.why}.</div>
-          <div style={{ color: '#7f1d1d' }}>Paste the Sign refresh token (from the Zoho API console, scopes ZohoSign.documents.ALL + ZohoSign.templates.ALL). It's stored in the app, shown back as the last 4 only.</div>
+          <div style={{ color: '#7f1d1d' }}>In api-console.zoho.com → Self Client → Generate Code, use scope ZohoSign.documents.ALL,ZohoSign.templates.ALL,ZohoSign.account.READ (10 minutes), then paste the code here within 10 minutes. The app swaps it for a lasting key and shows back only the last 4.</div>
           <div className="flex gap-2 mt-2">
-            <input value={tok} onChange={e => setTok(e.target.value)} placeholder="1000.xxxx.xxxx" type="password" autoComplete="off" className="flex-1 rounded-lg px-3 py-2 text-sm" style={input} />
+            <input value={tok} onChange={e => setTok(e.target.value)} placeholder="Paste the code (1000.xxxx.xxxx)" type="password" autoComplete="off" className="flex-1 rounded-lg px-3 py-2 text-sm" style={input} />
             <button onClick={saveToken} disabled={busy === 'token' || !tok.trim()} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: '#1F8B8B', opacity: !tok.trim() ? .5 : 1 }}>{busy === 'token' ? 'Testing…' : 'Save + test'}</button>
           </div>
         </div>
