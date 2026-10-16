@@ -762,9 +762,10 @@ export async function flagRemoteClockIn(req, entry) {
 
 // ── Nightly time clock backup (Mark 2026-08-30: "I want the time clock
 // backed up this is very important") ────────────────────────────────────
-// Every evening the full punch history goes to Mark's email as JSON +
-// CSV attachments — an off-site copy that survives anything happening
-// to Catalyst. Rides the postscan hourly, 8-10pm PT window, once a day.
+// Once a day, 8-10pm PT, the full punch history is written to AppConfig
+// rows the live save path cannot blank (`tcbak:night:YYYY-MM-DD:*`).
+// Email is not the backup. Each save also keeps `tcbak:cur:*` and a
+// pre-change copy. Rides the postscan hourly.
 export async function maybeBackupTimeclock(req) {
   const hourNow = ptHourNow()
   if (hourNow < 20 || hourNow > 22) return { fired: false, reason: `outside 8-10pm window (hour=${hourNow})` }
@@ -774,46 +775,12 @@ export async function maybeBackupTimeclock(req) {
   const r0 = await getConfigRowByKey(app, stampKey)
   if (r0?.config_value) return { fired: false, reason: 'already backed up today' }
 
-  const { readEntriesPublic } = await import('../routes/timeclock.js')
-  const entries = await readEntriesPublic(req)
-  // People + vans ride along (2026-09-22): the Directory (with each person's
-  // kit, documents index, handover) and every van record with its inventory.
-  let peopleJson = '[]', vansJson = '{}'
-  try { const { readTeamMembers } = await import('../routes/team.js'); peopleJson = JSON.stringify(await readTeamMembers(req), null, 1) } catch (e) { console.warn('[backup] people:', e.message) }
-  try { const { readVans } = await import('../routes/people.js'); vansJson = JSON.stringify(await readVans(req), null, 1) } catch (e) { console.warn('[backup] vans:', e.message) }
-
-  const csvRows = [['user', 'email', 'clock_in', 'clock_out', 'total_minutes', 'auto_punched', 'auto_closed', 'acknowledged', 'reported', 'notes']]
-  for (const e of entries) {
-    csvRows.push([
-      e.user_name || '', e.user_id || '', e.clock_in || '', e.clock_out || '',
-      e.total_minutes ?? '', e.auto_punched ? 'yes' : '', e.auto_closed ? 'yes' : '',
-      e.acknowledged ? 'yes' : '', e.reported ? 'yes' : '',
-      String(e.notes || '').replace(/\r?\n/g, ' '),
-    ])
-  }
-  const csv = csvRows.map(r => r.map(v => /[",]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v).join(',')).join('\n')
-
-  let emailed = false
-  try {
-    const { sendBroadcast, resendConfigured } = await import('./brewResend.js')
-    if (resendConfigured()) {
-      await sendBroadcast({
-        recipients: ['mark@absoluteadas.com'],
-        subject: `Time clock + people + vans backup — ${today} (${entries.length} entries)`,
-        text: `Nightly off-site backup of the Absolute ADAS time clock.\n${entries.length} entries attached as JSON (restore format) and CSV (readable).\nKeep a few of these — any one email restores the whole clock.`,
-        attachments: [
-          { filename: `directory-${today}.json`, content: Buffer.from(peopleJson).toString('base64') },
-          { filename: `vans-${today}.json`, content: Buffer.from(vansJson).toString('base64') },
-          { filename: `timeclock-${today}.json`, content: Buffer.from(JSON.stringify(entries, null, 1), 'utf8').toString('base64') },
-          { filename: `timeclock-${today}.csv`, content: Buffer.from(csv, 'utf8').toString('base64') },
-        ],
-      })
-      emailed = true
-    }
-  } catch (e) { console.warn('[tc-backup] email failed:', e.message) }
-
-  if (!emailed) return { fired: false, reason: 'email failed — will retry next hour' }
+  const { snapshotTimeclock } = await import('../routes/timeclock.js')
+  const snap = await snapshotTimeclock(req)
   await app.datastore().table('AppConfig')
-    .insertRow({ config_key: stampKey, config_value: new Date().toISOString() }).catch(() => {})
-  return { fired: true, entries: entries.length }
+    .insertRow({
+      config_key: stampKey,
+      config_value: JSON.stringify({ at: new Date().toISOString(), count: snap.count, parts: snap.parts, where: 'datastore' }),
+    }).catch(() => {})
+  return { fired: true, entries: snap.count, where: 'datastore' }
 }

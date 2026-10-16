@@ -368,14 +368,24 @@ router.post('/run', async (req, res) => {
     console.warn('[postscan] hours-report piggyback failed (non-fatal):', e.message)
   }
 
-  // Nightly time clock backup (Mark 2026-08-30) — 8-10pm PT, email
-  // JSON+CSV to mark@. Own stamp + retry inside.
+  // Nightly time clock backup — 8-10pm PT, datastore snapshot.
+  // Own stamp inside. Email is not the copy.
   try {
     const { maybeBackupTimeclock } = await import('../services/hr.js')
     const tb = await maybeBackupTimeclock(req)
     if (tb.fired) console.log('[postscan] tc backup:', JSON.stringify(tb))
   } catch (e) {
     console.warn('[postscan] tc-backup piggyback failed (non-fatal):', e.message)
+  }
+
+  // Pull the old email backups into the datastore and put back any
+  // punches the live clock lost. One short pass per run until finished.
+  try {
+    const { maybeRecoverTimeclockMail } = await import('../services/timeclockBackup.js')
+    const rc = await maybeRecoverTimeclockMail(req, { budgetMs: 20000 })
+    if (rc.added || rc.files) console.log('[postscan] tc mail restore:', JSON.stringify(rc))
+  } catch (e) {
+    console.warn('[postscan] tc mail restore failed (non-fatal):', e.message)
   }
 
   // Nightly Zoho Books mirror refresh (books scan B-02, Mark 2026-09-07)

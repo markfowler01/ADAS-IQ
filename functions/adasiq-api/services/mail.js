@@ -275,10 +275,10 @@ export async function saveDraftReply(token, accountId, { to, subject, body, inRe
  * Search an account's mail (Zoho searchKey syntax, e.g. "entire:Ford" or
  * "subject:Ford camera"). Read-only.
  */
-export async function searchMessages(token, accountId, searchKey, limit = 25) {
+export async function searchMessages(token, accountId, searchKey, limit = 25, start = 1) {
   const res = await axios.get(`${MAIL_API}/accounts/${accountId}/messages/search`, {
     headers: mailHeaders(token),
-    params: { searchKey, limit },
+    params: { searchKey, limit, start },
     timeout: 15000,
     transformResponse: [safeParseMailResponse],
   })

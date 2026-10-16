@@ -1,5 +1,6 @@
 import express from 'express'
 import { canonicalIdentity, isMarkEmail } from '../services/hr.js'
+import { parseBucket, unionEntries, addMissingEntries, packLists, punchesThatWouldBeLost, TEXT_MAX } from '../services/timeclockGuard.js'
 import catalyst from 'zcatalyst-sdk-node'
 
 const router = express.Router()
@@ -167,8 +168,9 @@ async function writeLegacyEntries(req, entries) { // retained for emergencies
 // backed up this is very important"). One AppConfig row per person per
 // month — a punch touches ONLY that person's row, so simultaneous
 // 8 AM clock-ins can never race each other. The legacy blob is left in
-// place untouched as a frozen backup, and a nightly email backup rides
-// the postscan (see hr.js maybeBackupTimeclock).
+// place untouched as a frozen backup. Every save also copies the previous
+// row to tcbak:* keys that this writer never blanks. The nightly copy
+// lives in the datastore (see hr.js maybeBackupTimeclock), not in email.
 const TC2_INDEX = 'tc2:index'
 const emailKey = uid => String(uid || 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '_')
 function monthOf(entry) {
@@ -180,7 +182,9 @@ const rowKeyFor = (uid, month) => `tc2:${emailKey(uid)}:${month}`
 
 async function tc2Index(req) {
   const r = await tcRead(req, TC2_INDEX)
-  try { return r?.value ? JSON.parse(r.value) : null } catch { return null }
+  if (!r?.value) return null
+  const parsed = parseBucket(r.value, TC2_INDEX)
+  return parsed
 }
 async function tc2SetIndex(req, keys) {
   await tcWrite(req, TC2_INDEX, JSON.stringify([...new Set(keys)].sort()))
@@ -217,60 +221,151 @@ async function ensureTc2(req) {
   return keys
 }
 
+const curKey = key => `tcbak:cur:${key}`
+
+function sortEntries(entries) {
+  return normalizeIdentities(entries).sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)))
+}
+
+// Copy the raw row before we change it. These keys are not in the tc2
+// index, so a later save cannot blank them.
+async function archiveRaw(req, key, raw) {
+  if (!raw || raw === '[]') return
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '')
+  const base = `tcbak:pre:${stamp}:${key}`
+  if (raw.length <= TEXT_MAX) {
+    await tcWrite(req, base, raw)
+    return
+  }
+  const size = 8000
+  const parts = Math.ceil(raw.length / size)
+  for (let i = 0; i < parts; i++) await tcWrite(req, `${base}~${i}`, raw.slice(i * size, (i + 1) * size))
+  await tcWrite(req, `${base}~n`, String(parts))
+}
+
+async function loadKeys(req, keys) {
+  const rows = await Promise.all(keys.map(async key => {
+    const row = await tcRead(req, key)
+    return { key, raw: row?.value || '', list: parseBucket(row?.value, key) }
+  }))
+  const seen = new Set(rows.flatMap(row => row.list.map(entry => entry?.id).filter(Boolean)))
+  for (const row of rows) {
+    if (row.list.length) continue
+    let saved = []
+    try { saved = parseBucket((await tcRead(req, curKey(row.key)))?.value, curKey(row.key)) }
+    catch (e) { console.warn('[timeclock] backup unreadable:', e.message); continue }
+    const missing = saved.filter(entry => entry?.id && !seen.has(entry.id))
+    if (!missing.length) continue
+    await tcWrite(req, row.key, JSON.stringify(missing))
+    row.list = missing
+    row.raw = JSON.stringify(missing)
+    for (const entry of missing) seen.add(entry.id)
+    console.log(`[timeclock] restored ${missing.length} punch(es) into ${row.key} from the datastore backup`)
+  }
+  return rows
+}
+
 async function readEntries(req) {
   const keys = await ensureTc2(req)
-  const parts = await Promise.all(keys.map(async k => {
-    const r = await tcRead(req, k)
-    try { return r?.value ? JSON.parse(r.value) : [] } catch { return [] }
-  }))
-  return normalizeIdentities(parts.flat()).sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)))
+  const rows = await loadKeys(req, keys)
+  return sortEntries(rows.flatMap(row => row.list))
+}
+
+// Write `buckets` and blank only `touchKeys` that no longer have punches.
+// Refuses to drop an id the caller did not name in dropIds.
+async function persistBuckets(req, touchKeys, buckets, { dropIds = [] } = {}) {
+  const packed = packLists(buckets)
+  for (const list of Object.values(packed)) {
+    if (JSON.stringify(list).length > TEXT_MAX) throw new Error('time clock row is too big to save safely')
+  }
+  const nextIds = new Set(Object.values(packed).flat().map(entry => entry?.id).filter(Boolean))
+  const index = await ensureTc2(req)
+  const touch = [...new Set(touchKeys)]
+  for (const key of touch) {
+    if (!key.startsWith('tc2:')) throw new Error(`refusing to rewrite ${key}`)
+    const current = await tcRead(req, key)
+    const raw = current?.value || ''
+    const old = parseBucket(raw, key)
+    const lost = punchesThatWouldBeLost(old, nextIds, dropIds)
+    if (lost.length) {
+      try { await archiveRaw(req, key, raw) } catch (e) { console.warn('[timeclock] archive before refusal failed:', e.message) }
+      throw new Error(`refusing to erase ${lost.length} punch(es) from ${key}`)
+    }
+    const nextJson = JSON.stringify(packed[key] || [])
+    if (raw && raw !== nextJson) {
+      try { await archiveRaw(req, key, raw) } catch (e) { console.warn('[timeclock] archive failed:', e.message) }
+    }
+  }
+  for (const [key, list] of Object.entries(packed)) {
+    if (!key.startsWith('tc2:')) throw new Error(`refusing to write ${key}`)
+    const json = JSON.stringify(list)
+    await tcWrite(req, key, json)
+    await tcWrite(req, curKey(key), json)
+  }
+  for (const key of touch) {
+    if (packed[key]) continue
+    await tcWrite(req, key, '[]')
+    await tcWrite(req, curKey(key), '[]')
+  }
+  await tc2SetIndex(req, [...new Set([...index, ...touch, ...Object.keys(packed)])])
+  const check = await tcRead(req, TC2_INDEX)
+  if (!check?.value) throw new Error('timeclock write verification failed — retry')
+  const first = Object.keys(packed)[0]
+  if (first) {
+    const written = await tcRead(req, first)
+    if (!written?.value) throw new Error('timeclock write verification failed — punch NOT saved, retry')
+  }
 }
 
 // Full write (sweeps + multi-person admin ops — evening, low contention).
-async function writeEntries(req, entries) {
+// Incoming entries update matching ids. Every other stored punch stays
+// unless its id is in dropIds.
+async function writeEntries(req, entries, opts = {}) {
+  const existing = await readEntries(req)
+  const merged = unionEntries(existing, normalizeIdentities(entries), opts.dropIds || [])
   const keys = await ensureTc2(req)
-  const buckets = bucketize(normalizeIdentities(entries))
-  for (const [k, list] of Object.entries(buckets)) {
-    await tcWrite(req, k, JSON.stringify(list))
-  }
-  // A person-month that lost its last entry must be emptied, or deleted
-  // entries resurrect on the next read.
-  for (const k of keys) {
-    if (!buckets[k]) await tcWrite(req, k, '[]')
-  }
-  await tc2SetIndex(req, [...keys, ...Object.keys(buckets)])
-  const check = await tcRead(req, TC2_INDEX)
-  if (!check?.value) throw new Error('timeclock write verification failed — retry')
+  await persistBuckets(req, keys, bucketize(merged), opts)
 }
 
-// HOT PATH: one person's entries only. Punches race no one.
 async function readPerson(req, userId) {
   const keys = await ensureTc2(req)
   const mine = keys.filter(k => k.startsWith(`tc2:${emailKey(userId)}:`))
-  const parts = await Promise.all(mine.map(async k => {
-    const r = await tcRead(req, k)
-    try { return r?.value ? JSON.parse(r.value) : [] } catch { return [] }
-  }))
-  return normalizeIdentities(parts.flat()).sort((a, b) => String(a.clock_in).localeCompare(String(b.clock_in)))
+  const rows = await loadKeys(req, mine)
+  return sortEntries(rows.flatMap(row => row.list))
 }
-async function writePerson(req, userId, personEntries) {
-  const keys = await ensureTc2(req)
+
+async function writePerson(req, userId, personEntries, opts = {}) {
   const ek = emailKey(userId)
-  const buckets = bucketize(personEntries)
-  for (const [k, list] of Object.entries(buckets)) {
-    if (!k.startsWith(`tc2:${ek}:`)) throw new Error('writePerson: foreign entry in person write')
-    await tcWrite(req, k, JSON.stringify(list))
+  const existing = await readPerson(req, userId)
+  const merged = unionEntries(existing, normalizeIdentities(personEntries), opts.dropIds || [])
+    .filter(entry => emailKey(entry.user_id) === ek)
+  const keys = await ensureTc2(req)
+  const touch = keys.filter(k => k.startsWith(`tc2:${ek}:`))
+  await persistBuckets(req, touch, bucketize(merged), opts)
+}
+
+export async function snapshotTimeclock(req) {
+  const entries = await readEntries(req)
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+  const packed = packLists({ night: entries })
+  const parts = Object.entries(packed)
+  for (const [key, list] of parts) {
+    const n = key === 'night' ? 0 : Number(String(key).split('~')[1]) - 1
+    await tcWrite(req, `tcbak:night:${today}:p${n}`, JSON.stringify(list))
   }
-  for (const k of keys) {
-    if (k.startsWith(`tc2:${ek}:`) && !buckets[k]) await tcWrite(req, k, '[]')
-  }
-  await tc2SetIndex(req, [...keys, ...Object.keys(buckets)])
-  // read-back verify the newest bucket
-  const first = Object.keys(buckets)[0]
-  if (first) {
-    const check = await tcRead(req, first)
-    if (!check?.value) throw new Error('timeclock person-write verification failed — punch NOT saved, retry')
-  }
+  await tcWrite(req, `tcbak:night:${today}:meta`, JSON.stringify({
+    parts: parts.length, count: entries.length, at: new Date().toISOString(),
+  }))
+  return { count: entries.length, parts: parts.length, day: today }
+}
+
+export async function mergeRecoveredEntries(req, recovered) {
+  const live = await readEntries(req)
+  const { entries, added } = addMissingEntries(live, normalizeIdentities(recovered))
+  if (added > 0) await writeEntries(req, entries)
+  return { before: live.length, added, after: live.length + added }
 }
 
 function getUserId(req) {
@@ -737,7 +832,7 @@ router.delete('/entries/:id', async (req, res) => {
     }
     const removed = entries[idx]
     entries.splice(idx, 1)
-    await writeEntries(req, entries)
+    await writeEntries(req, entries, { dropIds: [removed.id] })
     if (gate?.audit) {
       try {
         const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
@@ -1069,6 +1164,19 @@ router.post('/period-review/attest', async (req, res) => {
     }
     res.json({ ok: true, attested: rec })
   } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// One-time pull of the emailed time-clock backups into the datastore.
+router.post('/recover-mail', async (req, res) => {
+  try {
+    if (!isOwner(req)) return res.status(403).json({ error: 'Only Mark can restore the time clock.' })
+    const { maybeRecoverTimeclockMail } = await import('../services/timeclockBackup.js')
+    const out = await maybeRecoverTimeclockMail(req, { budgetMs: 20000 })
+    res.json({ ok: true, ...out })
+  } catch (e) {
+    console.error('[timeclock] recover-mail', e)
+    res.status(500).json({ error: e.message })
+  }
 })
 
 export { readEntries as readEntriesPublic, writeEntries as writeEntriesPublic }
