@@ -412,8 +412,8 @@ async function readOffer(req, id) { const { cfgReadJson } = await import('./peop
 async function writeOffer(req, id, o) { const { cfgWriteJson } = await import('./people.js'); return cfgWriteJson(req, offerKey(id), o) }
 
 router.get('/sign-status', async (req, res) => {
-  try { const sign = await import('../services/zohoSign.js'); await sign.loadStoredToken(req); const p = await sign.isConfigured(); res.json({ ok: true, configured: p.ok, why: p.why, token: sign.signTokenSource() }) }
-  catch (e) { res.json({ ok: true, configured: false, why: e.message }) }
+  // In-app e-sign (2026-10-16): offers no longer need Zoho Sign.
+  res.json({ ok: true, configured: true, why: '', token: 'app' })
 })
 // Owner pastes the Sign refresh token here (the console's env block is full).
 // Stored in AppConfig; never echoed back beyond the last 4.
@@ -495,25 +495,23 @@ router.post('/:id/offer/send', async (req, res) => {
     if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
     const cand = (await readAll(req)).find(c => c.id === String(req.params.id))
     if (!cand) return res.status(404).json({ error: 'Candidate not found' })
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cand.email || '')) return res.status(400).json({ error: 'The candidate needs an email on their card — Zoho Sign sends there.' })
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cand.email || '')) return res.status(400).json({ error: 'The candidate needs an email on their card — the signing link and signed copy go there.' })
     const o = offerFromBody(req.body)
     if (!(o.pay_rate > 0)) return res.status(400).json({ error: 'Pay is required.' })
     if (!o.start_date) return res.status(400).json({ error: 'Start date is required.' })
-    const sign = await import('../services/zohoSign.js')
-    await sign.loadStoredToken(req)
-    const probe = await sign.isConfigured()
-    if (!probe.ok) return res.status(503).json({ error: `Zoho Sign isn't connected yet (${probe.why}). Mint a token with the ZohoSign scopes and set ZOHO_SIGN_REFRESH_TOKEN.` })
+    const es = await import('../services/esign.js')
     const prev = await readOffer(req, cand.id)
-    if (prev?.request_id && prev.status === 'inprogress') { try { await sign.recallRequest(prev.request_id, 'Replaced by a new offer') } catch (e) { console.log('[offer] recall failed (continuing):', e.message) } }
+    if (prev?.request_id && prev.status === 'inprogress') { if (prev.via === 'app') await es.voidEnvelope(req, prev.request_id, 'Replaced by a new offer'); else { try { const sign = await import('../services/zohoSign.js'); await sign.loadStoredToken(req); await sign.recallRequest(prev.request_id, 'Replaced by a new offer') } catch (e) { console.log('[offer] recall failed (continuing):', e.message) } } }
     const { pdf, sign: sig, date, comp: offerComp } = await buildRecruitOffer(req, cand, o, req.body?.package)
     const subject = `${o.employment === 'contractor' ? 'Contractor agreement' : 'Offer letter'} — ${cand.name} — Absolute ADAS`
-    const r = await sign.sendForSignature({ pdf, filename: `${subject}.pdf`, recipientName: cand.name, recipientEmail: cand.email, subject, note: `Hi ${cand.name.split(' ')[0]} — here's your ${o.employment === 'contractor' ? 'agreement' : 'offer'} from Absolute ADAS. Sign on your phone and your onboarding link follows. — Mark`,
-      fields: [{ type: 'Signature', ...sig, name: 'Signature' }, { type: 'Date', ...date, name: 'Date signed' }] })
-    const offer = { ...o, comp: offerComp, package: req.body?.package || '', request_id: r.request_id, action_id: r.action_id, document_id: r.document_id, status: 'inprogress', sent_at: new Date().toISOString(), sent_by: req.user?.name || '', candidate_name: cand.name, candidate_email: cand.email }
+    const first = cand.name.split(' ')[0]
+    const { env, delivery } = await es.createEnvelope(req, { kind: 'recruit_offer', ref: cand.id, subject, signer: { name: cand.name, email: cand.email, phone: cand.phone || '' }, pdf, fields: { sign: sig, date }, sentBy: req.user?.name || 'Mark Fowler',
+      invite: { sms: `${first}, it's Mark. Here's your ${o.employment === 'contractor' ? 'agreement' : 'offer'} from Absolute ADAS. Read it and sign right on your phone. Your onboarding link comes as soon as you do:`, emailIntro: `Here's your ${o.employment === 'contractor' ? 'agreement' : 'offer'} from Absolute ADAS. Read it over and sign right on your phone. As soon as you sign, your onboarding link comes your way.` } })
+    const offer = { ...o, comp: offerComp, package: req.body?.package || '', via: 'app', request_id: env.id, status: 'inprogress', sent_at: new Date().toISOString(), sent_by: req.user?.name || '', candidate_name: cand.name, candidate_email: cand.email, delivery }
     await writeOffer(req, cand.id, offer)
     if (cand.stage !== 'offer') await catalyst.initialize(req).datastore().table(TABLE).updateRow({ ROWID: cand.id, cand_stage: 'offer', cand_updated_at: new Date().toISOString() })
-    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📝 *Offer sent to ${cand.name}* via Zoho Sign — ${o.title}, ${o.employment === 'contractor' ? 'contractor' : 'W-2'}, starts ${o.start_date}. I'll file the signed copy and send their onboarding link the moment it comes back.`) } catch {}
-    console.log(`[offer] sent to ${cand.name} <${cand.email}> request ${r.request_id}`)
+    try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📝 *Offer sent to ${cand.name}* (sign in the app) — ${o.title}, ${o.employment === 'contractor' ? 'contractor' : 'W-2'}, starts ${o.start_date}. I'll file the signed copy and send their onboarding link the moment it comes back.`) } catch {}
+    console.log(`[offer] sent to ${cand.name} <${cand.email}> envelope ${offer.request_id}`)
     res.json({ ok: true, offer })
   } catch (e) { console.error('[offer send]', e.message); res.status(500).json({ error: e.message }) }
 })
@@ -522,34 +520,22 @@ router.post('/:id/offer/withdraw', async (req, res) => {
     if (!isOwner(req) && req.user?.role !== 'owner') return res.status(403).json({ error: 'Owners only' })
     const o = await readOffer(req, req.params.id)
     if (!o?.request_id) return res.status(404).json({ error: 'No offer out' })
-    const sign = await import('../services/zohoSign.js')
-    await sign.loadStoredToken(req)
-    try { await sign.recallRequest(o.request_id, String(req.body?.reason || 'Withdrawn by Absolute ADAS').slice(0, 200)) } catch (e) { console.log('[offer] recall failed:', e.message) }
+    if (o.via === 'app') { const es = await import('../services/esign.js'); await es.voidEnvelope(req, o.request_id, String(req.body?.reason || 'Withdrawn by Absolute ADAS').slice(0, 200)) }
+    else { const sign = await import('../services/zohoSign.js'); await sign.loadStoredToken(req); try { await sign.recallRequest(o.request_id, String(req.body?.reason || 'Withdrawn by Absolute ADAS').slice(0, 200)) } catch (e) { console.log('[offer] recall failed:', e.message) } }
     await writeOffer(req, req.params.id, { ...o, status: 'withdrawn', withdrawn_at: new Date().toISOString() })
     res.json({ ok: true })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
-/** Hourly: any offer still in progress → ask Sign; completed → file + hire. */
-export async function pollOffers(req) {
+
+/** A signed offer (Zoho Sign or in-app): file it, hire them, seed Pay & Benefits, onboarding link. */
+export async function completeOffer(req, candId, pdf, signedAtIn) {
   const app = catalyst.initialize(req)
-  const rows = await app.zcql().executeZCQLQuery("SELECT ROWID, config_key, config_value FROM AppConfig WHERE config_key LIKE 'offer:%' LIMIT 300").catch(() => [])
-  const sign = await import('../services/zohoSign.js')
-  await sign.loadStoredToken(req)
-  let checked = 0, completed = 0
-  for (const r of rows || []) {
-    const row = r.AppConfig || r
-    let o = null; try { o = JSON.parse(row.config_value || 'null') } catch { continue }
-    if (!o?.request_id || o.status !== 'inprogress') continue
-    const candId = String(row.config_key).slice('offer:'.length)
-    checked++
-    let st
-    try { st = await sign.requestStatus(o.request_id) } catch (e) { console.log(`[offer] status check failed for ${o.candidate_name}:`, e.message); continue }
-    if (st.status === 'inprogress') continue
-    if (st.status !== 'completed') { await writeOffer(req, candId, { ...o, status: st.status, ended_at: new Date().toISOString() }); try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📝 Offer to *${o.candidate_name}* is now *${st.status}* in Zoho Sign.`) } catch {}; continue }
-    // Signed → file it, hire them, send the onboarding link.
-    try {
-      const pdf = await sign.downloadSignedPdf(o.request_id)
+  const o = await readOffer(req, candId)
+  if (!o) throw new Error('offer not found')
+  if (o.status === 'completed' && o.filed) return o
+  const signedAt = signedAtIn || new Date().toISOString()
+  const { cfgReadJson, cfgWriteJson } = await import('./people.js')
       const cand = (await readAll(req)).find(c => c.id === candId)
       const { onCandidateHired } = await import('./people.js')
       const { readTeamMembers, saveMemberPublic } = await import('./team.js')
@@ -562,7 +548,7 @@ export async function pollOffers(req) {
         member.payroll_type = o.employment === 'contractor' ? 'contractor_wise' : 'w2_zoho'
         const { putFile } = await import('./onboardPublic.js')
         const doc = await putFile(req, member, 'contract', '', pdf, 'application/pdf', '.pdf')
-        member.signatures = { ...(member.signatures || {}), contract: { at: st.signed_at || new Date().toISOString(), file_id: doc.file_id, version: 'zoho-sign', request_id: o.request_id } }
+        member.signatures = { ...(member.signatures || {}), contract: { at: signedAt, file_id: doc.file_id, version: o.via === 'app' ? 'app-esign' : 'zoho-sign', request_id: o.request_id } }
         await saveMemberPublic(req, member)
         // 💵 Signed W-2 terms become their Pay & Benefits record (never overwrite one Mark already made).
         if (o.comp) {
@@ -570,7 +556,7 @@ export async function pollOffers(req) {
             const comp = await import('../services/comp.js')
             const key = `mpb:${String(member.id).replace(/[^a-z0-9_]/gi, '')}`
             if (!(await cfgReadJson(req, key, null))) {
-              const c = comp.normalizeComp({ ...o.comp, letter: { request_id: o.request_id, status: 'completed', sent_at: o.sent_at, signed_at: st.signed_at || new Date().toISOString(), via: 'recruiting' } })
+              const c = comp.normalizeComp({ ...o.comp, letter: { request_id: o.request_id, status: 'completed', sent_at: o.sent_at, signed_at: signedAt, via: o.via === 'app' ? 'app' : 'recruiting' } })
               c.history = [{ at: new Date().toISOString(), by: 'Recruiting', what: 'Created from the signed offer letter' }]
               await cfgWriteJson(req, key, c)
             }
@@ -578,10 +564,34 @@ export async function pollOffers(req) {
         }
       }
       if (cand && cand.stage !== 'hired') await app.datastore().table(TABLE).updateRow({ ROWID: candId, cand_stage: 'hired', cand_updated_at: new Date().toISOString() })
-      await writeOffer(req, candId, { ...o, status: 'completed', signed_at: st.signed_at || new Date().toISOString(), filed: !!member })
-      completed++
+      await writeOffer(req, candId, { ...o, status: 'completed', signed_at: signedAt, filed: !!member })
       try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ *${o.candidate_name} signed the ${o.employment === 'contractor' ? 'agreement' : 'offer'}.* Filed as "09 Signed contract" in their folder, marked Hired${member?.onboarding_invited_at ? ', onboarding link sent' : ''}. Starts ${o.start_date}.`) } catch {}
       console.log(`[offer] ${o.candidate_name} signed → filed + hired`)
+  return o
+}
+
+/** Hourly: any offer still in progress → ask Sign; completed → file + hire. */
+export async function pollOffers(req) {
+  const app = catalyst.initialize(req)
+  const rows = await app.zcql().executeZCQLQuery("SELECT ROWID, config_key, config_value FROM AppConfig WHERE config_key LIKE 'offer:%' LIMIT 300").catch(() => [])
+  const sign = await import('../services/zohoSign.js')
+  await sign.loadStoredToken(req)
+  let checked = 0, completed = 0
+  for (const r of rows || []) {
+    const row = r.AppConfig || r
+    let o = null; try { o = JSON.parse(row.config_value || 'null') } catch { continue }
+    if (!o?.request_id || o.status !== 'inprogress' || o.via === 'app') continue
+    const candId = String(row.config_key).slice('offer:'.length)
+    checked++
+    let st
+    try { st = await sign.requestStatus(o.request_id) } catch (e) { console.log(`[offer] status check failed for ${o.candidate_name}:`, e.message); continue }
+    if (st.status === 'inprogress') continue
+    if (st.status !== 'completed') { await writeOffer(req, candId, { ...o, status: st.status, ended_at: new Date().toISOString() }); try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `📝 Offer to *${o.candidate_name}* is now *${st.status}* in Zoho Sign.`) } catch {}; continue }
+    // Signed → file it, hire them, send the onboarding link.
+    try {
+      const pdf = await sign.downloadSignedPdf(o.request_id)
+      await completeOffer(req, candId, pdf, st.signed_at)
+      completed++
     } catch (e) { console.log(`[offer] completion handling failed for ${o.candidate_name}:`, e.message) }
   }
   return { checked, completed }

@@ -386,7 +386,7 @@ function OfferPanel({ c, onPatched }) {
   return (
     <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1.5px solid #1F8B8B' }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#1F8B8B' }}>📝 Offer · Zoho Sign</div>
+        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#1F8B8B' }}>📝 Offer · sign in the app</div>
         <div className="flex gap-1.5">
           {status === 'inprogress' && <button onClick={withdraw} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: 'white', color: '#dc2626', border: '1px solid #fecaca' }}>{busy === 'withdraw' ? '…' : 'Withdraw'}</button>}
           {!open && <button onClick={() => setOpen(true)} disabled={sign && !sign.configured} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: '#1F8B8B', opacity: sign && !sign.configured ? .5 : 1 }}>{status === 'inprogress' ? 'Re-send' : status === 'completed' ? 'Send another' : 'Send offer'}</button>}
@@ -402,7 +402,7 @@ function OfferPanel({ c, onPatched }) {
           </div>
         </div>
       )}
-      {sign?.configured && <div className="text-[11px] mt-1" style={{ color: '#1F8B8B' }}>✓ Connected to Zoho Sign ({sign.token === 'app' ? 'token stored in the app' : sign.token === 'env' ? 'env var' : sign.token}).</div>}
+      {sign?.configured && <div className="text-[11px] mt-1" style={{ color: '#1F8B8B' }}>✓ They get a private link by text and email, read it, and sign on their phone.</div>}
       {offer && STATUS[status] && <div className="text-xs mt-2 px-2.5 py-2 rounded-lg font-semibold" style={{ backgroundColor: STATUS[status][2], color: STATUS[status][1] }}>{STATUS[status][0]} · {offer.title} · {offer.employment === 'contractor' ? 'contractor' : 'W-2'} · ${Number(offer.pay_rate).toLocaleString()} {offer.pay_type === 'salary' ? '/yr' : offer.pay_type === 'per_job' ? '/job' : '/hr'} · starts {offer.start_date} · sent {String(offer.sent_at || '').slice(0, 10)}{offer.signed_at ? ` · signed ${String(offer.signed_at).slice(0, 10)}` : ''}</div>}
       {open && (
         <div className="mt-3">
@@ -423,7 +423,7 @@ function OfferPanel({ c, onPatched }) {
             </div>) })()}
           <input value={f.bonus} onChange={e => setF({ ...f, bonus: e.target.value })} placeholder={f.employment === 'w2' ? 'Extra bonus line (optional, on top of the package)' : 'Bonus line (optional) — e.g. $500 after 90 days'} className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
           <textarea value={f.duties} onChange={e => setF({ ...f, duties: e.target.value })} rows={2} placeholder="Duties (optional — leave blank for the standard tech / billing wording)" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
-          <div className="text-[11px] mb-2" style={{ color: '#555' }}>Sent to <b>{c.email || 'no email on the card — add one first'}</b>. They sign on their phone; the signed PDF lands in their personnel folder, they're marked Hired, and the onboarding link goes out on its own.</div>
+          <div className="text-[11px] mb-2" style={{ color: '#555' }}>Sent to <b>{c.email || 'no email on the card — add one first'}</b>. They sign on their phone; you both get the signed copy by email, it lands in their personnel folder, they're marked Hired, and the onboarding link goes out on its own.</div>
           {err && <div className="text-xs mb-2" style={{ color: '#dc2626' }}>{err}</div>}
           <div className="flex gap-2">
             <button onClick={preview} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: 'white', color: '#1F8B8B', border: '1px solid #1F8B8B' }}>{busy === 'preview' ? '…' : '👁 Preview PDF'}</button>

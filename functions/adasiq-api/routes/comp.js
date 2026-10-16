@@ -132,18 +132,18 @@ router.post('/:id/send-letter', async (req, res) => {
     if (!c.start_date) return res.status(400).json({ error: 'Set a start date first.' })
     if (!(c.pay_rate > 0)) return res.status(400).json({ error: 'Set the pay first.' })
     if (!m.email) return res.status(400).json({ error: `${m.name} has no email on file.` })
-    const sign = await import('../services/zohoSign.js')
-    await sign.loadStoredToken(req)
-    const probe = await sign.isConfigured()
-    if (!probe.ok) return res.status(503).json({ error: `Zoho Sign isn't connected (${probe.why}).` })
-    if (c.letter?.request_id && c.letter.status === 'inprogress') { try { await sign.recallRequest(c.letter.request_id, 'Replaced by an updated letter') } catch (e) { console.log('[comp] recall failed (continuing):', e.message) } }
+    const es = await import('../services/esign.js')
+    if (c.letter?.request_id && c.letter.status === 'inprogress') {
+      if (c.letter.via === 'app') await es.voidEnvelope(req, c.letter.request_id, 'Replaced by an updated letter')
+      else { try { const sign = await import('../services/zohoSign.js'); await sign.loadStoredToken(req); await sign.recallRequest(c.letter.request_id, 'Replaced by an updated letter') } catch (e) { console.log('[comp] recall failed (continuing):', e.message) } }
+    }
     const { pdf, sign: sig, date } = await buildLetter(m, await withCheckins(req, m, c))
-    const subject = `Offer letter — ${m.name} — Absolute ADAS`
-    const r = await sign.sendForSignature({ pdf, filename: `${subject}.pdf`, recipientName: m.name, recipientEmail: m.email, subject,
-      note: `Hi ${m.name.split(' ')[0]}, here's your updated offer letter with your pay and benefits. Sign on your phone. — Mark`,
-      fields: [{ type: 'Signature', ...sig, name: 'Signature' }, { type: 'Date', ...date, name: 'Date signed' }] })
-    c.letter = { request_id: r.request_id, status: 'inprogress', sent_at: new Date().toISOString() }
-    c.history = [...c.history, { at: c.letter.sent_at, by: 'Mark', what: 'Offer letter sent through Zoho Sign' }].slice(-25)
+    const first = m.name.split(' ')[0]
+    const { env } = await es.createEnvelope(req, { kind: 'comp_letter', ref: m.id, subject: `Offer letter — ${m.name} — Absolute ADAS`, signer: { name: m.name, email: m.email, phone: m.personal_phone || m.phone || '' }, pdf, fields: { sign: sig, date },
+      invite: { sms: `Hey ${first}, it's Mark. Here's your updated offer letter with your pay and benefits all in one place. Read it and sign right on your phone:`, emailIntro: "Here's your updated offer letter with your pay and benefits all in one place. Read it over and sign right on your phone. It takes a minute." } })
+    const r = { request_id: env.id }
+    c.letter = { request_id: r.request_id, status: 'inprogress', sent_at: new Date().toISOString(), via: 'app' }
+    c.history = [...c.history, { at: c.letter.sent_at, by: 'Mark', what: 'Offer letter sent to sign in the app' }].slice(-25)
     await writeComp(req, m.id, c)
     res.json({ ok: true, letter: c.letter })
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }) }
@@ -154,6 +154,7 @@ router.post('/:id/send-letter', async (req, res) => {
 // still shows it done.
 export async function checkLetter(req, m, c) {
   if (!c?.letter?.request_id || c.letter.status !== 'inprogress') return c?.letter || null
+  if (c.letter.via === 'app') { const es = await import('../services/esign.js'); const env = await es.readEnvelope(req, c.letter.request_id); if (env?.status === 'completed') await es.finishEnvelope(req, env.id); return (await readComp(req, m.id))?.letter || c.letter }
   const sign = await import('../services/zohoSign.js')
   await sign.loadStoredToken(req)
   const st = await sign.requestStatus(c.letter.request_id)
@@ -170,6 +171,17 @@ export async function checkLetter(req, m, c) {
   }
   return c.letter
 }
+// ✍️ In-app signature finished (services/esign.js finishEnvelope → here).
+export async function onLetterSigned(req, memberId, env) {
+  const m = await memberById(req, memberId)
+  const c = m && await readComp(req, m.id)
+  if (!c) return
+  c.letter = { ...(c.letter || {}), request_id: env.id, status: 'completed', signed_at: env.signed_at, via: 'app' }
+  c.history = [...c.history, { at: new Date().toISOString(), by: env.signed_name, what: 'Offer letter signed in the app' }].slice(-25)
+  await writeComp(req, m.id, c)
+  try { m.signatures = { ...(m.signatures || {}), contract: { at: env.signed_at, version: 'offer-letter' } }; const { saveMemberPublic } = await import('./team.js'); await saveMemberPublic(req, m) } catch (e) { console.log('[comp] signature tick', e.message) }
+  try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ ${m.name} signed the offer letter. Copy in your email and in Pay & Benefits.`) } catch { /* fine */ }
+}
 router.post('/:id/letter-check', async (req, res) => {
   try {
     const m = await memberById(req, req.params.id)
@@ -183,8 +195,9 @@ router.get('/:id/signed.pdf', async (req, res) => {
     const m = await memberById(req, req.params.id)
     const c = m && await readComp(req, m.id)
     if (!c?.letter?.request_id || c.letter.status !== 'completed') return res.status(404).json({ error: 'No signed letter yet' })
-    const sign = await import('../services/zohoSign.js'); await sign.loadStoredToken(req)
-    const pdf = await sign.downloadSignedPdf(c.letter.request_id)
+    let pdf
+    if (c.letter.via === 'app') { const es = await import('../services/esign.js'); pdf = await es.readPdf(req, c.letter.request_id, true); if (!pdf) return res.status(404).json({ error: 'Signed copy not found' }) }
+    else { const sign = await import('../services/zohoSign.js'); await sign.loadStoredToken(req); pdf = await sign.downloadSignedPdf(c.letter.request_id) }
     res.setHeader('Content-Type', 'application/pdf'); res.setHeader('Cache-Control', 'no-store')
     res.setHeader('Content-Disposition', `inline; filename="Signed offer letter - ${m.name}.pdf"`)
     res.send(pdf)

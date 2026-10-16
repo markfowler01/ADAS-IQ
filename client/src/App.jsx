@@ -28,6 +28,7 @@ import ErrorBoundary from './components/ErrorBoundary.jsx'
 import RepairEstimateScreen from './components/RepairEstimateScreen'
 import EstimatorBoard from './components/estimator/EstimatorBoard'  // repair estimator (2026-09-14)
 import EstimateApprovalScreen from './components/estimator/EstimateApprovalScreen'
+import EsignScreen from './components/EsignScreen'   // public: /app/?esign=<id>&t=
 import OnboardingScreen from './components/team/OnboardingScreen'  // public: /app/?onboard=<id>&t=  // public: /app/estimate?e=&t=
 import CalibrationRulesScreen from './components/CalibrationRulesScreen'
 import CRMScreen from './components/CRMScreen'
@@ -66,6 +67,7 @@ import DisputesScreen from './components/DisputesScreen'
 import CustomerExperienceScreen from './components/CustomerExperienceScreen'
 import NPSScreen from './components/NPSScreen'
 import IntelligenceScreen from './components/IntelligenceScreen'
+import ShopTalkScreen from './pages/ShopTalkScreen'
 import PayrollScreen from './components/PayrollScreen'
 import ScalingScreen from './components/ScalingScreen'
 import TechToday from './pages/TechToday'
@@ -82,6 +84,7 @@ function getTopLevelRoute() {
   if (path.endsWith('/quote') || path.includes('/app/quote')) return 'quote'
   // Catalyst static hosting only serves real files, so the customer approval link is /app/?estimate=<id>&t=<token>
   if (/\/estimate\/?$/.test(path) || /[?&]estimate=/.test(window.location.search || '')) return 'estimate'
+  if (/[?&]esign=/.test(window.location.search || '')) return 'esign'
   if (/[?&]onboard=/.test(window.location.search || '')) return 'onboard'
   if (path.endsWith('/nps') || path.includes('/app/nps')) return 'nps'
   return 'app'
@@ -93,6 +96,7 @@ export default function App() {
   if (topRoute === 'portal') return <PortalApp />
   if (topRoute === 'quote') return <QuoteApprovalScreen />
   if (topRoute === 'estimate') return <EstimateApprovalScreen />
+  if (topRoute === 'esign') return <EsignScreen />
   if (topRoute === 'onboard') return <OnboardingScreen />
   if (topRoute === 'nps') return <NPSScreen />
   return <MainApp />
@@ -499,6 +503,9 @@ function MainApp() {
       )}
       {screen === 'intel' && (
         <IntelligenceScreen {...navProps} />
+      )}
+      {screen === 'shop-talk' && (
+        <ShopTalkScreen {...navProps} />
       )}
       {screen === 'payroll' && (
         <PayrollScreen {...navProps} />

@@ -94,6 +94,7 @@ import projectsRouter from './routes/projects.js'
 import teamRouter from './routes/team.js'
 import compRouter from './routes/comp.js'
 import workStyleSelfRouter from './routes/workStyleSelf.js'
+import esignPublicRouter from './routes/esignPublic.js'
 import portalRouter, { handleStripeWebhook } from './routes/portal.js'
 import zohoImportRouter from './routes/zoho-import.js'
 import quotesRouter from './routes/quotes.js'
@@ -401,6 +402,7 @@ app.use('/api/sales-stops', requireAuth, salesStopsRouter)
 // 💬 Text as Mark — outbox (owner) + Mac bridge (cron secret). The Mac sends, never Catalyst.
 app.use('/api/personal-texts', requireAuth, requireMark, personalTextsOwnerRouter)
 app.use('/api/people', requireAuth, peopleRouter)
+app.use('/api/public/esign', esignPublicRouter)   // ✍️ in-app e-signature links (no login, HMAC token)
 app.use('/api/public/onboard', onboardPublicRouter)   // signed-link onboarding portal for new hires, no login   // Directory tools: profiles, log, policy acks, onboarding, calendar, company page (2026-09-16)
 app.use('/api/cron/personal-texts', personalTextsBridgeRouter)
 app.use('/api/jobs', requireAuth, requireStaff, billItRouter)   // 💸 Bill it — Kat / dispatch / Mark only

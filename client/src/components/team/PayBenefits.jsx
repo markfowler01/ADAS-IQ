@@ -59,7 +59,7 @@ export default function PayBenefits({ m }) {
   }
   async function send() {
     setBusy(true); setErr('')
-    try { await j(`/api/comp/${m.id}/send-letter`, { method: 'POST' }); setConfirmSend(false); setMsg(`Sent to ${m.email} through Zoho Sign.`); await load() } catch (e) { setErr(e.message) } finally { setBusy(false) }
+    try { await j(`/api/comp/${m.id}/send-letter`, { method: 'POST' }); setConfirmSend(false); setMsg(`Sent to ${m.name.split(' ')[0]} by text and email.`); await load() } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
   async function check() {
     setBusy(true); setErr('')
@@ -169,8 +169,8 @@ export default function PayBenefits({ m }) {
           </div>
           {confirmSend && (
             <div className="rounded-lg p-2.5 mt-2" style={{ backgroundColor: '#fff5f0', border: `1px solid ${ORANGE}` }}>
-              <div className="text-xs font-bold mb-1" style={{ color: '#1a1a1a' }}>Send this letter to {m.email || '(no email on file)'} through Zoho Sign?</div>
-              <div className="text-[11px] mb-2" style={{ color: '#666' }}>Preview it first. {letter?.status === 'inprogress' ? 'The letter already out gets recalled. ' : ''}When {m.name.split(' ')[0]} signs, the copy files into the personnel folder.</div>
+              <div className="text-xs font-bold mb-1" style={{ color: '#1a1a1a' }}>Send this letter to {m.name.split(' ')[0]} to sign? (text + email to {m.email || 'no email on file'})</div>
+              <div className="text-[11px] mb-2" style={{ color: '#666' }}>Preview it first. {letter?.status === 'inprogress' ? 'The letter already out gets recalled. ' : ''}They read and sign on their phone; you both get the signed copy by email.</div>
               <div className="flex gap-2"><button disabled={busy || !m.email} onClick={send} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white disabled:opacity-50" style={{ backgroundColor: GREEN }}>{busy ? 'Sending…' : 'Yes, send it'}</button><button onClick={() => setConfirmSend(false)} className="text-xs font-semibold px-2" style={{ color: '#888' }}>cancel</button></div>
             </div>
           )}

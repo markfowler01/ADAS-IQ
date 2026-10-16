@@ -83,7 +83,7 @@ export function buildOfferPdf(cand, offer, opts = {}) {
     sign = { page, x: 60, y: y + 6, w: 280, h: 32 }
     date = { page, x: 380, y: y + 12, w: 150, h: 26 }
     // Footer only if it fits under the lines — never a page of its own.
-    if (y + 66 < doc.page.height - doc.page.margins.bottom) doc.fontSize(8).fillColor('#888').text('Signed electronically through Zoho Sign. The signed copy is filed in your personnel folder at Absolute ADAS.', 60, y + 56, { width: W, lineBreak: false })
+    if (y + 66 < doc.page.height - doc.page.margins.bottom) doc.fontSize(8).fillColor('#888').text('Signed electronically in the Absolute ADAS app. A signed copy is emailed to you and kept on file.', 60, y + 56, { width: W, lineBreak: false })
     doc.end()
   })
 }

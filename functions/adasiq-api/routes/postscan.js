@@ -370,6 +370,9 @@ router.post('/run', async (req, res) => {
 
   // 💵 Pay & Benefits: review reminders to Mark + pick up signed offer letters.
   try {
+    const { maybeFinishEnvelopes } = await import('../services/esign.js')
+    const fe = await maybeFinishEnvelopes(req)
+    if (fe.finished) console.log('[postscan] e-sign finished:', fe.finished)
     const { maybeScheduleReviews } = await import('../services/reviewSchedule.js')
     const rs = await maybeScheduleReviews(req)
     if (rs.booked) console.log('[postscan] review check-ins booked:', rs.booked)
