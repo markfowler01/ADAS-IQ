@@ -270,7 +270,7 @@ function PartnerPanel({ c, onPatch }) {
         <select value={p.insured || ''} onChange={e => set('insured', e.target.value)} className="rounded-lg px-3 py-2 text-sm" style={input}><option value="">Insured?</option><option value="yes">Insured: yes</option><option value="no">Insured: no</option><option value="unknown">Insured: not sure</option></select>
         <select value={p.brew || ''} onChange={e => set('brew', e.target.value)} className="rounded-lg px-3 py-2 text-sm" style={input}><option value="">Reads ADAS Brew?</option><option value="yes">☕ Brew reader</option><option value="no">Not on Brew</option></select>
       </div>
-      <input value={p.interest || ''} onChange={e => set('interest', e.target.value)} placeholder="Interested in: software, billing, network work, backup coverage…" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
+      <input value={p.interest || ''} onChange={e => set('interest', e.target.value)} placeholder="Interested in: software, billing, network work, backup coverage (sick/vacation)…" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
       <textarea value={p.pains || ''} onChange={e => set('pains', e.target.value)} rows={2} placeholder="Biggest headaches (billing, denials, admin, finding work…)" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
       <div className="grid grid-cols-3 gap-2">
         <input value={p.next_step || ''} onChange={e => set('next_step', e.target.value)} placeholder="Next step (coffee, send Brew, pilot terms…)" className="col-span-2 rounded-lg px-3 py-2 text-sm" style={input} />
