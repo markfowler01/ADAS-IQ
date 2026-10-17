@@ -59,7 +59,8 @@ function isAdmin(req) {
 // cash for the month; over that, 5% of revenue above $40,000 when the month
 // is $40,000-$55,000, 8% of revenue above $40,000 when the month is over
 // $55,000. Not marginal: the rate covers everything above $40,000.
-// Ignores the old bonus_config tiers. TODO: Calibration ID / pass-through fees.
+// Ignores the old bonus_config tiers. Calibration ID, technology, and other
+// pass-through fees are taken out of the cash first (services/bonusFees.js).
 const CONTRACT = { threshold: 40000, tiers: [{ up_to: 55000, rate: 0.05 }, { up_to: null, rate: 0.08 }] }
 function calculateBonus(revenue) {
   const { threshold, tiers } = CONTRACT
@@ -165,15 +166,33 @@ async function techNameFor(req, userId) {
 }
 async function getRevenueForUser(req, userId, start, end) {
   const { invoiceBelongsToTech } = await import('./dailyGreeting.js')
+  const { eligibleCash, loadPassThrough } = await import('../services/bonusFees.js')
   const name = await techNameFor(req, userId)
-  let revenue = 0
-  const invoiceList = []
+  const mine = []
   for (const r of await cashRows(req, start, end)) {
     if (!r.salesperson_name || !invoiceBelongsToTech(r, name)) continue
-    revenue += Number(r.total) || 0
-    invoiceList.push({ id: r.payment_id, invoice_number: r.invoice_number, customer_name: r.customer_name, total: r.total, paid_at: r.date })
+    mine.push(r)
   }
-  return { revenue: Math.round(revenue * 100) / 100, invoices: invoiceList }
+  const fees = await loadPassThrough(req, mine.map(r => r.invoice_number))
+  let revenue = 0
+  let feesExcluded = 0
+  const invoiceList = []
+  for (const r of mine) {
+    const cash = eligibleCash(r.total, fees.byInvoice[r.invoice_number])
+    revenue += cash.eligible
+    feesExcluded += cash.excluded
+    invoiceList.push({
+      id: r.payment_id, invoice_number: r.invoice_number, customer_name: r.customer_name,
+      total: cash.eligible, gross: Math.round((Number(r.total) || 0) * 100) / 100,
+      fees_excluded: cash.excluded, paid_at: r.date,
+    })
+  }
+  return {
+    revenue: Math.round(revenue * 100) / 100,
+    fees_excluded: Math.round(feesExcluded * 100) / 100,
+    fees_pending: fees.pending,
+    invoices: invoiceList,
+  }
 }
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
@@ -216,7 +235,7 @@ router.get('/calculate', async (req, res) => {
     }
 
     const { start, end } = periodToRange(period)
-    const { revenue, invoices } = await getRevenueForUser(req, userId, start, end, config)
+    const { revenue, invoices, fees_excluded, fees_pending } = await getRevenueForUser(req, userId, start, end, config)
     const calc = calculateBonus(revenue, config.tiers)
 
     // Progress to next tier
@@ -237,6 +256,8 @@ router.get('/calculate', async (req, res) => {
       } : null,
       invoice_count: invoices.length,
       invoices,
+      fees_excluded,
+      fees_pending,
     })
   } catch (e) {
     console.error('[bonuses] calculate failed:', e)
@@ -254,18 +275,23 @@ router.get('/all', async (req, res) => {
     const { start, end } = periodToRange(period)
 
     // Techs = salespeople on the invoices that money came in for.
-    const techs = new Set((await cashRows(req, start, end)).map(r => String(r.salesperson_name || '').trim()).filter(Boolean))
+    const rows = await cashRows(req, start, end)
+    const techs = new Set(rows.map(r => String(r.salesperson_name || '').trim()).filter(Boolean))
+    const { loadPassThrough } = await import('../services/bonusFees.js')
+    await loadPassThrough(req, rows.map(r => r.invoice_number))
 
     const results = []
     for (const tech of techs) {
-      const { revenue, invoices: invs } = await getRevenueForUser(req, tech, start, end, config)
-      if (revenue === 0) continue
+      const { revenue, invoices: invs, fees_excluded, fees_pending } = await getRevenueForUser(req, tech, start, end, config)
+      if (revenue === 0 && fees_excluded === 0) continue
       const calc = calculateBonus(revenue, config.tiers)
       results.push({
         user_id: tech,
         total_revenue: revenue,
         bonus_amount: calc.bonus,
         invoice_count: invs.length,
+        fees_excluded,
+        fees_pending,
       })
     }
 
