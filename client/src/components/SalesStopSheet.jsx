@@ -195,7 +195,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
             </div>
             {done.bonus_pending && (
               <div className="rounded-xl p-3 mb-3 text-sm font-bold" style={{ backgroundColor: '#fff5f0', color: ORANGE, border: `1.5px dashed ${ORANGE}` }}>
-                🎯 {done.shop?.shop_name} has never been invoiced. Their first job pays you 1% of their first 30 days.
+                🎯 {done.shop?.shop_name} has never been invoiced. Land them and you earn $500 once they hit 10 calibrations.
               </div>
             )}
             {done.new_shop && <div className="text-xs mb-3" style={{ color: '#666' }}>➕ Added {done.shop?.shop_name} to the CRM as Contacted.</div>}
@@ -273,18 +273,18 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
             </div>
             {/* 📍 Google — the shop you're standing at */}
             {(places.length > 0 || placesLoading) && (!query.trim() ? tab === 'near' : true) && (
-              <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1.5px solid #bfdbfe' }}>
-                <div className="px-3 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>
+              <div className="rounded-xl overflow-hidden mb-2" style={{ border: '1.5px solid #e8e4e0' }}>
+                <div className="px-3 py-1.5 text-[11px] font-bold" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>
                   📍 Google · {query.trim() ? 'matches near you' : 'body shops around the van'}{placesLoading ? ' · looking…' : ''}
                 </div>
                 {places.filter(pl => !shops.some(s => s.shop_name.toLowerCase() === pl.name.toLowerCase())).map((pl, i) => (
                   <button key={pl.place_id || i} onClick={() => { setShop({ shop_name: pl.name, id: '', isNew: true, place: pl }); setStep(2) }}
-                    className="w-full text-left px-3 flex items-center gap-2 active:bg-blue-50" style={{ borderTop: i ? '1px solid #f1ede9' : 'none', backgroundColor: 'white', minHeight: '56px', paddingTop: '10px', paddingBottom: '10px' }}>
+                    className="w-full text-left px-3 flex items-center gap-2 active:bg-[#f5e8e3]" style={{ borderTop: i ? '1px solid #f1ede9' : 'none', backgroundColor: 'white', minHeight: '56px', paddingTop: '10px', paddingBottom: '10px' }}>
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>{pl.name}</div>
                       <div className="text-[11px] truncate" style={{ color: '#888' }}>{pl.address}{pl.phone ? ` · ${pl.phone}` : ''} · adds to CRM with location</div>
                     </div>
-                    {pl.distance_mi != null && <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#eff6ff', color: '#1d4ed8' }}>{pl.distance_mi} mi</span>}
+                    {pl.distance_mi != null && <span className="text-xs font-bold rounded-full px-2 py-0.5" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>{pl.distance_mi} mi</span>}
                   </button>
                 ))}
               </div>
@@ -360,14 +360,12 @@ export function SalesStopScoreboard({ user, onOpen, refreshKey }) {
   }, [refreshKey])
   const techs = stats?.techs || []
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm mb-3" style={{ border: '1px solid #ebebeb', borderTop: `4px solid ${ORANGE}` }}>
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>🚐 Sales stops · this week</div>
-          <div className="text-xs" style={{ color: '#888' }}>Goal {stats?.goal ?? 5} per tech · a stop that lands a new customer pays 1% of their first 30 days</div>
-        </div>
-        <button onClick={onOpen} className="text-sm font-bold rounded-xl px-3 py-2 text-white" style={{ backgroundColor: ORANGE }}>🚐 Sales stop</button>
+    <div className="rounded-2xl bg-white p-4 shadow-sm mb-3" style={{ border: '1px solid #e8e4e0', borderTop: `3px solid ${ORANGE}` }}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>Sales stops · this week</div>
+        <button onClick={onOpen} className="text-sm font-extrabold rounded-xl px-3 text-white flex-shrink-0 whitespace-nowrap" style={{ backgroundColor: GREEN, minHeight: 44 }}>Sales stop</button>
       </div>
+      <div className="text-xs mt-1.5 mb-3" style={{ color: '#666' }}>Goal {stats?.goal ?? 5} per tech · a stop that lands a new shop pays $500 once it hits 10 calibrations</div>
       {techs.length === 0 ? (
         <div className="text-sm py-2" style={{ color: '#888' }}>No stops yet this week. First one's the hardest.</div>
       ) : techs.map(t => {
@@ -385,7 +383,7 @@ export function SalesStopScoreboard({ user, onOpen, refreshKey }) {
             </div>
             {(t.pending?.length > 0 || t.active?.length > 0) && (
               <div className="text-[11px] mt-1" style={{ color: '#666' }}>
-                {t.active?.map(a => `💰 ${a.shop}: $${Number(a.bonus).toFixed(2)} so far (to ${a.window_end})`).join(' · ')}
+                {t.active?.map(a => a.bonus > 0 ? `💰 ${a.shop}: $${Number(a.bonus).toFixed(0)} earned${a.pay_on ? ` · pays ${a.pay_on}` : ''}` : `🔧 ${a.shop}: ${a.jobs_done ?? 0}/${a.jobs_needed ?? 10} calibrations`).join(' · ')}
                 {t.active?.length && t.pending?.length ? ' · ' : ''}
                 {t.pending?.length ? `🎯 pending: ${t.pending.slice(0, 3).join(', ')}${t.pending.length > 3 ? ` +${t.pending.length - 3}` : ''}` : ''}
               </div>
