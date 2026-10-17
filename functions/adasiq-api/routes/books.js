@@ -444,14 +444,10 @@ router.get('/dashboard', async (req, res) => {
     let invoice_count = invoices.length
     let draft_count = 0
 
+    // 💵 Revenue MTD = cash received this month, after discount (Mark 2026-10-17).
+    const { paidRows } = await import('../services/cashRevenue.js')
+    for (const p of await paidRows(`${monthStr}-01`, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))) { revenue_mtd += p.total; paid_mtd += p.total }
     for (const inv of invoices) {
-      if (inv.status === 'paid') {
-        const paidDate = (inv.paid_at || '').slice(0, 7)
-        if (paidDate === monthStr) {
-          revenue_mtd += inv.total || 0
-          paid_mtd += inv.amount_paid || 0
-        }
-      }
       if (inv.status === 'sent' || inv.status === 'overdue') {
         outstanding += inv.balance_due || 0
       }
@@ -1559,6 +1555,11 @@ router.get('/report', async (req, res) => {
 
     const invoices  = allInvoices.map(checkOverdue)
     const expenses  = allExpenses
+    // 💵 Every revenue figure in the report = cash received (payments) by
+    // payment date, after discount (Mark 2026-10-17). Invoices stay for AR,
+    // aging, counts and the service mix.
+    const { paidRows, CASH_SINCE } = await import('../services/cashRevenue.js')
+    const cash = await paidRows(CASH_SINCE, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
 
     const now       = new Date()
     const thisYear  = now.getFullYear()
@@ -1584,10 +1585,7 @@ router.get('/report', async (req, res) => {
 
     // ── Revenue: count paid invoices (by paid_at or date for older records) ─
     // We report on SENT+PAID invoices for revenue recognition
-    const revenueInvoices = invoices.filter(i =>
-      (i.status === 'paid' || i.status === 'sent' || i.status === 'overdue') &&
-      inPeriod(i.status === 'paid' ? (i.paid_at || i.date) : i.date)
-    )
+    const revenueInvoices = cash.filter(i => inPeriod(i.date))
 
     const periodExpenses = expenses.filter(e => inPeriod(e.date))
 
@@ -1612,8 +1610,7 @@ router.get('/report', async (req, res) => {
     const months = buildMonths()
     months.forEach(m => { monthlyMap[m.key] = m })
 
-    for (const inv of invoices) {
-      if (inv.status !== 'paid') continue
+    for (const inv of cash) {
       const dateStr = (inv.paid_at || inv.date || '').slice(0, 7)
       if (monthlyMap[dateStr]) {
         monthlyMap[dateStr].revenue   += inv.total || 0
@@ -1634,8 +1631,7 @@ router.get('/report', async (req, res) => {
 
     // ── Revenue by customer ──────────────────────────────────────────────
     const customerMap = {}
-    for (const inv of invoices) {
-      if (inv.status !== 'paid') continue
+    for (const inv of cash) {
       const name = inv.customer_name || 'Unknown'
       if (!customerMap[name]) customerMap[name] = { name, revenue: 0, invoice_count: 0 }
       customerMap[name].revenue       += inv.total || 0
@@ -1705,13 +1701,13 @@ router.get('/report', async (req, res) => {
     Object.keys(aging).forEach(k => { aging[k] = Math.round(aging[k] * 100) / 100 })
 
     // ── Totals ───────────────────────────────────────────────────────────
-    const totalRevenue  = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.total || 0), 0)
-    const totalPaid     = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount_paid || 0), 0)
+    const totalRevenue  = cash.filter(i => i.status === 'paid').reduce((s, i) => s + (i.total || 0), 0)
+    const totalPaid     = cash.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount_paid || 0), 0)
     const totalOutstanding = invoices.filter(i => i.status === 'sent' || i.status === 'overdue').reduce((s, i) => s + (i.balance_due || 0), 0)
     const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0)
-    const ytdRevenue    = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.date || '').startsWith(String(thisYear))).reduce((s, i) => s + (i.total || 0), 0)
+    const ytdRevenue    = cash.filter(i => i.status === 'paid' && (i.paid_at || i.date || '').startsWith(String(thisYear))).reduce((s, i) => s + (i.total || 0), 0)
     const ytdExpenses   = expenses.filter(e => (e.date || '').startsWith(String(thisYear))).reduce((s, e) => s + (e.amount || 0), 0)
-    const mtdRevenue    = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.date || '').startsWith(`${thisYear}-${String(thisMonth).padStart(2,'0')}`)).reduce((s, i) => s + (i.total || 0), 0)
+    const mtdRevenue    = cash.filter(i => i.status === 'paid' && (i.paid_at || i.date || '').startsWith(`${thisYear}-${String(thisMonth).padStart(2,'0')}`)).reduce((s, i) => s + (i.total || 0), 0)
     const mtdExpenses   = expenses.filter(e => (e.date || '').startsWith(`${thisYear}-${String(thisMonth).padStart(2,'0')}`)).reduce((s, e) => s + (e.amount || 0), 0)
 
     res.json({

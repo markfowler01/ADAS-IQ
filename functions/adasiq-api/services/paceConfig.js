@@ -71,23 +71,9 @@ export async function recomputeRatio(req, { months = 12 } = {}) {
   start.setMonth(start.getMonth() - months)
   const dateStart = start.toISOString().slice(0, 10)
 
-  const seen = new Set()
-  const invoices = []
-  for (let page = 1; page <= 8; page++) {
-    const r = await axios.get('https://www.zohoapis.com/books/v3/invoices', {
-      headers: { Authorization: `Zoho-oauthtoken ${token}` },
-      params: { organization_id: orgId, per_page: 200, page, sort_column: 'date', sort_order: 'A', date_start: dateStart },
-      timeout: 20000, validateStatus: s => s < 500,
-    })
-    const batch = r.data?.invoices || []
-    for (const i of batch) {
-      if (i.invoice_id && !seen.has(i.invoice_id)) {
-        seen.add(i.invoice_id)
-        invoices.push({ date: i.date, total: parseFloat(i.total) || 0 })
-      }
-    }
-    if (batch.length < 200) break
-  }
+  // 💵 Cash basis (Mark 2026-10-17): pace learns from money received by payment date.
+  const { listPayments } = await import('./cashRevenue.js')
+  const invoices = (await listPayments(dateStart, new Date().toISOString().slice(0, 10), { maxPages: 10 })).map(p => ({ date: p.date, total: p.amount }))
 
   const d = deriveRatio(invoices)
   const rec = {

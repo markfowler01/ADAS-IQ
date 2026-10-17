@@ -148,45 +148,37 @@ async function readJobs(req) {
   }
 }
 
-// Get revenue for a user in a date range
-async function getRevenueForUser(req, userId, start, end, config) {
-  const invoices = await readInvoices(req)
-  const jobs = await readJobs(req)
-  const jobsById = new Map(jobs.map(j => [j.id, j]))
-
+// 💵 Bonus revenue = cash received, after discount, by payment date (Mark
+// 2026-10-17: "everything to be cash ... including technician bonuses 100%").
+// A payment counts for the tech named as salesperson on the invoice it paid.
+// Was: legacy Cache invoices with no technician field (so per-tech was ~$0).
+const dayOf = iso => String(iso).slice(0, 10)
+const dayBefore = iso => { const d = new Date(dayOf(iso) + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10) }
+async function cashRows(req, start, end) {
+  const k = `${start}|${end}`
+  req._cashRows = req._cashRows || {}
+  if (!req._cashRows[k]) { const { listCashForDateRange } = await import('../services/cashRevenue.js'); req._cashRows[k] = listCashForDateRange(req, dayOf(start), dayBefore(end)) }
+  return req._cashRows[k]
+}
+// user id → the name on Books invoices (salesperson). Emails resolve through the Directory.
+async function techNameFor(req, userId) {
+  const u = String(userId || '')
+  if (!u.includes('@')) return u
+  if (u.toLowerCase() === String(req.user?.email || '').toLowerCase() && (req.user?.techName || req.user?.name)) return req.user.techName || req.user.name
+  try { const { readTeamMembers } = await import('./team.js'); const m = (await readTeamMembers(req)).find(x => [x.email, x.personal_email].some(e => String(e || '').toLowerCase() === u.toLowerCase())); if (m?.name) return m.name } catch { /* fall through */ }
+  return u.split('@')[0]
+}
+async function getRevenueForUser(req, userId, start, end) {
+  const { invoiceBelongsToTech } = await import('./dailyGreeting.js')
+  const name = await techNameFor(req, userId)
   let revenue = 0
   const invoiceList = []
-
-  for (const inv of invoices) {
-    if (inv.status !== 'paid') continue
-    if (!inv.paid_at) continue
-    if (inv.paid_at < start || inv.paid_at >= end) continue
-
-    // Filter by invoice type config
-    if (inv.invoice_type === 'insurance' && !config.include_insurance_invoices) continue
-    if (inv.invoice_type === 'shop' && !config.include_shop_invoices) continue
-
-    // Find technician: check invoice.technician first, fall back to job
-    let tech = inv.technician || inv.assigned_to || ''
-    if (!tech && inv.job_id) {
-      const job = jobsById.get(inv.job_id)
-      if (job) tech = job.technician || job.assigned_to || ''
-    }
-
-    // Match by user_id or name
-    if (tech !== userId && tech?.toLowerCase() !== userId.toLowerCase()) continue
-
-    revenue += inv.total || 0
-    invoiceList.push({
-      id: inv.id,
-      invoice_number: inv.invoice_number,
-      customer_name: inv.customer_name,
-      total: inv.total,
-      paid_at: inv.paid_at,
-    })
+  for (const r of await cashRows(req, start, end)) {
+    if (!r.salesperson_name || !invoiceBelongsToTech(r, name)) continue
+    revenue += Number(r.total) || 0
+    invoiceList.push({ id: r.payment_id, invoice_number: r.invoice_number, customer_name: r.customer_name, total: r.total, paid_at: r.date })
   }
-
-  return { revenue, invoices: invoiceList }
+  return { revenue: Math.round(revenue * 100) / 100, invoices: invoiceList }
 }
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
@@ -267,24 +259,8 @@ router.get('/all', async (req, res) => {
     const period = req.query.period || 'this_month'
     const { start, end } = periodToRange(period)
 
-    const invoices = await readInvoices(req)
-    const jobs = await readJobs(req)
-    const jobsById = new Map(jobs.map(j => [j.id, j]))
-
-    // Collect all unique techs
-    const techs = new Set()
-    for (const inv of invoices) {
-      let tech = inv.technician || inv.assigned_to
-      if (!tech && inv.job_id) {
-        const job = jobsById.get(inv.job_id)
-        if (job) tech = job.technician || job.assigned_to
-      }
-      if (tech) techs.add(tech)
-    }
-    for (const job of jobs) {
-      if (job.technician) techs.add(job.technician)
-      if (job.assigned_to) techs.add(job.assigned_to)
-    }
+    // Techs = salespeople on the invoices that money came in for.
+    const techs = new Set((await cashRows(req, start, end)).map(r => String(r.salesperson_name || '').trim()).filter(Boolean))
 
     const results = []
     for (const tech of techs) {

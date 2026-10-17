@@ -492,6 +492,38 @@ async function hasPriorInvoices(customerName, beforeDate) {
 
 // Called from routes/webhook.js after an invoice alerts. Idempotent per
 // invoice number. Returns null when nothing applies.
+// 💵 Cash basis (Mark 2026-10-17): the 1% pays on money COLLECTED on the
+// window's invoices, after discount. Invoices open and fill the window;
+// payments (Books customer payments) set sales + bonus. Hourly refresh.
+async function refreshStopCash(req, stop) {
+  const bj = stop.bonus || {}
+  const nums = new Set((bj.invoices || []).map(i => String(i.number)))
+  if (!nums.size || !bj.first_invoice_date) return null
+  const { listPayments } = await import('../services/cashRevenue.js')
+  const pays = await listPayments(bj.first_invoice_date, todayPT(), { maxPages: 6 })
+  let cash = 0
+  for (const p of pays) {
+    const hit = p.invoice_numbers.filter(n => nums.has(n))
+    if (!hit.length) continue
+    cash += hit.length === p.invoice_numbers.length ? p.amount : p.amount * (hit.length / p.invoice_numbers.length)
+  }
+  cash = Math.round(cash * 100) / 100
+  if (cash === bj.sales) return bj
+  const was = Number(bj.bonus || 0)
+  bj.sales = cash; bj.bonus = Math.round(cash * BONUS_RATE * 100) / 100; bj.basis = 'cash'
+  await tbl(req).updateRow({ ROWID: stop.id, bonus_json: JSON.stringify(bj) })
+  if (bj.bonus > was) await postToCliqChannel(SALES_CHANNEL, `💵 *${stop.tech}'s new customer ${stop.shop_name}* paid · collected $${cash.toFixed(2)} → bonus $${bj.bonus.toFixed(2)} (1% of cash)`).catch(() => {})
+  return bj
+}
+// Hourly (postscan piggyback): windows that are open or closed in the last 60 days.
+export async function maybeRefreshStopCash(req) {
+  const cutoff = addDays(todayPT(), -60)
+  const live = (await allStops(req)).filter(s => s.bonus_status === 'active' && (s.bonus?.window_end || '') >= cutoff)
+  let n = 0
+  for (const s of live.slice(0, 15)) { try { if (await refreshStopCash(req, s)) n++ } catch (e) { console.log('[sales-stop cash]', s.id, e.message) } }
+  return { checked: live.length, refreshed: n }
+}
+
 export async function trackNewCustomerBonus(req, invoice) {
   try {
     const customer = String(invoice.customer_name || '').trim()
@@ -510,10 +542,10 @@ export async function trackNewCustomerBonus(req, invoice) {
       if ((bj.invoices || []).some(i => i.number === number)) return null
       if (date > bj.window_end) return null
       bj.invoices = [...(bj.invoices || []), { number, date, total }]
-      bj.sales = Math.round((bj.invoices.reduce((s, i) => s + i.total, 0)) * 100) / 100
-      bj.bonus = Math.round(bj.sales * BONUS_RATE * 100) / 100
+      bj.invoiced = Math.round((bj.invoices.reduce((s, i) => s + i.total, 0)) * 100) / 100
       await tbl(req).updateRow({ ROWID: active.id, bonus_json: JSON.stringify(bj) })
-      await postToCliqChannel(SALES_CHANNEL, `💰 *${active.tech}'s new customer ${customer}* invoiced again · $${total.toFixed(2)} → bonus now $${bj.bonus.toFixed(2)} (1% of $${bj.sales.toFixed(2)}, window to ${bj.window_end})`).catch(() => {})
+      await refreshStopCash(req, { ...active, bonus: bj }).catch(() => {})
+      await postToCliqChannel(SALES_CHANNEL, `💰 *${active.tech}'s new customer ${customer}* invoiced again · $${total.toFixed(2)} · bonus pays 1% when it's collected (so far $${Number(bj.bonus || 0).toFixed(2)})`).catch(() => {})
       return { tech: active.tech, bonus: bj.bonus }
     }
 
@@ -526,10 +558,10 @@ export async function trackNewCustomerBonus(req, invoice) {
       for (const s of stops.filter(x => x.bonus_status === 'pending')) await tbl(req).updateRow({ ROWID: s.id, bonus_status: '' }).catch(() => {})
       return null
     }
-    const bj = { first_invoice_date: date, window_end: addDays(date, BONUS_WINDOW_DAYS), invoices: [{ number, date, total }], sales: total, bonus: Math.round(total * BONUS_RATE * 100) / 100, rate: BONUS_RATE }
+    const bj = { first_invoice_date: date, window_end: addDays(date, BONUS_WINDOW_DAYS), invoices: [{ number, date, total }], invoiced: total, sales: 0, bonus: 0, basis: 'cash', rate: BONUS_RATE }
     await tbl(req).updateRow({ ROWID: recent.id, bonus_status: 'active', bonus_json: JSON.stringify(bj) })
     for (const s of stops.filter(x => x.id !== recent.id && x.bonus_status === 'pending')) await tbl(req).updateRow({ ROWID: s.id, bonus_status: '' }).catch(() => {})
-    await postToCliqChannel(SALES_CHANNEL, `💰🎉 *NEW CUSTOMER — ${customer}* · ${recent.tech}'s stop on ${recent.date} just paid off!\nFirst invoice ${number} · $${total.toFixed(2)} → ${recent.tech} earns 1% of everything they invoice through ${bj.window_end}. Bonus so far: $${bj.bonus.toFixed(2)}. GET SOME!!!`).catch(() => {})
+    await postToCliqChannel(SALES_CHANNEL, `💰🎉 *NEW CUSTOMER — ${customer}* · ${recent.tech}'s stop on ${recent.date} just paid off!\nFirst invoice ${number} · $${total.toFixed(2)} → ${recent.tech} earns 1% of the cash collected on everything they invoice through ${bj.window_end}. Bonus grows as they pay. GET SOME!!!`).catch(() => {})
     console.log(`[sales-stop bonus] ${recent.tech} ← ${customer} first invoice ${number} $${total}`)
     return { tech: recent.tech, bonus: bj.bonus, first: true }
   } catch (e) {

@@ -97,8 +97,9 @@ router.get('/daily-review', async (req, res) => {
     const lastWeekStart = new Date(startOfWeek(now))
     lastWeekStart.setDate(lastWeekStart.getDate() - 7)
 
-    // Sales aggregations
-    const paid = invoices.filter(i => i.status === 'paid')
+    // 💵 Sales = cash received by payment date, after discount (Mark 2026-10-17).
+    const { paidRows } = await import('../services/cashRevenue.js')
+    const paid = await paidRows(new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10), new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
     const created = invoices.filter(i => !!i.created_at)
 
     const salesToday = paid.filter(i => (i.paid_at || '').startsWith(today))
@@ -237,6 +238,9 @@ router.get('/trends', async (req, res) => {
     const period = req.query.period || 'monthly'
     const count = Math.min(Number(req.query.count) || 12, 36)
     const [invoices, expenses] = await Promise.all([readInvoices(req), readExpenses(req)])
+    // 💵 Revenue per bucket = cash received (payments), after discount.
+    const { paidRows, CASH_SINCE } = await import('../services/cashRevenue.js')
+    const cash = await paidRows(CASH_SINCE, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
 
     const now = new Date()
     const buckets = []
@@ -266,8 +270,8 @@ router.get('/trends', async (req, res) => {
         label = d.toLocaleDateString([], { month: 'short', year: '2-digit' })
       }
 
-      const revenue = invoices
-        .filter(inv => inv.status === 'paid' && inv.paid_at && inv.paid_at >= start && inv.paid_at < end)
+      const revenue = cash
+        .filter(inv => inv.paid_at >= start && inv.paid_at < end)
         .reduce((s, inv) => s + (inv.total || 0), 0)
       const expense = expenses
         .filter(e => e.date && e.date >= start.slice(0, 10) && e.date < end.slice(0, 10))
@@ -289,8 +293,10 @@ router.get('/trends', async (req, res) => {
 
 router.get('/customers', async (req, res) => {
   try {
-    const [invoices, jobs] = await Promise.all([readInvoices(req), readJobs(req)])
-    const paid = invoices.filter(i => i.status === 'paid')
+    const [jobs] = await Promise.all([readJobs(req)])
+    // 💵 Customer revenue = cash received, after discount.
+    const { paidRows, CASH_SINCE } = await import('../services/cashRevenue.js')
+    const paid = await paidRows(CASH_SINCE, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
 
     const map = new Map()
     for (const inv of paid) {

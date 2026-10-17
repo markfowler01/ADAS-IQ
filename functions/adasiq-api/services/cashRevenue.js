@@ -117,3 +117,13 @@ export async function cashByDay(fromISO, toISO) {
   for (const p of pays) byDay[p.date] = (byDay[p.date] || 0) + p.amount
   return { byDay, payments: pays.length }
 }
+
+/** Payments as "paid invoice" rows for the older screens that sum
+ *  status==='paid' / paid_at / total: { status, paid_at, date, total, amount_paid, customer_name, invoice_number }. */
+export async function paidRows(fromISO, toISO) {
+  return (await listPayments(fromISO, toISO, { maxPages: 40 })).map(p => ({
+    status: 'paid', paid_at: `${p.date}T12:00:00.000Z`, date: p.date, total: p.amount, amount_paid: p.amount,
+    customer_name: p.customer_name, invoice_number: p.invoice_numbers.join(', '), payment_id: p.payment_id, invoice_type: 'payment',
+  }))
+}
+export const CASH_SINCE = '2025-01-01'   // before the company's first invoice (founded 2025-10-29)

@@ -435,6 +435,9 @@ router.post('/run', async (req, res) => {
   } catch (e) {
     console.warn('[postscan] recruit-project piggyback failed (non-fatal):', e.message)
   }
+  // 💵 Sales-stop 1% bonus follows cash collected (Mark 2026-10-17).
+  try { const { maybeRefreshStopCash } = await import('./salesStops.js'); const r = await maybeRefreshStopCash(req); if (r.refreshed) console.log('[postscan] stop cash:', JSON.stringify(r)) }
+  catch (e) { console.warn('[postscan] stop-cash piggyback failed (non-fatal):', e.message) }
   // 🤝 Partner thank-you emails, ~3h after a website partner application.
   try {
     const { maybeSendPartnerThanks } = await import('./recruit.js')
