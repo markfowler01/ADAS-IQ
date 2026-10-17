@@ -1,4 +1,4 @@
-// Booked sales by period, straight from Books.
+// Cash sales by period, straight from Books payments (was booked invoices until 2026-10-17).
 //
 // The strip used to be about days elapsed. It is about dollars. This pages
 // invoices from Jan 1 once and rolls them up per day, so day / week / month /
@@ -24,7 +24,7 @@ async function write(req, key, val) {
   try { await s.update(key, payload) } catch { await s.put(key, payload, 48) }
 }
 
-const KEY = 'sales_rollup_v1'
+const KEY = 'sales_rollup_v2_cash'
 const TTL_MS = 6 * 60 * 60 * 1000
 
 // Money that is actually money. A draft is a document, not a sale, and a void
@@ -39,34 +39,10 @@ export async function fetchYtdByDay(req, { year, force = false } = {}) {
     }
   }
 
-  const token = await getAccessToken()
-  const orgId = process.env.ZOHO_ORGANIZATION_ID
-  const byDay = {}
-  let count = 0
-  let truncated = false
-
-  for (let page = 1; page <= 12; page++) {
-    const r = await axios.get('https://www.zohoapis.com/books/v3/invoices', {
-      headers: { Authorization: `Zoho-oauthtoken ${token}` },
-      params: {
-        organization_id: orgId, per_page: 200, page,
-        sort_column: 'date', sort_order: 'A', date_start: `${year}-01-01`,
-      },
-      timeout: 20000, validateStatus: s => s < 500,
-    })
-    const batch = r.data?.invoices || []
-    for (const i of batch) {
-      const st = String(i.status || '').toLowerCase()
-      if (st === 'draft' || st === 'void') continue
-      if (COUNTED.size && !COUNTED.has(st)) continue
-      const d = String(i.date || '').slice(0, 10)
-      if (!d) continue
-      byDay[d] = (byDay[d] || 0) + (parseFloat(i.total) || 0)
-      count++
-    }
-    if (batch.length < 200) break
-    if (page === 12) truncated = true
-  }
+  // 💵 Cash basis, after discount (Mark 2026-10-17): money received by payment date.
+  const { cashByDay } = await import('./cashRevenue.js')
+  const { byDay, payments: count } = await cashByDay(`${year}-01-01`, `${year}-12-31`)
+  const truncated = false
 
   const rec = { year, byDay, invoices: count, truncated, at: new Date().toISOString() }
   await write(req, KEY, rec).catch(() => {})

@@ -87,7 +87,9 @@ router.get('/', async (req, res) => {
 
     let totals = cacheGet(cacheKey)
     if (!totals) {
-      const invoices = await listInvoicesForDateRange(monthStart, dateStr)
+      // 💵 Cash received, after discount (Mark 2026-10-17).
+      const { listCashForDateRange } = await import('../services/cashRevenue.js')
+      const invoices = await listCashForDateRange(req, monthStart, dateStr)
       let mtd_sales = 0
       let today_sales = 0
       for (const inv of invoices) {

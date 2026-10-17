@@ -107,24 +107,30 @@ function workingDays(year, monthIdx, upTo = null) {
 
 // ---------- sources ----------
 
-async function getRevenue() {
+// 💵 Cash basis, after discount (Mark 2026-10-17): money received by payment
+// date, from Books payments. Was the newest 100 invoices by invoice date.
+async function getRevenue(req) {
   return safe('revenue', async () => {
-    const token = await getAccessToken()
-    const orgId = process.env.ZOHO_ORGANIZATION_ID
-    const r = await axios.get('https://www.zohoapis.com/books/v3/invoices', {
-      headers: { Authorization: `Zoho-oauthtoken ${token}` },
-      params: { organization_id: orgId, per_page: 100, sort_column: 'date', sort_order: 'D' },
-      timeout: 5500,
-    })
-    const invs = r.data?.invoices || []
-    const today = todayStr()
+    const pt = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(d)
+    const today = pt(new Date())
     const ym = today.slice(0, 7)
     const y = ym.slice(0, 4)
-    const monthlyTotal = invs.filter(i => (i.date || '').startsWith(ym)).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
-    const ytdTotal = invs.filter(i => (i.date || '').startsWith(y)).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
-    const yesterdayTotal = invs.filter(i => i.date === yesterday).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
-    const todayTotal = invs.filter(i => i.date === today).reduce((s, i) => s + (parseFloat(i.total) || 0), 0)
+    const yesterday = pt(new Date(Date.now() - 86400000))
+    const { listCashForDateRange } = await import('../services/cashRevenue.js')
+    const { fetchYtdByDay, sumRange } = await import('../services/salesRollup.js')
+    const [rows, roll, open] = await Promise.all([
+      listCashForDateRange(req, `${ym}-01`, today),
+      fetchYtdByDay(req, { year: Number(y) }).catch(() => null),
+      // AR now comes from the invoice mirror: what is still owed (balance), any month.
+      catalyst.initialize(req).zcql().executeZCQLQuery("SELECT invoice_number, customer_name, inv_status, inv_date, inv_balance FROM AdasInvoices WHERE inv_balance > 0 AND inv_status != 'void' AND inv_status != 'draft' LIMIT 300").catch(() => []),
+    ])
+    const openRecords = (open || []).map(r => r.AdasInvoices || r).map(x => ({ number: String(x.invoice_number || ''), total: Number(x.inv_balance) || 0, date: String(x.inv_date || '').slice(0, 10), status: String(x.inv_status || 'sent'), customer: String(x.customer_name || '') }))
+    const sum = f => rows.filter(f).reduce((t, r) => t + (Number(r.total) || 0), 0)
+    const monthlyTotal = sum(() => true)
+    const ytdTotal = roll?.byDay ? sumRange(roll.byDay, `${y}-01-01`, today) : monthlyTotal
+    const yesterdayTotal = sum(r => r.date === yesterday)
+    const todayTotal = sum(r => r.date === today)
+    const invs = rows
     const yr = Number(y), mi = Number(ym.slice(5, 7)) - 1, dayNum = Number(today.slice(8, 10))
     const elapsed = Math.max(1, workingDays(yr, mi, dayNum))
     // Extrapolating a month from a couple of days is noise dressed as insight:
@@ -140,10 +146,9 @@ async function getRevenue() {
     // Keep the raw records — per-tech revenue is a join of Books invoices to
     // the jobs table on invoice_number, since jobs carry no dollar amount.
     const records = invs
-      .filter(i => (i.date || '').startsWith(ym))
       .map(i => ({
         number: String(i.invoice_number || ''),
-        total: parseFloat(i.total) || 0,
+        total: Number(i.total) || 0,
         date: i.date || '',
         // Books tracks the salesperson on the invoice — the same field behind
         // the "Sales by Salesperson" report Mark already gets daily. That is
@@ -154,7 +159,7 @@ async function getRevenue() {
         customer: String(i.customer_name || ''),
       }))
     return { monthlyTotal, ytdTotal, yesterdayTotal, todayTotal, projected, dailyPace,
-      elapsedWorkingDays: elapsed, totalWorkingDays, projectable, invoiceCount: invs.length, records }
+      elapsedWorkingDays: elapsed, totalWorkingDays, projectable, invoiceCount: invs.length, records, openRecords }
   })
 }
 
@@ -351,7 +356,7 @@ async function buildBriefing(req, { only, mode = 'morning' } = {}) {
 
   const [jobs, revenue, shops, cliqBlocks, emailBlocks, events] = await Promise.all([
     on('jobs') ? timed('jobs', withTimeout('jobs', safe('jobs', () => readJobsPublic(req)), 6000)).then(j => j || []) : [],
-    on('revenue') ? timed('revenue', withTimeout('revenue', getRevenue(), 6000)) : null,
+    on('revenue') ? timed('revenue', withTimeout('revenue', getRevenue(req), 6000)) : null,
     on('crm') ? timed('crm', withTimeout('crm', getCrmShops(req), 6000)).then(s => s || []) : [],
     on('cliq') ? timed('cliq', withTimeout('cliq', getCliqBlocks(), 6000)).then(b => b || []) : [],
     on('email') ? timed('email', withTimeout('email', getEmailBlocks(), 6000)).then(b => b || []) : [],
@@ -1008,7 +1013,7 @@ export function formatNumbers(n, goal) {
 // AR — what is owed, aged, by customer. Books carries status on every invoice:
 // "sent" is outstanding, "overdue" is past terms, "paid" is closed.
 export function buildAR(revenue) {
-  const recs = (revenue?.records || []).filter(r => r.status && r.status !== 'paid')
+  const recs = (revenue?.openRecords || revenue?.records || []).filter(r => r.status && r.status !== 'paid')
   if (!recs.length) return null
   const byCustomer = {}
   for (const r of recs) {

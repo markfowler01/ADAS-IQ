@@ -282,7 +282,9 @@ export async function sendMorningKickoff(req, { force = false } = {}) {
   // cover last week even when it crosses a month boundary; MTD sums are
   // still gated to monthStart below.
   const fetchStart = (isMonday && lastMonday < monthStart) ? lastMonday : monthStart
-  const invoices = await listInvoicesForDateRange(fetchStart, dateStr)
+  // 💵 Cash received by payment date, after discount (Mark 2026-10-17).
+  const { listCashForDateRange } = await import('../services/cashRevenue.js')
+  const invoices = await listCashForDateRange(req, fetchStart, dateStr)
 
   const results = []
   const roster = await rosterFromDirectory(req)

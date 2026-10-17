@@ -98,6 +98,9 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const goals = await readTechGoals(req)
   let invoices = []
   try { invoices = await listInvoicesForDateRange(monthStart, dateStr) } catch (e) { console.warn('[huddle] invoices:', e.message) }
+  // 💵 Tech dollars are cash received (after discount); invoices still count the cars.
+  let cash = []
+  try { const { listCashForDateRange } = await import('./cashRevenue.js'); cash = await listCashForDateRange(req, monthStart, dateStr) } catch (e) { console.warn('[huddle] cash:', e.message) }
   // Jobs done each day this month (one invoice = one car) + average per job.
   const perDay = {}
   for (const inv of invoices) { const d = String(inv.date || '').slice(0, 10); if (d >= monthStart && d <= dateStr && !/void|draft/i.test(String(inv.status || ''))) perDay[d] = (perDay[d] || 0) + 1 }
@@ -107,7 +110,7 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const share = roster.length ? Math.round(goal / roster.length / 500) * 500 : goal
   const techs = roster.map(r => {
     let m = 0, y = 0
-    for (const inv of invoices) { if (!invoiceBelongsToTech(inv, r.name)) continue; const t = Number(inv.total || 0) || 0; const d = String(inv.date || '').slice(0, 10); if (d >= monthStart) m += t; if (d === yesterday) y += t }
+    for (const inv of cash) { if (!invoiceBelongsToTech(inv, r.name)) continue; const t = Number(inv.total || 0) || 0; const d = String(inv.date || '').slice(0, 10); if (d >= monthStart) m += t; if (d === yesterday) y += t }
     const g = Number(goals[r.name]) || share
     return { name: r.name, mtd: Math.round(m), yesterday: Math.round(y), goal: g, pct: Math.min(100, Math.round((m / Math.max(1, g)) * 100)) }
   }).sort((a, b) => b.mtd - a.mtd)
