@@ -55,24 +55,19 @@ function isAdmin(req) {
   return req.user?.role !== 'technician'
 }
 
-function calculateBonus(revenue, tiers) {
-  let bonus = 0
-  const breakdown = []
-  const sorted = [...tiers].sort((a, b) => a.threshold - b.threshold)
-  for (let i = 0; i < sorted.length; i++) {
-    const tier = sorted[i]
-    const nextThreshold = sorted[i + 1]?.threshold ?? Infinity
-    if (revenue <= tier.threshold) break
-    const revenueInTier = Math.min(revenue, nextThreshold) - tier.threshold
-    const bonusInTier = revenueInTier * tier.rate
-    bonus += bonusInTier
-    breakdown.push({
-      tier: { threshold: tier.threshold, rate: tier.rate, label: tier.label },
-      revenue_in_tier: revenueInTier,
-      bonus_in_tier: bonusInTier,
-    })
-  }
-  return { bonus: Math.round(bonus * 100) / 100, breakdown }
+// Jayden's field-tech letter (Mark 2026-10-17 "yes"): no bonus under $40,000
+// cash for the month; over that, 5% of revenue above $40,000 when the month
+// is $40,000-$55,000, 8% of revenue above $40,000 when the month is over
+// $55,000. Not marginal: the rate covers everything above $40,000.
+// Ignores the old bonus_config tiers. TODO: Calibration ID / pass-through fees.
+const CONTRACT = { threshold: 40000, tiers: [{ up_to: 55000, rate: 0.05 }, { up_to: null, rate: 0.08 }] }
+function calculateBonus(revenue) {
+  const { threshold, tiers } = CONTRACT
+  if (revenue <= threshold) return { bonus: 0, breakdown: [] }
+  const t = tiers.find(x => x.up_to === null || revenue <= x.up_to)
+  const above = revenue - threshold
+  const bonus = Math.round(above * t.rate * 100) / 100
+  return { bonus, breakdown: [{ tier: { threshold, rate: t.rate, label: `${t.rate * 100}% of revenue above $40K` }, revenue_in_tier: above, bonus_in_tier: bonus }] }
 }
 
 // Match period to date ranges
@@ -225,8 +220,7 @@ router.get('/calculate', async (req, res) => {
     const calc = calculateBonus(revenue, config.tiers)
 
     // Progress to next tier
-    const nextTier = [...config.tiers].sort((a, b) => a.threshold - b.threshold)
-      .find(t => t.threshold > revenue)
+    const nextTier = revenue < 40000 ? { threshold: 40000, rate: 0.05 } : revenue <= 55000 ? { threshold: 55001, rate: 0.08 } : null
 
     res.json({
       user_id: userId,
