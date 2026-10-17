@@ -29,7 +29,24 @@ export const STAGES = [
   { id: 'did_not_hire', label: '❌ Did Not Hire' },
   { id: 'do_not_hire',  label: '🚫 Do Not Hire' },
 ]
-const STAGE_IDS = new Set(STAGES.map(s => s.id))
+// 🤝 Business partners (Mark 2026-10-17: "add in potential business partners
+// and flag them differently"). Independent ADAS companies for the Founding
+// Partner Program live on the same board with their own pipeline.
+export const PARTNER_STAGES = [
+  { id: 'p_prospect',  label: '🎯 Prospect' },
+  { id: 'p_intro',     label: '👋 Reached out' },
+  { id: 'p_discovery', label: '☕ Discovery call' },
+  { id: 'p_qualify',   label: '🔍 Qualifying' },
+  { id: 'p_offer',     label: '📝 Pilot offer' },
+  { id: 'p_pilot',     label: '🧪 In pilot' },
+  { id: 'p_partner',   label: '🤝 Founding partner' },
+  { id: 'p_not_now',   label: '⏸ Not now' },
+  { id: 'p_no_fit',    label: '✖ Not a fit' },
+]
+const STAGE_IDS = new Set([...STAGES, ...PARTNER_STAGES].map(s => s.id))
+const PARTNER_FIELDS = { company: 200, website: 200, techs: 10, vans: 10, service_area: 300, years: 10, tools: 300, oem: 300, shops: 10, monthly: 20, insured: 10, pains: 1000, interest: 300, next_step: 300, next_date: 10, brew: 10 }
+export function normalizePartner(p = {}) { const o = {}; for (const [k, n] of Object.entries(PARTNER_FIELDS)) o[k] = clip(p[k], n); return o }
+const parseJson = v => { try { return v ? JSON.parse(v) : {} } catch { return {} } }
 const TABLE = 'AdasCandidates'
 const q = s => String(s ?? '').replace(/'/g, "''")
 const clip = (v, n) => String(v ?? '').trim().slice(0, n)
@@ -46,6 +63,7 @@ function rowToCandidate(r) {
     project_token: r.cand_project_token || '', project_sent_at: r.cand_project_sent_at || '',
     project_doc_id: r.cand_project_doc_id || '', project_video: r.cand_project_video || '',
     project_received_at: r.cand_project_received_at || '', project_words_ok: r.cand_project_words_ok || '',
+    kind: r.cand_kind === 'partner' ? 'partner' : 'hire', partner: normalizePartner(parseJson(r.cand_partner)),
   }
 }
 
@@ -71,6 +89,8 @@ async function insertCandidate(req, c) {
     cand_message: clip(c.message, 10000), cand_stage: STAGE_IDS.has(c.stage) ? c.stage : 'new',
     cand_notes: clip(c.notes, 10000), cand_resume_url: clip(c.resume_url, 255), cand_photo_id: clip(c.photo_id, 120),
     cand_rating: Number(c.rating) || 0, cand_created_at: now, cand_updated_at: now,
+    cand_kind: c.kind === 'partner' ? 'partner' : 'hire',
+    ...(c.kind === 'partner' ? { cand_partner: JSON.stringify(normalizePartner(c.partner)) } : {}),
   })
   return rowToCandidate(row)
 }
@@ -85,7 +105,11 @@ async function notifyMark(c, files = {}) {
     `Applying for: ${c.role || '—'}`, `Availability: ${c.availability || '—'}`, `Certs/licenses: ${c.certs || '—'}`,
     `Heard about us: ${c.source || '—'}`, '', `Experience:`, c.experience || '—', '', `Message:`, c.message || '—',
   ]
-  const text = lines.join('\n')
+  const isP = c.kind === 'partner', P = c.partner || {}
+  if (isP) lines.splice(0, lines.length, `Name: ${c.name}`, `Company: ${P.company || '—'}`, `Phone: ${c.phone || '—'}`, `Email: ${c.email || '—'}`, `Area: ${P.service_area || c.city || '—'}`,
+    `Techs/vans: ${P.techs || '—'} / ${P.vans || '—'}`, `Years in business: ${P.years || '—'}`, `Tools: ${P.tools || '—'}`, `Shops served: ${P.shops || '—'}`, `Monthly billing: ${P.monthly || '—'}`,
+    `Interested in: ${P.interest || '—'}`, `Heard about us: ${c.source || '—'}`, '', 'Biggest headaches:', P.pains || '—', '', 'Message:', c.message || '—')
+  let text = lines.join('\n')
   const photo = files.photo, resume = files.resume
   const MAX_ATTACH = 10 * 1024 * 1024
   const attachments = []
@@ -96,9 +120,9 @@ async function notifyMark(c, files = {}) {
   const boardUrl = 'https://adas-iq-904191467.development.catalystserverless.com/app/'
   const html = `<div style="font-family:Inter,Arial,sans-serif;font-size:14px;color:#1a1a1a">${inlinePhoto}` +
     `<pre style="font-family:Inter,Arial,sans-serif;font-size:14px;white-space:pre-wrap;margin:0 0 14px">${esc(text)}</pre>` +
-    `${resume ? '<p>📄 Resume attached.</p>' : '<p style="color:#888">No resume uploaded.</p>'}` +
+    `${isP ? '' : resume ? '<p>📄 Resume attached.</p>' : '<p style="color:#888">No resume uploaded.</p>'}` +
     `<p><a href="${boardUrl}" style="color:#CD4419;font-weight:700">Open the Recruiting board →</a></p></div>`
-  const subject = `🧑‍🔧 New applicant: ${c.name}${c.role ? ` — ${c.role}` : ''}`
+  const subject = isP ? `🤝 New partner prospect: ${P.company || c.name}${P.service_area ? ` — ${P.service_area}` : ''}` : `🧑‍🔧 New applicant: ${c.name}${c.role ? ` — ${c.role}` : ''}`
   const tasks = []
   tasks.push((async () => {
     try {
@@ -119,8 +143,9 @@ async function notifyMark(c, files = {}) {
   tasks.push((async () => {
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      `🧑‍🔧 *New applicant: ${c.name}*${c.role ? ` · ${c.role}` : ''}${c.city ? ` · ${c.city}` : ''}\n` +
-      `${c.phone || ''}${c.email ? ` · ${c.email}` : ''}${photo ? ' · 📷' : ''}${resume ? ' · 📄' : ''}\n${clip(c.experience || c.message, 240)}`)
+      (isP ? `🤝 *New partner prospect: ${P.company || c.name}*${P.company ? ` · ${c.name}` : ''}${P.service_area ? ` · ${P.service_area}` : ''}${P.techs ? ` · ${P.techs} techs` : ''}\n`
+        : `🧑‍🔧 *New applicant: ${c.name}*${c.role ? ` · ${c.role}` : ''}${c.city ? ` · ${c.city}` : ''}\n`) +
+      `${c.phone || ''}${c.email ? ` · ${c.email}` : ''}${photo ? ' · 📷' : ''}${resume ? ' · 📄' : ''}\n${clip(isP ? (P.pains || c.message) : (c.experience || c.message), 240)}`)
   })().catch(e => console.log('[recruit cliq] FAILED:', e.message)))
   await Promise.race([Promise.all(tasks), new Promise(r => setTimeout(r, 14000))])
 }
@@ -213,9 +238,13 @@ async function handleApply(req, res) {
     if (!phone && !email) return res.status(400).json({ error: 'A phone number or email is required' })
     if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'That email doesn\'t look right' })
     console.log('[recruit apply]', name, '· files:', (Array.isArray(req.files) ? req.files : []).map(f => `${f.fieldname}:${f.size}`).join(',') || 'none')
+    // Partner form (absoluteadas.com/partners): kind=partner + flat partner fields.
+    const isPartner = String(b.kind || b.type || '').toLowerCase() === 'partner'
+    const partner = isPartner ? normalizePartner(typeof b.partner === 'object' && b.partner ? b.partner : b) : null
     const c = await insertCandidate(req, {
-      name, phone, email, city: b.city, role: b.role || b.position, experience: b.experience,
-      certs: b.certs, availability: b.availability, source: b.source || 'website', message: b.message, stage: 'new',
+      name, phone, email, city: b.city || partner?.service_area, role: isPartner ? 'Business partner' : (b.role || b.position), experience: b.experience,
+      certs: b.certs, availability: b.availability, source: b.source || (isPartner ? 'website: partners' : 'website'), message: b.message,
+      stage: isPartner ? 'p_prospect' : 'new', kind: isPartner ? 'partner' : 'hire', partner,
       ...(await storeFiles(req, req.files, name)),
     })
     const _list = Array.isArray(req.files) ? req.files : []
@@ -223,7 +252,7 @@ async function handleApply(req, res) {
     // 📧 The six electrical questions go out straight away, from Mark. Once
     // per candidate, and a mail failure never loses the application.
     let screen = { sent: false, why: 'skipped' }
-    try { const { sendTechScreen } = await import('../services/techScreenEmail.js'); screen = await sendTechScreen(req, c) } catch (e) { console.warn('[recruit apply] screen email failed:', e.message) }
+    if (c.kind !== 'partner') try { const { sendTechScreen } = await import('../services/techScreenEmail.js'); screen = await sendTechScreen(req, c) } catch (e) { console.warn('[recruit apply] screen email failed:', e.message) }
     res.json({ ok: true, screen_sent: !!screen.sent })
   } catch (e) {
     console.error('[recruit apply]', e.message)
@@ -272,7 +301,7 @@ async function sendProjectEmail(req, c) {
 export async function maybeSendProjectEmails(req) {
   const all = await readAll(req)
   const cutoff = Date.now() - PROJECT_DELAY_HOURS * 3600 * 1000
-  const due = all.filter(c => c.email && !c.project_sent_at && ['new', 'contacted'].includes(c.stage) && new Date(c.created_at).getTime() <= cutoff)
+  const due = all.filter(c => c.kind !== 'partner' && c.email && !c.project_sent_at && ['new', 'contacted'].includes(c.stage) && new Date(c.created_at).getTime() <= cutoff)
   const out = { due: due.length, sent: 0, failed: 0 }
   for (const c of due.slice(0, 20)) {
     try { await sendProjectEmail(req, c); out.sent++ } catch (e) { out.failed++; console.log('[recruit project] send failed', c.id, e.message) }
@@ -342,7 +371,7 @@ const router = express.Router()
 const isOwner = req => String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
 
 router.get('/', async (req, res) => {
-  try { res.json({ stages: STAGES, candidates: await readAll(req) }) }
+  try { res.json({ stages: STAGES, partner_stages: PARTNER_STAGES, candidates: await readAll(req) }) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
 
@@ -376,7 +405,8 @@ router.post('/', async (req, res) => {
   try {
     const b = req.body || {}
     if (!clip(b.name, 200)) return res.status(400).json({ error: 'Name is required' })
-    res.json({ ok: true, candidate: await insertCandidate(req, { ...b, source: b.source || 'manual' }) })
+    const isPartner = b.kind === 'partner'
+    res.json({ ok: true, candidate: await insertCandidate(req, { ...b, kind: isPartner ? 'partner' : 'hire', stage: b.stage || (isPartner ? 'p_prospect' : 'new'), role: b.role || (isPartner ? 'Business partner' : ''), source: b.source || 'manual' }) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
@@ -387,6 +417,8 @@ router.patch('/:id', async (req, res) => {
     const upd = { ROWID: String(req.params.id), cand_updated_at: new Date().toISOString() }
     if (b.stage !== undefined) { if (!STAGE_IDS.has(b.stage)) return res.status(400).json({ error: 'Unknown stage' }); upd.cand_stage = b.stage }
     if (b.notes !== undefined) upd.cand_notes = clip(b.notes, 10000)
+    if (b.kind !== undefined) upd.cand_kind = b.kind === 'partner' ? 'partner' : 'hire'
+    if (b.partner !== undefined) upd.cand_partner = JSON.stringify(normalizePartner(b.partner))
     if (b.rating !== undefined) upd.cand_rating = Math.max(0, Math.min(5, Number(b.rating) || 0))
     for (const [k, col, n] of [['name', 'cand_name', 200], ['phone', 'cand_phone', 40], ['email', 'cand_email', 200], ['city', 'cand_city', 120],
       ['role', 'cand_role', 100], ['certs', 'cand_certs', 255], ['availability', 'cand_availability', 120], ['resume_url', 'cand_resume_url', 255],
@@ -397,7 +429,7 @@ router.patch('/:id', async (req, res) => {
     const cand = rowToCandidate(row)
     // Hired → Directory entry + onboarding checklist (company tools, 2026-09-16)
     let member_id = null
-    if (b.stage === 'hired') { try { const { onCandidateHired } = await import('./people.js'); const r = await onCandidateHired(req, cand); member_id = r.member?.id || null; if (r.created) console.log(`[recruit] ${cand.name} hired → directory ${r.member.id}`) } catch (e) { console.warn('[recruit] hired hook failed:', e.message) } }
+    if (b.stage === 'hired' && cand.kind !== 'partner') { try { const { onCandidateHired } = await import('./people.js'); const r = await onCandidateHired(req, cand); member_id = r.member?.id || null; if (r.created) console.log(`[recruit] ${cand.name} hired → directory ${r.member.id}`) } catch (e) { console.warn('[recruit] hired hook failed:', e.message) } }
     res.json({ ok: true, candidate: cand, member_id })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })

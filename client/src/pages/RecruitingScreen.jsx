@@ -13,14 +13,24 @@ const fileUrl = (id, dl) => `${API_BASE}/api/public/recruit/file/${id}?t=${encod
 const STAGE_COLORS = {
   new: '#CD4419', contacted: '#b45309', project: '#1F8B8B', phone_screen: '#0A0A0A', ride_along: '#B33A15',
   offer: '#b45309', hired: '#15803d', did_not_hire: '#888888', do_not_hire: '#b91c1c',
+  // 🤝 Partner pipeline: purple family so a partner card never reads as a hire.
+  p_prospect: '#6d28d9', p_intro: '#7c3aed', p_discovery: '#5b21b6', p_qualify: '#4338ca', p_offer: '#b45309',
+  p_pilot: '#0e7490', p_partner: '#15803d', p_not_now: '#888888', p_no_fit: '#b91c1c',
 }
+const PURPLE = '#6d28d9'
+const CLOSED = new Set(['hired', 'did_not_hire', 'do_not_hire', 'p_partner', 'p_not_now', 'p_no_fit'])
+const PARTNER_SOURCES = ['ADAS Brew', 'Referral', 'Shop intro', 'Industry contact', 'Website', 'LinkedIn', 'Other']
 const daysSince = iso => { const d = new Date(iso); return isNaN(d) ? '' : Math.floor((Date.now() - d) / 86400000) }
 const digits = s => String(s || '').replace(/[^\d+]/g, '')
 
 export default function RecruitingScreen({ user, onLogout, currentScreen, onNavigate }) {
-  const [stages, setStages] = useState([])
+  const [hStages, setHStages] = useState([])
+  const [pStages, setPStages] = useState([])
+  // 🧑‍🔧 Hires | 🤝 Partners (Mark 2026-10-17). Remembered per device.
+  const [view, setViewRaw] = useState(() => { try { return localStorage.getItem('recruit_view') === 'partner' ? 'partner' : 'hire' } catch { return 'hire' } })
+  const setView = v => { setViewRaw(v); setMobileStage('active'); try { localStorage.setItem('recruit_view', v) } catch { /* fine */ } }
   const [launch, setLaunch] = useState(null)   // 🚀 the two-flow view that pops up on Hired
-  const [cands, setCands] = useState([])
+  const [allCands, setCands] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
   const [open, setOpen] = useState(null)      // candidate id in detail
@@ -50,14 +60,14 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
       const r = await apiFetch(`${API_BASE}/api/recruit`)
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      setStages(j.stages || []); setCands(j.candidates || []); setErr(null)
+      setHStages(j.stages || []); setPStages(j.partner_stages || []); setCands(j.candidates || []); setErr(null)
     } catch (e) { setErr(e.message) }
     finally { setLoading(false) }
   }, [])
   useEffect(() => { load() }, [load])
 
   async function patch(id, body, okMsg) {
-    const prev = cands
+    const prev = allCands
     setCands(cs => cs.map(c => c.id === id ? { ...c, ...body } : c))
     try {
       const r = await apiFetch(`${API_BASE}/api/recruit/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -77,9 +87,13 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
     } catch (e) { say(`Delete failed: ${e.message}`) }
   }
 
+  const stages = view === 'partner' ? pStages : hStages
+  const cands = useMemo(() => allCands.filter(c => (c.kind === 'partner') === (view === 'partner')), [allCands, view])
+  const partnerCount = useMemo(() => allCands.filter(c => c.kind === 'partner' && !CLOSED.has(c.stage)).length, [allCands])
   const byStage = useMemo(() => Object.fromEntries(stages.map(s => [s.id, cands.filter(c => c.stage === s.id)])), [stages, cands])
-  const activeStages = stages.filter(s => !['hired', 'did_not_hire', 'do_not_hire'].includes(s.id))
-  const current = cands.find(c => c.id === open)
+  const activeStages = stages.filter(s => !CLOSED.has(s.id))
+  const current = allCands.find(c => c.id === open)
+  const currentStages = current?.kind === 'partner' ? pStages : hStages
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
@@ -87,12 +101,17 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
       <div className="max-w-7xl mx-auto px-4 py-5 pb-24">
         <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
           <div>
-            <h1 className="text-xl font-extrabold" style={{ color: '#1a1a1a' }}>🧑‍🔧 Recruiting</h1>
-            <p className="text-xs" style={{ color: '#888' }}>{cands.length} candidates · {activeStages.reduce((n, s) => n + (byStage[s.id]?.length || 0), 0)} in play</p>
+            <h1 className="text-xl font-extrabold" style={{ color: '#1a1a1a' }}>{view === 'partner' ? '🤝 Business partners' : '🧑‍🔧 Recruiting'}</h1>
+            <p className="text-xs" style={{ color: '#888' }}>{cands.length} {view === 'partner' ? 'ADAS companies' : 'candidates'} · {activeStages.reduce((n, s) => n + (byStage[s.id]?.length || 0), 0)} in play</p>
+            <div className="inline-flex mt-2 rounded-full p-0.5" style={{ backgroundColor: 'white', border: '1px solid #e0dbd6' }}>
+              {[['hire', '🧑‍🔧 Hires', ORANGE], ['partner', `🤝 Partners${partnerCount ? ` ${partnerCount}` : ''}`, PURPLE]].map(([k, l, col]) => (
+                <button key={k} onClick={() => setView(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={view === k ? { backgroundColor: col, color: 'white' } : { color: '#666' }}>{l}</button>
+              ))}
+            </div>
           </div>
           <div className="flex gap-2">
             <button onClick={() => setShowEmbed(v => !v)} className="text-xs font-bold rounded-xl px-3 py-2.5" style={{ backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>🔗 Website form</button>
-            <button onClick={() => setAdding(true)} className="text-sm font-bold rounded-xl px-4 py-2.5 text-white" style={{ backgroundColor: ORANGE }}>+ Add candidate</button>
+            <button onClick={() => setAdding(true)} className="text-sm font-bold rounded-xl px-4 py-2.5 text-white" style={{ backgroundColor: view === 'partner' ? PURPLE : ORANGE }}>{view === 'partner' ? '+ Add partner' : '+ Add candidate'}</button>
           </div>
         </div>
 
@@ -101,6 +120,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
             <p className="font-bold mb-1" style={{ color: '#1a1a1a' }}>The application page</p>
             <p className="text-xs mb-2" style={{ color: '#666' }}>Applicants fill out <b>absoluteadas.com/careers</b>. Every submission emails you, pings your alerts, and lands here in <b>New</b>. The form posts to:</p>
             <code className="block text-[11px] rounded-lg px-3 py-2 break-all" style={{ backgroundColor: '#f5f3f0', color: '#444' }}>{APPLY_URL}</code>
+            <p className="text-xs mt-3 mb-1" style={{ color: '#666' }}><b>🤝 Partner form</b> (absoluteadas.com/partners): same URL with <code>kind=partner</code> plus any of <code>company, website, techs, vans, service_area, years, tools, oem, shops, monthly, interest, pains, brew</code>. Lands in <b>🎯 Prospect</b> on the Partners board; no tech screen goes out.</p>
           </div>
         )}
 
@@ -120,7 +140,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
               ))}
             </div>
             <div className="flex flex-col gap-2">
-              {(mobileStage === 'active' ? cands.filter(c => !['hired', 'did_not_hire', 'do_not_hire'].includes(c.stage)) : (byStage[mobileStage] || [])).map(c => (
+              {(mobileStage === 'active' ? cands.filter(c => !CLOSED.has(c.stage)) : (byStage[mobileStage] || [])).map(c => (
                 <CandidateCard key={c.id} c={c} stages={stages} onOpen={() => cleanup ? toggleSel(c.id) : setOpen(c.id)} showStage={mobileStage === 'active'} cleanup={cleanup} selected={selected.has(c.id)} onQuickDelete={isOwner && !cleanup ? () => remove(c.id) : null} />
               ))}
             </div>
@@ -154,14 +174,14 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
       </div>
 
       {current && (
-        <CandidateModal c={current} stages={stages} isOwner={isOwner}
+        <CandidateModal key={current.id} c={current} stages={currentStages} isOwner={isOwner}
           onClose={() => setOpen(null)}
           onPatch={(body, msg) => patch(current.id, body, msg)}
           onDelete={() => remove(current.id)} />
       )}
       {launch && <OnboardingLaunch memberId={launch} onClose={() => setLaunch(null)} onOpenProfile={() => { setLaunch(null); onNavigate && onNavigate('team') }} />}
       {adding && (
-        <AddModal onClose={() => setAdding(false)} onSaved={c => { setCands(cs => [c, ...cs]); setAdding(false); say('✅ Candidate added') }} />
+        <AddModal kind={view} onClose={() => setAdding(false)} onSaved={c => { setCands(cs => [c, ...cs]); setAdding(false); say(view === 'partner' ? '🤝 Partner added' : '✅ Candidate added') }} />
       )}
       {isOwner && !cleanup && <button onClick={() => setCleanup(true)} className="fixed bottom-5 right-5 z-40 text-xs font-bold rounded-full px-4 py-2.5 shadow-lg" style={{ backgroundColor: 'white', color: '#555', border: '1.5px solid #e0dbd6' }}>🧹 Clean up board</button>}
       {isOwner && cleanup && (
@@ -179,6 +199,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
 function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected = false, onQuickDelete = null }) {
   const d = daysSince(c.updated_at || c.created_at)
   const stage = stages.find(s => s.id === c.stage)
+  if (c.kind === 'partner') return <PartnerCard c={c} d={d} stage={stage} onOpen={onOpen} showStage={showStage} cleanup={cleanup} selected={selected} onQuickDelete={onQuickDelete} />
   return (
     <div onClick={onOpen} className="bg-white rounded-xl p-3 cursor-pointer shadow-sm relative" style={{ border: `2px solid ${cleanup && selected ? '#dc2626' : STAGE_COLORS[c.stage] || '#e0dbd6'}`, backgroundColor: cleanup && selected ? '#fef2f2' : 'white' }}>
       {cleanup && <span className="absolute top-2 right-2 text-base leading-none">{selected ? '☑' : '☐'}</span>}
@@ -205,7 +226,63 @@ function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected
   )
 }
 
+// 🤝 Partner card: company first, purple badge, the numbers that matter.
+function PartnerCard({ c, d, stage, onOpen, showStage, cleanup, selected, onQuickDelete }) {
+  const P = c.partner || {}
+  const facts = [P.service_area || c.city, P.techs && `${P.techs} tech${P.techs === '1' ? '' : 's'}`, P.shops && `${P.shops} shops`, P.monthly && `${P.monthly}/mo`].filter(Boolean)
+  const overdue = P.next_date && P.next_date < new Date().toISOString().slice(0, 10)
+  return (
+    <div onClick={onOpen} className="rounded-xl p-3 cursor-pointer shadow-sm relative" style={{ border: `2px solid ${cleanup && selected ? '#dc2626' : STAGE_COLORS[c.stage] || PURPLE}`, backgroundColor: cleanup && selected ? '#fef2f2' : '#faf7ff' }}>
+      {cleanup && <span className="absolute top-2 right-2 text-base leading-none">{selected ? '☑' : '☐'}</span>}
+      {onQuickDelete && <button title="Delete" onClick={e => { e.stopPropagation(); onQuickDelete() }} className="absolute top-1.5 right-1.5 text-[11px] font-bold rounded-full w-5 h-5 flex items-center justify-center" style={{ backgroundColor: '#f3f0f9', color: '#999' }}>×</button>}
+      <span className="inline-block text-[10px] font-extrabold tracking-wider px-2 py-0.5 rounded-full mb-1" style={{ backgroundColor: PURPLE, color: 'white' }}>🤝 PARTNER</span>
+      <p className="text-sm font-bold leading-snug" style={{ color: '#1a1a1a' }}>{P.company || c.name}</p>
+      {P.company && <p className="text-xs" style={{ color: '#666' }}>{c.name}</p>}
+      {facts.length > 0 && <p className="text-xs mt-0.5" style={{ color: '#5b21b6' }}>{facts.join(' · ')}</p>}
+      {P.next_step && <p className="text-[11px] mt-1.5 font-semibold" style={{ color: overdue ? '#b91c1c' : '#444' }}>➡ {P.next_step}{P.next_date ? ` · ${P.next_date}` : ''}{overdue ? ' (late)' : ''}</p>}
+      <div className="flex items-center justify-between mt-2">
+        <span className="flex items-center gap-1">
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#ede9fe', color: '#5b21b6' }}>{c.source || 'manual'}</span>
+          {P.brew === 'yes' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>☕ Brew</span>}
+        </span>
+        <span className="text-[10px]" style={{ color: '#aaa' }}>{showStage && stage ? `${stage.label} · ` : ''}{d === '' ? '' : d === 0 ? 'today' : `${d}d`}</span>
+      </div>
+    </div>
+  )
+}
+
+// What we know about an independent ADAS company. Saved as one JSON blob.
+function PartnerPanel({ c, onPatch }) {
+  const [p, setP] = useState({ ...(c.partner || {}) })
+  const [dirty, setDirty] = useState(false)
+  const set = (k, v) => { setP(x => ({ ...x, [k]: v })); setDirty(true) }
+  const input = { border: '1px solid #ddd6fe', backgroundColor: 'white' }
+  const F = [['company', 'Company name'], ['website', 'Website'], ['service_area', 'Service area (cities / states)'], ['years', 'Years in business'],
+    ['techs', 'Techs'], ['vans', 'Vans'], ['shops', 'Shops they serve'], ['monthly', 'Monthly billing ($)'], ['tools', 'Tools (Autel, Hunter…)'], ['oem', 'OEM access / coverage']]
+  return (
+    <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#faf7ff', border: `1.5px solid ${PURPLE}` }}>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: PURPLE }}>🤝 Founding partner profile</p>
+        {dirty && <button onClick={() => { onPatch({ partner: p }, '🤝 Partner saved'); setDirty(false) }} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: PURPLE }}>Save</button>}
+      </div>
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        {F.map(([k, ph]) => <input key={k} value={p[k] || ''} onChange={e => set(k, e.target.value)} placeholder={ph} className="rounded-lg px-3 py-2 text-sm" style={input} />)}
+        <select value={p.insured || ''} onChange={e => set('insured', e.target.value)} className="rounded-lg px-3 py-2 text-sm" style={input}><option value="">Insured?</option><option value="yes">Insured: yes</option><option value="no">Insured: no</option><option value="unknown">Insured: not sure</option></select>
+        <select value={p.brew || ''} onChange={e => set('brew', e.target.value)} className="rounded-lg px-3 py-2 text-sm" style={input}><option value="">Reads ADAS Brew?</option><option value="yes">☕ Brew reader</option><option value="no">Not on Brew</option></select>
+      </div>
+      <input value={p.interest || ''} onChange={e => set('interest', e.target.value)} placeholder="Interested in: software, billing, network work, backup coverage…" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
+      <textarea value={p.pains || ''} onChange={e => set('pains', e.target.value)} rows={2} placeholder="Biggest headaches (billing, denials, admin, finding work…)" className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={input} />
+      <div className="grid grid-cols-3 gap-2">
+        <input value={p.next_step || ''} onChange={e => set('next_step', e.target.value)} placeholder="Next step (coffee, send Brew, pilot terms…)" className="col-span-2 rounded-lg px-3 py-2 text-sm" style={input} />
+        <input type="date" value={p.next_date || ''} onChange={e => set('next_date', e.target.value)} className="rounded-lg px-2 py-2 text-sm" style={input} />
+      </div>
+      <p className="text-[10px] mt-2" style={{ color: '#888' }}>Keep their customer lists and prices out of here. Ask about headaches and capacity, not their book (antitrust guardrail from the partner plan).</p>
+    </div>
+  )
+}
+
 function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
+  const isP = c.kind === 'partner'
   const [notes, setNotes] = useState(c.notes || '')
   const [edit, setEdit] = useState(false)
   const [f, setF] = useState({ name: c.name, phone: c.phone, email: c.email, city: c.city, role: c.role, certs: c.certs, availability: c.availability, resume_url: c.resume_url })
@@ -217,8 +294,9 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           <div className="flex items-center gap-3">
             {c.photo_id && <a href={fileUrl(c.photo_id)} target="_blank" rel="noreferrer"><img src={fileUrl(c.photo_id)} alt="" className="rounded-xl" style={{ width: 56, height: 56, objectFit: 'cover', border: '1px solid #e0dbd6' }} /></a>}
             <div>
-            <h2 className="text-lg font-extrabold" style={{ color: '#1a1a1a' }}>{c.name}</h2>
-            <p className="text-xs" style={{ color: '#888' }}>{[c.role, c.city, c.source].filter(Boolean).join(' · ')} · applied {new Date(c.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
+            {isP && <span className="inline-block text-[10px] font-extrabold tracking-wider px-2 py-0.5 rounded-full mb-0.5" style={{ backgroundColor: PURPLE, color: 'white' }}>🤝 BUSINESS PARTNER</span>}
+            <h2 className="text-lg font-extrabold" style={{ color: '#1a1a1a' }}>{isP ? (c.partner?.company || c.name) : c.name}</h2>
+            <p className="text-xs" style={{ color: '#888' }}>{[isP && c.partner?.company ? c.name : c.role, c.city, c.source].filter(Boolean).join(' · ')} · {isP ? 'added' : 'applied'} {new Date(c.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</p>
             </div>
           </div>
           <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
@@ -234,7 +312,8 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           </span>
         </div>
 
-        <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1px solid #99f6e4' }}>
+        {isP && <PartnerPanel c={c} onPatch={onPatch} />}
+        {!isP && <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1px solid #99f6e4' }}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#0f766e' }}>🧪 First project</p>
             {!c.project_received_at && (
@@ -265,9 +344,9 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
                 : <a href={c.project_video} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>▶ Watch video</a>)}
             </div>
           )}
-        </div>
+        </div>}
 
-        {isOwner && <OfferPanel c={c} onPatched={() => onPatch({}, '')} />}
+        {isOwner && !isP && <OfferPanel c={c} onPatched={() => onPatch({}, '')} />}
         <p className="text-[11px] font-bold uppercase tracking-widest mb-1.5" style={{ color: '#888' }}>Stage</p>
         <div className="flex gap-1.5 flex-wrap mb-4">
           {stages.map(s => (
@@ -280,8 +359,8 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           <div className="text-sm mb-3 grid grid-cols-2 gap-x-3 gap-y-1" style={{ color: '#374151' }}>
             <div><span style={{ color: '#888' }}>Phone</span><br />{c.phone || '—'}</div>
             <div><span style={{ color: '#888' }}>Email</span><br /><span className="break-all">{c.email || '—'}</span></div>
-            <div><span style={{ color: '#888' }}>Availability</span><br />{c.availability || '—'}</div>
-            <div><span style={{ color: '#888' }}>Certs / licenses</span><br />{c.certs || '—'}</div>
+            {!isP && <div><span style={{ color: '#888' }}>Availability</span><br />{c.availability || '—'}</div>}
+            {!isP && <div><span style={{ color: '#888' }}>Certs / licenses</span><br />{c.certs || '—'}</div>}
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-2 mb-3">
@@ -299,7 +378,7 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
 
         <p className="text-[11px] font-bold uppercase tracking-widest mb-1.5" style={{ color: '#888' }}>Your notes</p>
         <textarea value={notes} onChange={e => setNotes(e.target.value)} onBlur={() => notes !== c.notes && onPatch({ notes }, '📝 Notes saved')}
-          rows={4} placeholder="Phone screen went well, knows Autel, can start in 2 weeks…" className="w-full rounded-lg px-3 py-2 text-sm mb-3" style={input} />
+          rows={4} placeholder={isP ? 'Coffee went well, 2 vans in Spokane, tired of chasing invoices…' : 'Phone screen went well, knows Autel, can start in 2 weeks…'} className="w-full rounded-lg px-3 py-2 text-sm mb-3" style={input} />
 
         <div className="flex gap-2">
           {!edit ? (
@@ -307,6 +386,8 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           ) : (
             <button onClick={() => { onPatch(f, '✅ Saved'); setEdit(false) }} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: ORANGE }}>Save details</button>
           )}
+          <button onClick={() => { if (window.confirm(isP ? 'Move this to the Hires board (a person applying for a job)?' : 'Move this to the Partners board (an ADAS business, not a hire)?')) onPatch(isP ? { kind: 'hire', stage: 'new' } : { kind: 'partner', stage: 'p_prospect' }, isP ? '→ Hires' : '→ 🤝 Partners') }}
+            className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: isP ? '#f5f3f0' : '#ede9fe', color: isP ? '#555' : PURPLE }}>{isP ? '↩ Move to Hires' : '🤝 Flag as partner'}</button>
           {isOwner && <button onClick={onDelete} className="text-xs font-bold rounded-lg px-3 py-2 ml-auto" style={{ backgroundColor: '#fef2f2', color: '#dc2626' }}>Delete</button>}
         </div>
       </div>
@@ -314,7 +395,47 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
   )
 }
 
-function AddModal({ onClose, onSaved }) {
+function AddModal({ kind = 'hire', onClose, onSaved }) {
+  if (kind === 'partner') return <AddPartnerModal onClose={onClose} onSaved={onSaved} />
+  return <AddHireModal onClose={onClose} onSaved={onSaved} />
+}
+
+function AddPartnerModal({ onClose, onSaved }) {
+  const [f, setF] = useState({ name: '', company: '', phone: '', email: '', service_area: '', techs: '', source: 'ADAS Brew', notes: '' })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState(null)
+  const input = { border: '1px solid #ddd6fe', backgroundColor: 'white' }
+  async function save() {
+    if (!f.name.trim() && !f.company.trim()) { setErr('Owner name or company is required'); return }
+    setSaving(true); setErr(null)
+    try {
+      const body = { kind: 'partner', name: f.name.trim() || f.company.trim(), phone: f.phone, email: f.email, city: f.service_area, source: f.source, notes: f.notes,
+        partner: { company: f.company, service_area: f.service_area, techs: f.techs, brew: f.source === 'ADAS Brew' ? 'yes' : '' } }
+      const r = await apiFetch(`${API_BASE}/api/recruit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      onSaved(j.candidate)
+    } catch (e) { setErr(e.message) } finally { setSaving(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" style={{ backgroundColor: 'rgba(0,0,0,.5)' }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-5">
+        <div className="flex items-center justify-between mb-3"><h2 className="text-base font-bold" style={{ color: PURPLE }}>🤝 Add a potential partner</h2><button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button></div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          {[['company', 'Company'], ['name', 'Owner name'], ['phone', 'Phone'], ['email', 'Email'], ['service_area', 'Service area'], ['techs', 'How many techs']].map(([k, ph]) => (
+            <input key={k} value={f[k]} onChange={e => setF({ ...f, [k]: e.target.value })} placeholder={ph} className="rounded-lg px-3 py-2.5 text-sm" style={input} />
+          ))}
+          <select value={f.source} onChange={e => setF({ ...f, source: e.target.value })} className="col-span-2 rounded-lg px-3 py-2.5 text-sm" style={input}>{PARTNER_SOURCES.map(x => <option key={x}>{x}</option>)}</select>
+        </div>
+        <textarea value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} rows={3} placeholder="How you know them / what you've heard" className="w-full rounded-lg px-3 py-2.5 text-sm mb-3" style={input} />
+        {err && <p className="text-xs mb-2" style={{ color: '#dc2626' }}>{err}</p>}
+        <button onClick={save} disabled={saving} className="w-full py-3 rounded-xl font-bold text-white text-sm" style={{ backgroundColor: saving ? '#c4b5fd' : PURPLE }}>{saving ? 'Saving…' : 'Add to 🎯 Prospect'}</button>
+      </div>
+    </div>
+  )
+}
+
+function AddHireModal({ onClose, onSaved }) {
   const [f, setF] = useState({ name: '', phone: '', email: '', city: '', role: 'ADAS Technician', source: 'referral', experience: '' })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
