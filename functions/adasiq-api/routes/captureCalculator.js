@@ -2757,6 +2757,110 @@ captureCalcRouter.get('/hiring/preview', requireCronSecretFlex, async (req, res)
   catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
+// ── 🤝 FOUNDING PARTNER SERIES (8 weeks, LinkedIn Tue 7:45, auto-approved) ───
+// See services/partnerSeries.js. The hourly safety net calls partnerSeriesTick.
+captureCalcRouter.all('/partner-series/run', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { partnerSeriesTick } = await import('../services/partnerSeries.js')
+    const dry = [].concat(req.query.dry || []).map(String).includes('1')
+    const dateStr = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : undefined
+    const hour = req.query.hour !== undefined && /^\d{1,2}$/.test(String(req.query.hour)) ? Number(req.query.hour) : undefined
+    res.json({ ok: true, ...(await partnerSeriesTick(req, { dateStr, hour, dry })) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+captureCalcRouter.all('/partner-series/status', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { partnerStatus, setPartnerActive } = await import('../services/partnerSeries.js')
+    if (req.query.active === '0' || req.query.active === '1') await setPartnerActive(req, req.query.active === '1')
+    res.json({ ok: true, ...(await partnerStatus(req)) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+// Read-only: every post (LinkedIn + Facebook-groups version) with its guardrail result.
+captureCalcRouter.all('/partner-series/preview', requireCronSecretFlex, async (req, res) => {
+  try {
+    const { POSTS, partnerClaimIssues, START_TUESDAY } = await import('../services/partnerSeries.js')
+    res.json({ ok: true, start: START_TUESDAY, posts: POSTS.map((p, i) => ({ n: i + 1, headline: p.headline, linkedin_issues: partnerClaimIssues(p.body), fb_issues: partnerClaimIssues(p.fb), body: p.body, fb: p.fb })) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+// Signed pause/resume links from the Monday heads-up card (no secret needed on Mark's phone).
+captureCalcRouter.get('/partner-series/:act(pause|resume)', async (req, res) => {
+  const act = req.params.act
+  const v = verifySignedAction({ id: req.query.id, action: `partner_${act}`, t: req.query.t, sig: req.query.sig })
+  if (!v.ok) return res.status(403).type('text/plain').send(`Link not valid: ${v.error}`)
+  const { setPartnerActive } = await import('../services/partnerSeries.js')
+  await setPartnerActive(req, act === 'resume')
+  const other = act === 'pause' ? 'resume' : 'pause'
+  const u = new URL(buildSignedActionUrl(PUBLIC_BASE, 'partner-series', `partner_${other}`))
+  const flip = `${PUBLIC_BASE}/api/capture-calc/partner-series/${other}?id=partner-series&t=${u.searchParams.get('t')}&sig=${u.searchParams.get('sig')}`
+  res.type('html').send(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><body style="font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#f5f5f5;padding:28px;max-width:520px;margin:0 auto"><h2>Founding Partner series ${act === 'pause' ? 'paused ⏸' : 'running again ▶️'}</h2><p style="color:#9ca3af">${act === 'pause' ? 'Nothing new will queue. Posts already queued can be killed from their own card.' : 'The next Monday queues the next week as usual.'}</p><p><a style="color:#CD4419" href="${flip}">${other === 'resume' ? 'Resume the series' : 'Pause again'}</a></p></body>`)
+})
+
+const partnerPage = (title, inner) => `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><style>
+body{font-family:-apple-system,Helvetica,Arial,sans-serif;background:#0d0d0d;color:#f5f5f5;margin:0 auto;padding:24px;max-width:520px}
+h1{font-size:20px}h1 span{color:#CD4419}label{display:block;font-size:13px;color:#9ca3af;margin:14px 0 4px}
+input,textarea,select{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #333;background:#1a1a1a;color:#f5f5f5;font-size:16px}
+button{margin-top:14px;width:100%;padding:14px;border:0;border-radius:8px;background:#CD4419;color:#fff;font-size:16px;font-weight:700}
+.note{font-size:13px;color:#9ca3af}.warn{color:#fbbf24;font-size:14px}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:14px}td{padding:6px 0;border-bottom:1px solid #222}td:last-child{text-align:right;font-weight:700}
+</style></head><body>${inner}</body></html>`
+const escH = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+// Intro drafter for ONE hand-picked owner. Mark sends it himself; nothing is stored or sent.
+captureCalcRouter.all('/partner-intro', express.urlencoded({ extended: false, limit: '8kb' }), async (req, res) => {
+  const b = { ...(req.query || {}), ...(req.body || {}) }
+  const name = String(b.name || '').trim().slice(0, 80)
+  const company = String(b.company || '').trim().slice(0, 120)
+  const context = String(b.context || '').trim().slice(0, 400)
+  const channel = ['LinkedIn message', 'email', 'text message'].includes(b.channel) ? b.channel : 'LinkedIn message'
+  let draft = ''
+  if (name && req.method === 'POST') {
+    try {
+      const { draftPartnerIntro } = await import('../services/partnerSeries.js')
+      const r = await draftPartnerIntro({ name, company, context, channel })
+      draft = `<label>Draft. Read it, change anything, then send it yourself</label>
+        <textarea id="out" rows="8">${escH(r.text)}</textarea>
+        ${r.issues.length ? `<p class="warn">⚠️ Check before sending: ${escH(r.issues.join(', '))}</p>` : ''}
+        <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('out').value).then(()=>this.textContent='Copied ✓')">Copy</button>`
+    } catch (e) { draft = `<p class="warn">Draft failed: ${escH(e.message)}</p>` }
+  }
+  const opt = v => `<option${v === channel ? ' selected' : ''}>${v}</option>`
+  res.type('html').send(partnerPage('Owner intro', `<h1>Absolute <span>ADAS</span>: owner intro</h1>
+<p class="note">For the 5 owners you picked this week. One at a time, in your words.</p>
+<form method="POST">
+<label>Owner's name</label><input name="name" value="${escH(name)}" required>
+<label>Their company (optional)</label><input name="company" value="${escH(company)}">
+<label>What you know about them (optional)</label><input name="context" value="${escH(context)}" placeholder="runs two vans out of Spokane, posts a lot about Toyota cals">
+<label>Sending as</label><select name="channel">${opt('LinkedIn message')}${opt('email')}${opt('text message')}</select>
+<button type="submit">Draft the intro</button></form>${draft}`))
+})
+
+// Friday numbers (signed link from the Cliq card). Saved in VanKV partner_metrics.
+captureCalcRouter.all('/partner-metrics', express.urlencoded({ extended: false, limit: '8kb' }), async (req, res) => {
+  const id = String(req.query.id || '')
+  const v = verifySignedAction({ id, action: 'partner_metrics', t: req.query.t, sig: req.query.sig })
+  if (!v.ok || !/^pm-\d{4}-\d{2}-\d{2}$/.test(id)) return res.status(403).type('text/plain').send(`Link not valid: ${v.error || 'bad id'}`)
+  const week = id.slice(3)
+  const { METRICS_KEY } = await import('../services/partnerSeries.js')
+  const { getVal, setVal } = await import('../services/vanDatastore.js')
+  const store = (await getVal(req, METRICS_KEY)) || { weeks: {} }
+  const FIELDS = [['conversations', 'Qualified owner conversations'], ['fit', 'Confirmed fit'], ['calls', 'Discovery calls'], ['inquiries', 'Website inquiries'], ['prospects', 'Pilot prospects']]
+  let saved = ''
+  if (req.method === 'POST') {
+    const row = { saved_at: new Date().toISOString(), notes: String(req.body?.notes || '').slice(0, 1000) }
+    for (const [k] of FIELDS) row[k] = Math.max(0, Math.min(999, parseInt(req.body?.[k], 10) || 0))
+    store.weeks = { ...(store.weeks || {}), [week]: row }
+    await setVal(req, METRICS_KEY, store)
+    saved = '<p style="color:#4ade80">Saved ✓</p>'
+  }
+  const cur = store.weeks?.[week] || {}
+  const totals = FIELDS.map(([k, label]) => [label, Object.values(store.weeks || {}).reduce((s, w) => s + (Number(w[k]) || 0), 0)])
+  res.type('html').send(partnerPage('Partner numbers', `<h1>Founding Partner <span>numbers</span></h1>
+<p class="note">Week ending ${escH(week)}. Real owner conversations only, not likes.</p>${saved}
+<form method="POST">${FIELDS.map(([k, label]) => `<label>${label}</label><input name="${k}" type="number" min="0" inputmode="numeric" value="${escH(cur[k] ?? '')}">`).join('')}
+<label>Notes (who, what they said)</label><textarea name="notes" rows="3">${escH(cur.notes || '')}</textarea>
+<button type="submit">Save</button></form>
+<label>Running totals, all weeks</label><table>${totals.map(([l, t]) => `<tr><td>${l}</td><td>${t}</td></tr>`).join('')}</table>`))
+})
+
 // ── ESTIMATOR MAGIC LANTERN (five lessons, one every three days) ────────────
 // Public opt-in from the guide page (form-encoded; JSON would preflight).
 // See services/estimatorLantern.js.
@@ -2904,6 +3008,8 @@ const DEBUG_FORWARD_WHITELIST = {
   'weekly-run':          '/api/capture-calc/report/weekly?force=1',
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
   'li-outreach-run':     '/api/capture-calc/li-outreach/run',
+  'partner-series-dry':  '/api/capture-calc/partner-series/run?dry=1',
+  'partner-series-preview': '/api/capture-calc/partner-series/preview',
   'weekly-run-cron':     '/api/capture-calc/report/weekly',
   'van-draft-weekly-cron': '/api/capture-calc/from-the-van/draft-weekly?cron=1',
   'mailagent-run':       '/api/mail-agent/run',
@@ -2972,6 +3078,8 @@ captureCalcRouter.all('/debug/van-draft-day',       (req, res) => debugForward(r
 captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run']))
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
 captureCalcRouter.all('/debug/li-outreach-run',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-outreach-run']))
+captureCalcRouter.all('/debug/partner-series-dry', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['partner-series-dry']))
+captureCalcRouter.get('/debug/partner-series-preview', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['partner-series-preview']))
 captureCalcRouter.all('/debug/weekly-run-cron',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run-cron']))
 captureCalcRouter.all('/debug/van-draft-weekly-cron', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['van-draft-weekly-cron']))
 captureCalcRouter.all('/debug/mailagent-run',       (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['mailagent-run']))
@@ -4369,6 +4477,16 @@ captureCalcRouter.all('/from-the-van/safety-net', heartbeatAttempt('capture_van_
     } catch (e) {
       console.warn('[safety-net hiring]', e.message)
       out.skipped.push({ check: 'hiring', reason: e.message })
+    }
+    // 🤝 Founding Partner series: Mon queue + Wed/Thu/Fri/monthly nudges (idempotent per day).
+    try {
+      const { partnerSeriesTick } = await import('../services/partnerSeries.js')
+      const ps = await partnerSeriesTick(req, {})
+      if (ps.results?.some(r => r.queued || r.sent)) out.actions.push({ action: 'partner_series', results: ps.results })
+      else out.skipped.push({ check: 'partner_series', reason: ps.reason || 'nothing due' })
+    } catch (e) {
+      console.warn('[safety-net partner series]', e.message)
+      out.skipped.push({ check: 'partner_series', reason: e.message })
     }
     // 📊 Estimator campaign card to Mark once a day at 5 PM PT.
     try {
