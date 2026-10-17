@@ -2479,6 +2479,11 @@ async function runSchedulerOnce(req, { dry = false } = {}) {
             out.push({ id: draft.id, channel: draft.channel, ok: true, platform_id: r.id, with_image: Boolean(draft.image_url) })
             const imgNote = draft.image_url ? ' (with image)' : ''
             await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ Published to LinkedIn${imgNote}: ${draft.headline || draft.body.slice(0, 60)}`).catch(() => {})
+            // Opt-in first comment (drafts that set meta.first_comment, e.g. the Founding Partner series).
+            if (draft.meta?.first_comment) {
+              const { commentOnLinkedInPost } = await import('../services/brewLinkedIn.js')
+              await commentOnLinkedInPost(r.id, String(draft.meta.first_comment)).catch(e => console.warn('[li first comment]', e.message))
+            }
           } else {
             await updateDraft(req, draft.id, { status: 'publish_failed', error: r?.error || 'unknown' })
             out.push({ id: draft.id, channel: draft.channel, ok: false, error: r?.error })

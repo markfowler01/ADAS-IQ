@@ -208,6 +208,10 @@ export function weekIndexFor(tuesday) {
 /** The series Tuesday for any day of that Mon-Sun week. */
 const tuesdayOfWeek = dateStr => addDays(dateStr, 2 - (weekdayOf(dateStr) || 7))
 
+// /partners is live (2026-10-17, apply form → Recruiting 🤝 Partners board, ?src counted).
+// Mark's post text stays verbatim; the link rides in the first comment.
+const partnersComment = n => `For independent ADAS owners who want the details, here's what we're exploring: absoluteadas.com/partners?src=li-partner-w${n + 1}`
+
 /** Signed links (same HMAC as the approval cards, 14-day TTL). */
 function signedLink(path, id, action) {
   const u = new URL(buildSignedActionUrl(PUBLIC_BASE, id, action))
@@ -250,7 +254,7 @@ async function queueWeek(req, meta, tuesday, { dry }) {
   const entry = await enqueueDraft(req, {
     status: 'approved', channel: 'linkedin_personal', category: 'partner_series',
     headline: `Founding Partner ${n + 1}/8: ${post.headline}`, body: post.body,
-    scheduled_for: when, meta: { partner_n: n + 1 },
+    scheduled_for: when, meta: { partner_n: n + 1, first_comment: partnersComment(n) },
   })
   // Mutate the shared meta so later nudges in this same tick don't save over the done marker.
   meta.done = { ...(meta.done || {}), [tuesday]: { n: n + 1, id: entry.id, at: new Date().toISOString() } }
@@ -261,6 +265,7 @@ async function queueWeek(req, meta, tuesday, { dry }) {
   await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, [
     `🤝 *Founding Partner series, week ${n + 1} of 8* posts ${tuesday === ptDateStr() ? 'today' : 'tomorrow'} 7:45 AM on your LinkedIn (auto-approved)`,
     `*${post.headline}*`, '', post.body, '',
+    `💬 First comment: ${partnersComment(n)}`, '',
     `✏️ Edit: ${edit}`, `❌ Kill this post: ${kill}`, `⏸ Pause the whole series: ${pause}`,
   ].join('\n')).catch(() => {})
   return { queued: true, tuesday, n: n + 1, id: entry.id, scheduled_for: when }
@@ -313,7 +318,8 @@ export async function partnerSeriesTick(req, { dateStr = ptDateStr(), hour = ptH
   if (wd === 4 && hour >= 9 && hour <= 15) {
     out.push(await nudgeOnce(req, meta, `fb_${dateStr}`, [
       `📘 *Founding Partner week ${n + 1}: Facebook groups version*`,
-      `Paste into owner groups where posting is allowed (not the company page):`, '', post.fb,
+      `Paste into owner groups where posting is allowed (not the company page):`, '', post.fb, '',
+      `If the group allows links, add it as a comment: absoluteadas.com/partners?src=fb-group-w${n + 1}`,
     ].join('\n'), { dry }))
   }
   if (wd === 5 && hour >= 15 && hour <= 19) {
