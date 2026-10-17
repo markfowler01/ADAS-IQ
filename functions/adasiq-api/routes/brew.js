@@ -12,6 +12,7 @@ import catalyst from 'zcatalyst-sdk-node'
 import { fetchAllSources, recentItems } from '../services/brewSources.js'
 import { assembleDigest } from '../services/brewAssembly.js'
 import { renderDigest, renderLinkedIn } from '../services/brewRender.js'
+import { generateOperatorCorner } from '../services/operatorCorner.js'
 import { fetchTopStocks } from '../services/stockTicker.js'
 import { assembleMarketsCommentary } from '../services/marketsCommentary.js'
 import { generateReplyPrompt } from '../services/replyPrompt.js'
@@ -208,12 +209,15 @@ async function buildIssue(req, preFetched = null) {
   // short-circuit returns today's existing MP3 if present, so preview is fast).
   const forceCarrier = req.query?.carrier === '1' || req.query?.carrier === 'true'
   const forceAudio = req.query?.audio === '1' || req.query?.audio === 'true'
-  const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo, carrierOfWeek] = await Promise.all([
+  // `?operator=1` forces the Thursday-only Operator's Corner for previews.
+  const forceOperator = req.query?.operator === '1' || req.query?.operator === 'true'
+  const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo, carrierOfWeek, operatorCorner] = await Promise.all([
     stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
     generateReplyPrompt(digest).catch(() => ''),
     generateTomorrowWatching(digest).catch(() => ''),
     buildAndPublishVoiceMemo(digest, dateISO, { always: forceAudio }).catch(() => null),
     generateCarrierOfWeek(digest, { always: forceCarrier }).catch(() => null),
+    generateOperatorCorner(digest, { always: forceOperator }).catch(() => null),
   ])
   const rendered = renderDigest(digest, {
     issueNumber: String(issueNumber),
@@ -224,6 +228,7 @@ async function buildIssue(req, preFetched = null) {
     tomorrowStinger,
     audioUrl: voiceMemo?.url || '',
     carrierOfWeek,
+    operatorCorner,
   })
   return { digest, rendered, issueNumber, sourceStatus, itemsConsidered: recent.length }
 }
@@ -319,6 +324,13 @@ cronRouter.get('/signup', (req, res) => {
   res.send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Subscribe to ADAS Brew</title><style>*{box-sizing:border-box}body{margin:0;background:#f5f3f0;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#1a1a1a;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:32px 16px}.card{background:#fff;max-width:520px;width:100%;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.08);padding:40px 32px;border-top:4px solid #CD4419}.brand{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:700;letter-spacing:.16em;color:#CD4419;text-transform:uppercase;margin-bottom:6px}h1{font-size:30px;margin:0 0 8px;font-weight:800;line-height:1.15}.lede{color:#374151;font-size:16px;line-height:1.55;margin:0 0 12px}.benefit{color:#6b7280;font-size:14px;line-height:1.55;margin:0 0 24px}label{display:block;font-size:13px;font-weight:600;color:#374151;margin:14px 0 6px}input{width:100%;padding:11px 14px;font-size:15px;border:1.5px solid #e5e7eb;border-radius:9px;background:#fff;color:#1a1a1a;font-family:inherit}input:focus{outline:none;border-color:#CD4419}button{display:block;width:100%;background:#CD4419;color:#fff;font-size:15px;font-weight:700;padding:13px 22px;border-radius:9px;border:none;cursor:pointer;margin-top:18px;font-family:inherit}button:hover{background:#b53a15}button:disabled{opacity:.6;cursor:not-allowed}.foot{margin-top:24px;font-size:12px;color:#6b7280;line-height:1.5}.foot a{color:#CD4419;text-decoration:none}.msg{padding:12px 14px;border-radius:8px;font-size:14px;margin-top:16px}.ok{background:#dcfce7;color:#166534;border:1px solid #86efac}.err{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}.hp{position:absolute;left:-9999px}</style></head><body><div class="card"><div class="brand">ADAS Brew</div><h1>Grab a coffee. Get caught up on calibration and body shop.</h1><p class="lede">A quick read for collision shop owners and calibration techs — the OEM bulletins, recalls, insurance signals, and craft tips that actually matter, delivered every weekday morning.</p><p class="benefit">Free. ~5 min read. Built by Mark Fowler — owner of Absolute ADAS.</p><form id="f" onsubmit="return s(event)"><label for="email">Email</label><input id="email" name="email" type="email" required placeholder="you@yourshop.com" autocomplete="email"><label for="name">Name <span style="font-weight:400;color:#9ca3af">(optional)</span></label><input id="name" name="name" type="text" placeholder="First name" autocomplete="given-name"><label for="shop">Shop name <span style="font-weight:400;color:#9ca3af">(optional)</span></label><input id="shop" name="shop" type="text" placeholder="Your collision shop" autocomplete="organization"><input class="hp" name="website" tabindex="-1" autocomplete="off"><button id="b" type="submit">Subscribe</button></form><div id="m"></div><p class="foot">No spam. Unsubscribe anytime. Issues land Mon–Fri at 6am Pacific.</p></div><script>async function s(e){e.preventDefault();const b=document.getElementById('b'),m=document.getElementById('m');b.disabled=true;b.textContent='Subscribing…';m.innerHTML='';try{const r=await fetch('/server/adasiq-api/api/cron/brew/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value,name:document.getElementById('name').value,shop:document.getElementById('shop').value,website:document.getElementById('website').value})});const d=await r.json();if(r.ok&&d.ok){m.innerHTML='<div class="msg ok">✓ You\\'re in. Check your inbox for a quick welcome.</div>';document.getElementById('f').reset();b.textContent='Subscribed!'}else{m.innerHTML='<div class="msg err">'+(d.error||'Something went wrong. Try again.')+'</div>';b.disabled=false;b.textContent='Subscribe'}}catch(err){m.innerHTML='<div class="msg err">Network error. Try again.</div>';b.disabled=false;b.textContent='Subscribe'}return false}</script></body></html>`)
 })
 
+// Operators are welcome on Brew (Mark 2026-10-17: "let the other competitors
+// in"); it's how they find the Founding Partner Program. The NAMED competitors
+// stay silently blocked: the form says "you're in", nothing is stored, no
+// welcome, no alert, so they never know.
+const NAMED_COMPETITOR_RE = /avscalibrations|hivecalibrations|evergreencalibration|\babs-c\b|\bavs calibration|\bhive calibration|evergreen calibration|airbag services/i
+export const isOperatorRole = role => /calibration (company|business)|adas.*business|operator/i.test(String(role || ''))
+
 cronRouter.post('/subscribe', express.json(), express.urlencoded({ extended: false }), async (req, res) => {
   try {
     const body = req.body || {}
@@ -334,6 +346,11 @@ cronRouter.post('/subscribe', express.json(), express.urlencoded({ extended: fal
     if (!email || !email.includes('@') || email.length < 5 || email.length > 250) {
       return res.status(400).json({ error: 'Valid email required' })
     }
+    if (NAMED_COMPETITOR_RE.test(`${email} ${shop}`)) {
+      console.log('[brew subscribe] named competitor, silently skipped')
+      return res.json({ ok: true })
+    }
+    const operator = isOperatorRole(role)
 
     const result = await addSubscriber(req, {
       email,
@@ -342,7 +359,7 @@ cronRouter.post('/subscribe', express.json(), express.urlencoded({ extended: fal
       location,
       role,
       added_at: new Date().toISOString(),
-      source: 'public_signup',
+      source: operator ? 'public_signup_operator' : 'public_signup',
       ip: (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || '',
       onboarding_sent: ['welcome'],
     })
@@ -353,14 +370,15 @@ cronRouter.post('/subscribe', express.json(), express.urlencoded({ extended: fal
     // Fire-and-forget welcome email
     sendWelcomeEmail({ email, name }).catch(e => console.warn('[brew welcome]', e.message))
 
-    // Fire-and-forget Zoho CRM sync — creates or tags the Lead with "adasbrew"
-    syncNewsletterSubscriberToCrm({ email, name, shop, source: 'ADAS Brew Newsletter' })
+    // Fire-and-forget Zoho CRM sync — creates or tags the Lead with "adasbrew".
+    // Operators are not shop leads; they're tracked on the Partners board.
+    if (!operator) syncNewsletterSubscriberToCrm({ email, name, shop, source: 'ADAS Brew Newsletter' })
       .catch(e => console.warn('[brew crm-sync]', e.message))
 
     // Await Cliq notify before responding — Catalyst drops fire-and-forget after response
     try {
       const allSubs = await readSubscribers(req)
-      await notifyMarkOfSignup({ email, name, shop, location, role, total: allSubs.length })
+      await notifyMarkOfSignup({ email, name, shop, location, role: operator ? `🤝 ${role} (ADAS operator)` : role, total: allSubs.length })
     } catch (e) { console.warn('[brew cliq-notify]', e.message) }
 
     res.json({ ok: true })
@@ -798,6 +816,9 @@ cronRouter.post('/monthly-summary', async (req, res) => {
     cliqLines.push('')
     cliqLines.push(`*👥 New Subscribers (${monthSubs.length})*`)
     if (topRole) cliqLines.push(`Top role: ${topRole[0]} (${topRole[1]})`)
+    // Founding Partner funnel: operator readers (applications + calls live on the Partners board).
+    const opsAll = subs.filter(x => isOperatorRole(x.role)).length, opsNew = monthSubs.filter(x => isOperatorRole(x.role)).length
+    cliqLines.push(`🤝 ADAS operators reading: ${opsAll} (+${opsNew} this month). Applications: Recruiting → Partners.`)
     if (topLocation) cliqLines.push(`Top location: ${topLocation[0]} (${topLocation[1]})`)
     cliqLines.push('')
     cliqLines.push(`_View full stats: adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/cron/brew/stats?secret=…_`)
@@ -1929,14 +1950,15 @@ async function executeDailyPipeline(req, { retry = false } = {}) {
     // Voice memo is idempotent on the date filename so re-running it is safe
     // (overwrites today's MP3 with the same content; cheap).
     const stocks = await fetchTopStocks().catch(() => [])
-    const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo, carrierOfWeek] = await Promise.all([
+    const [marketsCommentary, replyPrompt, tomorrowStinger, voiceMemo, carrierOfWeek, operatorCorner] = await Promise.all([
       stocks.length ? assembleMarketsCommentary(stocks).catch(() => '') : Promise.resolve(''),
       generateReplyPrompt(digest).catch(() => ''),
       generateTomorrowWatching(digest).catch(() => ''),
       buildAndPublishVoiceMemo(digest, isoDate).catch(() => null),
       generateCarrierOfWeek(digest).catch(() => null),
+      generateOperatorCorner(digest).catch(() => null),
     ])
-    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary, replyPrompt, tomorrowStinger, audioUrl: voiceMemo?.url || '', carrierOfWeek })
+    rendered = renderDigest(digest, { issueNumber: String(issueNumber), dateISO: isoDate, stocks, marketsCommentary, replyPrompt, tomorrowStinger, audioUrl: voiceMemo?.url || '', carrierOfWeek, operatorCorner })
   } else {
     const fetched = await fetchAndTrim()
     const built = await buildIssue(req, { items: fetched.items, status: fetched.status })

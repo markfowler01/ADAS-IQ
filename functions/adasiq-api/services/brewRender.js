@@ -149,6 +149,18 @@ function renderCarrierBlock(cow) {
   return `<div class="cow"><div class="cow-eyebrow">🎯 Carrier of the Week</div><div class="cow-carrier">${esc(cow.carrier)}</div><h2 class="cow-headline">${esc(stripEmDashes(cow.headline))}</h2>${patternsHtml}${rebuttalHtml}${playHtml}</div>`
 }
 
+// Thursday "Operator's Corner" (services/operatorCorner.js). The partners
+// line is fixed copy here so the AI can never word an offer.
+function partnersUrl(issueNumber) {
+  return `https://absoluteadas.com/partners/?src=brew-${encodeURIComponent(issueNumber || 'issue')}`
+}
+const PARTNERS_LINE = 'Run your own ADAS business? The Founding Partner Program: keep your company and your shops, 0% on your existing book.'
+function renderOperatorBlock(oc, issueNumber) {
+  if (!oc || !oc.headline || !oc.body) return ''
+  const doThis = oc.do_this ? `<div style="margin-top:10px;font-weight:700;color:#1a1a1a">▶ This week: ${esc(stripEmDashes(oc.do_this))}</div>` : ''
+  return `<div style="margin:26px 0;padding:20px 22px;background:#f7f7f5;border:1px solid #e5e2dc;border-radius:10px"><div style="font-size:12px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#CD4419;margin-bottom:6px">🛠 Operator's Corner</div><div style="font-size:12px;color:#6b7280;margin-bottom:10px">For the folks who run a calibration business</div><h2 style="margin:0 0 8px;font-size:19px;line-height:1.3;color:#1a1a1a">${esc(stripEmDashes(oc.headline))}</h2><p style="margin:0;line-height:1.6;color:#333">${esc(stripEmDashes(oc.body))}</p>${doThis}<p style="margin:14px 0 0;padding-top:12px;border-top:1px solid #e5e2dc;font-size:14px;color:#555">${esc(PARTNERS_LINE)} <a href="${partnersUrl(issueNumber)}" style="color:#CD4419;font-weight:700">See how it works →</a></p></div>`
+}
+
 function renderMarketsBlock(stocks, commentary) {
   if (!stocks || stocks.length === 0) return ''
   const rows = stocks.map(s => {
@@ -199,6 +211,8 @@ export function renderDigest(digest, opts = {}) {
   const audioUrl          = String(opts.audioUrl || '')
   const carrierOfWeek     = opts.carrierOfWeek || null
   const carrierHtml       = renderCarrierBlock(carrierOfWeek)
+  const operatorCorner    = opts.operatorCorner || null
+  const operatorHtml      = renderOperatorBlock(operatorCorner, issueNumber)
   const readMin           = estimateReadingMin(intro, stories, marketsCommentary)
   // Per-recipient personalization marker — sendBroadcast does .replace per email.
   // Falls back to "Good morning." with no name if substitution didn't happen.
@@ -248,7 +262,7 @@ export function renderDigest(digest, opts = {}) {
     ? `<div class="tomorrow"><strong>👀 ${esc(tomorrowStinger)}</strong></div>`
     : ''
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div><div class="readtime">~${readMin} min read</div></div>${audioHtml}${marketsHtml}${carrierHtml}${greetingHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${replyBlock}${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner. Mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p>${tomorrowBlock}<div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(subject)}</title><style>${STYLES}</style></head><body><span style="display:none;visibility:hidden;opacity:0;color:transparent;height:0;width:0">${esc(previewText)}</span><div class="wrap"><div class="head"><div class="brand">ADAS Brew</div><div class="slogan">Grab a cup of coffee and get caught up on all things calibration and body shop.</div><div class="h1">${esc(tagline)}</div><div class="date">${esc(dateLabel)}${issueNumber ? ` · #${esc(issueNumber)}` : ''}</div><div class="readtime">~${readMin} min read</div></div>${audioHtml}${marketsHtml}${carrierHtml}${greetingHtml}${intro ? `<div class="intro"><p>${esc(intro)}</p></div>` : ''}${storiesHtml}${operatorHtml}<div class="cta"><p>${esc(cta.text || '')}</p><a class="btn" href="${safeUrl(cta.button_url)}">${esc(cta.button_text || 'Learn more')} →</a></div>${replyBlock}${forwardBlock}<p class="byline">Published by Absolute ADAS. Mark Fowler, owner. Mobile ADAS calibration in Western Washington. 50,000+ calibrations on the floor.</p>${tomorrowBlock}<div class="foot">ADAS Brew · brew@absoluteadas.com<br><a href="${safeUrl(unsubscribeUrl)}">Unsubscribe</a></div></div></body></html>`
 
   // Plain-text alternative
   const stocksText = stocks.length
@@ -292,6 +306,14 @@ export function renderDigest(digest, opts = {}) {
       `Source: ${s.source_label}: ${s.source_url}`,
       '',
     ].filter(Boolean).join('\n')),
+    ...(operatorHtml ? [
+      "🛠 OPERATOR'S CORNER (for the folks who run a calibration business)",
+      stripEmDashes(operatorCorner.headline),
+      stripEmDashes(operatorCorner.body),
+      operatorCorner.do_this ? `▶ This week: ${stripEmDashes(operatorCorner.do_this)}` : '',
+      `${PARTNERS_LINE} ${partnersUrl(issueNumber)}`,
+      '',
+    ].filter(Boolean) : []),
     '---',
     cta.text || '',
     cta.button_url ? `→ ${cta.button_url}` : '',
