@@ -243,7 +243,19 @@ async function handleApply(req, res) {
     const isPartner = String(b.kind || b.type || '').toLowerCase() === 'partner'
     // `website` is the form honeypot, so the partner form sends the company site as `company_site`.
     const partner = isPartner ? normalizePartner(typeof b.partner === 'object' && b.partner ? b.partner : { ...b, website: b.company_site || '', thanks_at: '' }) : null
-    const c = await insertCandidate(req, {
+    let merged = null
+    if (isPartner && email) {
+      const app = catalyst.initialize(req)
+      const rows = await app.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE cand_email = '${q(email)}'`).catch(() => [])
+      const prior = (rows || []).map(r => rowToCandidate(r?.[TABLE] || r)).find(x => x.kind === 'partner' && x.source === 'ADAS Brew')
+      if (prior) {
+        const keep = Object.fromEntries(Object.entries(partner).filter(([, v]) => v))
+        const row = await app.datastore().table(TABLE).updateRow({ ROWID: prior.id, cand_name: name, cand_phone: phone, cand_source: clip(b.source || 'website: partners', 100),
+          cand_message: clip(b.message, 10000), cand_partner: JSON.stringify(normalizePartner({ ...prior.partner, ...keep, brew: 'yes' })), cand_updated_at: new Date().toISOString() })
+        merged = rowToCandidate(row)
+      }
+    }
+    const c = merged || await insertCandidate(req, {
       name, phone, email, city: b.city || partner?.service_area, role: isPartner ? 'Business partner' : (b.role || b.position), experience: b.experience,
       certs: b.certs, availability: b.availability, source: b.source || (isPartner ? 'website: partners' : 'website'), message: b.message,
       stage: isPartner ? 'p_prospect' : 'new', kind: isPartner ? 'partner' : 'hire', partner,
@@ -296,6 +308,22 @@ async function sendProjectEmail(req, c) {
   if (!r?.sent) throw new Error(r?.results?.[0]?.error || 'send failed')
   await app.datastore().table(TABLE).updateRow({ ROWID: String(c.id), cand_project_token: token, cand_project_sent_at: new Date().toISOString(), cand_updated_at: new Date().toISOString() })
   return token
+}
+
+// ☕ Brew operator signup → 🎯 Prospect on the Partners board (Mark 2026-10-17
+// "yes"). One card per email: an existing partner card just gets brew=yes.
+export async function addPartnerFromBrew(req, { email, name, shop, location, role }) {
+  const em = clip(email, 200).toLowerCase(); if (!em) return { skipped: 'no email' }
+  const app = catalyst.initialize(req)
+  const rows = await app.zcql().executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE cand_email = '${q(em)}'`).catch(() => [])
+  const hit = (rows || []).map(r => rowToCandidate(r?.[TABLE] || r)).find(c => c.kind === 'partner')
+  if (hit) {
+    if (hit.partner.brew !== 'yes') await app.datastore().table(TABLE).updateRow({ ROWID: hit.id, cand_partner: JSON.stringify(normalizePartner({ ...hit.partner, brew: 'yes' })), cand_updated_at: new Date().toISOString() })
+    return { updated: hit.id }
+  }
+  const c = await insertCandidate(req, { name: clip(name, 200) || shop || em, email: em, city: location, role: 'Business partner', source: 'ADAS Brew', stage: 'p_prospect', kind: 'partner',
+    message: role ? `Signed up for ADAS Brew as: ${role}` : '', partner: { company: shop, service_area: location, brew: 'yes', next_step: 'Say hi: they read Brew' } })
+  return { created: c.id }
 }
 
 // 🤝 Partner thank-you (Mark 2026-10-17: "a simple thanks for applying

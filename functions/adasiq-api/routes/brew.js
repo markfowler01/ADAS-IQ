@@ -375,6 +375,9 @@ cronRouter.post('/subscribe', express.json(), express.urlencoded({ extended: fal
     if (!operator) syncNewsletterSubscriberToCrm({ email, name, shop, source: 'ADAS Brew Newsletter' })
       .catch(e => console.warn('[brew crm-sync]', e.message))
 
+    // 🤝 Operators land on Recruiting → Partners as a 🎯 Prospect (awaited: Catalyst drops work after res).
+    if (operator) { try { const { addPartnerFromBrew } = await import('./recruit.js'); await addPartnerFromBrew(req, { email, name, shop, location, role }) } catch (e) { console.warn('[brew → partners]', e.message) } }
+
     // Await Cliq notify before responding — Catalyst drops fire-and-forget after response
     try {
       const allSubs = await readSubscribers(req)
