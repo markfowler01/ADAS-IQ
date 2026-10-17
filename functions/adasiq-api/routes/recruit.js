@@ -44,7 +44,7 @@ export const PARTNER_STAGES = [
   { id: 'p_no_fit',    label: '✖ Not a fit' },
 ]
 const STAGE_IDS = new Set([...STAGES, ...PARTNER_STAGES].map(s => s.id))
-const PARTNER_FIELDS = { company: 200, website: 200, techs: 10, vans: 10, service_area: 300, years: 10, tools: 300, oem: 300, shops: 10, monthly: 20, insured: 10, pains: 1000, interest: 300, next_step: 300, next_date: 10, brew: 10 }
+const PARTNER_FIELDS = { thanks_at: 30, company: 200, website: 200, techs: 10, vans: 10, service_area: 300, years: 10, tools: 300, oem: 300, shops: 10, monthly: 20, insured: 10, pains: 1000, interest: 300, next_step: 300, next_date: 10, brew: 10 }
 export function normalizePartner(p = {}) { const o = {}; for (const [k, n] of Object.entries(PARTNER_FIELDS)) o[k] = clip(p[k], n); return o }
 const parseJson = v => { try { return v ? JSON.parse(v) : {} } catch { return {} } }
 const TABLE = 'AdasCandidates'
@@ -108,7 +108,8 @@ async function notifyMark(c, files = {}) {
   const isP = c.kind === 'partner', P = c.partner || {}
   if (isP) lines.splice(0, lines.length, `Name: ${c.name}`, `Company: ${P.company || '—'}`, `Phone: ${c.phone || '—'}`, `Email: ${c.email || '—'}`, `Area: ${P.service_area || c.city || '—'}`,
     `Techs/vans: ${P.techs || '—'} / ${P.vans || '—'}`, `Years in business: ${P.years || '—'}`, `Tools: ${P.tools || '—'}`, `Shops served: ${P.shops || '—'}`, `Monthly billing: ${P.monthly || '—'}`,
-    `Interested in: ${P.interest || '—'}`, `Heard about us: ${c.source || '—'}`, '', 'Biggest headaches:', P.pains || '—', '', 'Message:', c.message || '—')
+    `Interested in: ${P.interest || '—'}`, `Heard about us: ${c.source || '—'}`, `Brew reader: ${P.brew || '—'}`, `Website: ${P.website || '—'}`, '',
+    `📅 Call times they picked: ${P.next_step || '—'}${P.next_date ? ` (first pick ${P.next_date})` : ''}`, 'Call or text them to confirm.', '', 'Biggest headaches:', P.pains || '—', '', 'Message:', c.message || '—')
   let text = lines.join('\n')
   const photo = files.photo, resume = files.resume
   const MAX_ATTACH = 10 * 1024 * 1024
@@ -143,7 +144,7 @@ async function notifyMark(c, files = {}) {
   tasks.push((async () => {
     const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
     await postToCliqChannelById(MARK_ALERT_CHANNEL_ID,
-      (isP ? `🤝 *New partner prospect: ${P.company || c.name}*${P.company ? ` · ${c.name}` : ''}${P.service_area ? ` · ${P.service_area}` : ''}${P.techs ? ` · ${P.techs} techs` : ''}\n`
+      (isP ? `🤝 *New partner prospect: ${P.company || c.name}*${P.company ? ` · ${c.name}` : ''}${P.service_area ? ` · ${P.service_area}` : ''}${P.techs ? ` · ${P.techs} techs` : ''}\n${P.next_step ? `📅 ${P.next_step} · call/text to confirm\n` : ''}`
         : `🧑‍🔧 *New applicant: ${c.name}*${c.role ? ` · ${c.role}` : ''}${c.city ? ` · ${c.city}` : ''}\n`) +
       `${c.phone || ''}${c.email ? ` · ${c.email}` : ''}${photo ? ' · 📷' : ''}${resume ? ' · 📄' : ''}\n${clip(isP ? (P.pains || c.message) : (c.experience || c.message), 240)}`)
   })().catch(e => console.log('[recruit cliq] FAILED:', e.message)))
@@ -240,7 +241,8 @@ async function handleApply(req, res) {
     console.log('[recruit apply]', name, '· files:', (Array.isArray(req.files) ? req.files : []).map(f => `${f.fieldname}:${f.size}`).join(',') || 'none')
     // Partner form (absoluteadas.com/partners): kind=partner + flat partner fields.
     const isPartner = String(b.kind || b.type || '').toLowerCase() === 'partner'
-    const partner = isPartner ? normalizePartner(typeof b.partner === 'object' && b.partner ? b.partner : b) : null
+    // `website` is the form honeypot, so the partner form sends the company site as `company_site`.
+    const partner = isPartner ? normalizePartner(typeof b.partner === 'object' && b.partner ? b.partner : { ...b, website: b.company_site || '', thanks_at: '' }) : null
     const c = await insertCandidate(req, {
       name, phone, email, city: b.city || partner?.service_area, role: isPartner ? 'Business partner' : (b.role || b.position), experience: b.experience,
       certs: b.certs, availability: b.availability, source: b.source || (isPartner ? 'website: partners' : 'website'), message: b.message,
@@ -294,6 +296,52 @@ async function sendProjectEmail(req, c) {
   if (!r?.sent) throw new Error(r?.results?.[0]?.error || 'send failed')
   await app.datastore().table(TABLE).updateRow({ ROWID: String(c.id), cand_project_token: token, cand_project_sent_at: new Date().toISOString(), cand_updated_at: new Date().toISOString() })
   return token
+}
+
+// 🤝 Partner thank-you (Mark 2026-10-17: "a simple thanks for applying
+// email a few hours from me"). Website partner applicants only, ~3h after
+// they apply, once, 7am-7pm PT, from Mark's mailbox. OFF until Mark OKs the
+// wording: AppConfig partner_thanks_enabled = true.
+export const PARTNER_THANKS_HOURS = 3
+export function partnerThanksEmail(c) {
+  const first = String(c.name || '').trim().split(/\s+/)[0] || 'there'
+  const P = c.partner || {}
+  const next = P.next_step ? "You picked some times to talk. I'll call or text you to lock one in." : "I'll reach out in the next couple of days to set up a quick call."
+  const subject = `Thanks for reaching out, ${first}`
+  const body = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.55;color:#1a1a1a">` +
+    `<p>Hey ${first},</p>` +
+    `<p>Mark here, owner of Absolute ADAS. Thanks for putting your name in for the Founding Partner Program.</p>` +
+    `<p>I read every one of these myself. ${next}</p>` +
+    `<p>No pressure and no sales pitch. I just want to hear how your business runs and what's eating up your time.</p>` +
+    `<p>Talk soon,<br>Mark Fowler<br>Absolute ADAS</p></div>`
+  return { subject, body }
+}
+export async function maybeSendPartnerThanks(req, { force = false } = {}) {
+  const out = { enabled: false, due: 0, sent: 0, failed: 0 }
+  const app = catalyst.initialize(req)
+  const on = await cfgRow(app, 'partner_thanks_enabled')
+  out.enabled = String(on?.config_value || '').replace(/"/g, '') === 'true'
+  if (!out.enabled && !force) return out
+  const hr = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }))
+  if (!force && (hr < 7 || hr >= 19)) return { ...out, why: 'quiet hours' }
+  const cutoff = Date.now() - PARTNER_THANKS_HOURS * 3600 * 1000
+  const due = (await readAll(req)).filter(c => c.kind === 'partner' && c.email && !c.partner?.thanks_at && /^website/i.test(c.source || '')
+    && new Date(c.created_at).getTime() <= cutoff && Date.now() - new Date(c.created_at).getTime() < 7 * 86400000)
+  out.due = due.length
+  if (!due.length) return out
+  const { getMailAccessToken, getMailAccountIdFor, sendMail } = await import('../services/mail.js')
+  const token = await getMailAccessToken()
+  const accountId = await getMailAccountIdFor(token, 'mark@absoluteadas.com')
+  for (const c of due.slice(0, 20)) {
+    // Stamp first so a retry can never double-send.
+    const partner = { ...c.partner, thanks_at: new Date().toISOString() }
+    try {
+      await app.datastore().table(TABLE).updateRow({ ROWID: String(c.id), cand_partner: JSON.stringify(normalizePartner(partner)) })
+      const { subject, body } = partnerThanksEmail(c)
+      await sendMail(token, accountId, { to: c.email, subject, body }); out.sent++
+    } catch (e) { out.failed++; console.log('[partner thanks] failed', c.id, e.message) }
+  }
+  return out
 }
 
 // Hourly sweep (postscan piggyback): applied ≥ 2h ago, has an email,
@@ -376,6 +424,10 @@ router.get('/', async (req, res) => {
 })
 
 // GET /api/recruit/screen/preview — exactly what a candidate receives.
+router.get('/partner-thanks/preview', async (req, res) => {
+  const { subject, body } = partnerThanksEmail({ name: 'Ivan Example', partner: { next_step: req.query.picked ? 'Tue AM, Wed midday' : '' } })
+  res.type('html').send(`<p><b>Subject:</b> ${subject}</p><hr>${body}`)
+})
 router.get('/screen/preview', async (req, res) => {
   try { const { screenEmail } = await import('../services/techScreenEmail.js'); const e = screenEmail(String(req.query.name || 'Chris')); res.json({ ok: true, subject: e.subject, text: e.text, html: e.body }) }
   catch (e) { res.status(500).json({ error: e.message }) }

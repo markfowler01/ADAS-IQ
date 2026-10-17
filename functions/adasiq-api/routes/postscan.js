@@ -435,6 +435,12 @@ router.post('/run', async (req, res) => {
   } catch (e) {
     console.warn('[postscan] recruit-project piggyback failed (non-fatal):', e.message)
   }
+  // 🤝 Partner thank-you emails, ~3h after a website partner application.
+  try {
+    const { maybeSendPartnerThanks } = await import('./recruit.js')
+    const rt = await maybeSendPartnerThanks(req)
+    if (rt.due) console.log('[postscan] partner thanks:', JSON.stringify(rt))
+  } catch (e) { console.warn('[postscan] partner-thanks piggyback failed (non-fatal):', e.message) }
 
   // Invoice-sweep piggyback (Mark 2026-07-13) — pull-based backstop for
   // the Books invoice webhook. Every hourly tick, sweep the last two PT
