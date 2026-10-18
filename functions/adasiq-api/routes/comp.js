@@ -53,6 +53,34 @@ const view = (m, c) => {
   return { ...base, comp: c, summary: summarize(c), next_review: nextReview(c), letter: c.letter ? { status: c.letter.status, sent_at: c.letter.sent_at, signed_at: c.letter.signed_at } : null }
 }
 
+// 🕶 Remote Expert (Mark-only, like the rest of this router): fees + matched orders.
+//   GET /api/comp/remote-expert        { fees, orders }
+//   PUT /api/comp/remote-expert        { default, makes: { mercedes: 450 } }
+//   PUT /api/comp/remote-expert/:order { invoice_number?, fee? }  manual fix
+//   POST /api/comp/remote-expert/sync  run the email check now
+router.get('/remote-expert', async (req, res) => {
+  try { const R = await import('../services/remoteExpert.js'); const [fees, st] = await Promise.all([R.readFees(req), R.readOrders(req)]); res.json({ fees, orders: Object.values(st.orders || {}).sort((a, b) => String(b.at).localeCompare(String(a.at))) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/remote-expert', async (req, res) => {
+  try { const R = await import('../services/remoteExpert.js'); await R.writeFees(req, req.body || {}); res.json({ fees: await R.readFees(req) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/remote-expert/:order', async (req, res) => {
+  try {
+    const R = await import('../services/remoteExpert.js'); const st = await R.readOrders(req); const o = st.orders?.[req.params.order]
+    if (!o) return res.status(404).json({ error: 'No such order' })
+    if (req.body?.invoice_number !== undefined) o.invoice_number = String(req.body.invoice_number || '')
+    if (req.body?.fee !== undefined) o.fee = req.body.fee === '' || req.body.fee === null ? undefined : Number(req.body.fee)
+    const { cfgWriteJson } = await import('./people.js'); await cfgWriteJson(req, 're_orders', st)
+    res.json({ order: o })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/remote-expert/sync', async (req, res) => {
+  try { const R = await import('../services/remoteExpert.js'); res.json(await R.maybeSyncRemoteExpert(req, { lookback: Number(req.query.days) || 90 })) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/templates', async (req, res) => {
   try { res.json({ templates: await templates(req) }) } catch (e) { res.status(500).json({ error: e.message }) }
 })

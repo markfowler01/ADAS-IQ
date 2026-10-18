@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
 import HoursTab from './payroll/HoursTab.jsx'
-import { PayBenefitsTable } from './team/PayBenefits.jsx'
+import { PayBenefitsTable, RemoteExpertPanel } from './team/PayBenefits.jsx'
 import { isMarkUser } from '../utils/identity.js'
 import {
   API_BASE, apiFetch, COLORS, PageHeader, SectionLabel,
@@ -126,7 +126,7 @@ export default function PayrollScreen({ user, onLogout, currentScreen, onNavigat
         <Tabs tabs={tabs} active={tab} onChange={setTab} className="mb-6" />
 
         {tab === 'hours' && <HoursTab user={user} />}
-        {tab === 'benefits' && isMarkUser(user) && <PayBenefitsTable />}
+        {tab === 'benefits' && isMarkUser(user) && <><PayBenefitsTable /><RemoteExpertPanel /></>}
         {tab === 'current' && (
           <CurrentRun payRun={payRun} loading={loading} periodEnd={periodEnd}
             setPeriodEnd={setPeriodEnd}

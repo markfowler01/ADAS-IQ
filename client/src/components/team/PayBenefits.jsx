@@ -240,3 +240,53 @@ export function PayBenefitsTable() {
     </div>
   )
 }
+
+// 🕶 Remote Expert (Mark-only). Never on an invoice: the app reads Autel's
+// order emails, matches each car to our invoice, and keeps the fee out of the
+// tech bonus. Set fees here; fix a match by typing the invoice number.
+export function RemoteExpertPanel() {
+  const [d, setD] = useState(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [fees, setFees] = useState({ default: 450, makes: '' })
+  const load = () => j('/api/comp/remote-expert').then(x => { setD(x); setFees({ default: x.fees.default, makes: Object.entries(x.fees.makes || {}).map(([k, v]) => `${k} ${v}`).join(', ') }) }).catch(e => setErr(e.message))
+  useEffect(() => { load() }, [])
+  const saveFees = async () => {
+    setBusy(true); setErr('')
+    try {
+      const makes = Object.fromEntries(String(fees.makes || '').split(',').map(x => x.trim()).filter(Boolean).map(x => { const m = x.match(/^(.+?)\s+\$?(\d+(?:\.\d+)?)$/); return m ? [m[1], Number(m[2])] : null }).filter(Boolean))
+      await j('/api/comp/remote-expert', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ default: Number(fees.default) || 0, makes }) }); await load()
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  const sync = async () => { setBusy(true); setErr(''); try { await j('/api/comp/remote-expert/sync?days=120', { method: 'POST' }); await load() } catch (e) { setErr(e.message) } finally { setBusy(false) } }
+  const fix = async (o, inv) => { try { await j(`/api/comp/remote-expert/${o.order}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ invoice_number: inv }) }); await load() } catch (e) { setErr(e.message) } }
+  const inp = { border: '1px solid #e0dbd6', backgroundColor: 'white' }
+  return (
+    <div className="rounded-2xl p-4 mt-4 bg-white" style={{ border: '1.5px solid #e8e4e0' }}>
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#555' }}>🕶 Remote Expert · kept out of tech bonus</div>
+        <button onClick={sync} disabled={busy} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>{busy ? '…' : '↻ Check email now'}</button>
+      </div>
+      <div className="text-[11px] mb-2" style={{ color: '#888' }}>Never on an invoice. Read from Autel's order emails in mf@, matched to the car's invoice by year/make/model.</div>
+      <div className="flex gap-2 items-center flex-wrap mb-3">
+        <span className="text-xs">Default fee $</span><input value={fees.default} onChange={e => setFees(f => ({ ...f, default: e.target.value }))} className="text-sm rounded-lg px-2 py-1 w-20" style={inp} />
+        <input value={fees.makes} onChange={e => setFees(f => ({ ...f, makes: e.target.value }))} placeholder="By make: mercedes 450, bmw 400" className="text-sm rounded-lg px-2 py-1 flex-1" style={inp} />
+        <button onClick={saveFees} disabled={busy} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: ORANGE }}>Save fees</button>
+      </div>
+      {err && <div className="text-xs mb-2" style={{ color: '#b91c1c' }}>{err}</div>}
+      {!d ? <div className="text-xs" style={{ color: '#888' }}>Loading…</div> : !d.orders.length ? <div className="text-xs" style={{ color: '#888' }}>No orders yet. Tap "Check email now".</div> : (
+        <table className="w-full text-xs"><tbody>
+          {d.orders.map(o => (
+            <tr key={o.order} style={{ borderTop: '1px solid #f0ece8', opacity: o.cancelled_at ? 0.45 : 1 }}>
+              <td className="py-1.5 pr-2 whitespace-nowrap">{String(o.completed_at || o.at).slice(0, 10)}</td>
+              <td className="pr-2">{[o.year, o.make, o.model].filter(Boolean).join(' ')}</td>
+              <td className="pr-2" style={{ color: '#888' }}>{o.expert}</td>
+              <td className="pr-2">{o.cancelled_at ? 'cancelled' : !o.completed_at ? 'open' : o.invoice_number ? `✅ ${o.invoice_number}` : <input placeholder="invoice #" onBlur={e => e.target.value && fix(o, e.target.value)} className="rounded px-1.5 py-0.5 w-24" style={inp} />}</td>
+              <td className="text-right whitespace-nowrap">{o.cancelled_at || !o.completed_at ? '' : `−$${o.fee ?? ((d.fees.makes || {})[String(o.make || '').toLowerCase().replace(/[^a-z0-9]/g, '')] ?? d.fees.default)}`}</td>
+            </tr>
+          ))}
+        </tbody></table>
+      )}
+    </div>
+  )
+}

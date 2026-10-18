@@ -174,6 +174,15 @@ async function getRevenueForUser(req, userId, start, end) {
     mine.push(r)
   }
   const fees = await loadPassThrough(req, mine.map(r => r.invoice_number))
+  // 🕶 Remote Expert fees (never on the invoice): matched from Autel's emails.
+  let reFees = {}
+  try { const { remoteExpertFeesByInvoice } = await import('../services/remoteExpert.js'); reFees = await remoteExpertFeesByInvoice(req) } catch (e) { console.warn('[bonuses] remote expert', e.message) }
+  for (const r of mine) {
+    const fee = reFees[r.invoice_number]; if (!fee) continue
+    const base = fees.byInvoice[r.invoice_number] || { excluded: 0, base: 0, total: null }
+    fees.byInvoice[r.invoice_number] = { ...base, excluded: Math.round((base.excluded + fee) * 100) / 100 }
+    delete reFees[r.invoice_number]   // once per invoice, even when it was paid in parts
+  }
   let revenue = 0
   let feesExcluded = 0
   const invoiceList = []
