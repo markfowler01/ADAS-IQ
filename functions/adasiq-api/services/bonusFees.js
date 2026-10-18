@@ -30,15 +30,47 @@ export function lineAmount(line) {
 
 // excluded = dollars on pass-through lines. base = every line, so a partial
 // payment drops the same fraction of those fees.
-export function passThroughTotals(lines) {
+//
+// Item cost (Mark 2026-10-17): any Books item with a purchase cost only
+// counts what we keep. "Remote Expert – Mercedes Programming" sold at $500
+// with a $450 cost puts $50 toward the bonus; set cost = price and it puts $0.
+// OEM per-use programming fees work the same way.
+export function passThroughTotals(lines, costs = {}) {
   let excluded = 0
   let base = 0
   for (const line of lines || []) {
     const amount = lineAmount(line)
     base += amount
-    if (isPassThroughLine(line?.name || line?.item_name)) excluded += Math.max(0, amount)
+    if (isPassThroughLine(line?.name || line?.item_name)) { excluded += Math.max(0, amount); continue }
+    const unit = Number(costs[String(line?.item_id || '')]) || 0
+    if (unit > 0 && amount > 0) excluded += Math.min(amount, unit * (Number(line?.quantity ?? 1) || 1))
   }
   return { excluded: round2(excluded), base: round2(base) }
+}
+
+// item_id → purchase cost, from Books items. Remembered in AppConfig for 6h
+// so a cost Mark changes in Books shows up the same day.
+const COST_KEY = 'books_item_costs'
+export async function loadItemCosts(req, token) {
+  if (req._itemCosts) return req._itemCosts
+  const app = catalyst.initialize(req)
+  let row = null
+  try { const r = await app.zcql().executeZCQLQuery(`SELECT ROWID, config_value FROM AppConfig WHERE config_key = '${COST_KEY}' LIMIT 1`); row = r?.[0]?.AppConfig || r?.[0] || null } catch { /* none */ }
+  try { const v = row?.config_value ? JSON.parse(row.config_value) : null; if (v?.at && Date.now() - new Date(v.at).getTime() < 6 * 3600 * 1000) return (req._itemCosts = v.costs || {}) } catch { /* refetch */ }
+  const costs = {}
+  try {
+    for (let page = 1; page <= 10; page++) {
+      const r = await booksGet(token, '/items', { per_page: 200, page }, 12000)
+      const items = r.data?.items || []
+      for (const it of items) { const c = Number(it.purchase_rate) || 0; if (c > 0) costs[String(it.item_id)] = c }
+      if (!r.data?.page_context?.has_more_page) break
+    }
+    const value = JSON.stringify({ at: new Date().toISOString(), costs })
+    const table = app.datastore().table('AppConfig')
+    if (row?.ROWID) await table.updateRow({ ROWID: String(row.ROWID), config_key: COST_KEY, config_value: value })
+    else await table.insertRow({ config_key: COST_KEY, config_value: value })
+  } catch (e) { console.warn('[bonus-fees] item costs', e.message) }
+  return (req._itemCosts = costs)
 }
 
 export function eligibleCash(payment, info) {
@@ -56,7 +88,7 @@ export function eligibleCash(payment, info) {
 
 const BOOKS = 'https://www.zohoapis.com/books/v3'
 const q = s => String(s ?? '').replace(/'/g, "''")
-const feeKey = n => `bex:${String(n).replace(/[^A-Za-z0-9._-]/g, '_')}`
+const feeKey = n => `bex2:${String(n).replace(/[^A-Za-z0-9._-]/g, '_')}`
 
 function parseCached(raw) {
   try {
@@ -195,7 +227,7 @@ export async function loadPassThrough(req, numbers) {
       if (!id) { pending.push(number); return }
       const lines = await linesForInvoice(token, id)
       if (!lines) { pending.push(number); return }
-      const totals = passThroughTotals(lines)
+      const totals = passThroughTotals(lines, await loadItemCosts(req, token))
       const info = { ...totals, total: ids[number]?.total ?? null }
       known[number] = info
       cachedOnReq[number] = info
