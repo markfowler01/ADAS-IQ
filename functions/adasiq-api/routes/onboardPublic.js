@@ -63,7 +63,7 @@ const KINDS = {
   handbook:     { n: '08', label: 'Signed handbook & policy acknowledgment', tick: 'handbook' },
   tech_handbook: { n: '08', label: 'Signed Technician Training Handbook acknowledgment' },
   contract:     { n: '09', label: 'Signed contract / offer letter', tick: 'contract' },
-  nda:          { n: '09', label: 'Signed confidentiality agreement (NDA)' },
+  nda:          { n: '09', label: 'Signed confidentiality & non-solicitation agreement (NDA)' },
   other:        { n: '10', label: 'Document' },
   w4:           { n: '11', label: 'Form W-4', tick: 'w4' },
   mvr:          { n: '12', label: 'Driving record (MVR)', tick: 'mvr' },
@@ -356,7 +356,7 @@ router.post('/:id/sign', async (req, res) => {
     const when = new Date().toISOString(), from = ip(req)
     const buf = await pdfBuffer(doc => {
       if (what === 'nda') {
-        doc.fontSize(18).text('Absolute ADAS — Confidentiality Agreement (NDA)').moveDown(0.5)
+        doc.fontSize(18).text('Absolute ADAS — Confidentiality & Non-Solicitation Agreement').moveDown(0.5)
         doc.fontSize(12).text(`Name: ${m.name}`).text(`Title: ${m.title || ''}`).text(`Version: ${N.ndaHash()}`).moveDown(1)
         for (const s of N.ndaSections({ contractor: m.employment === 'contractor' })) { doc.fontSize(12).text(s.title, { underline: true }).moveDown(0.2); doc.fontSize(10).text(s.body).moveDown(0.7) }
         doc.moveDown(0.5).fontSize(11).text('I have read this agreement and I agree to it.')
