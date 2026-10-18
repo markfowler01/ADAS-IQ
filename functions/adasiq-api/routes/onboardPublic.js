@@ -63,6 +63,7 @@ const KINDS = {
   handbook:     { n: '08', label: 'Signed handbook & policy acknowledgment', tick: 'handbook' },
   tech_handbook: { n: '08', label: 'Signed Technician Training Handbook acknowledgment' },
   contract:     { n: '09', label: 'Signed contract / offer letter', tick: 'contract' },
+  nda:          { n: '09', label: 'Signed confidentiality agreement (NDA)' },
   other:        { n: '10', label: 'Document' },
   w4:           { n: '11', label: 'Form W-4', tick: 'w4' },
   mvr:          { n: '12', label: 'Driving record (MVR)', tick: 'mvr' },
@@ -116,10 +117,13 @@ router.get('/:id', async (req, res) => {
     const progress = m.training || {}
     const company = await cfgReadJson(req, 'company_page', null)
     const welcome = await cfgReadJson(req, 'onboarding_welcome', WELCOME_DEFAULT)
+    // 🤐 NDA: shown once Mark OKs the wording (AppConfig nda_enabled = true).
+    let nda = null
+    try { if (await cfgReadJson(req, 'nda_enabled', false) === true) { const N = await import('../services/nda.js'); nda = { version: N.ndaHash(), sections: N.ndaSections({ contractor: m.employment === 'contractor' }) } } } catch { /* hidden */ }
     let route = null
     if (m.route_zone) { try { const { ZONE_BY_ID } = await import('../services/pipeline.js'); const { getAllShops } = await import('./shops.js'); const z = ZONE_BY_ID[m.route_zone]; const shops = (await getAllShops(req)).filter(x => x.region === m.route_zone && ['active', 'active2'].includes(x.stage || x.pipeline_stage)).map(x => x.shop_name); route = { zone: z?.label || m.region, day: z?.day || '', shops } } catch { route = { zone: m.region, day: '', shops: [] } } }
     const crew = members.filter(x => x.active !== false && x.id !== m.id && x.employment !== undefined).map(x => ({ name: x.preferred_name ? `${x.preferred_name} ${x.name.split(' ').slice(1).join(' ')}` : x.name, title: x.title || '', department: x.department || '', photo_url: x.photo_url || '', phone: x.phone || '', color: x.avatar_color || '#CD4419', is_boss: x.user_id === m.reports_to }))
-    res.json({ ok: true, mode, welcome, crew, route,
+    res.json({ ok: true, mode, welcome, crew, route, nda,
       member: { id: m.id, name: m.name, preferred_name: m.preferred_name || '', title: m.title, department: m.department, hire_date: m.hire_date, employment: m.employment, track: m.track || 'tech', region: m.region || '', boss: boss ? { name: boss.name, title: boss.title, phone: boss.phone } : null, phone: m.phone || '', personal_phone: m.personal_phone || m.phone || '', personal_email: m.personal_email || (/@absoluteadas\.com$/i.test(m.email || '') ? '' : m.email || ''), address: m.address || '', birthday: m.birthday || '', shirt_size: m.shirt_size || '', pants_waist: m.pants_waist || '', pants_inseam: m.pants_inseam || '', emergency_contact: m.emergency_contact || { name: '', phone: '', relationship: '' }, photo_url: m.photo_url || '', license_expiry: m.license_expiry || '', license_last4: m.license_last4 || '', mvr_checked_at: m.mvr_checked_at || '', van: m.van || '', scan_tool: m.scan_tool || '', van_handover: m.van_handover || null, van_locked: !!m.van_handover?.at, equipment: (m.equipment || []).map(e => ({ name: e.name, group: e.group || '', serial: e.serial || '', issued: e.issued || '' })), van_equipment: m.van ? ((await readVans(req))[vanKey(m.van)]?.equipment || []).map(e => ({ name: e.name, part: e.part || '', usage: e.usage || '', group: e.group || 'Other', serial: e.serial || '', added_by: e.added_by || '' })) : [] },
       documents: (m.documents || []).map(d => ({ kind: d.kind || 'other', name: d.name, added: d.added })),
       direct_deposit: m.direct_deposit ? { bank: m.direct_deposit.bank, last4: m.direct_deposit.last4, type: m.direct_deposit.type, at: m.direct_deposit.at } : null,
@@ -344,12 +348,22 @@ router.post('/:id/van-handover', async (req, res) => {
 router.post('/:id/sign', async (req, res) => {
   try {
     const g = await guard(req, res); if (!g) return
-    const { m } = g; const what = req.body?.doc === 'contract' ? 'contract' : req.body?.doc === 'tech_handbook' ? 'tech_handbook' : 'handbook'
+    const { m } = g; const what = req.body?.doc === 'contract' ? 'contract' : req.body?.doc === 'tech_handbook' ? 'tech_handbook' : req.body?.doc === 'nda' ? 'nda' : 'handbook'
+    const N = what === 'nda' ? await import('../services/nda.js') : null
     const typed = String(req.body?.signature || '').trim()
     if (typed.toLowerCase().replace(/\s+/g, ' ') !== m.name.toLowerCase().replace(/\s+/g, ' ')) return res.status(400).json({ error: `Sign by typing your full name exactly: ${m.name}` })
     const { SECTIONS, handbookHash, policyId, policyVersion } = await import('../services/handbook.js')
     const when = new Date().toISOString(), from = ip(req)
     const buf = await pdfBuffer(doc => {
+      if (what === 'nda') {
+        doc.fontSize(18).text('Absolute ADAS — Confidentiality Agreement (NDA)').moveDown(0.5)
+        doc.fontSize(12).text(`Name: ${m.name}`).text(`Title: ${m.title || ''}`).text(`Version: ${N.ndaHash()}`).moveDown(1)
+        for (const s of N.ndaSections({ contractor: m.employment === 'contractor' })) { doc.fontSize(12).text(s.title, { underline: true }).moveDown(0.2); doc.fontSize(10).text(s.body).moveDown(0.7) }
+        doc.moveDown(0.5).fontSize(11).text('I have read this agreement and I agree to it.')
+        doc.moveDown(1).fontSize(12).text(`Signed: ${typed}`).text(`Date: ${when.slice(0, 10)} (${when})`).text(`Signed from IP ${from || 'n/a'} via the Absolute ADAS onboarding link`)
+        doc.moveDown(0.5).text('For Absolute ADAS: Mark Fowler, Owner')
+        return
+      }
       doc.fontSize(18).text(what === 'contract' ? 'Absolute ADAS — Contract / Offer Acknowledgment' : what === 'tech_handbook' ? 'Absolute ADAS — Technician Training Handbook Acknowledgment' : 'Absolute ADAS — Handbook & Policy Acknowledgment').moveDown(0.5)
       doc.fontSize(12).text(`Name: ${m.name}`).text(`Title: ${m.title || ''}`).moveDown(1)
       if (what === 'handbook') {
@@ -363,7 +377,7 @@ router.post('/:id/sign', async (req, res) => {
       doc.moveDown(1).fontSize(12).text(`Signed: ${typed}`).text(`Date: ${when.slice(0, 10)} (${when})`).text(`Signed from IP ${from || 'n/a'} via the Absolute ADAS onboarding link`)
     })
     const d = await putFile(req, m, what, '', buf, 'application/pdf', '.pdf')
-    m.signatures = { ...(m.signatures || {}), [what]: { at: when, file_id: d.file_id, version: what === 'handbook' ? handbookHash() : what === 'tech_handbook' ? 'V1-2025-06' : '' } }
+    m.signatures = { ...(m.signatures || {}), [what]: { at: when, file_id: d.file_id, version: what === 'handbook' ? handbookHash() : what === 'tech_handbook' ? 'V1-2025-06' : what === 'nda' ? N.ndaHash() : '' } }
     if (what === 'handbook') m.signatures.tech_handbook = m.signatures.tech_handbook || { at: when, file_id: d.file_id, version: 'V1-2025-06', via: 'combined' }
     if (what === 'handbook') {
       const acks = await cfgReadJson(req, `policy_ack:${emailKey(m.user_id)}`, {})

@@ -43,7 +43,7 @@ export default function OnboardingScreen() {
   const contractor = m.employment === 'contractor'
   const catchup = d.mode === 'catchup'
   const isTech = (m.track || 'tech') !== 'ops'
-  const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), w4: has('w4'), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook, training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
+  const done = { about: !!(m.emergency_contact?.name && m.personal_phone), photo: !!m.photo_url, docs: contractor ? (has('passport') || has('dl_front')) : (has('dl_front') && has('ssn')), w4: has('w4'), deposit: !!(d.direct_deposit || d.payout), sign: !!d.signed?.handbook && (!d.nda || !!d.signed?.nda), training: d.course.modules.length > 0 && d.course.modules.every(x => x.progress?.passed), ask: true }
   const hasVan = isTech && !!m.van
   done.van = !!m.van_handover?.at
   done.workstyle = !!ws?.done
@@ -377,6 +377,13 @@ function Sign({ d, m, onDone }) {
       </div>
       {d.signed?.handbook ? <div className="text-sm font-bold mb-3" style={{ color: GREEN }}>✅ Policies + handbook signed {String(d.signed.handbook.at).slice(0, 10)}</div> : (
         <><L label={`Sign by typing your full name: ${m.name}`}><I v={sig} set={setSig} placeholder={m.name} /></L><Btn onClick={() => sign('handbook')} disabled={!ok || !!busy}>{busy === 'handbook' ? 'Filing…' : '✍️ I have read the policies and the handbook — sign'}</Btn></>)}
+      {d.nda && (d.signed?.nda ? <div className="text-sm font-bold mt-3" style={{ color: GREEN }}>✅ Confidentiality agreement (NDA) signed {String(d.signed.nda.at).slice(0, 10)}</div> : (
+        <div className="mt-4 pt-3" style={{ borderTop: '1px solid #f3f3f3' }}>
+          <details open><summary className="text-sm font-bold cursor-pointer" style={{ color: ORANGE }}>🤐 Confidentiality agreement (NDA)</summary>
+            <div className="mt-2 space-y-2">{d.nda.sections.map(x => <div key={x.title}><div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>{x.title}</div><div className="text-xs whitespace-pre-wrap" style={{ color: '#444', lineHeight: 1.6 }}>{x.body}</div></div>)}</div>
+          </details>
+          <div className="mt-2"><L label={`Sign by typing your full name: ${m.name}`}><I v={sig} set={setSig} placeholder={m.name} /></L><Btn onClick={() => sign('nda')} disabled={!ok || !!busy}>{busy === 'nda' ? 'Filing…' : '✍️ I agree to the confidentiality agreement — sign'}</Btn></div>
+        </div>))}
       {d.signed?.contract ? <div className="text-sm font-bold mt-3" style={{ color: GREEN }}>✅ Contract / offer signed {String(d.signed.contract.at).slice(0, 10)}</div> : (
         <div className="mt-4 pt-3" style={{ borderTop: '1px solid #f3f3f3' }}><div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>Contract / offer letter</div><div className="text-xs mb-2" style={{ color: '#666' }}>{hasContract ? 'Mark put your contract in your folder. Sign to confirm you received and agree to it.' : 'Mark hasn\'t added a contract to your folder yet — nothing to sign here for now.'}</div>{hasContract && <>{!ok && <L label={`Type your full name: ${m.name}`}><I v={sig} set={setSig} /></L>}<Btn tone="blue" onClick={() => sign('contract')} disabled={!ok || !!busy}>{busy === 'contract' ? 'Filing…' : '✍️ Sign contract acknowledgment'}</Btn></>}</div>)}
     </Card>
