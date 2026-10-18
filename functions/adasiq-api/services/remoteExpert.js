@@ -59,6 +59,23 @@ async function findInvoice(token, o) {
   return hits[0] || null
 }
 
+// The real price: techs pay Sheldon up front with the company card after
+// opening the ticket (Mark 2026-10-17), and the card charge lands in Books
+// as an expense ("Sheldon - DCRAUTOPROGRAMMING.COM", $350 on 2026-09-09).
+// Each completed order takes the closest unused charge from the 10 days
+// before it finished. The fee table is only the fallback.
+export const RE_VENDOR_RE = /dcr ?auto ?programming|sheldon|remote ?expert/i
+async function remoteExpertCharges(token, fromISO) {
+  const out = []
+  for (let page = 1; page <= 5; page++) {
+    const r = await axios.get(`${BOOKS}/expenses`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { organization_id: process.env.ZOHO_ORGANIZATION_ID, date_start: fromISO, per_page: 200, page }, timeout: 15000, validateStatus: s => s < 500 })
+    const list = r.data?.expenses || []
+    for (const x of list) if (RE_VENDOR_RE.test([x.vendor_name, x.description, x.reference_number, x.account_name].join(' '))) out.push({ id: String(x.expense_id), date: String(x.date || '').slice(0, 10), amount: Number(x.total ?? x.amount) || 0 })
+    if (!r.data?.page_context?.has_more_page) break
+  }
+  return out
+}
+
 /** Hourly: read new Remote Expert emails, record orders, match to invoices. */
 export async function maybeSyncRemoteExpert(req, { lookback = 60 } = {}) {
   const st = await readOrders(req)
@@ -92,6 +109,22 @@ export async function maybeSyncRemoteExpert(req, { lookback = 60 } = {}) {
     const hit = await findInvoice(token, { ...o, at: o.completed_at }).catch(() => null)
     if (hit) { o.invoice_number = hit.number; o.matched_at = new Date().toISOString(); out.matched++ } else out.unmatched++
   }
+  // Real fee from the card charge in Books.
+  try {
+    const open = Object.values(st.orders).filter(o => o.completed_at && !o.cancelled_at && o.fee == null)
+    if (open.length) {
+      const earliest = open.map(o => o.completed_at).sort()[0]
+      const from = new Date(Date.parse(earliest) - 12 * 86400000).toISOString().slice(0, 10)
+      const used = new Set(Object.values(st.orders).map(o => o.fee_expense_id).filter(Boolean))
+      const charges = (await remoteExpertCharges(token, from)).filter(c => !used.has(c.id) && c.amount > 0)
+      for (const o of open.sort((a, b) => a.completed_at.localeCompare(b.completed_at))) {
+        const done = o.completed_at.slice(0, 10)
+        const lo = new Date(Date.parse(o.completed_at) - 10 * 86400000).toISOString().slice(0, 10)
+        const c = charges.filter(x => !used.has(x.id) && x.date >= lo && x.date <= done).sort((a, b) => b.date.localeCompare(a.date))[0]
+        if (c) { o.fee = c.amount; o.fee_expense_id = c.id; o.fee_source = `card ${c.date}`; used.add(c.id); out.priced = (out.priced || 0) + 1 }
+      }
+    }
+  } catch (e) { console.warn('[remote-expert] charges', e.message) }
   st.seen = st.seen.slice(-400)
   await writeOrders(req, st)
   return out

@@ -267,7 +267,7 @@ export function RemoteExpertPanel() {
         <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#555' }}>🕶 Remote Expert · kept out of tech bonus</div>
         <button onClick={sync} disabled={busy} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>{busy ? '…' : '↻ Check email now'}</button>
       </div>
-      <div className="text-[11px] mb-2" style={{ color: '#888' }}>Never on an invoice. Read from Autel's order emails in mf@, matched to the car's invoice by year/make/model.</div>
+      <div className="text-[11px] mb-2" style={{ color: '#888' }}>Never on an invoice. Read from Autel's order emails in mf@, matched to the car's invoice by year/make/model. 💳 = real price from the card charge in Books (Sheldon / DCR Auto Programming); ~ = fee table below until the charge posts.</div>
       <div className="flex gap-2 items-center flex-wrap mb-3">
         <span className="text-xs">Default fee $</span><input value={fees.default} onChange={e => setFees(f => ({ ...f, default: e.target.value }))} className="text-sm rounded-lg px-2 py-1 w-20" style={inp} />
         <input value={fees.makes} onChange={e => setFees(f => ({ ...f, makes: e.target.value }))} placeholder="By make: mercedes 450, bmw 400" className="text-sm rounded-lg px-2 py-1 flex-1" style={inp} />
@@ -282,7 +282,7 @@ export function RemoteExpertPanel() {
               <td className="pr-2">{[o.year, o.make, o.model].filter(Boolean).join(' ')}</td>
               <td className="pr-2" style={{ color: '#888' }}>{o.expert}</td>
               <td className="pr-2">{o.cancelled_at ? 'cancelled' : !o.completed_at ? 'open' : o.invoice_number ? `✅ ${o.invoice_number}` : <input placeholder="invoice #" onBlur={e => e.target.value && fix(o, e.target.value)} className="rounded px-1.5 py-0.5 w-24" style={inp} />}</td>
-              <td className="text-right whitespace-nowrap">{o.cancelled_at || !o.completed_at ? '' : `−$${o.fee ?? ((d.fees.makes || {})[String(o.make || '').toLowerCase().replace(/[^a-z0-9]/g, '')] ?? d.fees.default)}`}</td>
+              <td className="text-right whitespace-nowrap" title={o.fee_source ? `From the ${o.fee_source} charge in Books` : 'Fee table (no card charge matched yet)'}>{o.cancelled_at || !o.completed_at ? '' : `−$${o.fee ?? ((d.fees.makes || {})[String(o.make || '').toLowerCase().replace(/[^a-z0-9]/g, '')] ?? d.fees.default)}${o.fee_source ? ' 💳' : ' ~'}`}</td>
             </tr>
           ))}
         </tbody></table>
