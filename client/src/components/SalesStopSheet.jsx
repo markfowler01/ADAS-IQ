@@ -60,6 +60,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
   const [lastShop] = useState(() => readLastShop())
   const [personOpen, setPersonOpen] = useState(false)
   const [leftCard, setLeftCard] = useState(false)   // 📇 rides along with any outcome
+  const [familyAngle, setFamilyAngle] = useState(false)   // 👨‍👦 did 'father and son' come up? (measures what lands, 2026-10-19)
   const [shops, setShops] = useState([])
   const [places, setPlaces] = useState([])       // 📍 Google, nearby / by name
   const [placesLoading, setPlacesLoading] = useState(false)
@@ -160,7 +161,7 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
     try {
       const r = await apiFetch(`${API_BASE}/api/sales-stops`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop_name: shop.shop_name, shop_id: shop.id || '', place: shop.place || null, outcome: effectiveOutcome, left_card: leftCard, note, person, lat: loc?.lat ?? null, lng: loc?.lng ?? null, tech: user?.name || '' }),
+        body: JSON.stringify({ shop_name: shop.shop_name, shop_id: shop.id || '', place: shop.place || null, outcome: effectiveOutcome, left_card: leftCard, family_angle: familyAngle, note, person, lat: loc?.lat ?? null, lng: loc?.lng ?? null, tech: user?.name || '' }),
       })
       const d = await r.json()
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -313,6 +314,12 @@ export default function SalesStopSheet({ user, onClose, onLogged }) {
               style={leftCard ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#1a1a1a', border: '1.5px dashed #c9c2bb' }}>
               <span className="text-2xl">📇</span>
               <span><span className="block font-bold">{leftCard ? 'Left our card ✓' : 'Left our card'}</span><span className="block text-xs" style={{ opacity: .8 }}>Tap to add to any of the above · alone counts as "nobody free"</span></span>
+            </button>
+            <button type="button" onClick={() => setFamilyAngle(v => !v)}
+              className="w-full rounded-2xl px-4 py-3 mb-3 text-left flex items-center gap-3"
+              style={familyAngle ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#1a1a1a', border: '1.5px dashed #c9c2bb' }}>
+              <span className="text-2xl">👨‍👦</span>
+              <span><span className="block font-bold">{familyAngle ? 'Father & son came up ✓' : 'Father & son came up'}</span><span className="block text-xs" style={{ opacity: .8 }}>Tap if you mentioned it · shows us what lands</span></span>
             </button>
             {outcome && outcome !== 'card' && !personOpen && !cardPreview && !person.name && (
               <button onClick={() => setPersonOpen(true)} className="w-full rounded-xl py-2.5 mb-3 text-sm font-semibold" style={{ backgroundColor: 'white', color: '#555', border: '1px dashed #d6d0ca' }}>

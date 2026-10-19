@@ -63,16 +63,19 @@ function drawFront(doc) {
   y += 44
   doc.font('Helvetica-Bold').fontSize(38).fillColor(WHITE).text('on calibrations', MARGIN, y, { width: CONTENT_W })
   y += 44
-  doc.font('Helvetica-Bold').fontSize(38).fillColor(ORANGE).text('you already bill insurance for.', MARGIN, y, { width: CONTENT_W })
-  y += 70
+  // Measured heights, not fixed offsets: "you already bill insurance for."
+  // wraps to two lines at 38pt and used to run into the paragraph below.
+  const l3 = 'you already bill insurance for.'
+  doc.font('Helvetica-Bold').fontSize(38).fillColor(ORANGE).text(l3, MARGIN, y, { width: CONTENT_W, lineGap: 2 })
+  y += doc.heightOfString(l3, { width: CONTENT_W, lineGap: 2 }) + 18
 
   // Body
-  doc.font('Helvetica').fontSize(13).fillColor('#d1d5db')
-    .text('Most mobile calibration vendors show up at your bay, use your power and parking, charge full list, send the invoice, and leave. The standard sublet playbook. They keep 100% of the margin on a job your facility helped make possible.', MARGIN, y, { width: CONTENT_W, lineGap: 4 })
-  y += 88
-  doc.font('Helvetica').fontSize(13).fillColor('#d1d5db')
-    .text('We do it differently. Every Absolute ADAS invoice to a partner shop shows a 15-25% partner discount off list. You bill insurance at list (insurance-approved). The difference is your margin.', MARGIN, y, { width: CONTENT_W, lineGap: 4 })
-  y += 76
+  const p1 = 'Most mobile calibration vendors show up at your bay, use your power and parking, charge full list, send the invoice, and leave. The standard sublet playbook. They keep 100% of the margin on a job your facility helped make possible.'
+  doc.font('Helvetica').fontSize(13).fillColor('#d1d5db').text(p1, MARGIN, y, { width: CONTENT_W, lineGap: 4 })
+  y += doc.heightOfString(p1, { width: CONTENT_W, lineGap: 4 }) + 14
+  const p2 = 'We do it differently. Every Absolute ADAS invoice to a partner shop shows a 15-25% partner discount off list. You bill insurance at list (insurance-approved). The difference is your margin.'
+  doc.font('Helvetica').fontSize(13).fillColor('#d1d5db').text(p2, MARGIN, y, { width: CONTENT_W, lineGap: 4 })
+  y += doc.heightOfString(p2, { width: CONTENT_W, lineGap: 4 }) + 20
 
   // Math example box
   doc.roundedRect(MARGIN, y, CONTENT_W, 132, 10).fill('#0a1f12').stroke(GREEN)
@@ -90,7 +93,7 @@ function drawFront(doc) {
   // Result row
   const resY = y + 92
   doc.font('Helvetica').fontSize(11).fillColor('#d1d5db').text('Your shop\'s annual margin (automatic, every invoice):', MARGIN + 20, resY)
-  doc.font('Helvetica-Bold').fontSize(22).fillColor(GREEN).text('$8,100 / year', MARGIN + CONTENT_W - 180, resY - 4, { width: 180, align: 'right' })
+  doc.font('Helvetica-Bold').fontSize(22).fillColor(GREEN).text('$8,100 / year', MARGIN + CONTENT_W - 200, resY - 4, { width: 180, align: 'right' })
   // Sub-text
   doc.font('Helvetica').fontSize(9).fillColor('#9ca3af').text('Volume tier (15+/mo, 20% off) = $16,200/yr  ·  Preferred Partner (30+/mo, 25%) = $40,500/yr', MARGIN + 20, resY + 24, { width: CONTENT_W - 40 })
 
@@ -106,7 +109,9 @@ function drawFront(doc) {
   // Footer
   const fy = PAGE_H - 56
   doc.moveTo(MARGIN, fy).lineTo(PAGE_W - MARGIN, fy).strokeColor('#374151').lineWidth(0.5).stroke()
-  doc.font('Helvetica').fontSize(9).fillColor('#9ca3af').text('Mark Fowler  ·  Owner', MARGIN, fy + 12)
+  // Father-son line (Mark picked it 2026-10-19; first names only, different last names).
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(WHITE).text('Mark & Jayden  ·  ', MARGIN, fy + 12, { continued: true })
+    .font('Helvetica').fillColor(ORANGE).text('Father and son. Same day. Done right.')
   doc.font('Helvetica').fontSize(9).fillColor('#9ca3af').text('1-844-349-2327  ·  absoluteadas.com', MARGIN, fy + 12, { width: CONTENT_W, align: 'right' })
   doc.font('Helvetica').fontSize(8).fillColor('#6b7280').text('50,000+ calibrations on the floor  ·  State Farm DRP preferred vendor  ·  $1M insured', MARGIN, fy + 26, { width: CONTENT_W, align: 'center' })
 }

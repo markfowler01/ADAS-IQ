@@ -6345,6 +6345,30 @@ captureCalcRouter.get('/debug/social-posts-on', async (req, res) => {
   }
 })
 
+// 👨‍👦 Father & Son photos folder (2026-10-19). Created once next to the van
+// photos folder; id kept in VanKV family_brand. Idempotent.
+//   GET /debug/family-photos-folder
+captureCalcRouter.get('/debug/family-photos-folder', async (req, res) => {
+  try {
+    const { getVal, setVal } = await import('../services/vanDatastore.js')
+    const brand = (await getVal(req, 'family_brand')) || {}
+    if (brand.photos_folder_id) return res.json({ ok: true, existing: true, folder_id: brand.photos_folder_id, url: `https://workdrive.zoho.com/folder/${brand.photos_folder_id}` })
+    const axios = (await import('axios')).default
+    const { getAccessToken } = await import('../services/zoho.js')
+    const { VAN_PHOTOS_FOLDER_ID } = await import('../services/vanPhotoLibrary.js')
+    const { createFolderUnder } = await import('../services/workdrive.js')
+    const token = await getAccessToken()
+    const info = await axios.get(`https://workdrive.zoho.com/api/v1/files/${VAN_PHOTOS_FOLDER_ID}`, { headers: { Authorization: `Zoho-oauthtoken ${token}`, Accept: 'application/vnd.api+json' }, timeout: 15000, validateStatus: s => s < 500 })
+    const parentId = info.data?.data?.attributes?.parent_id
+    if (!parentId) return res.status(500).json({ ok: false, error: 'could not find the van photos folder parent', status: info.status })
+    const f = await createFolderUnder(parentId, 'Father & Son photos', token)
+    await setVal(req, 'family_brand', { ...brand, photos_folder_id: f.folderId, created_at: new Date().toISOString() })
+    res.json({ ok: true, created: true, folder_id: f.folderId, url: f.folderUrl })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : e.message })
+  }
+})
+
 // TEMP DEBUG — generate a sample cover image so Mark can preview both styles
 // (editorial-typography vs. moody-photo) before deciding which to ship on
 // the LinkedIn post. Returns raw PNG bytes with the correct Content-Type.

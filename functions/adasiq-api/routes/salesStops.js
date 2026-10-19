@@ -42,6 +42,8 @@ const OUTCOMES = {
 }
 
 function tbl(req) { return catalyst.initialize(req, { type: 'advancedio' }).datastore().table(TABLE) }
+const FAMILY_KEY = 'family_angle_stops'   // { ids: [stopRowId] }
+
 function rowToStop(r) {
   r = r?.[TABLE] || r
   let bonus = null
@@ -336,6 +338,7 @@ router.post('/', async (req, res) => {
     const gotCard = outcome === 'card' || !!(person.name && (person.email || person.phone))
     // "Left our card" rides along with ANY outcome (Mark 2026-09-09).
     const leftCard = outcome === 'cards' || String(b.left_card) === 'true' || b.left_card === 'yes'
+    const familyAngle = b.family_angle === true || String(b.family_angle) === 'true'
     if (!shopName) return res.status(400).json({ error: 'Pick a shop first.' })
 
     // Google Places pick (parking-lot flow): real name/address/phone/coords.
@@ -425,6 +428,16 @@ router.post('/', async (req, res) => {
     }
     const stop = rowToStop(inserted)
 
+    // 👨‍👦 Father-son angle (2026-10-19): stop ids kept durable in VanKV so the
+    // close rate can be compared without a SalesStops schema change.
+    if (familyAngle) {
+      try {
+        const { getVal, setVal } = await import('../services/vanDatastore.js')
+        const fam = (await getVal(req, FAMILY_KEY)) || { ids: [] }
+        if (!fam.ids.includes(stop.id)) await setVal(req, FAMILY_KEY, { ids: [...fam.ids, stop.id], updated_at: now })
+      } catch (e) { console.log('[sales-stop] family flag save failed:', e.message) }
+    }
+
     // Van newsletter if we got an email (same as the counter flow).
     if (person.email) {
       import('../services/fromTheVan.js').then(m => m.addVanSubscriber({ email: person.email, firstName: person.name.split(' ')[0], lastName: person.name.split(' ').slice(1).join(' ') })).catch(() => {})
@@ -435,7 +448,7 @@ router.post('/', async (req, res) => {
     const mine = stats.techs.find(t => t.tech === tech)
     const line = [
       `🚐 *${tech} stopped by ${shop.shop_name}*${newShop ? ' (new to the CRM)' : ''}`,
-      `${OUTCOMES[outcome].emoji} ${OUTCOMES[outcome].label}${leftCard && outcome !== 'cards' ? ' · 📇 left our card' : ''}${person.name ? ` · met ${person.name}${person.title ? ` (${person.title})` : ''}` : ''}`,
+      `${OUTCOMES[outcome].emoji} ${OUTCOMES[outcome].label}${leftCard && outcome !== 'cards' ? ' · 📇 left our card' : ''}${familyAngle ? ' · 👨‍👦 father & son came up' : ''}${person.name ? ` · met ${person.name}${person.title ? ` (${person.title})` : ''}` : ''}`,
       outcome === 'interested' ? `🔥 Interested — follow-up on the CRM due list in 3 days` : null,
       note ? `📝 ${note}` : null,
       bonusStatus === 'pending' ? `🎯 Never invoiced — first job here pays ${tech} 1% of their first 30 days` : null,
@@ -448,6 +461,30 @@ router.post('/', async (req, res) => {
     console.error('[sales-stop]', e.message)
     res.status(500).json({ error: e.message })
   }
+})
+
+// 👨‍👦 Does "father and son" close shops? Shop-level: a shop counts as
+// "mentioned" if it came up on any stop there, and "converted" once any stop
+// there was credited with the shop's first invoice.
+router.get('/family-stats', async (req, res) => {
+  try {
+    const { getVal } = await import('../services/vanDatastore.js')
+    const famIds = new Set(((await getVal(req, FAMILY_KEY)) || { ids: [] }).ids)
+    const shops = new Map()
+    for (const s of await allStops(req)) {
+      const k = s.shop_key || s.shop_name
+      const cur = shops.get(k) || { mentioned: false, converted: false }
+      if (famIds.has(s.id)) cur.mentioned = true
+      if (s.bonus?.first_invoice_date) cur.converted = true
+      shops.set(k, cur)
+    }
+    const tally = want => {
+      const g = [...shops.values()].filter(x => x.mentioned === want)
+      const won = g.filter(x => x.converted).length
+      return { shops: g.length, new_customers: won, close_rate: g.length ? Math.round((won / g.length) * 1000) / 10 : null }
+    }
+    res.json({ ok: true, family_mentioned: tally(true), not_mentioned: tally(false), flagged_stops: famIds.size })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
 router.get('/stats', async (req, res) => {
