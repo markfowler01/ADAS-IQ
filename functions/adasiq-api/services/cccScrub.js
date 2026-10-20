@@ -25,7 +25,7 @@ export function parseBms(xml) {
     line: tag(l, 'LineNum'), seq: tag(l, 'UniqueSequenceNum'), parent: tag(l, 'ParentLineNum'), supp: tag(l, 'SupplementNum'),
     desc: tag(l, 'LineDesc'), memo: tag(l, 'LineMemo'),
     op: tag(block(l, 'LaborInfo'), 'LaborOperation'), hours: tag(block(l, 'LaborInfo'), 'LaborHours'), laborType: tag(block(l, 'LaborInfo'), 'LaborType'),
-    partType: tag(block(l, 'PartInfo'), 'PartType'), glass: /true/i.test(tag(block(l, 'PartInfo'), 'GlassPartInd')), partNum: tag(block(l, 'PartInfo'), 'PartNum'),
+    partType: tag(block(l, 'PartInfo'), 'PartType'), glass: /true/i.test(tag(block(l, 'PartInfo'), 'GlassPartInd')), partNum: tag(block(l, 'PartInfo'), 'PartNum') || tag(block(l, 'PartInfo'), 'OEMPartNum'),   // OEM Procedures category sends OEMPartNum
     sublet: /true/i.test(tag(block(l, 'SubletInfo'), 'PartSubletInd')),
   }))
   return {
