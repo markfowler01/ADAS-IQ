@@ -44,7 +44,8 @@ export function parseBms(xml) {
 /** One text line per estimate line, the way a printed CCC estimate reads. */
 export function bmsToText(e) {
   const head = [
-    `Repair facility: ${e.shop}${e.shopCity ? ` (${e.shopCity})` : ''}`, `RO: ${e.ro}`, `Claim: ${e.claim}`, `Insurance: ${e.insurer}`,
+    // Minimum necessary to the AI (CCC standards §4.1): no claim number, no people. RO/claim come back from CCC's own fields.
+    `Repair facility: ${e.shop}${e.shopCity ? ` (${e.shopCity})` : ''}`, `Insurance: ${e.insurer}`,
     `Vehicle: ${[e.year, e.make, e.model].filter(Boolean).join(' ')}`, `VIN: ${e.vin}`,
     `Estimate version: ${e.verCode === 'SV' ? `Supplement ${e.version}` : 'Original'}${e.status === 'C' ? ' (locked)' : ' (preliminary)'}`,
     e.poi.length ? `Point of impact codes: ${e.poi.join(', ')}` : '',
