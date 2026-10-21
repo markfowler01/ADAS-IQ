@@ -191,10 +191,19 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                   <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>🏢 Customer</span>
                   {Object.entries(p.customer_types || {}).map(([k, t]) => {
                     const dual = t.mode === 'dual', on = ctype === k, blocked = dual && !p.can_dual
-                    return <button key={k} type="button" disabled={blocked || switching} title={blocked ? 'Two invoices need a Books estimate behind the job' : ''} onClick={() => pickType(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={on ? { backgroundColor: dual ? '#5b21b6' : '#0369a1', color: 'white' } : { backgroundColor: 'white', color: blocked ? '#bbb' : '#555', border: '1px solid #e0dbd6' }}>{t.label} <span style={{ opacity: .75 }}>· {dual ? '2 invoices' : '1 invoice'}</span></button>
+                    return <button key={k} type="button" disabled={blocked || switching} title={blocked ? 'Two invoices need a Books estimate behind the job' : ''} onClick={() => pickType(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={on ? { backgroundColor: dual ? '#5b21b6' : '#1F8B8B', color: 'white' } : { backgroundColor: 'white', color: blocked ? '#bbb' : '#555', border: '1px solid #e0dbd6' }}>{t.label} <span style={{ opacity: .75 }}>· {dual ? '2 invoices' : '1 invoice'}</span></button>
                   })}
                   {switching && <span className="text-xs" style={{ color: '#888' }}>re-pricing…</span>}
                 </div>
+                {(() => {
+                  // 🔧/💥 Which price set this invoice uses (Mark 2026-10-21: run it off the CRM).
+                  const coll = ctype === 'body_shop'
+                  const wrong = lines.filter(l => coll ? /^Module Programming and Reflash - (?!.*\(Collision\))/i.test(l.name || '') : /\(Collision\)\s*$/i.test(l.name || ''))
+                  return (<div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-extrabold rounded-full px-3 py-1" style={coll ? { backgroundColor: '#fee2e2', color: '#991b1b' } : { backgroundColor: '#dbeafe', color: '#1e40af' }}>{coll ? '💥 COLLISION pricing' : '🔧 AUTO REPAIR pricing'}</span>
+                    {wrong.length > 0 && <span className="text-xs font-bold rounded-full px-3 py-1" style={{ backgroundColor: '#fef3c7', color: '#92400e' }}>⚠️ {wrong.length} line{wrong.length === 1 ? '' : 's'} on the {coll ? 'auto repair' : 'collision'} price: {wrong.map(l => l.name).join(', ')}</span>}
+                  </div>)
+                })()}
                 <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>{p.saved_type ? (ctype === p.saved_type ? `On file for ${p.shop_name}.` : `${p.shop_name} is on file as ${p.customer_types?.[p.saved_type]?.label || p.saved_type} — sending remembers the new pick.`) : `First invoice for ${p.shop_name} — what you pick is remembered on the CRM card.`}</div>
               </div>
             )}
@@ -264,7 +273,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-xs font-bold uppercase tracking-wider" style={{ color: '#555' }}>💳 How they pay</span>
                   {[['on_site', '🚐 pays on site'], ['net_terms', '✉️ net terms'], ['either', 'either']].map(([k, l]) => (
-                    <button key={k} type="button" onClick={() => setPayMode(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={payMode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>
+                    <button key={k} type="button" onClick={() => setPayMode(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={payMode === k ? { backgroundColor: '#1F8B8B', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>
                   ))}
                 </div>
                 <div className="text-[11px] mt-1.5" style={{ color: '#888' }}>Remembered on the CRM card with the customer type.</div>
@@ -288,12 +297,12 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
             )}
             <div className={single ? 'grid grid-cols-1 gap-4' : 'grid grid-cols-1 md:grid-cols-2 gap-4'} style={p.mode === 'estimator' ? { display: 'none' } : {}}>
               {/* LEFT — editable estimate (or THE invoice, in single mode) */}
-              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: `1.5px solid ${single ? '#bbf7d0' : '#bfdbfe'}` }}>
-                <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: single ? '#f0fdf4' : '#eff6ff', color: single ? GREEN : '#1d4ed8' }}>
+              <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: `1.5px solid ${single ? '#bbf7d0' : '#e8e4e0'}` }}>
+                <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: single ? '#f0fdf4' : '#f5f3f0', color: single ? GREEN : '#0A0A0A' }}>
                   <span>{single ? `💸 Invoice${p.estimate_number ? ` · RO ${p.estimate_number}` : ''}` : `🏦 Insurance invoice · estimate ${p.estimate_number}`}</span>
                   {single
                     ? <span className="flex items-center gap-1 text-sm">discount {p.cash_job ? <span className="text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #15803d', backgroundColor: '#dcfce7', color: '#14532d' }} title="Hard rule: every cash job is 15% off">💵 Cash job · {pct}</span> : <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-16 text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #86efac' }} />}%</span>
-                    : <span className="text-xs font-semibold text-right" style={{ color: edited ? ORANGE : '#3b82f6' }}>{edited ? '✏️ edited — Books estimate will be updated' : 'tap a price or qty to edit'}</span>}
+                    : <span className="text-xs font-semibold text-right" style={{ color: edited ? ORANGE : '#1F8B8B' }}>{edited ? '✏️ edited — Books estimate will be updated' : 'tap a price or qty to edit'}</span>}
                 </div>
                 {rows.map((l, i) => (
                   <div key={i} className="flex items-center gap-2 px-3 py-2 text-base" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: l._added ? '#f0fdf4' : 'white' }}>
@@ -309,11 +318,11 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                   </div>
                 ))}
                 <div className="px-3 py-2" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#f8fafc' }}>
-                  <input value={q} onChange={e => setQ(e.target.value)} placeholder="＋ Add an item from Books… (type 2+ letters)" className="w-full rounded-lg px-3 py-2 text-base" style={{ border: '1px dashed #93c5fd', outline: 'none', backgroundColor: 'white' }} />
+                  <input value={q} onChange={e => setQ(e.target.value)} placeholder="＋ Add an item from Books… (type 2+ letters)" className="w-full rounded-lg px-3 py-2 text-base" style={{ border: '1px dashed #c4bfb8', outline: 'none', backgroundColor: 'white' }} />
                   {hits.length > 0 && (
-                    <div className="rounded-lg overflow-hidden mt-1" style={{ border: '1px solid #bfdbfe' }}>
+                    <div className="rounded-lg overflow-hidden mt-1" style={{ border: '1px solid #e8e4e0' }}>
                       {hits.map(it => (
-                        <button key={it.item_id} type="button" onClick={() => addItem(it)} className="w-full text-left px-3 py-2 flex justify-between text-base" style={{ borderTop: '1px solid #eff6ff', backgroundColor: 'white' }}>
+                        <button key={it.item_id} type="button" onClick={() => addItem(it)} className="w-full text-left px-3 py-2 flex justify-between text-base" style={{ borderTop: '1px solid #f5f3f0', backgroundColor: 'white' }}>
                           <span className="truncate" style={{ color: '#1a1a1a' }}>{it.name}{it.type === 'goods' ? <span className="text-xs" style={{ color: '#888' }}> · part</span> : null}</span><span className="tabular-nums" style={{ color: '#555' }}>{fmt(it.rate)}</span>
                         </button>
                       ))}

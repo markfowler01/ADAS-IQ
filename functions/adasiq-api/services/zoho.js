@@ -405,8 +405,8 @@ function filterItemsByInsurer(allItems, insurerPrefix) {
  * Returns { item_id, matchedName, score } or null if no confident match.
  * Exported so the audit route can reuse the same logic.
  */
-export function findBestMatchExported(calName, exactMap, allItems, insurerPrefix = null, itemMap = null) {
-  return findBestMatch(calName, exactMap, allItems, insurerPrefix, itemMap)
+export function findBestMatchExported(calName, exactMap, allItems, insurerPrefix = null, itemMap = null, ctx = null) {
+  return findBestMatch(calName, exactMap, allItems, insurerPrefix, itemMap, ctx)
 }
 
 // Kinetic reports name sensors, not services — translate the common ones
@@ -547,7 +547,69 @@ function resolveMappedItem(mapping, allItems, insurerPrefix) {
   return { item_id: base.item_id, matchedName: base.name, score: 1, rate: base.rate || 0, via: 'map' }
 }
 
-function findBestMatch(calName, exactMap, allItems, insurerPrefix = null, itemMap = null) {
+// PCM update = per-make programming (Mark 2026-10-21: "I have two sets of
+// prices, one for every make … auto repair shop … auto collision shop. I need
+// this to run off of the CRM"). A PCM line prices off that make's
+// "Module Programming and Reflash - <Make>" item for an auto repair / retail /
+// dealer customer, and its "(Collision)" twin for a body shop. Unknown make or
+// missing item = needs a price; never the old generic "PCM Software Update"
+// ($450, retired 2026-10-21), never a guessed rate.
+const PCM_RE = /^(pcm|ecm|ecu)( software)?( update| reprogram(ming)?| reflash| programming| flash)?$|^program(ming)? (the )?(pcm|ecm|ecu)$/
+function isPcmLine(calName) {
+  const k = String(calName || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
+  return PCM_RE.test(k)
+}
+
+const MAKE_ALIAS = { vw: 'volkswagen', chevy: 'chevrolet', benz: 'mercedes', mb: 'mercedes', mercedesbenz: 'mercedes', landrover: 'landrover', rangerover: 'landrover', alfa: 'alfaromeo', mini: 'mini', ram: 'ram', infinity: 'infiniti' }
+const makeKey = m => { const k = String(m || '').toLowerCase().replace(/[^a-z]/g, ''); return MAKE_ALIAS[k] || k }
+
+export function pcmMakeName(make, vehicle) {
+  const direct = String(make || '').trim()
+  if (direct) return /^vw$/i.test(direct) ? 'Volkswagen' : direct
+  const v = String(vehicle || '')
+  if (/\bvolkswagen\b|\bvw\b/i.test(v)) return 'Volkswagen'
+  return v.replace(/^\s*\d{4}\s+/, '').trim().split(/\s+/)[0] || ''
+}
+
+function pcmIsCollision(ctx) {
+  const t = String(ctx?.customerType || '')
+  if (t === 'repair_shop' || t === 'retail' || t === 'dealer' || t === 'cash') return false
+  if (t === 'body_shop') return true
+  return !!ctx?.collision
+}
+
+// "Module Programming and Reflash - <Make>" (automotive) for this make.
+export function modItemForMake(allItems, make) {
+  const want = makeKey(make)
+  if (want.length < 2) return null
+  const mods = (allItems || []).map(i => ({ i, m: String(i.name || '').trim().match(/^Module Programming and Reflash - (.+?)$/i) }))
+    .filter(x => x.m && !/\(collision\)\s*$/i.test(x.i.name) && !PREFIXED.test(x.i.name))
+  const exact = mods.find(x => makeKey(x.m[1]) === want)
+  if (exact) return exact.i
+  const near = mods.find(x => { const k = makeKey(x.m[1]); return want.length >= 4 && k.length >= 4 && (k.startsWith(want) || want.startsWith(k)) })
+  return near ? near.i : null
+}
+
+function pcmMatch(item) {
+  if (!item) return null
+  return { item_id: item.item_id, matchedName: item.name, score: 1, rate: item.rate || 0, via: 'pcm' }
+}
+
+// Item, or null when the line needs a price (do not fall through to fuzzy).
+function matchPcmLine(allItems, ctx) {
+  const base = modItemForMake(allItems, pcmMakeName(ctx?.make, ctx?.vehicle))
+  if (!base) return null
+  if (!pcmIsCollision(ctx)) return pcmMatch(base)
+  return pcmMatch(collisionTwin(base, allItems))   // body shop: the (Collision) price or nothing
+}
+
+function findBestMatch(calName, exactMap, allItems, insurerPrefix = null, itemMap = null, ctx = null) {
+  if (isPcmLine(calName)) {
+    const picked = matchPcmLine(allItems, ctx || {})
+    if (picked) console.log(`[zoho] PCM "${calName}" → "${picked.matchedName}" ($${picked.rate})`)
+    else console.warn(`[zoho] PCM "${calName}" needs a price (${pcmMakeName(ctx?.make, ctx?.vehicle) || 'no make'}, ${pcmIsCollision(ctx) ? 'body shop' : 'auto repair / retail / dealer'})`)
+    return picked
+  }
   // 0. Item Map — deterministic, Mark-owned, wins over every guess.
   if (itemMap) {
     const key = String(calName || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim()
@@ -621,6 +683,7 @@ export async function listSalespersons() {
  */
 export async function createDraftQuote({
   collision = false,   // body shop → programming on the (Collision) twins
+  customerType = '',   // CRM billing_rules.customer_type; looked up when not passed
   customerId,
   customerName,
   salespersonId,
@@ -651,6 +714,12 @@ export async function createDraftQuote({
   req,
 }) {
   const token = await getAccessToken()
+
+  // 🔧/💥 The CRM decides repair-shop vs collision pricing (Mark 2026-10-21).
+  // A known type beats whatever the caller guessed (Bill it used to guess
+  // from "insurer isn't cash").
+  if (!customerType && req) { try { const { customerTypeFor } = await import('./big3.js'); customerType = await customerTypeFor(req, customerName || shop || '') } catch { /* keep the caller's flag */ } }
+  if (customerType) collision = customerType === 'body_shop' && String(insurer || '').toLowerCase() !== 'cash'
 
   // Item Map — deterministic kinetic-name → Books item lookup (needs the
   // Catalyst req for Datastore access; callers without one fall back to
@@ -753,7 +822,7 @@ export async function createDraftQuote({
       }
       return li
     }
-    let match = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
+    let match = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap, { make, vehicle, collision, customerType })
     if (match && collision) { const tw = collisionTwin(match, allItems); if (tw) { console.log(`[zoho] 💉 collision: "${match.matchedName}" → "${tw.name}" $${tw.rate}`); match = { ...match, item_id: tw.item_id, matchedName: tw.name, rate: tw.rate } } }
     if (match) {
       console.log(`[zoho] ✓ "${name}" → "${match.matchedName}" (score ${match.score.toFixed(2)}, rate $${match.rate})`)
@@ -836,12 +905,25 @@ export async function createDraftQuote({
     // them (Mark 2026-10-02: "Post Collision Safety Inspection 1 (included)" went
     // through the item matcher / Item Map and came out as the $99 paid item).
     const exactB4 = itemByName.get(String(name).toLowerCase().trim())
-    const li = exactB4 ? { item_id: exactB4.item_id, description: '', quantity: 1 } : buildLineItem(name, '')
+    const slot = b3.BIG3.find(b => b.base === baseName)
+    const copy = name === baseName ? b3.scanLineCopy(slot?.key) : null
+    const li = exactB4
+      ? { item_id: exactB4.item_id, description: copy?.description || '', quantity: 1, ...(copy ? { name: copy.name } : {}) }
+      : buildLineItem(copy?.name || name, copy?.description || '')
     if (exactB4) console.log(`[zoho] Big 4: "${name}" → exact item $${exactB4.rate}`)
     if (li && b3Zero.has(baseName)) li.rate = 0
     return li
   }).filter(Boolean)
   if (snapshotLine) fixedLineItems.push(snapshotLine)
+  const alignMod = await import('./alignmentInvoice.js')
+  let alignmentOn = false
+  if (req) {
+    try {
+      const { findShopByName } = await import('./big3.js')
+      const shopRow = await findShopByName(req, shop || customerName || '')
+      alignmentOn = alignMod.alignmentInvoiceOn(shopRow?.billing_rules)
+    } catch { alignmentOn = false }
+  }
   const calLineItems = calibrations.map((cal) => {
     // Review-modal line edits (Mark 2026-08-29 "ok yes"): remove, custom
     // rate, custom quantity — all decided on the review screen.
@@ -878,6 +960,12 @@ export async function createDraftQuote({
       description = parts.join('\n')
     }
     const quantity = (edit?.quantity != null ? Number(edit.quantity) : null) || cal.quantity || 1
+    const specialNames = alignMod.isFourWayAlignmentRow(cal) ? alignMod.ALIGN_INVOICE_NAMES : alignMod.isBatteryResetRow(cal) ? alignMod.BATTERY_INVOICE_NAMES : null
+    if (specialNames) {
+      const line = alignMod.invoiceLineForReportRow(cal, { alignmentOn, mappedItem: alignMod.pricedMappedItem(itemMap, allItems, specialNames) })
+      if (!line) { console.log(`[zoho] left off the invoice (no switch, or no existing price): "${cal.calibration_name || cal.name}"`); return null }
+      return { ...(line.item_id ? { item_id: line.item_id } : { name: line.name }), description: description || '', quantity: 1, rate: line.rate }
+    }
     const li = buildLineItem(cal.calibration_name, description, quantity)
     if (li && edit?.rate != null && Number.isFinite(Number(edit.rate))) {
       li.rate = Number(edit.rate)   // explicit rate beats the catalog rate
@@ -1311,7 +1399,12 @@ const SALESPERSON_FULL_NAME = {
 export async function updateEstimateSalesperson(estimateId, technicianName) {
   if (!estimateId || !technicianName) return
   const key = technicianName.trim().toLowerCase()
-  const salespersonName = SALESPERSON_FULL_NAME[key] || technicianName
+  const first = key.split(/\s+/)[0]
+  const salespersonName = SALESPERSON_FULL_NAME[key] || SALESPERSON_FULL_NAME[first] || (key.includes(' ') ? technicianName.trim() : null)
+  if (!salespersonName) {
+    console.log(`[zoho-sync] no salesperson map for "${technicianName}" — add a line to SALESPERSON_FULL_NAME`)
+    return
+  }
   const token = await getAccessToken()
   await axios.put(
     `${ZOHO_API_BASE}/estimates/${estimateId}`,
@@ -1355,7 +1448,7 @@ export async function listInvoicesForDateRange(fromISO, toISO) {
       // money isn't firm yet. Everything else (sent, viewed, partially_paid,
       // paid, overdue) counts.
       const status = String(inv.status || '').toLowerCase()
-      if (status === 'draft') continue
+      if (status === 'draft' || status === 'void') continue
       all.push({
         invoice_id:       inv.invoice_id,
         invoice_number:   inv.invoice_number,
@@ -1443,7 +1536,7 @@ export function paidAlternativeFor(allItems, insurerPrefix, fixedName) {
   return pick ? { name: pick.name, rate: Number(pick.rate) || 0, item_id: pick.item_id } : null
 }
 
-export async function previewInvoiceLines({ insurer, make, calibrations, req, poolOverride, big3Rules = null, cashCapLimit = null, collision = false }) {
+export async function previewInvoiceLines({ insurer, make, vehicle = '', calibrations, req, poolOverride, big3Rules = null, cashCapLimit = null, collision = false, alignmentOn = false }) {
   const token = await getAccessToken()
   let itemMap = null
   if (req) {
@@ -1537,7 +1630,7 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
         return
       }
     }
-    let m = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap)
+    let m = findBestMatch(name, exactMap, allItems, insurerPrefix, itemMap, { make, vehicle, collision: collision && !isFixed })
     if (m && collision && !isFixed) { const tw = collisionTwin(m, allItems); if (tw) m = { ...m, item_id: tw.item_id, matchedName: tw.name, rate: tw.rate, collision: true } }
     if (m) {
       const rate = Number(m.rate) || 0
@@ -1589,11 +1682,22 @@ export async function previewInvoiceLines({ insurer, make, calibrations, req, po
         ? { name: paid.name, requested: b.base, rate: Number(paid.rate) || 0, quantity: 1, amount: Number(paid.rate) || 0, needs_price: false, included: false, swappable: false, big3: 'charge' }
         : { name: b.paid, requested: b.base, rate: 0, quantity: 1, amount: 0, needs_price: true, included: false, swappable: false, big3: 'charge' }
     } else {
-      line = { name: baseItem?.name || b.base, requested: b.base, rate: 0, quantity: 1, amount: 0, needs_price: !baseItem, included: true, swappable: false, big3: 'included' }
+      const copy = b3mod.scanLineCopy(b.key)
+      line = { name: copy?.name || baseItem?.name || b.base, description: copy?.description || '', requested: b.base, rate: 0, quantity: 1, amount: 0, needs_price: !baseItem, included: true, swappable: false, big3: 'included' }
     }
     lines.push(line); big3Applied[b.key] = { mode, line: line.name }
   }
-  for (const c of calibrations || []) push(c.calibration_name || c.name, Number(c.quantity) || 1, false, c)
+  const alignMod = await import('./alignmentInvoice.js')
+  for (const c of calibrations || []) {
+    const specialNames = alignMod.isFourWayAlignmentRow(c) ? alignMod.ALIGN_INVOICE_NAMES : alignMod.isBatteryResetRow(c) ? alignMod.BATTERY_INVOICE_NAMES : null
+    if (specialNames) {
+      const line = alignMod.invoiceLineForReportRow(c, { alignmentOn, mappedItem: alignMod.pricedMappedItem(itemMap, allItems, specialNames) })
+      if (!line) continue
+      lines.push({ name: line.name, requested: c.calibration_name || c.name, rate: line.rate, quantity: 1, amount: line.rate, needs_price: false, included: false, swappable: true })
+      continue
+    }
+    push(c.calibration_name || c.name, Number(c.quantity) || 1, false, c)
+  }
   // The insurer's tier catalog (SF - 3a, AS - 3C Complex, ...) for the
   // review modal's swap picker. Only pool items — a handful, not the
   // whole catalog.
