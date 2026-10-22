@@ -98,7 +98,7 @@ router.get('/daily-review', async (req, res) => {
     lastWeekStart.setDate(lastWeekStart.getDate() - 7)
 
     // 💵 Sales = cash received by payment date, after discount (Mark 2026-10-17).
-    const { paidRows } = await import('../services/cashRevenue.js')
+    const { invoicedReportRows: paidRows } = await import('../services/salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
     const paid = await paidRows(new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10), new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
     const created = invoices.filter(i => !!i.created_at)
 
@@ -239,7 +239,7 @@ router.get('/trends', async (req, res) => {
     const count = Math.min(Number(req.query.count) || 12, 36)
     const [invoices, expenses] = await Promise.all([readInvoices(req), readExpenses(req)])
     // 💵 Revenue per bucket = cash received (payments), after discount.
-    const { paidRows, CASH_SINCE } = await import('../services/cashRevenue.js')
+    const { invoicedReportRows: paidRows, SALES_SINCE: CASH_SINCE } = await import('../services/salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
     const cash = await paidRows(CASH_SINCE, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
 
     const now = new Date()
@@ -295,7 +295,7 @@ router.get('/customers', async (req, res) => {
   try {
     const [jobs] = await Promise.all([readJobs(req)])
     // 💵 Customer revenue = cash received, after discount.
-    const { paidRows, CASH_SINCE } = await import('../services/cashRevenue.js')
+    const { invoicedReportRows: paidRows, SALES_SINCE: CASH_SINCE } = await import('../services/salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
     const paid = await paidRows(CASH_SINCE, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
 
     const map = new Map()

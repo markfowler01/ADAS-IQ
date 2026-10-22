@@ -62,7 +62,7 @@ function isAdmin(req) {
 // Ignores the old bonus_config tiers. Calibration ID, technology, and other
 // pass-through fees are taken out of the cash first (services/bonusFees.js).
 const CONTRACT = { threshold: 40000, tiers: [{ up_to: 55000, rate: 0.05 }, { up_to: null, rate: 0.08 }] }
-function calculateBonus(revenue) {
+export function calculateBonus(revenue) {
   const { threshold, tiers } = CONTRACT
   if (revenue <= threshold) return { bonus: 0, breakdown: [] }
   const t = tiers.find(x => x.up_to === null || revenue <= x.up_to)
@@ -144,8 +144,8 @@ async function readJobs(req) {
   }
 }
 
-// 💵 Bonus revenue = cash received, after discount, by payment date (Mark
-// 2026-10-17: "everything to be cash ... including technician bonuses 100%").
+// 📊 Bonus revenue = invoiced after discount, by invoice date (Mark 2026-10-22:
+// "I didn't mean cash collected … I meant after discount").
 // A payment counts for the tech named as salesperson on the invoice it paid.
 // Was: legacy Cache invoices with no technician field (so per-tech was ~$0).
 const dayOf = iso => String(iso).slice(0, 10)
@@ -153,7 +153,8 @@ const dayBefore = iso => { const d = new Date(dayOf(iso) + 'T12:00:00Z'); d.setU
 async function cashRows(req, start, end) {
   const k = `${start}|${end}`
   req._cashRows = req._cashRows || {}
-  if (!req._cashRows[k]) { const { listCashForDateRange } = await import('../services/cashRevenue.js'); req._cashRows[k] = listCashForDateRange(req, dayOf(start), dayBefore(end)) }
+  // 📊 Invoiced after discount, by invoice date (Mark 2026-10-22: "I meant after discount").
+  if (!req._cashRows[k]) { const { invoicedRows } = await import('../services/salesBasis.js'); req._cashRows[k] = invoicedRows( dayOf(start), dayBefore(end)) }
   return req._cashRows[k]
 }
 // user id → the name on Books invoices (salesperson). Emails resolve through the Directory.
@@ -164,7 +165,7 @@ async function techNameFor(req, userId) {
   try { const { readTeamMembers } = await import('./team.js'); const m = (await readTeamMembers(req)).find(x => [x.email, x.personal_email].some(e => String(e || '').toLowerCase() === u.toLowerCase())); if (m?.name) return m.name } catch { /* fall through */ }
   return u.split('@')[0]
 }
-async function getRevenueForUser(req, userId, start, end) {
+export async function getRevenueForUser(req, userId, start, end) {
   const { invoiceBelongsToTech } = await import('./dailyGreeting.js')
   const { eligibleCash, loadPassThrough } = await import('../services/bonusFees.js')
   const name = await techNameFor(req, userId)
@@ -285,7 +286,11 @@ router.get('/all', async (req, res) => {
 
     // Techs = salespeople on the invoices that money came in for.
     const rows = await cashRows(req, start, end)
-    const techs = new Set(rows.map(r => String(r.salesperson_name || '').trim()).filter(Boolean))
+    // One entry per person: typo variants ("Jaden", "Jayden", "Jayden Goshorn") fold into the longest name.
+    const { salespersonMatches } = await import('../services/salesBasis.js')
+    const names = [...new Set(rows.map(r => String(r.salesperson_name || '').trim()).filter(Boolean))].sort((a, b) => b.length - a.length)
+    const techs = new Set()
+    for (const n of names) if (![...techs].some(t => salespersonMatches(n, t))) techs.add(n)
     const { loadPassThrough } = await import('../services/bonusFees.js')
     await loadPassThrough(req, rows.map(r => r.invoice_number))
 

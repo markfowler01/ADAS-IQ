@@ -23,6 +23,7 @@ import express from 'express'
 import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { listInvoicesForDateRange } from '../services/zoho.js'
+import { salespersonMatches } from '../services/salesBasis.js'
 import {
   postToCliqUser, postToCliqChannel, postToCliqChannelById,
   MARK_ALERT_CHANNEL_ID, TECHNICIANS_CHANNEL,
@@ -130,10 +131,7 @@ function dayOfWeekOpener(weekday) {
 }
 
 function invoiceBelongsToTech(inv, tech) {
-  const sp = String(inv.salesperson_name || '').toLowerCase().trim()
-  const t  = String(tech || '').toLowerCase().trim()
-  if (!sp || !t) return false
-  return sp.includes(t) || t.includes(sp)
+  return salespersonMatches(inv.salesperson_name, tech)   // typo-tolerant (services/salesBasis.js)
 }
 
 async function countTodaysJobsForTech(req, techName, dateStr) {
@@ -144,12 +142,13 @@ async function countTodaysJobsForTech(req, techName, dateStr) {
     const t = String(techName || '').toLowerCase()
     const ACTIVE = new Set(['dispatched_mark', 'dispatched_jaden', 'pending_parts', 'ready_invoice'])
     return rows.filter(r => {
-      if (!ACTIVE.has(r.status)) return false
+      if (!ACTIVE.has(r.status) && !String(r.status || '').startsWith('dispatched_')) return false
       if ((r.scheduled_date || '').slice(0, 10) !== dateStr) return false
       const rowTech = String(r.technician || '').toLowerCase()
       if (rowTech.includes(t) || t.includes(rowTech)) return true
       if (t.includes('mark')   && r.status === 'dispatched_mark')  return true
       if (t.includes('jayden') && r.status === 'dispatched_jaden') return true
+      if (r.status === `dispatched_${t.replace(/[^a-z]/g, '')}` || (t.startsWith('jay') && r.status === 'dispatched_jaden')) return true
       return false
     }).length
   } catch (e) {
@@ -177,10 +176,37 @@ function buildGreetingMessage({ name, weekday }) {
   }
 }
 
-// Sales digest for a technician. Adds the reference day's sales + MTD $
-// and today's dispatched jobs on top of the DOW opener. On Mondays the
-// reference day is FRIDAY (yesterday = Sunday = automatic goose egg,
-// Mark 2026-07-13) and a last-week total rides along.
+// Jayden's morning text carries two meters (Mark 2026-10-20). Sales match
+// the GET SOME meeting: cost invoices, by invoice date, after the shop
+// discount, Remote Expert taken off. The bonus lines are the bonus screen:
+// cash collected, by payment date, with Calibration ID, pass-through fees,
+// and the Remote Expert charge taken out. The bonus starts at $40,000.
+// On Mondays the reference day is FRIDAY (yesterday = Sunday = automatic
+// goose egg, Mark 2026-07-13) and a last-week sales total rides along.
+function buildBonusDigestMessage({ techName, opener, refLabel, refSales, weekTotal, billedMtd, mtd, bonus, jobsToday }) {
+  const gap = Math.max(0, 40000 - mtd)
+  const bonusLine = mtd <= 40000
+    ? `💰 Bonus so far: *$0* — ${fmtUSD(gap)} to $40,000`
+    : mtd <= 55000
+      ? `💰 Bonus so far: *${fmtUSD(bonus)}* — 5% of everything above $40,000`
+      : `💰 Bonus so far: *${fmtUSD(bonus)}* — 8% of everything above $40,000`
+  const jobsLine = jobsToday > 0
+    ? `📋 ${jobsToday} ${jobsToday === 1 ? 'job' : 'jobs'} on your board today.`
+    : `📋 No dispatched jobs on the board yet — check back at 8am.`
+  return [
+    `${opener} Morning ${techName}.`,
+    ``,
+    `📈 ${refLabel} sales: *${fmtUSD(refSales)}*`,
+    ...(weekTotal != null ? [`🗓 Last week's sales: *${fmtUSD(weekTotal)}*`] : []),
+    // One number now (Mark 2026-10-22): sales and bonus are both invoiced after discount, Cal ID + Remote Expert off.
+    `📊 MTD sales: *${fmtUSD(mtd)}* toward the $40,000 bonus`,
+    bonusLine,
+    jobsLine,
+    ``,
+    mtd >= 55000 ? `🔥 Past $55,000. The 8% is on.` : mtd >= 40000 ? `🔥 Bonus is on. Stack it.` : `Fresh page. ${fmtUSD(gap)} to the bonus.`,
+  ].join('\n')
+}
+
 function buildTechDigestMessage({ techName, opener, refLabel, refSales, weekTotal, mtd, goal, jobsToday }) {
   const pct = Math.min(100, Math.round((mtd / Math.max(1, goal)) * 100))
   const goalGap = Math.max(0, goal - mtd)
@@ -282,19 +308,53 @@ export async function sendMorningKickoff(req, { force = false } = {}) {
   // cover last week even when it crosses a month boundary; MTD sums are
   // still gated to monthStart below.
   const fetchStart = (isMonday && lastMonday < monthStart) ? lastMonday : monthStart
-  // 💵 Cash received by payment date, after discount (Mark 2026-10-17).
-  const { listCashForDateRange } = await import('../services/cashRevenue.js')
-  const invoices = await listCashForDateRange(req, fetchStart, dateStr)
+  // Cost invoices by invoice date. Books `total` is what we billed after the
+  // shop discount. Drafts and voids are already left out. Remote Expert is
+  // paid to the vendor, so it comes off the sales lines the same way the
+  // meeting slide does. Pre-scans and post-scans stay in.
+  // Tech texts (Mark 2026-10-22): invoiced after discount, voids out, Cal ID /
+  // pass-through lines and Remote Expert off every tech number.
+  const { invoicedRows, techCutter } = await import('../services/salesBasis.js')
+  const invoices = await invoicedRows(fetchStart, dateStr)
+  const techCut = await techCutter(req, invoices).catch(e => { console.warn('[daily-greeting] tech cut', e.message); return () => 0 })
 
   const results = []
   const roster = await rosterFromDirectory(req)
   for (const r of roster) {
     let msg
     let mtd = 0, refSales = 0, weekTotal = 0, jobsToday = 0
-    if (r.type === 'tech') {
+    if (r.type === 'tech' && /jayden|jaden/i.test(r.name)) {
+      const end = daysAgoPT(dateStr, -1)
+      let bonus = 0
+      let billedMtd = 0
       for (const inv of invoices) {
         if (!invoiceBelongsToTech(inv, r.name)) continue
-        const t = Number(inv.total || 0) || 0
+        const t = (Number(inv.total) || 0) - techCut(inv)
+        const d = String(inv.date || '').slice(0, 10)
+        if (d >= monthStart && d <= dateStr) billedMtd += t
+        if (d === refDay) refSales += t
+        if (isMonday && d >= lastMonday && d <= yesterday) weekTotal += t
+      }
+      try {
+        const { getRevenueForUser, calculateBonus } = await import('./bonuses.js')
+        const { invoices: rows } = await getRevenueForUser(req, r.name, fetchStart, end)
+        for (const row of rows) {
+          const t = Number(row.total) || 0
+          const d = String(row.paid_at || '').slice(0, 10)
+          if (d >= monthStart && d <= dateStr) mtd += t
+        }
+        bonus = calculateBonus(mtd).bonus
+      } catch (e) { console.warn('[daily-greeting] bonus sales', e.message) }
+      jobsToday = await countTodaysJobsForTech(req, r.name, dateStr)
+      msg = buildBonusDigestMessage({
+        techName: r.name, opener, refLabel, refSales,
+        weekTotal: isMonday ? weekTotal : null,
+        billedMtd, mtd, bonus, jobsToday,
+      })
+    } else if (r.type === 'tech') {
+      for (const inv of invoices) {
+        if (!invoiceBelongsToTech(inv, r.name)) continue
+        const t = (Number(inv.total) || 0) - techCut(inv)
         const d = String(inv.date || '').slice(0, 10)
         if (d >= monthStart) mtd += t
         if (d === refDay) refSales += t

@@ -288,10 +288,6 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
   let acc = null
   try { acc = await bumpDayInvoiceTotal(req, Number(total) || 0) }
   catch (e) { console.log('[invoice] day-total bump failed (non-fatal):', e.message) }
-  // 💵 Revenue = cash (Mark 2026-10-17). Invoices sent today are activity, not revenue.
-  let cashToday = null
-  try { const { listPayments } = await import('../services/cashRevenue.js'); const d = dayKeyPT(); cashToday = (await listPayments(d, d, { maxPages: 2 })).reduce((t, p) => t + p.amount, 0) }
-  catch (e) { console.log('[invoice] cash-today lookup failed (non-fatal):', e.message) }
 
   const cliqMsg = [
     `💰 *Invoice Sent — #${invoiceNumber}*`,
@@ -304,8 +300,7 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
       ? '✅ Job completed'
       : `⚠️ Job NOT marked complete (status: ${(matchedJob.status || 'unknown').replace(/_/g, ' ')})`,
     totalStr ? `💵 Total: ${totalStr}` : null,
-    cashToday !== null ? `💵 Collected today (cash): $${cashToday.toFixed(2)}` : null,
-    acc ? `🧾 Invoiced today: $${Number(acc.total).toFixed(2)} · ${acc.count} invoice${acc.count === 1 ? '' : 's'}` : null,
+    acc ? `📊 Today's sales: $${Number(acc.total).toFixed(2)} · ${acc.count} invoice${acc.count === 1 ? '' : 's'}` : null,
   ].filter(l => l !== null).join('\n')
 
   const techMsg = [
@@ -323,9 +318,8 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
     totalStr ? `💵 ${totalStr}` : null,
     ...(acc ? [
       `──────────`,
-      `🧾 Invoiced today: $${Number(acc.total).toFixed(2)} · ${acc.count} invoice${acc.count === 1 ? '' : 's'}`,
+      `📊 *Today's sales: $${Number(acc.total).toFixed(2)}* · ${acc.count} invoice${acc.count === 1 ? '' : 's'}`,
     ] : []),
-    ...(cashToday !== null ? [`💵 *Collected today: $${cashToday.toFixed(2)}*`] : []),
   ].filter(Boolean).join('\n')
 
   // Fan-out with retries; every result logged. If Cliq is down for all

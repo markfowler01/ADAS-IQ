@@ -107,8 +107,8 @@ function workingDays(year, monthIdx, upTo = null) {
 
 // ---------- sources ----------
 
-// 💵 Cash basis, after discount (Mark 2026-10-17): money received by payment
-// date, from Books payments. Was the newest 100 invoices by invoice date.
+// 📊 Invoiced sales after discount by invoice date (Mark 2026-10-22). Sales by
+// tech drop Cal ID / pass-through lines and Remote Expert (company totals don't).
 async function getRevenue(req) {
   return safe('revenue', async () => {
     const pt = d => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(d)
@@ -116,16 +116,18 @@ async function getRevenue(req) {
     const ym = today.slice(0, 7)
     const y = ym.slice(0, 4)
     const yesterday = pt(new Date(Date.now() - 86400000))
-    const { listCashForDateRange } = await import('../services/cashRevenue.js')
+    const { invoicedRows, techCutter } = await import('../services/salesBasis.js')
     const { fetchYtdByDay, sumRange } = await import('../services/salesRollup.js')
     const [rows, roll, open] = await Promise.all([
-      listCashForDateRange(req, `${ym}-01`, today),
+      invoicedRows(`${ym}-01`, today),
       fetchYtdByDay(req, { year: Number(y) }).catch(() => null),
       // AR now comes from the invoice mirror: what is still owed (balance), any month.
       catalyst.initialize(req).zcql().executeZCQLQuery("SELECT invoice_number, customer_name, inv_status, inv_date, inv_balance FROM AdasInvoices WHERE inv_balance > 0 AND inv_status != 'void' AND inv_status != 'draft' LIMIT 300").catch(() => []),
     ])
     const openRecords = (open || []).map(r => r.AdasInvoices || r).map(x => ({ number: String(x.invoice_number || ''), total: Number(x.inv_balance) || 0, date: String(x.inv_date || '').slice(0, 10), status: String(x.inv_status || 'sent'), customer: String(x.customer_name || '') }))
     const sum = f => rows.filter(f).reduce((t, r) => t + (Number(r.total) || 0), 0)
+    // The brief has a 6s budget: line items load from cache; anything new waits for the next run.
+    const cutOf = await Promise.race([techCutter(req, rows), new Promise(r => setTimeout(() => r(() => 0), 2500))]).catch(() => () => 0)
     const monthlyTotal = sum(() => true)
     const ytdTotal = roll?.byDay ? sumRange(roll.byDay, `${y}-01-01`, today) : monthlyTotal
     const yesterdayTotal = sum(r => r.date === yesterday)
@@ -148,7 +150,7 @@ async function getRevenue(req) {
     const records = invs
       .map(i => ({
         number: String(i.invoice_number || ''),
-        total: Number(i.total) || 0,
+        total: (Number(i.total) || 0) - cutOf(i),   // tech view: Cal ID + Remote Expert off
         date: i.date || '',
         // Books tracks the salesperson on the invoice — the same field behind
         // the "Sales by Salesperson" report Mark already gets daily. That is
@@ -501,7 +503,7 @@ function formatFull(b, pace) {
   // two bucket targets. The old block reported a third, blended figure against
   // a $50,000 goal the pace section no longer uses — two different answers to
   // the same question, in the same brief.
-  L.push(`Field ops: ${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} scheduled today. Jaden has ${b.jadenToday.length} today (${b.jaden.length} on the board). ${b.openJobs.length} open jobs total.`)
+  L.push(`Field ops: ${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} scheduled today. Jayden has ${b.jadenToday.length} today (${b.jaden.length} on the board). ${b.openJobs.length} open jobs total.`)
   L.push(`Pipeline: ${b.shops.length} shops, ${b.followups.length} follow-ups due.`)
   if (b.events.length) {
     L.push('')
@@ -541,7 +543,7 @@ function formatDigestPeople(items) {
 function formatDigest(b) {
   const proj = b.revenue?.projectable ? money(b.revenue.projected || 0) : 'too early to project'
   const mtd = b.revenue ? money(b.revenue.monthlyTotal || 0) : 'n/a'
-  return `Briefing ${b.today}. Rev ${mtd} MTD, projecting ${proj} of ${money(TARGET)}. Jobs today ${b.todaysJobs.length} (Jaden ${b.jadenToday.length}). Events ${b.events.length}. Follow-ups ${b.followups.length}. Commitments due ${b.dueToday.length}, overdue ${b.overdue.length}. Full brief in Cliq.`
+  return `Briefing ${b.today}. Rev ${mtd} MTD, projecting ${proj} of ${money(TARGET)}. Jobs today ${b.todaysJobs.length} (Jayden ${b.jadenToday.length}). Events ${b.events.length}. Follow-ups ${b.followups.length}. Commitments due ${b.dueToday.length}, overdue ${b.overdue.length}. Full brief in Cliq.`
 }
 
 // ---------- voice (spoken by Siri Shortcut — plain sentences, no markdown/emoji) ----------
@@ -574,7 +576,7 @@ function formatVoiceMorning(b) {
       L.push(`Yesterday you booked ${spoken(b.revenue.yesterdayTotal || 0)}. You're at ${spoken(b.revenue.monthlyTotal || 0)} for the month, about ${spoken(b.revenue.dailyPace)} a day. It's too early to call the month.`)
     }
   }
-  L.push(`On the board today, ${plural(b.todaysJobs.length, 'job')} scheduled. Jaden has ${b.jadenToday.length}. ${plural(b.openJobs.length, 'job')} open in total.`)
+  L.push(`On the board today, ${plural(b.todaysJobs.length, 'job')} scheduled. Jayden has ${b.jadenToday.length}. ${plural(b.openJobs.length, 'job')} open in total.`)
   const ev = eventTitles(b.events, 5)
   if (ev.length) L.push(`On your calendar, ${ev.join(', ')}.`)
   if (b.dueToday.length) {
@@ -784,7 +786,7 @@ export function formatBriefHtml(b, big3, tr, audioUrl, pageUrl, triage, pace, cl
   ].join('') : ''
 
   const boardHtml = [
-    line(`${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} today, ${b.jadenToday.length} for Jaden.`),
+    line(`${b.todaysJobs.length} job${b.todaysJobs.length === 1 ? '' : 's'} today, ${b.jadenToday.length} for Jayden.`),
     ...(b.events || []).slice(0, 6).map(e =>
       `<div style="font:400 15px/24px ${SANS};color:${INK};">
         <span style="color:${SOFT};">${esc(e.start || '')}</span>&nbsp;&nbsp;${esc(e.title || '')}</div>`),

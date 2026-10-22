@@ -4,7 +4,8 @@
 // so the Live Day scoreboard can render a live MTD progress bar without
 // hitting Zoho on every render.
 //
-// Sales come from Zoho Books invoices (drafts excluded). Filter by
+// Sales are cost invoices: Books invoice total, which is the amount billed
+// after the shop discount. Drafts and voids are excluded. Filter by
 // salesperson_name — the picker on the invoice/estimate side always writes
 // this field so it's the source of truth for "who sold it." Match is
 // case-insensitive substring so "Mark Fowler" matches a query of "Mark"
@@ -16,6 +17,7 @@
 
 import express from 'express'
 import { listInvoicesForDateRange } from '../services/zoho.js'
+import { salespersonMatches } from '../services/salesBasis.js'
 
 const router = express.Router()
 
@@ -56,10 +58,7 @@ function cacheSet(key, value) {
 // Mark → matches "Mark", "Mark Fowler". Jayden → matches "Jayden", "Jayden Goshorn".
 // Case-insensitive substring both ways so partials on either side work.
 function invoiceBelongsToTech(inv, tech) {
-  const sp = String(inv.salesperson_name || '').toLowerCase().trim()
-  const t  = String(tech || '').toLowerCase().trim()
-  if (!sp || !t) return false
-  return sp.includes(t) || t.includes(sp)
+  return salespersonMatches(inv.salesperson_name, tech)   // typo-tolerant (services/salesBasis.js)
 }
 
 router.get('/', async (req, res) => {
@@ -87,14 +86,17 @@ router.get('/', async (req, res) => {
 
     let totals = cacheGet(cacheKey)
     if (!totals) {
-      // 💵 Cash received, after discount (Mark 2026-10-17).
-      const { listCashForDateRange } = await import('../services/cashRevenue.js')
-      const invoices = await listCashForDateRange(req, monthStart, dateStr)
+      // Cost invoices by invoice date. `total` is the amount billed after the shop discount.
+      // Tech view (Mark 2026-10-22): voids out, Cal ID / pass-through lines and Remote Expert off.
+      const { invoicedRows, techCutter } = await import('../services/salesBasis.js')
+      const invoices = await invoicedRows(monthStart, dateStr)
+      const mine = invoices.filter(inv => invoiceBelongsToTech(inv, tech))
+      const techCut = await techCutter(req, mine).catch(() => () => 0)
       let mtd_sales = 0
       let today_sales = 0
       for (const inv of invoices) {
         if (!invoiceBelongsToTech(inv, tech)) continue
-        const t = Number(inv.total || 0) || 0
+        const t = (Number(inv.total) || 0) - techCut(inv)
         mtd_sales += t
         if (String(inv.date || '').slice(0, 10) === dateStr) today_sales += t
       }

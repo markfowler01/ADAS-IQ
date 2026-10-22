@@ -111,6 +111,9 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   try { const { remoteExpertFeesByInvoice } = await import('./remoteExpert.js'); reFees = await remoteExpertFeesByInvoice(req) } catch (e) { console.warn('[huddle] remote expert', e.message) }
   const { remoteExpertCut } = await import('./remoteExpert.js')
   const cutOf = inv => remoteExpertCut(reFees, inv.invoice_number, inv.total)
+  // Tech bars also drop Cal ID / pass-through lines (Mark 2026-10-22). Company totals keep them.
+  let techCut = inv => cutOf(inv)
+  try { const { techCutter } = await import('./salesBasis.js'); techCut = await techCutter(req, invoices) } catch (e) { console.warn('[huddle] tech cut', e.message) }
   let reMtd = 0, reYest = 0, re7 = 0, re30 = 0, reYtd = 0
   const last7Start = addDays(dateStr, -7), last30Start = addDays(dateStr, -30), yearStart = `${year}-01-01`
   for (const inv of invoices) {
@@ -140,7 +143,7 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const share = roster.length ? Math.round(goal / roster.length / 500) * 500 : goal
   const techs = roster.map(r => {
     let m = 0, y = 0
-    for (const inv of invoices) { if (!invoiceBelongsToTech(inv, r.name)) continue; const t = (Number(inv.total) || 0) - cutOf(inv); const d = String(inv.date || '').slice(0, 10); if (d >= monthStart && d <= dateStr) m += t; if (d >= lastStart && d <= lastEnd) y += t }
+    for (const inv of invoices) { if (!invoiceBelongsToTech(inv, r.name)) continue; const t = (Number(inv.total) || 0) - techCut(inv); const d = String(inv.date || '').slice(0, 10); if (d >= monthStart && d <= dateStr) m += t; if (d >= lastStart && d <= lastEnd) y += t }
     const g = Number(goals[r.name]) || share
     return { name: r.name, mtd: Math.round(m), yesterday: Math.round(y), goal: g, pct: Math.min(100, Math.round((m / Math.max(1, g)) * 100)) }
   }).sort((a, b) => b.mtd - a.mtd)

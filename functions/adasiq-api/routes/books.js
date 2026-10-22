@@ -445,7 +445,7 @@ router.get('/dashboard', async (req, res) => {
     let draft_count = 0
 
     // 💵 Revenue MTD = cash received this month, after discount (Mark 2026-10-17).
-    const { paidRows } = await import('../services/cashRevenue.js')
+    const { invoicedReportRows: paidRows } = await import('../services/salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
     for (const p of await paidRows(`${monthStr}-01`, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))) { revenue_mtd += p.total; paid_mtd += p.total }
     for (const inv of invoices) {
       if (inv.status === 'sent' || inv.status === 'overdue') {
@@ -1135,6 +1135,20 @@ router.post('/invoices/from-job', async (req, res) => {
 
     // 2. Load services catalog
     const services = await getOrSeedServices(req)
+    const alignMod = await import('../services/alignmentInvoice.js')
+    let itemMap = null
+    try { itemMap = await (await import('../services/itemMap.js')).readItemMap(req) } catch { itemMap = null }
+    const alignOn = alignMod.alignmentInvoiceOn(billingRules)
+    const catalogItems = (services || []).map(s => ({ item_id: s.zoho_item_id || s.item_id, name: s.name, rate: Number(s.unit_price || s.rate) || 0 }))
+    const forcedRate = new Map()
+    calibrations = calibrations.filter(cal => {
+      const names = alignMod.isFourWayAlignmentRow(cal) ? alignMod.ALIGN_INVOICE_NAMES : alignMod.isBatteryResetRow(cal) ? alignMod.BATTERY_INVOICE_NAMES : null
+      if (!names) return true
+      const line = alignMod.invoiceLineForReportRow(cal, { alignmentOn: alignOn, mappedItem: alignMod.pricedMappedItem(itemMap, catalogItems, names) || alignMod.pricedCatalogService(services, names) })
+      if (!line) return false
+      forcedRate.set(cal, line)
+      return true
+    })
 
     // 3. Match calibrations to services
     function findService(calName) {
@@ -1214,12 +1228,13 @@ router.post('/invoices/from-job', async (req, res) => {
       // Cash (Mark 2026-09-08): catalog prices, then the $700 cap as a
       // negative adjustment line. See services/cashPricing.js.
       retailLineItems = calibrations.map(cal => {
-        const svc = findService(cal.name)
-        const rate = resolvePrice(svc, cal.name)
+        const forced = forcedRate.get(cal)
+        const svc = forced ? null : findService(cal.name || cal.calibration_name)
+        const rate = forced ? forced.rate : resolvePrice(svc, cal.name || cal.calibration_name)
         return {
           id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          description: (cal.name || '') + (cal.mode ? ` (${cal.mode})` : ''),
-          qty: 1, rate, amount: rate, retail_amount: rate, no_match: !svc,
+          description: forced?.name || ((cal.name || cal.calibration_name || '') + (cal.mode ? ` (${cal.mode})` : '')),
+          qty: 1, rate, amount: rate, retail_amount: rate, no_match: forced ? false : !svc,
         }
       })
       const cap = cashCapFor(retailLineItems.map(li => ({ rate: li.rate, quantity: li.qty })))
@@ -1233,16 +1248,17 @@ router.post('/invoices/from-job', async (req, res) => {
       console.log(`[books from-job] cash pricing for job ${job.id}: list $${cap.list_total} → $${cap.total}`)
     } else {
       retailLineItems = calibrations.map(cal => {
-        const svc = findService(cal.name)
-        const rate = resolvePrice(svc, cal.name)
+        const forced = forcedRate.get(cal)
+        const svc = forced ? null : findService(cal.name || cal.calibration_name)
+        const rate = forced ? forced.rate : resolvePrice(svc, cal.name || cal.calibration_name)
         return {
           id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-          description: (cal.name || '') + (cal.mode ? ` (${cal.mode})` : ''),
+          description: forced?.name || ((cal.name || cal.calibration_name || '') + (cal.mode ? ` (${cal.mode})` : '')),
           qty: 1,
           rate,
           amount: rate,
           retail_amount: rate,
-          no_match: !svc,
+          no_match: forced ? false : !svc,
         }
       })
     }
@@ -1558,7 +1574,7 @@ router.get('/report', async (req, res) => {
     // 💵 Every revenue figure in the report = cash received (payments) by
     // payment date, after discount (Mark 2026-10-17). Invoices stay for AR,
     // aging, counts and the service mix.
-    const { paidRows, CASH_SINCE } = await import('../services/cashRevenue.js')
+    const { invoicedReportRows: paidRows, SALES_SINCE: CASH_SINCE } = await import('../services/salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
     const cash = await paidRows(CASH_SINCE, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
 
     const now       = new Date()

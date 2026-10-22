@@ -214,7 +214,7 @@ router.get('/shop-margin-mix', async (req, res) => {
 
     // 💵 Shop revenue = cash received after discount (Mark 2026-10-17). Invoice
     // lines still supply the calibration mix and COGS.
-    const { paidRows } = await import('../services/cashRevenue.js')
+    const { invoicedReportRows: paidRows } = await import('../services/salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
     const cashSince = since.startsWith('1970') ? '2025-01-01' : since.slice(0, 10)
     const cashByShop = {}
     for (const p of await paidRows(cashSince, new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))) { const k = p.customer_name || '—'; cashByShop[k] = (cashByShop[k] || 0) + p.total }
@@ -254,7 +254,7 @@ router.get('/forecast', async (req, res) => {
   try {
     const [jobs] = await Promise.all([readJobs(req)])
     // 💵 Cash received (payments), after discount (Mark 2026-10-17).
-    const { paidRows } = await import('../services/cashRevenue.js')
+    const { invoicedReportRows: paidRows } = await import('../services/salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
     const invoices = await paidRows(new Date(Date.now() - 200 * 86400000).toISOString().slice(0, 10), new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date()))
     const now = new Date()
 

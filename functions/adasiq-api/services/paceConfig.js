@@ -72,8 +72,8 @@ export async function recomputeRatio(req, { months = 12 } = {}) {
   const dateStart = start.toISOString().slice(0, 10)
 
   // 💵 Cash basis (Mark 2026-10-17): pace learns from money received by payment date.
-  const { listPayments } = await import('./cashRevenue.js')
-  const invoices = (await listPayments(dateStart, new Date().toISOString().slice(0, 10), { maxPages: 10 })).map(p => ({ date: p.date, total: p.amount }))
+  const { invoicedRows } = await import('./salesBasis.js')   // 📊 invoiced after discount (Mark 2026-10-22)
+  const invoices = (await invoicedRows(dateStart, new Date().toISOString().slice(0, 10))).map(i => ({ date: i.date, total: i.total }))
 
   const d = deriveRatio(invoices)
   const rec = {
