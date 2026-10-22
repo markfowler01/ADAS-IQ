@@ -37,6 +37,25 @@ export async function patchLive(req, sid, data) {
   await put(req, KEY(sid), row); return row
 }
 export async function getLive(req, sid) { return sid ? get(req, KEY(sid)) : null }
+/** Health-check and hand pings. 555-123-4567 is not a real caller. */
+export function isSyntheticCall({ from = '', sid = '' } = {}) {
+  const digits = String(from).replace(/\D/g, '')
+  return digits.endsWith('5551234567') || /^CA(health|katcheck)/i.test(String(sid))
+}
+
+/** Drop fake ringing rows the health ping left on the live-call bar. */
+export async function clearSynthetic(req) {
+  const idx = await readIndex(req)
+  const rows = await Promise.all(idx.map(sid => get(req, KEY(sid))))
+  const drop = []
+  rows.forEach((r, i) => {
+    const sid = r?.sid || idx[i]
+    if (sid && isSyntheticCall({ from: r?.from || r?.from_number || '', sid })) drop.push(sid)
+  })
+  for (const sid of drop) await clearLive(req, sid)
+  return drop
+}
+
 export async function clearLive(req, sid) {
   if (!sid) return
   try { await put(req, KEY(sid), { sid, ended: true, updated_at: new Date().toISOString() }) } catch { /* fine */ }
@@ -62,6 +81,16 @@ export function cascadeKeyFor(user) {
 }
 export const KEY_NAMES = { mark: 'Mark', kat: 'Kat', jayden: 'Jayden', desk: 'the desk', voicemail: 'Voicemail' }
 /** Can this user see / transfer this call? Owner always; otherwise the person on it (desk counts for any staff). */
+// 📞 Who may MOVE a call (Mark 2026-10-22: calls bounced back to Kat after she
+// sent them to Mark — her app could still transfer a call she was no longer on).
+// Ringing: anyone but a tech can send it. Live: only the person on it, or Mark.
+export function canTransfer(user, call) {
+  if (!call) return false
+  const me = cascadeKeyFor(user)
+  if (me === 'mark') return true
+  if (!call.who || call.status === 'ringing') return user?.role !== 'technician'
+  return call.who === me || (call.who === 'desk' && user?.role !== 'technician')
+}
 export function canSee(user, call) {
   if (!call) return false
   if (user?.role === 'owner' || cascadeKeyFor(user) === 'mark') return true

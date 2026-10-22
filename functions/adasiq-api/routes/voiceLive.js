@@ -4,7 +4,7 @@
 //                                The person's own leg drops because the bridge it was in is gone.
 // Mounted with requireAuth only: technicians take calls too (Jayden is in the cascade).
 import express from 'express'
-import { listLive, getLive, patchLive, canSee, cascadeKeyFor, KEY_NAMES, logShopActivity } from '../services/liveCalls.js'
+import { listLive, getLive, patchLive, canSee, canTransfer, cascadeKeyFor, KEY_NAMES, logShopActivity } from '../services/liveCalls.js'
 import catalyst from 'zcatalyst-sdk-node'
 import { resolvePhoneConfig } from '../services/phoneConfig.js'
 import { getTwilioClient, normalizePhoneUS } from '../services/twilio.js'
@@ -28,10 +28,16 @@ voiceLiveRouter.post('/transfer', async (req, res) => {
     if (!['mark', 'jayden', 'kat', 'desk', 'voicemail'].includes(to)) return res.status(400).json({ error: 'to must be mark, jayden, kat, desk or voicemail' })
     const call = await getLive(req, sid)
     if (!call || call.ended) return res.status(404).json({ error: 'That call is no longer live' })
-    if (!canSee(req.user, call)) return res.status(403).json({ error: 'Only the person on the call (or Mark) can transfer it' })
-    if (to === call.who) return res.status(400).json({ error: `They are already on with ${KEY_NAMES[to]}` })
-    const cfg = await resolvePhoneConfig(req)
+    const me = cascadeKeyFor(req.user)
     const by = req.user?.techName || req.user?.name || req.user?.email || 'staff'
+    const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+    console.log(`[voice transfer] ${by} (${me || '?'}) asks ${call.who || 'ringing'} → ${to} · ${String(req.body?.mode || 'cold')} · ${sid} · ${ip}`)
+    if (!canTransfer(req.user, call)) { console.log(`[voice transfer] refused: ${by} is not on this call (on with ${call.who})`); return res.status(403).json({ error: `This call is with ${KEY_NAMES[call.who] || call.who} now. Only they (or Mark) can move it.` }) }
+    if (to === call.who) return res.status(400).json({ error: `They are already on with ${KEY_NAMES[to]}` })
+    // No double taps: a transfer still ringing through, or the same person again within 20s.
+    const since = call.transferred_at ? Date.now() - new Date(call.transferred_at).getTime() : Infinity
+    if (since < 20000 && (call.transferring_to || call.transferred_by === by)) { console.log(`[voice transfer] ignored double tap from ${by} (${Math.round(since / 1000)}s after the last one)`); return res.status(409).json({ error: `Already sent to ${KEY_NAMES[call.transferring_to] || 'them'} — you can hang up.` }) }
+    const cfg = await resolvePhoneConfig(req)
     // 🤝 Warm: park the caller, call the transferring person back and dial the target
     // inside that call so they talk first. Complete / Take back finish it.
     if (String(req.body?.mode || '') === 'warm' && to !== 'voicemail') {
@@ -53,6 +59,7 @@ voiceLiveRouter.post('/transfer', async (req, res) => {
     const client = await getTwilioClient(cfg)
     await client.calls(sid).update({ twiml })
     await patchLive(req, sid, { transferring_to: to, transferred_by: by, transferred_at: new Date().toISOString() })
+    console.log(`[voice transfer] ✓ ${by} sent ${sid} ${call.who} → ${to}`)
     try {
       const { postToCliqChannel, DISPATCH_CHANNEL } = await import('../services/cliq.js')
       const who = [call.caller_name, call.shop_name].filter(Boolean).join(' · ') || call.from_pretty || normalizePhoneUS(call.from) || call.from

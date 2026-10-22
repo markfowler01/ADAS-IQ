@@ -27,6 +27,11 @@ export default function LiveCallBar({ user, onNavigate }) {
   const [warm, setWarm] = useState(() => { try { return localStorage.getItem('adas_xfer_warm') === '1' } catch { return false } })   // 🤝 talk to them first
   const timer = useRef(null)
   const [sheetOff, setSheetOff] = useState(() => new Set())   // calls where 'Stay on the call' was tapped
+  // 📞 Calls this phone already handed off (Mark 2026-10-22: a second tap on the sender's
+  // phone was sending calls back to Kat). Once sent, no more buttons for that call here.
+  const [sent, setSent] = useState(() => ({}))
+  const markSent = (sid, name) => { setSent(m => ({ ...m, [sid]: name })); setSheetOff(x => new Set([...x, sid])) }
+  const holdTimer = useRef(null)
 
   const load = useCallback(async () => {
     try {
@@ -69,6 +74,7 @@ export default function LiveCallBar({ user, onNavigate }) {
       const j = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
       setMsg(isWarm ? `🤝 Caller on hold — your phone is ringing with ${name}…` : `↪️ Transferring to ${name}…`)
+      if (!isWarm) markSent(call.sid, name)
       setCalls(prev => prev.map(c => c.sid === call.sid ? { ...c, transferring_to: to, status: isWarm ? 'consulting' : c.status } : c))
       setTimeout(load, 2500)
     } catch (e) { setMsg(`⚠ ${e.message}`) }
@@ -98,7 +104,7 @@ export default function LiveCallBar({ user, onNavigate }) {
   const primaryLabel = TARGETS.find(t => t.key === primary)?.label || ''
   const coldTransfer = (c, to) => { setWarm(false); try { localStorage.setItem('adas_xfer_warm', '0') } catch {} ; const name = TARGETS.find(t => t.key === to)?.label || to; setBusy(`${c.sid}:${to}`); setMsg('')
     apiFetch(`${API_BASE}/api/voice/transfer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sid: c.sid, to, mode: 'cold' }) })
-      .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); setMsg(`↪️ Transferring to ${name}… you can hang up.`); setCalls(prev => prev.map(x => x.sid === c.sid ? { ...x, transferring_to: to } : x)); setTimeout(load, 2500) })
+      .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`); setMsg(`↪️ Transferring to ${name}… you can hang up.`); markSent(c.sid, name); setCalls(prev => prev.map(x => x.sid === c.sid ? { ...x, transferring_to: to } : x)); setTimeout(load, 2500) })
       .catch(e => setMsg(`⚠ Transfer failed: ${e.message}`)).finally(() => setBusy('')) }
 
   return (<>
@@ -109,10 +115,14 @@ export default function LiveCallBar({ user, onNavigate }) {
           <div className="text-2xl font-extrabold mt-1 leading-tight">{label}</div>
           {c.from_pretty && label !== c.from_pretty && <div className="text-sm opacity-80">{c.from_pretty}</div>}
           <div className="flex-1 flex flex-col justify-center gap-3">
-            <button disabled={!!busy} onClick={() => coldTransfer(c, primary)}
+            <button disabled={!!busy || !!sent[c.sid]}
+              // Mark's phone is at his ear: hold ~1s so a cheek can't send the call to Kat.
+              onClick={() => { if (me !== 'mark') coldTransfer(c, primary) }}
+              onPointerDown={() => { if (me !== 'mark') return; clearTimeout(holdTimer.current); holdTimer.current = setTimeout(() => coldTransfer(c, primary), 900) }}
+              onPointerUp={() => clearTimeout(holdTimer.current)} onPointerLeave={() => clearTimeout(holdTimer.current)} onPointerCancel={() => clearTimeout(holdTimer.current)}
               className="w-full rounded-3xl font-extrabold text-white active:scale-[0.98] transition"
               style={{ backgroundColor: '#16a34a', fontSize: 30, padding: '34px 16px', boxShadow: '0 14px 40px rgba(22,163,74,0.45)' }}>
-              {busy === `${c.sid}:${primary}` ? 'Transferring…' : `➡️ Transfer to ${primaryLabel}`}
+              {busy === `${c.sid}:${primary}` ? 'Transferring…' : me === 'mark' ? `✋ Hold to transfer to ${primaryLabel}` : `➡️ Transfer to ${primaryLabel}`}
             </button>
             <div className="grid grid-cols-3 gap-2">
               {TARGETS.filter(t => t.key !== c.who && t.key !== primary).map(t => (
@@ -148,7 +158,8 @@ export default function LiveCallBar({ user, onNavigate }) {
                 <button disabled={!!busy} onClick={() => warmAction(c, 'cancel')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.18)', color: 'white' }}>{busy === `${c.sid}:cancel` ? '…' : '↩️ Take caller back'}</button>
               </div>
             )}
-            {!xfer && !consulting && (
+            {sent[c.sid] && !consulting && <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg" style={{ backgroundColor: 'white', color: GREEN }}>✅ Sent to {sent[c.sid]} — you can hang up</span>}
+            {!xfer && !consulting && !sent[c.sid] && (ringing || c.who === me || me === 'mark') && (
               <div className="flex items-center gap-1 flex-wrap">
                 {!ringing && (
                   <button onClick={() => setWarm(w => { try { localStorage.setItem('adas_xfer_warm', w ? '0' : '1') } catch {} ; return !w })}
