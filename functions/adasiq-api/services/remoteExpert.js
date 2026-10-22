@@ -130,6 +130,13 @@ export async function maybeSyncRemoteExpert(req, { lookback = 60 } = {}) {
   return out
 }
 
+/** Dollars of a matched Remote Expert charge to take off one invoice, never more than the invoice itself. */
+export function remoteExpertCut(feesByInvoice, invoiceNumber, cap) {
+  const fee = Number(feesByInvoice?.[invoiceNumber]) || 0
+  if (!(fee > 0)) return 0
+  return Math.min(fee, Math.max(0, Number(cap) || 0))
+}
+
 /** invoice number → Remote Expert fee to take out of bonus cash. */
 export async function remoteExpertFeesByInvoice(req) {
   const [st, fees] = await Promise.all([readOrders(req), readFees(req)])

@@ -49,6 +49,43 @@ export async function fetchYtdByDay(req, { year, force = false } = {}) {
   return { ...rec, cached: false }
 }
 
+// Cost invoices by invoice date. Books invoice `total` is what the shop was
+// billed after the partnership discount (the discount sits on the lines).
+// Estimates are the list-price insurance copy and are not included.
+// The brief still uses fetchYtdByDay (cash). The GET SOME meeting uses this.
+const COST_KEY = 'sales_rollup_v3_cost'
+export async function fetchCostByDay(req, { year, force = false } = {}) {
+  if (!force) {
+    const hit = await read(req, COST_KEY)
+    if (hit?.year === year && Date.now() - new Date(hit.at).getTime() < TTL_MS) return { ...hit, cached: true }
+  }
+  const token = await getAccessToken()
+  const byDay = {}
+  let count = 0
+  let truncated = false
+  for (let page = 1; page <= 12; page++) {
+    const r = await axios.get('https://www.zohoapis.com/books/v3/invoices', {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+      params: { organization_id: process.env.ZOHO_ORGANIZATION_ID, per_page: 200, page, sort_column: 'date', sort_order: 'A', date_start: `${year}-01-01` },
+      timeout: 20000, validateStatus: s => s < 500,
+    })
+    const batch = r.data?.invoices || []
+    for (const i of batch) {
+      const st = String(i.status || '').toLowerCase()
+      if (!COUNTED.has(st)) continue
+      const d = String(i.date || '').slice(0, 10)
+      if (!d || !d.startsWith(String(year))) continue
+      byDay[d] = (byDay[d] || 0) + (parseFloat(i.total) || 0)
+      count++
+    }
+    if (batch.length < 200) break
+    if (page === 12) truncated = true
+  }
+  const rec = { year, byDay, invoices: count, truncated, at: new Date().toISOString() }
+  await write(req, COST_KEY, rec).catch(() => {})
+  return { ...rec, cached: false }
+}
+
 export function sumRange(byDay, startISO, endISO) {
   let t = 0
   for (const [d, v] of Object.entries(byDay || {})) if (d >= startISO && d <= endISO) t += v

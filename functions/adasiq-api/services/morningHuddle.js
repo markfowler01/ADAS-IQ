@@ -71,18 +71,24 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const year = Number(dateStr.slice(0, 4)), monthStart = `${dateStr.slice(0, 7)}-01`
   const monthEnd = (() => { const d = new Date(Date.UTC(year, Number(dateStr.slice(5, 7)), 0)); return d.toISOString().slice(0, 10) })()
   const yesterday = addDays(dateStr, -1)
+  // 📅 "Yesterday" = the last working day (Mark 2026-10-21: daily sales + jobs from
+  // the day before). On a Monday that's Friday, with any weekend work rolled in.
+  const isWeekend = iso => { const w = new Date(`${iso}T12:00:00Z`).getUTCDay(); return w === 0 || w === 6 }
+  let lastStart = yesterday; while (isWeekend(lastStart)) lastStart = addDays(lastStart, -1)
+  const lastEnd = yesterday
+  const lastLabel = lastStart === lastEnd ? 'Yesterday' : new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long' }).format(new Date(`${lastStart}T12:00:00Z`))
   const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'long' }).format(new Date(`${dateStr}T12:00:00Z`))
   const dateLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' }).format(new Date(`${dateStr}T12:00:00Z`))
   const monthLabel = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'long' }).format(new Date(`${dateStr}T12:00:00Z`))
 
   const { getMonthlyGoal } = await import('./paceConfig.js')
-  const { fetchYtdByDay, sumRange } = await import('./salesRollup.js')
+  const { fetchCostByDay, sumRange } = await import('./salesRollup.js')
   const goal = (await getMonthlyGoal(req)).goal
   let byDay = {}, lastYearByDay = {}
-  try { byDay = (await fetchYtdByDay(req, { year }))?.byDay || {} } catch (e) { console.warn('[huddle] rollup:', e.message) }
-  try { lastYearByDay = (await fetchYtdByDay(req, { year: year - 1 }))?.byDay || {} } catch { /* first year */ }
+  try { byDay = (await fetchCostByDay(req, { year }))?.byDay || {} } catch (e) { console.warn('[huddle] rollup:', e.message) }
+  try { lastYearByDay = (await fetchCostByDay(req, { year: year - 1 }))?.byDay || {} } catch { /* first year */ }
   const mtd = sumRange(byDay, monthStart, dateStr)
-  const yesterdaySales = sumRange(byDay, yesterday, yesterday)
+  const yesterdaySales = sumRange(byDay, lastStart, lastEnd)
   const last7 = sumRange(byDay, addDays(dateStr, -7), yesterday), last30 = sumRange(byDay, addDays(dateStr, -30), yesterday)
   const ytd = sumRange(byDay, `${year}-01-01`, dateStr)
   const lastYtd = sumRange(lastYearByDay, `${year - 1}-01-01`, `${year - 1}${dateStr.slice(4)}`)
@@ -97,20 +103,44 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const roster = (await rosterFromDirectory(req)).filter(r => r.type === 'tech')
   const goals = await readTechGoals(req)
   let invoices = []
-  try { invoices = await listInvoicesForDateRange(monthStart, dateStr) } catch (e) { console.warn('[huddle] invoices:', e.message) }
-  // 💵 Tech dollars are cash received (after discount); invoices still count the cars.
-  let cash = []
-  try { const { listCashForDateRange } = await import('./cashRevenue.js'); cash = await listCashForDateRange(req, monthStart, dateStr) } catch (e) { console.warn('[huddle] cash:', e.message) }
-  // Jobs done each day this month (one invoice = one car) + average per job.
+  const fetchFrom = lastStart < monthStart ? lastStart : monthStart
+  try { invoices = await listInvoicesForDateRange(fetchFrom, dateStr) } catch (e) { console.warn('[huddle] invoices:', e.message) }
+  // Remote Expert is paid to the vendor and is not our sales. Take the matched
+  // charge off the invoice it belongs to. Pre-scans and post-scans stay in.
+  let reFees = {}
+  try { const { remoteExpertFeesByInvoice } = await import('./remoteExpert.js'); reFees = await remoteExpertFeesByInvoice(req) } catch (e) { console.warn('[huddle] remote expert', e.message) }
+  const { remoteExpertCut } = await import('./remoteExpert.js')
+  const cutOf = inv => remoteExpertCut(reFees, inv.invoice_number, inv.total)
+  let reMtd = 0, reYest = 0, re7 = 0, re30 = 0, reYtd = 0
+  const last7Start = addDays(dateStr, -7), last30Start = addDays(dateStr, -30), yearStart = `${year}-01-01`
+  for (const inv of invoices) {
+    const c = cutOf(inv); if (!c) continue
+    const d = String(inv.date || '').slice(0, 10)
+    if (d >= monthStart && d <= dateStr) reMtd += c
+    if (d >= lastStart && d <= lastEnd) reYest += c
+    if (d >= last7Start && d <= yesterday) re7 += c
+    if (d >= last30Start && d <= yesterday) re30 += c
+    if (d >= yearStart && d <= dateStr) reYtd += c
+  }
   const perDay = {}
   for (const inv of invoices) { const d = String(inv.date || '').slice(0, 10); if (d >= monthStart && d <= dateStr && !/void|draft/i.test(String(inv.status || ''))) perDay[d] = (perDay[d] || 0) + 1 }
+  const lastDayJobs = invoices.filter(inv => { const d = String(inv.date || '').slice(0, 10); return d >= lastStart && d <= lastEnd && !/void|draft/i.test(String(inv.status || '')) }).length
   const jobsMonth = Object.values(perDay).reduce((t, n) => t + n, 0)
   const avgPerJob = jobsMonth ? Math.round(mtd / jobsMonth) : 0
-  const days = []; for (let d = monthStart; d <= monthEnd; d = addDays(d, 1)) { const w = new Date(`${d}T12:00:00Z`).getUTCDay(); if (w !== 0 && w !== 6) days.push({ d, n: perDay[d] || 0, past: d <= yesterday, today: d === dateStr }) }
+  // Weekdays, plus any Saturday/Sunday that had a car. weekStart marks the first
+  // bar of each week so the chart shows a visible break where a weekend was.
+  const days = []; let prevW = null
+  for (let d = monthStart; d <= monthEnd; d = addDays(d, 1)) {
+    const w = new Date(`${d}T12:00:00Z`).getUTCDay(), wk = w === 0 || w === 6
+    if (wk && !perDay[d]) continue
+    const weekStart = prevW != null && (w === 1 || (w !== 0 && w < prevW) || (w === 6 && prevW === 6))
+    days.push({ d, n: perDay[d] || 0, past: d <= yesterday, today: d === dateStr, weekend: wk, weekStart })
+    prevW = w === 0 ? 7 : w
+  }
   const share = roster.length ? Math.round(goal / roster.length / 500) * 500 : goal
   const techs = roster.map(r => {
     let m = 0, y = 0
-    for (const inv of cash) { if (!invoiceBelongsToTech(inv, r.name)) continue; const t = Number(inv.total || 0) || 0; const d = String(inv.date || '').slice(0, 10); if (d >= monthStart) m += t; if (d === yesterday) y += t }
+    for (const inv of invoices) { if (!invoiceBelongsToTech(inv, r.name)) continue; const t = (Number(inv.total) || 0) - cutOf(inv); const d = String(inv.date || '').slice(0, 10); if (d >= monthStart && d <= dateStr) m += t; if (d >= lastStart && d <= lastEnd) y += t }
     const g = Number(goals[r.name]) || share
     return { name: r.name, mtd: Math.round(m), yesterday: Math.round(y), goal: g, pct: Math.min(100, Math.round((m / Math.max(1, g)) * 100)) }
   }).sort((a, b) => b.mtd - a.mtd)
@@ -128,7 +158,10 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   }
   const schedule = Object.entries(byTech).sort((a, b) => (a[0] === 'Unassigned') - (b[0] === 'Unassigned') || a[0].localeCompare(b[0])).map(([tech, list]) => ({ tech, jobs: list }))
 
-  return { dateStr, weekday, dateLabel, monthLabel, goal, mtd, last7, last30, jobsMonth, avgPerJob, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtd / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtd - pace, yesterdaySales, bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNeeded), ytd, lastYtd, growthPct, techs, schedule, jobsToday: jobs.length, line: growthLine(dateStr) }
+  const mtdNet = Math.round(mtd - reMtd), ytdNet = Math.round(ytd - reYtd)
+  const growthNet = lastYtd > 0 ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
+  const perDayNet = bizLeft > 0 ? Math.max(0, goal - mtdNet) / bizLeft : 0
+  return { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, line: growthLine(dateStr) }
 }
 
 // ── render ───────────────────────────────────────────────────────────────────
@@ -162,7 +195,6 @@ function bar(x, y, w, h, pct, { tickPct = null, color = ORANGE, track = 'rgba(25
 
 export async function renderHuddlePng(req, data) {
   const f = await fonts()
-  const bg = await background(req)
   const d = data
   const ahead = d.ahead >= 0
   // Mark's mock (2026-10-06): dark glass cards on the left, van alive on the right,
@@ -179,7 +211,11 @@ export async function renderHuddlePng(req, data) {
   const L = 52
   // ── Card 1: THE MONTH ─────────────────────────────────────────────────────
   const c1 = { x: L, y: 168, w: 930, h: 356 }
-  const stats = [['Yesterday', d.yesterdaySales], ['Last 7 Days', d.last7], ['Last 30 Days', d.last30]]
+  // Yesterday's sales + cars (Mark 2026-10-21), then last 7 / last 30. Widths are
+  // estimated for 22px Inter so the three tiles never collide.
+  const jobsTxt = d.lastDayJobs != null ? ` · ${d.lastDayJobs} ${d.lastDayJobs === 1 ? 'job' : 'jobs'}` : ''
+  const stats = [[d.lastLabel || 'Yesterday', `${fmtUSD(d.yesterdaySales)}${jobsTxt}`], ['Last 7', fmtUSD(d.last7)], ['Last 30', fmtUSD(d.last30)]]
+  const tileW = ([k, v]) => Math.round(k.length * 12.2 + 14 + String(v).length * 13.6)
   const month = `
     ${card(c1.x, c1.y, c1.w, c1.h)}
     ${ICON.cal(c1.x + 30, c1.y + 24)}
@@ -196,7 +232,7 @@ export async function renderHuddlePng(req, data) {
     <text x="${c1.x + 548}" y="${c1.y + 250}" class="body2 w400" style="font-style:italic;fill:rgba(255,255,255,0.78)">${esc(fmtUSD(d.perDayNeeded))}/day closes the month</text>
     <rect x="${c1.x + 30}" y="${c1.y + 282}" width="${c1.w - 60}" height="1.5" fill="rgba(255,255,255,0.14)"/>
     ${ICON.trend(c1.x + 30, c1.y + 300, 30)}
-    ${stats.map(([k, v], i) => { const sx = c1.x + 96 + i * 290; return `${i ? `<rect x="${sx - 28}" y="${c1.y + 300}" width="2" height="30" fill="rgba(255,255,255,0.2)"/>` : ''}<text x="${sx}" y="${c1.y + 324}" class="stat"><tspan class="w400" style="fill:rgba(255,255,255,0.75)">${k}</tspan>  ${esc(fmtUSD(v))}</text>` }).join('')}`
+    ${(() => { let sx = c1.x + 96; return stats.map(([k, v], i) => { const out = `${i ? `<rect x="${sx - 22}" y="${c1.y + 300}" width="2" height="30" fill="rgba(255,255,255,0.2)"/>` : ''}<text x="${sx}" y="${c1.y + 324}" class="stat" style="font-size:22px"><tspan class="w400" style="fill:rgba(255,255,255,0.75)">${esc(k)}</tspan>  ${esc(v)}</text>`; sx += tileW([k, v]) + 44; return out }).join('') })()}`
   // ── Card 2: INDIVIDUAL GOALS ──────────────────────────────────────────────
   const techs = d.techs.slice(0, 4)
   const c2 = { x: L, y: 542, w: 930, h: 206 }
@@ -237,12 +273,14 @@ export async function renderHuddlePng(req, data) {
   let jobsCard = ''
   if (c4.y + c4.h < H - 200) {
     const days = d.days || [], maxN = Math.max(1, ...days.map(x => x.n))
-    const gap = 6, inner = c4.w - 60, bw = Math.max(8, Math.floor((inner - gap * (days.length - 1)) / Math.max(1, days.length)))
-    const chartH = 70, baseY = c4.y + 96 + chartH
+    const gap = 6, wkGap = 14, breaks = days.filter(x => x.weekStart).length, inner = c4.w - 60
+    const bw = Math.max(8, Math.floor((inner - gap * (days.length - 1) - wkGap * breaks) / Math.max(1, days.length)))
+    let off = 0; const xs = days.map(x => { if (x.weekStart) off += wkGap; const v = off; return v })
+    const chartH = 60, baseY = c4.y + 106 + chartH   // top-of-bar numbers clear the stat line
     jobsCard = `${card(c4.x, c4.y, c4.w, c4.h)}${ICON.bars(c4.x + 30, c4.y + 18, 30)}<text x="${c4.x + 76}" y="${c4.y + 42}" class="ch" style="fill:white">JOBS DONE <tspan class="dot">•</tspan> ${esc(d.monthLabel.toUpperCase())}</text>
       <text x="${c4.x + c4.w - 30}" y="${c4.y + 76}" class="stat" text-anchor="end">${d.jobsMonth} <tspan class="w400" style="fill:rgba(255,255,255,0.7)">cars</tspan>   ${esc(fmtUSD(d.avgPerJob))} <tspan class="w400" style="fill:rgba(255,255,255,0.7)">avg/car</tspan>   ${d.jobsPerDay} <tspan class="w400" style="fill:rgba(255,255,255,0.7)">/day</tspan></text>
-      ${days.map((x, i) => { const bx = c4.x + 30 + i * (bw + gap); const bh = x.n ? Math.max(6, Math.round(chartH * (x.n / maxN))) : 3; const col = x.today ? 'rgba(255,255,255,0.35)' : x.past ? (x.n ? ORANGE : 'rgba(255,255,255,0.16)') : 'rgba(255,255,255,0.07)'
-        return `<rect x="${bx}" y="${baseY - bh}" width="${bw}" height="${bh}" rx="3" fill="${col}"/>${x.n ? `<text x="${bx + bw / 2}" y="${baseY - bh - 6}" class="small2" text-anchor="middle" style="fill:white;font-weight:700;font-size:16px">${x.n}</text>` : ''}<text x="${bx + bw / 2}" y="${baseY + 24}" class="small2" text-anchor="middle" style="font-size:14px">${Number(x.d.slice(8))}</text>` }).join('')}`
+      ${days.map((x, i) => { const bx = c4.x + 30 + i * (bw + gap) + xs[i]; const bh = x.n ? Math.max(6, Math.round(chartH * (x.n / maxN))) : 3; const col = x.today ? 'rgba(255,255,255,0.35)' : x.past ? (x.n ? (x.weekend ? '#f59e0b' : ORANGE) : 'rgba(255,255,255,0.16)') : 'rgba(255,255,255,0.07)'
+        return `${x.weekStart ? `<rect x="${bx - (wkGap + gap) / 2 - 1}" y="${baseY - chartH}" width="1.5" height="${chartH + 30}" fill="rgba(255,255,255,0.18)"/>` : ''}<rect x="${bx}" y="${baseY - bh}" width="${bw}" height="${bh}" rx="3" fill="${col}"/>${x.n ? `<text x="${bx + bw / 2}" y="${baseY - bh - 6}" class="small2" text-anchor="middle" style="fill:white;font-weight:700;font-size:16px">${x.n}</text>` : ''}<text x="${bx + bw / 2}" y="${baseY + 24}" class="small2" text-anchor="middle" style="font-size:14px">${Number(x.d.slice(8))}</text>` }).join('')}`
   }
   // ── footer ────────────────────────────────────────────────────────────────
   const FY = H - 186
@@ -304,6 +342,8 @@ export async function renderHuddlePng(req, data) {
   ${jobsCard}
   ${footer}
 </svg>`
+  if (data?._svgOnly) return svg   // local preview without sharp
+  const bg = await background(req)
   return sharp(bg).composite([{ input: Buffer.from(svg, 'utf-8'), top: 0, left: 0 }]).png({ compressionLevel: 8 }).toBuffer()
 }
 
