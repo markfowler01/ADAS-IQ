@@ -60,3 +60,13 @@ export function salespersonMatches(salesperson, tech) {
   if (f1.length >= 4 && f2.length >= 4 && lev(f1, f2) <= 1 && (!l1 || !l2 || lev(l1, l2) <= 2)) return true   // "jaden" ~ "jayden goshorn"
   return false
 }
+
+// The one spelling Books should get (Mark 2026-10-22). Bill it stamped the job's
+// technician field as the salesperson, so "Jaden", "Jayden", and "Mark" became
+// new salespeople in Books. Known names come from SALESPEOPLE.
+export function canonicalSalesperson(name) {
+  const n = String(name || '').trim()
+  if (!n) return ''
+  const known = (process.env.SALESPEOPLE || 'Mark Fowler,Jayden Goshorn').split(',').map(x => x.trim()).filter(Boolean)
+  return known.find(k => k.toLowerCase() === n.toLowerCase()) || known.find(k => salespersonMatches(n, k)) || n
+}

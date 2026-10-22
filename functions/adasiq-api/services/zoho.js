@@ -3,6 +3,7 @@ import { poolFor, familyFor } from './insurerFamilies.js'
 import * as tiers from './insurerTiers.js'
 import { createJobFolder, uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink } from './workdrive.js'
 import { generateADASIQPdf } from './pdf.js'
+import { canonicalSalesperson } from './salesBasis.js'
 
 const ZOHO_TOKEN_URL = 'https://accounts.zoho.com/oauth/v2/token'
 const ZOHO_API_BASE = 'https://www.zohoapis.com/books/v3'  // Zoho Books
@@ -1134,7 +1135,7 @@ export async function createDraftQuote({
   // auto-create a contact when customer_name appears in the body without a
   // matching customer_id, which is exactly what we are guarding against.
   delete body.customer_name
-  if (salespersonName) body.salesperson_name = salespersonName
+  if (salespersonName) body.salesperson_name = canonicalSalesperson(salespersonName)
 
   // 4. Create the estimate — retry with .1, .2 etc. on duplicate number or unique field conflict
   let res
@@ -1408,7 +1409,7 @@ export async function updateEstimateSalesperson(estimateId, technicianName) {
   const token = await getAccessToken()
   await axios.put(
     `${ZOHO_API_BASE}/estimates/${estimateId}`,
-    { salesperson_name: salespersonName },
+    { salesperson_name: canonicalSalesperson(salespersonName) },
     { headers: zohoHeaders(token), params: orgParam() }
   )
 }
@@ -1807,7 +1808,7 @@ export async function createRepairDraftQuote({
   }
   body.customer_id = customerId
   delete body.customer_name
-  if (salespersonName) body.salesperson_name = salespersonName
+  if (salespersonName) body.salesperson_name = canonicalSalesperson(salespersonName)
 
   // Create with retry on duplicate number
   let res

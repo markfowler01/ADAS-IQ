@@ -15,6 +15,7 @@
 // Shared by 💸 Bill it (routes/billIt.js) and the Quotes Out bill path
 // (routes/shopQuotes.js) so both produce the same document.
 import axios from 'axios'
+import { canonicalSalesperson } from './salesBasis.js'
 
 const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
@@ -114,7 +115,7 @@ export function applyDiscount(lines, pct) {
 export async function createCostInvoice({ token, app, est, lines, pct, customerType, technician, by, templates: tpl }) {
   const text = await standardText(app)
   const invLines = lines.map(l => ({
-    ...(l.item_id ? { item_id: l.item_id } : { name: l.name }), description: l.description || '', rate: l.rate, quantity: l.quantity,
+    ...(l.item_id ? { item_id: l.item_id } : {}), name: l.name, description: l.description || '', rate: l.rate, quantity: l.quantity,
     ...(l.discount_pct > 0 ? { discount: `${l.discount_pct}%` } : {}),
   }))
   const body = {
@@ -126,7 +127,7 @@ export async function createCostInvoice({ token, app, est, lines, pct, customerT
     date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), payment_terms: 0, payment_terms_label: 'Due on Receipt',
     discount_type: 'item_level', is_discount_before_tax: true, line_items: invLines,
     notes: text.notes, terms: text.terms,
-    custom_fields: invoiceCustomFields(est.custom_fields), salesperson_name: est.salesperson_name || technician || '',
+    custom_fields: invoiceCustomFields(est.custom_fields), salesperson_name: canonicalSalesperson(est.salesperson_name || technician || ''),
     ...(tpl?.invoice?.id ? { template_id: tpl.invoice.id } : {}),
     // The "Payment Options" button on Kat's invoices = Zoho Payments gateway.
     payment_options: { payment_gateways: [{ gateway_name: 'zoho_payments', configured: true }] },
@@ -164,7 +165,7 @@ export async function createCostInvoice({ token, app, est, lines, pct, customerT
 export async function createSingleInvoice({ token, app, customerId, job, lines, pct, customerType, technician, by, template, taxId, taxPct }) {
   const text = await standardText(app)
   const invLines = lines.map(l => ({
-    ...(l.item_id ? { item_id: l.item_id } : { name: l.name }), description: l.description || '', rate: l.rate, quantity: l.quantity,
+    ...(l.item_id ? { item_id: l.item_id } : {}), name: l.name, description: l.description || '', rate: l.rate, quantity: l.quantity,
     ...(l.discount_pct > 0 ? { discount: `${l.discount_pct}%` } : {}),
     ...(taxId ? { tax_id: taxId } : {}),
   }))
@@ -177,7 +178,7 @@ export async function createSingleInvoice({ token, app, customerId, job, lines, 
     customer_id: customerId, ...(ro ? { reference_number: ro } : {}),
     date: new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }), payment_terms: 0, payment_terms_label: 'Due on Receipt',
     discount_type: 'item_level', is_discount_before_tax: true, line_items: invLines,
-    notes: text.notes, terms: text.terms, custom_fields: cf, salesperson_name: technician || '',
+    notes: text.notes, terms: text.terms, custom_fields: cf, salesperson_name: canonicalSalesperson(technician || ''),
     ...(template?.id ? { template_id: template.id } : {}),
     payment_options: { payment_gateways: [{ gateway_name: 'zoho_payments', configured: true }] },
   }
