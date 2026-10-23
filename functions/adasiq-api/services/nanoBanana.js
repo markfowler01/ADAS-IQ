@@ -52,7 +52,7 @@ Lighting: cinematic low-key. Dark blues, blacks, and gunmetal grays dominate. Su
 
 The TOP portion (upper 45%) of the photo should have darker, less-detailed areas (sky, shadow, out-of-focus background, dark wall, or paper margins) so headline text can be cleanly overlaid later. The MIDDLE 35% can have the main subject. The BOTTOM 10% will be covered by a graphic footer — keep it visually quiet there too.
 
-CRITICAL: NO TEXT, NO LOGOS, NO WATERMARKS, NO GRAPHICS, NO BORDERS. Just the photograph. Do not add any words, captions, headlines, or branding of any kind to the image — text and branding will be added later in code.`
+CRITICAL: NO TEXT, NO LOGOS, NO WATERMARKS, NO GRAPHICS, NO BORDERS. Just the photograph. Keep anything that carries writing OUT of the frame: no computer monitors, phone or tablet screens, documents or paperwork, whiteboards, signs, or license plates. Do not add any words, captions, headlines, or branding of any kind to the image — text and branding will be added later in code.`
 
 const DEFAULT_PHOTO_SUBJECT = 'A dramatic moody close-up of a modern vehicle\'s front-end — headlight cluster, ADAS sensor housing, grille, or windshield camera region. ADAS hardware visible or implied. Automotive editorial photography.'
 
@@ -68,7 +68,14 @@ const DEFAULT_PHOTO_SUBJECT = 'A dramatic moody close-up of a modern vehicle\'s 
  */
 export async function generateTipCardImage(args = {}) {
   const { generateWithoutText } = await import('./aiImageTextGuard.js')
-  return generateWithoutText(() => generateTipCardImageRaw(args), { label: 'tip card photo' })
+  // Story subjects ("RO paperwork", "estimate on a screen") keep pulling in
+  // monitors and documents, and the guard rightly rejects the text on them —
+  // the tip card failed Oct 21-22 when both tries did. The second try swaps
+  // to a text-free vehicle subject, so the card still ships within the 30s
+  // cron budget.
+  return generateWithoutText(
+    attempt => generateTipCardImageRaw(attempt === 1 ? args : { photoSubject: DEFAULT_PHOTO_SUBJECT }),
+    { label: 'tip card photo' })
 }
 
 async function generateTipCardImageRaw({ photoSubject } = {}) {

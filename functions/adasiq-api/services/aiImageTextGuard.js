@@ -45,12 +45,13 @@ Respond ONLY with JSON: {"has_text": true/false, "found": "<the characters you c
 
 /**
  * Run an AI image generator up to `attempts` times until it returns a layer
- * with no stray text. Generator must resolve to {ok, buffer, ...}.
+ * with no stray text. Generator must resolve to {ok, buffer, ...}; it gets the
+ * 1-based attempt number so a retry can switch to a safer subject.
  */
 export async function generateWithoutText(genFn, { attempts = 2, label = 'ai image' } = {}) {
   let last = null
   for (let i = 1; i <= attempts; i++) {
-    const r = await genFn()
+    const r = await genFn(i)
     if (!r?.ok) return r
     const { hasText, found } = await detectAiText(r.buffer)
     if (!hasText) return r

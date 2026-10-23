@@ -3018,6 +3018,7 @@ const DEBUG_FORWARD_WHITELIST = {
   'scheduler-run-raw':   '/api/capture-calc/scheduler/run',
   'li-outreach-run':     '/api/capture-calc/li-outreach/run',
   'partner-series-dry':  '/api/capture-calc/partner-series/run?dry=1',
+  'brew-tips-dry':       '/api/cron/brew-tips/run?dry_run=1',
   'partner-series-preview': '/api/capture-calc/partner-series/preview',
   'weekly-run-cron':     '/api/capture-calc/report/weekly',
   'van-draft-weekly-cron': '/api/capture-calc/from-the-van/draft-weekly?cron=1',
@@ -3088,6 +3089,7 @@ captureCalcRouter.all('/debug/weekly-run',          (req, res) => debugForward(r
 captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['scheduler-run-raw']))
 captureCalcRouter.all('/debug/li-outreach-run',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-outreach-run']))
 captureCalcRouter.all('/debug/partner-series-dry', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['partner-series-dry']))
+captureCalcRouter.all('/debug/brew-tips-dry',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['brew-tips-dry']))
 captureCalcRouter.get('/debug/partner-series-preview', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['partner-series-preview']))
 captureCalcRouter.all('/debug/weekly-run-cron',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run-cron']))
 captureCalcRouter.all('/debug/van-draft-weekly-cron', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['van-draft-weekly-cron']))
@@ -6318,6 +6320,21 @@ captureCalcRouter.post('/debug/brew-li-repost', async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message })
   }
+})
+
+// Tip-card photo test: runs generateTipCardImage (text guard + safe-subject
+// retry) for a given subject and hosts the result. No posting.
+//   GET /debug/tip-photo-test?subject=...
+captureCalcRouter.get('/debug/tip-photo-test', async (req, res) => {
+  try {
+    const { generateTipCardImage } = await import('../services/nanoBanana.js')
+    const t0 = Date.now()
+    const r = await generateTipCardImage({ photoSubject: String(req.query.subject || '') })
+    if (!r.ok) return res.json({ ok: false, error: r.error, ms: Date.now() - t0 })
+    const { uploadImageToCloudinary } = await import('../services/cloudinaryImage.js')
+    const up = await uploadImageToCloudinary({ buffer: r.buffer, publicId: `tip-photo-test-${Date.now()}` })
+    res.json({ ok: true, ms: Date.now() - t0, url: up.url, subject_used: r.prompt?.includes('front-end') ? 'safe fallback' : 'requested' })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
 // List one PT day's Facebook Page posts + Instagram media (ids, permalinks,
