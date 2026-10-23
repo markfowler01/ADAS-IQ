@@ -348,3 +348,25 @@ export async function validateTwilioSignature(req, cfg) {
 
 // Re-export for callers that want everything in one import.
 export { resolvePhoneConfig }
+
+// 📞 "Call ended" signal on the 844 (Mark 2026-10-23 "yes go"). Twilio never told
+// the app when a call on the number ended, so every CallLog row stayed "ringing"
+// with 0 seconds and an unanswered call's pop-up stuck. This sets ONLY the
+// number's StatusCallback → /webhooks/twilio/voice/status. VoiceUrl, SMS and
+// routing are never touched. Runs hourly; a no-op once it's set.
+export async function ensureNumberStatusCallback(cfg, { base, numbers } = {}) {
+  const { accountSid, authToken, tollfree } = pickCfg(cfg)
+  if (!accountSid || !authToken || !base) return { ok: false, why: 'not configured' }
+  const want = `${String(base).replace(/\/$/, '')}/webhooks/twilio/voice/status`
+  const out = []
+  for (const num of (numbers || [tollfree]).filter(Boolean)) {
+    const r = await axios.get(`${TWILIO_BASE}/${accountSid}/IncomingPhoneNumbers.json`, { auth: twilioAuth(accountSid, authToken), params: { PhoneNumber: num }, timeout: 15000, validateStatus: () => true })
+    const pn = (r.data?.incoming_phone_numbers || [])[0]
+    if (!pn) { out.push({ number: num, ok: false, why: `not found (${r.status})` }); continue }
+    if (pn.status_callback === want && String(pn.status_callback_method || '').toUpperCase() === 'POST') { out.push({ number: num, ok: true, already: true }); continue }
+    await twilioPost(accountSid, authToken, `IncomingPhoneNumbers/${pn.sid}`, { StatusCallback: want, StatusCallbackMethod: 'POST' })
+    console.log(`[twilio] status callback set on ${num} (was ${pn.status_callback || 'none'})`)
+    out.push({ number: num, ok: true, set: true, was: pn.status_callback || '' })
+  }
+  return { ok: out.every(x => x.ok), numbers: out }
+}

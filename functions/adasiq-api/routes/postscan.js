@@ -435,6 +435,13 @@ router.post('/run', async (req, res) => {
   } catch (e) {
     console.warn('[postscan] recruit-project piggyback failed (non-fatal):', e.message)
   }
+  // 📞 Keep the 844's "call ended" callback set (Mark 2026-10-23). Only StatusCallback; routing untouched.
+  try {
+    const { resolvePhoneConfig } = await import('../services/phoneConfig.js'); const { ensureNumberStatusCallback } = await import('../services/twilio.js')
+    const base = (process.env.TWILIO_WEBHOOK_BASE_URL || '').replace(/\/$/, '') || 'https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api'
+    const r = await ensureNumberStatusCallback(await resolvePhoneConfig(req), { base })
+    if (r.numbers?.some(n => n.set || !n.ok)) console.log('[postscan] 844 status callback:', JSON.stringify(r))
+  } catch (e) { console.warn('[postscan] status-callback check failed (non-fatal):', e.message) }
   // 🕶 Remote Expert orders from Autel's emails → invoice match (tech bonus only).
   try { const { maybeSyncRemoteExpert } = await import('../services/remoteExpert.js'); const r = await maybeSyncRemoteExpert(req); if (r.new || r.matched) console.log('[postscan] remote expert:', JSON.stringify(r)) }
   catch (e) { console.warn('[postscan] remote-expert piggyback failed (non-fatal):', e.message) }
