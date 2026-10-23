@@ -355,11 +355,11 @@ export { resolvePhoneConfig }
 // number's StatusCallback → /webhooks/twilio/voice/status. VoiceUrl, SMS and
 // routing are never touched. Runs hourly; a no-op once it's set.
 export async function ensureNumberStatusCallback(cfg, { base, numbers } = {}) {
-  const { accountSid, authToken, tollfree } = pickCfg(cfg)
+  const { accountSid, authToken, tollfree, local } = pickCfg(cfg)   // 844 + 425 (Mark 2026-10-23 "ya")
   if (!accountSid || !authToken || !base) return { ok: false, why: 'not configured' }
   const want = `${String(base).replace(/\/$/, '')}/webhooks/twilio/voice/status`
   const out = []
-  for (const num of (numbers || [tollfree]).filter(Boolean)) {
+  for (const num of [...new Set((numbers || [tollfree, local]).filter(Boolean))]) {
     const r = await axios.get(`${TWILIO_BASE}/${accountSid}/IncomingPhoneNumbers.json`, { auth: twilioAuth(accountSid, authToken), params: { PhoneNumber: num }, timeout: 15000, validateStatus: () => true })
     const pn = (r.data?.incoming_phone_numbers || [])[0]
     if (!pn) { out.push({ number: num, ok: false, why: `not found (${r.status})` }); continue }
