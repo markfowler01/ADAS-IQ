@@ -66,7 +66,12 @@ export async function clearLive(req, sid) {
 export async function listLive(req) {
   const idx = await readIndex(req)
   const rows = await Promise.all(idx.map(sid => get(req, KEY(sid))))
-  const live = rows.filter(r => r && !r.ended && Date.now() - new Date(r.answered_at || r.updated_at).getTime() < STALE_MS)
+  // A ring nobody answered is over in under 2 minutes (cascade → voicemail). When Twilio's
+  // hang-up callback never arrives, the "ringing" row used to stick for hours and pop the
+  // caller card every time the app opened (Jamie's Transmission, 2026-10-22).
+  const RING_STALE_MS = 2 * 60 * 1000
+  const live = rows.filter(r => r && !r.ended && Date.now() - new Date(r.answered_at || r.updated_at).getTime() < STALE_MS
+    && !(r.status === 'ringing' && Date.now() - new Date(r.updated_at || r.answered_at).getTime() > RING_STALE_MS))
   if (live.length !== idx.length) { try { await put(req, INDEX, live.map(r => r.sid)) } catch { /* fine */ } }
   return live.sort((a, b) => String(b.answered_at).localeCompare(String(a.answered_at)))
 }
@@ -74,9 +79,12 @@ export async function listLive(req) {
 // Who is this app user in cascade terms? Owner = mark; otherwise by first name.
 export function cascadeKeyFor(user) {
   const email = String(user?.email || '').toLowerCase(), name = String(user?.techName || user?.name || '').toLowerCase()
-  if (user?.role === 'owner' || email.startsWith('mark@') || email.startsWith('mf@') || /\bmark\b/.test(name)) return 'mark'
-  if (/\bkat\b|katherine|kathleen|belmonte/.test(name) || email.startsWith('kat')) return 'kat'
+  // Kat and Jayden first (Mark 2026-10-22): Kat has the OWNER role, so "owner = Mark"
+  // made her phone think every call of Mark's was hers — it popped the full-screen
+  // "Transfer to Kat" sheet on her phone the moment Mark answered a call she sent him.
+  if (/\bkat\b|katherine|kathleen|belmonte/.test(name) || email.startsWith('kat') || email.startsWith('k.belmonte')) return 'kat'
   if (/jayden|jaden|goshorn/.test(name) || email.startsWith('jayden') || email.startsWith('jaden')) return 'jayden'
+  if (email.startsWith('mark@') || email.startsWith('mf@') || email === 'mfowler4456@gmail.com' || /\bmark\b/.test(name) || user?.role === 'owner') return 'mark'
   return ''
 }
 export const KEY_NAMES = { mark: 'Mark', kat: 'Kat', jayden: 'Jayden', desk: 'the desk', voicemail: 'Voicemail' }

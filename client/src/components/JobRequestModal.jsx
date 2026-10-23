@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { useDispatchBoard } from '../lib/techColumns.js'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
 
 const ORANGE = '#CD4419'
@@ -8,8 +9,9 @@ const ORANGE = '#CD4419'
 // that are in the requested job to be in the requested quote") — one
 // form, two tags. Quote mode adds the insurer and submits request_type
 // 'quote' so Kat's alert still reads 📝 Quote Requested.
-export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode = 'job' }) {
+export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode = 'job', defaultShopName = '' }) {
   const isQuote = mode === 'quote'
+  const { techs } = useDispatchBoard()
   const [customers,    setCustomers]    = useState([])
   const [custLoading,  setCustLoading]  = useState(true)
   const [custSearch,   setCustSearch]   = useState('')
@@ -64,7 +66,16 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
   useEffect(() => {
     apiFetch(`${API_BASE}/api/customers`)
       .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setCustomers(data) })
+      .then(data => {
+        if (!Array.isArray(data)) return
+        setCustomers(data)
+        // 📇 Opened from the caller card: the shop on the phone is already picked.
+        if (defaultShopName) {
+          const want = defaultShopName.trim().toLowerCase()
+          const hit = data.find(c => String(c.contact_name || '').trim().toLowerCase() === want)
+          setSelected(prev => prev || hit || { contact_id: '', contact_name: defaultShopName.trim() })
+        }
+      })
       .catch(() => {})
       .finally(() => setCustLoading(false))
   }, [])
@@ -332,11 +343,13 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
                 <input value={newShop.phone} onChange={e => setNewShop(x => ({ ...x, phone: e.target.value }))} placeholder="Their phone" inputMode="tel" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
                 <input value={newShop.email} onChange={e => setNewShop(x => ({ ...x, email: e.target.value }))} placeholder="Email for invoices" inputMode="email" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
                 <input value={newShop.address} onChange={e => setNewShop(x => ({ ...x, address: e.target.value }))} placeholder="Address (street, city, WA zip)" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} />
+                <input value={newShop.wifi_name} onChange={e => setNewShop(x => ({ ...x, wifi_name: e.target.value }))} placeholder="WiFi name" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} autoComplete="off" />
+                <input value={newShop.wifi_password} onChange={e => setNewShop(x => ({ ...x, wifi_password: e.target.value }))} placeholder="WiFi password" className="text-sm rounded-lg px-3 py-2" style={{ border: '1.5px solid #fdba74', outline: 'none', backgroundColor: 'white' }} autoComplete="off" />
               </div>
               <div className="text-[11px] font-bold mb-1" style={{ color: '#9a3412' }}>What kind of shop?</div>
               <div className="flex gap-1.5 flex-wrap mb-2">{[['body_shop', 'Collision'], ['repair_shop', 'Auto repair'], ['dealer', 'Dealer']].map(([k, l]) => <button key={k} type="button" onClick={() => setNewShop(x => ({ ...x, customer_type: k, pay_mode: k === 'body_shop' ? 'net_terms' : 'on_site' }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={newShop.customer_type === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}</div>
               <div className="text-[11px] font-bold mb-1" style={{ color: '#9a3412' }}>How do they pay?</div>
-              <div className="flex gap-1.5 flex-wrap mb-3">{[['on_site', '🚐 On site'], ['net_terms', '✉️ Net terms'], ['either', 'Either']].map(([k, l]) => <button key={k} type="button" onClick={() => setNewShop(x => ({ ...x, pay_mode: k }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={newShop.pay_mode === k ? { backgroundColor: '#0e7490', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}</div>
+              <div className="flex gap-1.5 flex-wrap mb-3">{[['on_site', '🚐 On site'], ['net_terms', '✉️ Net terms'], ['either', 'Either']].map(([k, l]) => <button key={k} type="button" onClick={() => setNewShop(x => ({ ...x, pay_mode: k }))} className="text-xs font-bold rounded-full px-3 py-1.5" style={newShop.pay_mode === k ? { backgroundColor: '#1F8B8B', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{l}</button>)}</div>
               <button type="button" onClick={createShop} disabled={newShopBusy || !newShop.shop_name.trim()} className="w-full rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: ORANGE, opacity: newShopBusy || !newShop.shop_name.trim() ? .5 : 1 }}>{newShopBusy ? 'Creating…' : '➕ Create the shop and use it'}</button>
             </div>
           )}
@@ -389,7 +402,7 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
                     ) : filteredCustomers.length === 0 ? (
                       <p className="text-sm px-4 py-3" style={{ color: '#bbb' }}>No matches</p>
                     ) : (<>
-                    <button type="button" onMouseDown={() => { setNewShop({ shop_name: custSearch.trim(), contact_name: '', phone: '', email: '', address: '', customer_type: 'repair_shop', pay_mode: 'on_site' }); setCustDropOpen(false) }}
+                    <button type="button" onMouseDown={() => { setNewShop({ shop_name: custSearch.trim(), contact_name: '', phone: '', email: '', address: '', wifi_name: '', wifi_password: '', customer_type: 'repair_shop', pay_mode: 'on_site' }); setCustDropOpen(false) }}
                       className="w-full text-left px-4 py-2.5 text-sm font-bold" style={{ color: ORANGE, backgroundColor: '#fff5f0', borderBottom: '1px solid #fde4d8' }}>
                       ➕ New shop{custSearch.trim() ? ` — "${custSearch.trim()}"` : ''}
                     </button>
@@ -420,7 +433,7 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
           <div>
             <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Technician</label>
             <div className="flex gap-2">
-              {['Mark', 'Jayden'].map(name => (
+              {techs.map(t => t.name).map(name => (
                 <button
                   key={name}
                   type="button"
