@@ -1687,7 +1687,11 @@ captureCalcRouter.all('/meta/draft-day', heartbeatAttempt('capture_meta'), requi
     const todayLive = existing.filter(d => {
       if (!['facebook_page', 'instagram_business', 'linkedin_personal'].includes(d.channel)) return false
       if (!['approved', 'pending', 'published'].includes(d.status)) return false
-      if (d.category === 'van_field') return false
+      // Count ONLY this drafter's own posts (meta.unified). Other campaigns on
+      // the same channels (van_field, estimator_series, hiring, partner_series…)
+      // used to count as "today's educational draft" and silently skipped this
+      // drafter every day from 2026-09-29 to 2026-10-23.
+      if (!d.meta?.unified) return false
       return metaPtDay(d.scheduled_for) === todayDateStr
     })
     const channelsAlreadyDone = new Set(todayLive.map(d => d.channel))
