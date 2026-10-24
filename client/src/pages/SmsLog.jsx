@@ -11,6 +11,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import CallerDrawer from '../components/CallerDrawer.jsx'
 import { getPushState, enablePush, disablePush } from '../utils/push.js'
 import Navbar from '../components/Navbar.jsx'
 
@@ -38,6 +39,7 @@ function fmtPhone(input) {
 // and /api/voicemails. All three share the same top header (from-number
 // toggle + New button).
 export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
+  const [callerCard, setCallerCard] = useState('')   // phone whose 📇 card is open
   // 'messages' | 'calls' | 'voicemails' — persisted per-browser.
   const [tab, setTab] = useState(() => {
     try { return localStorage.getItem('aa_phone_tab') || 'messages' } catch { return 'messages' }
@@ -51,6 +53,8 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
 
   const [threads,       setThreads]       = useState([])
   const [calls,         setCalls]         = useState([])
+  const [callSources,   setCallSources]   = useState({})   // call_sid → { source } ("how'd you hear about us")
+  const [sourceOptions, setSourceOptions] = useState([])
   const [voicemails,    setVoicemails]    = useState([])
   const [loading,       setLoading]       = useState(true)
   const [err,           setErr]           = useState('')
@@ -118,6 +122,25 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
       const j = await r.json()
       if (r.ok) setCalls(j.calls || [])
     } catch { /* silent — non-critical */ }
+    try {
+      const r = await apiFetch(`${API_BASE}/api/call-sources?months=3`)
+      const j = await r.json()
+      if (r.ok) { setCallSources(j.sources || {}); setSourceOptions(j.options || []) }
+    } catch { /* silent — tags are optional */ }
+  }, [])
+
+  const tagCallSource = useCallback(async (call, source) => {
+    setCallSources(prev => {
+      const next = { ...prev }
+      if (source) next[call.call_sid] = { source }; else delete next[call.call_sid]
+      return next
+    })
+    try {
+      await apiFetch(`${API_BASE}/api/call-sources/${encodeURIComponent(call.call_sid)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source, timestamp: call.timestamp }),
+      })
+    } catch { /* optimistic; the next load shows the saved state */ }
   }, [])
 
   const loadVoicemails = useCallback(async () => {
@@ -187,6 +210,9 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
         sessionStorage.removeItem('aa_sms_deeplink')
         setTab('messages')
         setSelectedPhone(t)
+        // Came in from a push (inbound text) or the caller card → pop the card too, unless the card sent us here.
+        if (!sessionStorage.getItem('adas_skip_caller_card') && !String(t).startsWith('group:')) setCallerCard(t)
+        sessionStorage.removeItem('adas_skip_caller_card')
       }
     } catch { /* non-critical */ }
   }, [])
@@ -289,6 +315,8 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
+      {/* 📇 Caller card for the open thread (Mark 2026-10-05: "when customers text I want their CRM to pop up") */}
+      {callerCard && <CallerDrawer phone={callerCard} user={user} context="Text" onNavigate={onNavigate} onClose={() => setCallerCard('')} />}
 
       {/* Header. Hidden on phones while a conversation is open — the
           thread needs every pixel so the reply box stays on screen. */}
@@ -335,7 +363,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
             <button
               onClick={() => setShowDial(true)}
               className="text-xs font-bold rounded-lg px-3 py-1.5 text-white"
-              style={{ backgroundColor: '#0e7490' }}
+              style={{ backgroundColor: '#1F8B8B' }}
               title="Click-to-call — Twilio rings your cell then bridges you"
             >📞 Dial</button>
             <button
@@ -386,6 +414,21 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
 
       {tab === 'calls' && (
         <div className="rounded-2xl bg-white p-2" style={{ border: '1px solid #ebebeb' }}>
+          {(() => {
+            const month = new Date().toISOString().slice(0, 7)
+            const counts = {}
+            for (const c of calls) {
+              const t = callSources[c.call_sid]?.source
+              if (t && String(c.timestamp || '').slice(0, 7) === month) counts[t] = (counts[t] || 0) + 1
+            }
+            const parts = Object.entries(counts).sort((a, b) => b[1] - a[1])
+            return parts.length ? (
+              <div className="text-xs px-3 pt-2 pb-1" style={{ color: '#666' }}>
+                <span className="font-semibold" style={{ color: '#1a1a1a' }}>This month's callers heard about us from:</span>{' '}
+                {parts.map(([k, v]) => `${k} ${v}`).join(' · ')}
+              </div>
+            ) : null
+          })()}
           {calls.length === 0 ? (
             <div className="text-sm p-4" style={{ color: '#888' }}>No calls logged yet.</div>
           ) : (
@@ -414,13 +457,23 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                         {c.duration_seconds ? ` · ${c.duration_seconds}s` : ''}
                         {status && ` · ${status}`}
                       </div>
+                      {isInbound && sourceOptions.length > 0 && (
+                        <select value={callSources[c.call_sid]?.source || ''}
+                          onChange={e => tagCallSource(c, e.target.value)}
+                          className="text-[11px] mt-1 rounded-md px-1.5 py-0.5 bg-white"
+                          style={{ border: '1px solid #e0dbd6', color: callSources[c.call_sid] ? '#1a1a1a' : '#999' }}
+                          aria-label="How did they hear about us">
+                          <option value="">How'd they hear about us?</option>
+                          {sourceOptions.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      )}
                     </div>
                     <div className="flex gap-1.5 flex-shrink-0 flex-wrap justify-end">
                       {c.recording_url && (
                         <a href={c.recording_url.includes('?') ? c.recording_url : `${c.recording_url}.mp3`}
                           target="_blank" rel="noopener noreferrer"
                           className="text-xs font-semibold px-2.5 py-1 rounded-lg"
-                          style={{ color: '#7e22ce', border: '1px solid #7e22ce' }}
+                          style={{ color: '#0A0A0A', border: '1px solid #0A0A0A' }}
                           title={`Play recording (${c.recording_duration_sec || '?'}s)`}
                         >▶ Play</a>
                       )}
@@ -430,7 +483,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                       >📞 Call</a>
                       <button onClick={() => { setTab('messages'); setSelectedPhone(other); loadConversation(other) }}
                         className="text-xs font-semibold px-2.5 py-1 rounded-lg"
-                        style={{ color: '#0e7490', border: '1px solid #0e7490' }}
+                        style={{ color: '#1F8B8B', border: '1px solid #1F8B8B' }}
                       >💬 Text</button>
                     </div>
                   </li>
@@ -489,7 +542,7 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                       >📞 Call back</a>
                       <button onClick={() => { setTab('messages'); setSelectedPhone(v.from_number); loadConversation(v.from_number) }}
                         className="text-xs font-semibold px-2.5 py-1 rounded-lg"
-                        style={{ color: '#0e7490', border: '1px solid #0e7490' }}
+                        style={{ color: '#1F8B8B', border: '1px solid #1F8B8B' }}
                       >💬 Text</button>
                     </div>
                   </li>
@@ -586,11 +639,17 @@ export default function SmsLog({ user, onLogout, currentScreen, onNavigate }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  {!isGroupThread && (
+                    <button onClick={() => setCallerCard(selectedPhone)}
+                      className="text-xs font-semibold px-2.5 py-1 rounded-lg"
+                      style={{ color: '#0A0A0A', border: '1px solid #0A0A0A' }}
+                      title="Caller card — shop, jobs, AR, notes">📇 Card</button>
+                  )}
                   {convoContact.shop_id && onNavigate && (
                     <button
                       onClick={() => onNavigate('crm')}
                       className="text-xs font-semibold px-2.5 py-1 rounded-lg"
-                      style={{ color: '#0e7490', border: '1px solid #0e7490' }}
+                      style={{ color: '#1F8B8B', border: '1px solid #1F8B8B' }}
                       title={`Open CRM (shop: ${convoContact.shop_name})`}
                     >📇 CRM</button>
                   )}
@@ -878,7 +937,7 @@ function DialModal({ fromLine, setFromLine, onClose, showToast, onDialed }) {
             onClick={dial}
             disabled={dialing || !to.trim()}
             className="text-sm font-bold rounded-lg px-4 py-2 text-white"
-            style={{ backgroundColor: dialing || !to.trim() ? '#e5e7eb' : '#0e7490' }}
+            style={{ backgroundColor: dialing || !to.trim() ? '#e5e7eb' : '#1F8B8B' }}
           >
             {dialing ? 'Connecting…' : '📞 Call'}
           </button>
@@ -973,7 +1032,7 @@ function PhoneSetupModal({ onClose, showToast }) {
                     {e.label}{e.required && <span style={{ color: '#dc2626' }}> *</span>}
                   </label>
                   <span className="text-[10px] font-semibold uppercase tracking-wider"
-                    style={{ color: e.source === 'unset' ? '#b45309' : e.source === 'env' ? '#0e7490' : '#15803d' }}>
+                    style={{ color: e.source === 'unset' ? '#b45309' : e.source === 'env' ? '#1F8B8B' : '#15803d' }}>
                     {e.source === 'env' ? '● ENV LOCKED' : e.source === 'cache' ? '● SAVED' : '○ UNSET'}
                   </span>
                 </div>
