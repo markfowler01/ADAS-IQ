@@ -24,7 +24,7 @@ async function write(req, key, val) {
   try { await s.update(key, payload) } catch { await s.put(key, payload, 48) }
 }
 
-const KEY = 'sales_rollup_v2_cash'
+
 const TTL_MS = 6 * 60 * 60 * 1000
 
 // Money that is actually money. A draft is a document, not a sale, and a void
@@ -34,6 +34,44 @@ const COUNTED = new Set(['sent', 'overdue', 'paid', 'partially_paid', 'viewed', 
 // 📊 Invoiced sales after discount by invoice date (Mark 2026-10-22: "everything
 // invoiced sales after discount"). Same numbers as the GET SOME meeting.
 export async function fetchYtdByDay(req, opts = {}) { return fetchCostByDay(req, opts) }
+
+// Books invoice `total` = what the shop was billed after the partnership
+// discount (the discount sits on the lines). Drafts and voids never count.
+// (Restored 2026-10-24: the 10-22 switch deleted this by mistake, so the
+// meeting, brief and Ada strip read $0 for two days.)
+const COST_KEY = 'sales_rollup_v3_cost'
+export async function fetchCostByDay(req, { year, force = false } = {}) {
+  if (!force) {
+    const hit = await read(req, COST_KEY)
+    if (hit?.year === year && Date.now() - new Date(hit.at).getTime() < TTL_MS) return { ...hit, cached: true }
+  }
+  const token = await getAccessToken()
+  const byDay = {}
+  let count = 0
+  let truncated = false
+  for (let page = 1; page <= 12; page++) {
+    const r = await axios.get('https://www.zohoapis.com/books/v3/invoices', {
+      headers: { Authorization: `Zoho-oauthtoken ${token}` },
+      params: { organization_id: process.env.ZOHO_ORGANIZATION_ID, per_page: 200, page, sort_column: 'date', sort_order: 'A', date_start: `${year}-01-01`, date_end: `${year}-12-31` },
+      timeout: 20000, validateStatus: s => s < 500,
+    })
+    const batch = r.data?.invoices || []
+    for (const i of batch) {
+      const st = String(i.status || '').toLowerCase()
+      if (!COUNTED.has(st)) continue
+      const d = String(i.date || '').slice(0, 10)
+      if (!d || !d.startsWith(String(year))) continue
+      byDay[d] = (byDay[d] || 0) + (parseFloat(i.total) || 0)
+      count++
+    }
+    if (batch.length < 200) break
+    if (page === 12) truncated = true
+  }
+  // An empty year that should have sales is a failure, not a fact: don't cache it.
+  const rec = { year, byDay, invoices: count, truncated, at: new Date().toISOString() }
+  if (count > 0) await write(req, COST_KEY, rec).catch(() => {})
+  return { ...rec, cached: false }
+}
 
 export function sumRange(byDay, startISO, endISO) {
   let t = 0
