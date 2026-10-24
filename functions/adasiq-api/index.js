@@ -35,6 +35,7 @@ import invoiceRouter from './routes/invoice.js'
 import customersRouter from './routes/customers.js'
 import salespersonsRouter from './routes/salespersons.js'
 import techStatsRouter from './routes/techStats.js'
+import shopRhythmRouter from './routes/shopRhythm.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
 import salesStopsRouter from './routes/salesStops.js'
 import { ownerRouter as personalTextsOwnerRouter, bridgeRouter as personalTextsBridgeRouter } from './routes/personalTexts.js'
@@ -308,6 +309,7 @@ app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
 app.use('/api/salespersons', requireAuth, salespersonsRouter)
 app.use('/api/tech-stats', requireAuth, techStatsRouter)
+app.use('/api/shop-rhythm', requireAuth, shopRhythmRouter)   // 📅 call days + 🍖 BBQ on the CRM card
 app.use('/api/cron/daily-greeting', dailyGreetingRouter)
 // Phone-system self-test cron. Every 5 minutes hits the voice + SMS
 // webhooks with a synthetic Twilio payload; if either 5xx's, 403's, or
@@ -621,7 +623,7 @@ app.post('/api/cron/stuck-jobs', async (req, res) => {
 
     const stuck = []
     for (const job of jobs) {
-      const threshold = THRESHOLD_DAYS[job.status]
+      const threshold = THRESHOLD_DAYS[job.status] || (String(job.status || '').startsWith('dispatched_') ? 3 : 0)
       if (!threshold) continue
       const createdAt = new Date(job.created_at || 0).getTime()
       if (!createdAt) continue

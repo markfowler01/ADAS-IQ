@@ -556,6 +556,15 @@ router.get('/huddle.png', requireCronSecret, async (req, res) => {
   try { const M = await import('../services/morningHuddle.js'); const data = await M.buildHuddleData(req, req.query.date ? { dateStr: String(req.query.date) } : {}); const png = await M.renderHuddlePng(req, data); res.type('image/png').send(png) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 📅🍖 Shop rhythm + BBQ check by hand. ?dry=1 = report only (no calendar, no texts, no state).
+router.post('/shop-rhythm/run', requireCronSecret, async (req, res) => {
+  try {
+    const M = await import('../services/shopRhythm.js')
+    const built = await M.buildShopRhythm(req)
+    const bbq = await M.runBbq(req, built, { dry: String(req.query.dry || '') === '1' })
+    res.json({ shops: Object.keys(built.rec.shops).length, invoices: built.rec.invoices, unmatched: built.rec.unmatched, unmatchedNames: built.rec.unmatchedNames, sample: Object.values(built.rec.shops).sort((a, b) => b.n - a.n).slice(0, 12), bbq })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.get('/huddle/data', requireCronSecret, async (req, res) => {
   try { const M = await import('../services/morningHuddle.js'); res.json(await M.buildHuddleData(req, req.query.date ? { dateStr: String(req.query.date) } : {})) }
   catch (e) { res.status(500).json({ error: e.message }) }

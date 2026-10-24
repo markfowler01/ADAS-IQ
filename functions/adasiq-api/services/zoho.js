@@ -1459,6 +1459,7 @@ export async function listInvoicesForDateRange(fromISO, toISO) {
         total:            Number(inv.total || 0) || 0,
         balance:          Number(inv.balance || 0) || 0,
         date:             inv.date || '',
+        reference_number: inv.reference_number || '',
         status,
       })
     }

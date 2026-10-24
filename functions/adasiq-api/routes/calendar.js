@@ -788,4 +788,32 @@ export async function calDayBusy(date) {
   return (resp.data.events || []).filter(e => !e.isallday).map(e => ({ start: parseZohoTime(e.dateandtime?.start || ''), end: parseZohoTime(e.dateandtime?.end || ''), title: e.title }))
 }
 
+// ── For other services (🍖 shop BBQ, 2026-10-24) ──
+function pacificOffset(dateStr) {
+  const y = parseInt(dateStr.slice(0, 4))
+  const t = new Date(dateStr + 'T12:00:00')
+  return t >= getNthSunday(y, 2, 2) && t < getNthSunday(y, 10, 1) ? 7 : 8
+}
+/** Timed events on one Pacific day: [{ title, start, end }] with start/end as Zoho's yyyyMMddTHHmmssZ strings. */
+export async function calendarEventsOn(dateStr) {
+  const token = await getAccessToken()
+  const off = String(pacificOffset(dateStr)).padStart(2, '0')
+  const next = new Date(dateStr + 'T00:00:00Z'); next.setUTCDate(next.getUTCDate() + 1)
+  const range = JSON.stringify({ start: `${dateStr.replace(/-/g, '')}T${off}0000Z`, end: `${next.toISOString().slice(0, 10).replace(/-/g, '')}T${off}0000Z` })
+  const resp = await axios.get(`${ZOHO_CALENDAR_API}/calendars/${CALENDAR_UID}/events`, { headers: { Authorization: `Zoho-oauthtoken ${token}` }, params: { range }, timeout: 15000 })
+  return (resp.data.events || []).filter(e => !e.isallday).map(e => ({ title: e.title || '', start: e.dateandtime?.start || '', end: e.dateandtime?.end || '' }))
+}
+/** Create a timed event on Mark's calendar. startTime/endTime 'HH:MM' Pacific. */
+export async function createCalendarEvent({ title, date, startTime, endTime, location = '', description = '' }) {
+  const token = await getAccessToken()
+  const off = `0${pacificOffset(date)}00`
+  const d = date.replace(/-/g, '')
+  const eventData = { title, dateandtime: { start: `${d}T${startTime.replace(':', '')}00-${off}`, end: `${d}T${endTime.replace(':', '')}00-${off}`, timezone: 'America/Los_Angeles' } }
+  if (location) eventData.location = location
+  if (description) eventData.description = description
+  const resp = await axios.post(`${ZOHO_CALENDAR_API}/calendars/${CALENDAR_UID}/events`, `eventdata=${encodeURIComponent(JSON.stringify(eventData))}`,
+    { headers: { Authorization: `Zoho-oauthtoken ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 })
+  return resp.data.events?.[0]?.uid || ''
+}
+
 export default router

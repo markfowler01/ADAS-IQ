@@ -161,10 +161,13 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   }
   const schedule = Object.entries(byTech).sort((a, b) => (a[0] === 'Unassigned') - (b[0] === 'Unassigned') || a[0].localeCompare(b[0])).map(([tech, list]) => ({ tech, jobs: list }))
 
+  // 📅 Shops that usually call on this weekday (services/shopRhythm.js, Mark 2026-10-24: "better predict my weeks").
+  let calls = { label: '', shops: [] }
+  try { const R = await import('./shopRhythm.js'); calls = R.usuallyCallOn(await R.readRhythm(req), dateStr, 4) } catch (e) { console.warn('[huddle] rhythm:', e.message) }
   const mtdNet = Math.round(mtd - reMtd), ytdNet = Math.round(ytd - reYtd)
   const growthNet = lastYtd > 0 ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
   const perDayNet = bizLeft > 0 ? Math.max(0, goal - mtdNet) / bizLeft : 0
-  return { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, line: growthLine(dateStr) }
+  return { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
 }
 
 // ── render ───────────────────────────────────────────────────────────────────
@@ -261,7 +264,8 @@ export async function renderHuddlePng(req, data) {
   }
   const rowH = r => r.h ? 40 : r.more ? 34 : 62
   const listH = rows.reduce((t, r) => t + rowH(r), 0)
-  c3.h = Math.max(222, 130 + (rows.length ? listH + 10 : 80))
+  const callsTxt = d.calls?.shops?.length ? `Usually call on ${d.calls.label}: ${d.calls.shops.slice(0, 3).map(x => clip(String(x.name).replace(/\s+(collision repair|body shop|auto body|inc|llc)\b.*$/i, '').trim(), 20)).join(' · ')}` : ''
+  c3.h = Math.max(222, 130 + (rows.length ? listH + 10 : 80)) + (callsTxt ? 46 : 0)
   let yy = c3.y + 128, list = ''
   if (!rows.length) list = `${ICON.clip(c3.x + 30, c3.y + 128, 30)}<text x="${c3.x + 76}" y="${c3.y + 152}" class="body2">Nothing on the board yet for today.</text><text x="${c3.x + 76}" y="${c3.y + 184}" class="small2" style="font-style:italic">Open jobs land here as they are scheduled.</text>`
   else for (const r of rows) {
@@ -270,6 +274,7 @@ export async function renderHuddlePng(req, data) {
     else { list += `<text x="${c3.x + 40}" y="${yy + 26}" class="body2">${esc(clip(r.job.shop, 34))}</text><text x="${c3.x + 40}" y="${yy + 52}" class="small2">${esc(clip(r.job.vehicle, 40))}${r.job.cals ? ` · ${r.job.cals} cal${r.job.cals === 1 ? '' : 's'}` : ''}${r.job.region ? ` · ${esc(r.job.region)}` : ''}</text>` }
     yy += rowH(r)
   }
+  if (callsTxt) list += `<rect x="${c3.x + 30}" y="${c3.y + c3.h - 52}" width="${c3.w - 60}" height="1.5" fill="rgba(255,255,255,0.18)"/><text x="${c3.x + 30}" y="${c3.y + c3.h - 20}" class="small2" style="fill:white">${esc(clip(callsTxt, 78))}</text>`
   const today = `${card(c3.x, c3.y, c3.w, c3.h)}${ICON.cal(c3.x + 30, c3.y + 26)}<text x="${c3.x + 84}" y="${c3.y + 48}" class="ch" style="font-size:30px;fill:${ORANGE}">TODAY</text><text x="${c3.x + 84}" y="${c3.y + 76}" class="ch" style="font-size:19px">${d.jobsToday} ${d.jobsToday === 1 ? 'CAR' : 'CARS'} ON THE BOARD</text><text x="${c3.x + 84}" y="${c3.y + 118}" class="sched">The schedule</text>${list}`
   // ── Card 4: JOBS DONE (per-day bars) — below TODAY when there is room ──────
   const c4 = { x: 1012, y: c3.y + c3.h + 18, w: 856, h: 214 }
@@ -413,6 +418,7 @@ export async function sendHuddle(req, { force = false, to = MARK_TO, cc = MARK_C
       <p style="margin:0 0 4px"><b>${esc(data.monthLabel)}:</b> ${fmtUSD(data.mtd)} of ${fmtUSD(data.goal)} (${data.pct}%) · ${data.ahead >= 0 ? 'ahead' : 'behind'} pace by ${fmtUSD(Math.abs(data.ahead))} · ${data.bizLeft} working days left · ${fmtUSD(data.perDayNeeded)}/day closes it.</p>
       <table style="border-collapse:collapse;margin:8px 0 14px">${rows}</table>
       <p style="margin:0 0 4px"><b>Today · ${data.jobsToday} on the board</b></p>${sched}
+      ${data.calls?.shops?.length ? `<p style="margin:10px 0 0"><b>📅 Usually call on ${esc(data.calls.label)}:</b> ${data.calls.shops.map(x => `${esc(x.name)} (${x.pct}%)`).join(' · ')}</p>` : ''}
       <p style="margin:16px 0 0;color:#666;font-size:12px">${esc(data.line)}<br/>Set individual goals: AppConfig <code>huddle_tech_goals</code> (e.g. {"Jayden": 20000}). Company goal: Ada's pace goal.</p>
     </div>`
     await sendMail(token, accountId, { to, cc, subject: `🔥 GET SOME! Meeting · ${data.weekday} ${data.dateLabel} · ${fmtUSD(data.mtd)} of ${fmtUSD(data.goal)}`, body, attachments })
@@ -469,6 +475,7 @@ export async function postHuddle(req, { force = false } = {}) {
       `🔥 *GET SOME! Meeting — 8:00* · ${data.weekday} ${data.dateLabel}`,
       `${data.monthLabel}: *${fmtUSD(data.mtd)}* of ${fmtUSD(data.goal)} (${data.pct}%) · ${data.ahead >= 0 ? 'ahead' : 'behind'} pace by ${fmtUSD(Math.abs(data.ahead))} · ${data.jobsToday} on the board today`,
       `📊 Today's board: ${img.url}`,
+      data.calls?.shops?.length ? `📅 Usually call on ${data.calls.label}: ${data.calls.shops.map(x => `${x.name} (${x.pct}%)`).join(' · ')}` : '',
       cfg.meeting_link ? `📹 Join: ${cfg.meeting_link}` : '',
       data.line,
     ].filter(Boolean)

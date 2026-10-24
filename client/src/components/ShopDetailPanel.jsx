@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { WifiCopy } from './MobileJobCard.jsx'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import TextAsMarkModal from './TextAsMarkModal.jsx'
-import Big3Rules, { DrpRules, BooksLink, EstimateFirstToggle, FullServiceRules } from './books/Big3Rules.jsx'
+import Big3Rules, { DrpRules, BooksLink, EstimateFirstToggle, FullServiceRules, AlignmentInvoiceToggle } from './books/Big3Rules.jsx'
 import IntegrationsPanel from './books/Integrations.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import {
@@ -10,6 +11,7 @@ import {
 } from './crmConstants.js'
 import CRMTemplatesModal from './CRMTemplatesModal.jsx'
 import BillingRulesEditor from './books/BillingRulesEditor.jsx'
+import PortalUsersTab from './crm/PortalUsersTab.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -221,7 +223,7 @@ function DeniedSection({ form, setField, backup = false }) {
 }
 
 // ─── Info Tab ─────────────────────────────────────────────────────────────────
-function InfoTab({ form, setForm }) {
+function InfoTab({ form, setForm, wifi, setWifi, wifiTouched, setDirty }) {
   function setField(k, v) { setForm(f => ({ ...f, [k]: v })) }
   const isLost   = form.pipeline_stage === 'lost'
   const isDenied = form.pipeline_stage === 'denied' || form.pipeline_stage === 'active2'   // both 'own ADAS guy' columns tag who they use
@@ -289,6 +291,23 @@ function InfoTab({ form, setForm }) {
           style={{ borderColor: '#e0dbd6' }}
           value={form.address || ''} onChange={e => setField('address', e.target.value)}
           placeholder="123 Main St, Dallas TX" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">WiFi name</label>
+          <input className="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none"
+            style={{ borderColor: '#e0dbd6' }} autoComplete="off"
+            value={wifi?.name || ''} onChange={e => { wifiTouched.current = true; setWifi(w => ({ ...w, name: e.target.value })); setDirty(true) }}
+            placeholder="Shop network" />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">WiFi password</label>
+          <input className="w-full border rounded-xl px-3 py-2.5 text-sm focus:outline-none"
+            style={{ borderColor: '#e0dbd6' }} autoComplete="off"
+            value={wifi?.password || ''} onChange={e => { wifiTouched.current = true; setWifi(w => ({ ...w, password: e.target.value })); setDirty(true) }}
+            placeholder="Password" />
+        </div>
       </div>
 
       {/* Region + Assigned To */}
@@ -365,16 +384,16 @@ function InfoTab({ form, setForm }) {
           onClick={() => setField('kinetic_in_bed', !form.kinetic_in_bed)}
           className="flex items-center gap-2 w-full text-left px-3 py-2 rounded-xl border transition-all"
           style={form.kinetic_in_bed
-            ? { backgroundColor: '#faf5ff', borderColor: '#7c3aed', color: '#7c3aed' }
+            ? { backgroundColor: '#f5e8e3', borderColor: '#CD4419', color: '#CD4419' }
             : { backgroundColor: '#fff', borderColor: '#e0dbd6', color: '#888' }}>
           <div className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-white text-xs font-bold"
-            style={{ backgroundColor: form.kinetic_in_bed ? '#7c3aed' : '#e0dbd6' }}>
+            style={{ backgroundColor: form.kinetic_in_bed ? '#CD4419' : '#e0dbd6' }}>
             {form.kinetic_in_bed ? '✓' : ''}
           </div>
           <span className="text-sm font-medium">Kinetic in Bed</span>
           {form.kinetic_in_bed && (
             <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-semibold"
-              style={{ backgroundColor: '#f3e8ff', color: '#7c3aed' }}>YES</span>
+              style={{ backgroundColor: '#f5e8e3', color: '#CD4419' }}>YES</span>
           )}
         </button>
       </div>
@@ -499,7 +518,7 @@ function PeopleTab({ people, onChange, canTextAsMark = false, shopId = '' }) {
                   </a>
                   <a href={`sms:${p.phone}`}
                     className="w-8 h-8 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: '#e8f0fe', color: '#1d4ed8' }}>
+                    style={{ backgroundColor: '#e6f4f4', color: '#0A0A0A' }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                     </svg>
@@ -514,7 +533,7 @@ function PeopleTab({ people, onChange, canTextAsMark = false, shopId = '' }) {
                 {p.email && (
                   <a href={`mailto:${p.email}`}
                     className="w-8 h-8 rounded-xl flex items-center justify-center"
-                    style={{ backgroundColor: '#ede9fe', color: '#7c3aed' }}>
+                    style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                       <polyline points="22,6 12,13 2,6"/>
@@ -748,6 +767,34 @@ function JobsTab({ shopName }) {
 }
 
 // ─── Main Panel ───────────────────────────────────────────────────────────────
+// 📅 Usually calls + 🍖 BBQ (Mark 2026-10-24): top 3 days this shop calls us,
+// from 12 months of jobs (services/shopRhythm.js, rebuilt each morning).
+function ShopRhythmLine({ shopId, shopName }) {
+  const [r, setR] = useState(null)
+  useEffect(() => {
+    let dead = false
+    if (!shopId && !shopName) return
+    apiFetch(`${API_BASE}/api/shop-rhythm?id=${encodeURIComponent(shopId || '')}&name=${encodeURIComponent(shopName || '')}`)
+      .then(x => x.ok ? x.json() : null).then(d => { if (!dead) setR(d) }).catch(() => {})
+    return () => { dead = true }
+  }, [shopId, shopName])
+  if (!r?.ready) return null
+  const fmtK = n => `$${Math.round(n / 1000)}k`
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
+  const bbqUpcoming = r.bbq && r.bbq.date >= today
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 mt-1">
+      {r.n >= (r.minJobs || 8) && r.top?.length
+        ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#eef2ff', color: '#3730a3' }} title={`Based on ${r.n} jobs in the last 12 months`}>
+            📅 Usually calls: {r.top.map(t => `${t.day} ${t.pct}%`).join(' · ')} <span style={{ fontWeight: 500, opacity: 0.75 }}>· {r.n} jobs</span>
+          </span>
+        : <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>📅 Not enough history yet{r.n ? ` (${r.n} job${r.n === 1 ? '' : 's'})` : ''}</span>}
+      {bbqUpcoming && <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fff7ed', color: '#c2410c', border: '1px solid #fdba74' }}>🍖 BBQ {new Date(`${r.bbq.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })} · {fmtK(r.bbq.milestone)}</span>}
+      {r.lifetime > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f0fdf4', color: '#15803d' }} title="Lifetime invoiced sales after discount">💵 {fmtK(r.lifetime)} lifetime · {fmtK(r.nextMilestone - r.lifetime)} to the next 🍖</span>}
+    </div>
+  )
+}
+
 export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user = null }) {
   const canTextAsMark = isMarkUser(user) // his personal cell — Mark only, even though Kat is an owner
   const [tab,          setTab]          = useState('info')
@@ -759,6 +806,17 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
     next_action: shop.next_action || '',
     fit_score: shop.fit_score ?? '',
   })
+  const [wifi, setWifi] = useState({ name: '', password: '' })
+  const wifiTouched = useRef(false)
+  useEffect(() => {
+    wifiTouched.current = false
+    let dead = false
+    apiFetch(`${API_BASE}/api/shops/wifi?shop=${encodeURIComponent(shop.shop_name || '')}`)
+      .then(r => r.json())
+      .then(j => { if (!dead && j?.ok && !wifiTouched.current) setWifi({ name: j.wifi?.name || '', password: j.wifi?.password || '' }) })
+      .catch(() => {})
+    return () => { dead = true }
+  }, [shop.shop_name])
   const [saving,       setSaving]       = useState(false)
   const [error,        setError]        = useState(null)
   const [dirty,        setDirty]        = useState(false)
@@ -774,6 +832,20 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
     setSaving(true); setError(null)
     try {
       await onSave(form, shop)
+      if (wifiTouched.current) {
+        await apiFetch(`${API_BASE}/api/shops/wifi`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shop_name: form.shop_name, name: wifi.name, password: wifi.password }),
+        })
+        const renamed = String(form.shop_name || '').trim().toLowerCase() !== String(shop.shop_name || '').trim().toLowerCase()
+        if (renamed) {
+          await apiFetch(`${API_BASE}/api/shops/wifi`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shop_name: shop.shop_name, name: '', password: '' }),
+          }).catch(() => {})
+        }
+        window.dispatchEvent(new CustomEvent('adas:wifi-saved', { detail: { shop_name: form.shop_name, old_name: renamed ? shop.shop_name : '', wifi: { name: wifi.name, password: wifi.password } } }))
+      }
       setDirty(false)
     } catch (e) {
       setError(e.message)
@@ -787,6 +859,7 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
     { id: 'people',   label: `People${form.people.length > 0 ? ` (${form.people.length})` : ''}` },
     { id: 'activity', label: `Activity${form.activities.length > 0 ? ` (${form.activities.length})` : ''}` },
     { id: 'jobs',     label: 'Jobs' },
+    { id: 'portal',   label: 'Portal' },
     { id: 'billing', label: 'Billing' },
   ]
 
@@ -819,6 +892,8 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
                 {form.shop_name || 'Shop'}
               </p>
               {form.address && <p className="text-xs truncate" style={{ color: '#888' }}>{form.address}</p>}
+              <WifiCopy wifi={wifi} bg="#f5f3f0" />
+              <ShopRhythmLine shopId={shop?.id || ''} shopName={shop?.shop_name || ''} />
             </div>
 
             {/* Templates button */}
@@ -855,7 +930,7 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {tab === 'info' && (
-            <InfoTab form={form} setForm={f => updateForm(typeof f === 'function' ? f : () => f)} />
+            <InfoTab form={form} setForm={f => updateForm(typeof f === 'function' ? f : () => f)} wifi={wifi} setWifi={setWifi} wifiTouched={wifiTouched} setDirty={setDirty} />
           )}
           {tab === 'people' && (
             <PeopleTab
@@ -872,12 +947,14 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
             />
           )}
           {tab === 'jobs' && <JobsTab shopName={form.shop_name} />}
+          {tab === 'portal' && <PortalUsersTab shopId={shop?.id || ''} shopName={form.shop_name} />}
           {tab === 'billing' && (<>
             <BooksLink shop={shop} />
             <EstimateFirstToggle shop={shop} />
             <IntegrationsPanel shop={shop} />
             <Big3Rules shop={form} />
             <FullServiceRules shop={form} />
+            <AlignmentInvoiceToggle shop={form} />
             <DrpRules shop={form} />
             <BillingRulesEditor
               shop={form}
@@ -889,7 +966,7 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
         </div>
 
         {/* Footer */}
-        {tab !== 'jobs' && tab !== 'billing' && (
+        {tab !== 'jobs' && tab !== 'billing' && tab !== 'portal' && (
           <div className="flex-shrink-0 flex items-center justify-between px-5 py-4"
             style={{ borderTop: '1px solid #ebebeb' }}>
             {error && <p className="text-xs text-red-500 flex-1 mr-3">{error}</p>}
