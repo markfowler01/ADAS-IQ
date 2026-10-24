@@ -167,7 +167,17 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const mtdNet = Math.round(mtd - reMtd), ytdNet = Math.round(ytd - reYtd)
   const growthNet = lastYtd > 0 ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
   const perDayNet = bizLeft > 0 ? Math.max(0, goal - mtdNet) / bizLeft : 0
-  return { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
+  const out = { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
+  // 🏆🎯 Records + goals hit (services/salesRecords.js). Today's list is made once and then fixed;
+  // any other date is a preview that saves nothing.
+  out.pops = []
+  try {
+    const hourPT = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(new Date()))
+    const live = dateStr === todayPT() && hourPT >= 5
+    const { huddlePops } = await import('./salesRecords.js')
+    out.pops = (await Promise.race([huddlePops(req, out, { live }), new Promise(r => setTimeout(() => r([]), 15000))])) || []
+  } catch (e) { console.warn('[huddle] pops:', e.message) }
+  return out
 }
 
 // ── render ───────────────────────────────────────────────────────────────────
@@ -253,6 +263,11 @@ export async function renderHuddlePng(req, data) {
       <text x="${tx + 20}" y="${ty + 108}" class="small2"><tspan style="fill:${ORANGE}">▼</tspan> Yesterday ${t.yesterday ? esc(fmtUSD(t.yesterday)) : '—'}</text>`
   }).join('')
   const goals = `${card(c2.x, c2.y, c2.w, c2.h)}${ICON.people(c2.x + 30, c2.y + 18)}<text x="${c2.x + 84}" y="${c2.y + 46}" class="ch" style="fill:white">INDIVIDUAL GOALS</text>${techCards}`
+  // ── 🏆🎯 Pop-ins (records + goals) under the goals card ───────────────────
+  let popCards = ''
+  { const ps = (d.pops || []).slice(0, 2), ph = 52, py0 = c2.y + c2.h + 16
+    ps.forEach((p, i) => { const py = py0 + i * (ph + 10); if (py + ph > H - 200) return
+      popCards += `<rect x="${c2.x}" y="${py}" width="${c2.w}" height="${ph}" rx="14" fill="${p.kind === 'goal' ? '#16a34a' : '#f5b301'}"/><text x="${c2.x + 24}" y="${py + 34}" class="stat" style="font-size:24px;fill:${p.kind === 'goal' ? 'white' : '#1a1a1a'}">${esc(clip(p.text.replace(/[^\x20-\x7E·$]/g, '').trim(), 62))}</text><text x="${c2.x + c2.w - 24}" y="${py + 34}" class="small2" text-anchor="end" style="font-size:18px;fill:${p.kind === 'goal' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.65)'}">${esc(clip(p.sub, 34))}</text>` }) }
   // ── Card 3: TODAY ─────────────────────────────────────────────────────────
   const c3 = { x: 1012, y: 168, w: 856 }
   const MAX = 8
@@ -346,6 +361,7 @@ export async function renderHuddlePng(req, data) {
   <text x="${W - 70}" y="106" class="daydate" text-anchor="end">${esc(d.weekday.toUpperCase())}  <tspan class="dot">•</tspan>  ${esc(d.dateLabel.toUpperCase())}</text>
   ${month}
   ${goals}
+  ${popCards}
   ${today}
   ${jobsCard}
   ${footer}
@@ -417,6 +433,7 @@ export async function sendHuddle(req, { force = false, to = MARK_TO, cc = MARK_C
       ${hosted ? `<a href="${hosted.url}"><img src="${hosted.url}" alt="GET SOME! Meeting" style="width:100%;max-width:900px;border-radius:12px;display:block;margin:0 0 8px" /></a><p style="margin:0 0 16px;font-size:13px"><a href="${hosted.url}" style="color:#CD4419;font-weight:700">Open full size (1920×1080) →</a> — share this in the meeting.</p>` : `<img src="data:image/png;base64,${png.toString('base64')}" alt="GET SOME! Meeting" style="width:100%;max-width:900px;border-radius:12px;display:block;margin:0 0 16px" />`}
       <p style="margin:0 0 4px"><b>${esc(data.monthLabel)}:</b> ${fmtUSD(data.mtd)} of ${fmtUSD(data.goal)} (${data.pct}%) · ${data.ahead >= 0 ? 'ahead' : 'behind'} pace by ${fmtUSD(Math.abs(data.ahead))} · ${data.bizLeft} working days left · ${fmtUSD(data.perDayNeeded)}/day closes it.</p>
       <table style="border-collapse:collapse;margin:8px 0 14px">${rows}</table>
+      ${(data.pops || []).map(p => `<p style="margin:0 0 6px;padding:8px 12px;border-radius:8px;background:${p.kind === 'goal' ? '#dcfce7' : '#fef3c7'}"><b>${p.kind === 'goal' ? '🎯' : '🏆'} ${esc(p.text)}</b> · ${esc(p.sub)}</p>`).join('')}
       <p style="margin:0 0 4px"><b>Today · ${data.jobsToday} on the board</b></p>${sched}
       ${data.calls?.shops?.length ? `<p style="margin:10px 0 0"><b>📅 Usually call on ${esc(data.calls.label)}:</b> ${data.calls.shops.map(x => `${esc(x.name)} (${x.pct}%)`).join(' · ')}</p>` : ''}
       <p style="margin:16px 0 0;color:#666;font-size:12px">${esc(data.line)}<br/>Set individual goals: AppConfig <code>huddle_tech_goals</code> (e.g. {"Jayden": 20000}). Company goal: Ada's pace goal.</p>
@@ -474,6 +491,7 @@ export async function postHuddle(req, { force = false } = {}) {
     const lines = [
       `🔥 *GET SOME! Meeting — 8:00* · ${data.weekday} ${data.dateLabel}`,
       `${data.monthLabel}: *${fmtUSD(data.mtd)}* of ${fmtUSD(data.goal)} (${data.pct}%) · ${data.ahead >= 0 ? 'ahead' : 'behind'} pace by ${fmtUSD(Math.abs(data.ahead))} · ${data.jobsToday} on the board today`,
+      ...(data.pops || []).map(p => `${p.kind === 'goal' ? '🎯' : '🏆'} *${p.text}* · ${p.sub}`),
       `📊 Today's board: ${img.url}`,
       data.calls?.shops?.length ? `📅 Usually call on ${data.calls.label}: ${data.calls.shops.map(x => `${x.name} (${x.pct}%)`).join(' · ')}` : '',
       cfg.meeting_link ? `📹 Join: ${cfg.meeting_link}` : '',

@@ -446,6 +446,7 @@ router.post('/run', async (req, res) => {
   try { const { maybeSyncRemoteExpert } = await import('../services/remoteExpert.js'); const r = await maybeSyncRemoteExpert(req); if (r.new || r.matched) console.log('[postscan] remote expert:', JSON.stringify(r)) }
   catch (e) { console.warn('[postscan] remote-expert piggyback failed (non-fatal):', e.message) }
   // 💵 New shop bonus: $500 at 10 calibrations (Mark 2026-10-17, Jayden's terms).
+  try { const { maybeRefreshStandings } = await import('../services/salesRecords.js'); const r = await Promise.race([maybeRefreshStandings(req), new Promise(r => setTimeout(() => r({ fired: false, reason: 'timeout' }), 25000))]); if (r.fired) console.log('[postscan] record standings:', JSON.stringify(r)) } catch (e) { console.warn('[postscan] record standings (non-fatal):', e.message) }
   try { const { maybeShopRhythm } = await import('../services/shopRhythm.js'); const r = await Promise.race([maybeShopRhythm(req), new Promise(r => setTimeout(() => r({ fired: false, reason: 'timeout' }), 25000))]); if (r.fired) console.log('[postscan] shop rhythm:', JSON.stringify(r)) } catch (e) { console.warn('[postscan] shop rhythm (non-fatal):', e.message) }
   try { const { maybeRefreshStopJobs } = await import('./salesStops.js'); const r = await maybeRefreshStopJobs(req); if (r.refreshed) console.log('[postscan] stop jobs:', JSON.stringify(r)) }
   catch (e) { console.warn('[postscan] stop-jobs piggyback failed (non-fatal):', e.message) }

@@ -7,6 +7,17 @@ import { shopKey } from '../services/shopResolve.js'
 
 const router = express.Router()
 
+// Every shop at once for the Customers cards: { ready, shops: { [id]: { n, top } }, byName: { [shopKey]: id } }.
+router.get('/all', async (req, res) => {
+  try {
+    const rh = await readRhythm(req)
+    if (!rh) return res.json({ ready: false, shops: {} })
+    const shops = {}, byName = {}
+    for (const [id, s] of Object.entries(rh.shops)) { shops[id] = { n: s.n, top: s.top }; byName[shopKey(s.name)] = id }
+    res.json({ ready: true, minJobs: rh.minJobs, shops, byName })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.get('/', async (req, res) => {
   try {
     const [rh, bbq] = await Promise.all([readRhythm(req), readBbq(req)])

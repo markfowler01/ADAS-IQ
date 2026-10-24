@@ -553,7 +553,12 @@ router.get('/huddle/fonts', requireCronSecret, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/huddle.png', requireCronSecret, async (req, res) => {
-  try { const M = await import('../services/morningHuddle.js'); const data = await M.buildHuddleData(req, req.query.date ? { dateStr: String(req.query.date) } : {}); const png = await M.renderHuddlePng(req, data); res.type('image/png').send(png) }
+  try { const M = await import('../services/morningHuddle.js'); const data = await M.buildHuddleData(req, req.query.date ? { dateStr: String(req.query.date) } : {}); if (req.query.pops === 'demo') data.pops = [{ kind: 'record', text: 'NEW RECORD · Best week ever: $14,880', sub: 'week of Oct 19 (old record $12,410)' }, { kind: 'goal', text: 'GOAL HIT · Jayden passed $25,000 for October', sub: '$25,310 so far' }]; const png = await M.renderHuddlePng(req, data); res.type('image/png').send(png) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+// 🏆 Record standings by hand (normally the early-morning postscan run).
+router.post('/records/standings', requireCronSecret, async (req, res) => {
+  try { const M = await import('../services/salesRecords.js'); res.json(await M.maybeRefreshStandings(req, { force: true })) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
 // 📅🍖 Shop rhythm + BBQ check by hand. ?dry=1 = report only (no calendar, no texts, no state).
