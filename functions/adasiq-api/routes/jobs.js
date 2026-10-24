@@ -7,6 +7,7 @@ import { createNotification } from './notifications.js'
 import { postToCliqChannel, AA_JOBS_CHANNEL, DISPATCH_CHANNEL } from '../services/cliq.js'
 import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder, listChildren } from '../services/workdrive.js'
 import { appendHistory } from '../services/history.js'
+import { statusIdForRoster } from '../services/techRoster.js'
 
 const router = express.Router()
 
@@ -446,11 +447,8 @@ async function notifyReadyToInvoiceTesla(req, job) {
 // only for genuinely unassigned work. Matches full Zoho names too
 // ("Jayden Goshorn", "Mark Fowler"/"Mark Folwer"). Unknown names (Kat,
 // blank) return null → normal unassigned flow.
-function dispatchedStatusFor(technician) {
-  const t = String(technician || '').toLowerCase().trim()
-  if (t.startsWith('jay')) return 'dispatched_jaden'
-  if (t.startsWith('mark')) return 'dispatched_mark'
-  return null
+async function dispatchedStatusFor(req, technician) {
+  return statusIdForRoster(req, technician)
 }
 
 // Parts-waiting notice to #aajobs (Mark 2026-07-13): when a job moves
@@ -583,7 +581,7 @@ router.post('/', async (req, res) => {
       body.customer = { kind: 'shop', id: '', name: String(body.customer.name || body.shop_name || '').slice(0, 120), zoho_contact_id: String(body.customer.zoho_contact_id || '').slice(0, 40) }
     }
     delete body.customer_kind; delete body.retail
-    const autoStatus = dispatchedStatusFor(body.technician)
+    const autoStatus = await dispatchedStatusFor(req, body.technician)
     const autoDispatched = !body.via_request && autoStatus &&
       (!body.status || body.status === 'need_dispatch')
     if (autoDispatched) {
@@ -642,6 +640,28 @@ router.post('/', async (req, res) => {
       // Also fan to #dispatch so the schedulers see it in their working channel.
       await postToCliqChannel(DISPATCH_CHANNEL, msg)
         .catch(e => console.warn(`[dispatch ${isQuote ? 'quote' : 'job'}_requested]`, e.message))
+      // 📸 A request built from a scrub (photos on site, or the Scrub Library): Kat gets
+      // the whole picture in a direct message (Mark 2026-10-24: "all this information
+      // to go directly to Kat") — shop, car, RO, insurer, what's required, the estimate.
+      if (req.body.scrub_id) {
+        try {
+          let cals = []; try { cals = JSON.parse(newJob.calibrations || '[]') } catch { cals = [] }
+          const reqd = cals.filter(c => c.enabled !== false && c.enabled !== 'false').map(c => `• ${c.calibration_name}${c.line_references ? ` (line ${c.line_references})` : ''}`)
+          const notReq = cals.filter(c => c.enabled === false || c.enabled === 'false').map(c => c.calibration_name)
+          const est = (String(newJob.notes || '').match(/https:\/\/workdrive\.zoho\.com\/file\/\S+/) || [])[0] || ''
+          const dm = [
+            `${isQuote ? '📝 *Quote requested*' : '🆕 *Job requested*'} from ${req.body.scrub_source === 'photos' ? '📸 estimate photos' : 'a scrub'} · ${shop}`,
+            `🚗 ${vehicle || 'Vehicle TBD'}${newJob.vin ? ` · VIN …${String(newJob.vin).slice(-8)}` : ''}${ro}`,
+            `🏦 ${newJob.insurer || (isQuote ? 'Cash / not given' : 'Insurer not on the estimate')}${reqBy}`,
+            reqd.length ? `✅ *Required (${reqd.length}):*\n${reqd.join('\n')}` : '⚠️ Scrub found nothing required — check before dispatch',
+            notReq.length ? `➖ Not required: ${notReq.slice(0, 8).join(', ')}${notReq.length > 8 ? '…' : ''}` : '',
+            est ? `📄 Estimate: ${est}` : '',
+            isQuote ? '➡️ Price it and send the quote.' : '➡️ Schedule it on the board (Job Requested).',
+          ].filter(Boolean).join('\n')
+          const { postToCliqUser } = await import('../services/cliq.js')
+          await postToCliqUser('k.belmonte@absoluteadas.com', dm)
+        } catch (e) { console.warn('[jobs POST] Kat DM failed:', e.message) }
+      }
       await createNotification(req, {
         to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
         type: 'job_requested',
@@ -817,8 +837,8 @@ router.patch('/:id', async (req, res) => {
       const nt = (req.body.technician || '').toLowerCase()
       const ot = (currentJob.technician || '').toLowerCase()
       if (nt !== ot) {
-        if (nt.includes('jayden') || nt.includes('jaden'))      req.body.status = 'dispatched_jaden'
-        else if (nt.includes('mark'))                            req.body.status = 'dispatched_mark'
+        const moved = await statusIdForRoster(req, req.body.technician)
+        if (moved) req.body.status = moved
       }
     }
 

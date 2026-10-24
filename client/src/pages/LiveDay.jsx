@@ -8,12 +8,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import ReadyChecks, { DEFAULT_CHECKS, readyChecksValid, readyChecksMissing, readyChecksToPatch, readyChecksNote, useSafetyChecksApply } from '../components/ReadyChecks.jsx'
 import SalesStopSheet, { SalesStopScoreboard } from '../components/SalesStopSheet'
+import SalesMode from '../components/crm/SalesMode'
 import { JobPhotosSheet, TakePhotosControl, PhotoBadge, photoProgress, gateApplies } from '../components/JobPhotos'
 import BuildJobModal from '../components/BuildJobModal.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from '../components/Navbar.jsx'
-import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstimateTotals } from '../components/MobileJobCard.jsx'
+import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstimateTotals, WifiCopy } from '../components/MobileJobCard.jsx'
+import { displayTechName, statusIdForTech } from '../lib/techColumns.js'
 import JobRequestModal from '../components/JobRequestModal.jsx'
+import PhotoScrub from '../components/PhotoScrub.jsx'
 
 const ORANGE = '#CD4419'
 const TECH_COLOR = { Mark: '#CD4419', Jayden: '#1F8B8B' }
@@ -85,9 +88,10 @@ function setStoredGoal(techName, val) {
 
 // Scoreboard — MTD sales toward the monthly bonus goal, plus today's sales,
 // plus jobs-today progress toward the GET SOME target. MTD/today $ come
-// from GET /api/tech-stats (Zoho Books invoices summed by salesperson,
-// drafts excluded, 5-min server-side cache). Auto-refresh every 60s so
-// numbers move as Kat marks invoices sent.
+// from GET /api/tech-stats (cost invoices summed by salesperson — the
+// amount billed after the shop discount, drafts and voids left out,
+// 5-min server-side cache). Auto-refresh every 60s so the numbers
+// move as Kat sends invoices.
 function TechScoreboard({ tech, viewerRole }) {
   const [goal, setGoal] = useState(() => getStoredGoal(tech.name))
   const [stats, setStats] = useState(null)
@@ -332,7 +336,7 @@ function TodoSection({ techName, items, onSave }) {
   )
 }
 
-function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList, customerNotes, techTodos, onSaveTodos }) {
+function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList, customerNotes, shopWifi, techTodos, onSaveTodos }) {
   const color = TECH_COLOR[tech.name] || '#999'
   // Every tech on the board except this card's owner — reassign targets.
   const otherTechs = (techList || []).filter(n => n && n !== tech.name)
@@ -403,6 +407,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
               ? ` · ✓ Done by ${projectedDoneBy(current.started_at)}`
               : current.time_window_start ? ` · ETA ${current.time_window_start}` : ''}
           </div>
+          <WifiCopy wifi={shopWifi?.[normShopName(current.shop_name)]} />
           <CustomerNoteBox items={parseNoteItems(customerNotes?.[normShopName(current.shop_name)])} />
           <HeadToJobButton job={current} techName={tech.name} />
           <div className="mb-1.5"><TakePhotosControl job={current} /></div>
@@ -412,7 +417,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
           <button
             onClick={() => onReadyToInvoice && onReadyToInvoice(current)}
             className="w-full text-sm font-bold rounded-lg py-2 text-white"
-            style={{ backgroundColor: '#7e22ce' }}
+            style={{ backgroundColor: '#0A0A0A' }}
           >
             🟢 Ready to Invoice
           </button>
@@ -463,7 +468,8 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
             <MobileJobCard job={j}
               onMoveToReadyInvoice={onReadyToInvoice}
               onMoveToPendingParts={onPendingParts}
-              customerNotes={customerNotes} />
+              customerNotes={customerNotes}
+              shopWifi={shopWifi} />
             <div className="mt-1.5"><HeadToJobButton job={j} techName={tech.name} /></div>
             {onReassign && otherTechs.map(n => (
               <button
@@ -677,6 +683,7 @@ function TimeClockChip({ user }) {
     try {
       const location = isTech ? await getLocation() : null
       const path = entry ? 'clock-out' : 'clock-in'
+      if (isTech && path === 'clock-in' && !location) { window.alert('📍 Location is required to punch in. Turn on Location for the Absolute ADAS app, then try again.'); return }
       const r = await apiFetch(`${API_BASE}/api/timeclock/${path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -828,7 +835,7 @@ function HeadToJobButton({ job, techName }) {
           </button>
           <button onClick={textShop} disabled={!!busy}
             className="flex-1 flex items-center justify-center gap-1.5 rounded-xl py-2.5 font-bold text-sm"
-            style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1.5px solid #bfdbfe', opacity: busy ? 0.6 : 1 }}>
+            style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1.5px solid #e8e4e0', opacity: busy ? 0.6 : 1 }}>
             💬 {busy === 'text' ? 'Texting…' : "Text: on my way"}
           </button>
         </div>
@@ -837,7 +844,7 @@ function HeadToJobButton({ job, techName }) {
       {nudge && !busy && (
         <button onClick={textShop}
           className="w-full mt-1.5 py-2 rounded-xl text-sm font-bold"
-          style={{ backgroundColor: '#1d4ed8', color: 'white' }}>
+          style={{ backgroundColor: '#0A0A0A', color: 'white' }}>
           💬 Now text the shop? →
         </button>
       )}
@@ -866,6 +873,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [suggestions, setSuggestions] = useState(null)
   const [toast, setToast] = useState('')
   const [jobRequestOpen,   setJobRequestOpen]   = useState(false)
+  const [photoScrubOpen,   setPhotoScrubOpen]   = useState(false)   // 📸 snap the printed estimate → scrub → request → Kat
   const [quoteRequestOpen, setQuoteRequestOpen] = useState(false)
   const [readyInvoiceJob,  setReadyInvoiceJob]  = useState(null)
   const [photoGateJob,     setPhotoGateJob]     = useState(null)   // 📸 photos-first before Ready to Invoice
@@ -883,6 +891,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [requestPhotoJob,  setRequestPhotoJob]  = useState(null)  // 📷 on a Waiting-for-Kat request
   const [buildJob,         setBuildJob]         = useState(null)  // 🔧 Build job — no report (staff)
   const [salesStopOpen,    setSalesStopOpen]    = useState(false)  // 🚐 sales stop sheet
+  const [salesMode,        setSalesMode]        = useState(() => { try { if (sessionStorage.getItem('adas_sales_mode')) { sessionStorage.removeItem('adas_sales_mode'); return true } } catch {} return false })   // 💼 Sales Mode (2026-10-08)
   const [salesStopTick,    setSalesStopTick]    = useState(0)      // bumps the scoreboard after a stop
   const refreshTimerRef = useRef(null)
 
@@ -904,10 +913,11 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   // (Mark 2026-07-14: "every job we do for that client needs to have
   // all those things"). Fetched once per visit; card components parse.
   const [customerNotes, setCustomerNotes] = useState({})
+  const [shopWifi, setShopWifi] = useState({})
   useEffect(() => {
     apiFetch(`${API_BASE}/api/shops/card-notes`)
       .then(r => r.json())
-      .then(j => setCustomerNotes(j.notes || {}))
+      .then(j => { setCustomerNotes(j.notes || {}); setShopWifi(j.wifi || {}) })
       .catch(() => {})
   }, [])
 
@@ -1116,7 +1126,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     try {
       const body = { technician: newTech }
       if (String(job.status || '').startsWith('dispatched_')) {
-        body.status = newTech.toLowerCase().startsWith('jay') ? 'dispatched_jaden' : 'dispatched_mark'
+        body.status = statusIdForTech(newTech) || 'need_dispatch'
       }
       const res = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, {
         method: 'PATCH',
@@ -1165,7 +1175,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       const job = (data?.unassigned_today || []).find(j => j.id === jobId)
       const body = {
         technician: tech,
-        status: tech.toLowerCase().startsWith('jay') ? 'dispatched_jaden' : 'dispatched_mark',
+        status: statusIdForTech(tech) || 'need_dispatch',
       }
       if (!job?.scheduled_date) body.scheduled_date = todayPT
       const res = await apiFetch(`${API_BASE}/api/jobs/${jobId}`, {
@@ -1196,8 +1206,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
     <div className="min-h-screen" style={{ backgroundColor: '#f5f3f0' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
 
-      <div className="sticky top-0 z-10 px-4 py-3"
-        style={{ backgroundColor: '#f5f3f0', borderBottom: '1px solid #e8e4e0' }}>
+      <div className="px-4 py-3" style={{ borderBottom: '1px solid #e8e4e0' }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-wider"
@@ -1210,62 +1219,12 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                 : ''}
             </div>
           </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap justify-end">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <TimeClockChip user={user} />
-            {/* Reference-tool shortcuts — one tap from the tech's Live Day
-                straight into AllData / Kinetic in a new tab. Kept compact
-                as pill buttons so they don't eat header real estate. */}
-            <a
-              href="https://my.alldata.com/migrate/#/home"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
-              style={{ backgroundColor: '#1e40af', color: 'white' }}
-              title="Open AllData"
-            >AllData</a>
-            <button
-              type="button"
-              onClick={() => onNavigate && onNavigate('scrubs')}
-              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
-              style={{ backgroundColor: '#CD4419', color: 'white' }}
-              title="Open our Scrub Library (Mark 2026-09-30)"
-            >🔬 Scrubs</button>
-            <a
-              href="https://ops.kinetic.auto/id/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
-              style={{ backgroundColor: '#0e7490', color: 'white' }}
-              title="Open Kinetic"
-            >Kinetic</a>
-            <a
-              href="https://portal.1sourceadas.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
-              style={{ backgroundColor: '#15803d', color: 'white' }}
-              title="Open 1Source ADAS"
-            >1Source</a>
-            <a
-              href="https://dh.identifix.com/Default/LogOnIdentifix?sessionTerminated=True"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
-              style={{ backgroundColor: '#7c2d12', color: 'white' }}
-              title="Open Identifix"
-            >Identifix</a>
-            <a
-              href="https://opusccp.com/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[13px] px-2.5 py-1.5 rounded-lg font-semibold"
-              style={{ backgroundColor: '#4c1d95', color: 'white' }}
-              title="Open Opus CCP"
-            >Opus CCP</a>
             <button
               onClick={load}
               className="text-xs px-2.5 py-1.5 rounded-lg font-semibold"
-              style={{ backgroundColor: 'white', border: '1px solid #ddd', color: '#555' }}
+              style={{ minHeight: 44, backgroundColor: 'white', border: '1px solid #ddd', color: '#555' }}
             >↻</button>
           </div>
         </div>
@@ -1280,37 +1239,38 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
         )}
 
         {/* Request buttons — Live Day companions for a tech in the field.
-            Both submit to #aajobs; Kat picks up either from Cliq. Stacked
-            on mobile, side-by-side on tablet+. */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+            Both submit to #aajobs; Kat picks up either from Cliq.
+            Job is orange, quote is blue. Sales stop lives on the week card. */}
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <button
+            onClick={() => setPhotoScrubOpen(true)}
+            className="col-span-2 text-base font-extrabold rounded-xl px-3 text-white"
+            style={{ backgroundColor: '#15803d', minHeight: 54 }}
+          >
+            📸 Scrub an estimate (take pictures)
+          </button>
           <button
             onClick={() => setJobRequestOpen(true)}
-            className="text-sm font-bold rounded-2xl px-4 py-3 text-white"
-            style={{ backgroundColor: ORANGE }}
+            className="text-sm font-extrabold rounded-xl px-3 text-white"
+            style={{ backgroundColor: ORANGE, minHeight: 48 }}
           >
-            📥 Request a Job
+            Request a Job
           </button>
           <button
             onClick={() => setQuoteRequestOpen(true)}
-            className="text-sm font-bold rounded-2xl px-4 py-3"
-            style={{ backgroundColor: 'white', color: ORANGE, border: `1.5px solid ${ORANGE}` }}
+            className="text-sm font-extrabold rounded-xl px-3"
+            style={{ backgroundColor: 'white', color: '#1d4ed8', border: '1.5px solid #1d4ed8', minHeight: 48 }}
           >
-            📝 Request a Quote
+            Request a Quote
           </button>
           <button
             onClick={() => onNavigate && onNavigate('tips')}
-            className="text-sm font-bold rounded-2xl px-4 py-3"
-            style={{ backgroundColor: 'white', color: '#1a1a1a', border: '1.5px solid #e0dbd6' }}
+            className="text-sm font-bold rounded-xl px-3"
+            style={{ backgroundColor: 'white', color: '#0A0A0A', border: '1px solid #e8e4e0', minHeight: 44 }}
           >
-            📖 TSB Tips
+            TSB Tips
           </button>
-          <button
-            onClick={() => setSalesStopOpen(true)}
-            className="text-sm font-bold rounded-2xl px-4 py-3 text-white"
-            style={{ backgroundColor: '#15803d' }}
-          >
-            🚐 Sales stop
-          </button>
+          <button onClick={() => setSalesMode(true)} className="text-sm font-bold rounded-xl px-3" style={{ backgroundColor: 'white', color: '#0A0A0A', border: '1px solid #e8e4e0', minHeight: 44 }} title="Switch into sales mode — the app queues who's next">Sales mode</button>
         </div>
 
         {/* 🚐 Sales stops scoreboard (Mark 2026-09-09) */}
@@ -1321,9 +1281,9 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             already invoiced; these are the shots that never made it up.
             Tap a row to open the same camera sheet and finish it. */}
         {photosOwed.filter(o => !isTechView || isMine(o.technician || o.by)).length > 0 && (
-          <div className="rounded-2xl p-4" style={{ backgroundColor: '#faf5ff', border: '2px solid #7e22ce' }}>
+          <div className="rounded-2xl p-4" style={{ backgroundColor: '#f5e8e3', border: '2px solid #0A0A0A' }}>
             <div className="text-xs uppercase tracking-wider font-bold mb-2"
-              style={{ color: '#7e22ce', fontFamily: 'IBM Plex Mono, monospace' }}>
+              style={{ color: '#0A0A0A', fontFamily: 'IBM Plex Mono, monospace' }}>
               📸 Still to do — photos owed ({photosOwed.filter(o => !isTechView || isMine(o.technician || o.by)).length})
             </div>
             <ul className="space-y-2">
@@ -1334,23 +1294,35 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                   <li key={o.id}>
                     <button onClick={() => o.job && setOwedJob(o.job)}
                       className="w-full text-left flex items-center justify-between gap-2 rounded-lg p-2"
-                      style={{ backgroundColor: 'white', border: `1px solid ${mine ? '#7e22ce' : '#e9d5ff'}` }}>
+                      style={{ backgroundColor: 'white', border: `1px solid ${mine ? '#0A0A0A' : '#e8e4e0'}` }}>
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-sm truncate" style={{ color: '#581c87' }}>
                           {o.shop_name || 'Job'}{o.vehicle ? ` · ${o.vehicle}` : ''}
                         </div>
-                        <div className="text-xs truncate" style={{ color: '#7e22ce' }}>
+                        <div className="text-xs truncate" style={{ color: '#0A0A0A' }}>
                           {(o.labels || []).join(', ') || 'photos'} · {o.technician || o.by || 'tech'} · {age}
                         </div>
                       </div>
                       <span className="text-xs font-bold rounded-lg px-3 py-2 text-white flex-shrink-0"
-                        style={{ backgroundColor: '#7e22ce' }}>📷 Add →</span>
+                        style={{ backgroundColor: '#0A0A0A' }}>📷 Add →</span>
                     </button>
+                    {/* 🗑 Drop it from the list (Mark 2026-10-05) — the job and invoice stay as they are. */}
+                    {!isTechView && (
+                      <button onClick={async e => {
+                          e.stopPropagation()
+                          if (!window.confirm(`Remove "${o.shop_name || 'Job'}${o.vehicle ? ' · ' + o.vehicle : ''}" from the photos-owed list?\nThe job and invoice are not touched.`)) return
+                          setPhotosOwed(prev => prev.filter(x => x.id !== o.id))
+                          try { await apiFetch(`${API_BASE}/api/jobs/${o.id}/photos/waive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }) } catch { loadOwed() }
+                        }}
+                        className="mt-1 text-[11px] font-semibold px-2 py-0.5 rounded"
+                        style={{ color: '#0A0A0A', backgroundColor: 'transparent', border: '1px solid #e8e4e0' }}
+                        title="Remove from this list">🗑 Delete from list</button>
+                    )}
                   </li>
                 )
               })}
             </ul>
-            <div className="text-[13px] mt-2" style={{ color: '#7e22ce' }}>
+            <div className="text-[13px] mt-2" style={{ color: '#0A0A0A' }}>
               These cars are already invoiced. Add the shots when you have signal — each one drops off this list on its own.
             </div>
           </div>
@@ -1430,7 +1402,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                     </div>
                     <div className="text-xs truncate" style={{ color: '#92400e' }}>
                       {j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'}
-                      {j.technician && ` · 👤 ${j.technician}`}
+                      {j.technician && ` · 👤 ${displayTechName(j.technician)}`}
                     </div>
                     {/* Photos don't wait for Kat (Mark 2026-09-21): shoot now, the card she builds inherits them. */}
                     <div className="mt-1"><PhotoBadge job={j} onClick={() => setRequestPhotoJob(j)} /></div>
@@ -1438,7 +1410,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
                   <div className="flex flex-col gap-1 flex-shrink-0">
                     <button onClick={() => setRequestPhotoJob(j)}
                       className="text-xs font-bold rounded-lg px-3 py-2 text-white"
-                      style={{ backgroundColor: '#7e22ce' }}>📷 Photos</button>
+                      style={{ backgroundColor: '#0A0A0A' }}>📷 Photos</button>
                     {user?.role !== 'technician' && <button onClick={() => setBuildJob(j)}
                       className="text-xs font-bold rounded-lg px-3 py-2 text-white"
                       style={{ backgroundColor: ORANGE }}>🔧 Build</button>}
@@ -1462,6 +1434,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
               onPendingParts={handlePendingParts}
               techList={(data?.techs || []).map(x => x.name)}
               customerNotes={customerNotes}
+              shopWifi={shopWifi}
               techTodos={techTodos}
               onSaveTodos={saveTodos}
             />
@@ -1480,6 +1453,9 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
 
       {salesStopOpen && (
         <SalesStopSheet user={user} onClose={() => setSalesStopOpen(false)} onLogged={() => setSalesStopTick(t => t + 1)} />
+      )}
+      {salesMode && (
+        <SalesMode user={user} onClose={() => setSalesMode(false)} onOpenDeal={() => { try { sessionStorage.setItem('adas_crm_mode_once', 'deals') } catch {}; setSalesMode(false); onNavigate && onNavigate('crm') }} />
       )}
 
       {buildJob && <BuildJobModal job={buildJob} user={user} onClose={() => setBuildJob(null)} onBuilt={() => { setBuildJob(null); load() }} />}
@@ -1519,6 +1495,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
         />
       )}
 
+      {photoScrubOpen && <PhotoScrub user={user} onClose={() => setPhotoScrubOpen(false)} />}
       {jobRequestOpen && (
         <JobRequestModal
           onClose={() => setJobRequestOpen(false)}

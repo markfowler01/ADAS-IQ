@@ -18,10 +18,58 @@
 import express from 'express'
 import multer from 'multer'
 import { requeueScrub, runScrubQueue, scrubQueue } from '../services/emailToJob.js'
-import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, alldataLinksFor, saveAlldataLink, setScrubStageById, linkScrubJob, clearScrubInvoice } from '../services/scrubStore.js'
+import { listScrubs, getScrub, scrubsForJob, scrubStats, refreshFromCard, updateScrubCalibrations, replaceScrubCalibrations, alldataLinksFor, saveAlldataLink, setScrubStageById, linkScrubJob, clearScrubInvoice } from '../services/scrubStore.js'
 
 const router = express.Router()
 const who = req => req.user?.name || req.user?.email || 'staff'
+
+// Opening or reprinting a saved scrub applies the Nissan rules to the stored
+// lines. A bumper-cover drop is not a park reset. A required front radar keeps
+// the alignment prerequisite and a conditional steering-angle row. A battery
+// disconnect is added as Battery Reset even when the saved scrub has no
+// enabled battery row. A previous look that did not store line numbers is
+// not trusted. No re-upload.
+async function estimateText(req, s) {
+  if (!s?.fileId) return ''
+  const { getAccessToken } = await import('../services/zoho.js')
+  const { downloadFile } = await import('../services/workdrive.js')
+  const { buffer } = await downloadFile(s.fileId, await getAccessToken())
+  if (!buffer || buffer.length < 512) return ''
+  const pdf = (await import('pdf-parse/lib/pdf-parse.js')).default
+  return ((await pdf(buffer)).text || '').trim()
+}
+async function refreshNissanRules(req, s) {
+  const p = s?.payload && typeof s.payload === 'object' ? s.payload : null
+  const cals = Array.isArray(p?.calibrations) ? p.calibrations.map(c => ({ ...c })) : null
+  if (!cals?.length) return s
+  const data = { ...p, make: p.make || s.make || '', vehicle: p.vehicle || s.vehicle || '', calibrations: cals }
+  const { demoteNissanParkRows, noteNissanRadarAlignment, openNissanBattery, batteryDisconnectLines, nissanBatteryProbe } = await import('../services/scrubGuard.js')
+  const park = demoteNissanParkRows(data)
+  const align = noteNissanRadarAlignment(data)
+  let battery = false
+  let looked = false
+  let probeLines = null
+  const probe = nissanBatteryProbe(data, { fileId: s.fileId, batteryLines: p._batteryLines })
+  if (probe === 'use-stored') {
+    battery = openNissanBattery(data, { batteryLines: p._batteryLines }) || battery
+  } else if (probe === 'read-file') {
+    try {
+      const text = await estimateText(req, s)
+      looked = true
+      probeLines = text ? batteryDisconnectLines(text) : []
+      battery = openNissanBattery(data, { text, batteryLines: probeLines }) || battery
+    } catch (e) {
+      console.warn('[scrubs] nissan battery file check:', e.message)
+      battery = openNissanBattery(data) || battery
+    }
+  } else if (probe !== 'skip') {
+    battery = openNissanBattery(data) || battery
+  }
+  if (!park && !align && !battery && !looked) return s
+  const extra = probeLines ? { _batteryChecked: true, _batteryLines: probeLines } : null
+  await replaceScrubCalibrations(req, s.id, data.calibrations, extra)
+  return (await getScrub(req, s.id)) || s
+}
 
 // ── Run a scrub on a card, on demand ────────────────────────────────────────
 router.post('/job/:id', async (req, res) => {
@@ -102,6 +150,43 @@ router.post('/upload', (req, res) => {
       res.json(out)
     } catch (e) {
       if (seg) { try { await seg.delete(lockKey) } catch { /* fine */ } }
+      res.status(500).json({ error: e.message, name })
+    }
+  })
+})
+
+// 📸 Photos of a printed estimate (Mark 2026-10-24: "the technician will be on
+// site and he will take pictures … send it through the scrubber"). The phone
+// shrinks each page to a JPEG; here the pages become ONE PDF and run through the
+// exact same scrubber as an uploaded PDF (scanned PDFs already read page by page).
+// Same gateway story as /upload: the scrub outlives the 30s window, so the app
+// polls the library for `name`.
+const photoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024, files: 15 } }).array('pages', 15)
+export async function photosToPdf(files) {
+  const { PDFDocument } = await import('pdf-lib')
+  const doc = await PDFDocument.create()
+  for (const f of files) {
+    const isPng = /png/i.test(f.mimetype) || (f.buffer[0] === 0x89 && f.buffer[1] === 0x50)
+    const img = isPng ? await doc.embedPng(f.buffer) : await doc.embedJpg(f.buffer)
+    const page = doc.addPage([img.width, img.height])
+    page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height })
+  }
+  return Buffer.from(await doc.save())
+}
+router.post('/upload-photos', (req, res) => {
+  photoUpload(req, res, async err => {
+    if (err) return res.status(400).json({ error: err.message })
+    const files = (req.files || []).filter(f => f.buffer?.length > 2000 && /image\/(jpe?g|png)/i.test(f.mimetype || 'image/jpeg'))
+    if (!files.length) return res.status(400).json({ error: 'No photos came through. Take a picture of each page and try again.' })
+    const name = String(req.body?.name || `Photo estimate ${new Date().toISOString().slice(0, 16).replace('T', ' ')}.pdf`).replace(/[^\w .()-]/g, '').slice(0, 120)
+    try {
+      const pdf = await photosToPdf(files)
+      console.log(`[scrub 📸] ${files.length} page photo(s) → ${Math.round(pdf.length / 1024)} KB PDF · ${who(req)} · ${name}`)
+      const { scrubPdfBuffer } = await import('./extract.js')
+      const data = await scrubPdfBuffer(req, pdf, { learn: true, source: 'photos', by: who(req), file: { name }, pdfType: 'CCC', textMode: false })
+      res.json({ ok: true, name, pages: files.length, scrubId: data?._scrubId || '', vehicle: data?.vehicle || '', required: (data?.calibrations || []).filter(c => c.enabled !== false).length, duplicate: !!data?._reused })
+    } catch (e) {
+      console.error('[scrub 📸]', e.message)
       res.status(500).json({ error: e.message, name })
     }
   })
@@ -193,7 +278,7 @@ router.post('/walks/:wid/finish', express.json(), async (req, res) => {
 
 router.get('/:id/pdf', async (req, res) => {
   try {
-    const s = await getScrub(req, req.params.id)
+    const s = await refreshNissanRules(req, await getScrub(req, req.params.id))
     if (!s) return res.status(404).json({ error: 'not found' })
     const p = s.payload || {}
     const cals = Array.isArray(p.calibrations) && p.calibrations.length
@@ -268,7 +353,7 @@ router.post('/:id/feedback', express.json(), async (req, res) => {
     const action = actionIn === 'extra' || actionIn === 'drop' ? 'drop' : 'require'
     const sensor = String(req.body?.sensor || req.body?.name || '').trim()
     if (!sensor) return res.status(400).json({ error: 'sensor required' })
-    const { recordLesson, canonSensor } = await import('../services/scrubLearn.js')
+    const { recordLesson, canonSensor, applyMiss } = await import('../services/scrubLearn.js')
     const name = canonSensor(sensor)
     const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
     const cals = Array.isArray(p.calibrations) ? p.calibrations.map(c => ({ ...c })) : (s.sensors || []).map(x => ({
@@ -276,10 +361,18 @@ router.post('/:id/feedback', express.json(), async (req, res) => {
     }))
     let row = cals.find(c => canonSensor(c.calibration_name || c.sensor) === name)
     if (!row) {
-      row = { calibration_name: name, cal_type: '', trigger: String(req.body?.trigger || ''), line_references: String(req.body?.lines || ''), enabled: action === 'require', justification: 'Added from feedback.', _added: true, _by: who(req) }
+      row = { calibration_name: name, cal_type: '', trigger: String(req.body?.trigger || ''), line_references: String(req.body?.lines || ''), enabled: action === 'require', justification: 'Added from feedback.', _added: true, _learned: action === 'require' ? 'added' : '', _by: who(req) }
       cals.push(row)
+    } else if (action === 'require') {
+      const applied = applyMiss(row)
+      if (applied.keptOff) {
+        return res.json({ ok: true, keptOff: true, scrub: s, message: `Kept off — ${name} stays off. A hard rule demoted it, so Missed does not turn it back on.` })
+      }
+      row._by = who(req)
+      if (req.body?.trigger) row.trigger = String(req.body.trigger)
+      if (req.body?.lines) row.line_references = String(req.body.lines)
     } else {
-      row.enabled = action === 'require'
+      row.enabled = false
       row._edited = true
       row._by = who(req)
       if (req.body?.trigger) row.trigger = String(req.body.trigger)
@@ -425,7 +518,7 @@ router.post('/:id/full-service-override', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 router.get('/:id', async (req, res) => {
-  const s = await getScrub(req, req.params.id)
+  const s = await refreshNissanRules(req, await getScrub(req, req.params.id))
   if (!s) return res.status(404).json({ error: 'not found' })
   res.json(s)
 })

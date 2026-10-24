@@ -17,11 +17,17 @@ import { ScanLogo } from '../components/LoadingSplash'
 // /shop-quotes/send attaches the Quote PDF. Reused, not copied (Mark 2026-09-29).
 import { SendQuoteButton } from '../components/ToggleBoard'
 import { ShopBig4Bar } from '../components/books/Big3Rules.jsx'
+import { BRAND } from '../lib/brandTokens.js'
+import PhotoScrub from '../components/PhotoScrub.jsx'
+import { shopCoreKey, shopKey as shopKeyRaw } from '../lib/shopResolve.js'
+import { FS_ITEMS, fsItemFor, nissanBatteryLine, fsIsOff, dropFsLines } from '../lib/operationsRows.js'
 
-const ORANGE = '#CD4419'
-const INK = '#1a1a1a'
+const ORANGE = BRAND.orange
+const INK = BRAND.ink
+const QUOTE = BRAND.quote
 
 const SOURCE_LABEL = {
+  photos: '📸 Photos',
   button: '🔬 Scrub button', upload: '📄 Upload', email: '📧 Email', equote: '📧 Email',
   requeue: '🔄 Re-scrub', 'report-only': '📎 Reports only',
 }
@@ -31,10 +37,10 @@ const statusNote = s => s.status === 'from-card' ? 'from card' : s.status === 'r
 // Where this car is on the money path. Grey until it turns into paperwork.
 const STAGE = {
   scrubbed: { label: 'scrubbed', bg: '#f5f3f0', fg: '#777' },
-  quoted:   { label: 'quoted',   bg: '#eff6ff', fg: '#1e40af' },
-  quote_requested: { label: 'quote requested', bg: '#dbeafe', fg: '#1d4ed8' },
+  quoted:   { label: 'quoted',   bg: BRAND.quoteSoft, fg: BRAND.quoteHover },
+  quote_requested: { label: 'quote requested', bg: '#dbeafe', fg: QUOTE },
   requested: { label: 'job requested', bg: '#ffedd5', fg: '#c2410c' },
-  job:      { label: 'on the board', bg: '#fff7ed', fg: '#b45309' },
+  job:      { label: 'active job', bg: BRAND.orangeSoft, fg: ORANGE },   // 🟠 the card is past Requested — brand orange, same signal as the row outline
   invoiced: { label: 'invoiced', bg: '#dcfce7', fg: '#166534' },
   paid:     { label: 'paid',     bg: '#166534', fg: '#fff' },
 }
@@ -82,7 +88,7 @@ function foldBsm(items, k = { name: 'n', req: 'r', lines: 'l', trig: 'g' }) {
   const out = items.filter(x => !isBsm(x)); out.splice(items.indexOf(rows[0]), 0, keep)
   return out
 }
-function normScrub(s) {
+export function normScrub(s) {
   if (!s || !Array.isArray(s.sensors) || !s.sensors.length) return s
   const sensors = foldBsm(s.sensors)
   if (sensors === s.sensors) return s
@@ -97,14 +103,7 @@ function normScrub(s) {
 // 🧰 Full Service (Mark 2026-10-01): headlamp aim, TPMS, programming, resets.
 // The scrub always finds them; each shop's CRM rule decides what we do:
 // we = on the quote · shop = shop handles it, never quoted · ask = an offer.
-const FS_ITEMS = [
-  { key: 'headlamp', emoji: '💡', label: 'Headlamp aim (manual)', match: /^(?!.*(adaptive|level|swivel|afs|matrix|module|initiali|calibration|electronic)).*(headlamp|headlight)/i },   // electronic headlamps = a calibration we always do
-  { key: 'bsm_rr', emoji: '📡', label: 'Blind spot aim after rear bumper removal', match: /rear bumper removed/i, optional: true },   // Full Service shops only (Mark 2026-10-02)
-  { key: 'tpms', emoji: '🛞', label: 'TPMS relearn', match: /\btpms\b|tire pressure/i },
-  { key: 'resets', emoji: '🪟', label: 'Battery-disconnect resets', match: /window|sunroof|moon ?roof|power (liftgate|tailgate|sliding door)|initiali[sz]ation after battery|battery.*reset|reset.*battery/i },
-]
 const FS_MODE = { we: { label: 'We do it', bg: '#CD4419' }, shop: { label: 'Shop does it', bg: '#78716c' }, ask: { label: 'Ask', bg: '#16a34a' } }
-const fsItemFor = name => FS_ITEMS.find(f => f.match.test(String(name || ''))) || null
 const _fsCache = new Map()
 async function fsRulesFor(shop, fresh = false) {
   const k = String(shop || '').trim().toLowerCase(); if (!k) return { rules: {}, set: {} }
@@ -112,7 +111,38 @@ async function fsRulesFor(shop, fresh = false) {
   try { const r = await apiFetch(`${API_BASE}/api/shops/full-service-by-name?shop=${encodeURIComponent(shop)}`); const d = await r.json(); const v = { rules: d.rules || {}, set: d.set || {}, inCrm: !!d.shop_id, on: !!d.on, collision: d.collision !== false, ctype: d.customer_type || '' }; _fsCache.set(k, v); return v }
   catch { return { rules: {}, set: {} } }
 }
-const fsMode = (rules, key) => rules?.[key] || 'shop'   // no answer from the server = treat as the shop's own work (never billed by surprise)
+// Any value the server (or a hand-edited CRM rule) sends is folded into we | shop | ask —
+// an unknown mode crashed the whole scrub screen on 2026-10-07 ("reading 'bg'").
+const fsMode = (rules, key) => {
+  const v = rules?.[key]
+  if (v === 'ask') return 'ask'
+  if (v === 'off') return 'off'   // Full Service OFF for this shop (the server's default) → the line is not ours at all
+  if (v === 'we' || v === 'bill' || v === 'on' || v === 'charge' || v === true || v === 'true' || v === 'included') return 'we'
+  return 'shop'   // no answer / false / anything else = the shop's own work (never billed by surprise)
+}
+// 🧰 Full Service is OFF by default (Mark 2026-10-09: "default off, if it is on for this
+// account then add it in"). OFF on a collision shop = the FS lines are not on the report,
+// the counts, the quote or the job request. ON shops (or a per-report ON override) keep them.
+// List-row required count / pills: drop Full Service lines when the shop is OFF
+// so the orange badge matches what the report will show.
+function requiredOf(s, fsr) {
+  const vehicle = `${s.make || ''} ${s.vehicle || ''}`
+  const sensors = s.sensors || []
+  if (!sensors.length) {
+    const names = String(s.requiredNames || '').split(/\s*[,|;]\s*/).filter(Boolean)
+    const kept = dropFsLines(names.map(n => ({ name: n })), fsr, vehicle).map(x => x.name)
+    return { count: kept.length || (fsIsOff(fsr) ? 0 : s.requiredCount), names: kept }
+  }
+  const names = dropFsLines(sensors.filter(x => x.r).map(x => ({ name: x.n })), fsr, vehicle).map(x => x.name)
+  return { count: names.length, names }
+}
+/** Per-report override (Mark 2026-10-07): 'on' | 'off' | '' bends the CRM rules for THIS scrub only. */
+function withOverride(fsr, override) {
+  if (!fsr || !override || fsr.collision === false) return fsr
+  const keys = FS_ITEMS.map(f => f.key)
+  if (override === 'off') return { ...fsr, on: false, override, rules: Object.fromEntries(keys.map(k => [k, 'off'])) }
+  return { ...fsr, on: true, override, rules: Object.fromEntries(keys.map(k => [k, fsr.set?.[k] || 'we'])) }
+}
 /** Apply the shop's Full Service rules to outgoing calibration rows (quote / job request). */
 function applyFs(cals, rules, collision = true) {
   const offers = [], shopDoes = [], weDo = []
@@ -120,10 +150,10 @@ function applyFs(cals, rules, collision = true) {
     const f = fsItemFor(c.calibration_name)
     // Optional items (not OEM-required) only exist for Full Service shops that do or offer them.
     if (f?.optional && (!collision || fsMode(rules, f.key) === 'shop')) { c._drop = true; continue }
-    if (!collision) continue   // repair shop / dealer / retail: plain lines, no Full Service
-    if (!f || (!c.enabled && !f.optional)) continue
+    if (!collision || !f) continue   // repair shop / dealer / retail: plain lines, no Full Service
     const m = fsMode(rules, f.key)
-    if (m === 'off') { c._drop = true; continue }   // Full Service OFF for this shop → not on the quote at all
+    if (m === 'off') { c._drop = true; continue }   // Full Service OFF for this shop → not on the quote at all (required or not)
+    if (!c.enabled && !f.optional) continue
     if (f.optional && m === 'we') c.enabled = true
     if (m === 'we') weDo.push(`${f.emoji} ${c.calibration_name}`)
     else { c.enabled = false; (m === 'shop' ? shopDoes : offers).push(`${f.emoji} ${c.calibration_name}`); c.justification = `${m === 'shop' ? 'Required · shop handles this (Full Service rule).' : '💰 Offer: required, and we can do it for the shop.'} ${c.justification || ''}`.trim() }
@@ -133,7 +163,7 @@ function applyFs(cals, rules, collision = true) {
   return [weDo.length ? `🧰 Full Service (we do it): ${weDo.join(', ')}` : '', offers.length ? `💰 Offer the shop: ${offers.join(', ')}` : '', shopDoes.length ? `🏪 Shop handles: ${shopDoes.join(', ')}` : ''].filter(Boolean)
 }
 
-async function requestJobFor(scrub, user, kind = 'job') {
+export async function requestJobFor(scrub, user, kind = 'job') {
   const quote = kind === 'quote'
   let full = scrub
   if (!Array.isArray(scrub?.payload?.calibrations)) {
@@ -145,7 +175,7 @@ async function requestJobFor(scrub, user, kind = 'job') {
     : (full.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' }))
   const list = foldBsm(raw, { name: 'name', req: 'required', lines: 'lines', trig: 'trigger' })
   const cals = list.map(c => ({ calibration_name: c.name, cal_type: c.type || '', trigger: c.trigger || '', line_references: c.lines || '', justification: c.why || '', enabled: !!c.required }))
-  const fsr = await fsRulesFor(full.shop)
+  const fsr = withOverride(await fsRulesFor(full.shop), full.payload?.fs_override || '')
   const fsNotes = applyFs(cals, fsr.rules, fsr.collision !== false)
   const req = cals.filter(c => c.enabled).map(c => c.calibration_name)
   const notes = [
@@ -162,6 +192,7 @@ async function requestJobFor(scrub, user, kind = 'job') {
     technician: user?.techName || (user?.role === 'technician' ? (user?.name || '').split(' ')[0] : '') || '',
     notes, status: 'job_requested', via_request: true, request_type: quote ? 'quote' : 'job',   // quote → board's Quotes Requested column
     calibrations: JSON.stringify(cals),
+    scrub_id: full.id || '', scrub_source: full.source || full.by_source || '',   // server DMs Kat the full picture
   }
   const r = await apiFetch(`${API_BASE}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
   const d = await r.json().catch(() => ({}))
@@ -177,30 +208,198 @@ async function requestJobFor(scrub, user, kind = 'job') {
   return normScrub(next)
 }
 
-// Quote (blue, left) + Job (orange, right) — one tap each, right on the row
-// (Mark 2026-09-30: "50-50 … quote on the left in blue, job in orange").
-// full = the phone card's full-width 50/50 bar.
-const REQ_STYLE = { quote: { bg: '#1d4ed8', label: '📝 Quote' }, job: { bg: '#CD4419', label: '📋 Job' } }
-function RowRequest({ s, user, onDone, full = false }) {
+// Same-size action chips: ink = scan, blue = quote, orange = job.
+// One height, one radius, one type size — they sit as a single row, no wrap.
+function ActionBtn({ children, onClick, title, bg, fg = '#fff', border, busy, dim, full, grow }) {
+  return (
+    <span role="button" tabIndex={0} onClick={onClick} title={title}
+      className={`inline-flex items-center justify-center font-extrabold rounded-md whitespace-nowrap cursor-pointer select-none ${grow ? 'w-full' : ''}`}
+      style={{
+        height: full ? 40 : 28,
+        padding: '0 10px',
+        fontSize: full ? 13 : 11,
+        letterSpacing: '-0.01em',
+        lineHeight: 1,
+        backgroundColor: bg,
+        color: fg,
+        border: border || '1px solid transparent',
+        opacity: busy ? 0.7 : dim ? 0.4 : 1,
+        boxSizing: 'border-box',
+      }}>{children}</span>
+  )
+}
+
+const REQ_STYLE = { quote: { bg: QUOTE, label: 'Quote' }, job: { bg: ORANGE, label: 'Create Job' } }
+// Pre-scan stays ink on purpose (Mark 2026-10-09: "the prescan black looks sick").
+function RowPreScan({ s, onDone, full = false }) {
+  const [prev, setPrev] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  if (scansOf(s).pre.done_at) return null
+  const open = async e => {
+    e.stopPropagation(); e.preventDefault(); if (busy) return
+    setBusy('preview'); setMsg('')
+    try { const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/scan/preview`); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setPrev(d) }
+    catch (x) { setMsg(x.message || 'failed') } finally { setBusy('') }
+  }
+  const send = async e => {
+    e.stopPropagation(); e.preventDefault(); if (busy) return
+    setBusy('send'); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'pre', done: true }) })
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setPrev(null); if (d.scrub) onDone(d.scrub)
+    } catch (x) { setMsg(x.message || 'failed') } finally { setBusy('') }
+  }
+  const cancel = e => { e.stopPropagation(); e.preventDefault(); setPrev(null) }
+  return (
+    <span className={`relative inline-flex ${full ? 'flex-1 min-w-0' : ''}`} onClick={e => e.stopPropagation()}>
+      <ActionBtn full={full} grow={full} bg={INK} busy={!!busy} onClick={open}
+        title="Pre-scan done — bills the one-line pre-scan per the shop's rule and emails both documents">
+        {busy === 'preview' ? '…' : 'Pre-scan'}
+      </ActionBtn>
+      {prev && (
+        <span className="absolute z-30 mt-1 rounded-lg p-2 text-[11px] font-sans"
+          style={{ backgroundColor: BRAND.cream, border: `1px solid ${BRAND.line}`, color: INK, minWidth: 260, maxWidth: 360, whiteSpace: 'normal', top: '100%', right: full ? 'auto' : 0, left: full ? 0 : 'auto' }}>
+          <b>{prev.mode === 'charge' ? 'Bill the pre-scan?' : prev.mode === 'included' ? 'No charge — just mark done' : 'Shop handles its own — just mark done'}</b>
+          {prev.mode === 'charge' && <div className="mt-0.5">{prev.billing_mode === 'dual' ? `Estimate ${prev.item?.name || ''} $${Number(prev.list || 0).toFixed(2)} + cost invoice $${Number(prev.cost || 0).toFixed(2)} (${prev.discount_pct}% off)` : `Invoice ${prev.item?.name || ''} $${Number(prev.cost || 0).toFixed(2)}`} → {prev.emails?.join(', ') || 'no email'}</div>}
+          {prev.warnings?.length > 0 && <div className="mt-0.5" style={{ color: '#b45309' }}>{prev.warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}</div>}
+          <span className="flex gap-1 mt-1.5">
+            <button disabled={!!busy || (prev.mode === 'charge' && !prev.can_bill)} onClick={send} className="flex-1 rounded px-2 py-1.5 font-bold text-white" style={{ backgroundColor: INK, opacity: prev.mode === 'charge' && !prev.can_bill ? .5 : 1 }}>{busy === 'send' ? 'Sending…' : prev.mode === 'charge' ? 'Send both · mark done' : 'Mark done'}</button>
+            <button disabled={!!busy} onClick={cancel} className="rounded px-2 py-1.5 font-bold" style={{ backgroundColor: '#fff', color: '#555', border: `1px solid ${BRAND.line}` }}>Cancel</button>
+          </span>
+        </span>
+      )}
+      {msg && <span className="absolute left-0 top-full mt-1 text-[10px] font-sans whitespace-nowrap" style={{ color: BRAND.red }}>{msg}</span>}
+    </span>
+  )
+}
+// 🚦 Create Job on EVERY estimate row (Mark 2026-10-09: "every ccc estimate needs
+// to have a button on the right that says create job"). What it does depends on
+// where the car is on the money path:
+//   · nothing on the board        → Quote request (blue) + Create Job (orange) → Job Requested
+//   · quote requested (card out)  → Create Job flips that same card to Job Requested
+//   · quote SENT (shop said yes)  → Jayden / Mark / Dispatch later picker, same as the
+//                                   board's Quoted jacket — approves the quote and moves the card
+//   · requested / active job      → "On the board →"
+//   · invoiced / paid             → nothing (the RO's green $ says it all)
+const DISPATCH_PICK = [['jayden', 'Jayden', BRAND.jayden], ['mark', 'Mark', ORANGE], ['need_dispatch', 'Later', INK]]
+async function moveQuoteRequestToJob(s) {
+  const r = await apiFetch(`${API_BASE}/api/jobs/${s.jobId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_type: 'job' }) })
+  const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+  const l = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: String(s.jobId), stage: 'requested' }) })
+  const ld = await l.json().catch(() => ({}))
+  return normScrub(ld.scrub || { ...s, stage: 'requested' })
+}
+async function approveQuoteAsJob(s, dispatch) {
+  if (s.quoteId) {
+    const r = await apiFetch(`${API_BASE}/api/shop-quotes/${encodeURIComponent(s.quoteId)}/status`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'approved', dispatch: dispatch === 'need_dispatch' ? undefined : dispatch }) })
+    const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+  } else if (s.jobId) {
+    // Quote number is on the card but the Books estimate id never landed — move the card ourselves.
+    const status = dispatch === 'jayden' ? 'dispatched_jaden' : dispatch === 'mark' ? 'dispatched_mark' : 'need_dispatch'
+    const body = { status }
+    if (dispatch === 'jayden') body.technician = 'Jayden'
+    if (dispatch === 'mark') body.technician = 'Mark'
+    const r = await apiFetch(`${API_BASE}/api/jobs/${s.jobId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+  } else {
+    throw new Error('No quote or job card on this scrub')
+  }
+  let next = { ...s, stage: 'job' }
+  if (s.jobId) {
+    const l = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/job`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: String(s.jobId), stage: 'job' }) })
+    const ld = await l.json().catch(() => ({})); if (ld.scrub) next = ld.scrub
+  }
+  return normScrub(next)
+}
+function RowRequest({ s, user, onDone, full = false, onNavigate }) {
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')
-  if (s.jobId || ['invoiced', 'paid'].includes(s.stage)) return null   // already billed — nothing to request
-  const go = kind => async e => {
-    e.stopPropagation(); e.preventDefault()
+  const [pick, setPick] = useState(false)
+  if (['invoiced', 'paid'].includes(s.stage)) return null   // already billed — nothing to request
+  const stop = e => { e.stopPropagation(); e.preventDefault() }
+  const run = async (key, fn) => {
     if (busy) return
-    setBusy(kind); setErr('')
-    try { onDone(await requestJobFor(s, user, kind)) } catch (x) { setErr(x.message || 'failed') } finally { setBusy('') }
+    setBusy(key); setErr('')
+    try { onDone(await fn()) } catch (x) { setErr(x.message || 'failed') } finally { setBusy('') }
   }
+  const wrapCls = `inline-flex items-center gap-1 min-w-0 ${full ? 'w-full flex-1' : ''}`
+  const errLine = err ? <span className="absolute left-0 top-full mt-1 text-[10px] font-sans whitespace-nowrap" style={{ color: BRAND.red }}>⚠ {err}</span> : null
+  const jobBtn = (onClick, title, label, extra = {}) => (
+    <ActionBtn full={full} grow={full} bg={err ? BRAND.red : ORANGE} busy={!!busy} onClick={e => { stop(e); onClick() }} title={title} {...extra}>
+      {busy ? '…' : err ? 'Retry' : label}
+    </ActionBtn>
+  )
+
+  // On the board already (requested, or an active job) → one tap to the board.
+  if (s.jobId && (s.stage === 'requested' || s.stage === 'job')) {
+    const active = s.stage === 'job'
+    return (
+      <span className={wrapCls} onClick={stop}>
+        <ActionBtn full={full} grow={full} onClick={e => { stop(e); onNavigate && onNavigate('kanban') }}
+          title={active ? 'This car is an active job on the board' : 'Job requested — Kat is pricing it'}
+          bg={active ? BRAND.orangeSoft : '#ffedd5'} fg={active ? ORANGE : '#c2410c'}
+          border={`1px solid ${active ? ORANGE : '#fdba74'}`}>
+          {active ? 'On the board →' : 'Requested →'}
+        </ActionBtn>
+      </span>
+    )
+  }
+
+  // Quote SENT → never show Quote again. If we have the card, who takes it?
+  // If the cron marked it quoted but never linked a card, Create Job makes one.
+  if (s.stage === 'quoted') {
+    return (
+      <span className={`relative ${wrapCls}`} onClick={stop} title={err || ''}>
+        {s.quoteId || s.jobId
+          ? (!pick
+            ? jobBtn(() => setPick(true), 'Shop approved the quote — pick who takes the job', 'Create Job')
+            : <>
+                {DISPATCH_PICK.map(([k, label, bg]) => (
+                  <ActionBtn key={k} full={full} grow={full} bg={bg} busy={busy === k} dim={busy && busy !== k}
+                    onClick={e => { stop(e); run(k, () => approveQuoteAsJob(s, k)) }}>{busy === k ? '…' : label}</ActionBtn>
+                ))}
+                <ActionBtn full={full} bg="#fff" fg="#777" border={`1px solid ${BRAND.line}`} onClick={e => { stop(e); setPick(false) }}>Cancel</ActionBtn>
+              </>)
+          : jobBtn(() => run('job', () => requestJobFor(s, user, 'job')), 'Quote is out — send this car to Job Requested so Kat can dispatch it', 'Create Job')}
+        {errLine}
+      </span>
+    )
+  }
+
+  // Quote requested (card in Quotes Requested) → Create Job moves that card.
+  if (s.jobId && s.stage === 'quote_requested') {
+    return (
+      <span className={`relative ${wrapCls}`} onClick={stop}>
+        {jobBtn(() => run('job', () => moveQuoteRequestToJob(s)), 'Move this card from Quotes Requested to Job Requested — Kat prices and dispatches it', 'Create Job')}
+        {errLine}
+      </span>
+    )
+  }
+
+  // Nothing on the board yet → Quote (blue, left) + Create Job (orange, right).
   return (
-    <span className={`flex gap-1.5 ${full ? 'w-full mt-2' : ''}`} title={err || ''}>
+    <span className={`relative ${wrapCls}`} onClick={stop} title={err || ''}>
       {['quote', 'job'].map(k => (
-        <span key={k} role="button" tabIndex={0} onClick={go(k)} onKeyDown={e => e.key === 'Enter' && go(k)(e)}
-          title={k === 'quote' ? 'Send to Quotes Requested with every scrub detail — Kat drafts the estimate' : 'Send to Job Requested with every scrub detail — Kat prices and dispatches it'}
-          className={`inline-flex items-center justify-center font-bold rounded-lg whitespace-nowrap cursor-pointer text-white ${full ? 'flex-1 text-sm py-2.5' : 'text-[11px] px-2 py-1'}`}
-          style={{ backgroundColor: err ? '#b91c1c' : REQ_STYLE[k].bg, opacity: busy && busy !== k ? .4 : busy ? .7 : 1 }}>
-          {busy === k ? '…' : err ? '⚠ Retry' : `${REQ_STYLE[k].label}${full ? ' request' : ''}`}
-        </span>
+        <ActionBtn key={k} full={full} grow={full} bg={err ? BRAND.red : REQ_STYLE[k].bg}
+          busy={busy === k} dim={busy && busy !== k}
+          onClick={e => { stop(e); run(k, () => requestJobFor(s, user, k)) }}
+          title={k === 'quote' ? 'Send to Quotes Requested with every scrub detail — Kat drafts the estimate' : 'Send to Job Requested with every scrub detail — Kat prices and dispatches it'}>
+          {busy === k ? '…' : err ? 'Retry' : REQ_STYLE[k].label}
+        </ActionBtn>
       ))}
+      {errLine}
+    </span>
+  )
+}
+
+// Pre-scan + Quote + Create Job as one even row (list + phone cards).
+function RowActions({ s, user, onDone, full = false, onNavigate }) {
+  return (
+    <span className={`inline-flex items-center ${full ? 'w-full gap-1.5 mt-2' : 'gap-1'}`} onClick={e => { e.stopPropagation(); e.preventDefault() }}>
+      <RowPreScan s={s} onDone={onDone} full={full} />
+      <RowRequest s={s} user={user} onDone={onDone} onNavigate={onNavigate} full={full} />
     </span>
   )
 }
@@ -208,6 +407,16 @@ function RowRequest({ s, user, onDone, full = false }) {
 // RO on the list rows. Invoiced / paid = the RO itself gets a green
 // highlighter with a $ instead of a separate "invoiced …" tag (Mark
 // 2026-09-30: "instead of crowding this area"); other stages keep their pill.
+// 🔬 Scan lifecycle (Mark 2026-10-07/08): the scans record rides in s.reports as {kind:'scans'}.
+const scansOf = s => { const e = (s?.reports || []).find(r => r && r.kind === 'scans'); return { pre: e?.pre || {}, post: e?.post || {}, completed_at: e?.completed_at || '' } }
+const scanState = s => { const sc = scansOf(s); const preDone = !!sc.pre.done_at, preInv = !!(sc.pre.invoice_number || sc.pre.mode === 'included' || sc.pre.mode === 'off'); const postDone = !!sc.post.done_at, postInv = !!(sc.post.invoice_number || sc.post.mode === 'included' || sc.post.mode === 'off'); if (preDone && preInv && postDone && postInv) return 'complete'; if (postDone) return 'post_done'; if (preDone && preInv) return 'pre_invoiced'; if (preDone) return 'pre_done'; return 'none' }
+const SCAN_STYLE = { none: null, pre_done: { border: '#888888', bg: '#f5f3f0', label: 'Pre-scan done' }, pre_invoiced: { border: '#0A0A0A', bg: '#f5f3f0', label: 'Pre-scan invoiced · waiting on post-scan' }, post_done: { border: '#d97706', bg: '#fffbeb', label: 'Post-scan done · bill it' }, complete: { border: '#16a34a', bg: '#f0fdf4', label: 'Complete' } }
+function ScanBoxes({ s }) {
+  const sc = scansOf(s), st = scanState(s)
+  if (st === 'none') return null
+  const box = (k, label) => { const v = sc[k]; const done = !!v.done_at; const inv = v.invoice_number || (v.mode === 'included' ? 'no charge' : v.mode === 'off' ? 'shop' : ''); return <span key={k} className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: done ? (inv ? '#dcfce7' : '#e8e4e0') : '#f3f4f6', color: done ? (inv ? '#166534' : '#0A0A0A') : '#9ca3af', border: `1px solid ${done ? (inv ? '#86efac' : '#c4bfb8') : '#e5e7eb'}` }}>{done ? '☑' : '☐'} {label}{inv ? ` · ${inv}` : ''}</span> }
+  return <div className="flex gap-1 flex-wrap mt-0.5">{box('pre', 'Pre-scan')}{box('post', 'Post-scan')}{st === 'complete' && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#16a34a', color: '#fff' }}>✅ COMPLETE</span>}</div>
+}
 function RoTag({ s }) {
   const billed = ['invoiced', 'paid'].includes(s.stage)
   const ro = s.ro ? `RO ${s.ro}` : 'no RO'
@@ -217,10 +426,19 @@ function RoTag({ s }) {
 
 // 📝 Quote already sent → blue border on the list (Mark 2026-09-30). Billed cars
 // don't need it (their RO is the green $ highlight).
-const QUOTE_BLUE = '#2563eb'
 // Only a quote actually SENT (stage 'quoted' — set by Send Quote). A job's Books
 // estimate number alone isn't a sent quote; once it's a job it shows "on the board".
 const quoteSent = s => s.stage === 'quoted'
+// 🟠 Active job (Mark 2026-10-09: "we need a way to mark a active job") — automatic:
+// the card is past Requested (stage 'job'), so the row gets the brand-orange outline
+// and a light orange tint, the mirror of the blue quoted outline. Billed cars drop it.
+const activeJob = s => s.stage === 'job'
+const ACTIVE_TINT = '#fff7f3'
+// One place for the row/card frame: quoted (blue) > active job (orange) > scan state > plain.
+const rowFrame = s => quoteSent(s) ? { border: QUOTE, bg: BRAND.quoteSoft }
+  : activeJob(s) ? { border: ORANGE, bg: ACTIVE_TINT }
+  : SCAN_STYLE[scanState(s)] ? { border: SCAN_STYLE[scanState(s)].border, bg: SCAN_STYLE[scanState(s)].bg }
+  : null
 
 // 👀 Last lot-walk result on a car (Mark 2026-09-30).
 const SEEN = {
@@ -228,7 +446,7 @@ const SEEN = {
   not_ready: { label: 'Not ready',  bg: '#fef3c7', fg: '#92400e', icon: '⏳' },
   estimate:  { label: 'Estimate only', bg: '#f3f4f6', fg: '#4b5563', icon: '📄' },
   gone:      { label: 'Not here',   bg: '#fee2e2', fg: '#b91c1c', icon: '❌' },
-  found:     { label: 'Found on walk', bg: '#e0f2fe', fg: '#0369a1', icon: '🆕' },
+  found:     { label: 'Found on walk', bg: '#e6f4f4', fg: '#1F8B8B', icon: '🆕' },
 }
 function SeenChip({ s }) {
   const v = s.seen; if (!v || !SEEN[v.s]) return null
@@ -275,7 +493,7 @@ const shortDay = ymd => { try { const [y, m, d] = ymd.split('-').map(Number); re
 
 // 🚶 Lot walk: one shop's active cars as a big-button checklist; add cars found
 // on the lot; finish → summary to Kat + #dispatch. Phone first.
-function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
+function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onNavigate, onClose }) {
   const [walk, setWalk] = useState(null)
   const [err, setErr] = useState('')
   const [marks, setMarks] = useState({})        // scrubId → status
@@ -363,6 +581,12 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
               <div className="text-sm font-bold leading-snug" style={{ color: INK }}>{s.vehicle || 'Vehicle'}</div>
               <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap mt-0.5" style={{ color: ORANGE }}>{s.ro ? `RO ${s.ro}` : 'no RO'}{s.vin ? <span style={{ color: '#888' }}>…{String(s.vin).slice(-6)}</span> : null}<CalPills s={s} /></div>
               <div className="mt-1"><ShopClock s={s} first={s._first} /></div>
+              <ScanBoxes s={s} />
+              {/* 🔬 Post-scan done from the walk (Mark 2026-10-08): ticks the car's box; the invoice fills in at Bill it. */}
+              {!!s.id && !scansOf(s).post.done_at && (
+                <button disabled={!!busy} onClick={async () => { setBusy(`${s.id}:post`); try { const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which: 'post', done: true }) }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); if (d.scrub) onRequest && onRequest(d.scrub) } catch (e) { window.alert(e.message) } finally { setBusy('') } }}
+                  className="mt-2 w-full rounded-lg py-2.5 text-xs font-bold text-white" style={{ backgroundColor: '#d97706' }}>{busy === `${s.id}:post` ? '…' : '🔬 Post-scan done'}</button>
+              )}
               <div className="grid grid-cols-2 gap-1.5 mt-2">
                 {['here', 'not_ready', 'estimate', 'gone'].map(k => (
                   <button key={k} onClick={() => mark(s, k)} disabled={!walk || !!busy}
@@ -395,24 +619,24 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
               {m === 'not_ready' && dues[s.id] && !nr[s.id]?.open && <div className="text-xs font-bold mt-1.5" style={{ color: '#92400e' }}>⏳ {nr[s.id]?.stage ? `${nr[s.id].stage} · ` : ''}check back {shortDay(dues[s.id])} — it'll be on your Live Day To-Do</div>}
               <input value={notes[s.id] || ''} onChange={e => setNotes(n => ({ ...n, [s.id]: e.target.value }))} placeholder="Note (optional) — e.g. waiting on bumper"
                 className="w-full text-xs rounded-lg px-2.5 py-2 mt-1.5" style={inp} />
-              {m === 'here' && <RowRequest s={s} user={user} onDone={onRequest} full />}
+              {m === 'here' && <RowRequest s={s} user={user} onDone={onRequest} onNavigate={onNavigate} full />}
             </div>
           )
         })}
       </div>
       {/* ＋ Found a car */}
-      <div className="mt-3 rounded-xl p-3" style={{ border: '2px dashed #0369a1', backgroundColor: '#f0f9ff' }}>
+      <div className="mt-3 rounded-xl p-3" style={{ border: '2px dashed #1F8B8B', backgroundColor: '#e6f4f4' }}>
         {!f.open
-          ? <button onClick={() => setF(x => ({ ...x, open: true }))} className="w-full text-sm font-bold py-1" style={{ color: '#0369a1' }}>＋ Found a car that isn't listed</button>
+          ? <button onClick={() => setF(x => ({ ...x, open: true }))} className="w-full text-sm font-bold py-1" style={{ color: '#1F8B8B' }}>＋ Found a car that isn't listed</button>
           : <div className="grid gap-1.5">
-              <div className="text-sm font-bold" style={{ color: '#0369a1' }}>🆕 Car found on the lot</div>
+              <div className="text-sm font-bold" style={{ color: '#1F8B8B' }}>🆕 Car found on the lot</div>
               <input value={f.vin} onChange={e => setF(x => ({ ...x, vin: e.target.value.toUpperCase() }))} placeholder="VIN (full 17) or last 4–8" className="text-sm rounded-lg px-2.5 py-2 font-mono" style={inp} />
               <input value={f.vehicle} onChange={e => setF(x => ({ ...x, vehicle: e.target.value }))} placeholder="Year make model (e.g. 2022 Honda CR-V)" className="text-sm rounded-lg px-2.5 py-2" style={inp} />
               <input value={f.ro} onChange={e => setF(x => ({ ...x, ro: e.target.value }))} placeholder="RO (if you know it)" className="text-sm rounded-lg px-2.5 py-2" style={inp} />
               <input value={f.note} onChange={e => setF(x => ({ ...x, note: e.target.value }))} placeholder="Note — what's going on with it" className="text-sm rounded-lg px-2.5 py-2" style={inp} />
               <div className="flex gap-1.5">
                 <button onClick={() => setF({ open: false, vin: '', vehicle: '', ro: '', note: '' })} className="flex-1 rounded-lg py-2.5 text-sm font-bold" style={{ backgroundColor: '#fff', color: '#555', border: '1px solid #ddd' }}>Cancel</button>
-                <button onClick={addFound} disabled={busy === 'found' || (!f.vin.trim() && !f.vehicle.trim())} className="flex-1 rounded-lg py-2.5 text-sm font-bold text-white" style={{ backgroundColor: '#0369a1', opacity: (!f.vin.trim() && !f.vehicle.trim()) ? .5 : 1 }}>{busy === 'found' ? 'Adding…' : 'Add car'}</button>
+                <button onClick={addFound} disabled={busy === 'found' || (!f.vin.trim() && !f.vehicle.trim())} className="flex-1 rounded-lg py-2.5 text-sm font-bold text-white" style={{ backgroundColor: '#1F8B8B', opacity: (!f.vin.trim() && !f.vehicle.trim()) ? .5 : 1 }}>{busy === 'found' ? 'Adding…' : 'Add car'}</button>
               </div>
             </div>}
       </div>
@@ -429,10 +653,9 @@ function LotWalk({ shop, cars, user, onSeen, onFound, onRequest, onClose }) {
 }
 
 // One pill per REQUIRED calibration on the list rows (Mark 2026-09-30).
-function CalPills({ s }) {
-  const names = (s.sensors || []).filter(x => x.r).map(x => x.n)
-  const list = names.length ? names : String(s.requiredNames || '').split(/\s*[,|;]\s*/).filter(Boolean)
-  return list.map(n => <span key={n} className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: '#fff1ec', color: '#b4380f', border: '1px solid #f6c3b1' }}>{String(n).replace(/\s*calibration$/i, '')}</span>)
+function CalPills({ s, fsr }) {
+  const { names } = requiredOf(s, fsr)
+  return names.map(n => <span key={n} className="text-[10px] font-bold font-sans px-1.5 py-0.5 rounded-full whitespace-nowrap" style={{ backgroundColor: '#fff1ec', color: '#b4380f', border: '1px solid #f6c3b1' }}>{String(n).replace(/\s*calibration$/i, '')}</span>)
 }
 
 const when = iso => {
@@ -451,7 +674,9 @@ const shortWhen = iso => {
 export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNavigate, onExtracted }) {
   const nav = <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
   const [q, setQ] = useState('')
+  const [photoOpen, setPhotoOpen] = useState(false)   // 📸 scrub from estimate photos
   const [rows, setRows] = useState([])
+  const [fsByShop, setFsByShop] = useState({})   // shop name → Full Service rule (list counts drop FS lines when OFF)
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -466,7 +691,9 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   // poll the list for the file name for up to three minutes and open it.
   const pickFile = () => fileRef.current?.click()
   const [dragOver, setDragOver] = useState(false)
-  const [tab, setTab] = useState('active')        // active | archive (invoiced + paid)
+  const [tab, setTab] = useState('active')        // active | archive (invoiced + paid) | archived (🗄 purged by hand or auto, Mark 2026-10-07)
+  const [archivedRows, setArchivedRows] = useState([])
+  const loadArchived = async () => { try { const r = await apiFetch(`${API_BASE}/api/scrubs?limit=500&archived=1`); const d = await r.json().catch(() => ({})); setArchivedRows(Array.isArray(d.scrubs) ? d.scrubs.map(normScrub) : []) } catch { setArchivedRows([]) } }
   const [shopSel, setShopSel] = useState('')      // '' = all shops
   const [walkShop, setWalkShop] = useState('')    // 🚶 a lot walk is open for this shop
   const [hot, setHot] = useState(false)           // ⏰ only cars running out of shop time
@@ -478,10 +705,12 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
     if (up.busy) return
     await uploadReport(f)
   }
-  const uploadReport = async f => {
+  const [dupNote, setDupNote] = useState(null)   // 🔁 same CCC already scrubbed → opened, nothing charged
+  const uploadReport = async (f, force = false) => {
     const name = f.name
-    setUp({ busy: true, msg: `Scrubbing ${name} — about a minute…`, name })
-    const fd = new FormData(); fd.append('file', f, name)
+    setUp({ busy: true, msg: force ? `Scrubbing ${name} again — about a minute…` : `Scrubbing ${name} — about a minute…`, name })
+    setDupNote(null)
+    const fd = new FormData(); fd.append('file', f, name); if (force) fd.append('force', '1')
     let refused = ''
     try {
       const r = await apiFetch(`${API_BASE}/api/scrubs/upload`, { method: 'POST', body: fd })
@@ -492,7 +721,11 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         if (d.scrubId) {
           const l = await apiFetch(`${API_BASE}/api/scrubs?limit=60`).then(x => x.json()).catch(() => ({}))
           const hit = (l.scrubs || []).find(x => String(x.id) === String(d.scrubId))
-          if (hit) { setRows((l.scrubs || []).map(normScrub)); setUp({ busy: false, msg: '', name: '' }); openScrub(hit); return }
+          if (hit) {
+            setRows((l.scrubs || []).map(normScrub)); setUp({ busy: false, msg: '', name: '' })
+            if (d.duplicate) setDupNote({ when: d.scrubbed_at, why: d.duplicate_why, file: f })
+            openScrub(hit); return
+          }
         }
       }
     } catch { /* gateway cut — the scrub is still running */ }
@@ -522,7 +755,17 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load(''); apiFetch(`${API_BASE}/api/scrubs/stats`).then(r => r.json()).then(setStats).catch(() => {}) }, [])
+  useEffect(() => { load(''); loadArchived(); apiFetch(`${API_BASE}/api/scrubs/stats`).then(r => r.json()).then(setStats).catch(() => {}) }, [])
+  useEffect(() => {
+    const names = [...new Set(rows.map(s => s.shop).filter(Boolean))]
+    names.forEach(shop => {
+      if (fsByShop[shop] || _fsCache.has(String(shop).trim().toLowerCase())) {
+        if (!fsByShop[shop] && _fsCache.has(String(shop).trim().toLowerCase())) setFsByShop(m => ({ ...m, [shop]: _fsCache.get(String(shop).trim().toLowerCase()) }))
+        return
+      }
+      fsRulesFor(shop).then(r => setFsByShop(m => (m[shop] ? m : { ...m, [shop]: r })))
+    })
+  }, [rows]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => load(q.trim()), 350)
@@ -555,7 +798,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         {nav}
         {openBusy
           ? <div className="p-10 text-center text-sm" style={{ color: '#777' }}>Opening…</div>
-          : <ScrubReport s={open} user={user} onBack={closeScrub} onNavigate={onNavigate} onExtracted={onExtracted} />}
+          : <ScrubReport s={open} user={user} onBack={closeScrub} onNavigate={onNavigate} onExtracted={onExtracted} onArchived={() => { load(q.trim()); loadArchived() }} />}
       </div>
     )
   }
@@ -566,10 +809,10 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
   const firstAt = (() => { const m = new Map(); for (const r of rows) { const k = carKeyOf(r); if (r.at && (!m.has(k) || r.at < m.get(k))) m.set(k, r.at) } return m })()
   const first = s => firstAt.get(carKeyOf(s)) || s.at
   const hotCount = rows.filter(s => !billed(s) && runningOut(s, first(s))).length
-  const tabRows = rows.filter(s => (tab === 'archive' ? billed(s) : !billed(s))).filter(s => !hot || tab === 'archive' || runningOut(s, first(s)))
+  const tabRows = tab === 'archived' ? archivedRows : rows.filter(s => (tab === 'archive' ? billed(s) : !billed(s))).filter(s => !hot || tab === 'archive' || runningOut(s, first(s)))
   // One shop, many spellings ("…LLC", "…Llc", "Avon Body Shop, Llc") → one group,
   // shown under its most common spelling.
-  const shopKey = s => String(s.shop || '').toLowerCase().replace(/[.,&']/g, ' ').replace(/\b(llc|inc|co|corp|corporation|ltd|the)\b/g, ' ').replace(/[^a-z0-9]+/g, '') || 'noshop'
+  const shopKey = s => shopCoreKey(s.shop) || shopKeyRaw(s.shop) || 'noshop'
   const shopLabel = (() => {
     const m = new Map()
     for (const s of rows) { const k = shopKey(s); const n = (s.shop || '').trim() || 'No shop'; const c = m.get(k) || {}; c[n] = (c[n] || 0) + 1; m.set(k, c) }
@@ -590,7 +833,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
       <div className="min-h-screen" style={{ backgroundColor: '#fff' }}>
         {nav}
         <LotWalk shop={walkShop} cars={rows.filter(s => !billed(s) && shopName(s) === walkShop)} user={user}
-          onSeen={addSeen} onFound={row => setRows(rs => [row, ...rs])} onRequest={swapRow}
+          onSeen={addSeen} onFound={row => setRows(rs => [row, ...rs])} onRequest={swapRow} onNavigate={onNavigate}
           onClose={() => setWalkShop('')} />
       </div>
     )
@@ -610,8 +853,10 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         <div className="flex gap-2 w-full sm:w-auto">
           <button onClick={pickFile} disabled={up.busy} className="rounded-lg px-4 py-2.5 text-sm font-bold whitespace-nowrap" style={{ backgroundColor: ORANGE, color: '#fff', minHeight: 44, opacity: up.busy ? 0.6 : 1 }}>{up.busy ? '⏳ Scrubbing…' : '⬆️ Upload report'}</button>
           <input ref={fileRef} type="file" accept="application/pdf,.pdf" onChange={onFile} style={{ display: 'none' }} />
+          <button onClick={() => setPhotoOpen(true)} className="rounded-lg px-4 py-2.5 text-sm font-bold whitespace-nowrap" style={{ backgroundColor: '#15803d', color: '#fff', minHeight: 44 }}>📸 Photos</button>
+          {photoOpen && <PhotoScrub user={user} onClose={() => { setPhotoOpen(false); load(q) }} />}
         </div>
-        {up.msg && !up.busy && <div className="w-full text-xs rounded-lg px-3 py-2" style={{ backgroundColor: up.busy ? '#eff6ff' : '#fef2f2', color: up.busy ? '#1e40af' : '#b91c1c' }}>{up.msg}</div>}
+        {up.msg && !up.busy && <div className="w-full text-xs rounded-lg px-3 py-2" style={{ backgroundColor: up.busy ? '#f5f3f0' : '#fef2f2', color: up.busy ? '#0A0A0A' : '#b91c1c' }}>{up.msg}</div>}
         <input
           value={q}
           onChange={e => setQ(e.target.value)}
@@ -640,9 +885,16 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         <div className="rounded-xl p-3 mb-3 text-sm" style={{ backgroundColor: '#fef2f2', color: '#b91c1c', border: '1.5px solid #fecaca' }}>{err}</div>
       )}
 
+      {dupNote && (
+        <div className="rounded-xl px-3 py-2 mb-2 text-xs flex items-center gap-2 flex-wrap" style={{ backgroundColor: '#f0fdf4', border: '1.5px solid #86efac', color: '#166534' }}>
+          <span>♻️ <b>Already scrubbed</b>{dupNote.when ? ` ${shortWhen(dupNote.when)}` : ''} — opened the existing one, nothing charged ({dupNote.why}).</span>
+          {user?.role === 'owner' && <button onClick={() => uploadReport(dupNote.file, true)} className="font-bold underline">Scrub again anyway</button>}
+          <button onClick={() => setDupNote(null)} className="ml-auto font-bold" style={{ color: '#166534' }}>✕</button>
+        </div>
+      )}
       {/* Active / Archive + shop picker */}
       <div className="flex items-center gap-2 mb-2 flex-wrap">
-        {[['active', 'Active', rows.filter(s => !billed(s)).length], ['archive', '🗄 Archive', rows.filter(billed).length]].map(([k, l, n]) => (
+        {[['active', 'Active', rows.filter(s => !billed(s)).length], ['archive', '💵 Billed', rows.filter(billed).length], ['archived', '🗄 Archived', archivedRows.length]].map(([k, l, n]) => (
           <button key={k} onClick={() => { setTab(k); setShopSel('') }} className="rounded-lg px-3 py-2 text-sm font-bold"
             style={tab === k ? { backgroundColor: INK, color: '#fff' } : { backgroundColor: '#f5f3f0', color: '#555' }}>{l} <span className="opacity-70">{n}</span></button>
         ))}
@@ -651,6 +903,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
             style={hot ? { backgroundColor: '#dc2626', color: '#fff' } : { backgroundColor: '#fee2e2', color: '#b91c1c' }}>⏰ Running out <span className="opacity-80">{hotCount}</span></button>
         )}
         {tab === 'archive' && <span className="text-xs" style={{ color: '#888' }}>Invoiced and paid cars</span>}
+        {tab === 'archived' && <span className="text-xs" style={{ color: '#888' }}>Purged by hand or auto-archived — open one and Resurrect to bring it back</span>}
       </div>
       {shops.length > 1 && (
         <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1" style={{ scrollbarWidth: 'thin' }}>
@@ -679,7 +932,7 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                 [g.rows.filter(s => !s.stage || s.stage === 'scrubbed').length, 'scrubbed'],
                 [g.rows.filter(s => ['quote_requested', 'requested'].includes(s.stage)).length, 'requested'],
                 [g.rows.filter(s => s.stage === 'quoted').length, 'quote sent'],
-                [g.rows.filter(s => s.stage === 'job').length, 'on the board'],
+                [g.rows.filter(s => s.stage === 'job').length, 'active'],
                 [g.rows.filter(billed).length, 'invoiced'],
               ].filter(([n]) => n).map(([n, l]) => `${n} ${l}`).join(' · ')}</div>
             </div>
@@ -709,27 +962,30 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
                     key={s.id}
                     onClick={() => openScrub(s)}
                     className="cursor-pointer hover:bg-gray-50"
-                    title={quoteSent(s) ? `Quote sent${s.quoteNumber ? ` · ${s.quoteNumber}` : ''}` : undefined}
-                    style={{ borderBottom: '1px solid #f0f0f0', ...(quoteSent(s) ? { outline: `2px solid ${QUOTE_BLUE}`, outlineOffset: -2, backgroundColor: '#f5f9ff' } : {}) }}
+                    title={quoteSent(s) ? `Quote sent${s.quoteNumber ? ` · ${s.quoteNumber}` : ''}` : activeJob(s) ? 'Active job — on the board' : undefined}
+                    style={{ borderBottom: '1px solid #f0f0f0', ...(rowFrame(s) ? { outline: `2px solid ${rowFrame(s).border}`, outlineOffset: -2, backgroundColor: rowFrame(s).bg } : {}) }}
                   >
                     <td className="py-2.5 pl-2">
+                      {(() => { const n = requiredOf(s, fsByShop[s.shop]).count; return (
                       <span
                         className="inline-flex items-center justify-center text-[11px] font-bold rounded-full"
-                        style={{ width: 24, height: 24, backgroundColor: s.requiredCount ? ORANGE : '#e5e5e5', color: s.requiredCount ? '#fff' : '#888' }}
-                        title={`${s.requiredCount} required of ${s.sensorCount} sensors`}
-                      >{s.requiredCount}</span>
+                        style={{ width: 24, height: 24, backgroundColor: n ? ORANGE : '#e5e5e5', color: n ? '#fff' : '#888' }}
+                        title={`${n} required of ${s.sensorCount} sensors`}
+                      >{n}</span>
+                      ) })()}
                     </td>
                     <td className="py-2.5 pr-3">
                       <div className="font-bold" style={{ color: INK }}>{s.vehicle || 'Vehicle not read'}</div>
                       <div className="mt-0.5"><ShopClock s={s} first={first(s)} /></div>
                       <SeenChip s={s} />
-                      <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
+                      <ScanBoxes s={s} />
+                      <div className="text-xs font-mono flex items-center gap-1.5 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} fsr={fsByShop[s.shop]} />{statusNote(s) && <span className="text-[10px] font-sans" style={{ color: '#999' }}>{statusNote(s)}</span>}</div>
                     </td>
                     <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}><CopyVin vin={s.vin} /></td>
                     <td className="py-2.5 pr-3 font-mono text-xs" style={{ color: '#555' }}>{s.claim || '—'}</td>
                     <td className="py-2.5 pr-3 text-xs" style={{ color: '#555' }}>{s.shop || '—'}</td>
                     <td className="py-2.5 pr-3 text-xs" style={{ color: '#888' }}>{shortWhen(s.at)}</td>
-                    <td className="py-2.5 pr-2"><RowRequest s={s} user={user} onDone={swapRow} /></td>
+                    <td className="py-2.5 pr-2 whitespace-nowrap"><RowActions s={s} user={user} onDone={swapRow} onNavigate={onNavigate} /></td>
                     <td className="py-2.5 text-right pr-2" style={{ color: ORANGE }}>→</td>
                   </tr>
                 ))}
@@ -742,23 +998,26 @@ export default function ScrubLibraryScreen({ user, onLogout, currentScreen, onNa
         <div className="md:hidden grid grid-cols-1 gap-2">   {/* grid-cols-1 = minmax(0,1fr): one long card can't widen the page */}
           {g.rows.map(s => (
             <button key={s.id} onClick={() => openScrub(s)} className="text-left rounded-xl p-3 w-full min-w-0 overflow-hidden"
-              style={{ backgroundColor: quoteSent(s) ? '#f5f9ff' : '#fff', border: `2px solid ${quoteSent(s) ? QUOTE_BLUE : s.requiredCount ? ORANGE : '#e5e5e5'}` }}>
+              style={{ backgroundColor: rowFrame(s)?.bg || '#fff', border: `2px solid ${rowFrame(s)?.border || (requiredOf(s, fsByShop[s.shop]).count ? '#f3c9ba' : '#e5e5e5')}` }}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-bold leading-snug" style={{ color: INK, overflowWrap: 'anywhere' }}>{s.vehicle || 'Vehicle not read'}</div>
-                  <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} /></div>
+                  <div className="text-xs font-mono flex items-center gap-2 flex-wrap" style={{ color: ORANGE }}><RoTag s={s} /><CalPills s={s} fsr={fsByShop[s.shop]} /></div>
                 </div>
+                {(() => { const n = requiredOf(s, fsByShop[s.shop]).count; return (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap"
-                  style={{ backgroundColor: s.requiredCount ? ORANGE : '#f5f3f0', color: s.requiredCount ? '#fff' : '#777' }}>
-                  {s.requiredCount} of {s.sensorCount}
+                  style={{ backgroundColor: n ? ORANGE : '#f5f3f0', color: n ? '#fff' : '#777' }}>
+                  {n} of {s.sensorCount}
                 </span>
+                ) })()}
               </div>
               <div className="mt-1"><ShopClock s={s} first={first(s)} /></div>
               <SeenChip s={s} />
+              <ScanBoxes s={s} />
               <div className="text-[11px] mt-1" style={{ color: '#666' }}>{s.shop || '—'}</div>
               <div className="text-[10px] mt-0.5 font-mono" style={{ color: '#999' }}><CopyVin vin={s.vin} /></div>
               <div className="text-[10px] mt-0.5" style={{ color: '#999' }}>{shortWhen(s.at)}</div>
-              <RowRequest s={s} user={user} onDone={swapRow} full />
+              <RowActions s={s} user={user} onDone={swapRow} onNavigate={onNavigate} full />
             </button>
           ))}
         </div>
@@ -780,19 +1039,43 @@ const CAL_TYPES = ['Static', 'Dynamic', 'Static + Dynamic']
 
 const toLine = c => ({
   name: c.sensor || c.calibration_name || '', type: c.cal_type || '',
-  required: c.enabled === true, lines: c.line_references || '',
+  required: c.enabled === true && !/^(CONDITIONAL:|REVIEW NEEDED|NOT REQUIRED)/.test(c.classification || ''),
+  lines: c.line_references || '',
   trigger: c.trigger || '', why: c.justification || '',
-  added: !!c._added, edited: !!c._edited, by: c._by || '', guard: c._guard || '',
+  added: !!c._added, edited: !!c._edited, by: c._by || '', guard: c._guard || '', learned: c._learned || '',
+  reportRequired: !!(c._reportRequired || c._onReport),
+  classification: c.classification || '', title: c.operation_title || '', procedure: c.procedure || '',
+  required_before: c.required_before || '', repair_relationship: c.repair_relationship || '', oem_reference: c.oem_reference || '',
 })
 const fromLine = l => ({
   calibration_name: l.name, cal_type: l.type || null, trigger: l.trigger || null,
-  line_references: l.lines || null, justification: l.why || '', enabled: !!l.required,
+  line_references: l.lines || null, justification: l.why || '',
+  enabled: l.classification === 'REVIEW NEEDED' ? true : !!l.required,
+  ...(l.classification ? { classification: l.classification } : {}),
+  ...(l.title ? { operation_title: l.title } : {}),
+  ...(l.procedure ? { procedure: l.procedure } : {}),
+  ...(l.required_before ? { required_before: l.required_before } : {}),
+  ...(l.repair_relationship ? { repair_relationship: l.repair_relationship } : {}),
+  ...(l.oem_reference ? { oem_reference: l.oem_reference } : {}),
   ...(l.added ? { _added: true, _by: l.by } : {}), ...(l.edited ? { _edited: true, _by: l.by } : {}),
+  ...(l.reportRequired ? { _reportRequired: true } : {}),
 })
 
-function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
+function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted, onArchived }) {
+  // 🗄 Archive / Resurrect (Mark 2026-10-07): nothing is deleted; the car leaves the active list.
+  const [archBusy, setArchBusy] = useState(false)
+  const [archPick, setArchPick] = useState(false)
+  const archive = async reason => {
+    setArchBusy(true)
+    try { const r = await apiFetch(`${API_BASE}/api/scrubs/${initial.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`); onArchived && onArchived('archived'); onBack && onBack() }
+    catch (e) { window.alert(e.message || 'Could not archive') } finally { setArchBusy(false); setArchPick(false) }
+  }
+  const resurrect = async () => {
+    setArchBusy(true)
+    try { const r = await apiFetch(`${API_BASE}/api/scrubs/${initial.id}/resurrect`, { method: 'POST' }); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`); onArchived && onArchived('resurrected'); onBack && onBack() }
+    catch (e) { window.alert(e.message || 'Could not resurrect') } finally { setArchBusy(false) }
+  }
   const [s, setS] = useState(initial)
-  const [reqBusy, setReqBusy] = useState('')
   const [reqMsg, setReqMsg] = useState('')
   const [cardBusy, setCardBusy] = useState(false)
   const [cardMsg, setCardMsg] = useState('')
@@ -808,6 +1091,8 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   const [draft, setDraft] = useState([])
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
+  const [fbBusy, setFbBusy] = useState('')
+  const [fbFlash, setFbFlash] = useState(null)
   const [aiBusy, setAiBusy] = useState(-1)
   const [estUrl, setEstUrl] = useState('')      // two-tap open (never window.open after an await — iOS PWA rule)
   const [estBusy, setEstBusy] = useState(false)
@@ -852,11 +1137,20 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   }
 
   const p = s.payload || {}
+  // `list` = every line the scrub found (what Edit works on and what gets saved).
+  // `visible` = what the report shows: Full Service lines drop out when the shop is OFF.
   const list = useMemo(() => {
     const cals = Array.isArray(p.calibrations) ? p.calibrations : []
     return foldBsm(cals.length ? cals.map(toLine) : (s.sensors || []).map(x => ({ name: x.n, type: x.t, required: x.r, lines: x.l, trigger: x.g, why: '' })), { name: 'name', req: 'required', lines: 'lines', trig: 'trigger' })
   }, [s]) // eslint-disable-line react-hooks/exhaustive-deps
-  const shown = editing ? draft : list
+  const [fsCrm, setFsCrm] = useState(null)   // the shop's Full Service rule (CRM); null until loaded
+  useEffect(() => { let live = true; fsRulesFor(s.shop).then(r => { if (live) setFsCrm(r) }); return () => { live = false } }, [s.shop])
+  const fsEff = fsCrm ? withOverride(fsCrm, p.fs_override || '') : null   // what THIS report uses
+  const vehicleBits = `${s.make || ''} ${s.vehicle || ''}`
+  const visible = useMemo(() => dropFsLines(list, fsEff, vehicleBits).map(l => ({
+    ...l, onReport: !!(l.reportRequired || nissanBatteryLine(l, vehicleBits)),
+  })), [list, fsEff, vehicleBits])   // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = editing ? draft : visible
   const required = shown.filter(c => c.required)
 
   // 📋 Request Job (Mark 2026-09-30): a tech on the scrub taps one button and
@@ -864,12 +1158,12 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
   // scrub knows — shop, car, VIN, RO, claim, insurer, every calibration line,
   // and the estimate link — so Kat only has to price and dispatch it. Same
   // POST the board's "+ Request Job" uses, so Kat's alert fires the same way.
-  async function requestJob(kind = 'job') {
-    if (reqBusy || s.jobId) return
-    setReqBusy(kind); setReqMsg('')
-    try { setS(await requestJobFor(s, user, kind)); setReqMsg(kind === 'quote' ? '✓ On the board in Quotes Requested — Kat has it.' : '✓ On the board in Job Requested — Kat has it.') }
-    catch (e) { setReqMsg(e.message || 'Could not send the request.') }
-    finally { setReqBusy('') }
+  // The RowRequest control does the work; this just lands the result and says what happened.
+  const onRequested = next => {
+    setS(next)
+    setReqMsg(next.stage === 'quote_requested' ? '✓ On the board in Quotes Requested — Kat has it.'
+      : next.stage === 'requested' ? '✓ On the board in Job Requested — Kat has it.'
+      : next.stage === 'job' ? '✓ Quote approved — the card is on the board as an active job.' : '')
   }
 
   const neverScrubbed = !list.length && ['report-only', 'from-card'].includes(s.status)
@@ -907,7 +1201,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
         calibration_name: l.name, enabled: l.required === true, cal_type: l.type || '',
         trigger: l.trigger || '', line_references: l.lines || '', justification: l.why || '',
       }))
-      { const fsr = await fsRulesFor(s.shop); applyFs(qCals, fsr.rules, fsr.collision !== false) }   // 🧰 shop-handled + offers start OFF; flip an offer on to sell it
+      { const fsr = withOverride(await fsRulesFor(s.shop), s.payload?.fs_override || ''); applyFs(qCals, fsr.rules, fsr.collision !== false) }   // 🧰 shop-handled + offers start OFF; flip an offer on to sell it
       const jobData = {
         shop: s.shop || '', ro_number: s.ro || '', insurer: s.insurer || '', claim: s.claim || '',
         vin: s.vin || '', vehicle: [s.year, s.make, s.model].filter(Boolean).join(' '),
@@ -968,6 +1262,34 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
     return d.justification
   }
 
+  const sendFeedback = async (c, action) => {
+    const key = `${action}:${c.name}`
+    const label = c.title || c.name
+    if (fbBusy) return
+    setFbBusy(key); setSaveMsg(''); setFbFlash(null)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/feedback`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sensor: c.name, action, trigger: c.trigger, lines: c.lines }),
+      })
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      if (d.keptOff) {
+        const text = d.message || `Kept off — ${label} stays off. A hard rule demoted it.`
+        setSaveMsg(text); setFbFlash({ name: c.name, text, ok: true })
+        return
+      }
+      if (d.scrub) setS(d.scrub)
+      const n = d.lesson?.n || 1
+      const text = action === 'miss'
+        ? `Learned — ${label} is required now (${n}×). The next similar ${s.make || 'car'} gets it.`
+        : `Learned — ${label} was extra (${n}×). The next similar ${s.make || 'car'} drops it.`
+      setSaveMsg(text); setFbFlash({ name: c.name, text, ok: true })
+    } catch (e) {
+      const text = e.message || 'Feedback failed.'
+      setSaveMsg(text); setFbFlash({ name: c.name, text, ok: false })
+    } finally { setFbBusy('') }
+  }
   const startEdit = () => { setDraft(list.map(l => ({ ...l }))); setSaveMsg(''); setEditing(true) }
   const cancelEdit = () => { setEditing(false); setDraft([]); setSaveMsg('') }
   const patchLine = (i, patch) => setDraft(d => d.map((l, j) => j === i ? { ...l, ...patch, edited: true } : l))
@@ -1029,6 +1351,18 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
           <p className="text-sm mt-1 flex items-center gap-2" style={{ color: '#444' }}><span className="font-bold">Stage:</span> <StagePill s={s} /></p>
           {s.quoteNumber && s.quoteNumber !== s.invoiceNumber && <p className="text-sm mt-1" style={{ color: '#444' }}><span className="font-bold">Quote:</span> {s.quoteNumber}</p>}
           {s.status === 'edited' && <p className="text-xs mt-1" style={{ color: '#b45309' }}>✏️ Lines edited by hand{p._edited_by ? ` · ${p._edited_by}` : ''}</p>}
+          {s.status === 'archived' && <div className="mt-3 rounded-lg p-3" style={{ backgroundColor: '#f3f4f6', border: '1px solid #d1d5db' }}>
+            <div className="text-sm font-bold" style={{ color: '#374151' }}>🗄 Archived{p.archive?.auto ? ' automatically' : ''}{p.archive?.reason ? ` — ${p.archive.reason}` : ''}</div>
+            <div className="text-[11px]" style={{ color: '#6b7280' }}>{p.archive?.by ? `${p.archive.by} · ` : ''}{when(p.archive?.at) || ''}</div>
+            <button onClick={resurrect} disabled={archBusy} className="mt-2 w-full rounded-lg px-3 py-2.5 text-sm font-bold text-white" style={{ backgroundColor: '#15803d' }}>{archBusy ? '…' : '♻️ Resurrect — back to the active list'}</button>
+          </div>}
+          {s.status !== 'archived' && !editing && (archPick
+            ? <div className="mt-3 rounded-lg p-3" style={{ backgroundColor: '#f3f4f6', border: '1px solid #d1d5db' }}>
+                <div className="text-xs font-bold mb-2" style={{ color: '#374151' }}>Why is this car leaving the list?</div>
+                <div className="flex flex-wrap gap-1.5">{['Never came on site', 'Not completed', 'Duplicate', 'Shop cancelled', 'Other'].map(r => <button key={r} disabled={archBusy} onClick={() => archive(r)} className="rounded-full px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: '#fff', color: '#374151', border: '1px solid #9ca3af' }}>{r}</button>)}</div>
+                <button onClick={() => setArchPick(false)} className="mt-2 text-xs font-semibold" style={{ color: '#6b7280' }}>Cancel</button>
+              </div>
+            : <button onClick={() => setArchPick(true)} className="mt-3 w-full rounded-lg px-3 py-2 text-xs font-bold" style={{ backgroundColor: '#fff', color: '#6b7280', border: '1px solid #d1d5db' }} title="Take this car off the active list — nothing is deleted, Resurrect brings it back">🗄 Archive this scrub</button>)}
 
           <button onClick={downloadPdf} disabled={pdfBusy || editing || (!shown.length && !hasStoredReport)}
             className="mt-4 w-full rounded-lg px-3 py-3 text-sm font-bold"
@@ -1044,7 +1378,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
             const qid = quoteId || s.quoteId || ''
             if (qid) return (
               <div className="mt-2 flex flex-col gap-1.5">
-                {s.quoteNumber && <div className="text-xs font-semibold text-center" style={{ color: '#1e40af' }}>📝 Quote {s.quoteNumber} is built — review the lines and send:</div>}
+                {s.quoteNumber && <div className="text-xs font-semibold text-center" style={{ color: '#0A0A0A' }}>📝 Quote {s.quoteNumber} is built — review the lines and send:</div>}
                 <SendQuoteButton
                   result={{ quoteId: qid, quoteNumber: s.quoteNumber || '' }}
                   job={{ scrubId: s.id, shop: s.shop || '', year: s.year || '', make: s.make || '', model: s.model || '', vin: s.vin || '', ro_number: s.ro || '', claim: s.claim || '', insurer: s.insurer || '' }}
@@ -1056,51 +1390,41 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
             return (
               <button onClick={openBuilder} disabled={qBusy || editing || !list.length || !onExtracted}
                 className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
-                style={{ backgroundColor: qBusy ? '#f5f3f0' : '#1d4ed8', color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
+                style={{ backgroundColor: qBusy ? BRAND.cream : QUOTE, color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
                 title="Opens the estimate screen pre-filled from this scrub — pick the customer, check the lines, build, then send"
-              >{qBusy ? 'Opening the estimate…' : `📝 Build quote${required.length ? ` (${required.length} required)` : ''}`}</button>
+              >{qBusy ? 'Opening the estimate…' : `Build quote${required.length ? ` (${required.length} required)` : ''}`}</button>
             )
           })()}
-          {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#1e40af' : '#b91c1c' }}>{qMsg}</p>}
+          {qMsg && <p className="text-xs mt-2" style={{ color: qMsg.startsWith('✓') ? '#0A0A0A' : '#b91c1c' }}>{qMsg}</p>}
 
-          {/* 📝 Quote / 📋 Job request — techs hand the car to Kat with the scrub attached */}
-          {!s.jobId && !['invoiced', 'paid'].includes(s.stage)
-            ? <div className="mt-2 hidden md:flex gap-2">
-                {['quote', 'job'].map(k => (
-                  <button key={k} onClick={() => requestJob(k)} disabled={!!reqBusy || editing}
-                    className="flex-1 rounded-lg px-3 py-3 text-sm font-bold text-white"
-                    style={{ backgroundColor: REQ_STYLE[k].bg, opacity: reqBusy && reqBusy !== k ? .45 : reqBusy ? .7 : 1 }}
-                    title={k === 'quote' ? 'Quotes Requested column — Kat drafts the estimate' : 'Job Requested column — Kat prices and dispatches it'}
-                  >{reqBusy === k ? 'Requesting…' : `${REQ_STYLE[k].label} request`}</button>
-                ))}
-              </div>
-            : ['requested', 'quote_requested'].includes(s.stage) && <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={s.stage === 'quote_requested' ? { backgroundColor: '#dbeafe', color: '#1d4ed8', border: '1.5px solid #93c5fd' } : { backgroundColor: '#ffedd5', color: '#c2410c', border: '1.5px solid #fdba74' }}>{s.stage === 'quote_requested' ? '📝 Quote requested' : '📋 Job requested'} — open the board →</button>}
+          {/* 📋 Create Job / 📝 Quote request — the SAME state-aware control as the list rows:
+              Quote + Create Job when nothing is on the board, Create Job on a quote request,
+              the Jayden / Mark / Dispatch later picker on a sent quote, "On the board →" after. */}
+          {!editing && !['invoiced', 'paid'].includes(s.stage) && (
+            <div className="hidden md:block mt-2"><RowRequest s={s} user={user} onDone={onRequested} onNavigate={onNavigate} full /></div>
+          )}
           {reqMsg && <p className="text-xs mt-1" style={{ color: reqMsg.startsWith('✓') ? '#166534' : '#b91c1c' }}>{reqMsg}</p>}
-          {/* 📱 Phone: Quote | Job pinned to the bottom of the screen, 50/50 */}
-          {!s.jobId && !['invoiced', 'paid'].includes(s.stage) && (
-            <div className="md:hidden fixed left-0 right-0 bottom-0 z-40 flex gap-2 p-2" style={{ backgroundColor: 'rgba(255,255,255,.96)', borderTop: '1px solid #eee', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}>
-              {['quote', 'job'].map(k => (
-                <button key={k} onClick={() => requestJob(k)} disabled={!!reqBusy || editing}
-                  className="flex-1 rounded-xl py-3.5 text-base font-bold text-white"
-                  style={{ backgroundColor: REQ_STYLE[k].bg, opacity: reqBusy && reqBusy !== k ? .45 : reqBusy ? .7 : 1 }}
-                >{reqBusy === k ? 'Requesting…' : `${REQ_STYLE[k].label} request`}</button>
-              ))}
+          {/* 📱 Phone: the same control pinned to the bottom of the screen */}
+          {!editing && !['invoiced', 'paid'].includes(s.stage) && (
+            <div className="md:hidden fixed left-0 right-0 bottom-0 z-40 p-2" style={{ backgroundColor: 'rgba(255,255,255,.96)', borderTop: '1px solid #eee', paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 8px)' }}>
+              <RowRequest s={s} user={user} onDone={onRequested} onNavigate={onNavigate} full />
             </div>
           )}
-          {!s.jobId && !['invoiced', 'paid'].includes(s.stage) && <div className="md:hidden" style={{ height: 72 }} />}
+          {!editing && !['invoiced', 'paid'].includes(s.stage) && <div className="md:hidden" style={{ height: 72 }} />}
 
-          {/* 🧾 Create Job (Mark 2026-09-30): the retired "Create invoice" shortcut
-              skipped Bill it and made a single, wrong invoice. This opens the SAME
-              review screen an upload opens; its Create job builds the Books estimate
-              and puts the card on the board, and Bill it (both invoices) runs from
-              Ready to Invoice exactly like every other job. */}
+          {/* 🧾 Build job — price it now (Mark 2026-09-30; renamed 2026-10-09 so it
+              isn't confused with the one-tap Create Job above). The retired "Create
+              invoice" shortcut skipped Bill it and made a single, wrong invoice. This
+              opens the SAME review screen an upload opens; its Create job builds the
+              Books estimate and puts the card on the board, and Bill it (both invoices)
+              runs from Ready to Invoice exactly like every other job. */}
           {s.jobId && s.stage === 'job'
-            ? <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fff7ed', color: '#b45309', border: '1.5px solid #fcd34d' }}>🧾 Job created{s.quoteNumber ? ` · ${s.quoteNumber}` : ''} — open the board →</button>
+            ? <button onClick={() => onNavigate && onNavigate('kanban')} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fdeae2', color: ORANGE, border: `1.5px solid ${ORANGE}` }}>🟠 Active job{s.quoteNumber ? ` · ${s.quoteNumber}` : ''} — open the board →</button>
             : <button onClick={openBuilder} disabled={qBusy || editing || !list.length || !onExtracted}
                 className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold"
-                style={{ backgroundColor: qBusy ? '#f5f3f0' : ORANGE, color: qBusy ? '#777' : '#fff', opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
-                title="Opens the same review screen as an uploaded report: pick the customer, check the lines, Create job → the card goes on the board"
-              >{qBusy ? 'Opening…' : `🧾 Create Job${required.length ? ` (${required.length} required)` : ''}`}</button>}
+                style={{ backgroundColor: qBusy ? '#f5f3f0' : '#fff', color: qBusy ? '#777' : ORANGE, border: `1.5px solid ${ORANGE}`, opacity: list.length && !editing && onExtracted ? 1 : 0.5 }}
+                title="Opens the same review screen as an uploaded report: pick the customer, check the lines, Create job → the card goes on the board priced"
+              >{qBusy ? 'Opening…' : `🧾 Build job (price it now)${required.length ? ` · ${required.length} required` : ''}`}</button>}
 
           {!editing
             ? <button onClick={startEdit} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd' }}>✏️ Edit calibration lines</button>
@@ -1110,8 +1434,8 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
               </div>}
 
           {s.fileId && (estUrl
-            ? <a href={estUrl} target="_blank" rel="noreferrer" className="mt-2 block text-center w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#eff6ff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>📎 Open the CCC estimate (tap again)</a>
-            : <button onClick={fetchEstimate} disabled={estBusy} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>{estBusy ? 'Fetching…' : '📎 Open the CCC estimate'}</button>)}
+            ? <a href={estUrl} target="_blank" rel="noreferrer" className="mt-2 block text-center w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1.5px solid #c4bfb8' }}>📎 Open the CCC estimate (tap again)</a>
+            : <button onClick={fetchEstimate} disabled={estBusy} className="mt-2 w-full rounded-lg px-3 py-3 text-sm font-bold" style={{ backgroundColor: '#fff', color: '#0A0A0A', border: '1.5px solid #c4bfb8' }}>{estBusy ? 'Fetching…' : '📎 Open the CCC estimate'}</button>)}
           {!s.fileId && <p className="text-xs mt-2" style={{ color: '#999' }}>No estimate file is stored for this scrub yet.</p>}
 
           {!list.length && s.jobId && !cardGone && !editing && (
@@ -1120,7 +1444,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
             </button>
           )}
           {cardMsg && <p className="text-xs mt-2" style={{ color: cardMsg.startsWith('Loaded') ? '#166534' : '#b91c1c' }}>{cardMsg}</p>}
-          {saveMsg && <p className="text-xs mt-2" style={{ color: saveMsg.startsWith('Saved') ? '#166534' : '#b91c1c' }}>{saveMsg}</p>}
+          {saveMsg && <p className="text-xs mt-2" style={{ color: /^(Saved|Learned|Kept)/.test(saveMsg) ? '#166534' : '#b91c1c' }}>{saveMsg}</p>}
 
           <button onClick={onBack} className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold" style={{ backgroundColor: '#fff', color: INK, border: '1.5px solid #ddd' }}>← All scrubs</button>
           {pdfErr && <p className="text-xs mt-2" style={{ color: '#b91c1c' }}>{pdfErr}</p>}
@@ -1169,6 +1493,30 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
                 <div className="text-sm" style={{ color: '#444' }}>{neverScrubbed ? 'Not scrubbed' : `${shown.length} on this vehicle`}{p.estimate_version ? ` · ${p.estimate_version}` : ''}{s.status === 'from-card' ? ' · from the job card' : ''}</div>
               </div>
             </div>
+            {!required.some(c => /^wheel alignment$/i.test(c.name || '')) && required.some(c => /front radar|acc radar|distance sensor/i.test(c.name || '') && !/side|corner|park/i.test(c.name || '') && /4-wheel vehicle alignment must be performed/i.test(c.why || '')) && (
+              <div className="rounded-lg px-3 py-2.5 mb-5 text-sm" style={{ backgroundColor: '#fff7ed', border: '1.5px solid #CD4419', color: '#0A0A0A' }}>
+                <div className="font-bold">Prerequisite: wheel alignment required</div>
+                <div>A 4-wheel vehicle alignment must be performed before proceeding with radar alignment procedure.</div>
+              </div>
+            )}
+            {list.some(c => c.classification === 'REQUIRED: OEM PREREQUISITE') && (
+              <div className="rounded-lg px-3 py-2.5 mb-5 text-sm" style={{ backgroundColor: '#fff7ed', border: '1.5px solid #CD4419', color: '#0A0A0A' }}>
+                <div className="font-bold">Dependency chain</div>
+                <div>Front radar is a direct trigger. Four-wheel alignment is the OEM prerequisite. Steering angle stays conditional until an alignment adjustment is on the estimate. Radar aiming is last.</div>
+              </div>
+            )}
+            {(() => {
+              const row = list.find(c => /battery.?disconnect reset/i.test(c.name || ''))
+              const onReport = list.some(c => c.classification === 'REVIEW NEEDED' || (/battery.?disconnect reset/i.test(c.name || '') && /Operations Required after Disconnecting Battery/i.test(`${c.title || ''} ${c.why || ''}`)))
+              const note = String(row?.why || '').match(/12V battery disconnect[\s\S]*?Position Statement Power Window Servicing Post-Repair\./)
+              if (!note || onReport) return null
+              return (
+                <div className="rounded-lg px-3 py-2.5 mb-5 text-sm" style={{ backgroundColor: '#fff7ed', border: '1.5px solid #CD4419', color: '#0A0A0A' }}>
+                  <div className="font-bold">Battery Operations</div>
+                  <div>{note[0]}</div>
+                </div>
+              )
+            })()}
 
             {(p._guard?.flipped?.length || p._guard?.added?.length) ? (
               <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#ecfdf5', color: '#065f46' }}>
@@ -1185,7 +1533,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
                   <>
                     <a href={quickRef.url} target="_blank" rel="noreferrer" className="block text-center w-full rounded-xl px-4 py-3 text-base font-bold" style={{ backgroundColor: ORANGE, color: '#fff', minHeight: 48 }}>📚 Open in ALLDATA</a>
                     <div className="text-[11px] mt-1.5" style={{ color: '#777' }}>{alldata.match === 'exact' ? `Saved page for this ${[s.year, s.make, s.model].filter(Boolean).join(' ')}` : `Closest saved page: ${quickRef.for || 'same year and make'} — check the vehicle in ALLDATA's header`}{alldata.links.length > 1 ? ` · ${alldata.links.length - 1} more ALLDATA page${alldata.links.length > 2 ? 's' : ''} for this car below` : ''}</div>
-                    {alldata.links.length > 1 && <div className="mt-1 flex flex-wrap gap-1.5">{alldata.links.slice(1, 6).map((l, i) => <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold px-2 py-1 rounded" style={{ backgroundColor: '#fff', color: '#1e40af', border: '1px solid #93c5fd' }}>{l.label.slice(0, 40)}</a>)}</div>}
+                    {alldata.links.length > 1 && <div className="mt-1 flex flex-wrap gap-1.5">{alldata.links.slice(1, 6).map((l, i) => <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold px-2 py-1 rounded" style={{ backgroundColor: '#fff', color: '#0A0A0A', border: '1px solid #c4bfb8' }}>{l.label.slice(0, 40)}</a>)}</div>}
                   </>
                 ) : (
                   <>
@@ -1207,11 +1555,12 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
               </div>
             )}
             {Array.isArray(s.reports) && s.reports.length > 0 && !editing && (
-              <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#eff6ff', color: '#1e40af' }}>📎 Went out with the invoice: {s.reports.map(r => r.name).join(', ')}</div>
+              <div className="rounded-lg px-3 py-2.5 mb-5 text-xs" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>📎 Went out with the invoice: {s.reports.map(r => r.name).join(', ')}</div>
             )}
 
             {!editing && s.shop && <ShopBig4Bar shopName={s.shop} />}
-            {!editing && <FullServiceCard shop={s.shop} rows={list} />}
+            {!editing && s.status !== 'archived' && <ScanPanel s={s} onUpdated={setS} />}
+            {!editing && <FullServiceCard shop={s.shop} rows={list} scrubId={s.id} override={s.payload?.fs_override || ''} onOverride={ov => setS(x => ({ ...x, payload: { ...(x.payload || {}), fs_override: ov || undefined } }))} />}
 
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-lg font-bold" style={{ color: INK }}>Operations</h3>
@@ -1221,6 +1570,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
                 {editing && <span style={{ color: '#b45309' }}>tap ● to flip · tap a name to open it</span>}
               </div>
             </div>
+            {fbFlash && <div className="text-xs font-semibold mb-2" style={{ color: fbFlash.ok ? '#166534' : '#b91c1c' }}>{fbFlash.text}</div>}
 
             {!shown.length && !editing && (
               <p className="text-sm" style={{ color: '#777' }}>
@@ -1234,34 +1584,75 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
 
             {(!!shown.length || editing) && (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm" style={{ borderCollapse: 'collapse' }}>
+                <table className="w-full text-sm" style={{ borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                  <colgroup>
+                    <col style={{ width: 220 }} />
+                    <col />
+                    <col style={{ width: 72 }} />
+                    <col style={{ width: 268 }} />
+                    <col style={{ width: editing ? 40 : 132 }} />
+                  </colgroup>
                   <thead>
                     <tr style={{ backgroundColor: ORANGE }}>
                       <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Sensor</th>
                       <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Repair triggers</th>
-                      <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Lines</th>
-                      <th className="text-left font-bold py-2 px-3" style={{ color: '#fff' }}>Type</th>
-                      {editing && <th style={{ width: 36 }}></th>}
+                      <th className="text-left font-bold py-2 px-3" style={{ color: '#fff', whiteSpace: 'nowrap' }}>Lines</th>
+                      <th className="text-left font-bold py-2 px-3" style={{ color: '#fff', whiteSpace: 'nowrap' }}>Type</th>
+                      {!editing && <th className="text-right font-bold py-2 px-3" style={{ color: '#fff', whiteSpace: 'nowrap' }}>Teach</th>}
+                      {editing && <th style={{ width: 40 }}></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {shown.map((c, i) => (
-                      <LineRow key={i} c={c} i={i} editing={editing} expanded={!!expanded[i] || (editing && !!c.added)}
-                        onToggle={() => setExpanded(e => ({ ...e, [i]: !e[i] }))}
-                        onFlip={() => patchLine(i, { required: !c.required })}
-                        onPatch={patch => patchLine(i, patch)}
-                        onRewrite={() => rewriteLine(i)} aiBusy={aiBusy === i}
-                        onRemove={() => removeLine(i)}
-                        onWhy={editing ? null : () => setWhyOpen({ ...(whyFor(c) || {}), name: c.name, required: c.required, type: c.type, why: c.why })} />
-                    ))}
-                    {!editing && (whyData?.rows || []).filter(r => r.always).map((r, k) => (
-                      <tr key={`a${k}`} style={{ backgroundColor: '#fff', borderBottom: '1px solid #f0f0f0' }}>
-                        <td className="py-2.5 px-3 font-bold" style={{ color: INK }}><span style={{ color: ORANGE, marginRight: 6, fontSize: 16 }}>●</span>{r.name}<WhyBtn onClick={() => setWhyOpen(r)} /></td>
-                        <td className="py-2.5 px-3" style={{ color: '#444' }}>{r.trigger}</td>
-                        <td className="py-2.5 px-3 font-mono text-xs" style={{ color: '#444' }}>—</td>
-                        <td className="py-2.5 px-3"><span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: ORANGE, color: '#fff' }}>{r.type}</span></td>
-                      </tr>
-                    ))}
+                    {/* Required to the TOP (Mark 2026-10-09: "all the calibrations needed are all over
+                        the list") — required → always-required → not required, same order as the PDF.
+                        `i` stays the line's real index so edit-mode flips / removes hit the right row. */}
+                    {(() => {
+                      const withIdx = shown.map((c, i) => ({ c, i }))
+                      const onReport = x => x.c.required || x.c.onReport
+                      // CONDITIONAL and REVIEW sit in the Operations block, same order as the PDF.
+                      // enabled stays false on a conditional row, so it does not count as required.
+                      const held = c => /^(CONDITIONAL:|REVIEW NEEDED)/.test(c.classification || '')
+                      const rankOf = c => ({
+                        'REQUIRED: DIRECT TRIGGER': 1,
+                        'REQUIRED: OEM PREREQUISITE': 2,
+                        'REQUIRED: SECONDARY OPERATION': 3,
+                        'CONDITIONAL: VERIFICATION NEEDED': 4,
+                        'REVIEW NEEDED': 5,
+                      })[c.classification || (c.required ? 'REQUIRED: DIRECT TRIGGER' : '')] || 9
+                      const req = withIdx.filter(x => onReport(x) || held(x.c)).sort((a, b) => rankOf(a.c) - rankOf(b.c))
+                      const not = withIdx.filter(x => !onReport(x) && !held(x.c))
+                      const always = editing ? [] : (whyData?.rows || []).filter(r => r.always)
+                      let pos = 0
+                      const row = ({ c, i }) => (
+                        <LineRow key={i} c={c} i={i} zebra={pos++} editing={editing} vehicle={vehicleBits} expanded={!!expanded[i] || (editing && !!c.added)}
+                          onToggle={() => setExpanded(e => ({ ...e, [i]: !e[i] }))}
+                          onFlip={() => patchLine(i, { required: !c.required })}
+                          onPatch={patch => patchLine(i, patch)}
+                          onRewrite={() => rewriteLine(i)} aiBusy={aiBusy === i}
+                          onRemove={() => removeLine(i)}
+                          onWhy={editing ? null : () => setWhyOpen({ ...(whyFor(c) || {}), name: c.name, required: c.required, type: c.type, why: c.why })}
+                          onFeedback={editing ? null : (action) => sendFeedback(c, action)}
+                          fbBusy={fbBusy} fbFlash={fbFlash && fbFlash.name === c.name ? fbFlash : null} />
+                      )
+                      return (
+                        <>
+                          {req.map(row)}
+                          {always.map((r, k) => (
+                            <tr key={`a${k}`} style={{ backgroundColor: pos++ % 2 ? '#fafafa' : '#fff', borderBottom: '1px solid #f0f0f0' }}>
+                              <td className="py-2.5 px-3 font-bold" style={{ color: INK }}><span style={{ color: ORANGE, marginRight: 6, fontSize: 16 }}>●</span>{r.name}<WhyBtn onClick={() => setWhyOpen(r)} /></td>
+                              <td className="py-2.5 px-3" style={{ color: '#444' }}>{r.trigger}</td>
+                              <td className="py-2.5 px-3 font-mono text-xs" style={{ color: '#444', whiteSpace: 'nowrap' }}>—</td>
+                              <td className="py-2.5 px-3" style={{ whiteSpace: 'nowrap' }}><span style={{ display: 'inline-block', whiteSpace: 'nowrap', fontSize: 12, fontWeight: 700, lineHeight: '18px', padding: '2px 8px', borderRadius: 4, backgroundColor: ORANGE, color: '#fff' }}>{r.type}</span></td>
+                              {!editing && <td />}
+                            </tr>
+                          ))}
+                          {not.length > 0 && (req.length + always.length) > 0 && (
+                            <tr key="divider"><td colSpan={5} className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: '#999', borderTop: '2px solid #e5e5e5' }}>Not required — nothing on this estimate disturbs these</td></tr>
+                          )}
+                          {not.map(row)}
+                        </>
+                      )
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -1301,7 +1692,7 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
                   <textarea value={add.why} onChange={e => setAdd(a => ({ ...a, why: e.target.value }))} rows={3} style={{ ...input, fontFamily: 'inherit' }} />
                 </div>
                 <div className="flex gap-2 mt-2">
-                  <button onClick={writeAdd} disabled={add.busy || !add.name.trim()} className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: '#eff6ff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>{add.busy ? 'Writing…' : '🪄 Write the justification'}</button>
+                  <button onClick={writeAdd} disabled={add.busy || !add.name.trim()} className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1.5px solid #c4bfb8' }}>{add.busy ? 'Writing…' : '🪄 Write the justification'}</button>
                   <button onClick={commitAdd} disabled={!add.name.trim()} className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: ORANGE, color: '#fff' }}>➕ Add as required</button>
                 </div>
               </div>
@@ -1316,26 +1707,116 @@ function ScrubReport({ s: initial, user, onBack, onNavigate, onExtracted }) {
 // 🧰 The Full Service items this car needs + the shop's rule for each, settable
 // right here (the first pick for a shop becomes its rule; it's also on the
 // CRM Billing tab).
-function FullServiceCard({ shop, rows }) {
-  const items = FS_ITEMS.map(f => ({ ...f, rows: (rows || []).filter(r => (r.required || f.optional) && f.match.test(r.name)) })).filter(f => f.rows.length)
-  const [fs, setFs] = useState(null)
+// 🔬 Pre-scan / post-scan on the report (Mark 2026-10-07/08). Pre-scan done → one-line
+// billing per the shop's Big 3 rule, both documents emailed; post-scan done → rides on
+// the calibration invoice. Both filled + invoiced = green, archived after 7 days.
+function ScanPanel({ s, onUpdated }) {
+  const sc = scansOf(s), st = scanState(s)
+  const [prev, setPrev] = useState(null)      // pre-scan billing preview (confirm sheet)
   const [busy, setBusy] = useState('')
   const [msg, setMsg] = useState('')
-  useEffect(() => { if (shop && items.length) fsRulesFor(shop).then(setFs) }, [shop, items.length])
+  const post = async (which, done = true) => {
+    setBusy(which); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/scan`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ which, done }) })
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      if (d.scrub) onUpdated && onUpdated(d.scrub)
+      setPrev(null)
+      setMsg(d.bill?.billed ? `✓ Pre-scan billed — ${d.bill.mode === 'dual' ? `estimate ${d.bill.estimate_number} + invoice ${d.bill.invoice_number}` : `invoice ${d.bill.invoice_number}`} emailed to ${(d.bill.emails || []).join(', ')}.` : done ? `✓ ${which === 'pre' ? 'Pre-scan' : 'Post-scan'} marked done${d.bill && !d.bill.billed ? ` (${d.bill.mode === 'off' ? 'shop handles pre-scans' : 'no charge'} — nothing billed)` : ''}.` : 'Unchecked.')
+    } catch (e) { setMsg(`⚠ ${e.message}`) } finally { setBusy('') }
+  }
+  const openPreview = async () => {
+    setBusy('preview'); setMsg('')
+    try { const r = await apiFetch(`${API_BASE}/api/scrubs/${s.id}/scan/preview`); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setPrev(d) }
+    catch (e) { setMsg(`⚠ ${e.message}`) } finally { setBusy('') }
+  }
+  const style = SCAN_STYLE[st] || { border: '#e5e7eb', bg: '#fafafa', label: 'Scans' }
+  const Box = ({ k, label, onCheck }) => { const v = sc[k]; const done = !!v.done_at; const inv = v.invoice_number || (v.mode === 'included' ? 'no charge' : v.mode === 'off' ? 'shop handles' : ''); return (
+    <div className="flex items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ backgroundColor: '#fff', border: `1px solid ${done ? '#86efac' : '#e5e7eb'}` }}>
+      <div className="min-w-0"><div className="text-sm font-bold" style={{ color: INK }}>{done ? '☑' : '☐'} {label}</div><div className="text-[11px]" style={{ color: '#666' }}>{done ? `${v.by || ''}${v.done_at ? ` · ${shortWhen(v.done_at)}` : ''}${inv ? ` · ${inv}` : ' · not billed yet'}${v.pdf?.name ? ' · 📎 report attached' : ''}` : 'not done'}</div></div>
+      {!done ? <button disabled={!!busy} onClick={onCheck} className="rounded-lg px-3 py-2 text-xs font-bold text-white whitespace-nowrap" style={{ backgroundColor: k === 'pre' ? INK : '#d97706' }}>{busy === k || busy === 'preview' ? '…' : k === 'pre' ? '🔬 Pre-scan done' : '🔬 Post-scan done'}</button>
+        : !v.invoice_number && <button disabled={!!busy} onClick={() => post(k, false)} className="text-[11px] font-semibold" style={{ color: '#6b7280' }}>undo</button>}
+    </div>) }
+  return (
+    <div className="rounded-xl p-3 mb-4" style={{ border: `2px solid ${style.border}`, backgroundColor: style.bg }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+        <div className="text-sm font-extrabold" style={{ color: style.border === '#e5e7eb' ? INK : style.border }}>🔬 Scans · {style.label}</div>
+        {st === 'complete' && sc.completed_at && <span className="text-[11px]" style={{ color: '#166534' }}>archives 7 days after {shortWhen(sc.completed_at)}</span>}
+      </div>
+      <div className="grid gap-2">
+        <Box k="pre" label="Pre-scan" onCheck={openPreview} />
+        <Box k="post" label="Post-scan" onCheck={() => post('post')} />
+      </div>
+      {prev && (
+        <div className="mt-3 rounded-lg p-3" style={{ backgroundColor: '#fff', border: `1.5px solid ${INK}` }}>
+          <div className="text-sm font-bold" style={{ color: INK }}>{prev.mode === 'charge' ? 'Bill the pre-scan now?' : prev.mode === 'included' ? 'Mark pre-scan done (no charge)' : 'Mark pre-scan done (shop handles its own)'}</div>
+          {prev.mode === 'charge' && <div className="text-xs mt-1" style={{ color: '#444' }}>
+            {prev.billing_mode === 'dual' ? <>Estimate (insurance) <b>{prev.item?.name}</b> ${Number(prev.list || 0).toFixed(2)} + cost invoice ${Number(prev.cost || 0).toFixed(2)} ({prev.discount_pct}% off) — both emailed to {prev.emails?.join(', ') || '—'}.</> : <>Invoice <b>{prev.item?.name}</b> ${Number(prev.cost || 0).toFixed(2)}{prev.discount_pct ? ` (${prev.discount_pct}% off)` : ''} — emailed to {prev.emails?.join(', ') || '—'}.</>}
+            <div className="mt-1" style={{ color: '#666' }}>{prev.shop_name} · {prev.insurer || 'no insurer'} · one line, nothing else on it.</div>
+          </div>}
+          {prev.warnings?.length > 0 && <ul className="text-[11px] mt-1" style={{ color: '#b45309' }}>{prev.warnings.map((w, i) => <li key={i}>⚠ {w}</li>)}</ul>}
+          <div className="flex gap-2 mt-2">
+            <button disabled={!!busy || (prev.mode === 'charge' && !prev.can_bill)} onClick={() => post('pre')} className="flex-1 rounded-lg px-3 py-2.5 text-sm font-bold text-white" style={{ backgroundColor: INK, opacity: prev.mode === 'charge' && !prev.can_bill ? .5 : 1 }}>{busy === 'pre' ? 'Sending…' : prev.mode === 'charge' ? `💸 Send both${prev.billing_mode === 'single' ? '' : ''} · mark done` : '✓ Mark done'}</button>
+            <button disabled={!!busy} onClick={() => setPrev(null)} className="rounded-lg px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {msg && <div className="text-xs mt-2 font-semibold" style={{ color: msg.startsWith('⚠') ? '#b91c1c' : '#166534' }}>{msg}</div>}
+    </div>
+  )
+}
+function FullServiceCard({ shop, rows, scrubId, override = '', onOverride }) {
+  const items = FS_ITEMS.map(f => ({ ...f, rows: (rows || []).filter(r => (r.required || f.optional) && f.match.test(r.name)) })).filter(f => f.rows.length)
+  const [crm, setCrm] = useState(null)        // the account's rule, as the CRM has it
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  useEffect(() => { if (!items.length) return; if (shop) fsRulesFor(shop).then(setCrm); else setCrm({ rules: {}, set: {}, on: false, collision: true, inCrm: false }) }, [shop, items.length])
+  const fs = crm ? withOverride(crm, override) : null   // what THIS report uses
+  const setOverride = async next => {
+    if (!scrubId || busy) return
+    setBusy('override'); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/scrubs/${scrubId}/full-service-override`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ override: next }) })
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      onOverride && onOverride(d.fs_override || '')
+      setMsg(next ? `This report: Full Service ${next.toUpperCase()}. The CRM still says ${crm?.on ? 'ON' : 'OFF'} for ${shop}.` : `Back to the CRM rule (${crm?.on ? 'ON' : 'OFF'}).`)
+    } catch (e) { setMsg(e.message || 'failed') } finally { setBusy('') }
+  }
   const shown = items.filter(f => !f.optional || fs?.on)   // optional items only matter to Full Service shops
-  if (!shown.length || (fs && fs.collision === false)) return null   // collision shops only
+  if (crm && crm.collision === false) return null   // collision shops only
+  if (!shown.length && !items.length) return null
+  const seg = (k, label) => <button key={k} onClick={() => setOverride(k)} disabled={!!busy || !scrubId} className="rounded-full px-2.5 py-1 text-[11px] font-bold" style={override === k ? { backgroundColor: '#1F8B8B', color: '#fff' } : { backgroundColor: '#fff', color: '#1F8B8B', border: '1px solid #8eb8b8' }}>{label}</button>
   const pick = async (key, mode) => {
     if (!shop || busy) return
     setBusy(key); setMsg('')
     try {
       const r = await apiFetch(`${API_BASE}/api/shops/full-service-by-name`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop, rules: { [key]: mode } }) })
       const d = await r.json(); if (!d.ok) throw new Error(d.error || 'Could not save')
-      setFs(await fsRulesFor(shop, true)); setMsg(`Saved for ${shop}.`)
+      setCrm(await fsRulesFor(shop, true)); setMsg(`Saved for ${shop}.`)
     } catch (e) { setMsg(e.message) } finally { setBusy('') }
   }
+  // 🧰 OFF (the default): one quiet line. The FS lines are off the report, counts, quote
+  // and job request; the per-report ON switch is right here for the odd car we do them on.
+  if (!crm || (crm.collision !== false && !fs?.on)) {
+    const held = items.filter(f => !f.optional)
+    return (
+      <div className="rounded-lg px-3 py-2 mb-4 flex items-center justify-between gap-2 flex-wrap text-xs" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6', color: '#555' }}>
+        <span>🧰 <b style={{ color: INK }}>Full Service off</b>{shop ? ` for ${shop}` : ''}{crm ? '' : ' (checking the CRM…)'} — {held.length ? `${held.length} line${held.length > 1 ? 's' : ''} held back: ${held.map(f => f.label).join(', ')}` : 'nothing on this estimate for it'}.{crm && !crm.inCrm && shop ? ` ${shop} isn't in the CRM yet.` : ''}</span>
+        {crm && scrubId && <span className="flex gap-1 items-center"><span className="text-[10px] font-bold" style={{ color: '#1F8B8B' }}>THIS REPORT:</span>{seg('', `CRM (${crm.on ? 'ON' : 'OFF'})`)}{seg('on', 'ON')}</span>}
+        {msg && <span className="w-full text-[11px] font-semibold" style={{ color: msg.startsWith('Saved') || msg.startsWith('This report') || msg.startsWith('Back') ? '#166534' : '#b91c1c' }}>{msg}</span>}
+      </div>
+    )
+  }
   return (
-    <div className="rounded-xl p-3 mb-4" style={{ border: '2px solid #0369a1', backgroundColor: '#f0f9ff' }}>
-      <div className="text-sm font-extrabold" style={{ color: '#0369a1' }}>🧰 Full Service on this car</div>
+    <div className="rounded-xl p-3 mb-4" style={{ border: '2px solid #1F8B8B', backgroundColor: '#e6f4f4' }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-sm font-extrabold" style={{ color: '#1F8B8B' }}>🧰 Full Service on this car</div>
+        {crm && crm.collision !== false && <div className="flex gap-1 items-center">
+          <span className="text-[10px] font-bold mr-1" style={{ color: '#1F8B8B' }}>THIS REPORT:</span>
+          {seg('', `CRM default (${crm.on ? 'ON' : 'OFF'})`)}{seg('on', 'ON')}{seg('off', 'OFF')}
+        </div>}
+      </div>
+      {override && <div className="text-[11px] mb-1 font-semibold" style={{ color: '#1F8B8B' }}>Override for this report only — {shop} stays {crm?.on ? 'ON' : 'OFF'} in the CRM. The PDF, online report and quote follow this switch.</div>}
       <div className="text-[11px] mb-2" style={{ color: '#555' }}>{!shop ? 'Required follow-up work. No shop on this scrub.'
         : fs && !fs.collision ? `Required follow-up work. ${shop} isn't a collision shop, so this is billed as normal work.`
         : fs && !fs.on ? `Required follow-up work. Full Service is OFF for ${shop}: the shop does it, and our report says so. Turn it on in CRM → Billing once it's agreed with the shop.`
@@ -1353,7 +1834,7 @@ function FullServiceCard({ shop, rows }) {
                       style={m === k ? { backgroundColor: v.bg, color: '#fff' } : { backgroundColor: '#fff', color: v.bg, border: `1px solid ${v.bg}`, opacity: busy === f.key ? .5 : 1 }}>{v.label}</button>
                   ))}
                 </div>}
-                {!(fs?.on && fs?.collision) && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: FS_MODE[m].bg, color: '#fff' }}>{m === 'shop' ? 'Shop does it' : 'We do it'}</span>}
+                {!(fs?.on && fs?.collision) && <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ backgroundColor: (FS_MODE[m] || FS_MODE.shop).bg, color: '#fff' }}>{m === 'shop' ? 'Shop does it' : 'We do it'}</span>}
               </div>
               <div className="text-[11px] mt-1" style={{ color: '#666' }}>{f.rows.map(r => `${r.name}${r.lines ? ` (line ${r.lines})` : ''}`).join(' · ')}</div>
             </div>
@@ -1391,46 +1872,80 @@ function WhyModal({ r, onClose }) {
   )
 }
 
-function LineRow({ c, i, editing, expanded, onToggle, onFlip, onPatch, onRewrite, aiBusy, onRemove, onWhy }) {
-  const dim = !c.required
+function LineRow({ c, i, zebra, editing, vehicle, expanded, onToggle, onFlip, onPatch, onRewrite, aiBusy, onRemove, onWhy, onFeedback, fbBusy, fbFlash }) {
+  const lit = !!(c.required || c.onReport)
+  const dim = !lit
   const cell = { border: '1.5px solid #ddd', borderRadius: 6, padding: '3px 6px', fontSize: 12, width: '100%' }
+  const shade = (zebra ?? i) % 2 ? '#fafafa' : '#fff'   // zebra = display position (the table is sorted); i = the real line index
+  const nissanBat = nissanBatteryLine(c, vehicle)
+  const marks = [
+    c.added ? `added${c.by ? ` · ${c.by}` : ''}` : '',
+    !c.added && c.edited ? 'edited' : '',
+    c.guard ? 'rule' : '',
+    c.learned ? 'learned' : '',
+    fsItemFor(c.name) && !nissanBat ? 'Full Service' : '',
+  ].filter(Boolean)
+  const typeLabel = c.classification || (c.required ? (c.type || 'Required') : 'not required')
+  const typeStyle = {
+    display: 'inline-block',
+    whiteSpace: 'nowrap',
+    fontSize: 12,
+    fontWeight: 700,
+    lineHeight: '18px',
+    padding: '2px 6px',
+    borderRadius: 4,
+    backgroundColor: lit ? ORANGE : (c.classification || c.required ? '#f5f3f0' : '#eee'),
+    color: lit ? '#fff' : (c.classification || c.required ? '#444' : '#888'),
+  }
   return (
     <>
-      <tr style={{ backgroundColor: i % 2 ? '#fafafa' : '#fff', borderBottom: '1px solid #f0f0f0' }}>
-        <td className="py-2.5 px-3 font-bold" style={{ color: dim ? '#999' : INK }}>
-          <span onClick={editing ? onFlip : undefined} style={{ color: c.required ? ORANGE : '#ccc', marginRight: 6, cursor: editing ? 'pointer' : 'default', fontSize: 16 }} title={editing ? 'Flip required / not required' : ''}>●</span>
+      <tr style={{ backgroundColor: shade, borderBottom: '1px solid #f0f0f0' }}>
+        <td className="py-2.5 px-3 font-bold align-top" style={{ color: dim ? '#999' : INK }}>
+          <span onClick={editing ? onFlip : undefined} style={{ color: lit ? ORANGE : '#ccc', marginRight: 6, cursor: editing ? 'pointer' : 'default', fontSize: 16 }} title={editing ? 'Flip required / not required' : ''}>●</span>
           <span onClick={onToggle} style={{ cursor: 'pointer' }}>
             {(c.why || editing) ? <span style={{ color: '#bbb', marginRight: 4 }}>{expanded ? '⌄' : '›'}</span> : null}
-            {c.name}
+            {c.title || c.name}
           </span>
           {onWhy && <WhyBtn onClick={onWhy} />}
-          {c.added && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#fff7ed', color: '#b45309' }}>added{c.by ? ` · ${c.by}` : ''}</span>}
-          {!c.added && c.edited && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#f5f3f0', color: '#777' }}>edited</span>}
-          {c.guard && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#ecfdf5', color: '#065f46' }} title="Enforced by the guard: a hard rule in code, not the model's judgment">🛡️ rule</span>}
-          {fsItemFor(c.name) && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }} title="Full Service item: the shop's CRM rule decides who does it">🧰 Full Service</span>}
         </td>
-        <td className="py-2.5 px-3" style={{ color: dim ? '#aaa' : '#444' }}>
+        <td className="py-2.5 px-3 align-top" style={{ color: dim ? '#aaa' : '#444', lineHeight: 1.45 }}>
           {editing ? <input value={c.trigger} onChange={e => onPatch({ trigger: e.target.value })} placeholder="repair that disturbs it" style={cell} /> : (c.trigger || '—')}
         </td>
-        <td className="py-2.5 px-3 font-mono text-xs" style={{ color: dim ? '#aaa' : '#444' }}>
-          {editing ? <input value={c.lines} onChange={e => onPatch({ lines: e.target.value })} placeholder="3-4, 13" style={{ ...cell, width: 90 }} /> : (c.lines || '—')}
+        <td className="py-2.5 px-3 font-mono text-xs align-top" style={{ color: dim ? '#aaa' : '#444', whiteSpace: 'nowrap' }}>
+          {editing ? <input value={c.lines} onChange={e => onPatch({ lines: e.target.value })} placeholder="3-4, 13" style={{ ...cell, width: 64 }} /> : (c.lines || '—')}
         </td>
-        <td className="py-2.5 px-3">
+        <td className="py-2.5 px-3 align-top" style={{ whiteSpace: 'nowrap' }}>
           {editing
             ? <select value={c.type || ''} onChange={e => onPatch({ type: e.target.value })} style={{ ...cell, width: 130 }}><option value="">—</option>{CAL_TYPES.map(t => <option key={t}>{t}</option>)}</select>
-            : c.required
-              ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: ORANGE, color: '#fff' }}>{c.type || 'Required'}</span>
-              : <span className="text-[10px] font-bold px-1.5 py-0.5 rounded" style={{ backgroundColor: '#eee', color: '#888' }}>not required</span>}
+            : <span style={typeStyle}>{typeLabel}</span>}
         </td>
+        {!editing && onFeedback && (
+          <td className="py-2.5 px-3 text-right align-top" style={{ whiteSpace: 'nowrap' }}>
+            {!lit && (
+              <button type="button" onClick={e => { e.stopPropagation(); onFeedback('miss') }}
+                className="inline-flex items-center justify-center font-extrabold rounded-md cursor-pointer"
+                style={{ height: 28, padding: '0 10px', fontSize: 11, backgroundColor: fbBusy === `miss:${c.name}` ? '#ddd' : '#fff', color: ORANGE, border: `1px solid ${ORANGE}` }}
+                title={c.guard === 'demoted' ? 'A hard rule demoted this, so Missed leaves it off.' : 'We should have required this — the next similar car will'}>{fbBusy === `miss:${c.name}` ? '…' : 'Missed'}</button>
+            )}
+            {c.required && !c.guard && (
+              <button type="button" onClick={e => { e.stopPropagation(); onFeedback('extra') }}
+                className="inline-flex items-center justify-center font-extrabold rounded-md cursor-pointer"
+                style={{ height: 28, padding: '0 10px', fontSize: 11, backgroundColor: fbBusy === `extra:${c.name}` ? '#ddd' : '#fff', color: '#777', border: `1px solid ${BRAND.line}` }}
+                title="We should not have required this">{fbBusy === `extra:${c.name}` ? '…' : 'Extra'}</button>
+            )}
+            {marks.length > 0 && <div style={{ marginTop: 4, fontSize: 10, fontWeight: 600, color: '#999', whiteSpace: 'nowrap' }}>{marks.join(' · ')}</div>}
+            {fbFlash && <div className="text-[11px] font-semibold mt-1 whitespace-normal text-right" style={{ color: fbFlash.ok ? '#166534' : '#b91c1c', maxWidth: 120 }}>{fbFlash.text}</div>}
+          </td>
+        )}
         {editing && <td className="py-2.5 px-2 text-right"><button onClick={onRemove} title="Remove this line" style={{ color: '#b91c1c', fontWeight: 700 }}>✕</button></td>}
       </tr>
       {expanded && (c.why || editing) && (
         <tr style={{ backgroundColor: '#fff7ed' }}>
-          <td colSpan={editing ? 5 : 4} className="px-3 py-2.5 text-xs" style={{ color: '#444', borderBottom: '1px solid #f0f0f0' }}>
+          <td colSpan={5} className="px-3 py-2.5 text-xs" style={{ color: '#444', borderBottom: '1px solid #f0f0f0' }}>
             {editing
               ? <div>
                   <textarea value={c.why} onChange={e => onPatch({ why: e.target.value })} rows={3} style={{ ...cell, fontFamily: 'inherit' }} placeholder="Why this calibration is required — or press 🪄 and it is written from the trigger and lines above" />
-                  <button onClick={onRewrite} disabled={aiBusy} className="mt-1 rounded-lg px-2.5 py-1 text-[11px] font-bold" style={{ backgroundColor: '#eff6ff', color: '#1e40af', border: '1.5px solid #93c5fd' }}>{aiBusy ? 'Writing…' : '🪄 AI rewrite from the reason'}</button>
+                  <button onClick={onRewrite} disabled={aiBusy} className="mt-1 rounded-lg px-2.5 py-1 text-[11px] font-bold" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1.5px solid #c4bfb8' }}>{aiBusy ? 'Writing…' : '🪄 AI rewrite from the reason'}</button>
                 </div>
               : c.why}
           </td>
