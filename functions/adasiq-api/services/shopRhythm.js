@@ -78,20 +78,34 @@ export async function buildShopRhythm(req) {
   const acc = {}   // shopId → { lifetime, counts[7], cars:Set, invs:[{date,total}] }
   let unmatched = 0
   const unmatchedNames = {}
+  // 📊 Everyone together (Mark 2026-10-24: "the total top 3 days we get called for everyone, by the
+  // total money"): every invoice in the window, retail included, dollars on the day the car came in.
+  const coDollars = [0, 0, 0, 0, 0, 0, 0], coCars = [0, 0, 0, 0, 0, 0, 0], coSeen = new Set()
+  const cameOf = (inv, ro) => { const first = ro.length >= 3 ? seen[ro] : ''; return first && first <= inv.date && daysBetween(first, inv.date) <= 21 ? first : inv.date }
   for (const inv of invoices) {
+    const total = Number(inv.total) || 0
+    const ro = normRo(inv.reference_number)
+    if (total > 0 && inv.date >= since) {
+      const d = dowOf(cameOf(inv, ro))
+      coDollars[d] += total
+      const k = `${inv.customer_id || inv.customer_name}|${ro.length >= 3 ? ro : inv.invoice_id}`
+      if (!coSeen.has(k)) { coSeen.add(k); coCars[d]++ }
+    }
     const s = shopFor(inv); if (!s) { unmatched++; unmatchedNames[inv.customer_name || '?'] = (unmatchedNames[inv.customer_name || '?'] || 0) + 1; continue }
     const a = acc[s.id] = acc[s.id] || { name: s.shop_name, lifetime: 0, counts: [0, 0, 0, 0, 0, 0, 0], cars: new Set(), invs: [] }
-    const total = Number(inv.total) || 0
     a.lifetime += total
     a.invs.push({ date: inv.date, total })
     if (!(total > 0) || inv.date < since) continue
-    const ro = normRo(inv.reference_number)
     const car = ro.length >= 3 ? `ro:${ro}` : `inv:${inv.invoice_id}`
     if (a.cars.has(car)) continue
     a.cars.add(car)
-    const first = ro.length >= 3 ? seen[ro] : ''
-    const came = first && first <= inv.date && daysBetween(first, inv.date) <= 21 ? first : inv.date
-    a.counts[dowOf(came)]++
+    a.counts[dowOf(cameOf(inv, ro))]++
+  }
+  const coTotal = coDollars.reduce((t, v) => t + v, 0), coN = coCars.reduce((t, v) => t + v, 0)
+  const company = {
+    total: Math.round(coTotal), cars: coN,
+    top: coDollars.map((v, d) => ({ d, v })).filter(x => x.v > 0).sort((x, y) => y.v - x.v).slice(0, 3)
+      .map(x => ({ day: DOW[x.d], dow: x.d, dollars: Math.round(x.v), pct: Math.round((x.v / Math.max(1, coTotal)) * 100), cars: coCars[x.d] })),
   }
   const out = {}
   for (const [id, a] of Object.entries(acc)) {
@@ -100,7 +114,7 @@ export async function buildShopRhythm(req) {
       .map(x => ({ day: DOW[x.d], dow: x.d, pct: Math.round((x.c / Math.max(1, n)) * 100) }))
     out[id] = { name: a.name, n, top, lifetime: Math.round(a.lifetime), nextMilestone: (Math.floor(a.lifetime / BBQ_STEP) + 1) * BBQ_STEP }
   }
-  const rec = { at: new Date().toISOString(), since, minJobs: MIN_JOBS, shops: out, invoices: invoices.length, unmatched, unmatchedNames }
+  const rec = { at: new Date().toISOString(), since, minJobs: MIN_JOBS, company, shops: out, invoices: invoices.length, unmatched, unmatchedNames }
   await kvSet(app(req), RHYTHM_KEY, JSON.stringify(rec))
   return { rec, acc, shops }
 }

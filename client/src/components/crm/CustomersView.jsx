@@ -81,6 +81,14 @@ export default function CustomersView({ modeToggle, onOpenShop, onMarkCustomer, 
           {[['Customers', all.length, INK], ['Billed this month', fmt(totals.month), INK], ['Open AR', fmt(totals.open), INK], ['Overdue', fmt(totals.overdue), totals.overdue ? RED : MUTED]].map(([l, v, c]) => (
             <div key={l}><div className="text-2xl font-extrabold tabular-nums leading-none" style={{ color: c }}>{v}</div><div className="text-[11px] uppercase tracking-wider mt-1.5" style={{ color: MUTED }}>{l}</div></div>
           ))}
+          {rhythm?.company?.top?.length > 0 && (
+            <div title={`Last 12 months · ${fmt(rhythm.company.total)} across ${rhythm.company.cars} cars, by the day the job came in`}>
+              <div className="text-2xl font-extrabold leading-none flex gap-3" style={{ color: '#3730a3' }}>
+                {rhythm.company.top.map(t => <span key={t.day}>{t.day} <span className="tabular-nums">{t.pct}%</span></span>)}
+              </div>
+              <div className="text-[11px] uppercase tracking-wider mt-1.5" style={{ color: MUTED }}>📅 Busiest call days · share of sales · {rhythm.company.top.map(t => `${t.day} ${fmt(t.dollars)}`).join(' · ')}</div>
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap mb-5">
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search customers…" className="rounded-lg px-3 py-2 text-sm" style={{ border: `1.5px solid ${LINE}`, outline: 'none', minWidth: 220, backgroundColor: 'white' }} />

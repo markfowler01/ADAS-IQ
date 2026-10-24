@@ -14,7 +14,7 @@ router.get('/all', async (req, res) => {
     if (!rh) return res.json({ ready: false, shops: {} })
     const shops = {}, byName = {}
     for (const [id, s] of Object.entries(rh.shops)) { shops[id] = { n: s.n, top: s.top }; byName[shopKey(s.name)] = id }
-    res.json({ ready: true, minJobs: rh.minJobs, shops, byName })
+    res.json({ ready: true, minJobs: rh.minJobs, shops, byName, company: req.user?.role === 'technician' ? null : (rh.company || null) })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
