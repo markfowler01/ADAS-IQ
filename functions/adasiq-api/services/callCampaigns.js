@@ -5,8 +5,13 @@
 // Saturday–Sunday: father-and-son only.
 //
 // Copy is the approved bank. F2 stays off the schedule (it still needs
-// Jayden's answer). No Father & Son photo is attached. Instagram gets a
-// code-typeset card (no AI lettering). Facebook and LinkedIn get the text.
+// Jayden's answer). Each post gets a REAL photo under a code-typeset headline
+// (2026-10-24): father-and-son posts rotate through the Father & Son WorkDrive
+// folder (curated picks in VanKV family_brand.picks, else every IMG_*.jpeg
+// original), insurance posts rotate the van photo library. The same card goes
+// to Facebook, Instagram and LinkedIn. No AI lettering anywhere. If no photo
+// can be built, Instagram falls back to the plain "Father and son." card and
+// Facebook/LinkedIn post text.
 //
 // Idempotent per Pacific date. A retry will not post a platform that
 // already succeeded, and it will not post a platform whose send was
@@ -196,12 +201,12 @@ function needsSend(rec) {
 
 async function postPlatform(platform, text, imageUrl) {
   if (platform === 'facebook') {
-    const { postTextToFacebookPage } = await import('./metaPosting.js')
-    return postTextToFacebookPage({ message: text })
+    const { postTextToFacebookPage, postToFacebookPage } = await import('./metaPosting.js')
+    return imageUrl ? postToFacebookPage({ imageUrl, caption: text }) : postTextToFacebookPage({ message: text })
   }
   if (platform === 'linkedin') {
-    const { postToLinkedIn } = await import('./brewLinkedIn.js')
-    const r = await postToLinkedIn({ text })
+    const { postToLinkedIn, postImageToLinkedIn } = await import('./brewLinkedIn.js')
+    const r = imageUrl ? await postImageToLinkedIn({ imageUrl, text }) : await postToLinkedIn({ text })
     if (r?.dryRun) return { ok: false, error: 'linkedin_not_configured' }
     return r
   }
@@ -235,12 +240,84 @@ async function ensureImage(dateStr) {
   return { ok: true, url: uploaded.rawUrl }
 }
 
+const FAMILY_ROTATION_KEY = 'family_photo_rotation'
+const VAN_ROTATION_KEY = 'call_campaign_van_rotation'
+
+async function familyPhotoIds(req) {
+  const { getVal } = await import('./vanDatastore.js')
+  const brand = (await getVal(req, 'family_brand').catch(() => null)) || {}
+  if (Array.isArray(brand.picks) && brand.picks.length) return brand.picks
+  if (!brand.photos_folder_id) return []
+  const { getAccessToken } = await import('./zoho.js')
+  const { listChildren } = await import('./workdrive.js')
+  const items = await listChildren(brand.photos_folder_id, await getAccessToken(), { folders: false })
+  // Originals only: skips WorkDrive's timestamped duplicates and the AI concept PNGs.
+  return (items || []).filter(f => /^IMG_\d+\.(jpe?g|heic)$/i.test(f.name)).map(f => f.id)
+}
+
+async function pickFamilyPhoto(req, { peek = false, id: forceId = null } = {}) {
+  const ids = await familyPhotoIds(req)
+  if (!ids.length) return null
+  const { getVal, setVal } = await import('./vanDatastore.js')
+  const rot = (await getVal(req, FAMILY_ROTATION_KEY).catch(() => null)) || {}
+  const id = forceId || [...ids].sort((a, b) => ((rot[a] || 0) - (rot[b] || 0)) || String(a).localeCompare(String(b)))[0]
+  const { downloadVanPhoto } = await import('./vanPhotoLibrary.js')
+  const { buffer } = await downloadVanPhoto(id)
+  if (!peek) {
+    rot[id] = Date.now()
+    for (const k of Object.keys(rot)) if (!ids.includes(k)) delete rot[k]
+    await setVal(req, FAMILY_ROTATION_KEY, rot).catch(() => {})
+  }
+  return { id, buffer }
+}
+
+// Phone originals are ~12 MP; full-size sharp work has taken the function
+// down before. Shrink first, then take a square. topBias 0.25 keeps faces in
+// people shots; vans sit lower in frame (0.30).
+async function squareForCard(buffer, topBias) {
+  const sharp = (await import('sharp')).default
+  const small = await sharp(buffer).rotate().resize(1600, 1600, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 92 }).toBuffer()
+  const m = await sharp(small).metadata()
+  const side = Math.min(m.width, m.height)
+  return sharp(small)
+    .extract({ left: Math.round((m.width - side) / 2), top: Math.round((m.height - side) * topBias), width: side, height: side })
+    .resize(1080, 1080).jpeg({ quality: 90 }).toBuffer()
+}
+
+export async function buildSlotImage(req, dateStr, slotName, title, opts = {}) {
+  let photo = null
+  let source = null
+  if (slotName === 'family') {
+    const p = await pickFamilyPhoto(req, opts).catch(() => null)
+    if (p) { photo = await squareForCard(p.buffer, 0.25); source = `family:${p.id}` }
+  }
+  if (!photo) {
+    const { pickNextVanPhotoDatastore } = await import('./vanPhotoLibrary.js')
+    const v = await pickNextVanPhotoDatastore(req, VAN_ROTATION_KEY).catch(() => null)
+    if (v?.buffer) { photo = await squareForCard(v.buffer, 0.30); source = `van:${v.name}` }
+  }
+  if (!photo) return { ok: false, error: 'no_photo' }
+  const { composeAdCardImage } = await import('./absoluteAdCardImage.js')
+  const png = await composeAdCardImage({ photoBuffer: photo, imageHeadline: title })
+  const { uploadImageToCloudinary, cloudinaryImageConfigured } = await import('./cloudinaryImage.js')
+  if (cloudinaryImageConfigured()) {
+    const sharp = (await import('sharp')).default
+    const jpg = await sharp(png).jpeg({ quality: 90 }).toBuffer()
+    const up = await uploadImageToCloudinary({ buffer: jpg, publicId: `call-campaign-${dateStr}-${slotName}` })
+    if (up.ok) return { ok: true, url: up.url, source }
+  }
+  const { commitBinaryFile } = await import('./brewArchive.js')
+  const c = await commitBinaryFile({ path: `absolute-ad/call-campaign-${dateStr}-${slotName}.png`, buffer: png, message: `Call campaign card ${dateStr} ${slotName}` })
+  return c?.ok && c.rawUrl ? { ok: true, url: c.rawUrl, source } : { ok: false, error: c?.error || 'image_upload_failed' }
+}
+
 async function publishSlot(req, setVal, key, state, slotName) {
   const slot = state[slotName]
   if (!slot?.text) return
   const todo = []
+  const slotImage = state.images?.[slotName] || state.image_url || null
   for (const platform of ['facebook', 'linkedin', 'instagram']) {
-    if (platform === 'instagram' && !state.image_url) continue
+    if (platform === 'instagram' && !slotImage) continue
     if (!needsSend(state.results[slotName][platform])) continue
     state.results[slotName][platform] = { claimed: true, at: new Date().toISOString() }
     todo.push(platform)
@@ -250,7 +327,7 @@ async function publishSlot(req, setVal, key, state, slotName) {
   await Promise.all(todo.map(async (platform) => {
     let result
     try {
-      result = await postPlatform(platform, slot.text, state.image_url)
+      result = await postPlatform(platform, slot.text, slotImage)
     } catch (e) {
       result = { ok: false, error: e.message }
     }
@@ -317,7 +394,22 @@ export async function publishCallCampaigns(req) {
   if (!state.results.family) state.results.family = blankResults()
   if (!state.results.insurance) state.results.insurance = blankResults()
 
-  if (!state.image_url) {
+  if (!state.images) state.images = {}
+  for (const slotName of ['family', 'insurance']) {
+    const slot = state[slotName]
+    if (!slot?.text || state.images[slotName]) continue
+    const built = await buildSlotImage(req, dateStr, slotName, slot.title || 'Same day. Done right.').catch(e => ({ ok: false, error: e.message }))
+    if (built.ok) {
+      state.images[slotName] = built.url
+      state.image_sources = { ...(state.image_sources || {}), [slotName]: built.source }
+    } else {
+      state.image_errors = { ...(state.image_errors || {}), [slotName]: built.error }
+    }
+    await setVal(req, key, state)
+  }
+
+  const needFallbackCard = ['family', 'insurance'].some(s => state[s]?.text && !state.images[s])
+  if (needFallbackCard && !state.image_url) {
     const image = await ensureImage(dateStr).catch(e => ({ ok: false, error: e.message }))
     if (image.ok) {
       state.image_url = image.url
@@ -353,6 +445,7 @@ export async function publishCallCampaigns(req) {
           : `Call campaigns partial ${dateStr}`,
         line(state.family?.title || 'Family', state.results.family),
         state.insurance?.text ? line(state.insurance?.title || 'Insurance', state.results.insurance) : 'Insurance: weekend, not scheduled',
+        state.image_sources ? `Photos: ${Object.entries(state.image_sources).map(([k, v]) => `${k} ${v}`).join(', ')}` : '',
         state.image_error ? `Instagram card: ${state.image_error}` : '',
       ].filter(Boolean).join('\n').slice(0, 1500)
       await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, msg).catch(() => {})
@@ -367,6 +460,7 @@ export async function publishCallCampaigns(req) {
     family_id: state.family?.id || null,
     insurance_id: state.insurance?.id || null,
     status: state.status,
-    image: Boolean(state.image_url),
+    image: Boolean(state.image_url || Object.keys(state.images || {}).length),
+    images: state.images || {},
   }
 }

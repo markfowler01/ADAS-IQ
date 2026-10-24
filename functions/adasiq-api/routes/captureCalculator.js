@@ -6384,6 +6384,29 @@ captureCalcRouter.get('/debug/photo-thumb', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
+// Call-campaign card preview: builds the real-photo card without posting or
+// advancing the family rotation.  GET /debug/call-card-preview?slot=family|insurance&title=&id=
+captureCalcRouter.get('/debug/call-card-preview', async (req, res) => {
+  try {
+    const { buildSlotImage } = await import('../services/callCampaigns.js')
+    const slot = req.query.slot === 'insurance' ? 'insurance' : 'family'
+    const r = await buildSlotImage(req, `preview-${Date.now()}`, slot, String(req.query.title || 'Who shows up'), { peek: true, id: req.query.id ? String(req.query.id) : null })
+    res.json(r)
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+// Save the curated Father & Son photo picks (WorkDrive file ids, comma-separated).
+//   GET /debug/family-picks?ids=a,b,c   (no ids = read current picks)
+captureCalcRouter.get('/debug/family-picks', async (req, res) => {
+  try {
+    const { getVal, setVal } = await import('../services/vanDatastore.js')
+    const brand = (await getVal(req, 'family_brand')) || {}
+    const ids = String(req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean)
+    if (ids.length) await setVal(req, 'family_brand', { ...brand, picks: ids, picks_at: new Date().toISOString() })
+    res.json({ ok: true, picks: ids.length ? ids : (brand.picks || []) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 // What's in the Father & Son photos folder (names only).   GET /debug/family-photos
 captureCalcRouter.get('/debug/family-photos', async (req, res) => {
   try {
