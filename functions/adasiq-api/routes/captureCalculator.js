@@ -6407,6 +6407,15 @@ captureCalcRouter.get('/debug/family-picks', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
+// Paid-ads readiness: build the Meta Custom Audience CSVs (customers + prospects)
+// into WorkDrive "Ads Ready". Returns counts only.   GET /debug/ads-audience-export
+captureCalcRouter.get('/debug/ads-audience-export', async (req, res) => {
+  try {
+    const { exportAudiences } = await import('../services/adsAudience.js')
+    res.json(await exportAudiences(req))
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 // What's in the Father & Son photos folder (names only).   GET /debug/family-photos
 captureCalcRouter.get('/debug/family-photos', async (req, res) => {
   try {
