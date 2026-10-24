@@ -25,6 +25,7 @@ import cloningRouter from './routes/cloning.js'
 import zohoMirrorRouter from './routes/zohoMirror.js'
 import arRouter, { arCronRouter } from './routes/ar.js'   // Absolute ADAS Books (AR shadow mirror + drift), 2026-09-15
 import pipelineRouter, { pipelineCronRouter } from './routes/pipeline.js'   // CRM territories + cadence (2026-09-15)
+import { router as earlyAccessRouter } from './routes/earlyAccess.js'
 import recruitRouter, { publicRouter as recruitPublicRouter } from './routes/recruit.js'
 import { publicRouter as bookingPublicRouter } from './routes/booking.js'
 import shopAnswersPublicRouter from './routes/shopAnswersPublic.js'
@@ -38,6 +39,7 @@ import techStatsRouter from './routes/techStats.js'
 import shopRhythmRouter from './routes/shopRhythm.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
 import salesStopsRouter from './routes/salesStops.js'
+import callSourcesRouter from './routes/callSources.js'
 import { ownerRouter as personalTextsOwnerRouter, bridgeRouter as personalTextsBridgeRouter } from './routes/personalTexts.js'
 import peopleRouter from './routes/people.js'
 import onboardPublicRouter from './routes/onboardPublic.js'
@@ -298,6 +300,7 @@ app.use('/api/deals', requireAuth, async (req, res, next) => { try { const m = a
 app.use('/api/cron/pipeline', pipelineCronRouter)
 app.use('/api/recruit', requireAuth, requireStaff, recruitRouter)
 // Public website intake form (absoluteadas.com/careers) — no auth, honeypot inside.
+app.use('/api/early-access', earlyAccessRouter)          // adas-iq.com pilot signup (no auth)
 app.use('/api/public/recruit', recruitPublicRouter)
 app.use('/api/public/report', publicReportRouter)
 app.use('/api/public/huddle', async (req, res, next) => { try { const m = await import('./routes/publicHuddle.js'); return m.default(req, res, next) } catch (e) { res.status(500).json({ error: e.message }) } })   // 🔥 GET SOME! Meeting graphic (tokened)   // 🌐 online report with "Why?" popups (signed per-scrub link)
@@ -401,6 +404,7 @@ app.use('/api/calibration-rules', requireAuth, calibrationRulesRouter)
 app.use('/api/shops', requireAuth, shopsRouter)
 app.use('/api/ops', requireAuth, requireStaff, opsRouter)   // 🏭 shared Ops Hub state (2026-10-03)
 app.use('/api/sales-stops', requireAuth, salesStopsRouter)
+app.use('/api/call-sources', requireAuth, callSourcesRouter)
 // 💬 Text as Mark — outbox (owner) + Mac bridge (cron secret). The Mac sends, never Catalyst.
 app.use('/api/personal-texts', requireAuth, requireMark, personalTextsOwnerRouter)
 app.use('/api/people', requireAuth, peopleRouter)
