@@ -1,7 +1,7 @@
 // 📸 Scrub from photos (Mark 2026-10-24): on site, the shop hands the tech a
 // printed CCC estimate (usually 2–3+ pages). Snap every page → the pages become
 // one PDF on the server → the same scrubber as an uploaded PDF → the tech sees
-// what's required → Request job / Request quote → Kat gets all of it directly.
+// what's required → Request job / Request quote → Kat gets it on the board + #aajobs.
 import { useRef, useState } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { normScrub, requestJobFor } from '../pages/ScrubLibraryScreen.jsx'
@@ -148,7 +148,7 @@ export default function PhotoScrub({ user, onClose }) {
           <div className="text-center py-14">
             <div className="text-5xl mb-3">✅</div>
             <div className="font-extrabold text-lg" style={{ color: INK }}>{sentKind === 'quote' ? 'Quote requested' : 'Job requested'} — Kat has it</div>
-            <div className="text-sm mt-1 mb-6" style={{ color: '#666' }}>She got the car, the RO, what's required and the estimate in a direct message. It's on the board in {sentKind === 'quote' ? 'Quotes Requested' : 'Job Requested'}.</div>
+            <div className="text-sm mt-1 mb-6" style={{ color: '#666' }}>It's in #aajobs and on the board in {sentKind === 'quote' ? 'Quotes Requested' : 'Job Requested'}.</div>
             <div className="space-y-2 max-w-xs mx-auto">
               <Btn onClick={() => { setPages([]); setScrub(null); setShop(''); setStep('capture') }}>📸 Scrub another</Btn>
               <button onClick={onClose} className="w-full text-sm font-bold py-2" style={{ color: '#555' }}>Done</button>

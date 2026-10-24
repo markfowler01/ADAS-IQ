@@ -640,28 +640,6 @@ router.post('/', async (req, res) => {
       // Also fan to #dispatch so the schedulers see it in their working channel.
       await postToCliqChannel(DISPATCH_CHANNEL, msg)
         .catch(e => console.warn(`[dispatch ${isQuote ? 'quote' : 'job'}_requested]`, e.message))
-      // 📸 A request built from a scrub (photos on site, or the Scrub Library): Kat gets
-      // the whole picture in a direct message (Mark 2026-10-24: "all this information
-      // to go directly to Kat") — shop, car, RO, insurer, what's required, the estimate.
-      if (req.body.scrub_id) {
-        try {
-          let cals = []; try { cals = JSON.parse(newJob.calibrations || '[]') } catch { cals = [] }
-          const reqd = cals.filter(c => c.enabled !== false && c.enabled !== 'false').map(c => `• ${c.calibration_name}${c.line_references ? ` (line ${c.line_references})` : ''}`)
-          const notReq = cals.filter(c => c.enabled === false || c.enabled === 'false').map(c => c.calibration_name)
-          const est = (String(newJob.notes || '').match(/https:\/\/workdrive\.zoho\.com\/file\/\S+/) || [])[0] || ''
-          const dm = [
-            `${isQuote ? '📝 *Quote requested*' : '🆕 *Job requested*'} from ${req.body.scrub_source === 'photos' ? '📸 estimate photos' : 'a scrub'} · ${shop}`,
-            `🚗 ${vehicle || 'Vehicle TBD'}${newJob.vin ? ` · VIN …${String(newJob.vin).slice(-8)}` : ''}${ro}`,
-            `🏦 ${newJob.insurer || (isQuote ? 'Cash / not given' : 'Insurer not on the estimate')}${reqBy}`,
-            reqd.length ? `✅ *Required (${reqd.length}):*\n${reqd.join('\n')}` : '⚠️ Scrub found nothing required — check before dispatch',
-            notReq.length ? `➖ Not required: ${notReq.slice(0, 8).join(', ')}${notReq.length > 8 ? '…' : ''}` : '',
-            est ? `📄 Estimate: ${est}` : '',
-            isQuote ? '➡️ Price it and send the quote.' : '➡️ Schedule it on the board (Job Requested).',
-          ].filter(Boolean).join('\n')
-          const { postToCliqUser } = await import('../services/cliq.js')
-          await postToCliqUser('k.belmonte@absoluteadas.com', dm)
-        } catch (e) { console.warn('[jobs POST] Kat DM failed:', e.message) }
-      }
       await createNotification(req, {
         to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com',
         type: 'job_requested',
