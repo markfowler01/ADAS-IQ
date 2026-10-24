@@ -49,7 +49,7 @@ function isNotFound(e) {
 async function cacheSet(segment, key, value) {
   const str = typeof value === 'string' ? value : JSON.stringify(value)
   try { await segment.update(key, str) }
-  catch { await segment.put(key, str) }
+  catch { await segment.put(key, str, 48) }
 }
 async function cacheGet(segment, key, fallback = null) {
   try {

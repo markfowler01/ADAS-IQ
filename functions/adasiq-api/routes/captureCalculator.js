@@ -3019,6 +3019,7 @@ const DEBUG_FORWARD_WHITELIST = {
   'li-outreach-run':     '/api/capture-calc/li-outreach/run',
   'partner-series-dry':  '/api/capture-calc/partner-series/run?dry=1',
   'brew-tips-dry':       '/api/cron/brew-tips/run?dry_run=1',
+  'daily-ad-draft':      '/api/capture-calc/daily-ad/draft-today',
   'partner-series-preview': '/api/capture-calc/partner-series/preview',
   'weekly-run-cron':     '/api/capture-calc/report/weekly',
   'van-draft-weekly-cron': '/api/capture-calc/from-the-van/draft-weekly?cron=1',
@@ -3090,6 +3091,7 @@ captureCalcRouter.all('/debug/scheduler-run-raw',   (req, res) => debugForward(r
 captureCalcRouter.all('/debug/li-outreach-run',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['li-outreach-run']))
 captureCalcRouter.all('/debug/partner-series-dry', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['partner-series-dry']))
 captureCalcRouter.all('/debug/brew-tips-dry',      (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['brew-tips-dry']))
+captureCalcRouter.all('/debug/daily-ad-draft',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['daily-ad-draft']))
 captureCalcRouter.get('/debug/partner-series-preview', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['partner-series-preview']))
 captureCalcRouter.all('/debug/weekly-run-cron',     (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['weekly-run-cron']))
 captureCalcRouter.all('/debug/van-draft-weekly-cron', (req, res) => debugForward(req, res, DEBUG_FORWARD_WHITELIST['van-draft-weekly-cron']))
@@ -4103,18 +4105,17 @@ captureCalcRouter.all('/from-the-van/nurture/run', heartbeatAttempt('capture_van
       const nowPt = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }))
       const hourPt = nowPt.getHours()
       const minPt = nowPt.getMinutes()
-      const inDraftWindow = (hourPt === 5 && minPt >= 30) || hourPt === 6 || (hourPt === 7 && minPt <= 30)
-      const inPublishWindow = (hourPt === 14 && minPt >= 30) || hourPt === 15 || (hourPt === 16 && minPt === 0)
+      // Wide windows (2026-10-24): this route now fires every 2 hours on even
+      // hours, so the old 14:30-16:00 publish window fell between the 14:01
+      // and 16:01 runs and Friday's ad never posted. Both endpoints are
+      // idempotent per day, so a wider window can't double-draft or double-post.
+      const inDraftWindow = hourPt >= 5 && hourPt < 10
+      const inPublishWindow = hourPt >= 14 && hourPt < 18
 
-      // DRAFT window — hit our own draft endpoint idempotently
+      // The 3 PM slot now sends the call campaigns (see publish-today).
+      // Drafting the old van card would tell Mark it ships when it will not.
       if (inDraftWindow && !dry) {
-        try {
-          const axios = (await import('axios')).default
-          const secret = process.env.BREW_CRON_SECRET || ''
-          const url = `https://adas-iq-904191467.development.catalystserverless.com/server/adasiq-api/api/capture-calc/daily-ad/draft-today?secret=${encodeURIComponent(secret)}`
-          const r = await axios.post(url, {}, { timeout: 120000, validateStatus: () => true })
-          dailyAdActions.draft = { ok: r.data?.ok, skipped: r.data?.skipped, id: r.data?.pending?.id, http: r.status }
-        } catch (e) { dailyAdActions.draft = { ok: false, error: e.message } }
+        dailyAdActions.draft = { ok: true, skipped: true, reason: 'call_campaigns_took_the_slot' }
       }
 
       // PUBLISH window — hit our own publish endpoint idempotently
@@ -6337,6 +6338,65 @@ captureCalcRouter.get('/debug/tip-photo-test', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
 })
 
+// Engagement by post (FB reactions/comments/shares, IG likes/comments) for
+// the last N days — feeds the "best time to post" analysis. Read-only.
+//   GET /debug/engagement-history?days=60
+captureCalcRouter.get('/debug/engagement-history', async (req, res) => {
+  try {
+    const axios = (await import('axios')).default
+    const days = Math.min(120, Number(req.query.days) || 60)
+    const since = Math.floor(Date.now() / 1000) - days * 86400
+    const G = 'https://graph.facebook.com/v22.0'
+    const token = process.env.FB_PAGE_ACCESS_TOKEN
+    const rows = []
+    let url = `${G}/${process.env.FB_PAGE_ID}/posts`
+    let params = { since, limit: 100, fields: 'created_time,message,reactions.summary(true).limit(0),comments.summary(true).limit(0),shares', access_token: token }
+    for (let page = 0; page < 6 && url; page++) {
+      const r = await axios.get(url, { params, timeout: 25000, validateStatus: s => s < 500 })
+      if (r.status >= 400) { rows.push({ ch: 'fb', error: r.data?.error?.message }); break }
+      for (const p of r.data?.data || []) rows.push({ ch: 'fb', at: p.created_time, likes: p.reactions?.summary?.total_count || 0, comments: p.comments?.summary?.total_count || 0, shares: p.shares?.count || 0, text: String(p.message || '').slice(0, 60) })
+      url = r.data?.paging?.next || null; params = undefined
+    }
+    url = `${G}/${process.env.IG_BUSINESS_USER_ID}/media`
+    params = { limit: 100, fields: 'timestamp,caption,like_count,comments_count', access_token: token }
+    for (let page = 0; page < 6 && url; page++) {
+      const r = await axios.get(url, { params, timeout: 25000, validateStatus: s => s < 500 })
+      if (r.status >= 400) { rows.push({ ch: 'ig', error: r.data?.error?.message }); break }
+      let older = false
+      for (const m of r.data?.data || []) {
+        if (Date.parse(m.timestamp) / 1000 < since) { older = true; continue }
+        rows.push({ ch: 'ig', at: m.timestamp, likes: m.like_count || 0, comments: m.comments_count || 0, shares: 0, text: String(m.caption || '').slice(0, 60) })
+      }
+      url = older ? null : (r.data?.paging?.next || null); params = undefined
+    }
+    res.json({ ok: true, days, count: rows.length, rows })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+// 360px JPEG thumbnail of one WorkDrive photo (EXIF-rotated).  GET /debug/photo-thumb?id=
+captureCalcRouter.get('/debug/photo-thumb', async (req, res) => {
+  try {
+    const { downloadVanPhoto } = await import('../services/vanPhotoLibrary.js')
+    const { buffer } = await downloadVanPhoto(String(req.query.id || ''))
+    const sharp = (await import('sharp')).default
+    const thumb = await sharp(buffer).resize(360, 360, { fit: 'inside' }).jpeg({ quality: 70 }).toBuffer()
+    res.set('Content-Type', 'image/jpeg').send(thumb)
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
+// What's in the Father & Son photos folder (names only).   GET /debug/family-photos
+captureCalcRouter.get('/debug/family-photos', async (req, res) => {
+  try {
+    const { getVal } = await import('../services/vanDatastore.js')
+    const brand = (await getVal(req, 'family_brand')) || {}
+    if (!brand.photos_folder_id) return res.json({ ok: false, error: 'no folder yet' })
+    const { getAccessToken } = await import('../services/zoho.js')
+    const { listChildren } = await import('../services/workdrive.js')
+    const items = await listChildren(brand.photos_folder_id, await getAccessToken(), { folders: false })
+    res.json({ ok: true, folder_id: brand.photos_folder_id, count: (items || []).length, files: (items || []).map(f => ({ id: f.id, name: f.name })) })
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }) }
+})
+
 // List one PT day's Facebook Page posts + Instagram media (ids, permalinks,
 // caption start, image) — read-only.   GET /debug/social-posts-on?date=2026-10-01
 captureCalcRouter.get('/debug/social-posts-on', async (req, res) => {
@@ -6849,50 +6909,32 @@ captureCalcRouter.post('/daily-ad/publish-today', requireCronSecretFlex, async (
   try {
     const { isMarketingPaused } = await import('../services/marketingKillSwitch.js')
     if (await isMarketingPaused(req)) return res.json({ ok: true, skipped: true, reason: 'marketing_paused' })
+
+    // Father-and-son every day. Insurance-ready Monday–Friday as well.
+    // Same three platforms. Idempotent. This is the 3 PM send.
+    const { publishCallCampaigns } = await import('../services/callCampaigns.js')
+    const campaigns = await publishCallCampaigns(req)
+
     const { getVal, setVal } = await import('../services/vanDatastore.js')
     const dateStr = req.body?.date ? String(req.body.date) : todayPtDateStr()
     const p = await getVal(req, DAILY_AD_KEY(dateStr))
-    if (!p) return res.status(404).json({ ok: false, error: `no pending draft for ${dateStr}` })
-    if (p.killed) return res.json({ ok: true, skipped: true, reason: 'killed', pending: p })
-    if (p.status === 'published') return res.json({ ok: true, skipped: true, reason: 'already published', pending: p })
-
-    // Fan to LI + FB + IG in parallel — all three with the card image
-    const { postImageToLinkedIn } = await import('../services/brewLinkedIn.js')
-    const { postToFacebookPage, postToInstagram } = await import('../services/metaPosting.js')
-
-    const [li, fb, ig] = await Promise.all([
-      postImageToLinkedIn({ imageUrl: p.image_url, text: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
-      postToFacebookPage({ imageUrl: p.image_url, caption: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
-      postToInstagram({ imageUrl: p.image_url, caption: p.post_body_markdown }).catch(e => ({ ok: false, error: e.message })),
-    ])
-
-    const patched = {
-      ...p,
-      status: 'published',
-      published_at: new Date().toISOString(),
-      li_result: li,
-      fb_result: fb,
-      ig_result: ig,
+    // The old van card no longer goes out in this slot. Weekdays are the two
+    // campaign posts. Weekends are father-and-son only. Hold the card so a
+    // later retry cannot publish it.
+    if (p && !p.killed && p.status !== 'published' && !p.skipped_van) {
+      await setVal(req, DAILY_AD_KEY(dateStr), {
+        ...p,
+        skipped_van: true,
+        skipped_van_at: new Date().toISOString(),
+        skipped_van_reason: '3 PM slot sends the call campaigns',
+      })
     }
-    await setVal(req, DAILY_AD_KEY(dateStr), patched)
-
-    // Append to recent-patterns log for future dedup
-    const recent = (await getVal(req, DAILY_AD_RECENT_PATTERNS_KEY).catch(() => null)) || []
-    const nextLog = [{ date: dateStr, pattern_key: p.pattern_key }, ...recent.filter(x => x.date !== dateStr)].slice(0, 14)
-    await setVal(req, DAILY_AD_RECENT_PATTERNS_KEY, nextLog).catch(() => {})
-
-    // Cliq confirm
-    const anyFail = !li.ok || !fb.ok || !ig.ok
-    const cliqMsg = [
-      anyFail ? `⚠️ ABSOLUTE ADAS DAILY AD — partial publish ${dateStr}` : `✅ ABSOLUTE ADAS DAILY AD — published ${dateStr}`,
-      `Headline: ${p.image_headline}`,
-      `LinkedIn:  ${li.ok ? 'ok' : 'fail: ' + (li.error || 'unknown')}${li.id ? ' (' + li.id + ')' : ''}`,
-      `Facebook:  ${fb.ok ? 'ok' : 'fail: ' + (fb.error || 'unknown')}${fb.id ? ' (' + fb.id + ')' : ''}`,
-      `Instagram: ${ig.ok ? 'ok' : 'fail: ' + (ig.error || 'unknown')}${ig.id ? ' (' + ig.id + ')' : ''}`,
-    ].join('\n')
-    postToCliqChannelById(MARK_ALERT_CHANNEL_ID, cliqMsg).catch(() => {})
-
-    res.json({ ok: true, published: true, pending: patched })
+    return res.json({
+      ok: campaigns.ok !== false,
+      skipped: Boolean(campaigns.skipped),
+      campaigns,
+      van_ad: { skipped: true, reason: 'call campaigns took the 3 PM slot' },
+    })
   } catch (e) {
     console.error('[daily-ad publish-today]', e.message, e.stack)
     res.status(500).json({ ok: false, error: e.message })

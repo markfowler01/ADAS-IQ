@@ -74,6 +74,38 @@ export async function postToFacebookPage({ imageUrl, caption }) {
 }
 
 /**
+ * Text-only post to the Facebook Page feed. No photo.
+ * @param {{ message: string }} args
+ * @returns {Promise<{ok: true, id: string} | {ok: false, error: string}>}
+ */
+export async function postTextToFacebookPage({ message }) {
+  if (!facebookConfigured()) {
+    return { ok: false, error: 'FB_PAGE_ID or FB_PAGE_ACCESS_TOKEN not set' }
+  }
+  const { pageId, pageToken } = envBundle()
+  try {
+    const res = await axios.post(
+      `${GRAPH_API}/${pageId}/feed`,
+      null,
+      {
+        params: {
+          message: String(message || '').slice(0, 5000),
+          access_token: pageToken,
+        },
+        timeout: 20000,
+        validateStatus: s => s < 500,
+      }
+    )
+    if (res.status >= 400 || res.data?.error) {
+      return { ok: false, error: res.data?.error?.message || `HTTP ${res.status}` }
+    }
+    return { ok: true, id: res.data?.id }
+  } catch (e) {
+    return { ok: false, error: e.message || 'request failed' }
+  }
+}
+
+/**
  * Post a comment on an existing Facebook Page post.
  *
  * @param {Object} args
