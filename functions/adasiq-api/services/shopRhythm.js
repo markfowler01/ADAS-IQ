@@ -99,7 +99,14 @@ export async function buildShopRhythm(req) {
     const car = ro.length >= 3 ? `ro:${ro}` : `inv:${inv.invoice_id}`
     if (a.cars.has(car)) continue
     a.cars.add(car)
-    a.counts[dowOf(cameOf(inv, ro))]++
+    const came = cameOf(inv, ro)
+    a.counts[dowOf(came)]++
+    if (!a.lastCame || came > a.lastCame) a.lastCame = came
+    if (!a.firstCame || came < a.firstCame) a.firstCame = came
+  }
+  for (const inv of invoices) {   // 12-month dollars per shop (every invoice on the car, supplements too)
+    const total = Number(inv.total) || 0; if (!(total > 0) || inv.date < since) continue
+    const s = shopFor(inv); if (s && acc[s.id]) acc[s.id].year = (acc[s.id].year || 0) + total
   }
   const coTotal = coDollars.reduce((t, v) => t + v, 0), coN = coCars.reduce((t, v) => t + v, 0)
   const company = {
@@ -113,7 +120,54 @@ export async function buildShopRhythm(req) {
     const top = a.counts.map((c, d) => ({ d, c })).filter(x => x.c > 0).sort((x, y) => y.c - x.c || x.d - y.d).slice(0, 3)
       .map(x => ({ day: DOW[x.d], dow: x.d, pct: Math.round((x.c / Math.max(1, n)) * 100) }))
     out[id] = { name: a.name, n, top, lifetime: Math.round(a.lifetime), nextMilestone: (Math.floor(a.lifetime / BBQ_STEP) + 1) * BBQ_STEP }
+    // 📞 Gone quiet (Mark 2026-10-25): a shop that usually sends a car every `gap` days and
+    // has now gone 3 gaps (at least 2 weeks) without one. Worth = cars missed × average car.
+    if (n >= MIN_JOBS && a.lastCame) {
+      const gap = Math.max(1, daysBetween(a.firstCame, today) / n)
+      const quietDays = daysBetween(a.lastCame, today)
+      const perCar = (a.year || 0) / n
+      out[id].gap = Math.round(gap * 10) / 10
+      out[id].lastCame = a.lastCame
+      if (quietDays >= Math.max(14, 3 * gap)) out[id].quiet = { days: quietDays, missed: Math.floor(quietDays / gap), worth: Math.round(Math.floor(quietDays / gap) * perCar), usual: top.map(t => t.day) }
+    }
   }
+  // 💳 When each shop pays (Mark 2026-10-25), from the Books mirror (AdasInvoices: date + last
+  // payment date). Shops are due on receipt, so Books calls every open invoice "overdue";
+  // what matters is late FOR THAT SHOP. Median days to pay over 12 months (3+ paid invoices).
+  try {
+    const { readAll } = await import('./zohoMirror.js')
+    const mirror = (await readAll(req, 'inv')).filter(i => !/void|draft/i.test(i.status))
+    const paidDays = {}, open = {}
+    for (const i of mirror) {
+      const s = shopFor({ customer_id: i.customer_id, customer_name: i.customer_name }); if (!s || !out[s.id]) continue
+      if (i.status === 'paid' && i.last_payment_date && i.date >= since) (paidDays[s.id] = paidDays[s.id] || []).push(Math.max(0, daysBetween(i.date, i.last_payment_date)))
+      else if (i.balance > 0) (open[s.id] = open[s.id] || []).push(i)
+    }
+    const sunday = addDays(today, (7 - dowOf(today)) % 7)
+    const cash = { thisWeek: 0, week: [], late: [], open: 0 }
+    for (const [id, o] of Object.entries(out)) {
+      const d = (paidDays[id] || []).sort((x, y) => x - y)
+      const median = d.length >= 3 ? d[Math.floor(d.length / 2)] : null
+      const ops = open[id] || []
+      const openAmt = ops.reduce((t, i) => t + i.balance, 0)
+      if (median == null && !ops.length) continue
+      let week = 0, late = 0, lateDays = 0
+      for (const i of ops) {
+        if (median == null) continue
+        const expect = addDays(i.date, median)
+        if (expect < addDays(today, -7)) { late += i.balance; lateDays = Math.max(lateDays, daysBetween(expect, today)) }
+        else if (expect <= sunday) week += i.balance
+      }
+      o.pay = { median, paid: d.length, open: Math.round(openAmt), openN: ops.length, week: Math.round(week), late: Math.round(late), lateDays }
+      cash.open += openAmt; cash.thisWeek += week
+      if (week > 0) cash.week.push({ id, name: o.name, amount: Math.round(week) })
+      if (late > 0) cash.late.push({ id, name: o.name, amount: Math.round(late), daysLate: lateDays, median })
+    }
+    cash.thisWeek = Math.round(cash.thisWeek); cash.open = Math.round(cash.open)
+    cash.week.sort((x, y) => y.amount - x.amount); cash.late.sort((x, y) => y.amount - x.amount)
+    company.cash = cash
+  } catch (e) { console.warn('[shop-rhythm] pay', e.message) }
+  company.quiet = Object.entries(out).filter(([, o]) => o.quiet).map(([id, o]) => ({ id, name: o.name, ...o.quiet })).sort((x, y) => y.worth - x.worth).slice(0, 10)
   const rec = { at: new Date().toISOString(), since, minJobs: MIN_JOBS, company, shops: out, invoices: invoices.length, unmatched, unmatchedNames }
   await kvSet(app(req), RHYTHM_KEY, JSON.stringify(rec))
   return { rec, acc, shops }
@@ -204,7 +258,9 @@ export async function maybeShopRhythm(req) {
   await kvSet(a, stamp, new Date().toISOString())
   const built = await buildShopRhythm(req)
   const bbq = await runBbq(req, built)
-  return { fired: true, shops: Object.keys(built.rec.shops).length, unmatched: built.rec.unmatched, bbq: { seeded: bbq.seeded, scheduled: bbq.scheduled.length, seed: bbq.seed.length } }
+  let monday = null
+  if (dowOf(ptDate(Date.now())) === 1) { try { monday = await sendMondayList(req, built.rec) } catch (e) { console.warn('[shop-rhythm] monday list', e.message) } }
+  return { fired: true, shops: Object.keys(built.rec.shops).length, unmatched: built.rec.unmatched, bbq: { seeded: bbq.seeded, scheduled: bbq.scheduled.length, seed: bbq.seed.length }, monday }
 }
 
 /** Shops that usually call on `dateStr`'s weekday (top day, enough history), busiest first. */
@@ -212,4 +268,23 @@ export function usuallyCallOn(rhythm, dateStr, limit = 4) {
   const d = dowOf(dateStr)
   const list = Object.values(rhythm?.shops || {}).filter(s => s.n >= MIN_JOBS && s.top?.[0]?.dow === d).sort((a, b) => b.n - a.n)
   return { label: DOW_LONG[d], shops: list.slice(0, limit).map(s => ({ name: s.name, pct: s.top[0].pct })) }
+}
+
+/** Monday: 📞 quiet shops to Mark + Jayden; 💳 cash this week + late-for-them to Mark only. Cliq DMs. */
+export function mondayLines(rec) {
+  const c = rec?.company || {}
+  const quiet = (c.quiet || []).slice(0, 6).map(q => `• *${q.name}* · ${q.days} days, usually every ${Math.max(1, Math.round(rec.shops[q.id]?.gap || 0))}d (${q.usual.join('/')}) · ~${fmtUSD(q.worth)} missed`)
+  const call = quiet.length ? ['📞 *Call these. They went quiet on their usual days:*', ...quiet] : ['📞 No regular shop has gone quiet. Nice.']
+  const cash = c.cash ? [
+    `💳 *Cash likely this week: ${fmtUSD(c.cash.thisWeek)}*${c.cash.week.length ? ` (${c.cash.week.slice(0, 4).map(w => `${w.name} ${fmtUSD(w.amount)}`).join(', ')})` : ''}`,
+    ...(c.cash.late.length ? ['⏰ *Late for them (chase these):*', ...c.cash.late.slice(0, 6).map(l => `• *${l.name}* · ${fmtUSD(l.amount)} · ${l.daysLate} days past when they usually pay (~${l.median}d)`)] : []),
+  ] : []
+  return { call, cash }
+}
+async function sendMondayList(req, rec) {
+  const { call, cash } = mondayLines(rec)
+  const { postToCliqUser, TECH_CLIQ_IDS } = await import('./cliq.js')
+  await postToCliqUser(TECH_CLIQ_IDS.Mark, ['🗓 *Monday list*', ...call, '', ...cash].join('\n'))
+  await postToCliqUser(TECH_CLIQ_IDS.Jayden, ['🗓 *Monday list*', ...call].join('\n')).catch(e => console.warn('[shop-rhythm] jayden dm', e.message))
+  return { quiet: rec.company?.quiet?.length || 0, late: rec.company?.cash?.late?.length || 0 }
 }

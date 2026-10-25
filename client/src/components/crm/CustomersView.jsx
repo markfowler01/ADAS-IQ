@@ -47,7 +47,7 @@ export default function CustomersView({ modeToggle, onOpenShop, onMarkCustomer, 
   // 📅 Usually calls (Mark 2026-10-24) — one fetch for every card.
   const [rhythm, setRhythm] = useState(null)
   useEffect(() => { apiFetch(`${API_BASE}/api/shop-rhythm/all`).then(r => r.ok ? r.json() : null).then(x => setRhythm(x?.ready ? x : null)).catch(() => {}) }, [])
-  const rhythmFor = r => { if (!rhythm) return null; const id = rhythm.shops[r.id] ? r.id : rhythm.byName[String(r.name || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '')]; const x = id && rhythm.shops[id]; return x && x.n >= (rhythm.minJobs || 8) && x.top?.length ? x : null }
+  const rhythmFor = r => { if (!rhythm) return null; const id = rhythm.shops[r.id] ? r.id : rhythm.byName[String(r.name || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '')]; const x = id && rhythm.shops[id]; if (!x) return null; return x.n >= (rhythm.minJobs || 8) && x.top?.length ? x : (x.pay?.median != null ? { ...x, top: null } : null) }
   useEffect(() => { apiFetch(`${API_BASE}/api/shops/customers`).then(r => r.json()).then(x => { if (x.error) setErr(x.error); else setD(x) }).catch(e => setErr(e.message)) }, [])
   const all = d?.customers || []
   const rows = useMemo(() => {
@@ -90,6 +90,33 @@ export default function CustomersView({ modeToggle, onOpenShop, onMarkCustomer, 
             </div>
           )}
         </div>
+        {rhythm && ((rhythm.quiet || []).length > 0 || rhythm.company?.cash) && (
+          <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+            {(rhythm.quiet || []).length > 0 && (
+              <div className="rounded-xl p-3" style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa' }}>
+                <p className="text-xs font-extrabold mb-1.5" style={{ color: '#9a3412' }}>📞 CALL THESE · went quiet on their usual days</p>
+                {rhythm.quiet.slice(0, 6).map(x => (
+                  <button key={x.id} onClick={() => onOpenShop(x.id)} className="w-full text-left text-[12px] py-1 flex justify-between gap-2" style={{ borderTop: '1px solid #fde4cf', color: INK }}>
+                    <span className="truncate"><b>{x.name}</b> · {x.days}d quiet · usually {x.usual.join('/')}</span>
+                    <span className="flex-shrink-0 font-bold" style={{ color: '#9a3412' }}>~{fmt(x.worth)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {rhythm.company?.cash && (
+              <div className="rounded-xl p-3" style={{ backgroundColor: '#f0fdfa', border: '1px solid #99f6e4' }}>
+                <p className="text-xs font-extrabold mb-1" style={{ color: '#0f766e' }}>💳 CASH LIKELY THIS WEEK · <span className="text-base">{fmt(rhythm.company.cash.thisWeek)}</span></p>
+                <p className="text-[11px] mb-1.5" style={{ color: MUTED }}>Open invoices due by each shop's own pay habit</p>
+                {rhythm.company.cash.late.slice(0, 5).map(x => (
+                  <button key={x.id} onClick={() => onOpenShop(x.id)} className="w-full text-left text-[12px] py-1 flex justify-between gap-2" style={{ borderTop: '1px solid #ccfbf1', color: INK }}>
+                    <span className="truncate">⏰ <b>{x.name}</b> · {x.daysLate}d past their usual {x.median}d</span>
+                    <span className="flex-shrink-0 font-bold" style={{ color: RED }}>{fmt(x.amount)}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-2 flex-wrap mb-5">
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search customers…" className="rounded-lg px-3 py-2 text-sm" style={{ border: `1.5px solid ${LINE}`, outline: 'none', minWidth: 220, backgroundColor: 'white' }} />
           {[['', 'All', all.length], ['Not marked as a customer', 'Not marked', countOf('Not marked as a customer') + countOf('Not in the CRM')], ['Needs attention', 'Needs attention', countOf('Needs attention')], ['Owes us', 'Owes us', countOf('Owes us')], ['Healthy', 'Healthy', countOf('Healthy')]].map(([k, l, n]) => (
@@ -191,7 +218,8 @@ function CustomerCard({ r, onOpen, onMark, wifi, rhythm }) {
         {onMark && <button onClick={e => { e.stopPropagation(); onMark() }} className="text-[11px] font-bold rounded-lg px-2.5 py-1 text-white flex-shrink-0" style={{ backgroundColor: ORANGE }}>Mark as customer</button>}
       </div>
 
-      {rhythm && <p className="text-[11px] mt-1.5 font-semibold" style={{ color: '#3730a3' }} title={`Based on ${rhythm.n} jobs in the last 12 months`}>📅 Usually calls: {rhythm.top.map(t => `${t.day} ${t.pct}%`).join(' · ')}</p>}
+      {rhythm?.top && <p className="text-[11px] mt-1.5 font-semibold" style={{ color: '#3730a3' }} title={`Based on ${rhythm.n} jobs in the last 12 months`}>📅 Usually calls: {rhythm.top.map(t => `${t.day} ${t.pct}%`).join(' · ')}</p>}
+      {rhythm?.pay?.median != null && <p className="text-[11px] mt-0.5 font-semibold" style={{ color: rhythm.pay.late ? RED : '#0f766e' }} title={`Median days from invoice to paid, ${rhythm.pay.paid} paid invoices in 12 months`}>💳 Usually pays in {rhythm.pay.median} days{rhythm.pay.late ? ` · ${fmt(rhythm.pay.late)} late for them` : rhythm.pay.week ? ` · ${fmt(rhythm.pay.week)} likely this week` : ''}</p>}
       <div className="flex items-end justify-between gap-4 mt-3">
         <Bars series={r.series || []} color={tb.color} />
         <div className="flex gap-5">

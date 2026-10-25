@@ -779,7 +779,7 @@ function ShopRhythmLine({ shopId, shopName }) {
     return () => { dead = true }
   }, [shopId, shopName])
   if (!r?.ready) return null
-  const fmtK = n => `$${Math.round(n / 1000)}k`
+  const fmtK = n => n >= 1000 ? `$${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `$${Math.round(n)}`
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' })
   const bbqUpcoming = r.bbq && r.bbq.date >= today
   return (
@@ -790,6 +790,8 @@ function ShopRhythmLine({ shopId, shopName }) {
           </span>
         : <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>📅 Not enough history yet{r.n ? ` (${r.n} job${r.n === 1 ? '' : 's'})` : ''}</span>}
       {bbqUpcoming && <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fff7ed', color: '#c2410c', border: '1px solid #fdba74' }}>🍖 BBQ {new Date(`${r.bbq.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })} · {fmtK(r.bbq.milestone)}</span>}
+      {r.quiet && <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full" style={{ backgroundColor: '#fff7ed', color: '#9a3412', border: '1px solid #fed7aa' }}>📞 Quiet {r.quiet.days}d · usually every {Math.round(r.gap || 0)}d · ~{fmtK(r.quiet.worth)} missed</span>}
+      {r.pay?.median != null && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ backgroundColor: r.pay.late ? '#fee2e2' : '#f0fdfa', color: r.pay.late ? '#b91c1c' : '#0f766e' }}>💳 Pays in ~{r.pay.median}d{r.pay.late ? ` · ${fmtK(r.pay.late)} late for them` : ''}</span>}
       {r.lifetime > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ backgroundColor: '#f0fdf4', color: '#15803d' }} title="Lifetime invoiced sales after discount">💵 {fmtK(r.lifetime)} lifetime · {fmtK(r.nextMilestone - r.lifetime)} to the next 🍖</span>}
     </div>
   )

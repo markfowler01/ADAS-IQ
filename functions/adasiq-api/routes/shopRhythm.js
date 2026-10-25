@@ -13,8 +13,10 @@ router.get('/all', async (req, res) => {
     const rh = await readRhythm(req)
     if (!rh) return res.json({ ready: false, shops: {} })
     const shops = {}, byName = {}
-    for (const [id, s] of Object.entries(rh.shops)) { shops[id] = { n: s.n, top: s.top }; byName[shopKey(s.name)] = id }
-    res.json({ ready: true, minJobs: rh.minJobs, shops, byName, company: req.user?.role === 'technician' ? null : (rh.company || null) })
+    const tech = req.user?.role === 'technician'
+    for (const [id, s] of Object.entries(rh.shops)) { shops[id] = { n: s.n, top: s.top, quiet: s.quiet || null, gap: s.gap || null, ...(tech ? {} : { pay: s.pay || null }) }; byName[shopKey(s.name)] = id }
+    const co = rh.company || {}
+    res.json({ ready: true, minJobs: rh.minJobs, shops, byName, quiet: co.quiet || [], company: tech ? null : co })
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
@@ -26,10 +28,10 @@ router.get('/', async (req, res) => {
     let sid = id && rh.shops[id] ? id : ''
     if (!sid && name) sid = Object.keys(rh.shops).find(k => shopKey(rh.shops[k].name) === name) || ''
     const s = sid ? rh.shops[sid] : null
-    const out = { ready: true, at: rh.at, minJobs: rh.minJobs, n: s?.n || 0, top: s?.top || [] }
+    const out = { ready: true, at: rh.at, minJobs: rh.minJobs, n: s?.n || 0, top: s?.top || [], quiet: s?.quiet || null, gap: s?.gap || null }
     if (req.user?.role !== 'technician' && s) {
       const last = (bbq?.shops?.[sid]?.history || []).slice(-1)[0] || null
-      Object.assign(out, { lifetime: s.lifetime, nextMilestone: s.nextMilestone, step: BBQ_STEP, bbq: last ? { date: last.date, milestone: last.milestone } : null })
+      Object.assign(out, { pay: s.pay || null, lifetime: s.lifetime, nextMilestone: s.nextMilestone, step: BBQ_STEP, bbq: last ? { date: last.date, milestone: last.milestone } : null })
     }
     res.json(out)
   } catch (e) { res.status(500).json({ error: e.message }) }
