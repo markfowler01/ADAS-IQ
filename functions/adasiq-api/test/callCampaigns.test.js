@@ -5,28 +5,26 @@ import { pickCallCampaigns, FAMILY_POSTS, INSURANCE_POSTS, HELD_POSTS } from '..
 const CTA = 'Call or text 1-844-FIX-ADAS.'
 const SIGNOFF = 'Father and son. Same day. Done right.'
 
-test('Friday Oct 23 2026 sends family plus the week-1 Friday insurance post', () => {
-  const day = pickCallCampaigns('2026-10-23')
-  assert.equal(day.weekday, true)
-  assert.equal(day.family.id, 'f3')
-  assert.equal(day.insurance.id, 'w1-fri')
-  assert.match(day.insurance.text, /Text the van by noon/)
-})
-
-test('weekend is father-and-son only', () => {
-  for (const date of ['2026-10-24', '2026-10-25']) {
+test('every day has an insurance post, weekends included', () => {
+  for (const date of ['2026-10-24', '2026-10-25', '2026-10-26', '2026-10-31', '2026-11-01']) {
     const day = pickCallCampaigns(date)
-    assert.equal(day.weekday, false)
-    assert.equal(day.insurance, null)
-    assert.ok(day.family.text)
+    assert.ok(day.insurance && day.insurance.text, date)
+    assert.ok(day.family.text, date)
   }
-  assert.notEqual(pickCallCampaigns('2026-10-24').family.id, pickCallCampaigns('2026-10-25').family.id)
 })
 
-test('Monday Oct 26 is the next insurance post, not a repeat of Friday', () => {
-  const day = pickCallCampaigns('2026-10-26')
-  assert.equal(day.weekday, true)
-  assert.equal(day.insurance.id, 'w2-mon')
+test('Sunday Oct 25 2026 starts the daily insurance rotation with the ADAS Maps post', () => {
+  assert.equal(pickCallCampaigns('2026-10-25').insurance.id, 'w1-mon')
+  assert.equal(pickCallCampaigns('2026-10-26').insurance.id, 'w1-tue')
+})
+
+test('no insurance post repeats within one full rotation', () => {
+  const ids = []
+  for (let i = 0; i < INSURANCE_POSTS.length; i++) {
+    const d = new Date(Date.UTC(2026, 9, 25 + i)).toISOString().slice(0, 10)
+    ids.push(pickCallCampaigns(d).insurance.id)
+  }
+  assert.equal(new Set(ids).size, INSURANCE_POSTS.length)
 })
 
 test('the same date always picks the same posts', () => {

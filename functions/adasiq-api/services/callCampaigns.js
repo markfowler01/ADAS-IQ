@@ -1,8 +1,8 @@
 // Call campaigns for the 3 PM slot (Facebook, Instagram, LinkedIn).
 //
-// Every day: one father-and-son post.
-// Monday–Friday: an insurance-ready post as well.
-// Saturday–Sunday: father-and-son only.
+// Every day: one father-and-son post AND one insurance-ready post
+// (Mark 2026-10-25: insurance every day, not weekdays only). The insurance
+// bank rotates daily from INSURANCE_START, so 15 days pass before a repeat.
 //
 // Copy is the approved bank. F2 stays off the schedule (it still needs
 // Jayden's answer). Each post gets a REAL photo under a code-typeset headline
@@ -25,6 +25,9 @@ const SIGNOFF = 'Father and son. Same day. Done right.'
 
 // Monday of the week the bank starts. Oct 23, 2026 is that week's Friday.
 const EPOCH = '2026-10-19'
+// First day of the daily insurance rotation. No insurance post had gone out
+// before this (Friday Oct 23 was lost to the 3 PM window bug).
+const INSURANCE_START = '2026-10-25'
 const STATE_KEY = (dateStr) => `call_campaign_${dateStr}`
 
 // Mark approved the examples on 2026-10-23. The 3 PM run may publish.
@@ -176,9 +179,8 @@ export function pickCallCampaigns(dateStr) {
   const dayIndex = Math.round((utcDate(dateStr) - utcDate(EPOCH)) / 86400000)
   const family = FAMILY_POSTS[((dayIndex % FAMILY_POSTS.length) + FAMILY_POSTS.length) % FAMILY_POSTS.length]
   const weekday = isWeekdayDate(dateStr)
-  const insurance = weekday
-    ? INSURANCE_POSTS[((weekdayIndex(dateStr) % INSURANCE_POSTS.length) + INSURANCE_POSTS.length) % INSURANCE_POSTS.length]
-    : null
+  const insIndex = Math.round((utcDate(dateStr) - utcDate(INSURANCE_START)) / 86400000)
+  const insurance = INSURANCE_POSTS[((insIndex % INSURANCE_POSTS.length) + INSURANCE_POSTS.length) % INSURANCE_POSTS.length]
   return {
     date: dateStr,
     weekday,
