@@ -12,6 +12,7 @@ import {
 import CRMTemplatesModal from './CRMTemplatesModal.jsx'
 import BillingRulesEditor from './books/BillingRulesEditor.jsx'
 import PortalUsersTab from './crm/PortalUsersTab.jsx'
+import { SpotPayToggle } from './SpotPay.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -953,6 +954,7 @@ export default function ShopDetailPanel({ shop, onClose, onSave, onDelete, user 
           {tab === 'billing' && (<>
             <BooksLink shop={shop} />
             <EstimateFirstToggle shop={shop} />
+            <SpotPayToggle shop={shop} />
             <IntegrationsPanel shop={shop} />
             <Big3Rules shop={form} />
             <FullServiceRules shop={form} />

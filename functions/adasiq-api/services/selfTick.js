@@ -41,6 +41,8 @@ const TICKS = {
   source_finder: { minutes: 7 * 24 * 60, path: '/api/crm-sync-cron/position-statements/sources/discover', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   // 🔒 Wrong-car report check on recent Books invoices/estimates (2026-09-30).
   // 🧱 Scrub piles: start a parallel worker per ready estimate (2026-09-30).
+  // ⚡ Pays-on-the-spot: nudge Kat / Mark while a tech waits on site for an invoice (2026-10-26).
+  spot_pay: { minutes: 2, path: '/api/crm-sync-cron/spot-pay-nudges', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   scrub_dispatch: { minutes: 2, path: '/api/crm-sync-cron/scrub-dispatch', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   // 🛟 Never lose one: CCC Inbox ↔ queue check + stuck/needs-a-human alarms.
   scrub_safety: { minutes: 15, path: '/api/crm-sync-cron/scrub-safety', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },

@@ -285,6 +285,20 @@ router.put('/:id/estimate-first', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// ⚡ Pays on the spot (Mark 2026-10-26): the shop hands the tech a check as soon as it has the
+// invoice. Ready to Invoice puts the car at the front of the line (services/spotPay.js).
+router.put('/:id/spot-pay', async (req, res) => {
+  try {
+    const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Owner / Kat only' })
+    const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
+    const on = !!req.body?.on
+    const updated = await updateShop(req, shop.id, { ...shop, billing_rules: { ...br, spot_pay: on, spot_pay_by: req.user?.name || req.user?.email || '', spot_pay_at: new Date().toISOString() } })
+    await postToCliqChannel(DISPATCH_CHANNEL, `⚡ *${shop.shop_name}: pays on the spot ${on ? 'ON' : 'OFF'}*${on ? ' · Ready to Invoice jumps the line, the tech waits for the check' : ''} (${req.user?.name || 'staff'})`).catch(() => {})
+    res.json({ ok: true, spot_pay: on, shop: updated })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // 🔗 Integrations (Mark 2026-09-23): Kinetic via CCC Secure Share, ADAS Maps.
 router.get('/:id/integrations', async (req, res) => {
   try {
@@ -366,10 +380,44 @@ function normShopName(name) {
 // live schema doesn't actually have the billing_rules column the code
 // maps ("Invalid input value for column name" = unknown column).
 const CARD_NOTE_PREFIX = 'card_note:'
+const WIFI_PREFIX = 'shop_wifi:'
 const APP_CONFIG_TABLE = 'AppConfig'
 
 function cardNoteKey(shopName) {
   return (CARD_NOTE_PREFIX + normShopName(shopName)).slice(0, 64)
+}
+function wifiKey(shopName) {
+  return (WIFI_PREFIX + normShopName(shopName)).slice(0, 64)
+}
+function parseWifi(val) {
+  try {
+    const j = JSON.parse(val || '{}')
+    const name = String(j.name || '').trim().slice(0, 80)
+    const password = String(j.password || '').trim().slice(0, 80)
+    if (!name && !password) return null
+    return { name, password }
+  } catch { return null }
+}
+async function writeAppConfigValue(req, key, value) {
+  const app = catalyst.initialize(req, { type: 'advancedio' })
+  const rows = await app.zcql().executeZCQLQuery(
+    `SELECT ROWID FROM ${APP_CONFIG_TABLE} WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+  )
+  const existing = rows?.[0]?.[APP_CONFIG_TABLE] || rows?.[0] || null
+  const table = app.datastore().table(APP_CONFIG_TABLE)
+  if (existing?.ROWID) {
+    if (value) await table.updateRow({ ROWID: String(existing.ROWID), config_key: key, config_value: value })
+    else await table.deleteRow(String(existing.ROWID))
+  } else if (value) {
+    await table.insertRow({ config_key: key, config_value: value })
+  }
+}
+async function writeShopWifi(req, shopName, name, password) {
+  const n = String(name || '').trim().slice(0, 80)
+  const p = String(password || '').trim().slice(0, 80)
+  const value = (n || p) ? JSON.stringify({ name: n, password: p }) : ''
+  await writeAppConfigValue(req, wifiKey(shopName), value)
+  return { name: n, password: p }
 }
 
 // GET /api/shops/card-notes → { notes: { "<normalized name>": "note" } }
@@ -383,6 +431,7 @@ router.get('/card-notes', async (req, res) => {
   try {
     const app = catalyst.initialize(req, { type: 'advancedio' })
     const notes = {}
+    const wifi = {}
     const PAGE = 300
     for (let offset = 0; offset < 20000; offset += PAGE) {
       const rows = await app.zcql().executeZCQLQuery(
@@ -393,11 +442,14 @@ router.get('/card-notes', async (req, res) => {
         const key = String(r?.config_key || '')
         if (key.startsWith(CARD_NOTE_PREFIX) && r.config_value) {
           notes[key.slice(CARD_NOTE_PREFIX.length)] = String(r.config_value)
+        } else if (key.startsWith(WIFI_PREFIX) && r.config_value) {
+          const w = parseWifi(r.config_value)
+          if (w) wifi[key.slice(WIFI_PREFIX.length)] = w
         }
       }
       if (!rows || rows.length < PAGE) break
     }
-    res.json({ ok: true, notes })
+    res.json({ ok: true, notes, wifi })
   } catch (err) {
     console.error('[shops card-notes]', err.message)
     res.status(500).json({ error: err.message })
@@ -429,6 +481,36 @@ router.post('/card-note', async (req, res) => {
     res.json({ ok: true, shop_name: shopName, note })
   } catch (err) {
     console.error('[shops card-note save]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Shop Wi-Fi for the tech on the job (Mark 2026-10-15). Same AppConfig
+// store as card notes — CRMShops has no spare columns. Keyed by shop name.
+router.get('/wifi', async (req, res) => {
+  try {
+    const shopName = String(req.query.shop || '').trim()
+    if (!shopName) return res.status(400).json({ error: 'shop required' })
+    const app = catalyst.initialize(req, { type: 'advancedio' })
+    const key = wifiKey(shopName)
+    const rows = await app.zcql().executeZCQLQuery(
+      `SELECT config_value FROM ${APP_CONFIG_TABLE} WHERE config_key = '${key.replace(/'/g, "''")}' LIMIT 1`
+    )
+    const row = rows?.[0]?.[APP_CONFIG_TABLE] || rows?.[0] || null
+    res.json({ ok: true, wifi: parseWifi(row?.config_value) || { name: '', password: '' } })
+  } catch (err) {
+    console.error('[shops wifi]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+router.post('/wifi', async (req, res) => {
+  try {
+    const shopName = String(req.body?.shop_name || '').trim()
+    if (!shopName) return res.status(400).json({ error: 'shop_name required' })
+    const wifi = await writeShopWifi(req, shopName, req.body?.name ?? req.body?.wifi_name, req.body?.password ?? req.body?.wifi_password)
+    res.json({ ok: true, shop_name: shopName, wifi })
+  } catch (err) {
+    console.error('[shops wifi save]', err.message)
     res.status(500).json({ error: err.message })
   }
 })
@@ -689,6 +771,11 @@ router.post('/quick', async (req, res) => {
     if (justStarted) { try { const { sendShopWelcome } = await import('../services/shopWelcome.js'); await sendShopWelcome(req, shop, { by }) } catch (e) { console.log('[welcome] on quick failed:', e.message) } }
     let books = null
     try { books = await ensureShopBooksContact(req, shop, by) } catch (e) { console.warn('[shops quick] Books customer failed:', e.message); books = { error: e.message } }
+    const wifiName = String(b.wifi_name || '').trim()
+    const wifiPass = String(b.wifi_password || '').trim()
+    if (wifiName || wifiPass) {
+      try { await writeShopWifi(req, shop.shop_name, wifiName, wifiPass) } catch (e) { console.warn('[shops quick] wifi', e.message) }
+    }
     if (created) {
       await postToCliqChannel(DISPATCH_CHANNEL, `🆕 *New shop — ${shop.shop_name}* · ${b3.CUSTOMER_TYPES[ctype].label} · ${pay.replace('_', ' ')} · by ${by}${shop.region ? ` · zone ${shop.region}` : ''}${books?.contact_id ? ' · Books customer ready' : ' · ⚠ Books customer NOT created'}\nKat: the new-shop checklist is on the CRM card → Billing.`).catch(() => {})
       try { const { createNotification } = await import('./notifications.js'); await createNotification(req, { to: 'Kath', toEmail: 'k.belmonte@absoluteadas.com', type: 'new_shop', title: `New shop: ${shop.shop_name}`, body: `${b3.CUSTOMER_TYPES[ctype].label} · added by ${by} · checklist on the CRM card`, skipCliq: true, skipTechChannel: true }) } catch { /* fine */ }
@@ -729,6 +816,31 @@ router.put('/:id/full-service', async (req, res) => {
     const r = await fs.saveFullService(req, shop, req.body?.rules || {}, req.user?.name || req.user?.email || '', { learnOnly: req.body?.learn === true, on: typeof req.body?.on === 'boolean' ? req.body.on : null })
     res.json({ ok: true, ...r, ...fs.fsRulesOf(rowToShop(await getTable(req).getRow(String(req.params.id)))) })
   } catch (e) { console.error('[shops full-service PUT]', req.params.id, e.message); res.status(500).json({ error: e.message }) }
+})
+
+// Invoice 4-way alignment (Mark 2026-10-20). Default off for every shop,
+// including shops saved before this switch. The report still lists the row.
+router.get('/:id/alignment-invoice', async (req, res) => {
+  try {
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    const { alignmentInvoiceOn } = await import('../services/alignmentInvoice.js')
+    const br = shop.billing_rules && typeof shop.billing_rules === 'object' ? shop.billing_rules : {}
+    res.json({ ok: true, on: alignmentInvoiceOn(br), set_by: br.invoice_4way_alignment_set_by || '', set_at: br.invoice_4way_alignment_set_at || '' })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.put('/:id/alignment-invoice', async (req, res) => {
+  try {
+    if (typeof req.body?.on !== 'boolean') return res.status(400).json({ error: 'on true or false required' })
+    const shop = rowToShop(await getTable(req).getRow(String(req.params.id)))
+    if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    const br = shop.billing_rules && typeof shop.billing_rules === 'object' ? shop.billing_rules : {}
+    const on = req.body.on === true
+    const by = req.user?.name || req.user?.email || 'app'
+    const next = { ...br, invoice_4way_alignment: on, invoice_4way_alignment_set_by: by, invoice_4way_alignment_set_at: new Date().toISOString() }
+    await updateShop(req, shop.id, { ...shop, billing_rules: next })
+    res.json({ ok: true, on, set_by: by, set_at: next.invoice_4way_alignment_set_at })
+  } catch (e) { console.error('[shops alignment-invoice PUT]', req.params.id, e.message); res.status(500).json({ error: e.message }) }
 })
 
 // Big 3 rule on a CRM shop (Mark 2026-09-10) — read/set from the Billing tab.

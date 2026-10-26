@@ -37,6 +37,7 @@ import customersRouter from './routes/customers.js'
 import salespersonsRouter from './routes/salespersons.js'
 import techStatsRouter from './routes/techStats.js'
 import shopRhythmRouter from './routes/shopRhythm.js'
+import spotPayRouter from './routes/spotPay.js'
 import dailyGreetingRouter from './routes/dailyGreeting.js'
 import salesStopsRouter from './routes/salesStops.js'
 import callSourcesRouter from './routes/callSources.js'
@@ -312,7 +313,8 @@ app.use('/api/create-invoice', requireAuth, requireStaff, invoiceRouter)
 app.use('/api/customers', requireAuth, customersRouter)
 app.use('/api/salespersons', requireAuth, salespersonsRouter)
 app.use('/api/tech-stats', requireAuth, techStatsRouter)
-app.use('/api/shop-rhythm', requireAuth, shopRhythmRouter)   // 📅 call days + 🍖 BBQ on the CRM card
+app.use('/api/shop-rhythm', requireAuth, shopRhythmRouter)
+app.use('/api/spot-pay', requireAuth, spotPayRouter)   // ⚡ pays on the spot   // 📅 call days + 🍖 BBQ on the CRM card
 app.use('/api/cron/daily-greeting', dailyGreetingRouter)
 // Phone-system self-test cron. Every 5 minutes hits the voice + SMS
 // webhooks with a synthetic Twilio payload; if either 5xx's, 403's, or

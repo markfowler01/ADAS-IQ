@@ -30,6 +30,24 @@ export const BIG3 = [
   { key: 'post_scan', base: 'Post-Scan (included)',                          paid: 'Post-Scan', paidFallback: 'Post-Calibration Scan', label: 'Post-Scan', modes: ['charge', 'included', 'off'] },
   { key: 'snapshot',  base: null,                                            paid: 'Calibration Snapshot', label: 'Calibration Snapshot', modes: ['charge', 'off'] },
 ]
+// What prints on the invoice when the shop rule is Included ($0). The Books
+// item is still named "Pre-Scan (included)" so the lookup doesn't break, but
+// that word is what carriers use to deny the shop. Never print it.
+// Names stay "Pre-Scan" / "Post-Scan" so Big 4 line matching still finds them.
+export const SCAN_INVOICE_COPY = {
+  pre_scan:  { name: 'Pre-Scan',  description: 'Diagnostic scan performed before repairs. Separate operation. Scan report attached.' },
+  post_scan: { name: 'Post-Scan', description: 'Diagnostic scan performed after repairs and calibration. Separate operation. Scan report attached.' },
+}
+export function scanLineCopy(key) { return SCAN_INVOICE_COPY[key] || null }
+// Rewrite a line that still carries the catalog name "Pre-Scan (included)".
+// Paid lines ("Pre-Scan", insurer pool names) are left alone.
+export function presentScanLine(name, description) {
+  const n = String(name || '')
+  if (!/\(included\)|\(l-m\)/i.test(n)) return { name: n, description: description || '' }
+  const key = /^pre-?scan/i.test(n) && !/post/i.test(n) ? 'pre_scan' : /post-?(calibration )?scan/i.test(n) ? 'post_scan' : null
+  const copy = key && SCAN_INVOICE_COPY[key]
+  return copy ? { name: copy.name, description: copy.description } : { name: n, description: description || '' }
+}
 export const MODES = { charge: 'Charge', included: 'Included', off: 'Off' }
 // Until a shop has a rule: Cal ID charged (as today), PCSI + Post-Scan included, Snapshot off.
 export const DEFAULT_RULES = { cal_id: 'charge', pcsi: 'included', pre_scan: 'off', post_scan: 'included', snapshot: 'off' }
@@ -171,8 +189,8 @@ export async function big3Map(req) {
     const drps = Array.isArray(sh.drps) ? sh.drps : []
     const billing = br.customer_type ? { customer_type: br.customer_type, discount_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, pay_mode: br.pay_mode || CUSTOMER_TYPES[br.customer_type]?.pay || '', mode: billingModeFor(br.customer_type) } : null
     const ints = br.integrations ? { kinetic: br.integrations.kinetic?.state || 'off', adasmaps: br.integrations.adasmaps?.state || 'off' } : null
-    const estimateFirst = !!br.estimate_first
-    if (rules || drps.length || billing || ints || estimateFirst) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete: !!complete, drps, billing, integrations: ints, estimate_first: estimateFirst, estimate_first_note: br.estimate_first_note || '' }
+    const estimateFirst = !!br.estimate_first, spotPay = !!br.spot_pay
+    if (rules || drps.length || billing || ints || estimateFirst || spotPay) map[shopKeyOf(sh.shop_name)] = { rules, set_by: br.big3_set_by || '', complete: !!complete, drps, billing, integrations: ints, estimate_first: estimateFirst, estimate_first_note: br.estimate_first_note || '', spot_pay: spotPay }
     if ((!complete || !billing) && ['active', 'second_active', 'active2'].includes(sh.pipeline_stage)) missing.push({ id: sh.id, shop_name: sh.shop_name, no_big3: !complete, no_billing: !billing })
   }
   return { map, missing }

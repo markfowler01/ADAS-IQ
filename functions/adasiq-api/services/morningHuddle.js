@@ -170,6 +170,8 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const out = { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
   // 🏆🎯 Records + goals hit (services/salesRecords.js). Today's list is made once and then fixed;
   // any other date is a preview that saves nothing.
+  out.spot = null
+  try { const { spotWeek } = await import('./spotPay.js'); out.spot = await Promise.race([spotWeek(req), new Promise(r => setTimeout(() => r(null), 4000))]) } catch { /* optional */ }
   out.pops = []
   try {
     const hourPT = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hour12: false }).format(new Date()))
@@ -435,6 +437,7 @@ export async function sendHuddle(req, { force = false, to = MARK_TO, cc = MARK_C
       <table style="border-collapse:collapse;margin:8px 0 14px">${rows}</table>
       ${(data.pops || []).map(p => `<p style="margin:0 0 6px;padding:8px 12px;border-radius:8px;background:${p.kind === 'goal' ? '#dcfce7' : '#fef3c7'}"><b>${p.kind === 'goal' ? '🎯' : '🏆'} ${esc(p.text)}</b> · ${esc(p.sub)}</p>`).join('')}
       <p style="margin:0 0 4px"><b>Today · ${data.jobsToday} on the board</b></p>${sched}
+      ${data.spot?.checks ? `<p style="margin:6px 0 0"><b>⚡ Spot-pay:</b> ${data.spot.checks} check${data.spot.checks === 1 ? '' : 's'} picked up this week (${fmtUSD(data.spot.dollars)})${data.spot.avgMinutes != null ? ` · billed ${data.spot.avgMinutes} min after Ready to Invoice on average` : ''}</p>` : ''}
       ${data.calls?.shops?.length ? `<p style="margin:10px 0 0"><b>📅 Usually call on ${esc(data.calls.label)}:</b> ${data.calls.shops.map(x => `${esc(x.name)} (${x.pct}%)`).join(' · ')}</p>` : ''}
       <p style="margin:16px 0 0;color:#666;font-size:12px">${esc(data.line)}<br/>Set individual goals: AppConfig <code>huddle_tech_goals</code> (e.g. {"Jayden": 20000}). Company goal: Ada's pace goal.</p>
     </div>`
@@ -493,6 +496,7 @@ export async function postHuddle(req, { force = false } = {}) {
       `${data.monthLabel}: *${fmtUSD(data.mtd)}* of ${fmtUSD(data.goal)} (${data.pct}%) · ${data.ahead >= 0 ? 'ahead' : 'behind'} pace by ${fmtUSD(Math.abs(data.ahead))} · ${data.jobsToday} on the board today`,
       ...(data.pops || []).map(p => `${p.kind === 'goal' ? '🎯' : '🏆'} *${p.text}* · ${p.sub}`),
       `📊 Today's board: ${img.url}`,
+      data.spot?.checks ? `⚡ Spot-pay: ${data.spot.checks} check${data.spot.checks === 1 ? '' : 's'} this week (${fmtUSD(data.spot.dollars)})${data.spot.avgMinutes != null ? ` · billed in ${data.spot.avgMinutes} min avg` : ''}` : '',
       data.calls?.shops?.length ? `📅 Usually call on ${data.calls.label}: ${data.calls.shops.map(x => `${x.name} (${x.pct}%)`).join(' · ')}` : '',
       cfg.meeting_link ? `📹 Join: ${cfg.meeting_link}` : '',
       data.line,

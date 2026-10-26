@@ -711,7 +711,7 @@ router.get('/report-docs', async (req, res) => {
   try {
     const { getScrub } = await import('../services/scrubStore.js'); const A = await import('../services/oemAttach.js')
     const s = await getScrub(req, String(req.query.scrub || '')); const cals = (s?.payload?.calibrations || []).map(c => ({ ...c }))
-    const docs = await A.citedDocs(req, cals); const warns = []; const w = console.warn; console.warn = (...x) => { warns.push(x.join(' ')); w(...x) }
+    const docs = await A.citedDocs(req, cals, s?.make || ''); const warns = []; const w = console.warn; console.warn = (...x) => { warns.push(x.join(' ')); w(...x) }
     let got = []; try { got = await A.fetchCited(req, docs, cals) } finally { console.warn = w }
     res.json({ cited: docs.map(d => ({ n: d.n, title: d.row.doc_title, src: d.row.doc_hosted_url || d.row.doc_source_url, cals: d.cals })), loaded: got.map(d => ({ n: d.n, title: d.row.doc_title, pages: d.pageTexts?.length })), warns })
   } catch (e) { res.status(500).json({ error: e.message }) }
@@ -842,7 +842,7 @@ router.post('/phone/set', express.json(), async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try {
     const key = String(req.body?.key || ''), value = String(req.body?.value ?? '').trim()
-    if (!['KAT_PHONE_NUMBER', 'CASCADE_ORDER', 'JAYDEN_PHONE_NUMBER', 'MARK_PHONE_NUMBER', 'SHOP_LAT', 'SHOP_LNG', 'CLOCK_IN_GEOFENCE_MI', 'AFTER_HOURS_START', 'AFTER_HOURS_END'].includes(key)) return res.status(400).json({ error: 'key not allowed here' })
+    if (!['KAT_PHONE_NUMBER', 'CASCADE_ORDER', 'JAYDEN_PHONE_NUMBER', 'MARK_PHONE_NUMBER', 'SHOP_LAT', 'SHOP_LNG', 'CLOCK_IN_GEOFENCE_MI', 'AFTER_HOURS_START', 'AFTER_HOURS_END', 'DESK_PHONE_ON'].includes(key)) return res.status(400).json({ error: 'key not allowed here' })
     const P = await import('../services/phoneConfig.js')
     const next = await P.setPhoneConfigValue(req, key, value)
     res.json({ ok: true, key, value, cascade: next.CASCADE_ORDER || '', kat: next.KAT_PHONE_NUMBER || '' })
@@ -1409,6 +1409,11 @@ router.all('/scrub-worker', async (req, res) => {
 // in WorkDrive → CCC Inbox; each must have a queue row — any that don't are
 // queued now. (2) Anything waiting > 30 min, or a "needs a human" row, posts
 // to #dispatch (once per item per day). Runs every 15 min from the ticker.
+// ⚡ Spot-pay nudges (Kat at 10 min, Mark at 20) — every 2 min from the ticker.
+router.all('/spot-pay-nudges', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { spotNudges } = await import('../services/spotPay.js'); res.json(await spotNudges(req)) } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.all('/scrub-safety', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   const out = { inbox: 0, missing: 0, requeued: [], stale: 0, dead: 0, alerted: 0 }

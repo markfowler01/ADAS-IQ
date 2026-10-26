@@ -722,6 +722,7 @@ router.put('/:id', async (req, res) => {
       try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, updated.id, 'job') } catch (e) { console.warn('[jobs] scrub → job:', e.message) }
     }
     if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') await writePcsiStory(req, updated)
+    if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') { try { const { spotPayReady } = await import('../services/spotPay.js'); await Promise.race([spotPayReady(req, updated), new Promise(r => setTimeout(r, 6000))]) } catch (e) { console.warn('[spot-pay] ready', e.message) } }
     if (req.body.cash_quoted && String(cur?.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
     if (req.body.status === 'complete' && prevStatus !== 'complete') {
@@ -846,6 +847,7 @@ router.patch('/:id', async (req, res) => {
       try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, updated.id, 'job') } catch (e) { console.warn('[jobs] scrub → job:', e.message) }
     }
     if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') await writePcsiStory(req, updated)
+    if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') { try { const { spotPayReady } = await import('../services/spotPay.js'); await Promise.race([spotPayReady(req, updated), new Promise(r => setTimeout(r, 6000))]) } catch (e) { console.warn('[spot-pay] ready', e.message) } }
     if (req.body.cash_quoted && String(currentJob.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
     if (req.body.status === 'complete' && currentJob.status !== 'complete') {

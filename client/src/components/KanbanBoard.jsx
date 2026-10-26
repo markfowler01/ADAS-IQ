@@ -7,6 +7,7 @@ import CollectPanel from './CollectPanel.jsx'
 import BuildJobModal from './BuildJobModal.jsx'
 import EstimatePill from './EstimatePill.jsx'
 import { Big3Badge, DrpBadge, BillingPill, EstimateFirstPill } from './books/Big3Rules.jsx'
+import { SpotBadge, useSpotOpen, useIsSpotShop, spotFrame } from './SpotPay.jsx'
 import BillItModal from './BillItModal.jsx'
 import { needsWindshieldCheck } from './MobileJobCard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
@@ -14,10 +15,12 @@ import Navbar from './Navbar'
 import CreateInvoicesModal from './CreateInvoicesModal.jsx'
 import JobRequestModal from './JobRequestModal.jsx'
 import CalibrationReviewModal from './CalibrationReviewModal.jsx'
-import { parseNoteItems, CustomerNoteBox, insurerPricingBadge } from './MobileJobCard.jsx'
+import { parseNoteItems, CustomerNoteBox, insurerPricingBadge, WifiCopy } from './MobileJobCard.jsx'
 import { useShopQuotes, BillingModal } from './ShopQuotesColumn.jsx'
 import LoadingSplash from './LoadingSplash.jsx'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
+import { BRAND } from '../lib/brandTokens.js'
+import { displayTechName, useDispatchBoard } from '../lib/techColumns.js'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -29,7 +32,8 @@ function useIsMobile() {
   return isMobile
 }
 
-const ORANGE = '#CD4419'
+const ORANGE = BRAND.orange
+const QUOTE = BRAND.quote
 
 // Cash-customer detector — matches server-side services/cashPricing.js.
 // A blank insurer or one of the standard self-pay markers = cash. Kept
@@ -65,24 +69,15 @@ function normShopName(name) {
 const QUOTE_COL = { id: 'quote_requested', label: '📝 Quotes Requested', blue: true }
 const colOf = j => (j?.status === 'job_requested' && ['quote', 'equote'].includes(String(j?.request_type || '').toLowerCase())) ? 'quote_requested' : j?.status
 
-const COLUMNS = [
-  { id: 'job_requested',    label: 'Job Requested' },
-  { id: 'need_dispatch',    label: 'Need to Dispatch' },
-  { id: 'dispatched_jaden', label: 'Dispatched to Jaden' },
-  { id: 'dispatched_mark',  label: 'Dispatched to Mark' },
-  { id: 'pending_parts',    label: 'Pending / Waiting on Parts' },
-  { id: 'ready_invoice',    label: 'Ready to Invoice' },
-  { id: 'complete',         label: 'Completed' },
-]
-
 // Status badge colors for mobile card list
 const STATUS_INFO = {
-  job_requested:    { color: '#0369a1', bg: '#e0f2fe' },
+  quote_requested:  { color: QUOTE, bg: '#dbeafe' },
+  job_requested:    { color: '#0A0A0A', bg: '#e8e4e0' },
   need_dispatch:    { color: '#b45309', bg: '#fef3c7' },
-  dispatched_jaden: { color: '#1d4ed8', bg: '#dbeafe' },
-  dispatched_mark:  { color: '#7c3aed', bg: '#ede9fe' },
-  pending_parts:    { color: '#c2410c', bg: '#fff7ed' },
-  ready_invoice:    { color: '#0e7490', bg: '#cffafe' },
+  dispatched_jaden: { color: '#1F8B8B', bg: '#e6f4f4' },
+  dispatched_mark:  { color: '#CD4419', bg: '#f5e8e3' },
+  pending_parts:    { color: '#b45309', bg: '#fff7ed' },
+  ready_invoice:    { color: '#0A0A0A', bg: '#f5f3f0' },
   complete:         { color: '#15803d', bg: '#dcfce7' },
 }
 
@@ -240,9 +235,8 @@ async function triggerConfetti() {
 }
 
 // ─── Job Modal ────────────────────────────────────────────────────────────────
-const DISPATCH_TECH = { dispatched_jaden: 'Jaden', dispatched_mark: 'Mark' }
-
-function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
+function JobModal({ job, onClose, onSave, onDelete, allJobs, shopWifi }) {
+  const { columns: COLUMNS, dispatchTech: DISPATCH_TECH } = useDispatchBoard()
   const isNew = !job.id
   const [form, setForm] = useState(() => {
     if (isNew) {
@@ -365,6 +359,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
               />
             </div>
           </div>
+          <WifiCopy wifi={shopWifi?.[normShopName(form.shop_name)]} />
 
           {/* Vehicle */}
           <div>
@@ -644,13 +639,13 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs }) {
 function QuoteJacket({ q, job, readOnly, busy, onAction, children }) {
   const days = q?.days_waiting || 0
   return (
-    <div className="mb-3 rounded-2xl overflow-hidden" style={{ border: '2px solid #1d4ed8', backgroundColor: '#eff6ff' }}>
+    <div className="mb-3 rounded-2xl overflow-hidden" style={{ border: `2px solid ${QUOTE}`, backgroundColor: BRAND.quoteSoft }}>
       <div className="flex items-center justify-between px-3 py-2">
         <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full text-white"
-          style={{ backgroundColor: days >= 3 ? '#b45309' : '#1d4ed8', letterSpacing: '0.05em' }}>
+          style={{ backgroundColor: days >= 3 ? '#b45309' : QUOTE, letterSpacing: '0.05em' }}>
           📤 QUOTED{days > 0 ? ` · ${days}d waiting` : ''}
         </span>
-        <span className="text-sm font-extrabold" style={{ color: '#1e3a8a' }}>
+        <span className="text-sm font-extrabold" style={{ color: QUOTE }}>
           {q ? `$${Number(q.total).toFixed(2)}` : ''}
         </span>
       </div>
@@ -678,10 +673,12 @@ function QuoteJacket({ q, job, readOnly, busy, onAction, children }) {
   )
 }
 
-function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, billableQuote, onBillFromQuote, estimateTotal, expanded = true, onToggleExpand = null }) {
+function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes, shopWifi, onEditCustomerNote, billableQuote, onBillFromQuote, estimateTotal, expanded = true, onToggleExpand = null }) {
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const [finding, setFinding] = useState(false)
+  const spots = useSpotOpen(), isSpot = useIsSpotShop()   // ⚡ pays on the spot
+  const spotWaiting = isSpot(job.shop_name) && job.status === 'ready_invoice' && !job.invoiced && !job.billed_via_app
 
   async function handleOpenWorkDrive(e) {
     e.stopPropagation()
@@ -739,7 +736,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         // (Mark 2026-08-30). Complete stays green-tinted; cards inside
         // the blue quote jacket keep a quiet border. Requests are the
         // dashed, tinted ones (2026-09-08) — same as the schedule.
-        cardFrame(job, { complete: isComplete })
+        spotWaiting ? { ...cardFrame(job, { complete: isComplete }), ...spotFrame } : cardFrame(job, { complete: isComplete })
       }
     >
       {/* Price bar — top of the card, like the quoted jacket (Mark
@@ -759,6 +756,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
               {job.shop_name}
             </p>
           )}
+          <WifiCopy wifi={shopWifi?.[normShopName(job.shop_name)]} />
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           {/* Customer note — set once per shop, shows on every card */}
@@ -838,7 +836,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         </p>
       )}
       {job.status === 'job_requested' && <p className="mb-1 flex flex-wrap gap-1 items-center"><ScrubChip job={job} /><ScrubButton job={job} done={!!scrubState(job)?.done} compact onDone={() => window.dispatchEvent(new CustomEvent('adas:jobs-refresh'))} /><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /></p>}
-      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
+      {job.status !== 'job_requested' && <p className="mb-1 flex flex-wrap gap-1"><SpotBadge job={job} spots={spots} /><EstimateFirstPill shopName={job.shop_name} /><BillingPill shopName={job.shop_name} /><IntegrationPills shopName={job.shop_name} /><EstimatePill jobId={job.id} /><Big3Badge shopName={job.shop_name} /><DrpBadge shopName={job.shop_name} />{job.agreed_price?.amount > 0 && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded inline-block" style={{ backgroundColor: '#fff7ed', color: '#b45309' }} title={job.agreed_price.note || ''}>🤝 Agreed ${Number(job.agreed_price.amount).toFixed(0)}{job.agreed_price.with ? ` · ${job.agreed_price.with}` : ''}</span>}</p>}
       {isTeslaJob(job) && (
         <p className="mb-1">
           <span
@@ -874,7 +872,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           {job.cash_quoted && <span className="ml-1 text-[11px] font-extrabold" style={{ color: '#14532d' }}>{job.cash_quoted === '700' ? '$700 · dark green' : '$350 · light green'}</span>}
         </p>
       ) : job.insurer && (
-        <p className="text-xs font-medium mb-1 truncate" style={{ color: '#2563eb' }}>
+        <p className="text-xs font-medium mb-1 truncate" style={{ color: '#0A0A0A' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Insurer: </span>{job.insurer}
         </p>
       )}
@@ -886,7 +884,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             <circle cx="12" cy="8" r="4" stroke="#999" strokeWidth="2"/>
             <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#999" strokeWidth="2" strokeLinecap="round"/>
           </svg>
-          <p className="text-xs text-gray-500 font-medium">{job.technician}</p>
+          <p className="text-xs text-gray-500 font-medium">{displayTechName(job.technician)}</p>
         </div>
       )}
 
@@ -910,8 +908,8 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         {onToggleExpand && !expanded && calArr.length > 3 && (
           <span className="text-xs px-1.5 py-0.5 rounded-md font-bold" style={{ backgroundColor: '#f0ece8', color: '#888' }}>+{calArr.length - 3} more</span>
         )}
-        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
-        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>PCSI</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>POST</span>
       </div>
 
       {/* Extra services flag — from the Live Day Ready-to-Invoice modal.
@@ -998,12 +996,12 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
           disabled={reportBusy}
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
           style={{
-            backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd',
+            backgroundColor: '#e6f4f4', border: '1.5px solid #bae6fd',
             padding: '10px 0', minHeight: '44px', opacity: reportBusy ? 0.6 : 1,
           }}
         >
           <span style={{ fontSize: '14px' }}>{reportBusy ? '⏳' : '📄'}</span>
-          <span className="text-sm font-semibold" style={{ color: '#0369a1' }}>
+          <span className="text-sm font-semibold" style={{ color: '#1F8B8B' }}>
             {reportBusy ? 'Generating report…' : 'ADAS Report'}
           </span>
         </button>
@@ -1041,10 +1039,10 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         <button
           onClick={e => { e.stopPropagation(); onMoveToReadyInvoice && onMoveToReadyInvoice(job) }}
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
-          style={{ backgroundColor: '#fdf4ff', border: '1.5px solid #e9d5ff', padding: '10px 0', minHeight: '44px' }}
+          style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e8e4e0', padding: '10px 0', minHeight: '44px' }}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#0A0A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#0A0A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span className="text-sm font-semibold" style={{ color: '#0A0A0A' }}>Ready to Invoice</span>
         </button>
       )}
 
@@ -1052,9 +1050,9 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
         <button
           onClick={e => { e.stopPropagation(); onBillFromQuote(job) }}
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
-          style={{ backgroundColor: '#eff6ff', border: '1.5px solid #bfdbfe', padding: '10px 0', minHeight: '44px' }}
+          style={{ backgroundColor: BRAND.quoteSoft, border: `1.5px solid ${BRAND.quoteLine}`, padding: '10px 0', minHeight: '44px' }}
         >
-          <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>🧾 Bill from Quote (${Number(billableQuote.total).toFixed(0)})</span>
+          <span className="text-sm font-semibold" style={{ color: QUOTE }}>🧾 Bill from Quote (${Number(billableQuote.total).toFixed(0)})</span>
         </button>
       )}
 
@@ -1096,7 +1094,7 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
 }
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
-function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote, estimateTotals, expandedId, onToggleExpand, slim, onUnslim, onSlim, slimTotal }) {
+function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver, onDrop, onComplete, onToggleInvoiced, onDelete, onOpenWorkDrive, onRefreshShareLink, onCreateInvoices, onMoveToReadyInvoice, onMoveToPendingParts, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes, shopWifi, onEditCustomerNote, dragOverCol, billableQuotes, onBillFromQuote, estimateTotals, expandedId, onToggleExpand, slim, onUnslim, onSlim, slimTotal }) {
   const isOver = dragOverCol === column.id
 
   // Slim column (compact board, Mark 2026-09-03): empty columns and the
@@ -1111,8 +1109,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
         onDragOver={(e) => onDragOver(e, column.id)}
         onDrop={(e) => onDrop(e, column.id)}
       >
-        <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={column.blue ? { backgroundColor: '#dbeafe', border: '1.5px dashed #60a5fa' } : { backgroundColor: ORANGE, opacity: 0.75 }}>
-          <span className="text-xs font-bold truncate" style={{ color: column.blue ? '#1d4ed8' : 'white' }}>{column.label}</span>
+        <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={column.blue ? { backgroundColor: BRAND.quoteSoft, border: `1.5px dashed ${QUOTE}` } : { backgroundColor: ORANGE, opacity: 0.75 }}>
+          <span className="text-xs font-bold truncate" style={{ color: column.blue ? QUOTE : 'white' }}>{column.label}</span>
           <span className="text-xs font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>{jobs.length}</span>
         </div>
         <div className="flex-1 rounded-xl p-2 min-h-32 flex flex-col items-center justify-start gap-2 pt-4" style={{ backgroundColor: '#f9f8f7', border: '2px dashed transparent' }}>
@@ -1140,13 +1138,13 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
       {/* Column header */}
       <div
         className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between"
-        style={column.blue ? { backgroundColor: '#dbeafe', border: '1.5px dashed #60a5fa' } : { backgroundColor: ORANGE }}
+        style={column.blue ? { backgroundColor: BRAND.quoteSoft, border: `1.5px dashed ${QUOTE}` } : { backgroundColor: ORANGE }}
       >
         <div className="flex items-center gap-2">
-          <span className="text-sm font-bold" style={{ color: column.blue ? '#1d4ed8' : 'white' }}>{column.label}</span>
+          <span className="text-sm font-bold" style={{ color: column.blue ? QUOTE : 'white' }}>{column.label}</span>
           <span
             className="text-xs font-bold px-1.5 py-0.5 rounded-full"
-            style={column.blue ? { backgroundColor: 'rgba(29,78,216,0.15)', color: '#1d4ed8' } : { backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}
+            style={column.blue ? { backgroundColor: '#dbeafe', color: QUOTE } : { backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}
           >
             {jobs.length}
           </span>
@@ -1217,6 +1215,7 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
             onDownloadReport={onDownloadReport}
             reportBusyId={reportBusyId}
             customerNotes={customerNotes}
+            shopWifi={shopWifi}
             onEditCustomerNote={onEditCustomerNote}
           />
         ))}
@@ -1232,6 +1231,8 @@ function KanbanColumn({ column, jobs, onEdit, onNewJob, onDragStart, onDragOver,
 
 // ─── Main Kanban Board ─────────────────────────────────────────────────────────
 export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onNavigate, onExtracted, onManualInvoice }) {
+  const { columns: COLUMNS, dispatchTech: DISPATCH_TECH } = useDispatchBoard()
+  const isSpotShop = useIsSpotShop()   // ⚡ pays on the spot → front of Ready to Invoice
   // Compact board (Mark 2026-09-03: "the jobs screen is the hardest to
   // navigate"): one card's actions open at a time; Completed starts slim.
   const [expandedCardId, setExpandedCardId] = useState(null)
@@ -1354,11 +1355,12 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // for that shop (Mark 2026-07-10). Stored on the CRM shop row in
   // Datastore; keyed here by normalized shop name.
   const [customerNotes, setCustomerNotes] = useState({})
+  const [shopWifi, setShopWifi] = useState({})
   const fetchCustomerNotes = useCallback(async () => {
     try {
       const r = await apiFetch(`${API_BASE}/api/shops/card-notes`)
       const j = await r.json()
-      if (r.ok) setCustomerNotes(j.notes || {})
+      if (r.ok) { setCustomerNotes(j.notes || {}); setShopWifi(j.wifi || {}) }
     } catch { /* non-critical */ }
   }, [])
   useEffect(() => { fetchCustomerNotes() }, [fetchCustomerNotes])
@@ -2072,6 +2074,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
   const jobsByStatus = [QUOTE_COL, ...COLUMNS].reduce((acc, col) => {
     acc[col.id] = visibleJobs.filter(j => colOf(j) === col.id)
+    // ⚡ Front of the line: a spot-pay car waiting on its invoice goes first (Mark 2026-10-26).
+    if (col.id === 'ready_invoice') acc[col.id] = [...acc[col.id]].sort((a, b) => (isSpotShop(b.shop_name) && !b.invoiced ? 1 : 0) - (isSpotShop(a.shop_name) && !a.invoiced ? 1 : 0))
     return acc
   }, {})
 
@@ -2314,7 +2318,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                     onClick={() => pickMobileCol(t.id)}
                     className="text-xs font-bold rounded-full px-3 py-2 flex-shrink-0"
                     style={mobileCol === t.id
-                      ? { backgroundColor: (t.id === 'quotes' || t.id === 'quote_requested') ? '#1d4ed8' : ORANGE, color: 'white' }
+                      ? { backgroundColor: (t.id === 'quotes' || t.id === 'quote_requested') ? QUOTE : ORANGE, color: 'white' }
                       : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: t.n > 0 ? '#1a1a1a' : '#bbb' }}
                   >{t.label} {t.n > 0 ? t.n : ''}</button>
                 ))}
@@ -2332,6 +2336,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                         onEdit={openEdit}
                         onOpenWorkDrive={handleOpenWorkDrive}
                         customerNotes={customerNotes}
+                        shopWifi={shopWifi}
                       />
                     </QuoteJacket>
                   ))}
@@ -2369,6 +2374,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                         onDownloadReport={handleDownloadAdasReport}
                         reportBusyId={reportBusyId}
                         customerNotes={customerNotes}
+                        shopWifi={shopWifi}
                       />
                     </div>
                   ))
@@ -2401,7 +2407,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
               style={{ alignItems: 'stretch', minHeight: '100%' }}
             >
               <div id="col-quotes" className="flex flex-col flex-shrink-0" style={{ width: '300px' }}>
-                <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={{ backgroundColor: '#1d4ed8' }}>
+                <div className="rounded-xl px-3 py-2.5 mb-3 flex items-center justify-between" style={{ backgroundColor: QUOTE }}>
                   <div className="flex items-center gap-2">
                     <span className="text-white text-sm font-bold">📤 Quotes Out</span>
                     <span className="text-xs font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: 'rgba(255,255,255,0.25)', color: 'white' }}>{quotedJobs.length}</span>
@@ -2427,6 +2433,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                         onDownloadReport={handleDownloadAdasReport}
                         reportBusyId={reportBusyId}
                         customerNotes={customerNotes}
+                        shopWifi={shopWifi}
                       />
                     </QuoteJacket>
                   ))}
@@ -2467,6 +2474,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                   onDownloadReport={handleDownloadAdasReport}
                   reportBusyId={reportBusyId}
                   customerNotes={customerNotes}
+                  shopWifi={shopWifi}
                   onEditCustomerNote={handleEditCustomerNote}
                   dragOverCol={dragOverCol}
                 />
@@ -2531,6 +2539,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
           onSave={handleSave}
           onDelete={handleDelete}
           allJobs={jobs}
+          shopWifi={shopWifi}
         />
       )}
 
@@ -2800,8 +2809,8 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5">
             <h3 className="text-base font-bold mb-1" style={{ color: '#1a1a1a' }}>Create Job</h3>
             {scrubState(job)?.done && (
-              <button onClick={e => { e.stopPropagation(); setShowChooser(false); window.dispatchEvent(new CustomEvent('adas:open-scrub', { detail: job })) }} className="w-full text-left rounded-xl px-3 py-2.5 mb-2" style={{ backgroundColor: '#eff6ff', border: '1.5px solid #1d4ed8' }}>
-                <div className="text-sm font-bold" style={{ color: '#1d4ed8' }}>📎 From the emailed estimate — already scrubbed</div>
+              <button onClick={e => { e.stopPropagation(); setShowChooser(false); window.dispatchEvent(new CustomEvent('adas:open-scrub', { detail: job })) }} className="w-full text-left rounded-xl px-3 py-2.5 mb-2" style={{ backgroundColor: BRAND.quoteSoft, border: `1.5px solid ${QUOTE}` }}>
+                <div className="text-sm font-bold" style={{ color: QUOTE }}>📎 From the emailed estimate — already scrubbed</div>
                 <div className="text-[11px]" style={{ color: '#666' }}>Opens the review with the calibrations found on their CCC estimate. The PDF is already in the job folder — nothing to upload.</div>
               </button>
             )}
@@ -2819,11 +2828,11 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
             <button
               onClick={e => { e.stopPropagation(); setShowChooser(false); inputRef.current?.click() }}
               className="w-full flex items-center justify-between rounded-xl p-3 mb-2 transition-all hover:opacity-80 active:opacity-60"
-              style={{ backgroundColor: '#eff6ff', border: '1.5px solid #bfdbfe', textAlign: 'left' }}
+              style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e8e4e0', textAlign: 'left' }}
             >
-              <span className="text-sm font-bold" style={{ color: '#1d4ed8' }}>📄 With Kinetic Report</span>
+              <span className="text-sm font-bold" style={{ color: '#0A0A0A' }}>📄 With Kinetic Report</span>
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-                style={{ backgroundColor: '#1d4ed8', color: 'white' }}>Auto</span>
+                style={{ backgroundColor: '#0A0A0A', color: 'white' }}>Auto</span>
             </button>
             <button
               onClick={async e => { e.stopPropagation(); setShowChooser(false); setBusy(true); try { await onInvoiceFromJob(job) } finally { setBusy(false) } }}
@@ -2847,15 +2856,15 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
         disabled={busy}
         className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all hover:opacity-80 active:opacity-60"
         style={{
-          backgroundColor: '#eff6ff',
-          border: '1.5px solid #bfdbfe',
+          backgroundColor: '#f5f3f0',
+          border: '1.5px solid #e8e4e0',
           padding: '10px 0',
           minHeight: '44px',
           opacity: busy ? 0.6 : 1,
         }}
         title="Upload the report PDF — opens invoice creation prefilled; this request card becomes the job"
       >
-        <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>
+        <span className="text-sm font-semibold" style={{ color: '#0A0A0A' }}>
           {busy ? '⏳ Working…' : '🧾 Create Job'}
         </span>
       </button>
@@ -2864,19 +2873,20 @@ function UploadReportButton({ job, onUploadReport, onInvoiceFromJob, onEdit }) {
   )
 }
 
-function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts, onCreateInvoices, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes }) {
+function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts, onCreateInvoices, onUploadReport, onInvoiceFromJob, onBillIt, onDownloadReport, reportBusyId, customerNotes, shopWifi }) {
+  const { columns: COLUMNS } = useDispatchBoard()
   const reportBusy = reportBusyId != null && String(reportBusyId) === String(job.id)
   const customerNote = customerNotes?.[normShopName(job.shop_name)] || ''
   const vehicle = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')
   const statusLabel = COLUMNS.find(c => c.id === job.status)?.label || job.status
 
   const statusColors = {
-    need_dispatch:    { bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' },
-    dispatched_jaden: { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
-    dispatched_mark:  { bg: '#f0fdf4', color: '#15803d', border: '#bbf7d0' },
-    pending_parts:    { bg: '#fefce8', color: '#a16207', border: '#fde68a' },
-    ready_invoice:    { bg: '#fdf4ff', color: '#7e22ce', border: '#e9d5ff' },
-    complete:         { bg: '#f0fdf4', color: '#166534', border: '#bbf7d0' },
+    need_dispatch:    { bg: '#fef3c7', color: '#b45309', border: '#fde68a' },
+    dispatched_jaden: { bg: '#e6f4f4', color: '#1F8B8B', border: '#b8d4d4' },
+    dispatched_mark:  { bg: '#f5e8e3', color: '#CD4419', border: '#f5c9b8' },
+    pending_parts:    { bg: '#fff7ed', color: '#b45309', border: '#fed7aa' },
+    ready_invoice:    { bg: '#f5f3f0', color: '#0A0A0A', border: '#e8e4e0' },
+    complete:         { bg: '#dcfce7', color: '#15803d', border: '#bbf7d0' },
   }
   const sc = statusColors[job.status] || { bg: '#f5f3f0', color: '#555', border: '#e0dbd6' }
 
@@ -2897,12 +2907,15 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
       {/* Top row: shop + status badge — tapping here opens edit */}
       <div className="flex items-start justify-between gap-2 mb-1.5 cursor-pointer active:opacity-70"
         onClick={() => onEdit(job)}>
-        <span className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>{job.shop_name || 'No shop'}</span>
+        <span className="min-w-0">
+          <span className="font-semibold text-sm" style={{ color: '#1a1a1a' }}>{job.shop_name || 'No shop'}</span>
+        </span>
         <span className="text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0"
           style={{ backgroundColor: sc.bg, color: sc.color, border: `1px solid ${sc.border}` }}>
           {statusLabel}
         </span>
       </div>
+      <WifiCopy wifi={shopWifi?.[normShopName(job.shop_name)]} />
 
       {/* Vehicle */}
       <p className="text-sm mb-1 cursor-pointer" style={{ color: '#555' }} onClick={() => onEdit(job)}>
@@ -2917,7 +2930,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
 
       {/* Technician + date row. Cash badge takes over the insurer slot. */}
       <div className="flex items-center gap-3 text-xs mb-2 flex-wrap" style={{ color: '#aaa' }}>
-        {job.technician && <span>👤 {job.technician}</span>}
+        {job.technician && <span>👤 {displayTechName(job.technician)}</span>}
         {job.scheduled_date && <span>📅 {job.scheduled_date}</span>}
         {insurerPricingBadge(job) && (
           <span
@@ -2956,8 +2969,8 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             +{cals.length - 4} more
           </span>
         )}
-        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
-        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>PCSI</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>POST</span>
       </div>
 
       {/* 📸 Big photo button on the phone board too (Mark 2026-09-22). */}
@@ -2984,10 +2997,10 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
           <button
             onClick={e => { e.stopPropagation(); onMoveToReadyInvoice && onMoveToReadyInvoice(job) }}
             className="w-full flex items-center justify-center gap-2 rounded-xl transition-all active:opacity-60"
-            style={{ backgroundColor: '#fdf4ff', border: '1.5px solid #e9d5ff', padding: '10px 0', minHeight: '44px' }}
+            style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e8e4e0', padding: '10px 0', minHeight: '44px' }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#0A0A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#0A0A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <span className="text-sm font-semibold" style={{ color: '#0A0A0A' }}>Ready to Invoice</span>
           </button>
         )
       )}
@@ -3010,10 +3023,10 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
           onClick={e => { e.stopPropagation(); onDownloadReport(job) }}
           disabled={reportBusy}
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
-          style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', padding: '10px 0', minHeight: '44px', opacity: reportBusy ? 0.6 : 1 }}
+          style={{ backgroundColor: '#e6f4f4', border: '1.5px solid #bae6fd', padding: '10px 0', minHeight: '44px', opacity: reportBusy ? 0.6 : 1 }}
         >
           <span style={{ fontSize: '14px' }}>{reportBusy ? '⏳' : '📄'}</span>
-          <span className="text-sm font-semibold" style={{ color: '#0369a1' }}>
+          <span className="text-sm font-semibold" style={{ color: '#1F8B8B' }}>
             {reportBusy ? 'Generating report…' : 'ADAS Report'}
           </span>
         </button>

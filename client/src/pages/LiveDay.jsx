@@ -17,6 +17,7 @@ import MobileJobCard, { parseNoteItems, normShopName, CustomerNoteBox, useEstima
 import { displayTechName, statusIdForTech } from '../lib/techColumns.js'
 import JobRequestModal from '../components/JobRequestModal.jsx'
 import PhotoScrub from '../components/PhotoScrub.jsx'
+import { SpotHeadsUpButton, SpotBadge, ChecksToPickUp, useSpotOpen } from '../components/SpotPay.jsx'
 
 const ORANGE = '#CD4419'
 const TECH_COLOR = { Mark: '#CD4419', Jayden: '#1F8B8B' }
@@ -337,6 +338,7 @@ function TodoSection({ techName, items, onSave }) {
 }
 
 function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingParts, techList, customerNotes, shopWifi, techTodos, onSaveTodos }) {
+  const spots = useSpotOpen()   // ⚡ pays-on-the-spot state (shared poll)
   const color = TECH_COLOR[tech.name] || '#999'
   // Every tech on the board except this card's owner — reassign targets.
   const otherTechs = (techList || []).filter(n => n && n !== tech.name)
@@ -410,6 +412,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
           <WifiCopy wifi={shopWifi?.[normShopName(current.shop_name)]} />
           <CustomerNoteBox items={parseNoteItems(customerNotes?.[normShopName(current.shop_name)])} />
           <HeadToJobButton job={current} techName={tech.name} />
+          <div className="mt-1.5 flex flex-col gap-1.5"><SpotBadge job={current} spots={spots} /><SpotHeadsUpButton job={current} spots={spots} /></div>
           <div className="mb-1.5"><TakePhotosControl job={current} /></div>
           {/* Ready to Invoice — flips job status, which moves it to the
               Ready to Invoice column on the Kanban and posts to #aajobs +
@@ -471,6 +474,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
               customerNotes={customerNotes}
               shopWifi={shopWifi} />
             <div className="mt-1.5"><HeadToJobButton job={j} techName={tech.name} /></div>
+            <div className="mt-1.5"><SpotHeadsUpButton job={j} spots={spots} /></div>
             {onReassign && otherTechs.map(n => (
               <button
                 key={n}
@@ -1241,6 +1245,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
         {/* Request buttons — Live Day companions for a tech in the field.
             Both submit to #aajobs; Kat picks up either from Cliq.
             Job is orange, quote is blue. Sales stop lives on the week card. */}
+        <ChecksToPickUp />
         <div className="grid grid-cols-2 gap-2 mb-3">
           <button
             onClick={() => setPhotoScrubOpen(true)}

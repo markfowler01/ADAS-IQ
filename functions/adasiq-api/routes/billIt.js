@@ -24,6 +24,7 @@ import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, is
 import catalyst from 'zcatalyst-sdk-node'
 import { attachJobReports } from '../services/reportAttach.js'
 import { isCashJob, CASH_DISCOUNT_PCT } from '../services/cashPricing.js'
+import { presentScanLine } from '../services/big3.js'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
@@ -145,7 +146,7 @@ async function buildDualPreview(req, job, brPicked) {
   })
 
   const lines = [
-    ...(est.line_items || []).map(li => ({ line_item_id: li.line_item_id, item_id: li.item_id || null, name: li.name, description: li.description || '', rate: Number(li.rate) || 0, quantity: Number(li.quantity) || 1, product_type: byId.get(String(li.item_id))?.product_type || 'service', _extra: false })),
+    ...(est.line_items || []).map(li => { const shown = presentScanLine(li.name, li.description); return { line_item_id: li.line_item_id, item_id: li.item_id || null, name: shown.name, description: shown.description, rate: Number(li.rate) || 0, quantity: Number(li.quantity) || 1, product_type: byId.get(String(li.item_id))?.product_type || 'service', _extra: false } }),
     ...extraLines,
   ]
   const insurerCf = (est.custom_fields || []).find(c => c.label === 'Insurer')?.value || job.insurer || ''
@@ -218,7 +219,8 @@ async function buildSinglePreview(req, job, shop, br) {
     const { previewInvoiceLines } = await import('../services/zoho.js')
     // A retail person bills the STANDARD list ($450 a static) + tax, no discount
     // (Mark 2026-09-22: "standard price at 450"). Only a cash-quoted shop job uses the CP schedule.
-    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (retailJob ? '' : (job.insurer || '')), make: job.make || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : (retailJob ? 'STD' : null), big3Rules: effB3.rules, collision: customerType === 'body_shop' })
+    const { alignmentInvoiceOn } = await import('../services/alignmentInvoice.js')
+    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (retailJob ? '' : (job.insurer || '')), make: job.make || '', vehicle: job.vehicle || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : (retailJob ? 'STD' : null), big3Rules: effB3.rules, collision: customerType === 'body_shop', alignmentOn: alignmentInvoiceOn(br) })
   }
   let extras = []; try { extras = job.extra_items ? JSON.parse(job.extra_items) : [] } catch { extras = [] }
   const extraLines = (Array.isArray(extras) ? extras : []).map(x => {
@@ -322,6 +324,7 @@ async function billEstimator(req, res, job, p, dry) {
     const onSite = p.customer_type === 'retail' || String(req.body?.pay_mode || '') === 'on_site'
     await updateJobPublic(req, job.id, { ...job, status: onSite ? 'ready_invoice' : 'complete', invoiced: true, invoice_number: out.number, invoice_status: 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,
       notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: invoice ${out.number} from estimate ${p.estimate.number} ($${p.grand_total.toFixed(2)}) → ${emails.join(', ')}${onSite ? ' · collect on site' : ''}` })
+    try { const { spotPayBilled } = await import('../services/spotPay.js'); await Promise.race([spotPayBilled(req, job, { number: out.number, total: p.grand_total }), new Promise(r => setTimeout(r, 5000))]) } catch (e) { console.warn('[spot-pay] billed', e.message) }
   }
   await postToCliqChannel(DISPATCH_CHANNEL, `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}* — invoice ${out?.number || '(dry)'} from estimate ${p.estimate.number} $${p.grand_total.toFixed(2)} → ${emails.join(', ')} · by ${by}`).catch(() => {})
   res.json({ ok: true, dry, mode: 'estimator', invoice: out ? { number: out.number, id: out.id } : null, emails, preview: pub(p) })
@@ -361,10 +364,11 @@ function linesFromEdit(p, edited) {
   return edited.map(x => {
     const it = x.item_id ? p._byId.get(String(x.item_id)) : p._byName.get(String(x.name || '').toLowerCase().trim())
     const rate = r2(x.rate), quantity = Number(x.quantity) || 1
-    const name = it?.name || x.name || 'Item'
+    const shown = presentScanLine(it?.name || x.name || 'Item', x.description || '')
+    const name = shown.name
     const product_type = it?.product_type || x.product_type || 'service'
     const amount = r2(rate * quantity)
-    return { line_item_id: x.line_item_id || null, item_id: it?.item_id || x.item_id || null, name, description: x.description || '', rate, quantity, product_type, amount, is_part: isPart({ product_type, name }), never_discount: NO_DISCOUNT.test(name), _extra: !!x._extra, _edited: true }
+    return { line_item_id: x.line_item_id || null, item_id: it?.item_id || x.item_id || null, name, description: shown.description, rate, quantity, product_type, amount, is_part: isPart({ product_type, name }), never_discount: NO_DISCOUNT.test(name), _extra: !!x._extra, _edited: true }
   }).filter(l => l.quantity > 0)
 }
 
@@ -409,8 +413,8 @@ router.post('/:id/bill', async (req, res) => {
     })
     if (!same && !dry) {
       const lineItems = p.lines.map(l => ({
-        ...(l.line_item_id ? { line_item_id: l.line_item_id } : {}), ...(l.item_id ? { item_id: l.item_id } : { name: l.name }),
-        description: l.description || '', rate: l.rate, quantity: l.quantity,
+        ...(l.line_item_id ? { line_item_id: l.line_item_id } : {}), ...(l.item_id ? { item_id: l.item_id } : {}),
+        name: l.name, description: l.description || '', rate: l.rate, quantity: l.quantity,
       }))
       const u = await axios.put(`${API}/estimates/${p.estimate_id}`, { line_items: lineItems }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 })
       if (u.data?.code !== 0) throw new Error(`Could not update the estimate in Books: ${u.data?.message || u.status}`)
@@ -464,6 +468,7 @@ router.post('/:id/bill', async (req, res) => {
       // Mark 2026-09-11: "after I send both invoices… I want it gone" → Completed column.
       await updateJobPublic(req, job.id, { ...job, status: 'complete', invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,
         notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: insurance invoice (estimate ${p.estimate_number}) + cost invoice ${inv.invoice_number} at ${pct}% → ${emails.join(', ')}` })
+      try { const { spotPayBilled } = await import('../services/spotPay.js'); await Promise.race([spotPayBilled(req, job, { number: inv.invoice_number, total: p.cost_total }), new Promise(r => setTimeout(r, 5000))]) } catch (e) { console.warn('[spot-pay] billed', e.message) }
     }
     const summary = [
       `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}*`,
