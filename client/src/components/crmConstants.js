@@ -70,7 +70,27 @@ export const ZONES = [
   { id: 'yakima',      label: 'Yakima',       owner: 'Mark',   day: 'East trip', east: true },
   { id: 'wenatchee',   label: 'Wenatchee',    owner: 'Mark',   day: 'East trip', east: true },
   { id: 'cleelum',     label: 'Cle Elum / Ellensburg', owner: 'Mark', day: 'East trip', east: true },
+  // 🗺 New markets (Mark 2026-10-27) — prospect lists only, no owner yet. Mirrors services/pipeline.js.
+  { id: 'boise',     market: 'boise',   label: 'Boise',            owner: '', day: 'TBD' },
+  { id: 'meridian',  market: 'boise',   label: 'Meridian / Eagle', owner: '', day: 'TBD' },
+  { id: 'nampa',     market: 'boise',   label: 'Nampa / Caldwell', owner: '', day: 'TBD' },
+  { id: 'phx',       market: 'phoenix', label: 'Phoenix',          owner: '', day: 'TBD' },
+  { id: 'phxeast',   market: 'phoenix', label: 'East Valley',      owner: '', day: 'TBD' },
+  { id: 'phxwest',   market: 'phoenix', label: 'West Valley',      owner: '', day: 'TBD' },
+  { id: 'sf',        market: 'bay',     label: 'San Francisco',    owner: '', day: 'TBD' },
+  { id: 'peninsula', market: 'bay',     label: 'Peninsula',        owner: '', day: 'TBD' },
+  { id: 'eastbay',   market: 'bay',     label: 'East Bay',         owner: '', day: 'TBD' },
+  { id: 'southbay',  market: 'bay',     label: 'South Bay',        owner: '', day: 'TBD' },
 ]
+export const MARKETS = [
+  { id: 'wa',      label: 'Washington', emoji: '🌲', state: 'WA' },
+  { id: 'boise',   label: 'Boise',      emoji: '🥔', state: 'ID' },
+  { id: 'phoenix', label: 'Phoenix',    emoji: '🌵', state: 'AZ' },
+  { id: 'bay',     label: 'Bay Area',   emoji: '🌉', state: 'CA' },
+]
+// A shop's market = its zone's market; out of area / no zone counts as Washington.
+export const marketOf = s => ZONES.find(z => z.id === s?.region)?.market || 'wa'
+export const zonesIn = market => ZONES.filter(z => (z.market || 'wa') === market)
 // region 'out' = outside the I-5 territory (Mark 2026-10-14): kept, but no zone, owner or counts.
 export const OUT_OF_AREA = 'out'
 export const REGIONS = ZONES.map(z => z.id)

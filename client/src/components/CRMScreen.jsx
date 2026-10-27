@@ -5,7 +5,7 @@ import CustomersView from './crm/CustomersView.jsx'
 import { typeBadge, shopTypeOf } from './crm/shopType.js'
 import DealsBoard from './crm/DealsBoard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
-import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel } from './crmConstants.js'
+import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel, MARKETS, marketOf, zonesIn } from './crmConstants.js'
 import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, DiscoverModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
 import Navbar from './Navbar'
 import RepairCustomers from './crm/RepairCustomers.jsx'  // repair customers, kept separate from shops (2026-09-14)
@@ -483,7 +483,13 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   // the people in Repair customers.
   const [crmMode, setCrmModeState] = useState(() => { try { const once = sessionStorage.getItem('adas_crm_mode_once'); if (once) { sessionStorage.removeItem('adas_crm_mode_once'); return once } const m = localStorage.getItem('adas_crm_mode') || 'collision'; return ({ shops: 'collision', repair: 'retail' })[m] || m } catch { return 'collision' } })
   const setCrmMode = m => { setCrmModeState(m); try { localStorage.setItem('adas_crm_mode', m) } catch {} }
-  const [allShops,      setShops]         = useState([])
+  const [rawShops,      setShops]         = useState([])
+  // 🗺 Market switch (Mark 2026-10-27: Boise / Phoenix / Bay Area prospect lists). Washington is home; the other
+  // markets only show on the prospecting boards, never in Customers / Deals / Retail.
+  const [market, setMarketState] = useState(() => { try { const m = localStorage.getItem('adas_crm_market'); return MARKETS.some(x => x.id === m) ? m : 'wa' } catch { return 'wa' } })
+  const setMarket = m => { setMarketState(m); try { localStorage.setItem('adas_crm_market', m) } catch {} }
+  const marketBoard = !['customers', 'deals', 'retail'].includes(crmMode)
+  const allShops = rawShops.filter(s => marketOf(s) === (marketBoard ? market : 'wa'))
   const [dupOpen,       setDupOpen]       = useState(false)
   // Customers (active / active2) live in ⭐ Customers, not the pipeline (Mark 2026-10-03).
   const shops = crmMode === 'retail' || crmMode === 'customers' || crmMode === 'deals' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode && !CUSTOMER_STAGES.includes(sh.pipeline_stage))
@@ -837,6 +843,11 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
           </div>
         </div>
 
+        {/* 🗺 Market switch */}
+        {!loading && !error && <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1">{MARKETS.map(m => { const n = rawShops.filter(sh => marketOf(sh) === m.id && typeOfShop(sh) === crmMode).length; const on = market === m.id; return (
+          <button key={m.id} onClick={() => { setMarket(m.id); setRegionFilter(''); setStageFilter(''); setOwnerFilter('') }} className="text-xs font-bold rounded-full px-3 py-1.5 whitespace-nowrap flex-shrink-0"
+            style={on ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e8e4e0' }}>{m.emoji} {m.label} · {n}</button>) })}</div>}
+        {!loading && !error && market !== 'wa' && shops.length === 0 && <div className="rounded-xl px-3 py-3 mb-3 text-sm" style={{ backgroundColor: '#f8f6f4', border: '1.5px dashed #d6d3d1', color: '#555' }}>No {MARKETS.find(m => m.id === market)?.label} shops yet. {isOwnerUser(user) ? 'Tap 🔎 Find every shop to pull the list from Google.' : 'Mark can pull the list with 🔎 Find every shop.'}</div>}
         {/* Stats bar */}
         {!loading && !error && <StatsBar shops={shops} />}
         {!loading && !error && <SetupBanner shops={shops} isOwner={isOwnerUser(user)} onApplied={n => { setToast(`🗺 Zones and owners set on ${n} shops`); fetchShops() }} />}
@@ -847,7 +858,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
             <button onClick={() => { setStageFilter(''); setRegionFilter(''); setShowOverdue(false); setOwnerFilter(''); setStaleOnly(false); setBig3Only(false); setSearch('') }} className="text-xs font-bold px-3 py-1 rounded-full" style={{ backgroundColor: '#92400e', color: 'white' }}>Clear filters</button>
           </div>
         )}
-        {!loading && !error && gridOpen && <TerritoryGrid shops={shops} onPick={(z, st) => { setRegionFilter(z || 'unzoned'); setStageFilter(st); setShowOverdue(false); setGridOpen(false) }} />}
+        {!loading && !error && gridOpen && <TerritoryGrid shops={shops} market={market} onPick={(z, st) => { setRegionFilter(z || 'unzoned'); setStageFilter(st); setShowOverdue(false); setGridOpen(false) }} />}
 
         {/* Filter pills */}
         <div className="flex gap-2 mb-4 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
@@ -887,8 +898,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
           })}
 
           {/* Zone + owner filters (2026-09-15) */}
-          {ZONES.map((z, zi) => { const inZone = countShops.filter(sh => zoneOf(sh) === z.id); const n = inZone.length; const cust = inZone.filter(sh => sh.pipeline_stage === 'active').length; return (
-            <span key={z.id} className="contents">{z.east && !ZONES[zi - 1]?.east && <span className="text-[11px] font-extrabold flex-shrink-0 self-center px-1" style={{ color: '#b45309' }}>🌾 East WA</span>}<button onClick={() => { setRegionFilter(regionFilter === z.id ? '' : z.id); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }}
+          {zonesIn(market).map((z, zi, zs) => { const inZone = countShops.filter(sh => zoneOf(sh) === z.id); const n = inZone.length; const cust = inZone.filter(sh => sh.pipeline_stage === 'active').length; return (
+            <span key={z.id} className="contents">{z.east && !zs[zi - 1]?.east && <span className="text-[11px] font-extrabold flex-shrink-0 self-center px-1" style={{ color: '#b45309' }}>🌾 East WA</span>}<button onClick={() => { setRegionFilter(regionFilter === z.id ? '' : z.id); setStageFilter(''); setShowOverdue(false); setStaleOnly(false); setBig3Only(false) }}
               className="text-xs font-semibold px-3 py-1.5 rounded-full flex-shrink-0"
               style={regionFilter === z.id ? { backgroundColor: '#e0e7ff', color: '#3730a3', border: '1px solid #a5b4fc' } : { backgroundColor: '#f5f3f0', color: '#888' }}>
               📍 {z.label} · <span style={{ color: '#15803d' }}>✅ {cust}</span> / {n}
@@ -1129,7 +1140,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
 
       {nextPrompt && <NextActionModal shop={nextPrompt.shop} stage={nextPrompt.stage} onCancel={() => setNextPrompt(null)} onConfirm={extra => { const p = nextPrompt; setNextPrompt(null); handleStageChange(p.shop, p.stage, extra) }} />}
 
-      {discoverOpen && <DiscoverModal onClose={() => setDiscoverOpen(false)} onAdded={(n, d) => { setToast(`🔎 Added ${n} shops as Targets${d ? ` · ${d} already there` : ''}`); fetchShops() }} />}
+      {discoverOpen && <DiscoverModal market={market} onClose={() => setDiscoverOpen(false)} onAdded={(n, d) => { setToast(`🔎 Added ${n} shops as Targets${d ? ` · ${d} already there` : ''}`); fetchShops() }} />}
         {mondayOpen && <MondayModal isOwner={isOwnerUser(user)} onClose={() => setMondayOpen(false)} onOpenShop={id => { const sh = shops.find(x => x.id === id); if (sh) { setMondayOpen(false); setDetailShop(sh) } }} />}
 
       {toast && (

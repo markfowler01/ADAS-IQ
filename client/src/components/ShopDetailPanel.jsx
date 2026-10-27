@@ -320,7 +320,7 @@ function InfoTab({ form, setForm, wifi, setWifi, wifiTouched, setDirty }) {
             value={form.region || ''}
             onChange={e => setField('region', e.target.value)}>
             <option value="">— Select —</option>
-            {ZONES.map(z => <option key={z.id} value={z.id}>{z.label} · {z.owner} · {z.day}</option>)}
+            {ZONES.map(z => <option key={z.id} value={z.id}>{z.market ? `🗺 ${({ boise: 'Boise', phoenix: 'Phoenix', bay: 'Bay Area' })[z.market]} · ${z.label} · no owner yet` : `${z.label} · ${z.owner} · ${z.day}`}</option>)}
           </select>
         </div>
         <div>

@@ -560,6 +560,30 @@ router.get('/huddle.png', requireCronSecret, async (req, res) => {
 // 🔁 Dry re-check of one saved CCC scrub with the current scrubber (Mark 2026-10-26:
 // the guard ran blind 10-14 → 10-26). Saves nothing, files nothing, touches no card:
 // returns the old and new required lists so Mark decides what to re-issue.
+// 🗺 New-market prospect sweep (Mark 2026-10-27: Boise / Phoenix / Bay Area). One city per call
+// (30s gateway): Google Places body + collision shops in that city → Targets in that market's zone,
+// no owner yet. Dry run lists them; ?apply=1 adds. Never touches a shop already in the CRM.
+router.post('/market/discover-add', requireCronSecret, async (req, res) => {
+  try {
+    const P = await import('../services/pipeline.js'); const { discoverCity } = await import('./pipeline.js'); const { insertShop, getAllShops } = await import('./shops.js')
+    const m = P.MARKET_BY_ID[String(req.query.market || '')]
+    if (!m || m.home) return res.status(400).json({ error: `market must be one of ${P.MARKETS.filter(x => !x.home).map(x => x.id).join(', ')}` })
+    const d = await discoverCity(req, String(req.query.city || ''), m.state)
+    const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const have = new Set((await getAllShops(req)).map(s => norm(s.shop_name)))
+    const rows = []
+    for (const c of d.candidates || []) {
+      const region = P.regionForAddress(c.address)
+      if (!P.ZONE_BY_ID[region] || P.zoneMarket(P.ZONE_BY_ID[region]) !== m.id || have.has(norm(c.shop_name))) continue
+      have.add(norm(c.shop_name))
+      rows.push({ shop_name: c.shop_name, address: c.address, phone: c.phone || '', email: '', pipeline_stage: 'target', region, assigned_to: '', referral_source: 'Google',
+        notes: `Found by ${m.label} market discovery ${new Date().toISOString().slice(0, 10)} · ${c.rating ? `${c.rating}★ (${c.reviews})` : 'no rating'}${c.website ? ` · ${c.website}` : ''}${c.google_maps_url ? ` · ${c.google_maps_url}` : ''}` })
+    }
+    let added = 0
+    if (req.query.apply === '1') for (const r of rows) { await insertShop(req, r); added++ }
+    res.json({ ok: true, market: m.id, city: d.city, google_found: d.found, already_in_crm: d.already, new: rows.length, added, by_zone: rows.reduce((o, r) => (o[r.region] = (o[r.region] || 0) + 1, o), {}), shops: rows.map(r => `${r.shop_name} · ${r.address}`) })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 router.post('/scrub/recheck', requireCronSecret, async (req, res) => {
   const id = String(req.query.id || '').replace(/\D/g, '')
   if (!id) return res.status(400).json({ error: 'id required' })

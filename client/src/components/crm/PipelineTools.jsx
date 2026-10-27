@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Eyebrow, Notice, Pill, PrimaryButton, SecondaryButton, Chip, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
-import { ZONES, STAGES, STAGE_QUIET, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS } from '../crmConstants'
+import { ZONES, STAGES, STAGE_QUIET, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, MARKETS, zonesIn } from '../crmConstants'
 
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white', borderRadius: 8 }
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
@@ -58,9 +58,9 @@ export function InPlayBar({ shops, isOwner, gridOpen, onToggleGrid, onMonday, on
 }
 
 /** Zones down, stages across. Click a cell to filter the board. */
-export function TerritoryGrid({ shops, onPick }) {
+export function TerritoryGrid({ shops, onPick, market = 'wa' }) {
   const cols = STAGES.filter(s => !['lost', 'denied'].includes(s.id))
-  const rows = [...ZONES, { id: '', label: 'No zone', owner: '', day: '' }]
+  const rows = [...zonesIn(market), ...(market === 'wa' ? [{ id: '', label: 'No zone', owner: '', day: '' }] : [])]
   const live = shops.filter(s => !['lost', 'denied'].includes(s.pipeline_stage))
   return (
     <div className="rounded-xl overflow-x-auto mb-4" style={{ border: '1.5px solid #e8e4e0', backgroundColor: 'white' }}>
@@ -147,7 +147,8 @@ export function MondayModal({ isOwner, onClose, onOpenShop }) {
 
 
 /** Walk the zones city by city through Google Places; Mark reviews, then adds as Targets. */
-export function DiscoverModal({ onClose, onAdded }) {
+export function DiscoverModal({ onClose, onAdded, market = 'wa' }) {
+  const st = MARKETS.find(m => m.id === market)?.state || 'WA'   // 🗺 one market at a time (2026-10-27)
   const [zones, setZones] = useState(null)
   const [picked, setPicked] = useState(new Set())
   const [running, setRunning] = useState(false)
@@ -159,7 +160,7 @@ export function DiscoverModal({ onClose, onAdded }) {
   const [log, setLog] = useState([])
   const [adding, setAdding] = useState(false)
   const stopRef = useState({ stop: false })[0]
-  useEffect(() => { j('/api/pipeline/zones').then(d => { setZones(d.zones); setPicked(new Set(d.zones.map(z => z.id))) }).catch(e => setErr(e.message)) }, [])
+  useEffect(() => { j('/api/pipeline/zones').then(d => { const zs = d.zones.filter(z => (z.market || 'wa') === market); setZones(zs); setPicked(new Set(zs.map(z => z.id))) }).catch(e => setErr(e.message)) }, [])
   const cities = zones ? zones.filter(z => picked.has(z.id)).flatMap(z => z.cities.filter(c => !/^(mt|mt\.) /.test(c) && !/sedro woolley/.test(c)).map(c => ({ city: c.replace(/\b\w/g, m => m.toUpperCase()), zone: z.id }))) : []
   async function run() {
     setRunning(true); setErr(''); setCands([]); setChecked(new Set()); setAlready(0); stopRef.stop = false
@@ -169,7 +170,7 @@ export function DiscoverModal({ onClose, onAdded }) {
       if (stopRef.stop) break
       const c = cities[i]; setProgress({ done: i, total: cities.length, city: c.city })
       try {
-        const d = await j(`/api/pipeline/discover?city=${encodeURIComponent(c.city)}`)
+        const d = await j(`/api/pipeline/discover?city=${encodeURIComponent(c.city)}&state=${st}`)
         dup += d.already
         let n = 0
         for (const x of d.candidates) { if (seen.has(x.place_id)) continue; seen.add(x.place_id); all.push({ ...x, zone: x.zone || c.zone }); n++ }

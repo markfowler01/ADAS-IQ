@@ -1,13 +1,13 @@
 // Pipeline territories, cadence, Monday lists, setup.
 import express from 'express'
-import { ZONES, STAGE_META, IN_PLAY_CAP, OWNERS, zoneOf, ownerOf, staleDays, fitSuggest, mondayList, formatMonday, setupPreview, applySetup, stats, postMonday, maybeMondayPipeline, withInvoiceDates } from '../services/pipeline.js'
+import { ZONES, MARKETS, STAGE_META, IN_PLAY_CAP, OWNERS, zoneOf, ownerOf, staleDays, fitSuggest, mondayList, formatMonday, setupPreview, applySetup, stats, postMonday, maybeMondayPipeline, withInvoiceDates } from '../services/pipeline.js'
 
 const router = express.Router()
 const isOwner = req => String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
 const fail = (res, e, w) => { console.log(`[pipeline] ${w}:`, e.message); res.status(500).json({ error: e.message }) }
 const shops = async req => withInvoiceDates(await (await import('./shops.js')).getAllShops(req))
 
-router.get('/zones', (req, res) => res.json({ ok: true, zones: ZONES, stages: STAGE_META, cap: IN_PLAY_CAP, owners: OWNERS }))
+router.get('/zones', (req, res) => res.json({ ok: true, zones: ZONES, markets: MARKETS, stages: STAGE_META, cap: IN_PLAY_CAP, owners: OWNERS }))
 
 // ── Discovery: every body shop in a city via Google Places (Mark 2026-09-15:
 // "add every shop in western Washington"). One city per call (gateway 30s);
@@ -16,13 +16,16 @@ router.get('/zones', (req, res) => res.json({ ok: true, zones: ZONES, stages: ST
 // after Mark reviews the list.
 const COMPETITOR_RE = /calibrat|abs-c|avsc|hivecalib|adas\b|mobile diag|windshield|auto glass|glass repair|towing|tow\b|detail|tint|wrap|tire|muffler|transmission|oil change|lube|car wash|dealership|rental|u-haul|parts store|autozone|o'reilly|napa auto parts/i
 // Shared by the review modal (GET /discover) and the cron bulk-add (crm-sync-cron /pipeline/discover-add).
-export async function discoverCity(req, city) {
+export async function discoverCity(req, city, state = 'WA') {
     const apiKey = process.env.GOOGLE_PLACES_API_KEY
     if (!apiKey) throw Object.assign(new Error('Google Places API key not configured'), { status: 500 })
     city = String(city || '').trim(); if (!city) throw Object.assign(new Error('city required'), { status: 400 })
+    // New markets (2026-10-27): Boise ID, Phoenix AZ, Bay Area CA. Default stays Washington.
+    state = ['WA', 'ID', 'AZ', 'CA'].includes(String(state || '').toUpperCase()) ? String(state).toUpperCase() : 'WA'
+    const STATE_NAME = { WA: 'Washington', ID: 'Idaho', AZ: 'Arizona', CA: 'California' }[state]
     const axios = (await import('axios')).default
     const headers = { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.googleMapsUri,places.businessStatus,places.primaryType,places.types,nextPageToken' }
-    const queries = [`auto body shop in ${city}, WA`, `collision repair center in ${city}, WA`]
+    const queries = [`auto body shop in ${city}, ${state}`, `collision repair center in ${city}, ${state}`]
     const found = new Map()
     for (const q of queries) {
       let pageToken = null
@@ -42,7 +45,7 @@ export async function discoverCity(req, city) {
     const out = []
     for (const p of found.values()) {
       const name = p.displayName?.text || ''; const address = p.formattedAddress || ''
-      if (!name || !/\bWA\b|Washington/i.test(address)) continue
+      if (!name || !(new RegExp(`\\b${state}\\b|${STATE_NAME}`, 'i')).test(address)) continue
       if (p.businessStatus && p.businessStatus !== 'OPERATIONAL') continue
       if (COMPETITOR_RE.test(name) && !/body|collision/i.test(name)) continue
       // Body shops only: the name says so, or Google's type does. General mechanics are not our customers.
@@ -57,7 +60,7 @@ export async function discoverCity(req, city) {
 }
 router.get('/discover', async (req, res) => {
   try {
-    res.json(await discoverCity(req, req.query.city))
+    res.json(await discoverCity(req, req.query.city, req.query.state))
   } catch (e) { fail(res, e, 'discover') }
 })
 router.get('/stats', async (req, res) => { try { res.json({ ok: true, ...stats(await shops(req)) }) } catch (e) { fail(res, e, 'stats') } })

@@ -22,7 +22,35 @@ export const ZONES = [
   { id: 'cleelum',     label: 'Cle Elum / Ellensburg', owner: 'Mark', day: 'East trip', east: true, cities: ['cle elum', 'roslyn', 'ellensburg', 'kittitas', 'easton'] },
   // Mark 2026-10-14: Kitsap gets its own zone.
   { id: 'kitsap',      label: 'Kitsap',       owner: 'Mark',   day: 'TBD',       cities: ['bremerton', 'poulsbo', 'silverdale', 'port orchard', 'bainbridge island', 'belfair', 'kingston', 'port gamble', 'hansville', 'gorst'] },
+  // 🗺 New markets (Mark 2026-10-27: "expanding into areas like Boise, Phoenix, San Francisco … separate CRMs").
+  // Phase 1 = prospect lists inside this CRM, one market at a time; the Box (own app copy) comes when a
+  // market gets a van. No owner yet → these shops stay out of Monday lists and in-play counts.
+  { id: 'boise',       market: 'boise',   label: 'Boise',            owner: '', day: 'TBD', cities: ['boise', 'garden city'] },
+  { id: 'meridian',    market: 'boise',   label: 'Meridian / Eagle', owner: '', day: 'TBD', cities: ['meridian', 'eagle', 'star', 'kuna'] },
+  { id: 'nampa',       market: 'boise',   label: 'Nampa / Caldwell', owner: '', day: 'TBD', cities: ['nampa', 'caldwell', 'middleton', 'emmett', 'mountain home'] },
+  { id: 'phx',         market: 'phoenix', label: 'Phoenix',          owner: '', day: 'TBD', cities: ['phoenix', 'paradise valley', 'cave creek', 'anthem'] },
+  { id: 'phxeast',     market: 'phoenix', label: 'East Valley',      owner: '', day: 'TBD', cities: ['mesa', 'chandler', 'gilbert', 'tempe', 'scottsdale', 'queen creek', 'apache junction', 'fountain hills', 'san tan valley'] },
+  { id: 'phxwest',     market: 'phoenix', label: 'West Valley',      owner: '', day: 'TBD', cities: ['glendale', 'peoria', 'surprise', 'goodyear', 'avondale', 'buckeye', 'el mirage', 'sun city', 'tolleson', 'litchfield park'] },
+  { id: 'sf',          market: 'bay',     label: 'San Francisco',    owner: '', day: 'TBD', cities: ['san francisco', 'daly city', 'south san francisco', 'brisbane', 'colma'] },
+  { id: 'peninsula',   market: 'bay',     label: 'Peninsula',        owner: '', day: 'TBD', cities: ['san mateo', 'burlingame', 'redwood city', 'menlo park', 'palo alto', 'san carlos', 'belmont', 'millbrae', 'san bruno', 'foster city'] },
+  { id: 'eastbay',     market: 'bay',     label: 'East Bay',         owner: '', day: 'TBD', cities: ['oakland', 'berkeley', 'alameda', 'san leandro', 'hayward', 'fremont', 'union city', 'richmond', 'emeryville', 'walnut creek', 'concord', 'pleasanton', 'dublin', 'livermore', 'san ramon'] },
+  { id: 'southbay',    market: 'bay',     label: 'South Bay',        owner: '', day: 'TBD', cities: ['san jose', 'santa clara', 'sunnyvale', 'mountain view', 'milpitas', 'cupertino', 'campbell', 'los gatos'] },
 ]
+export const MARKETS = [
+  { id: 'wa',      label: 'Washington',  state: 'WA', home: true },
+  { id: 'boise',   label: 'Boise',       state: 'ID' },
+  { id: 'phoenix', label: 'Phoenix',     state: 'AZ' },
+  { id: 'bay',     label: 'Bay Area',    state: 'CA' },
+]
+export const MARKET_BY_ID = Object.fromEntries(MARKETS.map(m => [m.id, m]))
+export const zoneMarket = z => z?.market || 'wa'
+const STATE_RE = /^(WA|Washington|OR|Oregon|ID|Idaho|AZ|Arizona|CA|California)\b/i
+const STATE_CODE = { washington: 'WA', oregon: 'OR', idaho: 'ID', arizona: 'AZ', california: 'CA' }
+/** Two-letter state named in an address ("…, Boise, ID 83704, USA" → 'ID'), or ''. */
+export function stateOf(address) {
+  const p = String(address || '').split(',').map(x => x.trim()).find(x => STATE_RE.test(x)); if (!p) return ''
+  const w = p.match(STATE_RE)[1]; return w.length === 2 ? w.toUpperCase() : STATE_CODE[w.toLowerCase()]
+}
 // region = 'out' → out of the I-5 territory (Mark 2026-10-14): kept in the CRM, never in zone counts,
 // owner lists or Monday lists. These cities set it automatically.
 export const OUT_OF_AREA = 'out'
@@ -56,13 +84,16 @@ const esc = s => String(s || '').replace(/'/g, "''")
 // match the town of Pacific (2026-10-14). Falls back to the whole string when there's no ", WA".
 export function cityPart(address) {
   const parts = String(address || '').split(',').map(x => x.trim())
-  const i = parts.findIndex(p => /^(WA|Washington|OR|Oregon|ID|Idaho)\b/i.test(p))
+  const i = parts.findIndex(p => STATE_RE.test(p))
   return i > 0 ? parts[i - 1] : String(address || '')
 }
+// Only zones in the address's state: "Glendale, AZ" is West Valley, a WA shop named "Eagle Auto Body"
+// is not Meridian. No state (or a bare shop name) → Washington zones only, as before.
 export function zoneForAddress(address) {
   const a = ` ${cityPart(address).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
+  const st = stateOf(address) || 'WA'
   let best = null
-  for (const z of ZONES) for (const c of z.cities) if (a.includes(` ${c.replace(/[^a-z0-9 ]+/g, ' ')} `) && (!best || c.length > best.len)) best = { id: z.id, len: c.length }
+  for (const z of ZONES.filter(z => MARKET_BY_ID[zoneMarket(z)]?.state === st)) for (const c of z.cities) if (a.includes(` ${c.replace(/[^a-z0-9 ]+/g, ' ')} `) && (!best || c.length > best.len)) best = { id: z.id, len: c.length }
   return best?.id || ''
 }
 export function zoneOf(shop) { if (shop.region === OUT_OF_AREA) return ''; return ZONE_BY_ID[shop.region] ? shop.region : (zoneForAddress(shop.address) || zoneForAddress(shop.shop_name)) }
@@ -74,9 +105,11 @@ export function regionForAddress(address) {
   const z = zoneForAddress(raw); if (z) return z
   const a = ` ${cityPart(raw).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
   if (OUT_CITIES.some(c => a.includes(` ${c} `))) return OUT_OF_AREA
-  if (/,\s*(OR|ID|CA|Oregon|Idaho)\b/.test(raw)) return OUT_OF_AREA
+  if (/,\s*(OR|ID|CA|AZ|Oregon|Idaho|California|Arizona)\b/.test(raw)) return OUT_OF_AREA
   return ''
 }
+/** Which market a shop belongs to: its zone's market; anything else (out of area, unzoned) is Washington. */
+export function marketOf(shop) { return zoneMarket(ZONE_BY_ID[zoneOf(shop)]) }
 export function ownerOf(shop) { if (OWNERS.includes(shop.assigned_to)) return shop.assigned_to; const z = ZONE_BY_ID[zoneOf(shop)]; return z ? z.owner : '' }
 
 /** Most recent touch: activity, last_contact, stage change, creation. */
