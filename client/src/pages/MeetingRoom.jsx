@@ -24,6 +24,9 @@ export default function MeetingRoom({ token }) {
   const [flash, setFlash] = useState(false)
   const [fallbackEmbed, setFallbackEmbed] = useState(false)   // Spotify's iframe API blocked (extension) → plain embed
   const [tick, setTick] = useState(0)
+  // The graphic is a 1.5 MB PNG pulled from WorkDrive; a cold server can drop it once. Retry until it shows (Mark 2026-10-27: numbers didn't load in the room).
+  const [imgTry, setImgTry] = useState(0)
+  const [imgOk, setImgOk] = useState(false)
   const startedRef = useRef(false)
   useEffect(() => { musicOnRef.current = musicOn }, [musicOn])
   const ctrl = useRef(null)          // Spotify EmbedController
@@ -109,9 +112,10 @@ export default function MeetingRoom({ token }) {
     <div style={{ position: 'fixed', inset: 0, backgroundColor: '#0b0d11', color: 'white', fontFamily: 'Inter, system-ui, sans-serif', overflow: 'hidden' }}>
       {/* graphic */}
       {room?.image_url && (
-        <img src={`${room.image_url}?t=${room.date}`} alt="GET SOME! Meeting" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', transition: 'transform 600ms ease, filter 600ms ease', transform: started ? 'scale(1)' : 'scale(0.96)', filter: started ? 'none' : 'brightness(0.72)' }} />
+        <img key={imgTry} src={`${room.image_url}?t=${room.date}${imgTry ? `&r=${imgTry}` : ''}`} alt="GET SOME! Meeting" onLoad={() => setImgOk(true)} onError={() => { setImgOk(false); setTimeout(() => setImgTry(x => x + 1), Math.min(3000 * (imgTry + 1), 15000)) }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', transition: 'transform 600ms ease, filter 600ms ease', transform: started ? 'scale(1)' : 'scale(0.96)', filter: started ? 'none' : 'brightness(0.72)' }} />
       )}
       {err && <div style={{ position: 'absolute', top: 24, left: 24, padding: '10px 14px', background: '#7f1d1d', borderRadius: 10, fontSize: 14 }}>{err}</div>}
+      {room?.image_url && !imgOk && <div style={{ position: 'absolute', bottom: 24, left: 24, padding: '8px 14px', background: 'rgba(0,0,0,0.55)', borderRadius: 10, fontSize: 14, opacity: 0.85 }}>{imgTry ? `Loading today's numbers… (try ${imgTry + 1})` : "Loading today's numbers…"}</div>}
       {!room && !err && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', fontSize: 22, opacity: 0.8 }}>Loading today's board…</div>}
 
       {/* pre-start overlay: countdown + start */}

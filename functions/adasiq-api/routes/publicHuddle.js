@@ -13,7 +13,9 @@ router.get('/:token.png', async (req, res) => {
     const fileId = r?.[0]?.AppConfig?.config_value
     if (!fileId) return res.status(404).end()
     const { getAccessToken } = await import('../services/zoho.js'); const { downloadFile } = await import('../services/workdrive.js')
-    const { buffer } = await downloadFile(fileId, await getAccessToken())
+    // One retry: a cold WorkDrive download sometimes fails and the meeting room showed no numbers (2026-10-27).
+    let buffer
+    try { ({ buffer } = await downloadFile(fileId, await getAccessToken())) } catch { await new Promise(r => setTimeout(r, 800)); ({ buffer } = await downloadFile(fileId, await getAccessToken())) }
     res.set('Content-Type', 'image/png').set('Cache-Control', 'public, max-age=86400').send(buffer)
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
