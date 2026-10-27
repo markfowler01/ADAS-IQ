@@ -105,12 +105,18 @@ export async function spotCheck(req, job, { number, amount, by }) {
   s.check = { number: String(number || '').slice(0, 30), amount: Math.round((Number(amount) || 0) * 100) / 100, by, at: new Date().toISOString() }
   await writeSpot(req, job.id, s); await trackOpen(req, job.id, false)
   const off = s.invoice_total && Math.abs(s.check.amount - s.invoice_total) > 0.009
+  // Mark 2026-10-27: by the time the tech taps this the check is already deposited
+  // (mobile deposit → the Revenue account). Finance's only job: mark the invoice paid in Zoho Books.
   const lines = [
-    `💵 *Check picked up · ${s.shop}*`,
+    `💵 *Check deposited · ${s.shop}*`,
     `Check #${s.check.number || '—'} · *${fmtUSD(s.check.amount)}* · ${s.car || carOf(job)}`,
-    s.invoice_number ? `Invoice ${s.invoice_number}${s.invoice_total ? ` · ${fmtUSD(s.invoice_total)}` : ''}${off ? ` · ⚠️ check is ${fmtUSD(s.check.amount - s.invoice_total)} off the invoice` : ' · matches'}` : 'Invoice not sent through Bill it yet',
-    `In hand: ${by}${s.minutes != null ? ` · invoiced ${s.minutes} min after Ready to Invoice` : ''}`,
-  ]
+    s.invoice_number ? `Invoice ${s.invoice_number}${s.invoice_total ? ` · ${fmtUSD(s.invoice_total)}` : ''}${off ? ` · ⚠️ check is ${fmtUSD(s.check.amount - s.invoice_total)} off the invoice` : ' · matches'}` : '⚠️ Invoice not sent through Bill it yet',
+    `Already deposited to the *Revenue* account by ${by}. No bank deposit needed.`,
+    s.invoice_number
+      ? `👉 *Finance:* mark invoice ${s.invoice_number} *paid* in Zoho Books: record payment, ${fmtUSD(s.check.amount)}, mode Check, ref #${s.check.number || '—'}, deposit to Revenue.`
+      : `👉 *Finance:* find this job's invoice in Zoho Books and mark it *paid*: ${fmtUSD(s.check.amount)}, mode Check, ref #${s.check.number || '—'}, deposit to Revenue.`,
+    s.minutes != null ? `Invoiced ${s.minutes} min after Ready to Invoice` : '',
+  ].filter(Boolean)
   try { const { postToCliqChannel } = await import('./cliq.js'); await postToCliqChannel('financeadmin', lines.join('\n')) } catch (e) { console.warn('[spot-pay] finance post', e.message) }
   const log = await getJson(req, LOG_KEY, [])
   log.push({ job_id: s.job_id, shop: s.shop, ready_at: s.ready_at || null, billed_at: s.billed_at || null, minutes: s.minutes ?? null, invoice_total: s.invoice_total || null, check: s.check })
