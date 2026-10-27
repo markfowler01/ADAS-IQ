@@ -557,6 +557,27 @@ router.get('/huddle.png', requireCronSecret, async (req, res) => {
   catch (e) { res.status(500).json({ error: e.message }) }
 })
 // 🏆 Record standings by hand (normally the early-morning postscan run).
+// 🔁 Dry re-check of one saved CCC scrub with the current scrubber (Mark 2026-10-26:
+// the guard ran blind 10-14 → 10-26). Saves nothing, files nothing, touches no card:
+// returns the old and new required lists so Mark decides what to re-issue.
+router.post('/scrub/recheck', requireCronSecret, async (req, res) => {
+  const id = String(req.query.id || '').replace(/\D/g, '')
+  if (!id) return res.status(400).json({ error: 'id required' })
+  try {
+    const app = catalyst.initialize(req)
+    const row = ((await app.zcql().executeZCQLQuery(`SELECT ROWID, scrub_vehicle, scrub_shop, scrub_ro, scrub_vin, scrub_file_id, scrub_file_name, scrub_required_names, scrub_stage, scrub_invoice_number FROM AdasScrubs WHERE ROWID = ${id}`)) || []).map(r => r.AdasScrubs || r)[0]
+    if (!row) return res.status(404).json({ error: 'no such scrub' })
+    if (!row.scrub_file_id) return res.json({ id, skipped: 'no filed estimate' })
+    const { getAccessToken } = await import('../services/zoho.js'); const { downloadFile } = await import('../services/workdrive.js')
+    const { buffer } = await downloadFile(row.scrub_file_id, await getAccessToken())
+    if (!buffer || buffer.length < 512) return res.json({ id, skipped: 'estimate file empty' })
+    const { scrubPdfBuffer } = await import('./extract.js')
+    const data = await scrubPdfBuffer(req, buffer, { learn: false, keep: false, force: true, source: 'benchmark-recheck', by: 'Re-check 10-26', file: { name: row.scrub_file_name }, pdfType: 'CCC' })
+    const now = (data?.calibrations || []).filter(c => c.enabled === true).map(c => c.calibration_name)
+    res.json({ id, vehicle: row.scrub_vehicle, shop: row.scrub_shop, ro: row.scrub_ro, stage: row.scrub_stage, invoice: row.scrub_invoice_number || '', before: String(row.scrub_required_names || '').split(/,\s*/).filter(Boolean), after: now, health: data?._readerHealth || null })
+  } catch (e) { res.status(500).json({ id, error: e.message }) }
+})
+
 router.post('/records/standings', requireCronSecret, async (req, res) => {
   try { const M = await import('../services/salesRecords.js'); res.json(await M.maybeRefreshStandings(req, { force: true })) }
   catch (e) { res.status(500).json({ error: e.message }) }

@@ -238,7 +238,25 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   if (dup.scrub && !force) {
     console.log(`[scrub 🔁] reused ${dup.scrub.id} (${dup.why}) — no AI spend · source ${source}`)
     const p = { ...(dup.scrub.payload || {}) }
-    return { ...p, calibrations: Array.isArray(p.calibrations) ? p.calibrations : [], vin: p.vin || dup.scrub.vin, ro_number: p.ro_number || dup.scrub.ro, vehicle: p.vehicle || dup.scrub.vehicle, shop: p.shop || dup.scrub.shop, _scrubId: dup.scrub.id, _reused: true, _reusedWhy: dup.why, _reusedAt: dup.scrub.at, _pdfType: p._pdfType || 'CCC', _elapsed_ms: Date.now() - t0 }
+    p.calibrations = Array.isArray(p.calibrations) ? p.calibrations : []
+    p.make = p.make || dup.scrub.make || ''
+    p.vehicle = p.vehicle || dup.scrub.vehicle || ''
+    p._pdfType = p._pdfType || 'CCC'
+    // A saved scrub skips the model, but a rule added since that scrub still
+    // has to land (RO 8097: re-uploading the same CCC kept the old park-sensor call).
+    if (String(p._pdfType).toUpperCase() === 'CCC' && p.calibrations.length) {
+      try {
+        const { guardScrub, triggerLinesFromText } = await import('../services/scrubGuard.js')
+        const before = JSON.stringify(p.calibrations.map(c => [c.calibration_name, !!c.enabled, c.trigger || '']))
+        await guardScrub(p, '', { hitsPromise: Promise.resolve(triggerLinesFromText(estText)), text: estText || '' })
+        const after = JSON.stringify(p.calibrations.map(c => [c.calibration_name, !!c.enabled, c.trigger || '']))
+        if (before !== after) {
+          const { replaceScrubCalibrations } = await import('../services/scrubStore.js')
+          await replaceScrubCalibrations(req, dup.scrub.id, p.calibrations)
+        }
+      } catch (e) { console.warn('[extract] reuse guard skipped:', e.message) }
+    }
+    return { ...p, calibrations: p.calibrations, vin: p.vin || dup.scrub.vin, ro_number: p.ro_number || dup.scrub.ro, vehicle: p.vehicle || dup.scrub.vehicle, shop: p.shop || dup.scrub.shop, _scrubId: dup.scrub.id, _reused: true, _reusedWhy: dup.why, _reusedAt: dup.scrub.at, _pdfType: p._pdfType || 'CCC', _elapsed_ms: Date.now() - t0 }
   }
   const _dupKeys = { sha1: dup.sha1, est: dup.est }
   const textReady = !!(textMode && estText.length >= 800 && !/kinetic|report/i.test(pdfType || ''))
@@ -290,6 +308,8 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
   if (String(data?._pdfType || '').toUpperCase() === 'CCC' && !data._demo) {
     try { const { guardScrub } = await import('../services/scrubGuard.js'); await guardScrub(data, buffer.toString('base64'), { hitsPromise, text: estText || '' }); console.log(`[scrub ⏱] + guard ${Math.round((Date.now() - t0) / 1000)}s`) }
     catch (e) { console.warn('[extract] guard skipped:', e.message) }
+    // 👀 Did the line reader actually see the estimate? (10-14 → 10-26 it silently didn't.)
+    if (data._textMode) { try { const { noteReaderHealth } = await import('../services/scrubWatch.js'); await Promise.race([noteReaderHealth(req, { data, text: estText || '', hits: await (hitsPromise || Promise.resolve({})).catch(() => ({})) }), wait(4000)]) } catch (e) { console.warn('[extract] reader health skipped:', e.message) } }
     try { const { applyLessons } = await import('../services/scrubLearn.js'); const L = await applyLessons(req, data); if (L.applied?.length) console.log(`[scrub ⏱] + learn ${L.applied.length}`) }
     catch (e) { console.warn('[extract] learn skipped:', e.message) }
   }
@@ -319,6 +339,11 @@ export async function scrubPdfBuffer(req, buffer, { learn = true, jobId = '', by
       console.log(`[extract] Rules DB suggested ${additional.length} (${extras.length} shown as suggestions)`)
       data.calibrations = [...(data.calibrations || []), ...extras]
     }
+    try {
+      const { stripTeslaBlindSpot } = await import('../services/scrubGuard.js')
+      const dropped = stripTeslaBlindSpot(data)
+      if (dropped.length) console.log(`[extract] Tesla: dropped blind spot — ${dropped.join(' · ')}`)
+    } catch { /* fine */ }
   }
 
   // Rivian base procedures (Mark 2026-09-08): every Rivian scrub carries

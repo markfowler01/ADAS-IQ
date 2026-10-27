@@ -121,7 +121,7 @@ async function notifyMark(c, files = {}) {
   const boardUrl = 'https://adas-iq-904191467.development.catalystserverless.com/app/'
   const html = `<div style="font-family:Inter,Arial,sans-serif;font-size:14px;color:#1a1a1a">${inlinePhoto}` +
     `<pre style="font-family:Inter,Arial,sans-serif;font-size:14px;white-space:pre-wrap;margin:0 0 14px">${esc(text)}</pre>` +
-    `${isP ? '' : resume ? '<p>📄 Resume attached.</p>' : '<p style="color:#888">No resume uploaded.</p>'}` +
+    `${c._fileWarn ? `<p style="color:#b91c1c;font-weight:bold">${c._fileWarn}</p>` : ''}${isP ? '' : resume ? '<p>📄 Resume attached.</p>' : '<p style="color:#888">No resume uploaded.</p>'}` +
     `<p><a href="${boardUrl}" style="color:#CD4419;font-weight:700">Open the Recruiting board →</a></p></div>`
   const subject = isP ? `🤝 New partner prospect: ${P.company || c.name}${P.service_area ? ` — ${P.service_area}` : ''}` : `🧑‍🔧 New applicant: ${c.name}${c.role ? ` — ${c.role}` : ''}`
   const tasks = []
@@ -175,13 +175,15 @@ async function ensureCandidateFolder(req, wdToken) {
   return id
 }
 async function storeFiles(req, files, name) {
-  const out = { photo_id: '', resume_url: '' }
+  const out = { photo_id: '', resume_url: '', failed: [] }
   const list = Array.isArray(files) ? files : Object.values(files || {}).flat()
   const isImg = f => /^image\//.test(f.mimetype)
-  const isDoc = f => /pdf|msword|officedocument|^image\//.test(f.mimetype)
+  // Phones often send a PDF / .docx as application/octet-stream (or blank) — the extension decides then
+  // (2026-10-26: a resume could be dropped without a word).
+  const isDoc = f => /pdf|msword|officedocument|^image\//.test(f.mimetype) || /\.(pdf|docx?|rtf|txt|pages|odt|jpe?g|png|heic)$/i.test(f.originalname || '')
   const photo = list.find(f => f.fieldname === 'photo' && isImg(f))
   const resume = list.find(f => f.fieldname === 'resume' && isDoc(f))
-  for (const f of list) if ((f.fieldname === 'photo' && !isImg(f)) || (f.fieldname === 'resume' && !isDoc(f))) console.log('[recruit files] skipped', f.fieldname, f.mimetype)
+  for (const f of list) if ((f.fieldname === 'photo' && !isImg(f)) || (f.fieldname === 'resume' && !isDoc(f))) { console.log('[recruit files] skipped', f.fieldname, f.mimetype, f.originalname); out.failed.push(`${f.fieldname} skipped (${f.mimetype || 'unknown type'}: ${f.originalname || 'file'})`) }
   if (!photo && !resume) return out
   try {
     const { getAccessToken } = await import('../services/zoho.js')
@@ -199,7 +201,8 @@ async function storeFiles(req, files, name) {
       const ext = resume.originalname?.includes('.') ? resume.originalname.split('.').pop().toLowerCase().slice(0, 5) : 'pdf'
       out.resume_url = wdId(await uploadFileToFolder(folderId, `${safe} - resume ${stamp}.${ext}`, resume.buffer, wdToken, resume.mimetype))
     }
-  } catch (e) { console.log('[recruit files] FAILED:', e.message, e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : '') }
+  } catch (e) { console.log('[recruit files] FAILED:', e.message, e.response?.data ? JSON.stringify(e.response.data).slice(0, 300) : ''); out.failed.push(`upload to WorkDrive failed: ${String(e.message).slice(0, 120)}`) }
+  if (resume && !out.resume_url && !out.failed.length) out.failed.push('resume not saved')
   return out
 }
 async function fetchWdFile(fileId) {
@@ -255,13 +258,16 @@ async function handleApply(req, res) {
         merged = rowToCandidate(row)
       }
     }
+    const stored = merged ? { photo_id: '', resume_url: '', failed: [] } : await storeFiles(req, req.files, name)
+    const fileWarn = stored.failed.length ? `⚠️ The applicant sent a file the app could not save (${stored.failed.join('; ')}). It is attached to the application email.` : ''
     const c = merged || await insertCandidate(req, {
       name, phone, email, city: b.city || partner?.service_area, role: isPartner ? 'Business partner' : (b.role || b.position), experience: b.experience,
       certs: b.certs, availability: b.availability, source: b.source || (isPartner ? 'website: partners' : 'website'), message: b.message,
       stage: isPartner ? 'p_prospect' : 'new', kind: isPartner ? 'partner' : 'hire', partner,
-      ...(await storeFiles(req, req.files, name)),
+      photo_id: stored.photo_id, resume_url: stored.resume_url, notes: fileWarn,
     })
     const _list = Array.isArray(req.files) ? req.files : []
+    if (fileWarn) c._fileWarn = fileWarn
     await notifyMark(c, { photo: _list.find(f => f.fieldname === 'photo'), resume: _list.find(f => f.fieldname === 'resume') })
     // 📧 The six electrical questions go out straight away, from Mark. Once
     // per candidate, and a mail failure never loses the application.

@@ -164,6 +164,8 @@ export async function saveScrub(req, { jobId, data, source = 'button', by = '', 
     const inserted = await ds(req).datastore().table(TABLE).insertRow(row)
     const id = String(inserted?.ROWID || inserted?.[0]?.ROWID || '')
     console.log(`[scrubs] saved ${id} · ${row.scrub_shop} · ${row.scrub_vehicle} · ${required.length}/${cals.length} required`)
+    // 👀 Kinetic report + our CCC scrub for the same VIN → logged for the weekly scorecard.
+    try { const { noteKineticPair } = await import('./scrubWatch.js'); await Promise.race([noteKineticPair(req, { vin: row.scrub_vin, pdfType: row.scrub_pdf_type, source: row.scrub_source, sensors, vehicle, id }), new Promise(r => setTimeout(r, 5000))]) } catch (e) { console.warn('[scrubs] kinetic pair skipped:', e.message) }
     return { ok: true, id }
   } catch (e) {
     console.warn('[scrubs] save failed:', e.message)
@@ -460,13 +462,39 @@ export async function refreshFromCard(req, scrubId) {
  * it, so the report can show which calls were the scrubber's and which
  * were the estimator's.
  */
+/** Write calibrations back after a guard refresh. Does not record a lesson. */
+export async function replaceScrubCalibrations(req, scrubId, cals, extra = null) {
+  const s = await getScrub(req, scrubId)
+  if (!s) return { ok: false, error: 'not found' }
+  const p = s.payload && typeof s.payload === 'object' ? s.payload : {}
+  const payload = { ...p, ...(extra && typeof extra === 'object' ? extra : {}), calibrations: cals }
+  const patch = {
+    ROWID: s.id,
+    ...calColumns(cals, [s.shop, s.vehicle, s.vin, s.ro, s.claim, s.insurer]),
+    ...chunkPayload(JSON.stringify(payload)),
+  }
+  delete patch._overflow
+  await ds(req).datastore().table(TABLE).updateRow(patch)
+  return { ok: true, id: s.id }
+}
+
 export async function updateScrubCalibrations(req, scrubId, cals, { by = '', skipLearn = false } = {}) {
   const s = await getScrub(req, scrubId)
   if (!s) return { ok: false, error: 'not found' }
   const clean = (Array.isArray(cals) ? cals : []).filter(c => c && (c.calibration_name || c.sensor)).map(c => ({
     calibration_name: str(c.calibration_name || c.sensor, 120),
-    cal_type: str(c.cal_type, 40), trigger: str(c.trigger, 300), line_references: str(c.line_references, 120),
+    cal_type: str(c.cal_type, 40), trigger: str(c.trigger, 500), line_references: str(c.line_references, 120),
     justification: str(c.justification, 1500), enabled: c.enabled !== false,
+    ...(c.operation_title ? { operation_title: str(c.operation_title, 120) } : {}),
+    ...(c.classification ? { classification: str(c.classification, 80) } : {}),
+    ...(c.procedure ? { procedure: str(c.procedure, 40) } : {}),
+    ...(c.required_before ? { required_before: str(c.required_before, 200) } : {}),
+    ...(c.repair_relationship ? { repair_relationship: str(c.repair_relationship, 400) } : {}),
+    ...(c.oem_reference ? { oem_reference: str(c.oem_reference, 300) } : {}),
+    ...(c._reportRequired ? { _reportRequired: true } : {}),
+    ...(c._onReport ? { _onReport: true } : {}),
+    ...(c._guard ? { _guard: str(c._guard, 40) } : {}),
+    ...(c._learned ? { _learned: str(c._learned, 20) } : {}),
     ...(c._added ? { _added: true, _by: str(c._by || by, 80) } : {}),
     ...(c._edited ? { _edited: true, _by: str(c._by || by, 80) } : {}),
   }))
