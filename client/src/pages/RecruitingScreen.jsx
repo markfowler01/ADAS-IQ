@@ -196,6 +196,15 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
   )
 }
 
+// 📄 Résumé on every card (Mark 2026-10-26): a link when there is one, a clear "none" when not.
+const resumeHref = c => /^https?:/.test(c.resume_url) ? c.resume_url : fileUrl(c.resume_url, true)
+function ResumeLine({ c, big = false }) {
+  const cls = big ? 'text-xs font-bold rounded-lg px-3 py-2 inline-block' : 'text-[11px] font-bold rounded-full px-2 py-0.5 inline-block'
+  if (c.resume_url) return <a href={resumeHref(c)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} className={cls} style={{ backgroundColor: '#e6f4ea', color: '#15803d', border: '1px solid #86efac' }}>📄 Résumé — open</a>
+  if (/could not save/i.test(c.notes || '')) return <span className={cls} style={{ backgroundColor: '#fef2f2', color: '#dc2626', border: '1px solid #fca5a5' }}>⚠️ Résumé didn't save — it's in the application email</span>
+  return <span className={cls} style={{ backgroundColor: '#f5f3f0', color: '#999', border: '1px solid #e0dbd6' }}>No résumé uploaded</span>
+}
+
 function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected = false, onQuickDelete = null }) {
   const d = daysSince(c.updated_at || c.created_at)
   const stage = stages.find(s => s.id === c.stage)
@@ -213,6 +222,7 @@ function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected
       </div>
       <p className="text-xs mt-0.5" style={{ color: '#666' }}>{[c.role, c.city].filter(Boolean).join(' · ') || 'No role given'}</p>
       {(c.experience || c.message) && <p className="text-xs mt-1.5" style={{ color: '#888' }}>{String(c.experience || c.message).slice(0, 90)}{String(c.experience || c.message).length > 90 ? '…' : ''}</p>}
+      <div className="mt-2"><ResumeLine c={c} /></div>
       <div className="flex items-center justify-between mt-2">
         <span className="flex items-center gap-1">
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>{c.source || 'manual'}</span>
@@ -306,7 +316,7 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
           {c.phone && <a href={`tel:${digits(c.phone)}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>📞 Call</a>}
           {c.phone && <a href={`sms:${digits(c.phone)}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1px solid #e8e4e0' }}>💬 Text</a>}
           {c.email && <a href={`mailto:${c.email}`} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>✉️ Email</a>}
-          {c.resume_url && <a href={/^https?:/.test(c.resume_url) ? c.resume_url : fileUrl(c.resume_url, true)} target="_blank" rel="noreferrer" className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#444', border: '1px solid #e0dbd6' }}>📄 Resume</a>}
+          <ResumeLine c={c} big />
           <span className="ml-auto text-lg" title="Rating">
             {[1, 2, 3, 4, 5].map(n => <button key={n} onClick={() => onPatch({ rating: c.rating === n ? 0 : n })} style={{ color: n <= c.rating ? '#f59e0b' : '#ddd' }}>★</button>)}
           </span>
