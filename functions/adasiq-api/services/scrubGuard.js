@@ -46,50 +46,105 @@ const EMPTY_HITS = () => ({
   srs_deploy: [], b_pillar: [],
 })
 
+// CCC PDF text comes out glued: "53S01R&IR&I bumper cover2.2", "56*S03ReplBumper cover
+// w/o auto park…", "68<>    S01   Repl   Bumper cover…", and the location lives on a
+// numbered heading row above the lines ("52REAR BUMPER"), not in the description.
+// Until 2026-10-26 the reader used \b word boundaries ("S01R&I" has none) and wanted
+// "rear bumper" in the line itself, so on most estimates it found nothing and every
+// rule that needs a line hit (bumper → radar, quarter → structural…) sat idle.
+const OP_RE = /^(Repl|R&I|R&R|Rpr|O\/H|Subl(?:et)?|Blnd|Refn|Algn|D&R)/i
+/** One numbered estimate row → { n, flags, sup, op, desc } (null for anything else). */
+export function parseEstimateRow(row) {
+  const raw = String(row || '')
+  // Secure Share text (cccScrub.bmsToText): "3 | R&I | Bumper cover | new OEM, SUBLET | 1.8 hr | S01"
+  const pm = raw.match(/^\s*(\d{1,3})\s*\|(.*)$/)
+  if (pm) {
+    const [opCol = '', desc = '', parts = '', hours = '', supp = ''] = pm[2].split('|').map(x => x.trim())
+    let op = (opCol.match(OP_RE)?.[1] || (/^align/i.test(opCol) ? 'algn' : '')).toLowerCase().replace(/^sublet$/, 'subl')
+    if (!op && /sublet/i.test(parts)) op = 'subl'
+    return desc ? { n: pm[1], flags: '', sup: (supp.match(/S\d{2}/) || [''])[0], op, desc: `${desc} ${hours.replace(/\s*hr$/, '')}`.trim() } : null
+  }
+  // CCC PDF text: "53S01R&IR&I bumper cover2.2", "68<>    S01   Repl   Bumper cover…"
+  const m = raw.match(/^\s*(\d{1,3})(?!\d)\s*((?:[#*<>]+\s*)*)(S\d{2})?\s*(.*)$/)
+  if (!m || !m[4]) return null
+  let rest = m[4].trim(), op = ''
+  const om = rest.match(OP_RE)
+  if (om) { op = om[1].toLowerCase().replace(/^sublet$/, 'subl'); rest = rest.slice(om[1].length).trim() }
+  else { const any = rest.match(/(?:^|\s)(Repl|R&I|R&R|Rpr|O\/H|Subl(?:et)?|D&R)(?=\s|$)/i); if (any) op = any[1].toLowerCase().replace(/^sublet$/, 'subl') }   // "22 Battery R&I"
+  return { n: m[1], flags: m[2].replace(/\s+/g, ''), sup: m[3] || '', op, desc: rest }
+}
+/** The numbered rows of an estimate with the section heading each sits under. */
+export function estimateRows(text) {
+  const out = []
+  let t = String(text || '')
+  // CCC PDF: the vehicle options block ("Dual MirrorsBackup Camera…") comes before the
+  // first "LineOper…" column header — never read it as repair lines.
+  const hdr = t.search(/Line\s*Oper/i)
+  if (hdr > 0) t = t.slice(hdr)
+  let section = ''
+  for (const row of t.split(/\r?\n/)) {
+    const r = parseEstimateRow(row)
+    if (!r) continue
+    // "1REAR BUMPER", "2FRONT BUMPER & GRILLE", "73PILLARS, ROCKER & FLOOR"
+    if (!r.op && !r.flags && !r.sup && /^[A-Z][A-Z0-9 &,/'().-]{2,60}$/.test(r.desc) && !/\d\.\d/.test(r.desc)) { section = r.desc.toLowerCase(); continue }
+    out.push({ ...r, section })
+  }
+  return out
+}
+
 /** Instant line categorizer from CCC text — same buckets as the Haiku pass, no model. */
 export function triggerLinesFromText(text) {
   const hits = EMPTY_HITS()
   if (!text) return hits
   const push = (k, n) => { if (n && !hits[k].includes(n)) hits[k].push(n) }
-  for (const row of String(text).split(/\r?\n/)) {
-    const m = row.match(/^\s*(\d+)\s+((?:[#*<>]+\s+)*\S.*)$/)
-    if (!m) continue
-    const n = m[1]
-    const body = m[2].toLowerCase().replace(/\s+/g, ' ')
-    const opRepl = /\b(repl|r&r|r&i|subl|o\/h)\b/.test(body)
-    const opRi = /\b(r&i|repl|r&r|o\/h)\b/.test(body)
-    const opRpr = /\brpr\b/.test(body)
-    const glassOut = opRepl && /(windshield|w\/shield|windscreen|\bw\/s\b)/.test(body)
-      && !/(liftgate|back glass|rear (window|glass)|quarter glass|door glass|mirror glass|sunroof|moonroof)/.test(body)
-    const wsWord = /(windshield|w\/shield|windscreen|\bw\/s\b)/.test(body)
-    const wsKeep = /(mask|protect|cover|tape|plastic|chip|polish|denib|tint|urethane|molding|cowl|wiper|washer)/.test(body)
-    if (glassOut && !wsKeep) push('windshield', n)
-    else if (wsWord && (wsKeep || !opRepl)) push('windshield_excluded', n)
-    if (/(front bumper|front fascia)/.test(body) && !/(bracket|absorber|impact bar|reinforcement|lamp|trim|grille|add for)/.test(body)) {
-      if (opRi) push('front_bumper', n)
-      else if (opRpr) { /* front bumper repair is not a radar-aim trigger by itself */ }
+  for (const { n, op, desc, section } of estimateRows(text)) {
+    // "mirror0.3", "Alignment1162.49", "front bumper00.00": split the hours/price off the words.
+    const d = desc.toLowerCase().replace(/([a-z)])(\d)/g, '$1 $2').replace(/\s+/g, ' ')
+    const ctx = `${section} ${d}`
+    const addFor = /^add for\b/.test(d)
+    const opOut = /^(repl|r&r|r&i|subl|o\/h)$/.test(op)          // the part comes off the car
+    const opRi = /^(repl|r&r|r&i|o\/h)$/.test(op)
+    const opRpr = op === 'rpr'
+    const hrs = Math.max(0, ...(d.match(/\d+\.\d/g) || []).map(Number).filter(x => x < 30))
+
+    const wsWord = /(windshield|w\/shield|windscreen|\bw\/s\b)/.test(d) || (/windshield/.test(section) && /\bglass\b/.test(d))
+    const wsKeep = /(mask|protect|cover|tape|plastic|chip|polish|denib|tint|urethane|molding|mldg|cowl|wiper|washer|kit|add for)/.test(d)
+    const notFront = /(liftgate|back glass|back window|rear (window|glass)|quarter glass|door glass|mirror glass|sunroof|moonroof)/.test(d)
+    if (wsWord && opOut && !wsKeep && !notFront) push('windshield', n)
+    else if (wsWord && !notFront) push('windshield_excluded', n)
+
+    const bumperPart = /\b(bumper|fascia)\b/.test(d) || (/bumper/.test(section) && /^(cover|bumper cover)\b/.test(d))
+    const bumperTrim = /(bracket|absorber|impact bar|reinforc|lamp|trim|grille|add for|filler|step pad|molding|mldg|guard|insert|lower cover|valance|spoiler|skid|prep|clear coat|license|tow hook|emblem|retainer|clip)/.test(d)
+    const front = /front bumper|front fascia/.test(ctx) || (/bumper/.test(section) && /front/.test(section))
+    const rear = /rear bumper|rear fascia/.test(ctx) || (/bumper/.test(section) && /rear/.test(section))
+    if (bumperPart && !bumperTrim) {
+      if (front && !rear) { if (opRi) push('front_bumper', n) }
+      else if (rear) { if (opRi) push('rear_bumper', n); else if (opRpr) push('rear_bumper_rpr', n) }
     }
-    if (/(rear bumper|rear fascia)/.test(body) && !/(bracket|absorber|impact bar|reinforcement|lamp|trim|add for)/.test(body)) {
-      if (opRi) push('rear_bumper', n)
-      else if (opRpr) push('rear_bumper_rpr', n)
-    }
-    if (/\b(align|alignment|4[- ]wheel)\b/.test(body) || /steering system reset/.test(body)) push('alignment', n)
-    if (/\bbattery\b/.test(body) && /\b(d&r|r&i|disconnect|remove)\b/.test(body)) push('battery', n)
-    if (/(passenger seat|seat cushion|seat track|seat belt|pretensioner|air ?bag|\bsrs\b)/.test(body)) push('seat_airbag', n)
-    if (/(liftgate|tailgate|trunk lid|decklid)/.test(body) && (opRi || /adjust/.test(body))) push('liftgate', n)
-    if (/\b(mirror|outside mirror|door mirror)\b/.test(body) && opRi && !/mirror (glass|cover|cap)/.test(body)) push('mirror', n)
-    if (/(radar|millimeter|distronic|acc sensor|adaptive cruise sensor)/.test(body) && !/(park|pdc|ultrasonic|proximity|distance sensor)/.test(body)) push('radar_sensor', n)
-    if (/\bcamera\b/.test(body)) push('camera', n)
-    if (/(headlamp|headlight)/.test(body) && opRi && !/(bulb|aim labor|aiming)/.test(body)) push('headlamp', n)
-    if (/\bfender\b/.test(body) && !/(liner|molding|flare|rear)/.test(body) && (opRi || opRpr || /adjust/.test(body))) push('fender', n)
-    if (/(quarter panel|rocker|pillar|rail|apron|floor pan|rear body|roof panel|wheelhouse)/.test(body) && (/\b(repl|section)/.test(body) || (opRpr && /[1-9]\.\d/.test(body)))) push('structural', n)
-    if (/(bumper reinforcement|impact bar|door shell|core support|radiator support)/.test(body) && opRepl) push('structural', n)
-    if (/(grille|grille emblem)/.test(body) && opRi && !/(molding|refn|blnd)/.test(body)) push('grille', n)
-    if (/(front door|door shell|door assy|door assembly)/.test(body) && !/rear door/.test(body) && (opRi || opRpr || /adjust/.test(body))) push('front_door', n)
-    if (/\b(module|ecu|sdm|gateway)\b/.test(body) && /\brepl\b/.test(body)) push('module_repl', n)
-    if (/(park(ing)? (aid |distance )?sensor|ultrasonic|pdc|parktronic|sonar)/.test(body) && (opRi || /transfer/.test(body))) push('park_sensor', n)
-    if (/(air ?bag|pretensioner)/.test(body) && /\brepl\b/.test(body)) push('srs_deploy', n)
-    if (/(b-?pillar|center pillar)/.test(body)) push('b_pillar', n)
+    if (/\b(align|alignment|4[- ]wheel)\b/.test(d) || /steering system reset/.test(d)) push('alignment', n)
+    if (/\bbattery\b/.test(d) && (/^(r&i|repl|r&r|d&r)$/.test(op) || /\b(d&r|disconnect|remove)\b/.test(d))) push('battery', n)
+    if (/(passenger seat|seat cushion|seat track|seat belt|pretensioner|air ?bag|\bsrs\b)/.test(d) && op) push('seat_airbag', n)
+    if (/(liftgate|lift gate|tailgate|trunk lid|deck ?lid|back door)/.test(d) && (opRi || /adjust|align/.test(d)) && !/(trim|molding|mldg|emblem|nameplate|handle|strut|w'strip|weatherstrip|glass|wiper|spoiler|lamp|light)/.test(d)) push('liftgate', n)
+    if (/\bmirror\b/.test(d) && opRi && !/mirror (glass|cover|cap)|rear ?view mirror|inside mirror/.test(d)) push('mirror', n)
+    const radarWord = /(radar|millimeter|distronic|acc sensor|adaptive cruise|cruise control sensor)/.test(d) || (/distance sensor/.test(d) && !/bumper/.test(section))
+    if (radarWord && !/(park|pdc|ultrasonic|proximity|prk)/.test(d)) push('radar_sensor', n)
+    if (/\bcamera\b/.test(d)) push('camera', n)
+    if (/(headlamp|headlight)/.test(d) && opRi && !/(bulb|aim labor|aiming|\baim\b|bracket|washer)/.test(d)) push('headlamp', n)
+    if (/\bfender\b/.test(d) && !/(liner|molding|flare|rear)/.test(d) && (opRi || opRpr || /adjust/.test(d))) push('fender', n)
+    const trim = /(trim|molding|mldg|applique|garnish|seal|w'strip|weatherstrip|nameplate|emblem|liner|cover|cap\b|plug|clip|insulator)/.test(d)
+    if (/(quarter panel|rocker|pillar|\bplr\b|\brail\b|apron|floor pan|rear body|roof panel|wheelhouse|rear panel)/.test(d) && !trim && (/^(repl)$/.test(op) || /\bsection/.test(d) || (opRpr && hrs >= 1))) push('structural', n)
+    if (/(bumper reinforcement|impact bar|door shell|door assy|door assembly|core support|radiator support)/.test(d) && op === 'repl') push('structural', n)
+    if (/\bgrill/.test(d) && opRi && !/(molding|mldg|refn|blnd|cowl|emblem|nameplate|clip)/.test(d)) push('grille', n)
+    const frontDoorPart = /(door shell|door assy|door assembly|outer panel|door skin|\bdoor\b)/.test(d) && !/(trim|molding|mldg|handle|glass|regulator|w'strip|weatherstrip|striker|check|hinge|lock|speaker|switch|applique|nameplate)/.test(d)
+    if (((/front door/.test(ctx) && !/rear door/.test(d)) || (/front door/.test(section) && frontDoorPart)) && frontDoorPart && (opRi || opRpr || /adjust/.test(d))) push('front_door', n)
+    const moduleWord = /\b(module|ecu|sdm|gateway|control unit)\b/.test(d) || /(radar|distance sensor|\bcamera\b)/.test(d)
+    const airBag = /air ?bag/.test(d) && !/(control|sdm|sensing|diagnos)/.test(d)   // CCC "Air bag module" = the bag itself (Voyager 2026-10-20)
+    if (moduleWord && op === 'repl' && !airBag && !/(park|pdc|ultrasonic|prk|bracket|cover|aim|calibrat|wiring|harness|mount|holder|bezel|trim|lens)/.test(d)) push('module_repl', n)
+    const parkWord = /(park(ing)? (aid |assist |distance )?sensor|ultrasonic|\bpdc\b|parktronic|sonar|prk sensor|reverse sensor|back ?up sensor|park assist)/.test(d)
+    if (parkWord && (opRi || addFor || /transfer/.test(d)) && !/\bw\/o\b[^,]*(park|prk|sensor)/.test(d)) push('park_sensor', n)
+    else if (bumperPart && (opRi || opRpr) && /\bw\/\s*(prk|park|parking|sensor|pdc|ultrasonic)/.test(d)) push('park_sensor', n)   // "Bumper cover w/prk sensor" — the sensors come off with it
+    if (/(air ?bag|pretensioner)/.test(d) && op === 'repl') push('srs_deploy', n)
+    if (/(b-?pillar|center pillar|center plr)/.test(d)) push('b_pillar', n)
   }
   return hits
 }
@@ -136,6 +191,22 @@ Return ONLY JSON: {"windshield":[...],"windshield_excluded":[...],"front_bumper"
 const name = c => String(c?.sensor || c?.calibration_name || '').toLowerCase()
 const has = (cals, re) => cals.find(c => re.test(name(c)))
 const lines = arr => (Array.isArray(arr) ? arr : []).map(String).filter(Boolean)
+const BLIND_SPOT_ROW = /blind.?spot|rear.*radar/i
+
+/** Tesla has no blind-spot sensors (Mark 2026-10-19). Drop the row so it cannot be billed. */
+export function stripTeslaBlindSpot(data) {
+  if (!data || !/tesla/i.test(`${data.make || ''} ${data.vehicle || ''}`)) return []
+  const cals = data.calibrations
+  if (!Array.isArray(cals)) return []
+  const dropped = []
+  for (let i = cals.length - 1; i >= 0; i--) {
+    const label = String(cals[i]?.calibration_name || cals[i]?.sensor || cals[i]?.name || '')
+    if (!BLIND_SPOT_ROW.test(label) || /front/i.test(label)) continue
+    dropped.push(label)
+    cals.splice(i, 1)
+  }
+  return dropped
+}
 
 // `mayAdd`: only the windshield camera may be added when the scrub left it
 // out. Everything else is flip-only — the scrub decides what the car HAS, the
@@ -158,6 +229,356 @@ function require(cals, re, label, calType, trigger, lineRefs, why, out, mayAdd =
   }
 }
 
+const NISSAN_PARK_WHY = 'Not required. Dropping the bumper cover does not call for a Nissan sonar sensor reset. The sonar sensors are a separate removal. This estimate does not remove or replace a park sensor.'
+
+/** A stored Nissan park row whose trigger is a bumper-cover drop, not a sensor that was removed. */
+export function parkRowIsBumperOnly(c) {
+  const t = `${c?.trigger || ''} ${c?.justification || ''}`
+  if (/(?:sonar|ultrasonic|\bpdc\b|parktronic|(?:park(?:ing)? )?(?:aid |distance )?sensor).{0,80}\b(repl|r&i|r&r|removed|replaced|transfer)/i.test(t)) return false
+  if (/\b(repl|r&i|r&r)\b.{0,40}(?:sonar|ultrasonic|\bpdc\b|parktronic)/i.test(t)) return false
+  return true
+}
+
+const ALIGN_ROW = /^(?:wheel alignment|4-way alignment|four-wheel alignment|four wheel alignment)$/i
+function isAlignCal(c) {
+  return ALIGN_ROW.test(String(c?.calibration_name || '').trim())
+}
+function fourWayWhy(radarLines) {
+  const where = radarLines.length ? ` (line ${radarLines.join(', ')})` : ''
+  return `The ACC / front radar is required because of the front bumper removal${where}. This 4-way alignment is required before that ACC radar aim, because Nissan's distance-sensor procedure says a 4-wheel alignment must be performed before the radar alignment.`
+}
+const SAS_CONDITIONAL = 'Conditional. The steering angle sensor neutral-position adjustment is required only when a four-wheel alignment adjustment was performed. An alignment inspection is not an adjustment. Confirm the alignment result before this operation is required.'
+const SAS_SECONDARY = 'The steering angle sensor neutral-position adjustment is required after the wheel alignment adjustment on this estimate.'
+const RADAR_ALIGN_NOTE = /Prerequisite: wheel alignment required before this radar can be aimed\.|The wheel alignment on lines? [\d, ]+ must be performed before the radar alignment\.|A 4-wheel vehicle alignment must be performed before proceeding with (?:radar|distance sensor) alignment procedure\.|Always perform the radar alignment after removing and installing or replacing the distance sensor\./g
+const CLASS_DIRECT = 'REQUIRED: DIRECT TRIGGER'
+const CLASS_PREREQ = 'REQUIRED: OEM PREREQUISITE'
+const CLASS_SECONDARY = 'REQUIRED: SECONDARY OPERATION'
+const CLASS_CONDITIONAL = 'CONDITIONAL: VERIFICATION NEEDED'
+const CLASS_VERIFIED = 'NOT REQUIRED: VERIFIED'
+const CLASS_REVIEW = 'REVIEW NEEDED'
+
+function setFields(row, fields) {
+  let changed = false
+  for (const [k, v] of Object.entries(fields)) {
+    if (v == null) continue
+    if (row[k] !== v) { row[k] = v; changed = true }
+  }
+  return changed
+}
+
+function labelNissanOperations(data) {
+  if (!/nissan|infiniti/i.test(`${data?.make || ''} ${data?.vehicle || ''}`)) return false
+  let changed = false
+  for (const c of data?.calibrations || []) {
+    const n = `${c.calibration_name || ''} ${c.sensor || ''}`
+    if (isFrontRadarRow(c) && c.enabled === true) {
+      changed = setFields(c, {
+        classification: CLASS_DIRECT,
+        procedure: c.procedure || c.cal_type || 'Static',
+        required_before: '4-Way Alignment. This aiming procedure is last.',
+        repair_relationship: c.repair_relationship || `Qualifying front repair${c.line_references ? ` (line ${c.line_references})` : ''}.`,
+        oem_reference: c.oem_reference || 'Nissan distance sensor alignment procedure',
+      }) || changed
+    } else if (/blind.?spot|rear.*radar/i.test(n) && !/front/i.test(n) && c.enabled === true) {
+      changed = setFields(c, {
+        classification: CLASS_DIRECT,
+        procedure: c.procedure || c.cal_type || 'Static',
+        required_before: 'None for this chain. It is its own direct trigger.',
+        repair_relationship: c.repair_relationship || (c.trigger || 'Rear bumper repair'),
+        oem_reference: c.oem_reference || 'Nissan side radar alignment',
+      }) || changed
+    } else if (/seat weight|occupant classification/i.test(n) && c.enabled === true) {
+      changed = setFields(c, {
+        classification: CLASS_DIRECT,
+        procedure: c.procedure || 'Reset',
+        required_before: 'None for the radar chain.',
+        repair_relationship: c.repair_relationship || 'Any Nissan collision. The seat is removed to inspect the occupant classification system.',
+        oem_reference: c.oem_reference || 'Nissan Repairs and Inspections Required After a Collision',
+      }) || changed
+    } else if (/park|ultrasonic|sonar|\bpdc\b|parking sensor/i.test(n) && c.enabled !== true && /bumper cover|sonar sensor/i.test(`${c.justification || ''} ${c.trigger || ''}`)) {
+      changed = setFields(c, {
+        classification: CLASS_VERIFIED,
+        procedure: '—',
+        required_before: 'None.',
+        repair_relationship: 'Bumper-cover drop only. No sonar sensor line.',
+        oem_reference: c.oem_reference || 'Nissan front bumper removal and installation. The sonar sensors are a separate step.',
+      }) || changed
+    }
+  }
+  return changed
+}
+
+function isFrontRadarRow(c) {
+  const n = `${c?.calibration_name || ''} ${c?.sensor || ''}`
+  if (/park|ultrasonic|sonar|\bpdc\b|side|corner/i.test(n)) return false
+  return /front radar|acc radar|adaptive cruise|distance sensor/i.test(n)
+}
+
+function estimateAlignmentLines(data, alignmentLines) {
+  if (Array.isArray(alignmentLines)) return [...new Set(alignmentLines.map(String).filter(Boolean))]
+  const found = []
+  for (const c of data?.calibrations || []) {
+    if (isAlignCal(c)) continue
+    const m = String(c?.trigger || '').match(/^Wheel alignment \(lines? ([0-9, ]+)\)/i)
+    if (m) found.push(...m[1].split(/,\s*/))
+  }
+  return [...new Set(found.filter(Boolean))]
+}
+
+function stripRadarAlignNote(row) {
+  if (!row) return false
+  const prev = String(row.justification || '').trim()
+  const next = prev.replace(RADAR_ALIGN_NOTE, '').replace(/\s+/g, ' ').trim()
+  if (next === prev) return false
+  row.justification = next
+  return true
+}
+
+function wheelNamedLines(data) {
+  const wheel = (data?.calibrations || []).find(isAlignCal)
+  const m = String(wheel?.trigger || '').match(/^Wheel alignment \(lines? ([0-9, ]+)\)/i)
+  return m ? [...new Set(m[1].split(/,\s*/).filter(Boolean))] : []
+}
+
+/**
+ * Nissan/Infiniti distance-sensor chain. Front radar stays a direct trigger.
+ * 4-Way Alignment stays on the report as the OEM prerequisite. Invoicing that
+ * row is a shop switch and defaults off, so this row has no price and no
+ * labor hour. One row: a stored "Wheel Alignment" line is renamed, not copied.
+ * Steering angle is conditional until an alignment adjustment is on the
+ * estimate, then it is one secondary row. An inspection is not an adjustment.
+ * A battery disconnect does not turn SAS on. Rear blind spot type is not touched.
+ */
+export function noteNissanRadarAlignment(data, alignmentLines, opts = {}) {
+  if (!/nissan|infiniti/i.test(`${data?.make || ''} ${data?.vehicle || ''}`)) return false
+  const cals = data?.calibrations
+  if (!Array.isArray(cals)) return false
+  let changed = labelNissanOperations(data)
+  const radar = cals.find(c => c?.enabled === true && isFrontRadarRow(c))
+  if (!radar) {
+    for (let i = cals.length - 1; i >= 0; i--) {
+      const c = cals[i]
+      if (isAlignCal(c) && (c.classification === CLASS_PREREQ || c._guard === 'added' || c._guard === 'flipped')) {
+        cals.splice(i, 1)
+        changed = true
+      }
+    }
+    return changed
+  }
+  const passed = Array.isArray(alignmentLines)
+  const named = passed ? estimateAlignmentLines(data, alignmentLines) : wheelNamedLines(data)
+  const alignRows = cals.filter(isAlignCal)
+  const wheelNow = alignRows[0]
+  for (let i = cals.length - 1; i >= 0 && alignRows.length > 1; i--) {
+    if (isAlignCal(cals[i]) && cals[i] !== wheelNow) { cals.splice(i, 1); changed = true }
+  }
+  const adjusted = Array.isArray(opts.adjustmentLines)
+    ? [...new Set(opts.adjustmentLines.map(String).filter(Boolean))]
+    : (passed ? named : (wheelNow?._alignmentAdjusted === false ? [] : named))
+  const radarLines = String(radar.line_references || '').split(/,\s*/).filter(Boolean)
+  const lines = named.length ? named : radarLines
+  const why = fourWayWhy(radarLines)
+  const where = named.length
+    ? `Wheel alignment (line${lines.length > 1 ? 's' : ''} ${lines.join(', ')}). ${why}`
+    : why
+  const wheelFields = {
+    calibration_name: '4-Way Alignment', operation_title: '4-Way Alignment', cal_type: '', enabled: true,
+    trigger: where, line_references: lines.join(', '), justification: why,
+    classification: CLASS_PREREQ, procedure: 'Alignment',
+    required_before: 'The ACC / front radar aim.',
+    repair_relationship: 'OEM prerequisite before the ACC / front radar aim. The front bumper removal is why the radar is required, not why this alignment is required.',
+    oem_reference: 'Nissan distance sensor alignment procedure',
+    _alignmentAdjusted: adjusted.length > 0,
+  }
+  const wheel = cals.find(isAlignCal)
+  if (!wheel) {
+    cals.push({ ...wheelFields, _guard: 'added' })
+    changed = true
+  } else if (setFields(wheel, wheelFields)) {
+    wheel._guard = wheel._guard || 'flipped'
+    changed = true
+  }
+  if (wheel) { delete wheel.rate; delete wheel.price; delete wheel.hours; delete wheel.labor_hours }
+  const sas = cals.find(c => /steering angle|\bsas\b/i.test(`${c?.calibration_name || ''} ${c?.sensor || ''}`))
+  const fromChain = !sas || sas.enabled !== true || /wheel alignment|neutral-position|verification needed/i.test(`${sas.justification || ''} ${sas.trigger || ''}`) || sas.classification === CLASS_CONDITIONAL || sas.classification === CLASS_SECONDARY
+  const sasFields = adjusted.length ? {
+    enabled: true,
+    classification: CLASS_SECONDARY,
+    procedure: 'Neutral position',
+    trigger: `Wheel alignment adjustment (line${adjusted.length > 1 ? 's' : ''} ${adjusted.join(', ')})`,
+    line_references: adjusted.join(', '),
+    justification: SAS_SECONDARY,
+    required_before: 'Front radar aiming. Do this reset after the alignment adjustment.',
+    repair_relationship: 'Secondary operation. The estimate already has an alignment adjustment.',
+    oem_reference: 'Nissan steering angle sensor neutral position procedure',
+  } : {
+    enabled: false,
+    classification: CLASS_CONDITIONAL,
+    procedure: 'Neutral position',
+    trigger: 'Verification needed. Required only after an alignment adjustment, not an inspection.',
+    line_references: '',
+    justification: SAS_CONDITIONAL,
+    required_before: 'Front radar aiming, and only if the alignment was adjusted.',
+    repair_relationship: 'Not required yet. The alignment prerequisite alone does not require it. A battery disconnect does not require it.',
+    oem_reference: 'Nissan steering angle sensor neutral position procedure',
+  }
+  if (!sas) {
+    cals.push({ calibration_name: 'Steering Angle Sensor', cal_type: 'Reset', ...sasFields, _guard: 'added' })
+    changed = true
+  } else if (!adjusted.length && sas.enabled === true && !fromChain) {
+    changed = setFields(sas, { classification: sas.classification || CLASS_DIRECT, procedure: sas.procedure || sas.cal_type || 'Reset' }) || changed
+  } else if (setFields(sas, sasFields)) {
+    if (!sas.cal_type) sas.cal_type = 'Reset'
+    sas._guard = sas._guard || 'flipped'
+    changed = true
+  }
+  if (stripRadarAlignNote(radar)) changed = true
+  return changed
+}
+
+const NISSAN_BATTERY_MARK = 'Operations Required after Disconnecting Battery'
+const BATTERY_RESET_TITLE = 'Battery Reset'
+
+/** The Battery Operations sentences already written on a reset row, or ''. */
+export function batteryOperationsNote(cals) {
+  for (const c of cals || []) {
+    const n = `${c?.calibration_name || ''} ${c?.name || ''} ${c?.sensor || ''}`
+    if (!/battery.?disconnect reset/i.test(n)) continue
+    const m = String(c.justification || c.why || '').match(/12V battery disconnect[\s\S]*?Position Statement Power Window Servicing Post-Repair\./)
+    if (m) return m[0]
+  }
+  return ''
+}
+
+/**
+ * Add the Nissan battery-reset row when a saved scrub has the disconnect
+ * lines but never stored the row, then write the procedure on it.
+ * Pass line numbers from the estimate. Omit them when the row is already stored.
+ */
+export function ensureNissanBatteryRow(data, batteryLines) {
+  if (!/nissan|infiniti/i.test(`${data?.make || ''} ${data?.vehicle || ''}`)) return false
+  const linesIn = Array.isArray(batteryLines) ? [...new Set(batteryLines.map(String).filter(Boolean))] : null
+  if (!Array.isArray(data?.calibrations)) return false
+  const row = data.calibrations.find(c => /battery.?disconnect reset|\bbattery reset\b|operations required after disconnecting battery/i.test(`${c?.calibration_name || ''} ${c?.sensor || ''} ${c?.name || ''} ${c?.operation_title || ''}`))
+  if (!row) {
+    if (!linesIn?.length) return false
+    data.calibrations.push({
+      calibration_name: 'Battery-Disconnect Resets',
+      cal_type: 'Reset',
+      enabled: true,
+      line_references: linesIn.join(', '),
+      trigger: '',
+      justification: '',
+    })
+  }
+  return noteNissanBatteryProcedure(data, linesIn?.length ? linesIn : undefined)
+}
+
+const NISSAN_BATTERY_NAME = /battery.?disconnect reset|\bbattery reset\b|operations required after disconnecting battery/i
+
+export function nissanBatteryEnabled(data) {
+  return (data?.calibrations || []).some(c => NISSAN_BATTERY_NAME.test(`${c?.calibration_name || ''} ${c?.sensor || ''} ${c?.name || ''} ${c?.operation_title || ''}`) && c.enabled === true)
+}
+
+/**
+ * Line numbers for a battery disconnect. The one-line CCC form is handled by
+ * triggerLinesFromText. pdf-parse often puts the line number on its own line
+ * and the operation on the next lines, which that parser misses.
+ */
+export function batteryDisconnectLines(text) {
+  const hits = triggerLinesFromText(text)
+  const found = [...(hits.battery || [])]
+  const rows = String(text || '').split(/\r?\n/)
+  for (let i = 0; i < rows.length; i++) {
+    const only = rows[i].match(/^\s*(\d+)\s*$/)
+    if (!only) continue
+    const window = rows.slice(i + 1, i + 5).join(' ')
+    if (/\bbattery\b/i.test(window) && /\b(d&r|r&i|disconnect|remove)\b/i.test(window) && !found.includes(only[1])) found.push(only[1])
+  }
+  return found
+}
+
+/**
+ * What opening a saved Nissan scrub should do about Battery Reset.
+ * `_batteryChecked` is ignored on purpose: an earlier look that stored no
+ * line list must read the estimate again. A stored line list with numbers
+ * rebuilds the row without another download.
+ */
+export function nissanBatteryProbe(data, { fileId = '', batteryLines } = {}) {
+  if (!/nissan|infiniti/i.test(`${data?.make || ''} ${data?.vehicle || ''}`)) return 'skip'
+  if (nissanBatteryEnabled(data)) return 'have-row'
+  if (Array.isArray(batteryLines) && batteryLines.length) return 'use-stored'
+  if (Array.isArray(batteryLines)) return 'none'
+  if (fileId) return 'read-file'
+  return 'no-file'
+}
+
+/**
+ * Create or enable Battery Reset from a battery D&R. A missing row is added.
+ * A disabled row is turned on. Nothing here sets `_learned`.
+ */
+export function openNissanBattery(data, { text = '', batteryLines = null } = {}) {
+  if (!/nissan|infiniti/i.test(`${data?.make || ''} ${data?.vehicle || ''}`)) return false
+  const stored = Array.isArray(batteryLines) ? batteryLines.map(String).filter(Boolean) : []
+  const fromText = text ? batteryDisconnectLines(text) : []
+  const lines = [...new Set([...stored, ...fromText])]
+  if (lines.length) return ensureNissanBatteryRow(data, lines)
+  return noteNissanBatteryProcedure(data)
+}
+
+export function noteNissanBatteryProcedure(data, batteryLines) {
+  if (!/nissan|infiniti/i.test(`${data?.make || ''} ${data?.vehicle || ''}`)) return false
+  const row = (data?.calibrations || []).find(c => /battery.?disconnect reset|\bbattery reset\b|operations required after disconnecting battery/i.test(`${c?.calibration_name || ''} ${c?.sensor || ''} ${c?.name || ''} ${c?.operation_title || ''}`))
+  if (!row) return false
+  const fromArg = Array.isArray(batteryLines) ? batteryLines.map(String).filter(Boolean) : null
+  if (fromArg && !fromArg.length) return false
+  const turnedOn = row.enabled !== true
+  if (turnedOn) row.enabled = true
+  const fromRow = String(row.line_references || '').split(/,\s*/).map(s => s.trim()).filter(Boolean)
+  const lines = [...new Set([...(fromArg || []), ...fromRow])]
+  const where = lines.length
+    ? `12V battery disconnect on line${lines.length > 1 ? 's' : ''} ${lines.join(', ')}.`
+    : '12V battery disconnect.'
+  const steps = `${where} Positive cable on first. Clamp both cables tight. Check the terminals for corrosion. Nissan procedure: ${NISSAN_BATTERY_MARK}. Power windows: Position Statement Power Window Servicing Post-Repair.`
+  const note = `Review applicability. ${steps} Additional service: Additional Service When Removing Battery Negative Terminal. These references start the verification. They do not make every available reset mandatory.`
+  const keepRequired = /^REQUIRED:/.test(String(row.classification || ''))
+  const changed = setFields(row, {
+    _reportRequired: true,
+    _onReport: true,
+    operation_title: BATTERY_RESET_TITLE,
+    classification: keepRequired ? row.classification : CLASS_REVIEW,
+    procedure: 'Initialization',
+    trigger: steps,
+    justification: note,
+    required_before: 'None. This reviews which initializations apply. It is not a step in the radar chain.',
+    repair_relationship: lines.length ? `Battery disconnect on line ${lines.join(', ')}.` : 'Battery disconnect on this estimate.',
+    oem_reference: 'Operations Required after Disconnecting Battery; Position Statement Power Window Servicing Post-Repair; Additional Service When Removing Battery Negative Terminal',
+  })
+  let stripped = false
+  for (const k of ['rate', 'price', 'hours', 'labor_hours']) if (k in row) { delete row[k]; stripped = true }
+  return changed || turnedOn || stripped
+}
+
+/** Turn Nissan/Infiniti park rows off when the saved trigger is only a bumper drop. Mutates data. */
+export function demoteNissanParkRows(data) {
+  if (!/nissan|infiniti/i.test(`${data?.make || ''} ${data?.vehicle || ''}`)) return false
+  let changed = false
+  for (const c of data?.calibrations || []) {
+    const n = `${c.calibration_name || ''} ${c.sensor || ''}`
+    if (!/park|ultrasonic|sonar|pdc|parking sensor/i.test(n) || c.enabled !== true) continue
+    if (!parkRowIsBumperOnly(c)) continue
+    Object.assign(c, {
+      enabled: false, trigger: '', line_references: '', _guard: 'demoted', justification: NISSAN_PARK_WHY,
+      classification: 'NOT REQUIRED: VERIFIED', procedure: '—',
+      required_before: 'None.',
+      repair_relationship: 'Bumper-cover drop only. No sonar sensor line.',
+      oem_reference: 'Nissan front bumper removal and installation. The sonar sensors are a separate step.',
+    })
+    changed = true
+  }
+  return changed
+}
+
 /**
  * Enforce the hard rules on a finished scrub. Mutates data.calibrations.
  * Returns what it changed so the report can say "guard: …".
@@ -172,7 +593,10 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
   const make = String(data.make || ''), year = Number(data.year || 0)
   const per = (m, s) => `${m || 'OEM'} OEM position statement and ALLDATA ADAS procedure${s ? ' — ' + s : ''}`
   // Raw text of one numbered estimate line (CCC: "3 # Subl Seat Weight Sensor 1 100.00") — '' when we have no text.
-  const lineRaw = n => { if (!text) return ''; const num = String(n).replace(/\D/g, ''); if (!num) return ''; for (const row of String(text).split(/\r?\n/)) { const m = row.match(/^\s*(\d+)\s+((?:[#*<>]+\s+)*\S.*)$/); if (m && m[1] === num) return m[2] } return '' }
+  // Spaced out ("S01 Repl USED RT door assy") so word tests work on CCC's glued text.
+  const lineRaw = n => { if (!text) return ''; const num = String(n).replace(/\D/g, ''); if (!num) return ''; for (const row of String(text).split(/\r?\n/)) { const r = parseEstimateRow(row); if (r && r.n === num) return [r.flags, r.sup, r.op, r.desc].filter(Boolean).join(' ') } return '' }
+  // The CCC section heading a line sits under ("rear body & floor") — '' when we have no text.
+  const sectionOf = (() => { const m = new Map(); for (const r of estimateRows(text)) if (!m.has(r.n)) m.set(r.n, r.section); return n => m.get(String(n).replace(/\D/g, '')) || '' })()
 
   // 0. Normalise the inventory before any rule fires (Mark, 2026-09-29).
   //    a) Blind spot is ONE calibration for the whole system, billed once —
@@ -442,6 +866,17 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
       `Bumper removed/installed or replaced, or park sensor removed (line${trig.length > 1 ? 's' : ''} ${trig.join(', ')})`, trig,
       `Parking aid sensor calibration required per ALLDATA ADAS Quick Reference (Ford: Parking Aid Sensor / Active Park Assist Sensor in the front and rear bumpers, R&R / R&I, static with targets): the operation on line${trig.length > 1 ? 's' : ''} ${trig.join(', ')} removes the sensors.`, out, ps.length > 0)
   }
+  // 5k. Nissan / Infiniti park sensors (2024 Ariya front bumper R&I, RO 8097,
+  //     2026-10-20). Dropping the cover does not call for a sonar reset. The
+  //     sonar sensors are a later, separate removal. Required only when a
+  //     park / sonar / ultrasonic sensor line is removed, replaced, or transferred.
+  if (/nissan|infiniti/i.test(`${make} ${data.vehicle || ''}`)) {
+    const ps = lines(hits.park_sensor)
+    if (ps.length) require(cals, /park|ultrasonic|sonar|pdc|parking sensor/i, 'Park Distance Sensor', 'Reset',
+      `Park / sonar sensor removed, replaced or transferred (line${ps.length > 1 ? 's' : ''} ${ps.join(', ')})`, ps,
+      `Parking sensor reset required because a sonar sensor was removed or replaced (line${ps.length > 1 ? 's' : ''} ${ps.join(', ')}). A bumper cover drop alone does not call for this reset.`, out, true)
+    else if (demoteNissanParkRows(data)) out.demoted = [...(out.demoted || []), 'Park Distance Sensor']
+  }
   // 5c. Stellantis — Dodge, Chrysler, Jeep, Ram, Fiat, Alfa Romeo (ALLDATA ADAS
   //     Quick Reference: 2023 Ram ProMaster + 2018 Dodge Challenger, pasted by Mark
   //     2026-10-02; "All Stellantis"). The ACC radar lives in the FRONT BUMPER:
@@ -478,27 +913,10 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
       `Liftgate / tailgate / trunk lid R&I or Repl (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')})`, ref,
       `Back Up Camera calibration required per ${per(make)} following liftgate, tailgate or trunk lid removal or replacement (line${ref.length > 1 ? 's' : ''} ${ref.join(', ')}); the camera is mounted in that panel and its aim is disturbed. Failure to calibrate presents a safety liability and does not meet ${make || 'OEM'} repair standards.`, out)
   }
-  // 6. 📷 Rear camera = "Back Up Camera" (Mark 2026-10-02: "the industry standard is
-  //    backup camera calibration, but in the description … if equipped with around
-  //    view, this is the around view calibration"). A surround-view line raised only
-  //    by rear work (liftgate / trunk / rear bumper / rear camera) becomes the Back Up
-  //    Camera line instead — one calibration, billed once.
-  {
-    const isAvc = c => /around view|surround|multi.?view|360|bird/i.test(String(c.calibration_name || ''))
-    const isBuc = c => /back ?up|rear view camera|rearview camera|rear camera|reverse camera/i.test(String(c.calibration_name || ''))
-    const avc = cals.find(isAvc), rear = new Set([...lg, ...rb])
-    const refs = r => String(r?.line_references || '').split(/[,\s]+/).filter(Boolean)
-    if (avc && avc.enabled === true && refs(avc).length && refs(avc).every(l => rear.has(l))) {
-      let buc = cals.find(isBuc)
-      if (!buc) { buc = { calibration_name: 'Back Up Camera', cal_type: avc.cal_type || 'Static' }; cals.push(buc) }
-      if (buc.enabled !== true) Object.assign(buc, { enabled: true, trigger: avc.trigger, line_references: avc.line_references, justification: avc.justification, _guard: 'from-surround' })
-      Object.assign(avc, { enabled: false, trigger: '', line_references: '', justification: 'Not a separate calibration: the rear camera work on this estimate is billed once as the Back Up Camera line (performed as the surround-view calibration on cars equipped with it).', _guard: 'merged' })
-      out.flipped.push('Around View (rear only) → Back Up Camera')
-    }
-    const buc = cals.find(isBuc)
-    if (buc && buc.enabled === true && avc && !/around view calibration/i.test(buc.justification || ''))
-      buc.justification = `${buc.justification || ''} If equipped with surround view (Around View / 360), this is performed as the Around View calibration.`.trim()
-  }
+  // 6. Backup vs Around View is decided in 6f, after the equipment gate.
+  //    A rear-only surround line used to be renamed to Back Up Camera (2026-10-02).
+  //    Mark 2026-10-19: when the car has Around View, that calibration covers the
+  //    backup camera. Renaming it the other way double-billed the rear camera.
 
   // 6c. Front side (corner) radars (Mark 2026-10-02): only on select cars. Equipped
   //     (scrub says so, a corner-radar line, or the row already cites the options) +
@@ -549,6 +967,24 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
     }
   }
 
+  // 6f. Around View covers the backup camera (Mark 2026-10-19). When we are
+  //     doing Around View, that procedure includes the rear camera, so Back Up
+  //     Camera is not a second calibration. A car with a backup camera and no
+  //     Around View still gets the Back Up Camera line. Runs after 6e so a
+  //     demoted Around View cannot take the backup camera with it.
+  {
+    const isAvc = c => /around view|surround|multi.?view|360|bird/i.test(String(c.calibration_name || ''))
+    const isBuc = c => /back ?up|rear ?view camera|rearview|reverse camera|rear camera/i.test(String(c.calibration_name || '')) && !/around|surround|360|mirror/i.test(String(c.calibration_name || ''))
+    const avc = cals.find(c => isAvc(c) && c.enabled === true)
+    if (avc) {
+      for (const buc of cals.filter(c => isBuc(c) && c.enabled === true)) {
+        Object.assign(buc, { enabled: false, trigger: '', line_references: '', _guard: 'covered-by-around-view', justification: 'Covered by the Around View calibration. The surround-view procedure includes the backup camera, so it is not a separate calibration on this vehicle.' })
+        out.demoted = [...(out.demoted || []), 'Back Up Camera (covered by Around View)']
+      }
+      if (!/covers the backup camera/i.test(avc.justification || '')) avc.justification = `${avc.justification || ''} The Around View calibration covers the backup camera on this vehicle.`.trim()
+    }
+  }
+
   // 6b. GM "any collision" front radar only when the car HAS adaptive cruise radar
   //     (Mark 2026-10-02: Kinetic's 6-of-62 = most Chevys have no radar). Kept when
   //     the VIN decode or the estimate's options show adaptive cruise, or a front
@@ -589,9 +1025,14 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
   //     it on a bumper-only AMG GT; Kinetic did not).
   {
     const fwc = cals.find(c => /windshield camera|front camera|forward camera|multipurpose|lane depart/i.test(String(c.calibration_name || '')) && !/around|surround|360|side|rear|back/i.test(String(c.calibration_name || '')))
-    if (fwc && fwc.enabled === true && !fwc._guard && !fwc._fs) {
+    // GM: front camera calibration after ANY collision (GM position statement; Kinetic
+    // "In Collision" on every Chevy/GMC/Cadillac — Silverado HD, XT5, Equinox EV, Oct 2026).
+    const gmCollision = /chevrolet|gmc|buick|cadillac/i.test(make)
+    if (fwc && fwc.enabled === true && !fwc._guard && !fwc._fs && !gmCollision) {
       const camHit = lines(hits.camera).some(n => /windshield|w\/s|multipurpose|multi-purpose|forward|lane|mpc|front view camera unit|camera unit/i.test(lineRaw(n)))
-      const disturbed = ws.length || al.length || camHit || lines(hits.structural).length || /\b(strut|control arm|knuckle|subframe|steering (gear|rack|column)|tie rod|suspension|ride height)\b/i.test(JSON.stringify(cals.map(c => c.trigger || '')) + ' ' + (text || '').slice(0, 20000))
+      // Rear structure (quarter, rear body, floor) does not move the windshield camera (2023 Model 3 rear hit).
+      const frontStructure = lines(hits.structural).some(n => { const t = `${sectionOf(n)} ${lineRaw(n)}`; return /(a-?pillar|hinge pillar|front pillar|windshield|roof|cowl|dash|apron|radiator support|core support|front rail|frame rail|upper rail|\brail\b)/i.test(t) && !/\b(rear|quarter|floor|trunk)\b/i.test(t) })
+      const disturbed = ws.length || al.length || camHit || frontStructure || /\b(strut|control arm|knuckle|subframe|steering (gear|rack|column)|tie rod|suspension|ride height)\b/i.test(JSON.stringify(cals.map(c => c.trigger || '')) + ' ' + (text || '').slice(0, 20000))
       if (!disturbed) {
         const mb = /mercedes|benz/i.test(make)
         Object.assign(fwc, { enabled: false, trigger: '', line_references: '', _guard: 'demoted',
@@ -618,6 +1059,20 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
           justification: `Module programming / coding required per ${per(mk)}: ${mods.length} electronic module${mods.length > 1 ? 's are' : ' is'} replaced on this estimate (line${mods.length > 1 ? 's' : ''} ${mods.join(', ')}). A new ${mk} module must be programmed and configured to this VIN (and coded where the OEM requires it) before it will operate and before any related calibration can be performed. One programming operation per module.` })
         out.added.push(`${name} ×${mods.length} ← ${mods.join(', ')}`)
       }
+    }
+  }
+
+  // 7e. The outside mirror carries the blind spot WARNING LIGHT, not the radar (the radars
+  //     sit behind the rear bumper / quarter). A blind spot cal cited only on a mirror line is
+  //     a model error (2021 Silverado HD: "mirror carries blind spot radar hardware"; Kinetic: no).
+  {
+    const bsm = cals.find(c => /blind.?spot|rear.*radar/i.test(String(c.calibration_name || '')) && !/front/i.test(String(c.calibration_name || '')))
+    const refs = String(bsm?.line_references || '').split(/[,\s]+/).filter(Boolean)
+    const rearWork = rb.length || lines(hits.rear_bumper_rpr).length || lines(hits.structural).some(n => /quarter|rear|wheelhouse/i.test(lineRaw(n))) || rs.length
+    if (bsm && bsm.enabled === true && !bsm._guard && refs.length && !rearWork && refs.every(n => /mirror/i.test(lineRaw(n)))) {
+      Object.assign(bsm, { enabled: false, trigger: '', line_references: '', _guard: 'demoted',
+        justification: 'Not required — the outside mirror holds only the blind spot warning indicator; the blind spot radars are behind the rear bumper / quarter panels, and no rear bumper, quarter panel or radar operation is on this estimate. Confirm the system at post-scan.' })
+      out.demoted = [...(out.demoted || []), 'Rear Blind Spot Radar (mirror only)']
     }
   }
 
@@ -662,6 +1117,26 @@ export async function guardScrub(data, base64Pdf, { hitsPromise = null, text = '
       }
     }
   }
+
+  const teslaBsm = stripTeslaBlindSpot(data)
+  if (teslaBsm.length) {
+    out.dropped = [...(out.dropped || []), ...teslaBsm.map(n => `${n}: Tesla has no blind spot sensors`)]
+    console.log(`[guard] Tesla: dropped blind spot — ${teslaBsm.join(' · ')}`)
+  }
+
+  // Nissan distance-sensor chain. Alignment is the prerequisite. Steering angle
+  // stays conditional unless an alignment line is an adjustment, not an inspection.
+  const adjustedAl = al.filter(n => {
+    const raw = lineRaw(n).toLowerCase()
+    if (!raw) return true
+    return !(/inspect|inspection/.test(raw) && !/\badjust/.test(raw))
+  })
+  if (noteNissanRadarAlignment(data, al, { adjustmentLines: adjustedAl })) out.added.push('4-Way Alignment prerequisite')
+
+  // Nissan/Infiniti battery reconnect. The battery bucket already matched, or
+  // this does nothing. It writes on the reset row from 4a. It does not add a
+  // row and it does not turn the steering angle sensor on.
+  if (noteNissanBatteryProcedure(data, bat)) out.noted = [...(out.noted || []), 'Battery Operations: 12V reconnect procedure']
 
   if (out.flipped.length || out.added.length) console.log(`[guard] ${make} ${data.year || ''}: flipped ${out.flipped.length}, added ${out.added.length}${out.demoted ? `, demoted ${out.demoted.length}` : ''} — ${[...out.flipped, ...out.added, ...(out.demoted || [])].join(' · ')}`)
   data._guard = { flipped: out.flipped, added: out.added }

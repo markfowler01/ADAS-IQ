@@ -72,7 +72,11 @@ const EQUIP = [['acc', 'Adaptive cruise (front radar)'], ['aeb', 'Automatic emer
   ['lane_keep', 'Lane keep (windshield camera)'], ['lane_departure', 'Lane departure warning (windshield camera)'], ['blind_spot', 'Blind spot (rear radars)'],
   ['rear_cross', 'Rear cross-traffic'], ['park_assist', 'Park assist'], ['backup_cam', 'Backup camera']]
 export function findVinInText(text) {
-  for (const m of String(text || '').toUpperCase().matchAll(/\b[A-HJ-NPR-Z0-9]{17}\b/g)) if (validateVin(m[0]).ok) return m[0]
+  const t = String(text || '').toUpperCase()
+  // CCC PDF text glues the VIN to the next field ("VIN:    3GN7DMRR3RS248980Interior"),
+  // so \b never matched and text-path scrubs ran with no VIN decode (2026-10-14 → 10-26).
+  for (const m of t.matchAll(/\bVIN\b[:#\s]*([A-HJ-NPR-Z0-9]{17})/g)) if (validateVin(m[1]).ok) return m[1]
+  for (const m of t.matchAll(/\b[A-HJ-NPR-Z0-9]{17}\b/g)) if (validateVin(m[0]).ok) return m[0]
   return ''
 }
 export async function vinEquipment(req, vin) {
