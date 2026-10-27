@@ -20,9 +20,9 @@ export async function discoverCity(req, city, state = 'WA') {
     const apiKey = process.env.GOOGLE_PLACES_API_KEY
     if (!apiKey) throw Object.assign(new Error('Google Places API key not configured'), { status: 500 })
     city = String(city || '').trim(); if (!city) throw Object.assign(new Error('city required'), { status: 400 })
-    // New markets (2026-10-27): Boise ID, Phoenix AZ, Bay Area CA. Default stays Washington.
-    state = ['WA', 'ID', 'AZ', 'CA'].includes(String(state || '').toUpperCase()) ? String(state).toUpperCase() : 'WA'
-    const STATE_NAME = { WA: 'Washington', ID: 'Idaho', AZ: 'Arizona', CA: 'California' }[state]
+    // New markets (2026-10-27): Boise ID, Phoenix AZ, Bay Area CA, Portland OR. Default stays Washington.
+    state = ['WA', 'OR', 'ID', 'AZ', 'CA'].includes(String(state || '').toUpperCase()) ? String(state).toUpperCase() : 'WA'
+    const STATE_NAME = { WA: 'Washington', OR: 'Oregon', ID: 'Idaho', AZ: 'Arizona', CA: 'California' }[state]
     const axios = (await import('axios')).default
     const headers = { 'Content-Type': 'application/json', 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.nationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.googleMapsUri,places.businessStatus,places.primaryType,places.types,nextPageToken' }
     const queries = [`auto body shop in ${city}, ${state}`, `collision repair center in ${city}, ${state}`]
