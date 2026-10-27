@@ -81,12 +81,17 @@ export const ZONES = [
   { id: 'peninsula', market: 'bay',     label: 'Peninsula',        owner: '', day: 'TBD' },
   { id: 'eastbay',   market: 'bay',     label: 'East Bay',         owner: '', day: 'TBD' },
   { id: 'southbay',  market: 'bay',     label: 'South Bay',        owner: '', day: 'TBD' },
+  { id: 'pdx',       market: 'portland', label: 'Portland',         owner: '', day: 'TBD' },
+  { id: 'pdxwest',   market: 'portland', label: 'Westside',         owner: '', day: 'TBD' },
+  { id: 'pdxeast',   market: 'portland', label: 'East / Clackamas', owner: '', day: 'TBD' },
+  { id: 'vancouver', market: 'portland', label: 'Vancouver / Clark Co.', owner: '', day: 'TBD' },
 ]
 export const MARKETS = [
   { id: 'wa',      label: 'Washington', emoji: '🌲', state: 'WA' },
   { id: 'boise',   label: 'Boise',      emoji: '🥔', state: 'ID' },
   { id: 'phoenix', label: 'Phoenix',    emoji: '🌵', state: 'AZ' },
   { id: 'bay',     label: 'Bay Area',   emoji: '🌉', state: 'CA' },
+  { id: 'portland', label: 'Portland',  emoji: '🌹', state: 'OR' },
 ]
 // A shop's market = its zone's market; out of area / no zone counts as Washington.
 export const marketOf = s => ZONES.find(z => z.id === s?.region)?.market || 'wa'

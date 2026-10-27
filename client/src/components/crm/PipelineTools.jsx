@@ -161,7 +161,7 @@ export function DiscoverModal({ onClose, onAdded, market = 'wa' }) {
   const [adding, setAdding] = useState(false)
   const stopRef = useState({ stop: false })[0]
   useEffect(() => { j('/api/pipeline/zones').then(d => { const zs = d.zones.filter(z => (z.market || 'wa') === market); setZones(zs); setPicked(new Set(zs.map(z => z.id))) }).catch(e => setErr(e.message)) }, [])
-  const cities = zones ? zones.filter(z => picked.has(z.id)).flatMap(z => z.cities.filter(c => !/^(mt|mt\.) /.test(c) && !/sedro woolley/.test(c)).map(c => ({ city: c.replace(/\b\w/g, m => m.toUpperCase()), zone: z.id }))) : []
+  const cities = zones ? zones.filter(z => picked.has(z.id)).flatMap(z => z.cities.filter(c => !/^(mt|mt\.) /.test(c) && !/sedro woolley/.test(c)).map(c => ({ city: c.replace(/\b\w/g, m => m.toUpperCase()), zone: z.id, state: z.state || st }))) : []
   async function run() {
     setRunning(true); setErr(''); setCands([]); setChecked(new Set()); setAlready(0); stopRef.stop = false
     const seen = new Set(); const all = []; let dup = 0
@@ -170,7 +170,7 @@ export function DiscoverModal({ onClose, onAdded, market = 'wa' }) {
       if (stopRef.stop) break
       const c = cities[i]; setProgress({ done: i, total: cities.length, city: c.city })
       try {
-        const d = await j(`/api/pipeline/discover?city=${encodeURIComponent(c.city)}&state=${st}`)
+        const d = await j(`/api/pipeline/discover?city=${encodeURIComponent(c.city)}&state=${c.state}`)
         dup += d.already
         let n = 0
         for (const x of d.candidates) { if (seen.has(x.place_id)) continue; seen.add(x.place_id); all.push({ ...x, zone: x.zone || c.zone }); n++ }

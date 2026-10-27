@@ -568,7 +568,7 @@ router.post('/market/discover-add', requireCronSecret, async (req, res) => {
     const P = await import('../services/pipeline.js'); const { discoverCity } = await import('./pipeline.js'); const { insertShop, getAllShops } = await import('./shops.js')
     const m = P.MARKET_BY_ID[String(req.query.market || '')]
     if (!m || m.home) return res.status(400).json({ error: `market must be one of ${P.MARKETS.filter(x => !x.home).map(x => x.id).join(', ')}` })
-    const d = await discoverCity(req, String(req.query.city || ''), m.state)
+    const d = await discoverCity(req, String(req.query.city || ''), req.query.state || m.state)   // ?state=WA for Clark County (Portland market)
     const norm = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
     const have = new Set((await getAllShops(req)).map(s => norm(s.shop_name)))
     const rows = []

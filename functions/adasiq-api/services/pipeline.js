@@ -35,15 +35,22 @@ export const ZONES = [
   { id: 'peninsula',   market: 'bay',     label: 'Peninsula',        owner: '', day: 'TBD', cities: ['san mateo', 'burlingame', 'redwood city', 'menlo park', 'palo alto', 'san carlos', 'belmont', 'millbrae', 'san bruno', 'foster city'] },
   { id: 'eastbay',     market: 'bay',     label: 'East Bay',         owner: '', day: 'TBD', cities: ['oakland', 'berkeley', 'alameda', 'san leandro', 'hayward', 'fremont', 'union city', 'richmond', 'emeryville', 'walnut creek', 'concord', 'pleasanton', 'dublin', 'livermore', 'san ramon'] },
   { id: 'southbay',    market: 'bay',     label: 'South Bay',        owner: '', day: 'TBD', cities: ['san jose', 'santa clara', 'sunnyvale', 'mountain view', 'milpitas', 'cupertino', 'campbell', 'los gatos'] },
+  // 🌹 Portland (Mark 2026-10-27). Clark County is Washington but Portland metro, so its zone carries its own state.
+  { id: 'pdx',         market: 'portland', label: 'Portland',         owner: '', day: 'TBD', cities: ['portland', 'maywood park'] },
+  { id: 'pdxwest',     market: 'portland', label: 'Westside',         owner: '', day: 'TBD', cities: ['beaverton', 'hillsboro', 'tigard', 'tualatin', 'lake oswego', 'west linn', 'sherwood', 'forest grove', 'wilsonville', 'cornelius', 'aloha'] },
+  { id: 'pdxeast',     market: 'portland', label: 'East / Clackamas', owner: '', day: 'TBD', cities: ['gresham', 'troutdale', 'fairview', 'wood village', 'happy valley', 'clackamas', 'milwaukie', 'oregon city', 'gladstone', 'canby'] },
+  { id: 'vancouver',   market: 'portland', state: 'WA', label: 'Vancouver / Clark Co.', owner: '', day: 'TBD', cities: ['vancouver', 'battle ground', 'camas', 'washougal', 'ridgefield', 'la center'] },
 ]
 export const MARKETS = [
   { id: 'wa',      label: 'Washington',  state: 'WA', home: true },
   { id: 'boise',   label: 'Boise',       state: 'ID' },
   { id: 'phoenix', label: 'Phoenix',     state: 'AZ' },
   { id: 'bay',     label: 'Bay Area',    state: 'CA' },
+  { id: 'portland', label: 'Portland',   state: 'OR' },
 ]
 export const MARKET_BY_ID = Object.fromEntries(MARKETS.map(m => [m.id, m]))
 export const zoneMarket = z => z?.market || 'wa'
+export const zoneState = z => z?.state || MARKET_BY_ID[zoneMarket(z)]?.state || 'WA'
 const STATE_RE = /^(WA|Washington|OR|Oregon|ID|Idaho|AZ|Arizona|CA|California)\b/i
 const STATE_CODE = { washington: 'WA', oregon: 'OR', idaho: 'ID', arizona: 'AZ', california: 'CA' }
 /** Two-letter state named in an address ("…, Boise, ID 83704, USA" → 'ID'), or ''. */
@@ -54,7 +61,7 @@ export function stateOf(address) {
 // region = 'out' → out of the I-5 territory (Mark 2026-10-14): kept in the CRM, never in zone counts,
 // owner lists or Monday lists. These cities set it automatically.
 export const OUT_OF_AREA = 'out'
-export const OUT_CITIES = ['vancouver', 'battle ground', 'camas', 'washougal', 'ridgefield', 'longview', 'kelso', 'castle rock', 'aberdeen', 'hoquiam', 'montesano', 'port angeles', 'sequim', 'port townsend', 'forks']
+export const OUT_CITIES = ['longview', 'kelso', 'castle rock', 'aberdeen', 'hoquiam', 'montesano', 'port angeles', 'sequim', 'port townsend', 'forks']
 export const ZONE_BY_ID = Object.fromEntries(ZONES.map(z => [z.id, z]))
 export const OWNERS = ['Mark', 'Jayden']
 export const IN_PLAY_CAP = 10
@@ -93,7 +100,7 @@ export function zoneForAddress(address) {
   const a = ` ${cityPart(address).toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ')} `
   const st = stateOf(address) || 'WA'
   let best = null
-  for (const z of ZONES.filter(z => MARKET_BY_ID[zoneMarket(z)]?.state === st)) for (const c of z.cities) if (a.includes(` ${c.replace(/[^a-z0-9 ]+/g, ' ')} `) && (!best || c.length > best.len)) best = { id: z.id, len: c.length }
+  for (const z of ZONES.filter(z => zoneState(z) === st)) for (const c of z.cities) if (a.includes(` ${c.replace(/[^a-z0-9 ]+/g, ' ')} `) && (!best || c.length > best.len)) best = { id: z.id, len: c.length }
   return best?.id || ''
 }
 export function zoneOf(shop) { if (shop.region === OUT_OF_AREA) return ''; return ZONE_BY_ID[shop.region] ? shop.region : (zoneForAddress(shop.address) || zoneForAddress(shop.shop_name)) }
