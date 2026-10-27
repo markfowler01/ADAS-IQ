@@ -3,20 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Absolute ADAS Platform</title>
+    <title>Absolute ADAS</title>
     <meta name="description" content="Absolute ADAS — mobile ADAS calibration & diagnostics operations platform. Job board, invoicing, and reporting." />
     <link rel="icon" type="image/png" href="/logo.png" />
-    <link rel="apple-touch-icon" href="/logo.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
     <!-- PWA — manifest + standalone mode make iOS treat the home-screen
          app as installable, which is required for Web Push (iOS 16.4+). -->
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.json" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Absolute ADAS" />
     <meta name="theme-color" content="#f5f3f0" />
     <!-- Open Graph -->
-    <meta property="og:title" content="Absolute ADAS Platform" />
+    <meta property="og:title" content="Absolute ADAS" />
     <meta property="og:description" content="Mobile ADAS calibration & diagnostics — job board, invoicing, and reporting." />
     <meta property="og:type" content="website" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -47,7 +47,7 @@
             var empty = !root || root.children.length === 0 || (root.innerText || '').trim().length < 20;
             if (empty && Date.now() - last > 120000) {
               sessionStorage.setItem(key, String(Date.now()));
-              var u = location.pathname + '?v=' + Date.now() + (location.hash || '');
+              var q = new URLSearchParams(location.search); q.set('v', String(Date.now())); var u = location.pathname + '?' + q.toString() + (location.hash || '');   // keep ?meeting= etc. (2026-10-27: room reloaded into the login screen)
               location.replace(u);
             }
           }, 8000);
