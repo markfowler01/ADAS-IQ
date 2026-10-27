@@ -176,3 +176,10 @@ export const TEMPLATES = [
     text: `Hi {contact_first},\n\nJust wanted to reach out and say hello — it's Mark from Absolute ADAS.\n\nHope things are going great at {shop_name}. We've been growing our team and expanding our capabilities. If you ever need fast, certified ADAS calibrations, we're here.\n\nLet me know if there's anything we can do for you!\n\nMark Fowler\nAbsolute ADAS`,
   },
 ]
+
+// 🏁 Founding shops (Mark 2026-10-27): the first 10 shops in a new market that commit before
+// the van comes. Hitting 10 is the launch trigger. Saved on the shop as billing_rules.founding.
+export const FOUNDING_GOAL = 10
+const rulesOf = s => { const b = s?.billing_rules; if (!b) return {}; if (typeof b === 'object') return b; try { return JSON.parse(b) || {} } catch { return {} } }
+export const isFounding = s => !!rulesOf(s).founding
+export const foundingIn = (shops, market) => shops.filter(s => marketOf(s) === market && isFounding(s))

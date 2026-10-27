@@ -228,3 +228,96 @@ export function DiscoverModal({ onClose, onAdded, market = 'wa' }) {
     </div>
   )
 }
+
+// 🎯 Top 20 per market (Mark 2026-10-27, the "Dream 100" idea): rank a market's list so the
+// expensive treatment (mailed box, 3 calls, one trip) goes to the shops that matter most.
+// Google reviews stand in for car count; a name seen at 2+ addresses is a multi-shop owner
+// (one yes = several shops). National chains buy at corporate, so they're hidden by default.
+const CHAIN_RE = /\b(caliber|gerber|crash champions|service king|fix auto|carstar|maaco|abra|joe hudson|classic collision|vivid|1collision|boyd|cars collision|christian brothers)\b/i
+const gReviews = s => { const m = String(s.notes || '').match(/(\d(?:\.\d)?)★ \((\d+)\)/); return m ? { rating: Number(m[1]), reviews: Number(m[2]) } : { rating: 0, reviews: 0 } }
+const cityOf = s => { const p = String(s.address || '').split(',').map(x => x.trim()); return p.length >= 3 ? p[p.length - 3] : '' }
+const brandKey = s => String(s.shop_name || '').toLowerCase().split(/\s[-–|@]\s|\s(?:of|in|at)\s/)[0].replace(/&/g, 'and').replace(/\b(inc|llc|the|co)\b/g, '').replace(cityOf(s).toLowerCase(), '').replace(/[^a-z0-9]+/g, ' ').trim()
+export function rankTop(shops, market, { chains = false, n = 20 } = {}) {
+  const live = shops.filter(s => !['lost', 'denied'].includes(s.pipeline_stage))
+  const locs = {}; for (const s of live) { const k = brandKey(s); if (k) locs[k] = (locs[k] || 0) + 1 }
+  const seen = new Set(), out = []
+  for (const s of live) {
+    const chain = CHAIN_RE.test(s.shop_name || ''); if (chain && !chains) continue
+    const k = brandKey(s), { rating, reviews } = gReviews(s), l = locs[k] || 1
+    const score = Math.round(Math.log10(1 + reviews) * 40 + Math.max(0, rating - 4) * 20 + (l - 1) * 20)
+    out.push({ shop: s, k, rating, reviews, locs: l, chain, score })
+  }
+  out.sort((a, b) => b.score - a.score)
+  // One row per owner: the MSO's busiest location stands for the group.
+  return out.filter(r => (r.locs > 1 ? (seen.has(r.k) ? false : (seen.add(r.k), true)) : true)).slice(0, n)
+}
+
+export function FoundingStrip({ count, goal, label, onOpen }) {
+  const pct = Math.min(100, (count / goal) * 100), done = count >= goal
+  return (
+    <div className="rounded-xl px-3 py-2 mb-3 flex items-center gap-3 flex-wrap" style={{ backgroundColor: done ? '#ecfdf5' : '#fff7ed', border: `1.5px solid ${done ? '#6ee7b7' : '#fed7aa'}` }}>
+      <div className="flex-1 min-w-[180px]">
+        <div className="text-xs font-bold" style={{ color: done ? '#065f46' : '#9a3412' }}>🏁 {label} founding shops · {count} of {goal}{done ? ' · launch trigger hit, send the van' : ` · ${goal - count} to go`}</div>
+        <div className="h-2 rounded mt-1" style={{ backgroundColor: '#fde7d3' }}><div className="h-2 rounded" style={{ width: `${pct}%`, backgroundColor: done ? GREEN : ORANGE }} /></div>
+      </div>
+      <button onClick={onOpen} className="text-xs font-bold px-3 py-1.5 rounded-full" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>🎯 Top 20</button>
+    </div>
+  )
+}
+
+export function TopPickerModal({ shops, market, label, goal, isFounding, onClose, onOpenShop, onChanged }) {
+  const [chains, setChains] = useState(false)
+  const [tab, setTab] = useState('top')
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const [q, setQ] = useState('')
+  const top = rankTop(shops, market, { chains })
+  const founders = shops.filter(isFounding)
+  const found = q.trim().length >= 2 ? shops.filter(s => String(s.shop_name || '').toLowerCase().includes(q.trim().toLowerCase())).slice(0, 15) : []
+  async function toggle(s) {
+    setBusy(String(s.id)); setErr('')
+    try { await j(`/api/shops/${s.id}/founding`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !isFounding(s) }) }); await onChanged() }
+    catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  const row = (s, extra, i) => {
+    const f = isFounding(s)
+    return (
+      <div key={s.id} className="flex items-start gap-2 py-2 text-sm" style={{ borderTop: '1px solid #f1f5f9' }}>
+        {i != null && <span className="w-6 text-right font-bold flex-shrink-0" style={{ color: '#aaa' }}>{i + 1}</span>}
+        <button onClick={() => onOpenShop(s)} className="text-left min-w-0 flex-1">
+          <span className="font-semibold" style={{ color: '#1a1a1a' }}>{s.shop_name}</span>{f && <span className="ml-1 text-[11px] font-bold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#ffedd5', color: '#9a3412' }}>🏁 Founding</span>}
+          <div className="text-xs" style={{ color: '#666' }}>{extra}{s.phone ? ` · ${s.phone}` : ''}</div>
+        </button>
+        <button onClick={() => toggle(s)} disabled={!!busy} className="text-xs font-bold px-2.5 py-1 rounded-full flex-shrink-0" style={f ? { backgroundColor: 'white', color: '#9a3412', border: '1px solid #fed7aa' } : { backgroundColor: ORANGE, color: 'white' }}>{busy === String(s.id) ? '…' : f ? 'Remove' : '🏁 Mark founding'}</button>
+      </div>
+    )
+  }
+  return (
+    <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" style={{ maxHeight: '92vh' }}>
+        <div className="px-5 py-3 flex items-start justify-between gap-2" style={{ borderBottom: '1px solid #ebebeb' }}>
+          <div><Eyebrow>🎯 {label} · top 20 + founding shops</Eyebrow><div className="text-sm" style={{ color: '#555' }}>Ranked by Google reviews (car count), rating, and shops with more than one location. These get the box, the 3 calls and the trip.</div></div>
+          <button onClick={onClose} className="text-2xl" style={{ color: '#888' }}>×</button>
+        </div>
+        <div className="px-5 pt-3 flex gap-1.5 flex-wrap">
+          <Pill size="sm" on={tab === 'top'} onClick={() => setTab('top')}>🎯 Top 20</Pill>
+          <Pill size="sm" on={tab === 'founding'} onClick={() => setTab('founding')}>🏁 Founding · {founders.length}/{goal}</Pill>
+        </div>
+        <div className="px-5 py-3 overflow-y-auto">
+          {err && <Notice tone="red">{err}</Notice>}
+          {tab === 'top' && <>
+            <label className="flex items-center gap-2 text-xs mb-1" style={{ color: '#666' }}><input type="checkbox" checked={chains} onChange={e => setChains(e.target.checked)} /> Include national chains (Caliber, Gerber, Crash Champions… they buy at corporate)</label>
+            {top.length === 0 && <div className="text-sm py-4" style={{ color: '#888' }}>No shops in this market yet.</div>}
+            {top.map((r, i) => row(r.shop, [r.reviews ? `${r.rating}★ · ${r.reviews} reviews` : 'no Google reviews', r.locs > 1 && `🏢 ${r.locs} locations`, r.chain && '🔗 chain', cityOf(r.shop)].filter(Boolean).join(' · '), i))}
+          </>}
+          {tab === 'founding' && <>
+            {founders.length === 0 && <div className="text-sm py-2" style={{ color: '#888' }}>No founding shops yet. Mark one from the Top 20, or find it below.</div>}
+            {founders.map(s => row(s, cityOf(s) || s.address || ''))}
+            <input value={q} onChange={e => setQ(e.target.value)} placeholder="Find any shop in this market…" className="w-full px-3 py-2 text-sm mt-3" style={inp} />
+            {found.filter(s => !isFounding(s)).map(s => row(s, cityOf(s) || s.address || ''))}
+          </>}
+        </div>
+      </div>
+    </div>
+  )
+}

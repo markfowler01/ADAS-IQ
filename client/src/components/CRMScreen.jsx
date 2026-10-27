@@ -5,8 +5,8 @@ import CustomersView from './crm/CustomersView.jsx'
 import { typeBadge, shopTypeOf } from './crm/shopType.js'
 import DealsBoard from './crm/DealsBoard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
-import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel, MARKETS, marketOf, zonesIn } from './crmConstants.js'
-import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, DiscoverModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
+import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel, MARKETS, marketOf, zonesIn, FOUNDING_GOAL, isFounding, foundingIn } from './crmConstants.js'
+import { InPlayBar, TerritoryGrid, SetupBanner, NextActionModal, MondayModal, DiscoverModal, FoundingStrip, TopPickerModal, staleDays, zoneOf, ownerOf, inPlayCount } from './crm/PipelineTools.jsx'
 import Navbar from './Navbar'
 import RepairCustomers from './crm/RepairCustomers.jsx'  // repair customers, kept separate from shops (2026-09-14)
 import CRMImportModal from './CRMImportModal'
@@ -527,6 +527,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [gridOpen,      setGridOpen]      = useState(false)
   const [mondayOpen,    setMondayOpen]    = useState(false)
   const [discoverOpen,  setDiscoverOpen]  = useState(false)
+  const [topOpen,       setTopOpen]       = useState(false)
   const [compFilter,    setCompFilter]    = useState('')
   const [nextPrompt,    setNextPrompt]    = useState(null)   // { shop, stage } waiting for a next action
   const [showOverdue,   setShowOverdue]   = useState(false)
@@ -846,7 +847,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
         {/* 🗺 Market switch */}
         {!loading && !error && <div className="flex gap-1.5 mb-3 overflow-x-auto pb-1">{MARKETS.map(m => { const n = rawShops.filter(sh => marketOf(sh) === m.id && typeOfShop(sh) === crmMode).length; const on = market === m.id; return (
           <button key={m.id} onClick={() => { setMarket(m.id); setRegionFilter(''); setStageFilter(''); setOwnerFilter('') }} className="text-xs font-bold rounded-full px-3 py-1.5 whitespace-nowrap flex-shrink-0"
-            style={on ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e8e4e0' }}>{m.emoji} {m.label} · {n}</button>) })}</div>}
+            style={on ? { backgroundColor: '#1a1a1a', color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e8e4e0' }}>{m.emoji} {m.label} · {n}{m.id !== 'wa' ? ` · 🏁 ${foundingIn(rawShops, m.id).length}/${FOUNDING_GOAL}` : ''}</button>) })}</div>}
+        {!loading && !error && marketBoard && market !== 'wa' && allShops.length > 0 && <FoundingStrip count={foundingIn(rawShops, market).length} goal={FOUNDING_GOAL} label={MARKETS.find(m => m.id === market)?.label} onOpen={() => setTopOpen(true)} />}
         {!loading && !error && market !== 'wa' && shops.length === 0 && <div className="rounded-xl px-3 py-3 mb-3 text-sm" style={{ backgroundColor: '#f8f6f4', border: '1.5px dashed #d6d3d1', color: '#555' }}>No {MARKETS.find(m => m.id === market)?.label} shops yet. {isOwnerUser(user) ? 'Tap 🔎 Find every shop to pull the list from Google.' : 'Mark can pull the list with 🔎 Find every shop.'}</div>}
         {/* Stats bar */}
         {!loading && !error && <StatsBar shops={shops} />}
@@ -1140,6 +1142,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
 
       {nextPrompt && <NextActionModal shop={nextPrompt.shop} stage={nextPrompt.stage} onCancel={() => setNextPrompt(null)} onConfirm={extra => { const p = nextPrompt; setNextPrompt(null); handleStageChange(p.shop, p.stage, extra) }} />}
 
+      {topOpen && <TopPickerModal shops={allShops} market={market} label={MARKETS.find(m => m.id === market)?.label} goal={FOUNDING_GOAL} isFounding={isFounding} onClose={() => setTopOpen(false)} onOpenShop={sh => { setTopOpen(false); setDetailShop(sh) }} onChanged={fetchShops} />}
       {discoverOpen && <DiscoverModal market={market} onClose={() => setDiscoverOpen(false)} onAdded={(n, d) => { setToast(`🔎 Added ${n} shops as Targets${d ? ` · ${d} already there` : ''}`); fetchShops() }} />}
         {mondayOpen && <MondayModal isOwner={isOwnerUser(user)} onClose={() => setMondayOpen(false)} onOpenShop={id => { const sh = shops.find(x => x.id === id); if (sh) { setMondayOpen(false); setDetailShop(sh) } }} />}
 

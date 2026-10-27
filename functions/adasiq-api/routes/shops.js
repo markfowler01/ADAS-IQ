@@ -299,6 +299,19 @@ router.put('/:id/spot-pay', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🏁 Founding shop (Mark 2026-10-27): one of the first 10 shops to commit in a new market
+// before the van comes. 10 in a market = the launch trigger (CRM market strip counts them).
+router.put('/:id/founding', async (req, res) => {
+  try {
+    const shop = (await getAllShops(req)).find(x => String(x.id) === String(req.params.id)); if (!shop) return res.status(404).json({ error: 'Shop not found' })
+    if (String(req.user?.role || '') === 'technician') return res.status(403).json({ error: 'Owner / Kat only' })
+    const br = typeof shop.billing_rules === 'string' ? (JSON.parse(shop.billing_rules || '{}') || {}) : (shop.billing_rules || {})
+    const on = !!req.body?.on
+    const updated = await updateShop(req, shop.id, { ...shop, billing_rules: { ...br, founding: on ? { at: new Date().toISOString(), by: req.user?.name || req.user?.email || '' } : null } })
+    res.json({ ok: true, founding: on, shop: updated })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 // 🔗 Integrations (Mark 2026-09-23): Kinetic via CCC Secure Share, ADAS Maps.
 router.get('/:id/integrations', async (req, res) => {
   try {
