@@ -236,7 +236,11 @@ export function DiscoverModal({ onClose, onAdded, market = 'wa' }) {
 const CHAIN_RE = /\b(caliber|gerber|crash champions|service king|fix auto|carstar|maaco|abra|joe hudson|classic collision|vivid|1collision|boyd|cars collision|christian brothers)\b/i
 const gReviews = s => { const m = String(s.notes || '').match(/(\d(?:\.\d)?)★ \((\d+)\)/); return m ? { rating: Number(m[1]), reviews: Number(m[2]) } : { rating: 0, reviews: 0 } }
 const cityOf = s => { const p = String(s.address || '').split(',').map(x => x.trim()); return p.length >= 3 ? p[p.length - 3] : '' }
-const brandKey = s => String(s.shop_name || '').toLowerCase().split(/\s[-–|@]\s|\s(?:of|in|at)\s/)[0].replace(/&/g, 'and').replace(/\b(inc|llc|the|co)\b/g, '').replace(cityOf(s).toLowerCase(), '').replace(/[^a-z0-9]+/g, ' ').trim()
+const GENERIC_RE = /^(?:(?:auto|body|collision|center|centers|repair|shop|paint|and|car|cars|the|frame|dent|refinish|services?)\s*)+$/
+const brandKey = s => {
+  const k = String(s.shop_name || '').toLowerCase().split(/\s[-–|@]\s|\s(?:of|in|at)\s/)[0].replace(/&/g, 'and').replace(/\b(inc|llc|the|co)\b/g, '').replace(cityOf(s).toLowerCase(), '').replace(/[^a-z0-9]+/g, ' ').trim()
+  return GENERIC_RE.test(k) ? `${k} @${String(s.address || '').toLowerCase()}` : k   // "Tempe Collision Center" isn't a chain
+}
 export function rankTop(shops, market, { chains = false, n = 20 } = {}) {
   const live = shops.filter(s => !['lost', 'denied'].includes(s.pipeline_stage))
   const locs = {}; for (const s of live) { const k = brandKey(s); if (k) locs[k] = (locs[k] || 0) + 1 }
