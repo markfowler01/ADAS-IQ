@@ -64,3 +64,17 @@ test('Secure Share rows ("3 | R&I | …") read the operation column', () => {
   assert.deepEqual(h.alignment, ['9'])
   assert.deepEqual(h.windshield, ['12'])
 })
+
+test('Mitchell estimates: glued 6-digit op codes, wrapped operations, plain headings', () => {
+  const MIT = ['Mitchell Cloud Estimating', 'Front Door', '1202102L Frt Door OutsideBlendRefinish1.1', '2202107L Frt Rear View MirrorRemove /', 'Install', 'Body0.4Existing',
+    'Rear Bumper', '29204870Rear Bumper Cover AssyOverhaulBody3.4#Existing', '30AUTOR Rear Combination LampRemove /', 'Install', 'Body0.4',
+    '31204871Rear Add w/Distance', 'Sensor', 'Remove /', 'Replace', 'Body0.4', '32203425Rear Bumper CoverRepairBody4.0*#Existing',
+    'Special / Manual Entry', '509005004 WHEEL ALIGNMENTAlignBody*0.0*SubletSublet1$99.99*', '031460400001$474.00Yes'].join('\n')
+  const h = triggerLinesFromText(MIT)
+  assert.deepEqual(h.rear_bumper, ['29'])
+  assert.deepEqual(h.rear_bumper_rpr, ['32'])
+  assert.deepEqual(h.alignment, ['50'])        // line 50, not 509
+  assert.deepEqual(h.mirror, ['2'])
+  assert.deepEqual(h.park_sensor, ['31'])
+  assert.deepEqual(h.module_repl, [])
+})

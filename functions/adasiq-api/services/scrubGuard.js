@@ -73,10 +73,59 @@ export function parseEstimateRow(row) {
   else { const any = rest.match(/(?:^|\s)(Repl|R&I|R&R|Rpr|O\/H|Subl(?:et)?|D&R)(?=\s|$)/i); if (any) op = any[1].toLowerCase().replace(/^sublet$/, 'subl') }   // "22 Battery R&I"
   return { n: m[1], flags: m[2].replace(/\s+/g, ''), sup: m[3] || '', op, desc: rest }
 }
+// Mitchell (Cloud Estimating) PDF text, 2026-10-26 (BMW X7 came back "blind"): the line
+// number is glued to a 6-digit operation code or AUTO ("29204870Rear Bumper Cover AssyOverhaul
+// Body3.4#Existing"), the operation is spelled out and wraps ("Remove /" ⏎ "Install"), and the
+// section headings ("Rear Bumper") are plain lines with no number.
+const MITCHELL_OPS = [[/remove\s*\/\s*install/i, 'r&i'], [/remove\s*\/\s*replace/i, 'repl'], [/overhaul/i, 'o/h'], [/\balign(ment)?\b(?=\s*body|\s*mech|\s*\*|\s*$)|align(?=body|mech)/i, 'algn'], [/blend/i, 'blnd'], [/refinish/i, 'refn'], [/repair(?=\s*(body|mech|glass|frame|structural|refinish|\*))/i, 'rpr'], [/additional\s*(labor|operation|cost)/i, '']]
+const MITCHELL_NOISE = /^(committed on|version|mitchell|oem |copyright|all rights|printed on|profile|tm$|page |metro |labor|line #|\*\*|tt |##|dd |disclaimer|estimate totals)/i
+const MITCHELL_AREA = /bumper|door|roof|body|glass|lamp|hood|fender|grille|windshield|quarter|rocker|pillar|floor|liftgate|tailgate|trunk|deck|wheel|tire|suspension|steering|cooling|radiator|engine|electrical|mirror|seat|restraint|additional|special|manual|frame|cowl|dash|console|panel|interior|front|rear|side|sensor|camera/i
+function mitchellRows(text) {
+  const lines = String(text || '').split(/\r?\n/)
+  const out = []
+  let section = '', cur = null, last = 0, pendingHead = ''
+  const finish = () => {
+    if (!cur) return
+    const joined = cur.parts.join(' ').replace(/\s+/g, ' ').trim()
+    let op = '', at = joined.length
+    for (const [re, code] of MITCHELL_OPS) { const m = joined.match(re); if (m && m.index < at && m.index > 0) { at = m.index; op = code } }
+    if (/remove\s*\/\s*replace/i.test(joined) && /sublet/i.test(joined) && !op) op = 'subl'
+    out.push({ n: cur.n, flags: '', sup: '', op, desc: joined.slice(0, at).replace(/^(\d{6}|AUTO)\s*/, '').trim(), section: cur.section })
+    cur = null
+  }
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (/^estimate totals/i.test(line)) break
+    const m = line.match(/^(\d{7,9})(?!\d)(.*)$/) || line.match(/^(\d{1,3})(AUTO)(.*)$/)
+    let n = '', rest = ''
+    if (m && m[2] === 'AUTO') { n = m[1]; rest = 'AUTO' + m[3] }
+    else if (m) {
+      const digits = m[1], cands = []
+      for (let k = 1; k <= 3 && digits.length - k >= 6; k++) cands.push({ n: Number(digits.slice(0, k)), rest: digits.slice(k + 6) + m[2] })
+      const pick = cands.find(c => c.n === last + 1) || cands.filter(c => c.n > last && c.n <= last + 40).sort((a, b) => a.n - b.n)[0] || (last === 0 ? cands[0] : null)
+      if (pick) { n = String(pick.n); rest = pick.rest }
+    }
+    if (n) {
+      finish()
+      if (pendingHead) { section = pendingHead.toLowerCase(); pendingHead = '' }
+      cur = { n, parts: [rest], section }; last = Number(n)
+      continue
+    }
+    if (!line) continue
+    const done = cur && MITCHELL_OPS.some(([re]) => re.test(cur.parts.join(' ')))
+    if (cur && !done) { cur.parts.push(line); continue }
+    if (cur && done && /^(body|glass|mechanical|refinish|frame|structural|existing|new|sublet|install|replace|only|operation|cost|labor)/i.test(line)) { cur.parts.push(line); continue }
+    if (!MITCHELL_NOISE.test(line) && /^[A-Za-z][A-Za-z &/,'-]{2,40}$/.test(line) && line.split(/\s+/).length <= 5 && MITCHELL_AREA.test(line)) pendingHead = line
+  }
+  finish()
+  return out
+}
+
 /** The numbered rows of an estimate with the section heading each sits under. */
 export function estimateRows(text) {
   const out = []
   let t = String(text || '')
+  if (/mitchell/i.test(t) && /^\s*\d{7,9}\D/m.test(t)) return mitchellRows(t)
   // CCC PDF: the vehicle options block ("Dual MirrorsBackup Camera…") comes before the
   // first "LineOper…" column header — never read it as repair lines.
   const hdr = t.search(/Line\s*Oper/i)
@@ -99,7 +148,7 @@ export function triggerLinesFromText(text) {
   const push = (k, n) => { if (n && !hits[k].includes(n)) hits[k].push(n) }
   for (const { n, op, desc, section } of estimateRows(text)) {
     // "mirror0.3", "Alignment1162.49", "front bumper00.00": split the hours/price off the words.
-    const d = desc.toLowerCase().replace(/([a-z)])(\d)/g, '$1 $2').replace(/\s+/g, ' ')
+    const d = desc.toLowerCase().replace(/([a-z)])(\d)/g, '$1 $2').replace(/\bfrt\b/g, 'front').replace(/\bmoulding\b/g, 'molding').replace(/\s+/g, ' ')
     const ctx = `${section} ${d}`
     const addFor = /^add for\b/.test(d)
     const opOut = /^(repl|r&r|r&i|subl|o\/h)$/.test(op)          // the part comes off the car
@@ -114,7 +163,7 @@ export function triggerLinesFromText(text) {
     else if (wsWord && !notFront) push('windshield_excluded', n)
 
     const bumperPart = /\b(bumper|fascia)\b/.test(d) || (/bumper/.test(section) && /^(cover|bumper cover)\b/.test(d))
-    const bumperTrim = /(bracket|absorber|impact bar|reinforc|lamp|trim|grille|add for|filler|step pad|molding|mldg|guard|insert|lower cover|valance|spoiler|skid|prep|clear coat|license|tow hook|emblem|retainer|clip)/.test(d)
+    const bumperTrim = /(bracket|absorber|impact bar|reinforc|lamp|trim|grille|add for|add w\/|rivet|filler|step pad|molding|mldg|guard|insert|lower cover|valance|spoiler|skid|prep|clear coat|license|tow hook|emblem|retainer|clip)/.test(d)
     const front = /front bumper|front fascia/.test(ctx) || (/bumper/.test(section) && /front/.test(section))
     const rear = /rear bumper|rear fascia/.test(ctx) || (/bumper/.test(section) && /rear/.test(section))
     if (bumperPart && !bumperTrim) {
@@ -125,7 +174,7 @@ export function triggerLinesFromText(text) {
     if (/\bbattery\b/.test(d) && (/^(r&i|repl|r&r|d&r)$/.test(op) || /\b(d&r|disconnect|remove)\b/.test(d))) push('battery', n)
     if (/(passenger seat|seat cushion|seat track|seat belt|pretensioner|air ?bag|\bsrs\b)/.test(d) && op) push('seat_airbag', n)
     if (/(liftgate|lift gate|tailgate|trunk lid|deck ?lid|back door)/.test(d) && (opRi || /adjust|align/.test(d)) && !/(trim|molding|mldg|emblem|nameplate|handle|strut|w'strip|weatherstrip|glass|wiper|spoiler|lamp|light)/.test(d)) push('liftgate', n)
-    if (/\bmirror\b/.test(d) && opRi && !/mirror (glass|cover|cap)|rear ?view mirror|inside mirror/.test(d)) push('mirror', n)
+    if (/\bmirror\b/.test(d) && opRi && !/mirror (glass|cover|cap)|inside mirror|interior mirror/.test(d) && !(/rear ?view mirror/.test(d) && !/^(l|r|lt|rt|left|right)\b|front|door/.test(d))) push('mirror', n)
     const radarWord = /(radar|millimeter|distronic|acc sensor|adaptive cruise|cruise control sensor)/.test(d) || (/distance sensor/.test(d) && !/bumper/.test(section))
     if (radarWord && !/(park|pdc|ultrasonic|proximity|prk)/.test(d)) push('radar_sensor', n)
     if (/\bcamera\b/.test(d)) push('camera', n)
@@ -139,8 +188,8 @@ export function triggerLinesFromText(text) {
     if (((/front door/.test(ctx) && !/rear door/.test(d)) || (/front door/.test(section) && frontDoorPart)) && frontDoorPart && (opRi || opRpr || /adjust/.test(d))) push('front_door', n)
     const moduleWord = /\b(module|ecu|sdm|gateway|control unit)\b/.test(d) || /(radar|distance sensor|\bcamera\b)/.test(d)
     const airBag = /air ?bag/.test(d) && !/(control|sdm|sensing|diagnos)/.test(d)   // CCC "Air bag module" = the bag itself (Voyager 2026-10-20)
-    if (moduleWord && op === 'repl' && !airBag && !/(park|pdc|ultrasonic|prk|bracket|cover|aim|calibrat|wiring|harness|mount|holder|bezel|trim|lens)/.test(d)) push('module_repl', n)
-    const parkWord = /(park(ing)? (aid |assist |distance )?sensor|ultrasonic|\bpdc\b|parktronic|sonar|prk sensor|reverse sensor|back ?up sensor|park assist)/.test(d)
+    if (moduleWord && op === 'repl' && !airBag && !/\badd\b/.test(d) && !/(park|pdc|ultrasonic|prk|bracket|cover|aim|calibrat|wiring|harness|mount|holder|bezel|trim|lens)/.test(d)) push('module_repl', n)
+    const parkWord = /(park(ing)? (aid |assist |distance )?sensor|ultrasonic|\bpdc\b|parktronic|sonar|prk sensor|reverse sensor|back ?up sensor|park assist)/.test(d) || /add w\/ ?distance sensor/.test(d)   // BMW/Mitchell "Add w/Distance Sensor" = the bumper's PDC sensors (a Ford "Distance sensor" is the radar)
     if (parkWord && (opRi || addFor || /transfer/.test(d)) && !/\bw\/o\b[^,]*(park|prk|sensor)/.test(d)) push('park_sensor', n)
     else if (bumperPart && (opRi || opRpr) && /\bw\/\s*(prk|park|parking|sensor|pdc|ultrasonic)/.test(d)) push('park_sensor', n)   // "Bumper cover w/prk sensor" — the sensors come off with it
     if (/(air ?bag|pretensioner)/.test(d) && op === 'repl') push('srs_deploy', n)
