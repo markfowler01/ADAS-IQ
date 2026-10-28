@@ -14,9 +14,12 @@ export function verdict(card) {
   const t = card?.traits || {}, f = card?.flags || {}
   const score = TRAITS.reduce((n, k) => n + (Number(t[k]) || 0), 0)
   const scored = TRAITS.filter(k => t[k] != null).length
-  if (DEALBREAKERS.some(k => f[k])) return { verdict: 'no', score, scored }
-  if (TRAITS.every(k => Number(t[k]) >= PASS_SCORE)) return { verdict: 'yes', score, scored }
-  return { verdict: 'unproven', score, scored }
+  // ☎️ References (Mark 2026-10-28): a pass also needs one called reference who'd rehire, and none who wouldn't.
+  const refs = (card?.refs || []).filter(r => r.called_at)
+  const refs_ok = refs.some(r => r.rehire === 'yes') && !refs.some(r => r.rehire === 'no' || r.red_flag)
+  if (DEALBREAKERS.some(k => f[k])) return { verdict: 'no', score, scored, refs_ok }
+  if (TRAITS.every(k => Number(t[k]) >= PASS_SCORE) && refs_ok) return { verdict: 'yes', score, scored, refs_ok }
+  return { verdict: 'unproven', score, scored, refs_ok }
 }
 
 const clean = (card = {}) => {
@@ -28,6 +31,9 @@ const clean = (card = {}) => {
     flags: Object.fromEntries(DEALBREAKERS.map(k => [k, !!card.flags?.[k]])),
     custom: Array.isArray(card.custom) ? card.custom.slice(0, 20).map(q => ({ trait: str(q.trait, 20), q: str(q.q, 400), listen: str(q.listen, 300) })) : [],
     summary: str(card.summary, 2000),
+    refs: Array.isArray(card.refs) ? card.refs.slice(0, 6).map(r => ({ name: str(r.name, 120), relation: str(r.relation, 60), company: str(r.company, 120), phone: str(r.phone, 40),
+      called_at: str(r.called_at, 40), rehire: ['yes', 'hesitant', 'no'].includes(r.rehire) ? r.rehire : '', red_flag: !!r.red_flag,
+      answers: Object.fromEntries(Object.entries(r.answers || {}).slice(0, 20).map(([k, v]) => [str(k, 30), str(v, 1500)])) })) : [],
   }
 }
 
@@ -44,7 +50,7 @@ export async function readAllCards(req) {
 }
 export async function saveCard(req, id, patch, by) {
   const cur = (await readCard(req, id)) || {}
-  const merged = clean({ ...cur, ...patch, traits: { ...cur.traits, ...patch.traits }, notes: { ...cur.notes, ...patch.notes }, flags: { ...cur.flags, ...patch.flags }, custom: patch.custom ?? cur.custom })
+  const merged = clean({ ...cur, ...patch, traits: { ...cur.traits, ...patch.traits }, notes: { ...cur.notes, ...patch.notes }, flags: { ...cur.flags, ...patch.flags }, custom: patch.custom ?? cur.custom, refs: patch.refs ?? cur.refs })
   const card = { ...merged, updated_at: new Date().toISOString(), updated_by: by || '' }
   const table = catalyst.initialize(req).datastore().table('AppConfig'), row = await cfgRead(req, key(id)), v = JSON.stringify(card)
   if (row) await table.updateRow({ ROWID: row.rowid, config_key: key(id), config_value: v })
@@ -83,6 +89,6 @@ Return ONLY JSON: an array of 13 objects {"trait": one of abundance|urgency|chal
   try { resp = await client.messages.create({ model: 'claude-opus-5-5', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }) }
   catch (e) { if (e.status !== 404 && e.status !== 400) throw e; resp = await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }) }
   const text = (resp.content || []).map(b => b.text || '').join('')
-  const m = text.match(/\[[\s\S]*\]/); if (!m) throw new Error('No questions came back')
+  const m = text.match(/\[[\s\S]*\]/); if (!m) throw new Error(`No questions came back (${resp.model} · ${resp.stop_reason}): ${text.slice(0, 200)}`)
   return JSON.parse(m[0]).filter(x => x && x.q)
 }

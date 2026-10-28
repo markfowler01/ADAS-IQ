@@ -29,14 +29,31 @@ export const DEALBREAKERS = [
   { id: 'gossip', label: 'Gossip', signs: 'Runs down coworkers, personal attacks, rumors', q: 'What would your last boss say is your biggest weakness?' },
   { id: 'complacency', label: 'Complacency', signs: "Won't learn, improve or adapt", q: "What's something you learned in the last six months that you didn't know before?" },
 ]
+// ☎️ Reference call (Mark 2026-10-28). Bosses, not friends. Every question maps to a quality or a deal-breaker.
+export const REF_QS = [
+  { id: 'verify', tag: 'Honesty check', q: n => `How do you know ${n}? How long did you work together, and what was their job?`, listen: 'Matches what they told you. Different title or dates = dishonesty flag.' },
+  { id: 'abundance', tag: 'Abundance', q: n => `How did ${n} get along with the other techs? Did they ever help train anyone?`, listen: 'Named examples of teaching or helping.' },
+  { id: 'urgency', tag: 'Urgency', q: n => `When a car had to go out today, how did ${n} handle it? Did you ever have to chase them?`, listen: '"Never had to ask twice."' },
+  { id: 'challenge', tag: 'Challenges leadership', q: n => `Did ${n} ever push back on you? How did they do it?`, listen: 'Respectful, with facts, then got on board.' },
+  { id: 'decisions', tag: 'Decisions', q: n => `What would you trust ${n} to decide on their own? Where did you have to check their work?`, listen: 'Real trust, little babysitting.' },
+  { id: 'work', tag: 'Does the work', q: n => `When a job turned ugly, what did ${n} do?`, listen: 'Dug in and owned it, no hand-off.' },
+  { id: 'honesty', tag: 'Dishonesty', q: () => 'Any concerns at all about honesty: hours, tools, paperwork, the work itself?', listen: 'Any pause here matters. Ask a follow-up.' },
+  { id: 'attitude', tag: 'Pessimism · gossip', q: () => 'How did they handle a bad week? Did they complain much? Any drama with coworkers?', listen: 'Complaining, blaming, drama = deal-breaker.' },
+  { id: 'growth', tag: 'Complacency', q: () => 'Did they get better while you knew them? What did they learn?', listen: 'Specific growth, not "they were the same".' },
+  { id: 'leave', tag: 'Honesty check', q: () => 'Why did they leave?', listen: 'Same story the candidate told you?' },
+  { id: 'rehire', tag: 'The big one', q: () => 'On a scale of 1 to 10, would you hire them again? What keeps it from a 10?', listen: 'Below 8, or a long pause, is a no.' },
+  { id: 'else', tag: 'Open door', q: () => "Anything I should know that I didn't ask?", listen: 'Let the silence sit.' },
+]
 export const RUBRIC = ['No evidence', 'Talk only, no example', 'One weak example', 'A specific real example', 'Several strong examples']
 
 export function winnerVerdict(w) {
   const t = w?.traits || {}, f = w?.flags || {}
   if (DEALBREAKERS.some(d => f[d.id])) return 'no'
-  if (TRAITS.every(x => Number(t[x.id]) >= PASS)) return 'yes'
+  if (TRAITS.every(x => Number(t[x.id]) >= PASS) && refsOk(w)) return 'yes'
   return 'unproven'
 }
+const calledRefs = w => (w?.refs || []).filter(r => r.called_at)
+export const refsOk = w => calledRefs(w).some(r => r.rehire === 'yes') && !calledRefs(w).some(r => r.rehire === 'no' || r.red_flag)
 const score = w => TRAITS.reduce((n, x) => n + (Number(w?.traits?.[x.id]) || 0), 0)
 const LOOK = {
   yes: { text: '📕 ON THE LIST', bg: '#dcfce7', fg: '#15803d', bd: '#86efac' },
@@ -52,7 +69,7 @@ export function WinnerBadge({ w, small = false }) {
 export function WinnersBanner() {
   return (
     <div className="rounded-xl px-3 py-2 mb-3 text-xs" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>
-      <b>📕 Next hires: Sweaty Startup list only.</b> All five qualities at {PASS}+ on real examples (abundance · urgency · challenges you · decisions · does the work), and zero deal-breakers (dishonest · pessimist · manipulator · gossip · complacent).
+      <b>📕 Next hires: Sweaty Startup list only.</b> All five qualities at {PASS}+ on real examples (abundance · urgency · challenges you · decisions · does the work), zero deal-breakers (dishonest · pessimist · manipulator · gossip · complacent), and a called reference who'd hire them again.
     </div>
   )
 }
@@ -64,13 +81,13 @@ export function confirmWinner(c, stage) {
   if (v === 'yes') return true
   return window.confirm(v === 'no'
     ? `❌ ${c.name} has a deal-breaker flagged. Your rule: Sweaty Startup list only.\n\nMove to ${stage === 'hired' ? 'Hired' : 'Offer'} anyway?`
-    : `⚠️ ${c.name} isn't proven on the list yet (every quality needs ${PASS}+ on a real example).\n\nMove to ${stage === 'hired' ? 'Hired' : 'Offer'} anyway?`)
+    : `⚠️ ${c.name} isn't proven on the list yet (every quality needs ${PASS}+ on a real example, plus a reference who'd rehire).\n\nMove to ${stage === 'hired' ? 'Hired' : 'Offer'} anyway?`)
 }
 
 /** Modal panel: verdict + open the call sheet. */
 export function WinnersPanel({ c, onOpenSheet }) {
   const w = c.winner, v = winnerVerdict(w)
-  const low = TRAITS.filter(x => !(Number(w?.traits?.[x.id]) >= PASS)).map(x => x.label)
+  const low = TRAITS.filter(x => !(Number(w?.traits?.[x.id]) >= PASS)).map(x => x.label).concat(refsOk(w) ? [] : [calledRefs(w).some(r => r.rehire === 'no' || r.red_flag) ? 'a reference raised a concern' : 'a reference who would rehire'])
   const flags = DEALBREAKERS.filter(d => w?.flags?.[d.id]).map(d => d.label)
   return (
     <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: LOOK[v].bg, border: `1px solid ${LOOK[v].bd}` }}>
@@ -103,7 +120,7 @@ export function CallSheet({ c, onClose, onSaved }) {
   }
   // Notes save after a pause; taps save right away.
   function queue(part, now = false) {
-    for (const k of Object.keys(part)) pending.current[k] = { ...(pending.current[k] || {}), ...part[k] }
+    for (const k of Object.keys(part)) pending.current[k] = Array.isArray(part[k]) ? part[k] : { ...(pending.current[k] || {}), ...part[k] }
     clearTimeout(timer.current)
     const go = () => { const b = pending.current; pending.current = {}; send(b) }
     if (now) go(); else timer.current = setTimeout(go, 900)
@@ -120,6 +137,8 @@ export function CallSheet({ c, onClose, onSaved }) {
       setW(x => ({ ...x, custom: j.winner.custom })); onSaved(j.winner)
     } catch (e) { setErr(e.message) } finally { setTailoring(false) }
   }
+  const [tab, setTab] = useState('call')
+  const setRefs = (refs, now = false) => { setW(x => ({ ...x, refs })); queue({ refs }, now) }
   const custom = w.custom || []
   const box = { border: '1px solid #e0dbd6', backgroundColor: 'white' }
   return (
@@ -140,6 +159,11 @@ export function CallSheet({ c, onClose, onSaved }) {
           <button onClick={tailor} disabled={tailoring} className="font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#555', border: '1px solid #e0dbd6' }}>{tailoring ? 'Writing…' : custom.length ? '✨ Rewrite questions for this résumé' : '✨ Write questions for this résumé'}</button>
           <span style={{ color: err ? '#dc2626' : '#888' }}>{err || saving}</span>
         </div>
+        <div className="inline-flex rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0' }}>
+          {[['call', '📞 Interview'], ['refs', `☎️ References · ${calledRefs(w).length}/${(w.refs || []).length}`]].map(([k, l]) => <button key={k} onClick={() => setTab(k)} className="text-xs font-bold rounded-full px-3 py-1.5" style={tab === k ? { backgroundColor: '#1a1a1a', color: 'white' } : { color: '#666' }}>{l}</button>)}
+        </div>
+        {tab === 'refs' && <References c={c} refs={w.refs || []} onChange={setRefs} box={box} />}
+        {tab === 'call' && <>
         {c.experience && <div className="rounded-lg p-3 text-xs" style={{ backgroundColor: '#f9f8f7', color: '#444' }}><b>They wrote:</b> {c.experience}</div>}
         <p className="text-xs" style={{ color: '#666' }}>Score the <b>evidence</b>, not the confidence. {RUBRIC.map((r, i) => `${i} ${r.toLowerCase()}`).join(' · ')}. Pass = {PASS}+ on all five.</p>
 
@@ -178,7 +202,62 @@ export function CallSheet({ c, onClose, onSaved }) {
             </div>
           ))}
         </div>
+        <div className="rounded-xl p-3" style={{ border: '2px solid #bfdbfe', backgroundColor: '#f8fbff' }}>
+          <p className="text-sm font-extrabold" style={{ color: '#1e40af' }}>☎️ Before you hang up: references</p>
+          <p className="text-sm mt-1" style={{ color: '#1a1a1a' }}>“I'd like to talk to your last two direct bosses. Not friends, bosses. Who are they, and what will they tell me about you?”</p>
+          <p className="text-[11px] mt-1" style={{ color: '#888' }}>Their answer is its own honesty test: compare it to what the boss actually says. Add them on the References tab.</p>
+        </div>
+        </>}
         <p className="text-[11px]" style={{ color: '#aaa' }}>From The Sweaty Startup, chapter 9 (The Attributes of Winners). Character comes from this sheet; skill comes from the electrical screen and the paid day out. You need both.</p>
+      </div>
+    </div>
+  )
+}
+
+function References({ c, refs, onChange, box }) {
+  const first = String(c.name || 'them').split(' ')[0]
+  const [open, setOpen] = useState(() => refs.findIndex(r => !r.called_at))
+  const [add, setAdd] = useState({ name: '', relation: 'Boss', company: '', phone: '' })
+  const upd = (i, patch, now) => onChange(refs.map((r, k) => k === i ? { ...r, ...patch, called_at: r.called_at || (patch.answers || patch.rehire || patch.red_flag ? new Date().toISOString() : '') } : r), now)
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg p-3 text-xs" style={{ backgroundColor: '#f8fbff', border: '1px solid #bfdbfe', color: '#334' }}>
+        <b>How to run it:</b> call bosses, not friends. Faint praise ("they were fine") is a no. Listen for pauses. If you get voicemail: <i>"Please call me back only if {first} was a great employee."</i> No call back tells you plenty.
+      </div>
+      {refs.map((r, i) => (
+        <div key={i} className="rounded-xl p-3" style={{ border: `2px solid ${r.rehire === 'yes' && !r.red_flag ? '#86efac' : r.rehire === 'no' || r.red_flag ? '#fca5a5' : r.rehire === 'hesitant' ? '#fcd34d' : '#ebebeb'}` }}>
+          <button onClick={() => setOpen(open === i ? -1 : i)} className="w-full flex items-center justify-between gap-2 text-left">
+            <span className="min-w-0"><b className="text-sm" style={{ color: '#1a1a1a' }}>{r.name || 'Reference'}</b> <span className="text-xs" style={{ color: '#888' }}>{[r.relation, r.company].filter(Boolean).join(' · ')}</span></span>
+            <span className="text-[11px] font-bold flex-shrink-0" style={{ color: r.called_at ? '#15803d' : '#888' }}>{r.called_at ? `called ${new Date(r.called_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'not called'}{r.rehire ? ` · rehire: ${r.rehire}` : ''}{r.red_flag ? ' · 🚩' : ''}</span>
+          </button>
+          {open === i && <div className="mt-2 space-y-2">
+            {r.phone && <a href={`tel:${String(r.phone).replace(/[^\d+]/g, '')}`} className="inline-block text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>📞 Call {r.phone}</a>}
+            <p className="text-xs" style={{ color: '#555' }}>Open with: <i>"Hi, this is Mark Fowler with Absolute ADAS. {c.name} is up for a technician job with us and gave me your name. Got five minutes?"</i></p>
+            {REF_QS.map(q => (
+              <div key={q.id}>
+                <p className="text-sm" style={{ color: '#1a1a1a' }}><span className="text-[10px] font-bold uppercase tracking-wide mr-1" style={{ color: '#888' }}>{q.tag}</span>“{q.q(first)}”</p>
+                <p className="text-[11px]" style={{ color: '#888' }}>Listen for: {q.listen}</p>
+                <textarea value={r.answers?.[q.id] || ''} onChange={e => upd(i, { answers: { ...(r.answers || {}), [q.id]: e.target.value } })} rows={1} className="w-full rounded-lg px-3 py-1.5 text-sm mt-1" style={box} />
+              </div>
+            ))}
+            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+              <span className="text-xs font-bold" style={{ color: '#555' }}>Would rehire?</span>
+              {[['yes', '✅ Yes'], ['hesitant', '🤔 Hesitant'], ['no', '❌ No']].map(([k, l]) => <button key={k} onClick={() => upd(i, { rehire: r.rehire === k ? '' : k }, true)} className="text-xs font-bold rounded-full px-3 py-1.5" style={r.rehire === k ? { backgroundColor: k === 'yes' ? '#15803d' : k === 'no' ? '#b91c1c' : '#d97706', color: 'white' } : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#666' }}>{l}</button>)}
+              <button onClick={() => upd(i, { red_flag: !r.red_flag }, true)} className="text-xs font-bold rounded-full px-3 py-1.5 ml-auto" style={r.red_flag ? { backgroundColor: '#b91c1c', color: 'white' } : { backgroundColor: 'white', border: '1px solid #e0dbd6', color: '#888' }}>{r.red_flag ? '🚩 Red flag' : 'No red flags'}</button>
+              <button onClick={() => { if (window.confirm(`Remove ${r.name || 'this reference'}?`)) onChange(refs.filter((_, k) => k !== i), true) }} className="text-[11px] underline" style={{ color: '#aaa' }}>remove</button>
+            </div>
+          </div>}
+        </div>
+      ))}
+      <div className="rounded-xl p-3" style={{ backgroundColor: '#f9f8f7' }}>
+        <p className="text-xs font-bold mb-1.5" style={{ color: '#555' }}>+ Add a reference</p>
+        <div className="grid grid-cols-2 gap-2">
+          <input value={add.name} onChange={e => setAdd({ ...add, name: e.target.value })} placeholder="Name" className="rounded-lg px-3 py-2 text-sm" style={box} />
+          <input value={add.phone} onChange={e => setAdd({ ...add, phone: e.target.value })} placeholder="Phone" className="rounded-lg px-3 py-2 text-sm" style={box} />
+          <input value={add.company} onChange={e => setAdd({ ...add, company: e.target.value })} placeholder="Company" className="rounded-lg px-3 py-2 text-sm" style={box} />
+          <select value={add.relation} onChange={e => setAdd({ ...add, relation: e.target.value })} className="rounded-lg px-3 py-2 text-sm" style={box}>{['Boss', 'Former boss', 'Coworker', 'Customer', 'Other'].map(x => <option key={x}>{x}</option>)}</select>
+        </div>
+        <button disabled={!add.name.trim()} onClick={() => { onChange([...refs, { ...add, name: add.name.trim(), answers: {} }], true); setOpen(refs.length); setAdd({ name: '', relation: 'Boss', company: '', phone: '' }) }} className="mt-2 text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: add.name.trim() ? '#1a1a1a' : '#ccc' }}>Add</button>
       </div>
     </div>
   )
