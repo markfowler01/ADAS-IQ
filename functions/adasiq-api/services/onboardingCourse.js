@@ -41,7 +41,7 @@ How we talk: the app is the system of record. Cliq is the radio — #dispatch fo
 
 Request first, always. A website booking, a phone call, a text, or an estimate that syncs from Zoho Books all land as a Job Requested card. Nothing becomes a real job on the schedule until Kat or Mark creates it. That rule exists because a card that auto-dispatched itself once put a tech at the wrong shop on the wrong day.
 
-Your part as a tech starts when the card is dispatched to you. It shows on your Live Day with the shop, the address, the vehicle, and the calibrations on the estimate. On site: clock in, take the photo set, do the calibration, do the post-collision safety inspection, set the tire pressures, and move the card to Ready to Invoice. If the advisor tells you it's customer pay, or gives you a number, it goes on the card right there.
+Your part as a tech starts when the card is dispatched to you. It shows on your Live Day with the shop, the address, the vehicle, and the calibrations on the estimate. On site: clock in, take the photo set, do the calibration, do the post-collision safety inspection, set the tire pressures, and move the card to Ready to Invoice. If the estimator tells you it's customer pay, or gives you a number, it goes on the card right there.
 
 Kat's part starts at Ready to Invoice. She presses Bill it, which builds both documents from the shop's rules, checks them, and sends. The card moves to Completed.
 
@@ -51,7 +51,7 @@ The app will stop you moving a card to Ready to Invoice with photos or the safet
       { id: 'q2', q: 'What must be finished before Ready to Invoice?', options: ['Only the calibration', 'Photos + post-collision safety inspection + tire pressures', 'A phone call to the insurer', 'Nothing, Kat checks later'], correct: 1 },
       { id: 'q3', q: 'A website booking comes in. What is it in the app?', options: ['A dispatched job', 'A Job Requested card until Kat or Mark creates the job', 'An invoice', 'A CRM note'], correct: 1 },
       { id: 'q4', q: 'Who moves the card from Ready to Invoice to Completed?', options: ['The tech', 'The shop', 'Kat, by pressing Bill it', 'It moves itself'], correct: 2 },
-      { id: 'q5', q: 'The advisor says "this one\'s customer pay, $700." You…', options: ['Tell Kat later', 'Put it on the card at Ready to Invoice', 'Collect cash', 'Ignore it'], correct: 1 },
+      { id: 'q5', q: 'The estimator says "this one\'s customer pay, $700." You…', options: ['Tell Kat later', 'Put it on the card at Ready to Invoice', 'Collect cash', 'Ignore it'], correct: 1 },
     ] },
 
   { id: 'photos', tracks: ['core'], title: 'The photo set — 8 shots, every car', minutes: 10, video_url: '',
@@ -152,25 +152,28 @@ Your job on site: don't touch prices, but make sure the work behind each line ac
       { id: 'q5', q: 'A shop has no Big 3 rule yet. What happens on their first invoice?', options: ['It fails', 'The app asks Kat and saves her pick as the rule', 'Mark is called', 'The lines are left off'], correct: 1 },
     ] },
 
-  { id: 'customer', tracks: ['core'], title: 'On site: the shop, the advisor, the customer', minutes: 6, video_url: '',
-    script: `- Walk in, find the advisor, say who you are, what you're doing, how long.
-- Keys and fobs go back to the advisor, never left in the car.
-- Customer pay: the advisor says the words or gives a number — it goes on the card at Ready to Invoice, Kat gets it instantly.
+  { id: 'customer', tracks: ['core'], title: 'On site: the shop, the estimator, and the shop\'s rules', minutes: 6, video_url: '',
+    script: `- Collision shops don't have advisors. You deal with the estimator (sometimes the production manager or the front office).
+- Walk in, check in the way that shop wants, say who you are, what you're doing, how long.
+- Every shop has its own rules: where keys go, where to park, which bay, who moves cars, test drives. Follow theirs. Show the shop note on a job card.
+- Customer pay: the estimator says the words or gives a number — it goes on the card at Ready to Invoice, Kat gets it instantly.
 - Can't do something the estimate asked for? Say so plainly, let Kat quote the rest.
 - You're the company while you're there. Blue shirt, clean van, no drama.`,
-    reading: `You are the company while you're on site. Walk in, find the advisor, tell them who you are, what you're going to do, and roughly how long. When you're done, tell them you're done and where the keys are. Keys and fobs go back to the advisor, never left in the car.
+    reading: `You are the company while you're on site. Collision shops don't have service advisors — your contact is the estimator, and at some shops the production manager or the front office. Walk in, check in the way that shop wants, tell them who you are, what you're going to do, and roughly how long. When you're done, tell them you're done.
 
-Customer pay: if the advisor says "this is customer pay" or tells you a number ($350 or $700 are the usual ones), it goes on the card at Ready to Invoice. Kat and #dispatch get it instantly and the card turns green so nobody bills it as insurance by mistake. Cash jobs price on our cash schedule and never go over the number the customer was told.
+Every shop runs its own way, and on their floor their rules win. Where the keys and fobs go when you're done, where to park the van, which bay to use, whether you move cars yourself or a porter does, and whether and how far you can test drive — all of it is that shop's policy. The shop's note shows on your job card in the app; check it before you walk in. No note, or you're not sure? Ask the estimator, do it their way, and tell Kat so it goes on the shop's note for next time. Never guess with a customer's keys.
 
-If the car needs something we can't do today — a part, a windshield, a dealer-only procedure — say so plainly to the advisor and put it on the card. Kat quotes it. Don't promise a fix you can't deliver.
+Customer pay: if the estimator says "this is customer pay" or tells you a number ($350 or $700 are the usual ones), it goes on the card at Ready to Invoice. Kat and #dispatch get it instantly and the card turns green so nobody bills it as insurance by mistake. Cash jobs price on our cash schedule and never go over the number the customer was told.
+
+If the car needs something we can't do today — a part, a windshield, a dealer-only procedure — say so plainly to the estimator and put it on the card. Kat quotes it. Don't promise a fix you can't deliver.
 
 Insurers ask "why was this calibration needed?" Our answer is the justification on the invoice and the photos in the folder. That's why the report and the photo set matter more than the speed.
 
 No complaints about the shop, the insurer, or the last tech in front of the customer. Ever.`,
     quiz: [
-      { id: 'q1', q: 'The advisor says the job is customer pay at $700. You…', options: ['Ignore it — billing is Kat\'s job', 'Put it on the card at Ready to Invoice so Kat bills it right', 'Collect cash', 'Tell the customer to call the office'], correct: 1 },
+      { id: 'q1', q: 'The estimator says the job is customer pay at $700. You…', options: ['Ignore it — billing is Kat\'s job', 'Put it on the card at Ready to Invoice so Kat bills it right', 'Collect cash', 'Tell the customer to call the office'], correct: 1 },
       { id: 'q2', q: 'The car needs work we can\'t do. You…', options: ['Try anyway', 'Say so plainly and let Kat quote it', 'Say nothing', 'Send them to the dealer'], correct: 1 },
-      { id: 'q3', q: 'Where do the keys go when you are done?', options: ['On the seat', 'Back to the advisor', 'In the van', 'On the dash'], correct: 1 },
+      { id: 'q3', q: 'Where do the keys go when you are done?', options: ['On the seat', 'Wherever that shop\'s policy says — check the shop note, or ask the estimator', 'In the van', 'Always to the front desk'], correct: 1 },
       { id: 'q4', q: 'An insurer asks why a calibration was needed. The answer is…', options: ['A phone call', 'The justification on the invoice and the photos in the folder', 'A guess', 'The shop\'s problem'], correct: 1 },
       { id: 'q5', q: 'Cash jobs…', options: ['Bill whatever the estimate says', 'Never go over the number the customer was told', 'Are free', 'Skip the photos'], correct: 1 },
     ] },
@@ -188,7 +191,7 @@ Driving: the van has our name on it. How you drive is the company's reputation a
 
 If something feels unsafe — a lift, a car that won't hold still, a shop asking you to do something you shouldn't — stop and call Mark. Nobody has ever been in trouble for stopping.`,
     quiz: [
-      { id: 'q1', q: 'Where do the keys go when you are done?', options: ['On the seat', 'Back to the advisor', 'In the van', 'On the dash'], correct: 1 },
+      { id: 'q1', q: 'Before you set up targets around the car you…', options: ['Start the calibration', 'Put the chocks on and make sure the ground is level with room around it', 'Move the shop\'s carts yourself', 'Leave the van running'], correct: 1 },
       { id: 'q2', q: 'Something feels unsafe. You…', options: ['Push through', 'Stop and call Mark', 'Ask the shop to sign a waiver', 'Finish, then report'], correct: 1 },
       { id: 'q3', q: 'Targets and the rig are set up…', options: ['Wherever there is room', 'On level ground with room around them', 'On the lift', 'Outside'], correct: 1 },
       { id: 'q4', q: 'A tool is missing from the van. You…', options: ['Wait until you need it', 'Report it the same day', 'Buy one', 'Borrow from the shop'], correct: 1 },
