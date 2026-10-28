@@ -453,8 +453,24 @@ const router = express.Router()
 const isOwner = req => String(req.user?.email || '').toLowerCase().startsWith('mark@') || req.user?.role === 'owner'
 
 router.get('/', async (req, res) => {
-  try { res.json({ stages: STAGES, partner_stages: PARTNER_STAGES, candidates: await readAll(req) }) }
+  try {
+    const [cands, cards] = await Promise.all([readAll(req), import('../services/winners.js').then(W => W.readAllCards(req)).catch(() => ({}))])
+    res.json({ stages: STAGES, partner_stages: PARTNER_STAGES, candidates: cands.map(c => cards[c.id] ? { ...c, winner: cards[c.id] } : c) })
+  }
   catch (e) { res.status(500).json({ error: e.message }) }
+})
+
+// 📕 Attributes of Winners scorecard (Mark 2026-10-28, services/winners.js).
+router.put('/:id/winner', async (req, res) => {
+  try { const W = await import('../services/winners.js'); res.json({ ok: true, winner: await W.saveCard(req, String(req.params.id), req.body || {}, req.user?.name || req.user?.email) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/:id/winner/tailor', async (req, res) => {
+  try {
+    const c = (await readAll(req)).find(x => String(x.id) === String(req.params.id)); if (!c) return res.status(404).json({ error: 'Candidate not found' })
+    const W = await import('../services/winners.js')
+    res.json({ ok: true, winner: await W.saveCard(req, c.id, { custom: await W.tailorQuestions(req, c) }, req.user?.name || req.user?.email) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 // GET /api/recruit/screen/preview — exactly what a candidate receives.

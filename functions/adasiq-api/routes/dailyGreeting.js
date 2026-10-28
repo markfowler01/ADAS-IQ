@@ -584,6 +584,15 @@ router.post('/market/discover-add', requireCronSecret, async (req, res) => {
     res.json({ ok: true, market: m.id, city: d.city, google_found: d.found, already_in_crm: d.already, new: rows.length, added, by_zone: rows.reduce((o, r) => (o[r.region] = (o[r.region] || 0) + 1, o), {}), shops: rows.map(r => `${r.shop_name} · ${r.address}`) })
   } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
 })
+// 📕 Tailor a candidate's call sheet without a login (Claude prepping Mark's calls).
+router.post('/recruit/tailor', requireCronSecret, async (req, res) => {
+  try {
+    const { readAll } = await import('./recruit.js'); const W = await import('../services/winners.js')
+    const c = (await readAll(req)).find(x => String(x.id) === String(req.query.id || '')); if (!c) return res.status(404).json({ error: 'Candidate not found' })
+    const w = await W.saveCard(req, c.id, { custom: await W.tailorQuestions(req, c) }, 'Claude')
+    res.json({ ok: true, name: c.name, custom: w.custom })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 router.post('/scrub/recheck', requireCronSecret, async (req, res) => {
   const id = String(req.query.id || '').replace(/\D/g, '')
   if (!id) return res.status(400).json({ error: 'id required' })

@@ -6,6 +6,7 @@ import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 import OnboardingLaunch from '../components/team/OnboardingLaunch.jsx'
+import { WinnerBadge, WinnersBanner, WinnersPanel, CallSheet, confirmWinner } from '../components/WinnersScorecard.jsx'
 
 const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
@@ -29,6 +30,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
   // 🧑‍🔧 Hires | 🤝 Partners (Mark 2026-10-17). Remembered per device.
   const [view, setViewRaw] = useState(() => { try { return localStorage.getItem('recruit_view') === 'partner' ? 'partner' : 'hire' } catch { return 'hire' } })
   const setView = v => { setViewRaw(v); setMobileStage('active'); try { localStorage.setItem('recruit_view', v) } catch { /* fine */ } }
+  const [sheet, setSheet] = useState(null)     // 📕 call sheet candidate id
   const [launch, setLaunch] = useState(null)   // 🚀 the two-flow view that pops up on Hired
   const [allCands, setCands] = useState([])
   const [loading, setLoading] = useState(true)
@@ -67,6 +69,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
   useEffect(() => { load() }, [load])
 
   async function patch(id, body, okMsg) {
+    if (body.stage && !confirmWinner(allCands.find(c => c.id === id), body.stage)) return   // 📕 list only
     const prev = allCands
     setCands(cs => cs.map(c => c.id === id ? { ...c, ...body } : c))
     try {
@@ -124,6 +127,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
           </div>
         )}
 
+        {view === 'hire' && <WinnersBanner />}
         {err && <p className="text-sm py-3" style={{ color: '#dc2626' }}>{err}</p>}
         {loading && <p className="text-sm text-center py-10" style={{ color: '#888' }}>Loading…</p>}
 
@@ -177,8 +181,10 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
         <CandidateModal key={current.id} c={current} stages={currentStages} isOwner={isOwner}
           onClose={() => setOpen(null)}
           onPatch={(body, msg) => patch(current.id, body, msg)}
+          onOpenSheet={() => setSheet(current.id)}
           onDelete={() => remove(current.id)} />
       )}
+      {sheet && allCands.find(c => c.id === sheet) && <CallSheet c={allCands.find(c => c.id === sheet)} onClose={() => setSheet(null)} onSaved={w => setCands(cs => cs.map(c => c.id === sheet ? { ...c, winner: w } : c))} />}
       {launch && <OnboardingLaunch memberId={launch} onClose={() => setLaunch(null)} onOpenProfile={() => { setLaunch(null); onNavigate && onNavigate('team') }} />}
       {adding && (
         <AddModal kind={view} onClose={() => setAdding(false)} onSaved={c => { setCands(cs => [c, ...cs]); setAdding(false); say(view === 'partner' ? '🤝 Partner added' : '✅ Candidate added') }} />
@@ -226,6 +232,7 @@ function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected
       <div className="flex items-center justify-between mt-2">
         <span className="flex items-center gap-1">
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>{c.source || 'manual'}</span>
+          {c.winner && <WinnerBadge w={c.winner} small />}
           {c.project_received_at
             ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full" style={c.project_words_ok === 'yes' ? { backgroundColor: '#e6f4ea', color: '#15803d' } : { backgroundColor: '#fef2f2', color: '#dc2626' }}>{c.project_words_ok === 'yes' ? '✅ project' : '❌ words missing'}</span>
             : c.project_sent_at ? <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#ecfeff', color: '#1F8B8B' }}>🧪 sent</span> : null}
@@ -291,7 +298,7 @@ function PartnerPanel({ c, onPatch }) {
   )
 }
 
-function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
+function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete, onOpenSheet }) {
   const isP = c.kind === 'partner'
   const [notes, setNotes] = useState(c.notes || '')
   const [edit, setEdit] = useState(false)
@@ -323,6 +330,7 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete }) {
         </div>
 
         {isP && <PartnerPanel c={c} onPatch={onPatch} />}
+        {!isP && <WinnersPanel c={c} onOpenSheet={onOpenSheet} />}
         {!isP && <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1px solid #99f6e4' }}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <p className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#0f766e' }}>🧪 First project</p>
