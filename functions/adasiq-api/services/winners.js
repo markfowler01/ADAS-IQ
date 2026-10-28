@@ -63,7 +63,7 @@ export async function tailorQuestions(req, cand) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured')
   const Anthropic = (await import('@anthropic-ai/sdk')).default
-  const client = new Anthropic({ apiKey, timeout: 25000, maxRetries: 1 })
+  const client = new Anthropic({ apiKey, timeout: 60000, maxRetries: 1 })
   const prompt = `You are helping Mark Fowler, owner of Absolute ADAS (mobile ADAS calibration, collision shops, Western Washington), prepare a phone interview.
 
 Candidate:
@@ -86,8 +86,8 @@ Write questions built around THIS person's background (their tools, years, remot
 
 Return ONLY JSON: an array of 13 objects {"trait": one of abundance|urgency|challenge|decisions|work|dealbreaker, "q": the question, "listen": what a strong answer includes or the red flag to catch, under 20 words}. Two per quality, three dealbreaker probes.`
   let resp
-  try { resp = await client.messages.create({ model: 'claude-opus-5-5', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }) }
-  catch (e) { if (e.status !== 404 && e.status !== 400) throw e; resp = await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 2000, messages: [{ role: 'user', content: prompt }] }) }
+  try { resp = await client.messages.create({ model: 'claude-opus-5-5', max_tokens: 8000, messages: [{ role: 'user', content: prompt }] }) }
+  catch (e) { if (e.status !== 404 && e.status !== 400) throw e; resp = await client.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 8000, messages: [{ role: 'user', content: prompt }] }) }
   const text = (resp.content || []).map(b => b.text || '').join('')
   const m = text.match(/\[[\s\S]*\]/); if (!m) throw new Error(`No questions came back (${resp.model} · ${resp.stop_reason}): ${text.slice(0, 200)}`)
   return JSON.parse(m[0]).filter(x => x && x.q)
