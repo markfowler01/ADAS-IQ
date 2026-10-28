@@ -10,7 +10,8 @@
 export const CALIBRATION_FACTS = `CALIBRATION FACTS (locked by Mark Fowler; never contradict them, and never invent a procedure that conflicts with them):
 - Ford and GM (Chevrolet, GMC, Cadillac, Buick) windshield cameras calibrate DYNAMICALLY ONLY, on the road. They never use targets or a static setup. Never write that a Ford or GM windshield camera completed a static calibration, read targets, sat in front of a target board, or was calibrated in the shop or bay.
 - Subaru with EyeSight: any collision repair gets the calibration.
-- Toyota/Lexus, Honda/Acura and Hyundai/Kia blind spot modules bolt to the quarter panel, not the bumper cover. Calibrate them with the rear bumper cover off, because they often need a hand adjustment.`
+- Toyota/Lexus, Honda/Acura and Hyundai/Kia blind spot modules bolt to the quarter panel, not the bumper cover. Calibrate them with the rear bumper cover off, because they often need a hand adjustment.
+- WORDING (Mark 2026-10-28): talk about calibration REQUIREMENTS, never recommendations. Write "required calibrations", "calibration requirements", "the car maker requires". Never write that Absolute ADAS or Mark "recommends" a calibration. The Absolute Promise reads: every calibration requirement we call out, the shop gets paid for.`
 
 export const withCalibrationFacts = prompt => `${prompt}\n\n${CALIBRATION_FACTS}`
 

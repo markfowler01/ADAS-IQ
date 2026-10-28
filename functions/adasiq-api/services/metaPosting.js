@@ -13,6 +13,7 @@
 
 import axios from 'axios'
 import { retryOnTransient } from './httpRetry.js'
+import { socialText } from './requiredWording.js'
 
 const GRAPH_API = 'https://graph.facebook.com/v22.0'
 
@@ -54,7 +55,7 @@ export async function postToFacebookPage({ imageUrl, caption }) {
       {
         params: {
           url: imageUrl,
-          caption: String(caption || '').slice(0, 5000),
+          caption: socialText(String(caption || ''), 'facebook').slice(0, 5000),
           access_token: pageToken,
         },
         timeout: 25000,
@@ -89,7 +90,7 @@ export async function postTextToFacebookPage({ message }) {
       null,
       {
         params: {
-          message: String(message || '').slice(0, 5000),
+          message: socialText(String(message || ''), 'facebook').slice(0, 5000),
           access_token: pageToken,
         },
         timeout: 20000,
@@ -126,7 +127,7 @@ export async function commentOnFacebookPost({ postId, message }) {
       `${GRAPH_API}/${postId}/comments`,
       null,
       {
-        params: { message: String(message || '').slice(0, 8000), access_token: pageToken },
+        params: { message: socialText(String(message || ''), 'facebook comment').slice(0, 8000), access_token: pageToken },
         timeout: 20000,
         validateStatus: s => s < 500,
       }
@@ -163,7 +164,7 @@ export async function commentOnInstagramMedia({ mediaId, message }) {
       `${GRAPH_API}/${mediaId}/comments`,
       null,
       {
-        params: { message: String(message || '').slice(0, 2200), access_token: pageToken },
+        params: { message: socialText(String(message || ''), 'instagram comment').slice(0, 2200), access_token: pageToken },
         timeout: 20000,
         validateStatus: s => s < 500,
       }
@@ -280,7 +281,7 @@ export async function postToInstagram({ imageUrl, caption }) {
     return { ok: false, error: 'IG_BUSINESS_USER_ID or FB_PAGE_ACCESS_TOKEN not set' }
   }
   const { igUserId, pageToken } = envBundle()
-  const trimmedCaption = String(caption || '').slice(0, 2200)
+  const trimmedCaption = socialText(String(caption || ''), 'instagram').slice(0, 2200)
 
   // 1. Create the media container
   let creationId

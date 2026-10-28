@@ -12,6 +12,7 @@
 //   LINKEDIN_ACCESS_TOKEN   — short-lived (~60 days). If set, used directly. Otherwise refreshed from above.
 
 import axios from 'axios'
+import { socialText } from './requiredWording.js'
 
 const LI_API = 'https://api.linkedin.com'
 const LI_OAUTH = 'https://www.linkedin.com/oauth/v2'
@@ -102,7 +103,7 @@ export async function postToLinkedIn({ text }) {
     specificContent: {
       'com.linkedin.ugc.ShareContent': {
         shareCommentary: {
-          text: String(text || '').slice(0, 3000),
+          text: socialText(String(text || ''), 'linkedin').slice(0, 3000),
         },
         shareMediaCategory: 'NONE',
       },
@@ -417,7 +418,7 @@ export async function postImageToLinkedIn({ imageUrl, imageBuffer, text }) {
       lifecycleState: 'PUBLISHED',
       specificContent: {
         'com.linkedin.ugc.ShareContent': {
-          shareCommentary: { text: String(text || '').slice(0, 3000) },
+          shareCommentary: { text: socialText(String(text || ''), 'linkedin').slice(0, 3000) },
           shareMediaCategory: 'IMAGE',
           media: [{
             status: 'READY',
@@ -475,7 +476,7 @@ export async function commentOnLinkedInPost(shareUrn, text) {
   const body = {
     actor: e.userUrn,
     object: shareUrn,
-    message: { text: String(text || '').slice(0, 1250) },
+    message: { text: socialText(String(text || ''), 'linkedin comment').slice(0, 1250) },
   }
 
   try {

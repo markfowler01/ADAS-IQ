@@ -86,7 +86,7 @@ New to us? Your first car is free if you are not happy with it.`),
 
 When my son and I sign off on a calibration, we are putting the family on the line. So we do it to the car maker's procedure, every time, and we document it so you get paid.
 
-If a calibration we recommended gets denied, you don't pay us.`),
+If we call a calibration required and it gets denied, you don't pay us.`),
   },
   {
     id: 'f4',
@@ -111,7 +111,7 @@ export const INSURANCE_POSTS = [
   {
     id: 'w1-wed',
     title: 'The denied calibration',
-    text: finish(`Shop owners: how many calibrations did you eat this year because the carrier said no? We only recommend what the car maker requires and we document it the way carriers pay. If a calibration we recommended still gets denied, you don't pay us. That's the Absolute Promise.`),
+    text: finish(`Shop owners: how many calibrations did you eat this year because the carrier said no? We only call out the calibrations the car maker requires, and we document them the way carriers pay. If we call a calibration required and it still gets denied, you don't pay us. That's the Absolute Promise.`),
   },
   {
     id: 'w1-thu',
@@ -171,7 +171,7 @@ export const INSURANCE_POSTS = [
   {
     id: 'w3-fri',
     title: 'The Promise, part 2',
-    text: finish(`We guarantee you get paid for every calibration we recommend. If it's recommended, done and still denied, you don't pay us. No other fine print.`),
+    text: finish(`We guarantee you get paid for every calibration requirement we call out. If it's required, done and still denied, you don't pay us. No other fine print.`),
   },
 ]
 

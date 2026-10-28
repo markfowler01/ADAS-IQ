@@ -46,3 +46,9 @@ test('scheduled copy stays on confirmed facts and the one call to action', () =>
   assert.deepEqual(FAMILY_POSTS.map(p => p.id), ['f1', 'f3', 'f4'])
   assert.equal(HELD_POSTS[0].id, 'f2')
 })
+
+test('no campaign post says "recommend" (Mark 2026-10-28: calibration requirements)', () => {
+  for (const p of [...FAMILY_POSTS, ...INSURANCE_POSTS, ...HELD_POSTS]) {
+    assert.ok(!/recommend/i.test(p.text), p.id)
+  }
+})
