@@ -135,7 +135,15 @@ export function CallSheet({ c, onClose, onSaved }) {
       const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/winner/tailor`, { method: 'POST' })
       const j = await r.json(); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
       setW(x => ({ ...x, custom: j.winner.custom })); onSaved(j.winner)
-    } catch (e) { setErr(e.message) } finally { setTailoring(false) }
+    } catch (e) {
+      // The writer can outlast the 30s gateway but still saves: look for the new questions for a minute.
+      const before = JSON.stringify(w.custom || [])
+      for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 10000))
+        try { const j = await (await apiFetch(`${API_BASE}/api/recruit`)).json(); const nw = (j.candidates || []).find(x => x.id === c.id)?.winner; if (nw && JSON.stringify(nw.custom || []) !== before) { setW(x => ({ ...x, custom: nw.custom })); onSaved(nw); setTailoring(false); return } } catch { /* keep waiting */ }
+      }
+      setErr(e.message)
+    } finally { setTailoring(false) }
   }
   const [tab, setTab] = useState('call')
   const setRefs = (refs, now = false) => { setW(x => ({ ...x, refs })); queue({ refs }, now) }
