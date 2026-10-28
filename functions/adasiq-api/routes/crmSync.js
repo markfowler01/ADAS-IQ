@@ -1414,6 +1414,11 @@ router.all('/spot-pay-nudges', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   try { const { spotNudges } = await import('../services/spotPay.js'); res.json(await spotNudges(req)) } catch (e) { res.status(500).json({ error: e.message }) }
 })
+// 📞 Desk phone: drop laptops that closed or slept, and turn the desk off at 6 PM PT (2026-10-28).
+router.all('/desk-sync', async (req, res) => {
+  if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
+  try { const { syncDesk } = await import('../services/deskSessions.js'); const r = await syncDesk(req); res.json({ ok: true, live: r.alive.map(s => s.who), desk_on: r.cfg.DESK_PHONE_ON }) } catch (e) { res.status(500).json({ error: e.message }) }
+})
 router.all('/scrub-safety', async (req, res) => {
   if (!wdAuth(req)) return res.status(401).json({ error: 'Unauthorized' })
   const out = { inbox: 0, missing: 0, requeued: [], stale: 0, dead: 0, alerted: 0 }

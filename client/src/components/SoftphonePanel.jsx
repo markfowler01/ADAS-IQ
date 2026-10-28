@@ -26,8 +26,25 @@ function fmtPhone(input) {
 // page (Mark 2026-08-12: "I want this on the same page as the SMS").
 // The Device stays registered app-wide so an incoming call still pops
 // its banner on ANY screen — only the idle controls are page-scoped.
+// 📞 Per-device duty (Mark 2026-10-28): this browser rings only after someone taps On duty
+// HERE. Opening the laptop never turns it on; a laptop that slept comes back OFF with a
+// "turn back on?" card. Everyone sees who's on and the ring order (services/deskSessions.js).
+function deskDeviceId() {
+  try {
+    let id = localStorage.getItem('desk_device_id')
+    if (!id) { id = `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; localStorage.setItem('desk_device_id', id) }
+    return id
+  } catch { return 'nostorage' }
+}
+const localOn = v => { try { if (v === undefined) return localStorage.getItem('desk_duty_on') === '1'; localStorage.setItem('desk_duty_on', v ? '1' : '0') } catch { return false } }
+const ptTime = iso => iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }) : ''
+
 export default function SoftphonePanel({ showControls = true }) {
-  const [duty, setDuty] = useState(false)        // backend flag
+  const [duty, setDuty] = useState(false)        // THIS device is on duty
+  const [info, setInfo] = useState(null)         // { desk: [{who, since, me}], ring: [...], mine_ends_at }
+  const [whoOpen, setWhoOpen] = useState(false)
+  const [wasOn, setWasOn] = useState(false)      // came back from sleep / 6 PM: offer to turn back on
+  const device = useRef(deskDeviceId()).current
   const [phase, setPhase] = useState('off')      // off|starting|ready|incoming|incall|error
   const [call, setCall] = useState(null)         // active/incoming Twilio Call
   const [callerLabel, setCallerLabel] = useState('')
@@ -92,24 +109,47 @@ export default function SoftphonePanel({ showControls = true }) {
     } catch { /* banner still shows */ }
   }
 
-  // Backend duty flag on load — resume registration if Kat was on duty.
+  // Server check: is THIS device still on duty? (A sleeping laptop stops heartbeating and
+  // drops off after a few minutes; everything ends at 6 PM PT.) Never turns a device ON.
+  async function check(beat = false) {
+    try {
+      const r = beat
+        ? await apiFetch(`${API_BASE}/api/softphone/heartbeat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ device }) })
+        : await apiFetch(`${API_BASE}/api/softphone/status?device=${encodeURIComponent(device)}`)
+      const j = await r.json(); if (!r.ok) return null
+      setInfo(j)
+      if (!j.mine && (dutyRef.current || localOn())) {   // was on here, isn't any more
+        stopDevice(); setDuty(false); localOn(false); setWasOn(true)
+      }
+      return j
+    } catch { return null }
+  }
+
+  // On load: resume only if this same device is still on duty on the server.
   useEffect(() => {
-    apiFetch(`${API_BASE}/api/softphone/status`)
-      .then(r => r.json())
-      .then(j => { if (j.on) { setDuty(true); startDevice() } })
-      .catch(() => {})
+    check().then(j => { if (j?.mine) { setDuty(true); localOn(true); startDevice() } })
     return () => stopDevice()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Wake recovery: laptop sleep / long background kills the connection.
-  // On tab focus or network return, if we're supposed to be on duty but
-  // the device is gone or unregistered, restart it with a fresh token.
+  // Heartbeat while on duty; refresh "who's on" every minute either way.
   useEffect(() => {
-    const revive = () => {
+    const t = setInterval(() => check(dutyRef.current), 60000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Wake recovery: laptop sleep / long background kills the connection. Ask the server
+  // first: if this device dropped off while asleep it stays OFF (the "turn back on?" card);
+  // if it's still on duty and the Twilio device died, restart it with a fresh token.
+  useEffect(() => {
+    const revive = async () => {
+      if (!dutyRef.current) { check(); return }
+      const j = await check(true)
+      if (!j?.mine) return
       const d = deviceRef.current
       const dead = !d || d.state === 'destroyed' || d.state === 'unregistered'
-      if (dutyRef.current && dead && phaseRef.current !== 'starting') {
+      if (dead && phaseRef.current !== 'starting') {
         try { d?.destroy() } catch {}
         deviceRef.current = null
         startDevice()
@@ -215,16 +255,19 @@ export default function SoftphonePanel({ showControls = true }) {
     setPhase('off')
   }
 
-  async function toggleDuty() {
-    const next = !duty
-    setDuty(next)
+  async function toggleDuty(force) {
+    const next = typeof force === 'boolean' ? force : !duty
+    setDuty(next); localOn(next); setWasOn(false)
     try {
-      await apiFetch(`${API_BASE}/api/softphone/duty`, {
+      const r = await apiFetch(`${API_BASE}/api/softphone/duty`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ on: next }),
+        body: JSON.stringify({ on: next, device }),
       })
-    } catch { /* backend flag is best-effort; device state is what rings */ }
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      setInfo(j)
+    } catch (e) { setErr(e.message); setPhase('error'); setDuty(false); localOn(false); stopDevice(); return }
     if (next) startDevice()
     else stopDevice()
   }
@@ -319,6 +362,38 @@ export default function SoftphonePanel({ showControls = true }) {
         </div>
       )}
 
+      {/* Came back from sleep / 6 PM: off now, offer to turn back on */}
+      {wasOn && !duty && (
+        <div className="rounded-2xl p-3 shadow-2xl bg-white" style={{ border: '1px solid #fcd34d', maxWidth: 290 }}>
+          <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>📞 Desk phone is off on this computer</div>
+          <div className="text-xs mt-0.5" style={{ color: '#666' }}>It was on before this computer slept (or it hit 6 PM). It won't ring until you turn it back on.</div>
+          <div className="flex gap-2 mt-2">
+            <button onClick={() => toggleDuty(true)} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: GREEN }}>Turn back on</button>
+            <button onClick={() => setWasOn(false)} className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>Leave off</button>
+          </div>
+        </div>
+      )}
+
+      {/* Who's on — every screen */}
+      {info && whoOpen && (
+        <div className="rounded-2xl p-3 shadow-2xl bg-white text-xs" style={{ border: '1px solid #ebebeb', minWidth: 250, maxWidth: 300 }}>
+          <div className="text-[11px] uppercase tracking-widest mb-1.5" style={{ color: '#888' }}>📞 Who's on the 844 line</div>
+          {info.desk?.length
+            ? info.desk.map((d, i) => <div key={i} className="py-0.5" style={{ color: '#1a1a1a' }}>🖥 <b>{d.who}</b> on the desk phone{d.me ? ' (this computer)' : ''} · since {ptTime(d.since)}</div>)
+            : <div style={{ color: '#666' }}>Nobody is on the desk phone.</div>}
+          <div className="mt-2" style={{ color: '#555' }}><b>Calls ring:</b> {(info.ring || []).join(' → ') || '—'}</div>
+          {duty && info.mine_ends_at && <div className="mt-1" style={{ color: '#888' }}>This computer turns off at {ptTime(info.mine_ends_at)} or when it sleeps.</div>}
+          <button onClick={() => toggleDuty()} className="mt-2 w-full text-xs font-bold rounded-lg px-3 py-2" style={duty ? { backgroundColor: '#fee2e2', color: RED } : { backgroundColor: GREEN, color: 'white' }}>{duty ? 'Turn off on this computer' : 'Turn on here (desk rings first)'}</button>
+        </div>
+      )}
+      {info && !showControls && phase !== 'incoming' && phase !== 'incall' && (
+        <button onClick={() => setWhoOpen(o => !o)} className="flex items-center gap-1.5 text-[11px] font-bold rounded-full px-3 py-1.5 shadow-md"
+          style={info.desk?.length ? { backgroundColor: GREEN, color: 'white' } : { backgroundColor: 'white', color: '#666', border: '1px solid #e0dbd6' }}
+          title="Who's on the phone">
+          📞 {info.desk?.length ? `Desk: ${[...new Set(info.desk.map(d => d.who))].join(' + ')}` : (info.ring?.[0] || 'Phones').replace(/^📱 /, '')}
+        </button>
+      )}
+
       {/* Status pill — SMS page only */}
       {showControls && <div className="flex items-center gap-2">
         {(phase === 'ready') && (
@@ -326,7 +401,8 @@ export default function SoftphonePanel({ showControls = true }) {
             className="w-10 h-10 rounded-full shadow-lg text-lg bg-white" style={{ border: '1px solid #ebebeb' }}
             title="Open dialer">☎️</button>
         )}
-        <button onClick={toggleDuty}
+        {info && <button onClick={() => setWhoOpen(o => !o)} className="text-[11px] font-bold rounded-full px-3 py-2 shadow-lg bg-white" style={{ border: '1px solid #ebebeb', color: '#555' }} title="Who's on the phone">👥 {info.desk?.length ? [...new Set(info.desk.map(d => d.who))].join(' + ') : 'Nobody on desk'}</button>}
+        <button onClick={() => toggleDuty()}
           className="flex items-center gap-2 text-xs font-bold rounded-full px-4 py-2.5 shadow-lg"
           style={duty
             ? { backgroundColor: GREEN, color: 'white' }
@@ -334,7 +410,7 @@ export default function SoftphonePanel({ showControls = true }) {
           title="On duty = calls to 844 ring this browser first"
         >
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: duty ? '#86efac' : '#d1d5db' }} />
-          {phase === 'starting' ? 'Connecting…' : duty ? 'On duty — desk rings first' : '📞 Desk phone off'}
+          {phase === 'starting' ? 'Connecting…' : duty ? 'On duty here — desk rings first' : '📞 Desk phone off here'}
         </button>
       </div>}
     </div>

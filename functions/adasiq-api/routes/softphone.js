@@ -90,20 +90,23 @@ router.get('/token', async (req, res) => {
   }
 })
 
+// 📞 Per-device duty (Mark 2026-10-28, services/deskSessions.js): a device rings only after
+// someone taps On duty ON THAT DEVICE; `on` is that device's own state, so an old tab
+// waking up never re-registers itself. `desk` + `ring` = who's on, for every screen.
 router.get('/status', async (req, res) => {
-  try {
-    const cfg = await resolvePhoneConfig(req)
-    res.json({ ok: true, on: String(cfg.DESK_PHONE_ON || '').toLowerCase() === 'true' })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
+  try { const D = await import('../services/deskSessions.js'); res.json(await D.status(req, String(req.query.device || ''))) }
+  catch (err) { res.status(500).json({ error: err.message }) }
+})
+router.post('/heartbeat', async (req, res) => {
+  try { const D = await import('../services/deskSessions.js'); res.json(await D.heartbeat(req, String(req.body?.device || ''))) }
+  catch (err) { res.status(500).json({ error: err.message }) }
 })
 
 router.post('/duty', async (req, res) => {
   try {
-    const on = !!req.body?.on
-    await setPhoneConfigValue(req, 'DESK_PHONE_ON', on ? 'true' : 'false')
-    res.json({ ok: true, on })
+    const D = await import('../services/deskSessions.js')
+    if (!req.body?.device) return res.status(400).json({ error: 'Reload the app to use the desk phone (this tab is out of date).' })
+    res.json(await D.setDuty(req, String(req.body.device), !!req.body?.on))
   } catch (err) {
     console.error('[softphone duty]', err.message)
     res.status(500).json({ error: err.message })
