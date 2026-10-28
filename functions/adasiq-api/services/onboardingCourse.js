@@ -5,6 +5,9 @@
 // recording script (owner-only talking points for the video), the reading
 // the new hire sees, and a 5-question quiz. video_url stays blank until
 // Mark links one.
+// Outside scrubber we use today (Mark 2026-10-28: "just put current scrubber in use").
+// Kinetic → 1Source on 2026-10; change this one word when it changes again.
+export const SCRUBBER = '1Source'
 export const TRACKS = { tech: 'Technician', apprentice: 'Apprentice technician', ops: 'Billing & dispatch' }
 export const DEFAULT_COURSE = { version: 2, pass_pct: 80, modules: [
 
@@ -75,13 +78,13 @@ Why: the odometer pair proves the test drive. The four corners prove the car's c
 
 Bad signal: shoot everything anyway. Every photo is saved on the phone the moment you take it and uploads on its own. You can move the card to Ready to Invoice with photos still uploading — the button says so — and the card carries a "still uploading" note until the last one lands. Kat sees it clear. Never re-shoot because of signal.
 
-Every job has a folder in WorkDrive named by RO number, shop, and vehicle. The photos, the Kinetic report, and the post-scan PDFs all land there. That folder is what the shop forwards to the insurer. Only Mark can override the photo gate, and it shows on the card and in #dispatch when he does.`,
+Every job has a folder in WorkDrive named by RO number, shop, and vehicle. The photos, the ${SCRUBBER} report, and the post-scan PDFs all land there. That folder is what the shop forwards to the insurer. Only Mark can override the photo gate, and it shows on the card and in #dispatch when he does.`,
     quiz: [
       { id: 'q1', q: 'How many required shots are in the set?', options: ['4', '6', '8', '12'], correct: 2 },
       { id: 'q2', q: 'Why two odometer photos?', options: ['To bill mileage', 'To prove the test drive of more than 1 mile', 'Insurance requires two', 'To check the VIN'], correct: 1 },
       { id: 'q3', q: 'The signal drops mid-upload. What do you do?', options: ['Re-shoot everything', 'Keep working — photos are saved on the phone and upload on their own', 'Text Kat the photos', 'Skip the photos'], correct: 1 },
       { id: 'q4', q: 'What are the four corner shots for?', options: ['Marketing', 'Proving the car\'s condition when we touched it', 'Measuring the car', 'The insurer never sees them'], correct: 1 },
-      { id: 'q5', q: 'Where do the photos, the Kinetic report, and the post-scan end up?', options: ['On your phone', 'Email to Kat', 'The job\'s WorkDrive folder, named by RO, shop, and vehicle', 'Google Drive'], correct: 2 },
+      { id: 'q5', q: `Where do the photos, the ${SCRUBBER} report, and the post-scan end up?`, options: ['On your phone', 'Email to Kat', 'The job\'s WorkDrive folder, named by RO, shop, and vehicle', 'Google Drive'], correct: 2 },
     ] },
 
   { id: 'pcsi', tracks: ['core'], title: 'Post-collision safety inspection and tires', minutes: 8, video_url: '',
@@ -146,36 +149,37 @@ If a shop has no rule yet, the first invoice asks Kat which way it goes and save
 Your job on site: don't touch prices, but make sure the work behind each line actually happened — the report was generated, the inspection was done and checked off, the post-scan was run — and that the photos back it up.`,
     quiz: [
       { id: 'q1', q: 'The Big 3 are…', options: ['Three techs', 'Cal ID report, post-collision safety inspection, post-scan', 'Three insurers', 'Three vans'], correct: 1 },
-      { id: 'q2', q: 'Who sets whether a shop is charged for the Big 3?', options: ['The tech on site', 'The rule saved on the shop in the CRM (Kat/Mark)', 'The insurer', 'The customer'], correct: 1 },
+      { id: 'q2', q: 'Who sets whether a shop is charged for the Big 3?', options: ['The tech on site', 'The rule saved on the shop in the CRM (Kat/Mark)', 'The insurer', 'The car\'s owner'], correct: 1 },
       { id: 'q3', q: 'Why is a line shown at $0 instead of left off?', options: ['A Books limitation', 'So shops get used to seeing it before we charge for it', 'Insurance requires it', 'It isn\'t'], correct: 1 },
       { id: 'q4', q: 'When Calibration Snapshot is charged…', options: ['Nothing else changes', 'Post-Scan comes off that invoice', 'Cal ID report is free', 'The shop pays double'], correct: 1 },
       { id: 'q5', q: 'A shop has no Big 3 rule yet. What happens on their first invoice?', options: ['It fails', 'The app asks Kat and saves her pick as the rule', 'Mark is called', 'The lines are left off'], correct: 1 },
     ] },
 
   { id: 'customer', tracks: ['core'], title: 'On site: the shop, the estimator, and the shop\'s rules', minutes: 6, video_url: '',
-    script: `- Collision shops don't have advisors. You deal with the estimator (sometimes the production manager or the front office).
+    script: `- Collision shops don't have advisors. You deal with the estimator or the shop owner (sometimes the production manager or the front office).
+- We never talk to the car's owner. The shop owns that relationship. If the car's owner walks up, be polite and send them to the estimator.
 - Walk in, check in the way that shop wants, say who you are, what you're doing, how long.
 - Every shop has its own rules: where keys go, where to park, which bay, who moves cars, test drives. Follow theirs. Show the shop note on a job card.
 - Customer pay: the estimator says the words or gives a number — it goes on the card at Ready to Invoice, Kat gets it instantly.
 - Can't do something the estimate asked for? Say so plainly, let Kat quote the rest.
 - You're the company while you're there. Blue shirt, clean van, no drama.`,
-    reading: `You are the company while you're on site. Collision shops don't have service advisors — your contact is the estimator, and at some shops the production manager or the front office. Walk in, check in the way that shop wants, tell them who you are, what you're going to do, and roughly how long. When you're done, tell them you're done.
+    reading: `You are the company while you're on site. Collision shops don't have service advisors — your contact is the estimator or the shop owner, and at some shops the production manager or the front office. The shop is our customer. The car's owner is the shop's customer, and we never deal with them: no calls, no texts, no explaining the repair in the lot. If the car's owner walks up or calls, be polite and send them to the estimator. Walk in, check in the way that shop wants, tell them who you are, what you're going to do, and roughly how long. When you're done, tell them you're done.
 
-Every shop runs its own way, and on their floor their rules win. Where the keys and fobs go when you're done, where to park the van, which bay to use, whether you move cars yourself or a porter does, and whether and how far you can test drive — all of it is that shop's policy. The shop's note shows on your job card in the app; check it before you walk in. No note, or you're not sure? Ask the estimator, do it their way, and tell Kat so it goes on the shop's note for next time. Never guess with a customer's keys.
+Every shop runs its own way, and on their floor their rules win. Where the keys and fobs go when you're done, where to park the van, which bay to use, whether you move cars yourself or a porter does, and whether and how far you can test drive — all of it is that shop's policy. The shop's note shows on your job card in the app; check it before you walk in. No note, or you're not sure? Ask the estimator, do it their way, and tell Kat so it goes on the shop's note for next time. Never guess with someone's keys.
 
-Customer pay: if the estimator says "this is customer pay" or tells you a number ($350 or $700 are the usual ones), it goes on the card at Ready to Invoice. Kat and #dispatch get it instantly and the card turns green so nobody bills it as insurance by mistake. Cash jobs price on our cash schedule and never go over the number the customer was told.
+Customer pay: if the estimator says "this is customer pay" or tells you a number ($350 or $700 are the usual ones), it goes on the card at Ready to Invoice. Kat and #dispatch get it instantly and the card turns green so nobody bills it as insurance by mistake. Cash jobs price on our cash schedule and never go over the number the shop was told.
 
 If the car needs something we can't do today — a part, a windshield, a dealer-only procedure — say so plainly to the estimator and put it on the card. Kat quotes it. Don't promise a fix you can't deliver.
 
 Insurers ask "why was this calibration needed?" Our answer is the justification on the invoice and the photos in the folder. That's why the report and the photo set matter more than the speed.
 
-No complaints about the shop, the insurer, or the last tech in front of the customer. Ever.`,
+No complaints about the shop, the insurer, or the last tech in front of anyone at that shop. Ever.`,
     quiz: [
-      { id: 'q1', q: 'The estimator says the job is customer pay at $700. You…', options: ['Ignore it — billing is Kat\'s job', 'Put it on the card at Ready to Invoice so Kat bills it right', 'Collect cash', 'Tell the customer to call the office'], correct: 1 },
+      { id: 'q1', q: 'The estimator says the job is customer pay at $700. You…', options: ['Ignore it — billing is Kat\'s job', 'Put it on the card at Ready to Invoice so Kat bills it right', 'Collect cash from the car\'s owner', 'Call the car\'s owner to confirm'], correct: 1 },
       { id: 'q2', q: 'The car needs work we can\'t do. You…', options: ['Try anyway', 'Say so plainly and let Kat quote it', 'Say nothing', 'Send them to the dealer'], correct: 1 },
       { id: 'q3', q: 'Where do the keys go when you are done?', options: ['On the seat', 'Wherever that shop\'s policy says — check the shop note, or ask the estimator', 'In the van', 'Always to the front desk'], correct: 1 },
       { id: 'q4', q: 'An insurer asks why a calibration was needed. The answer is…', options: ['A phone call', 'The justification on the invoice and the photos in the folder', 'A guess', 'The shop\'s problem'], correct: 1 },
-      { id: 'q5', q: 'Cash jobs…', options: ['Bill whatever the estimate says', 'Never go over the number the customer was told', 'Are free', 'Skip the photos'], correct: 1 },
+      { id: 'q5', q: 'The car\'s owner walks up and asks what you\'re doing to their car. You…', options: ['Walk them through the calibration', 'Be polite and send them to the estimator — we only deal with the shop', 'Give them your number', 'Ignore them'], correct: 1 },
     ] },
 
   { id: 'safety', tracks: ['tech', 'apprentice'], title: 'Safety, the van, and the shop floor', minutes: 6, video_url: '',
@@ -313,7 +317,7 @@ At 8:00 every morning the team gets the kickoff text on its own. Your job is tha
 - Insurer families: Allstate family, Liberty Mutual = Allstate pricing, State Farm, Am Fam. The pill on the card.
 - Unknown insurer: the app asks once, you pick, it remembers.
 - Pricing disputes go to Mark.`,
-    reading: `Customer-pay jobs price on our cash schedule (the CP items in Books: $350 per calibration, SAS/SWS $100, Subaru EyeSight $550, dynamic $200) and the total never goes over the cap — $700, or the number the customer was told if the tech put one on the card. On the upload review, the 💵 Swap to Cash button switches a job to cash; it's already pressed when the Kinetic report has no insurer. A cash card is framed green and shows the number told.
+    reading: `Customer-pay jobs price on our cash schedule (the CP items in Books: $350 per calibration, SAS/SWS $100, Subaru EyeSight $550, dynamic $200) and the total never goes over the cap — $700, or the number the customer was told if the tech put one on the card. On the upload review, the 💵 Swap to Cash button switches a job to cash; it's already pressed when the ${SCRUBBER} report has no insurer. A cash card is framed green and shows the number told.
 
 Insurers don't all pay the same list. Allstate and its companies (National General, US General, Integon) bill on the Allstate schedule. Liberty Mutual and its companies (Ohio Security, Safeco, Ohio Casualty, Peerless) also bill on the Allstate schedule. State Farm has its own. American Family has its own. Everyone else is standard. The card shows a pill — "ALLSTATE PRICING", "LIBERTY MUTUAL · ALLSTATE PRICING", "STATE FARM PRICING" — and invoicing pulls from the right items on its own. The table lives on the Item Mapping page.
 
@@ -324,7 +328,7 @@ Insurers ask why a calibration was needed: the answer is the justification on th
       { id: 'q1', q: 'A cash customer was told $700. The invoice comes to $850. You…', options: ['Bill $850', 'Bill $700 — never above the quoted number', 'Split the difference', 'Ask the shop'], correct: 1 },
       { id: 'q2', q: 'An insurer asks why a calibration was needed. You…', options: ['Guess', 'Pull the report and photos — the justification is there', 'Refund it', 'Ignore it'], correct: 1 },
       { id: 'q3', q: 'Ohio Security Insurance bills on…', options: ['Standard pricing', 'The Allstate schedule (Liberty Mutual family)', 'State Farm pricing', 'Cash pricing'], correct: 1 },
-      { id: 'q4', q: 'The Kinetic report has no insurer. The upload review…', options: ['Fails', 'Has Swap to Cash already pressed', 'Bills standard', 'Asks Mark'], correct: 1 },
+      { id: 'q4', q: `The ${SCRUBBER} report has no insurer. The upload review…`, options: ['Fails', 'Has Swap to Cash already pressed', 'Bills standard', 'Asks Mark'], correct: 1 },
       { id: 'q5', q: 'A brand-new insurer shows up. The app…', options: ['Bills standard forever', 'Asks you once which list they use and remembers', 'Blocks the job', 'Emails the insurer'], correct: 1 },
     ] },
 
