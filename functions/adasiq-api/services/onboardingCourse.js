@@ -155,15 +155,24 @@ Your job on site: don't touch prices, but make sure the work behind each line ac
       { id: 'q5', q: 'A shop has no Big 3 rule yet. What happens on their first invoice?', options: ['It fails', 'The app asks Kat and saves her pick as the rule', 'Mark is called', 'The lines are left off'], correct: 1 },
     ] },
 
-  { id: 'customer', tracks: ['core'], title: 'On site: the shop, the estimator, and the shop\'s rules', minutes: 6, video_url: '',
+  { id: 'customer', tracks: ['core'], title: 'On site: the shop, the estimator, and the shop\'s rules', minutes: 8, video_url: '',
     script: `- Collision shops don't have advisors. You deal with the estimator or the shop owner (sometimes the production manager or the front office).
 - We never talk to the car's owner. The shop owns that relationship. If the car's owner walks up, be polite and send them to the estimator.
-- Walk in, check in the way that shop wants, say who you are, what you're doing, how long.
+- Check in: varies by shop, but it's usually the estimator. Say who you are, what you're doing, how long.
+- Before you leave: the post-scan comes back clear. Codes still there? Talk to the estimator first. They decide whether to diagnose further.
+- Always check out with the estimator when you're done, and ask if there's anything else they need.
+- We're paperless. Invoices and the scan report PDF are emailed. Nothing to hand over or leave on the counter.
 - Every shop has its own rules: where keys go, where to park, which bay, who moves cars, test drives. Follow theirs. Show the shop note on a job card.
 - Customer pay: the estimator says the words or gives a number — it goes on the card at Ready to Invoice, Kat gets it instantly.
 - Can't do something the estimate asked for? Say so plainly, let Kat quote the rest.
 - You're the company while you're there. Blue shirt, clean van, no drama.`,
-    reading: `You are the company while you're on site. Collision shops don't have service advisors — your contact is the estimator or the shop owner, and at some shops the production manager or the front office. The shop is our customer. The car's owner is the shop's customer, and we never deal with them: no calls, no texts, no explaining the repair in the lot. If the car's owner walks up or calls, be polite and send them to the estimator. Walk in, check in the way that shop wants, tell them who you are, what you're going to do, and roughly how long. When you're done, tell them you're done.
+    reading: `You are the company while you're on site. Collision shops don't have service advisors — your contact is the estimator or the shop owner, and at some shops the production manager or the front office. The shop is our customer. The car's owner is the shop's customer, and we never deal with them: no calls, no texts, no explaining the repair in the lot. If the car's owner walks up or calls, be polite and send them to the estimator. Check-in varies by shop, but it's usually with the estimator (the shop note says if it's different). Tell them who you are, what you're going to do, and roughly how long.
+
+Before you leave, the post-scan has to come back clear. If codes are still there, don't just leave and don't start chasing them on your own: talk to the estimator first. They decide whether they want it diagnosed further and how. Put what you found on the card.
+
+Always check out with the estimator when you're done. Tell them it's finished and ask if there's anything else they need. That question is how a lot of second jobs happen.
+
+We're paperless. Every invoice is emailed, and so is the scan report PDF. There's nothing to print, hand over, or leave on the counter. If the estimator asks for a copy, it's coming by email.
 
 Every shop runs its own way, and on their floor their rules win. Where the keys and fobs go when you're done, where to park the van, which bay to use, whether you move cars yourself or a porter does, and whether and how far you can test drive — all of it is that shop's policy. The shop's note shows on your job card in the app; check it before you walk in. No note, or you're not sure? Ask the estimator, do it their way, and tell Kat so it goes on the shop's note for next time. Never guess with someone's keys.
 
@@ -179,6 +188,9 @@ No complaints about the shop, the insurer, or the last tech in front of anyone a
       { id: 'q2', q: 'The car needs work we can\'t do. You…', options: ['Try anyway', 'Say so plainly and let Kat quote it', 'Say nothing', 'Send them to the dealer'], correct: 1 },
       { id: 'q3', q: 'Where do the keys go when you are done?', options: ['On the seat', 'Wherever that shop\'s policy says — check the shop note, or ask the estimator', 'In the van', 'Always to the front desk'], correct: 1 },
       { id: 'q4', q: 'An insurer asks why a calibration was needed. The answer is…', options: ['A phone call', 'The justification on the invoice and the photos in the folder', 'A guess', 'The shop\'s problem'], correct: 1 },
+      { id: 'q6', q: 'The post-scan still shows codes after your calibration. You…', options: ['Clear them and leave', 'Leave — it\'s the shop\'s problem', 'Talk to the estimator first; they decide whether to diagnose further', 'Start diagnosing on your own'], correct: 2 },
+      { id: 'q7', q: 'You\'re finished with the job. Before you drive off you…', options: ['Text Kat', 'Check out with the estimator and ask if there\'s anything else they need', 'Leave a printed invoice on the counter', 'Just go — the app tells them'], correct: 1 },
+      { id: 'q8', q: 'The estimator wants the invoice and scan report. They get them…', options: ['Printed, before you leave', 'By email — we\'re paperless', 'Faxed', 'From the insurer'], correct: 1 },
       { id: 'q5', q: 'The car\'s owner walks up and asks what you\'re doing to their car. You…', options: ['Walk them through the calibration', 'Be polite and send them to the estimator — we only deal with the shop', 'Give them your number', 'Ignore them'], correct: 1 },
     ] },
 
