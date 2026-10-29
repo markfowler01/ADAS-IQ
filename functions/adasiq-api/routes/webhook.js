@@ -203,9 +203,11 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
       if (roMatch) {
         const roNumber = roMatch[1].replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
         const refClean = referenceNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
-        if (roNumber && refClean && (refClean.includes(roNumber) || roNumber.includes(refClean))) return true
+        // Exact RO only (2026-10-29) — substring matching tied short ROs to the wrong cars.
+        if (roNumber && refClean && roNumber.length >= 3 && refClean === roNumber) return true
       }
-      return invoiceNumber ? j.notes.toLowerCase().includes(invoiceNumber.toLowerCase()) : false
+      // Bill it writes "invoice <number>" into the notes — whole-number match only.
+      return invoiceNumber ? new RegExp(`invoice ${invoiceNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i').test(j.notes) : false
     })
     if (matchedJob) matchVia = 'ro'
   }
@@ -231,10 +233,15 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
     // request for a different vehicle. With no tombstone, the next sync
     // re-imported it and re-alerted. Now: only a VIN / RO match may
     // remove a card here, and the estimate is tombstoned so it stays gone.
-    if (matchedJob && matchVia !== 'name') {
-      await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
-      await removeOrPark(req, matchedJob, `already-alerted (matched by ${matchVia})`)
-    } else if (matchedJob) {
+    // 🛑 Mark 2026-10-29 ("there are a few jobs missing — B&H and Gerber"): this
+    // hourly re-check deleted ~a dozen LIVE cards (Gerber Stanwood, Carstar
+    // Bellevue, Northwest Diesel…) on loose RO substring matches against
+    // invoices that had already gone out. The first pass (the real invoice
+    // alert) already cleared the right card; the re-check never deletes now.
+    if (matchedJob) {
+      console.log(`[invoice] already-alerted #${invoiceNumber}: ${matchVia} match on job ${matchedJob.id} — leaving the card alone (re-check never deletes)`)
+    }
+    if (false) {
       console.log(`[invoice] already-alerted #${invoiceNumber}: name-only match on job ${matchedJob.id} — leaving the card alone`)
     }
     return { action: 'already-alerted', invoice_number: invoiceNumber, job_id: matchedJob?.id, match: matchVia }
