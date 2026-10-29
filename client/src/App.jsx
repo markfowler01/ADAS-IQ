@@ -142,6 +142,11 @@ function MainApp() {
         setScreen('jobs')
         const u = new URL(window.location.href); u.searchParams.delete('job'); window.history.replaceState({}, '', u)
       }
+      if (new URLSearchParams(window.location.search).get('trash')) {   // 🗑 #dispatch "Restore it" link → board + Recently removed (2026-10-29)
+        sessionStorage.setItem('adas_open_trash', '1')
+        setScreen('jobs')
+        const u = new URL(window.location.href); u.searchParams.delete('trash'); window.history.replaceState({}, '', u)
+      }
       const ptBack = new URLSearchParams(window.location.search).get('partstech_return')
       if (ptBack) {   // back from PartsTech → reopen that estimate (2026-09-22)
         sessionStorage.setItem('adas_estimator_open', ptBack)

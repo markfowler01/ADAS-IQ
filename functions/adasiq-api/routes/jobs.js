@@ -293,10 +293,31 @@ async function updateJob(req, rowId, updates) {
   return rowToJob(updated)
 }
 
-async function deleteJob(req, rowId) {
+// 🗑 The ONLY way a card leaves the Jobs table (Mark 2026-10-29). The full row is
+// copied to the trash first (services/jobTrash.js); automation (no signed-in user)
+// must pass the rule — invoiced + exact match — and is capped per run. Returns
+// { removed, blocked?, why? } so callers can tell a kept card from a removed one.
+// meta: { reason, match, detail }.
+async function deleteJob(req, rowId, meta = {}) {
+  const T = await import('../services/jobTrash.js')
   const table = getTable(req)
   // Keep rowId as string for the same precision reason
-  await table.deleteRow(rowId)
+  const row = await table.getRow(String(rowId)).catch(() => null)
+  if (!row) return { removed: false, why: 'not found' }
+  const job = rowToJob(row)
+  const auto = !T.isPerson(req)
+  const m = { ...meta, reason: meta.reason || (auto ? 'automation' : 'manual'), by: T.whoOf(req), auto }
+  if (auto) {
+    const rule = T.checkAutoRemove(job, m)
+    if (!rule.ok) { await T.announceBlocked(req, job, m, rule.why); return { removed: false, blocked: true, why: rule.why } }
+    req.__autoRemovals = (req.__autoRemovals || 0) + 1
+    if (req.__autoRemovals > T.MAX_AUTO) { await T.announceRunStopped(req, req.__autoRemovals); return { removed: false, blocked: true, why: 'run limit' } }
+  }
+  const entry = await T.trashRow(req, row, job, m)   // throws → the card stays
+  await table.deleteRow(String(rowId))
+  console.log(`[jobs] 🗑 ${rowId} ${job.shop_name} ${job.vehicle || ''} → trash (${m.reason}${m.match ? '/' + m.match : ''}, by ${m.by})`)
+  if (auto) await T.announceRemoval(entry)
+  return { removed: true }
 }
 
 // ─── Notification helpers ─────────────────────────────────────────────────────
@@ -480,7 +501,7 @@ router.post('/clean-invoiced', async (req, res) => {
     const batch = targets.slice(0, 100)
     let removed = 0
     for (const j of batch) {
-      try { await deleteJob(req, j.id); removed++ }
+      try { if ((await deleteJob(req, j.id, { reason: 'clean_invoiced', match: 'invoiced' })).removed) removed++ }
       catch (e) { console.warn('[clean-invoiced] delete failed', j.id, e.message) }
     }
     res.json({ ok: true, removed, remaining: targets.length - removed })
@@ -491,6 +512,23 @@ router.post('/clean-invoiced', async (req, res) => {
 })
 
 // GET /api/jobs/completions — tech completion log (last 90 days)
+// 🗑 Recently removed (Mark 2026-10-29) — every card that left the board in the
+// last 90 days, why, and who; one tap puts it back. Owner / Kat (not techs).
+const notTech = (req, res) => {
+  if (String(req.user?.role || '') === 'technician') { res.status(403).json({ error: 'Owner / Kat only' }); return false }
+  return true
+}
+router.get('/trash', async (req, res) => {
+  if (!notTech(req, res)) return
+  try { const { listTrash } = await import('../services/jobTrash.js'); res.json({ items: await listTrash(req) }) }
+  catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/trash/:id/restore', async (req, res) => {
+  if (!notTech(req, res)) return
+  try { const { restoreFromTrash } = await import('../services/jobTrash.js'); res.json({ ok: true, ...(await restoreFromTrash(req, String(req.params.id))) }) }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
+
 router.get('/completions', async (req, res) => {
   try {
     const records = await readCompletions(req)
@@ -1010,7 +1048,7 @@ router.delete('/:id', async (req, res) => {
         })
       }
     } catch (e) { console.warn('[jobs DELETE] tombstone note failed (non-fatal):', e.message) }
-    await deleteJob(req, req.params.id)
+    await deleteJob(req, req.params.id, { reason: 'manual' })
     res.json({ success: true })
   } catch (err) {
     console.error('[jobs DELETE]', err.message, err.stack)
@@ -1294,8 +1332,7 @@ export async function performSyncQuotes(req) {
       if (job.status === 'need_dispatch' ||
           (job.status === 'job_requested' && /^Quote: /.test(job.notes || ''))) {
         try {
-          await deleteJob(req, job.id)
-          removed++
+          if ((await deleteJob(req, job.id, { reason: 'estimate_closed', match: 'estimate', detail: est ? `estimate ${est.status}` : 'estimate gone from Books' })).removed) removed++
         } catch (e) {
           console.warn(`[jobs sync] could not delete job ${job.id}:`, e.message)
         }

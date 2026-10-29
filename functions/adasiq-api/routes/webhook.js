@@ -133,10 +133,11 @@ async function tombstoneEstimate(req, estId) {
 // still owes shots is PARKED in Completed instead — it keeps showing on
 // 📸 Still to do in Live Day until the set lands, and the cleanup cron
 // already skips it. Returns true when it parked instead of deleting.
-async function removeOrPark(req, job, why) {
+async function removeOrPark(req, job, why, match) {
   if (!photosStillOwed(job)) {
-    await deleteJobPublic(req, job.id)
-      .then(() => console.log(`[invoice] ${why} — removed job ${job.id} from board`))
+    // 🗑 Through the trash + the automation rule (exact match only) — services/jobTrash.js.
+    await deleteJobPublic(req, job.id, { reason: 'invoice_sent', match, detail: why })
+      .then(r => console.log(`[invoice] ${why} — ${r.removed ? `removed job ${job.id} from board` : `KEPT job ${job.id}: ${r.why}`}`))
       .catch(e => console.log('[invoice] board cleanup failed (non-fatal):', e.message))
     return false
   }
@@ -152,6 +153,21 @@ async function removeOrPark(req, job, why) {
     console.log('[invoice] park failed, leaving the card alone (non-fatal):', e.message)
   }
   return true
+}
+
+/** A card's notes vs an invoice: exact RO (`RO#: 11003`) or Bill it's "invoice <number>" line.
+ *  Exact only (2026-10-29) — substring matching tied short ROs to the wrong cars. */
+export function notesMatchInvoice(notes, referenceNumber, invoiceNumber) {
+  if (!notes) return false
+  const roMatch = notes.match(/RO#[:\s]*(\S+)/i)
+  const clean = v => String(v || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+  if (roMatch && referenceNumber) {
+    const ro = clean(roMatch[1]), ref = clean(referenceNumber)
+    if (ro.length >= 3 && ro === ref) return true
+  }
+  if (!invoiceNumber) return false
+  const esc = String(invoiceNumber).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`invoice ${esc}(?![\\w-])`, 'i').test(notes)
 }
 
 export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
@@ -197,18 +213,7 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
 
   // Match strategy 2: reference_number contains RO# from job notes
   if (!matchedJob && referenceNumber) {
-    matchedJob = jobs.find(j => {
-      if (!j.notes) return false
-      const roMatch = j.notes.match(/RO#[:\s]*(\S+)/i)
-      if (roMatch) {
-        const roNumber = roMatch[1].replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
-        const refClean = referenceNumber.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
-        // Exact RO only (2026-10-29) — substring matching tied short ROs to the wrong cars.
-        if (roNumber && refClean && roNumber.length >= 3 && refClean === roNumber) return true
-      }
-      // Bill it writes "invoice <number>" into the notes — whole-number match only.
-      return invoiceNumber ? new RegExp(`invoice ${invoiceNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`, 'i').test(j.notes) : false
-    })
+    matchedJob = jobs.find(j => notesMatchInvoice(j.notes, referenceNumber, invoiceNumber))
     if (matchedJob) matchVia = 'ro'
   }
 
@@ -226,23 +231,13 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
 
 
   if (alreadyAlerted) {
-    // Alerts already went out — just make sure the board is clean.
-    // Mark 2026-09-08 ("why does this keep popping up"): this branch ran
-    // every hour from the sweep and, on a NAME-ONLY match, deleted
-    // whatever lone card that shop had — including a fresh sync-imported
-    // request for a different vehicle. With no tombstone, the next sync
-    // re-imported it and re-alerted. Now: only a VIN / RO match may
-    // remove a card here, and the estimate is tombstoned so it stays gone.
     // 🛑 Mark 2026-10-29 ("there are a few jobs missing — B&H and Gerber"): this
-    // hourly re-check deleted ~a dozen LIVE cards (Gerber Stanwood, Carstar
-    // Bellevue, Northwest Diesel…) on loose RO substring matches against
+    // hourly re-check deleted live cards (Stanwood Gerber, Northwest Diesel)
+    // on loose RO substring matches against
     // invoices that had already gone out. The first pass (the real invoice
     // alert) already cleared the right card; the re-check never deletes now.
     if (matchedJob) {
       console.log(`[invoice] already-alerted #${invoiceNumber}: ${matchVia} match on job ${matchedJob.id} — leaving the card alone (re-check never deletes)`)
-    }
-    if (false) {
-      console.log(`[invoice] already-alerted #${invoiceNumber}: name-only match on job ${matchedJob.id} — leaving the card alone`)
     }
     return { action: 'already-alerted', invoice_number: invoiceNumber, job_id: matchedJob?.id, match: matchVia }
   }
@@ -354,7 +349,7 @@ export async function processSentInvoice(req, invoice, jobsCache, opts = {}) {
   // Invoice is out the door — remove the card from the board. Tombstone
   // its estimate first so the hourly quote sync can't bring it back.
   await tombstoneEstimate(req, matchedJob.zoho_estimate_id)
-  await removeOrPark(req, matchedJob, `invoice #${invoiceNumber} sent`)
+  await removeOrPark(req, matchedJob, `invoice #${invoiceNumber} sent`, matchVia)
 
   return { action: 'alerted', invoice_number: invoiceNumber, job_id: matchedJob.id, cliq: results }
 }

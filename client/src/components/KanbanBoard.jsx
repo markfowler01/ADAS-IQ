@@ -9,6 +9,7 @@ import EstimatePill from './EstimatePill.jsx'
 import { Big3Badge, DrpBadge, BillingPill, EstimateFirstPill } from './books/Big3Rules.jsx'
 import { SpotBadge, useSpotOpen, useIsSpotShop, spotFrame } from './SpotPay.jsx'
 import BillItModal from './BillItModal.jsx'
+import JobTrashModal, { JobTrashButton } from './JobTrash.jsx'
 import { needsWindshieldCheck } from './MobileJobCard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import Navbar from './Navbar'
@@ -1236,6 +1237,8 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
   // Compact board (Mark 2026-09-03: "the jobs screen is the hardest to
   // navigate"): one card's actions open at a time; Completed starts slim.
   const [expandedCardId, setExpandedCardId] = useState(null)
+  // 🗑 Recently removed (2026-10-29) — opened from the board or the #dispatch "Restore it" link.
+  const [trashOpen, setTrashOpen] = useState(() => { try { const v = sessionStorage.getItem('adas_open_trash'); sessionStorage.removeItem('adas_open_trash'); return !!v } catch { return false } })
   // 📲 Opened from the tech's assignment text (?job=<id>): expand that card and scroll to it.
   const [openJobId] = useState(() => { try { const v = sessionStorage.getItem('adas_open_job'); sessionStorage.removeItem('adas_open_job'); return v || null } catch { return null } })
   useEffect(() => {
@@ -2122,6 +2125,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
                     {uploading ? 'Extracting…' : 'Upload Report'}
                   </button>
                 )}
+                {user?.role !== 'technician' && <JobTrashButton onClick={() => setTrashOpen(true)} />}
                 {/* Clean Out — only shows when invoiced leftovers exist */}
                 {jobs.some(j => j.invoiced && j.status === 'complete') && (
                   <button
@@ -2502,6 +2506,10 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
 
       {billItJob && (
         <BillItModal job={billItJob} user={user} onClose={() => setBillItJob(null)} onBilled={() => { setBillItJob(null); fetchJobs() }} />
+      )}
+
+      {trashOpen && user?.role !== 'technician' && (
+        <JobTrashModal onClose={() => setTrashOpen(false)} onRestored={d => { showToast(`↩︎ Restored ${d.summary?.shop || 'job'}${d.summary?.vehicle ? ' · ' + d.summary.vehicle : ''}`); fetchJobs() }} />
       )}
 
       {calReviewJob && (

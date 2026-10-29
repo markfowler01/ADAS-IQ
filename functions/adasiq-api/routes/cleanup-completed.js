@@ -18,6 +18,7 @@
 
 import express from 'express'
 import catalyst from 'zcatalyst-sdk-node'
+import { deleteJobPublic } from './jobs.js'
 
 const router = express.Router()
 const JOBS_TABLE = 'Jobs'
@@ -101,7 +102,9 @@ router.post('/run', async (req, res) => {
 
     for (const row of candidates) {
       try {
-        await table.deleteRow(String(row.ROWID))
+        // 🗑 Through the trash + automation rule (2026-10-29) — never a raw delete.
+        const r = await deleteJobPublic(req, String(row.ROWID), { reason: 'cleanup', match: 'invoiced' })
+        if (!r.removed) { failed++; errors.push({ id: String(row.ROWID), error: r.why || 'kept' }); continue }
         deleted++
         deletedJobs.push({
           id:        String(row.ROWID),
@@ -142,7 +145,9 @@ router.post('/job-requested', async (req, res) => {
 
     for (const row of candidates) {
       try {
-        await table.deleteRow(String(row.ROWID))
+        // 🗑 Through the trash + automation rule (2026-10-29) — never a raw delete.
+        const r = await deleteJobPublic(req, String(row.ROWID), { reason: 'cleanup', match: 'invoiced' })
+        if (!r.removed) { failed++; errors.push({ id: String(row.ROWID), error: r.why || 'kept' }); continue }
         deleted++
         deletedJobs.push({
           id:        String(row.ROWID),
@@ -180,7 +185,9 @@ router.post('/force', async (req, res) => {
 
     for (const row of candidates) {
       try {
-        await table.deleteRow(String(row.ROWID))
+        // 🗑 Through the trash + automation rule (2026-10-29) — never a raw delete.
+        const r = await deleteJobPublic(req, String(row.ROWID), { reason: 'cleanup', match: 'invoiced' })
+        if (!r.removed) { failed++; errors.push({ id: String(row.ROWID), error: r.why || 'kept' }); continue }
         deleted++
         deletedJobs.push({
           id:         String(row.ROWID),
@@ -220,7 +227,9 @@ router.post('/ready-invoice', async (req, res) => {
 
     for (const row of candidates) {
       try {
-        await table.deleteRow(String(row.ROWID))
+        // 🗑 Through the trash + automation rule (2026-10-29) — never a raw delete.
+        const r = await deleteJobPublic(req, String(row.ROWID), { reason: 'cleanup', match: 'invoiced' })
+        if (!r.removed) { failed++; errors.push({ id: String(row.ROWID), error: r.why || 'kept' }); continue }
         deleted++
         deletedJobs.push({
           id:         String(row.ROWID),
