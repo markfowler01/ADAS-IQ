@@ -254,6 +254,15 @@ export function CallSheet({ c, onClose, onSaved }) {
           <p className="text-sm mt-1" style={{ color: '#1a1a1a' }}>“I'd like to talk to your last two direct bosses. Not friends, bosses. Who are they, and what will they tell me about you?”</p>
           <p className="text-[11px] mt-1" style={{ color: '#888' }}>Their answer is its own honesty test: compare it to what the boss actually says. Add them on the References tab.</p>
         </div>
+        {/* 🌅 Always the last question (Mark 2026-10-30: "in five years from now, you're very happy, you love your
+            job, you love the people you work with, you love your responsibilities … ask them what that looks like"). */}
+        <div className="rounded-xl p-3" style={{ border: '2px solid #fdba74', backgroundColor: '#fffaf5' }}>
+          <p className="text-sm font-extrabold" style={{ color: '#c2410c' }}>🌅 Last question · always</p>
+          <p className="text-sm mt-1" style={{ color: '#1a1a1a' }}>“Picture five years from now. You're really happy. You love your job, you love the people you work with, you love what you're responsible for, and you look forward to going to work. Walk me through it. What does that look like?”</p>
+          <p className="text-xs mt-1.5" style={{ color: '#555' }}>If they stay general, go one level down: “What are you doing on a normal day? Who's around you? What are you in charge of? What do you do that you're proud of?”</p>
+          <p className="text-[11px] mt-2"><span style={{ color: '#15803d' }}>✅ A clear, specific picture that fits here: in the field, learning, more responsibility (lead tech, training people, running a van or a market), a team they like.</span><br /><span style={{ color: '#b91c1c' }}>🚩 No picture at all, only money or time off, or a life this job can't give them.</span></p>
+          <textarea value={w.notes?.five_years || ''} onChange={e => setNote('five_years', e.target.value)} rows={3} placeholder="Their five-year picture, in their words…" className="w-full rounded-lg px-3 py-2 text-sm mt-2" style={box} />
+        </div>
         </>}
         <p className="text-[11px]" style={{ color: '#aaa' }}>From The Sweaty Startup, chapter 9 (The Attributes of Winners). Character comes from this sheet; skill comes from the electrical screen and the paid day out. You need both.</p>
       </div>

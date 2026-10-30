@@ -27,7 +27,7 @@ const clean = (card = {}) => {
   const str = (v, n) => String(v || '').slice(0, n)
   return {
     traits: Object.fromEntries(TRAITS.map(k => [k, num(card.traits?.[k])])),
-    notes: Object.fromEntries(TRAITS.concat(DEALBREAKERS).map(k => [k, str(card.notes?.[k], 1000)])),
+    notes: Object.fromEntries(TRAITS.concat(DEALBREAKERS, ['five_years']).map(k => [k, str(card.notes?.[k], 1000)])),   // five_years = the closing question (2026-10-30)
     flags: Object.fromEntries(DEALBREAKERS.map(k => [k, !!card.flags?.[k]])),
     custom: Array.isArray(card.custom) ? card.custom.slice(0, 20).map(q => ({ trait: str(q.trait, 20), q: str(q.q, 400), listen: str(q.listen, 300) })) : [],
     summary: str(card.summary, 2000),
