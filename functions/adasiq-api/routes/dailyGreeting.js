@@ -585,6 +585,11 @@ router.post('/market/discover-add', requireCronSecret, async (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
 })
 // 📕 Tailor a candidate's call sheet without a login (Claude prepping Mark's calls).
+// 🔍 Dry run of the fit check on a made-up candidate — nothing saved. Body: { candidate, answer, notes }.
+router.post('/recruit/fit-test', requireCronSecret, async (req, res) => {
+  try { const { judgeFit } = await import('../services/winners.js'); const b = req.body || {}; res.json({ ok: true, fit: await judgeFit(req, b.candidate || { name: 'Test' }, { notes: { ...(b.notes || {}), five_years: b.answer || '' } }) }) }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 router.post('/recruit/tailor', requireCronSecret, async (req, res) => {
   try {
     const { readAll } = await import('./recruit.js'); const W = await import('../services/winners.js')
