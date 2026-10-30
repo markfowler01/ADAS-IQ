@@ -103,6 +103,27 @@ export function TopTwo({ c, onSaved, size = 'sm' }) {
     </span>
   )
 }
+const FIT_LOOK = { strong: { t: '✅ STRONG FIT', bg: '#dcfce7', fg: '#15803d' }, partial: { t: '⚠️ PARTIAL FIT', bg: '#fef3c7', fg: '#92400e' }, poor: { t: '❌ POOR FIT', bg: '#fee2e2', fg: '#b91c1c' } }
+export function FitResult({ fit, stale = false, compact = false }) {
+  if (!fit) return null
+  const l = FIT_LOOK[fit.verdict] || FIT_LOOK.partial
+  const list = (title, xs, color) => xs?.length ? <div className="mt-2"><p className="text-[11px] font-bold uppercase tracking-wider" style={{ color }}>{title}</p><ul className="mt-0.5 space-y-0.5">{xs.map((x, i) => <li key={i} className="text-xs" style={{ color: '#333' }}>• {x}</li>)}</ul></div> : null
+  return (
+    <div className="rounded-lg p-3 mt-2" style={{ backgroundColor: 'white', border: `1px solid ${l.fg}33` }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full" style={{ backgroundColor: l.bg, color: l.fg }}>{l.t}</span>
+        {stale && <span className="text-[11px]" style={{ color: '#b45309' }}>answer changed since — check again</span>}
+      </div>
+      <p className="text-sm mt-1.5" style={{ color: '#1a1a1a' }}>{fit.summary}</p>
+      {!compact && <>
+        {list('What they want', fit.wants, '#555')}
+        {list('We can give them', fit.can, '#15803d')}
+        {list("We can't, or only partly", fit.cant, '#b91c1c')}
+        {list('Ask next', fit.ask, '#1e40af')}
+      </>}
+    </div>
+  )
+}
 export const topBoth = c => !!(c?.winner?.top?.urgency && c?.winner?.top?.cares)
 
 export function WinnersBanner() {
@@ -184,6 +205,26 @@ export function CallSheet({ c, onClose, onSaved }) {
       setErr(e.message)
     } finally { setTailoring(false) }
   }
+  // 🔍 Can Absolute ADAS give them the future they described? (2026-10-30)
+  const [fitting, setFitting] = useState(false)
+  async function judgeFit() {
+    setFitting(true); setErr('')
+    clearTimeout(timer.current)
+    if (Object.keys(pending.current).length) { const b = pending.current; pending.current = {}; await send(b) }   // the answer they just typed
+    const before = w.fit?.at || ''
+    try {
+      const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/winner/fit`, { method: 'POST' })
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      setW(x => ({ ...x, fit: j.winner.fit })); onSaved(j.winner)
+    } catch (e) {
+      // Same as the question writer: it can outlast the 30s gateway and still save.
+      for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 10000))
+        try { const j = await (await apiFetch(`${API_BASE}/api/recruit`)).json(); const nw = (j.candidates || []).find(x => x.id === c.id)?.winner; if (nw?.fit?.at && nw.fit.at !== before) { setW(x => ({ ...x, fit: nw.fit })); onSaved(nw); setFitting(false); return } } catch { /* keep waiting */ }
+      }
+      setErr(e.message)
+    } finally { setFitting(false) }
+  }
   const [tab, setTab] = useState('call')
   const setRefs = (refs, now = false) => { setW(x => ({ ...x, refs })); queue({ refs }, now) }
   const custom = w.custom || []
@@ -262,6 +303,11 @@ export function CallSheet({ c, onClose, onSaved }) {
           <p className="text-xs mt-1.5" style={{ color: '#555' }}>If they stay general, go one level down: “What are you doing on a normal day? Who's around you? What are you in charge of? What do you do that you're proud of?”</p>
           <p className="text-[11px] mt-2"><span style={{ color: '#15803d' }}>✅ A clear, specific picture that fits here: in the field, learning, more responsibility (lead tech, training people, running a van or a market), a team they like.</span><br /><span style={{ color: '#b91c1c' }}>🚩 No picture at all, only money or time off, or a life this job can't give them.</span></p>
           <textarea value={w.notes?.five_years || ''} onChange={e => setNote('five_years', e.target.value)} rows={3} placeholder="Their five-year picture, in their words…" className="w-full rounded-lg px-3 py-2 text-sm mt-2" style={box} />
+          <button onClick={judgeFit} disabled={fitting || !String(w.notes?.five_years || '').trim()} className="mt-2 text-xs font-bold rounded-lg px-3 py-2"
+            style={{ backgroundColor: '#1a1a1a', color: 'white', opacity: fitting || !String(w.notes?.five_years || '').trim() ? 0.5 : 1 }}>
+            {fitting ? 'Thinking…' : w.fit ? '🔍 Check again' : '🔍 Can Absolute ADAS give them this?'}
+          </button>
+          <FitResult fit={w.fit} stale={w.fit && w.fit.answer !== String(w.notes?.five_years || '').trim()} />
         </div>
         </>}
         <p className="text-[11px]" style={{ color: '#aaa' }}>From The Sweaty Startup, chapter 9 (The Attributes of Winners). Character comes from this sheet; skill comes from the electrical screen and the paid day out. You need both.</p>

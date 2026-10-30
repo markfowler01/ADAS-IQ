@@ -9,6 +9,7 @@ import { Avatar } from './Directory.jsx'
 import PayBenefits from './PayBenefits.jsx'
 import { SelfWorkStyle, MarkWorkStyle } from './WorkStyleCards.jsx'
 import MarkNotes from './MarkNotes.jsx'
+import { FitResult } from '../WinnersScorecard.jsx'
 
 const GREEN = '#15803d', BLUE = '#0A0A0A', RED = '#b91c1c'
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
@@ -242,6 +243,7 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
               <div className="rounded-lg p-3 mb-2" style={{ backgroundColor: '#fffaf5', border: '1px solid #fdba74' }}>
                 <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#c2410c' }}>🌅 Their five-year picture · from the interview</div>
                 <div className="text-sm mt-1 whitespace-pre-wrap" style={{ color: '#1a1a1a' }}>“{p.five_years.text}”</div>
+                {p.five_years.fit && <FitResult fit={p.five_years.fit} />}
                 <div className="text-[11px] mt-1" style={{ color: '#888' }}>Are we moving them toward it? Ask what's changed.</div>
               </div>
             )}

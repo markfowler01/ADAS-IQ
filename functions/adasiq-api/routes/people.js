@@ -1033,7 +1033,7 @@ async function fiveYearsFor(req, m) {
   const { readCard } = await import('../services/winners.js')
   const card = await readCard(req, id)
   const text = String(card?.notes?.five_years || '').trim()
-  return text ? { text, candidate_id: id, at: card.updated_at || '', by: card.updated_by || '' } : null
+  return text ? { text, candidate_id: id, at: card.updated_at || '', by: card.updated_by || '', fit: card.fit || null } : null
 }
 
 export async function onCandidateHired(req, cand) {

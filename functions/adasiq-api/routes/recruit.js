@@ -465,6 +465,14 @@ router.put('/:id/winner', async (req, res) => {
   try { const W = await import('../services/winners.js'); res.json({ ok: true, winner: await W.saveCard(req, String(req.params.id), req.body || {}, req.user?.name || req.user?.email) }) }
   catch (e) { res.status(500).json({ error: e.message }) }
 })
+router.post('/:id/winner/fit', async (req, res) => {
+  try {
+    const c = (await readAll(req)).find(x => String(x.id) === String(req.params.id)); if (!c) return res.status(404).json({ error: 'Candidate not found' })
+    const W = await import('../services/winners.js')
+    const fit = await W.judgeFit(req, c, (await W.readCard(req, c.id)) || {})
+    res.json({ ok: true, winner: await W.saveCard(req, c.id, { fit }, req.user?.name || req.user?.email) })
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }) }
+})
 router.post('/:id/winner/tailor', async (req, res) => {
   try {
     const c = (await readAll(req)).find(x => String(x.id) === String(req.params.id)); if (!c) return res.status(404).json({ error: 'Candidate not found' })
