@@ -66,6 +66,45 @@ export function WinnerBadge({ w, small = false }) {
   return <span className={`${small ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2 py-1'} font-extrabold rounded-full whitespace-nowrap`} style={{ backgroundColor: l.bg, color: l.fg, border: `1px solid ${l.bd}` }}>{l.text}{v !== 'no' ? ` · ${score(w)}/20` : ''}</span>
 }
 
+// ⚡❤️ Mark's top two (2026-10-30: "my top two things I think I want are sense of urgency and
+// do they care … highlighted on their card and a button that I can toggle on"). His own call,
+// separate from the 0–4 scores. Saved on the winner card (`top`).
+const TOP = [
+  { id: 'urgency', on: '⚡ URGENCY', off: '⚡ Urgency?', bg: '#f97316', tip: 'Sense of urgency — moves fast, no reminders needed' },
+  { id: 'cares', on: '❤️ CARES', off: '❤️ Cares?', bg: '#dc2626', tip: 'Do they care — about the work, the shop, the car, the team' },
+]
+export function TopTwo({ c, onSaved, size = 'sm' }) {
+  const [top, setTop] = useState(c.winner?.top || {})
+  useEffect(() => { setTop(c.winner?.top || {}) }, [c.id, c.winner?.top?.urgency, c.winner?.top?.cares])
+  const flip = async (e, id) => {
+    e.stopPropagation()
+    const next = { ...top, [id]: !top[id] }
+    setTop(next)
+    try {
+      const r = await apiFetch(`${API_BASE}/api/recruit/${c.id}/winner`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ top: { [id]: next[id] } }) })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      onSaved?.(j.winner)
+    } catch (err) { setTop(top); alert(`Didn't save: ${err.message}`) }
+  }
+  const big = size === 'lg'
+  return (
+    <span className="flex items-center gap-1.5">
+      {TOP.map(t => {
+        const on = !!top[t.id]
+        return (
+          <button key={t.id} type="button" title={t.tip} onClick={e => flip(e, t.id)}
+            className={`${big ? 'text-xs px-3 py-1.5' : 'text-[11px] px-2 py-1'} font-extrabold rounded-full whitespace-nowrap`}
+            style={on ? { backgroundColor: t.bg, color: 'white', border: `1px solid ${t.bg}` } : { backgroundColor: 'white', color: '#9ca3af', border: '1px dashed #d1d5db' }}>
+            {on ? t.on : t.off}
+          </button>
+        )
+      })}
+    </span>
+  )
+}
+export const topBoth = c => !!(c?.winner?.top?.urgency && c?.winner?.top?.cares)
+
 export function WinnersBanner() {
   return (
     <div className="rounded-xl px-3 py-2 mb-3 text-xs" style={{ backgroundColor: '#1a1a1a', color: 'white' }}>

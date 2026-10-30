@@ -31,6 +31,8 @@ const clean = (card = {}) => {
     flags: Object.fromEntries(DEALBREAKERS.map(k => [k, !!card.flags?.[k]])),
     custom: Array.isArray(card.custom) ? card.custom.slice(0, 20).map(q => ({ trait: str(q.trait, 20), q: str(q.q, 400), listen: str(q.listen, 300) })) : [],
     summary: str(card.summary, 2000),
+    // ⚡❤️ Mark's top two (2026-10-30): "sense of urgency and do they care" — his own on/off call per candidate.
+    top: { urgency: !!card.top?.urgency, cares: !!card.top?.cares },
     refs: Array.isArray(card.refs) ? card.refs.slice(0, 6).map(r => ({ name: str(r.name, 120), relation: str(r.relation, 60), company: str(r.company, 120), phone: str(r.phone, 40),
       called_at: str(r.called_at, 40), rehire: ['yes', 'hesitant', 'no'].includes(r.rehire) ? r.rehire : '', red_flag: !!r.red_flag,
       answers: Object.fromEntries(Object.entries(r.answers || {}).slice(0, 20).map(([k, v]) => [str(k, 30), str(v, 1500)])) })) : [],
@@ -50,7 +52,7 @@ export async function readAllCards(req) {
 }
 export async function saveCard(req, id, patch, by) {
   const cur = (await readCard(req, id)) || {}
-  const merged = clean({ ...cur, ...patch, traits: { ...cur.traits, ...patch.traits }, notes: { ...cur.notes, ...patch.notes }, flags: { ...cur.flags, ...patch.flags }, custom: patch.custom ?? cur.custom, refs: patch.refs ?? cur.refs })
+  const merged = clean({ ...cur, ...patch, traits: { ...cur.traits, ...patch.traits }, notes: { ...cur.notes, ...patch.notes }, flags: { ...cur.flags, ...patch.flags }, custom: patch.custom ?? cur.custom, refs: patch.refs ?? cur.refs, top: { ...cur.top, ...patch.top } })
   const card = { ...merged, updated_at: new Date().toISOString(), updated_by: by || '' }
   const table = catalyst.initialize(req).datastore().table('AppConfig'), row = await cfgRead(req, key(id)), v = JSON.stringify(card)
   if (row) await table.updateRow({ ROWID: row.rowid, config_key: key(id), config_value: v })

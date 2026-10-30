@@ -6,7 +6,7 @@ import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch, getToken } from '../utils/api.js'
 import Navbar from '../components/Navbar'
 import OnboardingLaunch from '../components/team/OnboardingLaunch.jsx'
-import { WinnerBadge, WinnersBanner, WinnersPanel, CallSheet, confirmWinner } from '../components/WinnersScorecard.jsx'
+import { WinnerBadge, WinnersBanner, WinnersPanel, CallSheet, confirmWinner, TopTwo, topBoth } from '../components/WinnersScorecard.jsx'
 
 const ORANGE = '#CD4419'
 const APPLY_URL = `${API_BASE}/api/public/recruit/apply`
@@ -33,6 +33,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
   const [sheet, setSheet] = useState(null)     // 📕 call sheet candidate id
   const [launch, setLaunch] = useState(null)   // 🚀 the two-flow view that pops up on Hired
   const [allCands, setCands] = useState([])
+  const setWinner = (id, w) => setCands(cs => cs.map(c => c.id === id ? { ...c, winner: w } : c))
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState(null)
   const [open, setOpen] = useState(null)      // candidate id in detail
@@ -145,7 +146,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
             </div>
             <div className="flex flex-col gap-2">
               {(mobileStage === 'active' ? cands.filter(c => !CLOSED.has(c.stage)) : (byStage[mobileStage] || [])).map(c => (
-                <CandidateCard key={c.id} c={c} stages={stages} onOpen={() => cleanup ? toggleSel(c.id) : setOpen(c.id)} showStage={mobileStage === 'active'} cleanup={cleanup} selected={selected.has(c.id)} onQuickDelete={isOwner && !cleanup ? () => remove(c.id) : null} />
+                <CandidateCard key={c.id} c={c} stages={stages} onOpen={() => cleanup ? toggleSel(c.id) : setOpen(c.id)} showStage={mobileStage === 'active'} cleanup={cleanup} selected={selected.has(c.id)} onQuickDelete={isOwner && !cleanup ? () => remove(c.id) : null} onWinner={w => setWinner(c.id, w)} />
               ))}
             </div>
           </div>
@@ -166,7 +167,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
                 <div className="rounded-xl p-2 flex flex-col gap-2 min-h-24" style={{ backgroundColor: overStage === s.id ? '#fdf3ef' : '#efece8', border: `2px dashed ${overStage === s.id ? ORANGE : 'transparent'}` }}>
                   {(byStage[s.id] || []).map(c => (
                     <div key={c.id} draggable onDragStart={() => setDragId(c.id)}>
-                      <CandidateCard c={c} stages={stages} onOpen={() => cleanup ? toggleSel(c.id) : setOpen(c.id)} cleanup={cleanup} selected={selected.has(c.id)} onQuickDelete={isOwner && !cleanup ? () => remove(c.id) : null} />
+                      <CandidateCard c={c} stages={stages} onOpen={() => cleanup ? toggleSel(c.id) : setOpen(c.id)} cleanup={cleanup} selected={selected.has(c.id)} onQuickDelete={isOwner && !cleanup ? () => remove(c.id) : null} onWinner={w => setWinner(c.id, w)} />
                     </div>
                   ))}
                   {(byStage[s.id] || []).length === 0 && <p className="text-[11px] text-center py-3" style={{ color: '#c8c4c0' }}>drop here</p>}
@@ -182,6 +183,7 @@ export default function RecruitingScreen({ user, onLogout, currentScreen, onNavi
           onClose={() => setOpen(null)}
           onPatch={(body, msg) => patch(current.id, body, msg)}
           onOpenSheet={() => setSheet(current.id)}
+          onWinner={w => setWinner(current.id, w)}
           onDelete={() => remove(current.id)} />
       )}
       {sheet && allCands.find(c => c.id === sheet) && <CallSheet c={allCands.find(c => c.id === sheet)} onClose={() => setSheet(null)} onSaved={w => setCands(cs => cs.map(c => c.id === sheet ? { ...c, winner: w } : c))} />}
@@ -211,12 +213,12 @@ function ResumeLine({ c, big = false }) {
   return <span className={cls} style={{ backgroundColor: '#f5f3f0', color: '#999', border: '1px solid #e0dbd6' }}>No résumé uploaded</span>
 }
 
-function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected = false, onQuickDelete = null }) {
+function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected = false, onQuickDelete = null, onWinner = null }) {
   const d = daysSince(c.updated_at || c.created_at)
   const stage = stages.find(s => s.id === c.stage)
   if (c.kind === 'partner') return <PartnerCard c={c} d={d} stage={stage} onOpen={onOpen} showStage={showStage} cleanup={cleanup} selected={selected} onQuickDelete={onQuickDelete} />
   return (
-    <div onClick={onOpen} className="bg-white rounded-xl p-3 cursor-pointer shadow-sm relative" style={{ border: `2px solid ${cleanup && selected ? '#dc2626' : STAGE_COLORS[c.stage] || '#e0dbd6'}`, backgroundColor: cleanup && selected ? '#fef2f2' : 'white' }}>
+    <div onClick={onOpen} className="bg-white rounded-xl p-3 cursor-pointer shadow-sm relative" style={{ border: `2px solid ${cleanup && selected ? '#dc2626' : STAGE_COLORS[c.stage] || '#e0dbd6'}`, backgroundColor: cleanup && selected ? '#fef2f2' : topBoth(c) ? '#fff7ed' : 'white', boxShadow: topBoth(c) && !cleanup ? '0 0 0 3px #f97316' : undefined }}>
       {cleanup && <span className="absolute top-2 right-2 text-base leading-none">{selected ? '☑' : '☐'}</span>}
       {onQuickDelete && <button title="Delete (not a candidate)" onClick={e => { e.stopPropagation(); onQuickDelete() }} className="absolute top-1.5 right-1.5 text-[11px] font-bold rounded-full w-5 h-5 flex items-center justify-center" style={{ backgroundColor: '#f5f3f0', color: '#999' }}>✕</button>}
       <div className="flex items-start justify-between gap-2">
@@ -229,6 +231,7 @@ function CandidateCard({ c, stages, onOpen, showStage, cleanup = false, selected
       <p className="text-xs mt-0.5" style={{ color: '#666' }}>{[c.role, c.city].filter(Boolean).join(' · ') || 'No role given'}</p>
       {(c.experience || c.message) && <p className="text-xs mt-1.5" style={{ color: '#888' }}>{String(c.experience || c.message).slice(0, 90)}{String(c.experience || c.message).length > 90 ? '…' : ''}</p>}
       <div className="mt-2"><ResumeLine c={c} /></div>
+      {!cleanup && <div className="mt-2"><TopTwo c={c} onSaved={onWinner} /></div>}
       <div className="flex items-center justify-between mt-2">
         <span className="flex items-center gap-1">
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>{c.source || 'manual'}</span>
@@ -298,7 +301,7 @@ function PartnerPanel({ c, onPatch }) {
   )
 }
 
-function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete, onOpenSheet }) {
+function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete, onOpenSheet, onWinner }) {
   const isP = c.kind === 'partner'
   const [notes, setNotes] = useState(c.notes || '')
   const [edit, setEdit] = useState(false)
@@ -330,6 +333,10 @@ function CandidateModal({ c, stages, isOwner, onClose, onPatch, onDelete, onOpen
         </div>
 
         {isP && <PartnerPanel c={c} onPatch={onPatch} />}
+        {!isP && <div className="flex items-center justify-between gap-2 flex-wrap rounded-xl px-3 py-2 mb-3" style={{ backgroundColor: topBoth(c) ? '#fff7ed' : '#f9fafb', border: `1px solid ${topBoth(c) ? '#f97316' : '#e5e7eb'}` }}>
+          <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#9a3412' }}>Your top two</span>
+          <TopTwo c={c} onSaved={onWinner} size="lg" />
+        </div>}
         {!isP && <WinnersPanel c={c} onOpenSheet={onOpenSheet} />}
         {!isP && <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f0fdfa', border: '1px solid #99f6e4' }}>
           <div className="flex items-center justify-between gap-2 flex-wrap">
