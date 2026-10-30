@@ -160,6 +160,9 @@ router.get('/profile/:id', async (req, res) => {
           .filter(e => owner || (self && e.type !== 'note' && !e.private))
       } catch (e) { out.log = [] }
       out.acks = await policyAcksFor(req, m.user_id)
+      // 🌅 Their five-year picture from the interview (Mark 2026-10-30: "whatever I put in the answer
+      // field … during their reviews I want that to pop in"). Owners only — it's interview notes.
+      if (owner) { try { out.five_years = await fiveYearsFor(req, m) } catch (e) { console.warn('[people] five-years:', e.message) } }
     }
     out.checklist_templates = { onboarding: ONBOARDING, offboarding: OFFBOARDING }
     if ((m.track || '') === 'apprentice' || m.ladder) { out.ladder = ladderProgress(m, await readLadder(req)); out.can_sign_off = canSignOff(req) && !isSelf(req, m) }
@@ -1017,17 +1020,34 @@ router.get('/emergency', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+/** The candidate a team member was hired from (saved id, else same email / name) → their five-year answer. */
+async function fiveYearsFor(req, m) {
+  const z = catalyst.initialize(req, { type: 'advancedio' }).zcql(), q = v => String(v || '').replace(/'/g, "''")
+  let id = m.candidate_id || ''
+  if (!id) {
+    const email = String(m.email || m.user_id || '').toLowerCase()
+    const rows = await z.executeZCQLQuery(`SELECT ROWID, cand_email, cand_name FROM AdasCandidates WHERE ${email ? `cand_email = '${q(email)}' OR ` : ''}cand_name = '${q(m.name)}' LIMIT 5`).catch(() => [])
+    id = String((rows || []).map(r => r.AdasCandidates || r)[0]?.ROWID || '')
+  }
+  if (!id) return null
+  const { readCard } = await import('../services/winners.js')
+  const card = await readCard(req, id)
+  const text = String(card?.notes?.five_years || '').trim()
+  return text ? { text, candidate_id: id, at: card.updated_at || '', by: card.updated_by || '' } : null
+}
+
 export async function onCandidateHired(req, cand) {
   const members = await readTeamMembers(req)
   const email = String(cand.email || '').toLowerCase()
   const exists = members.find(m => (email && (m.user_id === email || m.email === email)) || m.name.toLowerCase() === String(cand.name || '').toLowerCase())
-  if (exists) return { created: false, member: exists }
+  if (exists) { if (cand.id && !exists.candidate_id) { exists.candidate_id = String(cand.id); try { await saveMember(req, exists) } catch { /* lookup falls back to email/name */ } } return { created: false, member: exists } }
   const { createMemberPublic } = await import('./team.js')
   const roleText = String(cand.role || '').toLowerCase()
   const track = /apprentice|trainee|junior/.test(roleText) ? 'apprentice' : /billing|dispatch|office|admin|assistant|book|account|ops/.test(roleText) ? 'ops' : 'tech'
   const m = await createMemberPublic(req, { name: cand.name, email, user_id: email, phone: cand.phone || '', title: cand.role || (track === 'apprentice' ? 'Apprentice ADAS Technician' : track === 'ops' ? 'Billing & Dispatch' : 'ADAS Calibration Technician'), department: track === 'ops' ? 'Operations' : 'Field', track, access: 'none', employment: 'w2', reports_to: 'mark@absoluteadas.com', region: cand.city || '', hire_date: todayPT(), notes: `From Recruiting${cand.source ? ` (${cand.source})` : ''}. Set App access once ready.` })
   // Account on from day one (Mark 2026-09-22: "make up an account so they can get familiar").
   m.access = track === 'ops' ? 'dispatcher' : 'technician'
+  if (cand.id) m.candidate_id = String(cand.id)   // 🌅 links reviews back to the interview
   startChecklist(m, 'onboarding', req.user?.name || 'Recruiting')
   seedKit(m)
   await saveMember(req, m)

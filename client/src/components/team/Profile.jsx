@@ -237,6 +237,14 @@ export default function ProfileDrawer({ m: card, members, user, onClose, onEdit,
                 </div>
               </div>
             )}
+            {/* 🌅 Their five-year picture from the interview (2026-10-30) — shows on every review. Owners only. */}
+            {owner && p?.five_years?.text && (adding === 'log' ? form.type === 'review' || form.type === '1on1' : true) && (
+              <div className="rounded-lg p-3 mb-2" style={{ backgroundColor: '#fffaf5', border: '1px solid #fdba74' }}>
+                <div className="text-[11px] font-bold uppercase tracking-widest" style={{ color: '#c2410c' }}>🌅 Their five-year picture · from the interview</div>
+                <div className="text-sm mt-1 whitespace-pre-wrap" style={{ color: '#1a1a1a' }}>“{p.five_years.text}”</div>
+                <div className="text-[11px] mt-1" style={{ color: '#888' }}>Are we moving them toward it? Ask what's changed.</div>
+              </div>
+            )}
             {(p?.log || []).length === 0 && <div className="text-xs" style={{ color: '#999' }}>Nothing logged yet. 1:1 notes, 90-day / annual reviews, and classes go here.</div>}
             {(p?.log || []).map(e => (
               <div key={e.id} className="py-1.5 text-sm" style={{ borderBottom: '1px solid #f3f3f3' }}>
