@@ -90,6 +90,11 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const mtd = sumRange(byDay, monthStart, dateStr)
   const yesterdaySales = sumRange(byDay, lastStart, lastEnd)
   const last7 = sumRange(byDay, addDays(dateStr, -7), yesterday), last30 = sumRange(byDay, addDays(dateStr, -30), yesterday)
+  // 📅 Weekly totals (Mark 2026-10-30: "I was looking for weekly sales totals on our morning
+  // meeting"). Mon–Sun weeks, same as the sales records. This week runs through today.
+  const dow = new Date(`${dateStr}T12:00:00Z`).getUTCDay()
+  const thisWeekStart = addDays(dateStr, -((dow + 6) % 7)), lastWeekStart = addDays(thisWeekStart, -7), lastWeekEnd = addDays(thisWeekStart, -1)
+  const thisWeek = sumRange(byDay, thisWeekStart, dateStr), lastWeek = sumRange(byDay, lastWeekStart, lastWeekEnd)
   const ytd = sumRange(byDay, `${year}-01-01`, dateStr)
   const lastYtd = sumRange(lastYearByDay, `${year - 1}-01-01`, `${year - 1}${dateStr.slice(4)}`)
   const growthPct = lastYtd > 0 ? Math.round(((ytd - lastYtd) / lastYtd) * 100) : null
@@ -114,7 +119,7 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   // Tech bars also drop Cal ID / pass-through lines (Mark 2026-10-22). Company totals keep them.
   let techCut = inv => cutOf(inv)
   try { const { techCutter } = await import('./salesBasis.js'); techCut = await techCutter(req, invoices) } catch (e) { console.warn('[huddle] tech cut', e.message) }
-  let reMtd = 0, reYest = 0, re7 = 0, re30 = 0, reYtd = 0
+  let reMtd = 0, reYest = 0, re7 = 0, re30 = 0, reYtd = 0, reWk = 0, reLastWk = 0
   const last7Start = addDays(dateStr, -7), last30Start = addDays(dateStr, -30), yearStart = `${year}-01-01`
   for (const inv of invoices) {
     const c = cutOf(inv); if (!c) continue
@@ -124,6 +129,8 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
     if (d >= last7Start && d <= yesterday) re7 += c
     if (d >= last30Start && d <= yesterday) re30 += c
     if (d >= yearStart && d <= dateStr) reYtd += c
+    if (d >= thisWeekStart && d <= dateStr) reWk += c
+    if (d >= lastWeekStart && d <= lastWeekEnd) reLastWk += c
   }
   const perDay = {}
   for (const inv of invoices) { const d = String(inv.date || '').slice(0, 10); if (d >= monthStart && d <= dateStr && !/void|draft/i.test(String(inv.status || ''))) perDay[d] = (perDay[d] || 0) + 1 }
@@ -167,7 +174,7 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const mtdNet = Math.round(mtd - reMtd), ytdNet = Math.round(ytd - reYtd)
   const growthNet = lastYtd > 0 ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
   const perDayNet = bizLeft > 0 ? Math.max(0, goal - mtdNet) / bizLeft : 0
-  const out = { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
+  const out = { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), thisWeek: Math.round(thisWeek - reWk), lastWeek: Math.round(lastWeek - reLastWk), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
   // 🏆🎯 Records + goals hit (services/salesRecords.js). Today's list is made once and then fixed;
   // any other date is a preview that saves nothing.
   out.spot = null
@@ -229,10 +236,11 @@ export async function renderHuddlePng(req, data) {
   const L = 52
   // ── Card 1: THE MONTH ─────────────────────────────────────────────────────
   const c1 = { x: L, y: 168, w: 930, h: 356 }
-  // Yesterday's sales + cars (Mark 2026-10-21), then last 7 / last 30. Widths are
-  // estimated for 22px Inter so the three tiles never collide.
+  // Yesterday's sales + cars (Mark 2026-10-21), then this week / last week (Mon–Sun,
+  // 2026-10-30 — replaced the rolling last 7 / last 30). Widths are estimated for
+  // 22px Inter so the three tiles never collide.
   const jobsTxt = d.lastDayJobs != null ? ` · ${d.lastDayJobs} ${d.lastDayJobs === 1 ? 'job' : 'jobs'}` : ''
-  const stats = [[d.lastLabel || 'Yesterday', `${fmtUSD(d.yesterdaySales)}${jobsTxt}`], ['Last 7', fmtUSD(d.last7)], ['Last 30', fmtUSD(d.last30)]]
+  const stats = [[d.lastLabel || 'Yesterday', `${fmtUSD(d.yesterdaySales)}${jobsTxt}`], ['This week', fmtUSD(d.thisWeek)], ['Last week', fmtUSD(d.lastWeek)]]
   const tileW = ([k, v]) => Math.round(k.length * 12.2 + 14 + String(v).length * 13.6)
   const month = `
     ${card(c1.x, c1.y, c1.w, c1.h)}
@@ -434,6 +442,7 @@ export async function sendHuddle(req, { force = false, to = MARK_TO, cc = MARK_C
       <p style="margin:0 0 14px">Share the attached graphic in the meeting (1920×1080). Numbers as of 7:40 AM.</p>
       ${hosted ? `<a href="${hosted.url}"><img src="${hosted.url}" alt="GET SOME! Meeting" style="width:100%;max-width:900px;border-radius:12px;display:block;margin:0 0 8px" /></a><p style="margin:0 0 16px;font-size:13px"><a href="${hosted.url}" style="color:#CD4419;font-weight:700">Open full size (1920×1080) →</a> — share this in the meeting.</p>` : `<img src="data:image/png;base64,${png.toString('base64')}" alt="GET SOME! Meeting" style="width:100%;max-width:900px;border-radius:12px;display:block;margin:0 0 16px" />`}
       <p style="margin:0 0 4px"><b>${esc(data.monthLabel)}:</b> ${fmtUSD(data.mtd)} of ${fmtUSD(data.goal)} (${data.pct}%) · ${data.ahead >= 0 ? 'ahead' : 'behind'} pace by ${fmtUSD(Math.abs(data.ahead))} · ${data.bizLeft} working days left · ${fmtUSD(data.perDayNeeded)}/day closes it.</p>
+      <p style="margin:0 0 4px"><b>This week:</b> ${fmtUSD(data.thisWeek)} · <b>Last week:</b> ${fmtUSD(data.lastWeek)}</p>
       <table style="border-collapse:collapse;margin:8px 0 14px">${rows}</table>
       ${(data.pops || []).map(p => `<p style="margin:0 0 6px;padding:8px 12px;border-radius:8px;background:${p.kind === 'goal' ? '#dcfce7' : '#fef3c7'}"><b>${p.kind === 'goal' ? '🎯' : '🏆'} ${esc(p.text)}</b> · ${esc(p.sub)}</p>`).join('')}
       <p style="margin:0 0 4px"><b>Today · ${data.jobsToday} on the board</b></p>${sched}
