@@ -95,6 +95,13 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const dow = new Date(`${dateStr}T12:00:00Z`).getUTCDay()
   const thisWeekStart = addDays(dateStr, -((dow + 6) % 7)), lastWeekStart = addDays(thisWeekStart, -7), lastWeekEnd = addDays(thisWeekStart, -1)
   const thisWeek = sumRange(byDay, thisWeekStart, dateStr), lastWeek = sumRange(byDay, lastWeekStart, lastWeekEnd)
+  // The week's target is what keeps the MONTH on track (Mark 2026-10-30: "monthly sales, then
+  // weekly sales — where we're at, what we need"). As of Monday morning: what was still owed on
+  // the month ÷ working days left in it, × 5. Behind on the month → a bigger week.
+  const wkFrom = thisWeekStart < monthStart ? monthStart : thisWeekStart
+  const owedAtWeekStart = Math.max(0, goal - sumRange(byDay, monthStart, addDays(wkFrom, -1)))
+  const weekGoal = Math.round(owedAtWeekStart / Math.max(1, businessDays(wkFrom, monthEnd)) * 5)
+  const weekFriday = addDays(thisWeekStart, 4), weekDaysLeft = dateStr <= weekFriday ? businessDays(dateStr, weekFriday) : 0
   const ytd = sumRange(byDay, `${year}-01-01`, dateStr)
   const lastYtd = sumRange(lastYearByDay, `${year - 1}-01-01`, `${year - 1}${dateStr.slice(4)}`)
   const growthPct = lastYtd > 0 ? Math.round(((ytd - lastYtd) / lastYtd) * 100) : null
@@ -174,7 +181,7 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const mtdNet = Math.round(mtd - reMtd), ytdNet = Math.round(ytd - reYtd)
   const growthNet = lastYtd > 0 ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
   const perDayNet = bizLeft > 0 ? Math.max(0, goal - mtdNet) / bizLeft : 0
-  const out = { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), thisWeek: Math.round(thisWeek - reWk), lastWeek: Math.round(lastWeek - reLastWk), jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
+  const out = { lastLabel, lastStart, lastEnd, lastDayJobs, dateStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), thisWeek: Math.round(thisWeek - reWk), lastWeek: Math.round(lastWeek - reLastWk), weekGoal, weekDaysLeft, weekPct: Math.min(100, Math.round(((thisWeek - reWk) / Math.max(1, weekGoal)) * 100)), weekPerDay: weekDaysLeft ? Math.round(Math.max(0, weekGoal - (thisWeek - reWk)) / weekDaysLeft) : 0, jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
   // 🏆🎯 Records + goals hit (services/salesRecords.js). Today's list is made once and then fixed;
   // any other date is a preview that saves nothing.
   out.spot = null
@@ -235,12 +242,14 @@ export async function renderHuddlePng(req, data) {
   }
   const L = 52
   // ── Card 1: THE MONTH ─────────────────────────────────────────────────────
-  const c1 = { x: L, y: 168, w: 930, h: 356 }
+  const c1 = { x: L, y: 168, w: 930, h: 432 }
   // Yesterday's sales + cars (Mark 2026-10-21), then this week / last week (Mon–Sun,
   // 2026-10-30 — replaced the rolling last 7 / last 30). Widths are estimated for
   // 22px Inter so the three tiles never collide.
   const jobsTxt = d.lastDayJobs != null ? ` · ${d.lastDayJobs} ${d.lastDayJobs === 1 ? 'job' : 'jobs'}` : ''
-  const stats = [[d.lastLabel || 'Yesterday', `${fmtUSD(d.yesterdaySales)}${jobsTxt}`], ['This week', fmtUSD(d.thisWeek)], ['Last week', fmtUSD(d.lastWeek)]]
+  const stats = [[d.lastLabel || 'Yesterday', `${fmtUSD(d.yesterdaySales)}${jobsTxt}`], ['Last week', fmtUSD(d.lastWeek)]]
+  const weekHit = d.thisWeek >= d.weekGoal
+  const weekNeed = weekHit ? 'Week goal hit' : d.weekDaysLeft ? `${fmtUSD(d.weekPerDay)}/day hits it` : `${fmtUSD(d.weekGoal - d.thisWeek)} short`
   const tileW = ([k, v]) => Math.round(k.length * 12.2 + 14 + String(v).length * 13.6)
   const month = `
     ${card(c1.x, c1.y, c1.w, c1.h)}
@@ -252,16 +261,21 @@ export async function renderHuddlePng(req, data) {
     <rect x="${c1.x + 520}" y="${c1.y + 40}" width="2" height="226" fill="rgba(255,255,255,0.14)"/>
     ${ICON.target(c1.x + 548, c1.y + 42)}
     <text x="${c1.x + 598}" y="${c1.y + 70}" class="ch" style="fill:rgba(255,255,255,0.6)">GOAL</text>
-    <text x="${c1.x + 548}" y="${c1.y + 150}" class="big2" style="font-size:54px">${esc(fmtUSD(d.goal))}</text>
-    <text x="${c1.x + c1.w - 36}" y="${c1.y + 150}" class="big2" text-anchor="end" style="fill:${ORANGE};font-size:54px">${d.pct}%</text>
+    <text x="${c1.x + 548}" y="${c1.y + 150}" class="big2" style="font-size:46px">${esc(fmtUSD(d.goal))}</text>
+    <text x="${c1.x + c1.w - 36}" y="${c1.y + 150}" class="big2" text-anchor="end" style="fill:${ORANGE};font-size:46px">${d.pct}%</text>
     <text x="${c1.x + 548}" y="${c1.y + 212}" class="body2 w400">${d.bizLeft} working day${d.bizLeft === 1 ? '' : 's'} left</text>
     <text x="${c1.x + 548}" y="${c1.y + 250}" class="body2 w400" style="font-style:italic;fill:rgba(255,255,255,0.78)">${esc(fmtUSD(d.perDayNeeded))}/day closes the month</text>
     <rect x="${c1.x + 30}" y="${c1.y + 282}" width="${c1.w - 60}" height="1.5" fill="rgba(255,255,255,0.14)"/>
-    ${ICON.trend(c1.x + 30, c1.y + 300, 30)}
-    ${(() => { let sx = c1.x + 96; return stats.map(([k, v], i) => { const out = `${i ? `<rect x="${sx - 22}" y="${c1.y + 300}" width="2" height="30" fill="rgba(255,255,255,0.2)"/>` : ''}<text x="${sx}" y="${c1.y + 324}" class="stat" style="font-size:22px"><tspan class="w400" style="fill:rgba(255,255,255,0.75)">${esc(k)}</tspan>  ${esc(v)}</text>`; sx += tileW([k, v]) + 44; return out }).join('') })()}`
+    <text x="${c1.x + 30}" y="${c1.y + 326}" class="ch" style="font-size:24px">THE WEEK</text>
+    <text x="${c1.x + 190}" y="${c1.y + 328}" class="stat" style="font-size:30px">${esc(fmtUSD(d.thisWeek))} <tspan class="w400" style="fill:rgba(255,255,255,0.75);font-size:22px">of ${esc(fmtUSD(d.weekGoal))}</tspan></text>
+    ${bar(c1.x + 520, c1.y + 308, 230, 18, d.weekPct, { color: weekHit ? '#4ade80' : ORANGE })}
+    <text x="${c1.x + c1.w - 36}" y="${c1.y + 326}" class="stat" text-anchor="end" style="fill:${weekHit ? '#4ade80' : ORANGE};font-size:28px">${d.weekPct}%</text>
+    <text x="${c1.x + 520}" y="${c1.y + 362}" class="small2" style="font-style:italic">${esc(weekNeed)}${d.weekDaysLeft && !weekHit ? ` · ${d.weekDaysLeft} day${d.weekDaysLeft === 1 ? '' : 's'} left` : ''}</text>
+    ${ICON.trend(c1.x + 30, c1.y + 378, 30)}
+    ${(() => { let sx = c1.x + 96; return stats.map(([k, v], i) => { const out = `${i ? `<rect x="${sx - 22}" y="${c1.y + 378}" width="2" height="30" fill="rgba(255,255,255,0.2)"/>` : ''}<text x="${sx}" y="${c1.y + 402}" class="stat" style="font-size:22px"><tspan class="w400" style="fill:rgba(255,255,255,0.75)">${esc(k)}</tspan>  ${esc(v)}</text>`; sx += tileW([k, v]) + 44; return out }).join('') })()}`
   // ── Card 2: INDIVIDUAL GOALS ──────────────────────────────────────────────
   const techs = d.techs.slice(0, 4)
-  const c2 = { x: L, y: 542, w: 930, h: 206 }
+  const c2 = { x: L, y: 618, w: 930, h: 206 }
   const tw = techs.length ? Math.floor((c2.w - 40 - 16 * (techs.length - 1)) / techs.length) : c2.w - 40
   const techCards = techs.map((t, i) => {
     const tx = c2.x + 20 + i * (tw + 16), ty = c2.y + 60, th = c2.h - 80
@@ -442,7 +456,7 @@ export async function sendHuddle(req, { force = false, to = MARK_TO, cc = MARK_C
       <p style="margin:0 0 14px">Share the attached graphic in the meeting (1920×1080). Numbers as of 7:40 AM.</p>
       ${hosted ? `<a href="${hosted.url}"><img src="${hosted.url}" alt="GET SOME! Meeting" style="width:100%;max-width:900px;border-radius:12px;display:block;margin:0 0 8px" /></a><p style="margin:0 0 16px;font-size:13px"><a href="${hosted.url}" style="color:#CD4419;font-weight:700">Open full size (1920×1080) →</a> — share this in the meeting.</p>` : `<img src="data:image/png;base64,${png.toString('base64')}" alt="GET SOME! Meeting" style="width:100%;max-width:900px;border-radius:12px;display:block;margin:0 0 16px" />`}
       <p style="margin:0 0 4px"><b>${esc(data.monthLabel)}:</b> ${fmtUSD(data.mtd)} of ${fmtUSD(data.goal)} (${data.pct}%) · ${data.ahead >= 0 ? 'ahead' : 'behind'} pace by ${fmtUSD(Math.abs(data.ahead))} · ${data.bizLeft} working days left · ${fmtUSD(data.perDayNeeded)}/day closes it.</p>
-      <p style="margin:0 0 4px"><b>This week:</b> ${fmtUSD(data.thisWeek)} · <b>Last week:</b> ${fmtUSD(data.lastWeek)}</p>
+      <p style="margin:0 0 4px"><b>This week:</b> ${fmtUSD(data.thisWeek)} of ${fmtUSD(data.weekGoal)} (${data.weekPct}%)${data.thisWeek >= data.weekGoal ? ' · week goal hit' : data.weekDaysLeft ? ` · ${fmtUSD(data.weekPerDay)}/day for ${data.weekDaysLeft} more day${data.weekDaysLeft === 1 ? '' : 's'} hits it` : ''} · <b>Last week:</b> ${fmtUSD(data.lastWeek)}</p>
       <table style="border-collapse:collapse;margin:8px 0 14px">${rows}</table>
       ${(data.pops || []).map(p => `<p style="margin:0 0 6px;padding:8px 12px;border-radius:8px;background:${p.kind === 'goal' ? '#dcfce7' : '#fef3c7'}"><b>${p.kind === 'goal' ? '🎯' : '🏆'} ${esc(p.text)}</b> · ${esc(p.sub)}</p>`).join('')}
       <p style="margin:0 0 4px"><b>Today · ${data.jobsToday} on the board</b></p>${sched}
