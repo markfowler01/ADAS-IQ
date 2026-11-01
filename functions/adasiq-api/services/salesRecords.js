@@ -98,7 +98,7 @@ export async function huddlePops(req, data, { live = false } = {}) {
     pops.push(describe(key, rec, old.period === rec.period ? null : old))
   }
   // Goals crossed (meeting numbers), once a month each.
-  const ym = dateStr.slice(0, 7)
+  const ym = (data.salesDate || dateStr).slice(0, 7)   // month-in-review day: tags belong to the month being reviewed
   const goalPop = (tag, text, sub) => { if (announced.has(tag)) return; announced.add(tag); pops.push({ kind: 'goal', text, sub }) }
   if (data.goal > 0 && data.mtd >= data.goal) goalPop(`goal:co:${ym}`, `GOAL HIT · The company passed ${fmtUSD(data.goal)} for ${data.monthLabel}`, `${fmtUSD(data.mtd)} so far`)
   for (const t of data.techs || []) {
