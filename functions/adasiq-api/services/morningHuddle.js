@@ -105,15 +105,21 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   // The week's target is what keeps the MONTH on track (Mark 2026-10-30: "monthly sales, then
   // weekly sales — where we're at, what we need"). As of Monday morning: what was still owed on
   // the month ÷ working days left in it, × 5. Behind on the month → a bigger week.
+  // 📈 Weighted by how our months really fill up (services/monthCurve.js, Mark 2026-11-01: "end of month
+  // numbers drives it"): the week gets its normal share of what's still owed, not an even 5/N slice.
+  const { learnCurve, curveAt, priorMonths } = await import('./monthCurve.js')
+  const curve = learnCurve({ ...lastYearByDay, ...byDay }, priorMonths(monthStart, 12))
+  const bizTotalM = Math.max(1, businessDays(monthStart, monthEnd)), fracAt = iso => iso < monthStart ? 0 : businessDays(monthStart, iso > monthEnd ? monthEnd : iso) / bizTotalM
   const wkFrom = thisWeekStart < monthStart ? monthStart : thisWeekStart
   const owedAtWeekStart = Math.max(0, goal - sumRange(byDay, monthStart, addDays(wkFrom, -1)))
-  const weekGoal = Math.round(owedAtWeekStart / Math.max(1, businessDays(wkFrom, monthEnd)) * 5)
+  const cStart = curveAt(curve, fracAt(addDays(wkFrom, -1))), cEnd = curveAt(curve, fracAt(addDays(thisWeekStart, 6)))
+  const weekGoal = Math.round(owedAtWeekStart * (cEnd - cStart) / Math.max(0.0001, 1 - cStart))
   const weekFriday = addDays(thisWeekStart, 4), weekDaysLeft = dateStr <= weekFriday ? businessDays(dateStr, weekFriday) : 0
   const ytd = sumRange(byDay, `${year}-01-01`, dateStr)
   const lastYtd = sumRange(lastYearByDay, `${year - 1}-01-01`, `${year - 1}${dateStr.slice(4)}`)
   const growthPct = lastYtd > 0 ? Math.round(((ytd - lastYtd) / lastYtd) * 100) : null
   const bizDone = businessDays(monthStart, yesterday), bizTotal = businessDays(monthStart, monthEnd), bizLeft = Math.max(0, bizTotal - bizDone)
-  const pace = Math.round(goal * (bizDone / Math.max(1, bizTotal)))
+  const pace = Math.round(goal * curveAt(curve, bizDone / Math.max(1, bizTotal)))   // 📈 our real month shape, not an even split
   const perDayNeeded = bizLeft > 0 ? Math.max(0, goal - mtd) / bizLeft : 0
 
   // Techs from the Directory roster + their own goals and MTD sales (invoice salesperson).
@@ -188,7 +194,7 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const mtdNet = Math.round(mtd - reMtd), ytdNet = Math.round(ytd - reYtd)
   const growthNet = lastYtd > 0 ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
   const perDayNet = bizLeft > 0 ? Math.max(0, goal - mtdNet) / bizLeft : 0
-  const out = { review, salesDate: dateStr, lastLabel, lastStart, lastEnd, lastDayJobs, dateStr: todayStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), thisWeek: Math.round(thisWeek - reWk), lastWeek: Math.round(lastWeek - reLastWk), weekGoal, weekDaysLeft, weekPct: Math.min(100, Math.round(((thisWeek - reWk) / Math.max(1, weekGoal)) * 100)), weekPerDay: weekDaysLeft ? Math.round(Math.max(0, weekGoal - (thisWeek - reWk)) / weekDaysLeft) : 0, jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
+  const out = { review, salesDate: dateStr, curve: { months: curve.months, weight: curve.weight, points: curve.points }, lastLabel, lastStart, lastEnd, lastDayJobs, dateStr: todayStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), thisWeek: Math.round(thisWeek - reWk), lastWeek: Math.round(lastWeek - reLastWk), weekGoal, weekDaysLeft, weekPct: Math.min(100, Math.round(((thisWeek - reWk) / Math.max(1, weekGoal)) * 100)), weekPerDay: weekDaysLeft ? Math.round(Math.max(0, weekGoal - (thisWeek - reWk)) / weekDaysLeft) : 0, jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
   if (review) {
     // The month's weeks (Mon–Sun, clipped to the month), best day, and the month before for comparison.
     const weeks = []
