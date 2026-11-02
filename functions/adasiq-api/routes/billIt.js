@@ -23,13 +23,40 @@ import axios from 'axios'
 import { getEstimate, resolveTemplates, applyEstimateTemplate, applyDiscount, isPart, NO_DISCOUNT, discountEligible, invoiceCustomFields, createCostInvoice, createSingleInvoice, retailTax, emailEstimate, emailInvoice, ensureLinked } from '../services/costInvoice.js'
 import catalyst from 'zcatalyst-sdk-node'
 import { attachJobReports } from '../services/reportAttach.js'
-import { isCashJob, CASH_DISCOUNT_PCT } from '../services/cashPricing.js'
+import { isCashJob, isCashCustomer } from '../services/cashPricing.js'
+import { defaultPct, repriceLines, clampPct } from '../services/billDefaults.js'
+import { kvGet, kvSet } from '../services/durableKV.js'
 import { presentScanLine } from '../services/big3.js'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
 const org = () => ({ organization_id: process.env.ZOHO_ORGANIZATION_ID })
 const r2 = n => Math.round((Number(n) || 0) * 100) / 100
+// 💵 Cash switch + editable % (Mark 2026-11-02) — Mark and Kat only.
+const isOffice = req => ['mark@absoluteadas.com', 'mf@absoluteadas.com', 'mfowler4456@gmail.com'].includes(String(req.user?.email || '').toLowerCase()) || req.user?.role === 'owner'
+// The switch is saved per card (DurableKV cash_switch:<id>) so reopening Bill it keeps it.
+// Paper trail on the card + #dispatch: "· cash job, default 15" / "· 💵 cash OFF by Kat".
+function pctNote(p, pct) {
+  const bits = []
+  if (p.cash_switch && p.cash_switch.on === false) bits.push(`💵 cash OFF by ${p.cash_switch.by}`)
+  if (p.cash_switch && p.cash_switch.on === true) bits.push(`💵 cash ON by ${p.cash_switch.by}`)
+  if ((p.pct_source === 'cash' || p.pct_source === 'insurer') && Number(pct) !== Number(p.pct_default)) bits.push(`${p.pct_label} default is ${p.pct_default}%`)
+  return bits.length ? ` (${bits.join(' · ')})` : ''
+}
+async function readCashSwitch(req, jobId) {
+  try { const v = await kvGet(catalyst.initialize(req), `cash_switch:${jobId}`); const o = v ? JSON.parse(v) : null; return typeof o?.on === 'boolean' ? o : null } catch { return null }
+}
+async function cashSwitchFor(req, job) {
+  const asked = req.body?.cash
+  const saved = await readCashSwitch(req, job.id)
+  if (typeof asked !== 'boolean' || !isOffice(req)) return saved
+  if (saved?.on !== asked) {
+    const rec = { on: asked, by: req.user?.name || req.user?.email || 'staff', at: new Date().toISOString() }
+    try { await kvSet(catalyst.initialize(req), `cash_switch:${job.id}`, rec) } catch (e) { console.warn('[bill-it] cash switch save', e.message) }
+    return rec
+  }
+  return saved
+}
 async function invoiceByNumber(token, number) {
   const r = await axios.get(`${API}/invoices`, { headers: H(token), params: { ...org(), invoice_number: number }, timeout: 15000, validateStatus: s => s < 500 })
   return (r.data?.invoices || []).find(i => i.invoice_number === number) || null
@@ -45,6 +72,8 @@ async function contactEmails(token, customerId) {
 
 // Everything the modal shows. Pure read except for nothing — no writes.
 async function buildPreview(req, job, pickType = '') {
+  const sw = await cashSwitchFor(req, job)
+  const cashOverride = sw ? sw.on : null
   // Single-invoice mode (Mark 2026-09-22): the shop's customer type
   // decides. Repair shops, dealers and retail get ONE invoice straight
   // from the job's lines; so does any card with no Books estimate.
@@ -64,8 +93,8 @@ async function buildPreview(req, job, pickType = '') {
   const brEarly = pick && pick !== brSaved.customer_type
     ? { ...brSaved, customer_type: pick, discount_value: big3mod.CUSTOMER_TYPES[pick].discount ?? 0, pay_mode: big3mod.CUSTOMER_TYPES[pick].pay }
     : brSaved
-  const ctypeEarly = String(job.cash_quoted || '').trim() ? 'cash' : (brEarly.customer_type || '')
-  const extra = { saved_type: brSaved.customer_type || '', can_dual: !!job.zoho_estimate_id, customer_types: big3mod.CUSTOMER_TYPES }
+  const ctypeEarly = (cashOverride ?? !!String(job.cash_quoted || '').trim()) ? 'cash' : (brEarly.customer_type || '')
+  const extra = { saved_type: brSaved.customer_type || '', can_dual: !!job.zoho_estimate_id, customer_types: big3mod.CUSTOMER_TYPES, cash_switch: sw, can_switch_cash: isOffice(req) }
   // 🧾 Collision = two invoices, always (Mark 2026-10-01). Two invoices are built
   // from the job's Books estimate; a collision card without one (built by hand,
   // or a link lost on a save) gets its estimate created right here from the
@@ -75,8 +104,8 @@ async function buildPreview(req, job, pickType = '') {
     if (made?.id) { job = { ...job, zoho_estimate_id: made.id, quote_number: made.number }; extra.can_dual = true; extra.estimate_created = made.number }
     else extra.estimate_missing = made?.error || 'No calibrations on the card yet. Add the work on the card, then Bill it makes both invoices.'
   }
-  if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return { ...(await buildSinglePreview(req, job, shopRow, brEarly)), ...extra }
-  const dual = await buildDualPreview(req, job, brEarly)
+  if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return { ...(await buildSinglePreview(req, job, shopRow, brEarly, cashOverride)), ...extra }
+  const dual = await buildDualPreview(req, job, brEarly, cashOverride)
   return { ...dual, ...extra }
 }
 // Create the Books estimate for a collision card that has none, from the card's
@@ -117,7 +146,7 @@ async function ensureCollisionEstimate(req, job, shopRow) {
   return { id, number }
 }
 
-async function buildDualPreview(req, job, brPicked) {
+async function buildDualPreview(req, job, brPicked, cashOverride = null) {
   const token = await getAccessToken()
   const [est, catalog, big3] = await Promise.all([
     getEstimate(token, job.zoho_estimate_id),
@@ -129,8 +158,13 @@ async function buildDualPreview(req, job, brPicked) {
   const rule = await big3.readBig3(req, shopName)
   const shop = rule.shop_id ? await big3.findShopByName(req, shopName) : null
   const br = brPicked || (shop?.billing_rules ? (typeof shop.billing_rules === 'string' ? JSON.parse(shop.billing_rules || '{}') : shop.billing_rules) : {})
-  const cashJob = isCashJob(job, { insurer: (est.custom_fields || []).find(c => c.label === 'Insurer')?.value, lines: est.line_items })
-  const pct = cashJob ? CASH_DISCOUNT_PCT : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null)
+  const estInsurer = (est.custom_fields || []).find(c => c.label === 'Insurer')?.value || ''
+  const cashJob = cashOverride ?? isCashJob(job, { insurer: estInsurer, lines: est.line_items })
+  // The real insurer behind a cash swap (Swap to Cash writes "Cash" over it) — null pool = standard list.
+  const realInsurer = [estInsurer, job.insurer].find(i => String(i || '').trim() && !isCashCustomer({ insurer: i })) || ''
+  const realPool = resolvePricingPool(realInsurer, null)
+  const dflt = defaultPct({ cash: cashJob, pool: realPool, shopPct: br.discount_value })
+  const pct = dflt.pct
   const customerType = cashJob ? 'cash' : (br.customer_type || '')
   const byName = new Map((catalog.allItems || []).map(it => [String(it.name).toLowerCase().trim(), it]))
   const byId = new Map((catalog.allItems || []).map(it => [String(it.item_id), it]))
@@ -174,7 +208,10 @@ async function buildDualPreview(req, job, brPicked) {
   if (existing) warnings.push(`Invoice ${existing.invoice_number} already exists in Books (${existing.status}) — billed by hand? The button will not create a second one.`)
   if (job.invoiced || job.billed_via_app) warnings.push(`This card is already marked invoiced${job.billed_via_app ? ` (via app ${job.billed_via_app})` : ''}.`)
   if (pct == null && !cashJob) warnings.push(`No cost-invoice discount on file for ${shopName} — set the customer type / % on the CRM Billing tab. Preview shows 0%.`)
-  if (cashJob) warnings.push(`💵 Cash job — cost invoice is ${CASH_DISCOUNT_PCT}% off (hard rule), not the shop's own %.${job.cash_quoted ? ` Customer was told $${job.cash_quoted}.` : ''}`)
+  if (cashOverride === false && job.cash_quoted) warnings.push(`💵 Cash is switched OFF, but the customer was told $${job.cash_quoted}. This bills list price.`)
+  // 💲 One-tap reprice onto the list that matches the switch (CP ⇄ standard / insurer).
+  const rp = repriceLines(lines, cashJob ? 'CP' : realPool, catalog.allItems || [])
+  const reprice = rp.changed ? { to: cashJob ? 'cash list (CP · $700 max)' : realPool ? `${realInsurer} list` : 'standard list', lines: rp.lines.map(l => ({ ...l, big3_key: big3KeyFor(l.name) })), missing: rp.missing, from_total: rp.from_total, to_total: rp.to_total } : null
   if (!emails.length) warnings.push('No email on the Books contact — add one in Books or type it below.')
   if (!tpl.estimate) warnings.push('No estimate PDF template named "Absolute List invoice" in Books — the button will not send until it exists.')
   if (!tpl.invoice) warnings.push('No invoice PDF template named "Absolute ADAS vrs 1" (or "Retail…") in Books — the button will not send until it exists.')
@@ -183,6 +220,7 @@ async function buildDualPreview(req, job, brPicked) {
   return {
     ok: true, mode: 'dual', job_id: job.id, shop_name: shopName, estimate_id: est.estimate_id, estimate_number: est.estimate_number, estimate_status: est.status,
     customer_id: est.customer_id, customer_type: customerType, discount_pct: pct ?? 0, has_discount: pct != null, emails, cash_job: cashJob,
+    pct_source: dflt.source, pct_label: dflt.label, pct_default: pct ?? 0, shop_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, reprice, est_insurer: estInsurer, real_insurer: realInsurer,
     cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''),
     lines: discounted, insurance_total: insuranceTotal, cost_total: costTotal, saved: r2(insuranceTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
@@ -196,15 +234,18 @@ async function buildDualPreview(req, job, brPicked) {
 }
 // ONE invoice, priced from the job itself — the same engine the
 // calibration review uses (pools, tiers, Big 3) plus the tech's extras.
-async function buildSinglePreview(req, job, shop, br) {
+async function buildSinglePreview(req, job, shop, br, cashOverride = null) {
   const token = await getAccessToken()
   const big3 = await import('../services/big3.js')
   const retailJob = job.customer?.kind === 'retail'
-  const cashJob = !!String(job.cash_quoted || '').trim()
+  const cashJob = cashOverride ?? !!String(job.cash_quoted || '').trim()
   const customerType = cashJob ? 'cash' : (br.customer_type || '')
   const typeDef = big3.CUSTOMER_TYPES[customerType] || null
-  const cashRule = isCashJob(job)
-  const pct = cashRule ? CASH_DISCOUNT_PCT : (Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : (typeDef?.discount ?? null))
+  const cashRule = cashOverride ?? isCashJob(job)
+  // Cash switched off on a card whose insurer says Cash → price the standard list, not CP.
+  const cashOffInsurer = !cashRule && isCashCustomer(job)
+  const dflt = defaultPct({ cash: cashRule, pool: retailJob || cashOffInsurer ? null : resolvePricingPool(job.insurer, null), shopPct: Number.isFinite(Number(br.discount_value)) ? br.discount_value : (typeDef?.discount ?? null) })
+  const pct = dflt.pct
   const payMode = br.pay_mode || typeDef?.pay || 'on_site'
   const catalog = await getItemCatalogForAudit().catch(() => ({ allItems: [] }))
   const zohoMod = await import('../services/zoho.js')
@@ -220,7 +261,7 @@ async function buildSinglePreview(req, job, shop, br) {
     // A retail person bills the STANDARD list ($450 a static) + tax, no discount
     // (Mark 2026-09-22: "standard price at 450"). Only a cash-quoted shop job uses the CP schedule.
     const { alignmentInvoiceOn } = await import('../services/alignmentInvoice.js')
-    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (retailJob ? '' : (job.insurer || '')), make: job.make || '', vehicle: job.vehicle || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : (retailJob ? 'STD' : null), big3Rules: effB3.rules, collision: customerType === 'body_shop', alignmentOn: alignmentInvoiceOn(br) })
+    priced = await previewInvoiceLines({ insurer: cashJob ? 'Cash' : (retailJob || cashOffInsurer ? '' : (job.insurer || '')), make: job.make || '', vehicle: job.vehicle || '', calibrations: cals, req, poolOverride: cashJob ? 'CP' : (retailJob || cashOffInsurer ? 'STD' : null), big3Rules: effB3.rules, collision: customerType === 'body_shop', alignmentOn: alignmentInvoiceOn(br) })
   }
   let extras = []; try { extras = job.extra_items ? JSON.parse(job.extra_items) : [] } catch { extras = [] }
   const extraLines = (Array.isArray(extras) ? extras : []).map(x => {
@@ -266,6 +307,7 @@ async function buildSinglePreview(req, job, shop, br) {
   let existing = null
   if (ro) { const r = await axios.get(`${API}/invoices`, { headers: H(token), params: { ...org(), reference_number: ro }, timeout: 15000, validateStatus: s => s < 500 }).catch(() => null); existing = (r?.data?.invoices || []).find(i => i.reference_number === ro && i.customer_id === customerId) || null }
   const warnings = []
+  if (cashOverride === false && job.cash_quoted) warnings.push(`💵 Cash is switched OFF, but the customer was told $${job.cash_quoted}. This bills list price.`)
   if (!customerType) warnings.push(`No customer type on file for ${job.shop_name} — answer the three billing questions on the CRM card (or pick one below) and it's remembered.`)
   if (!customerId) warnings.push(`No Zoho Books customer linked to ${job.shop_name} — link one on the CRM card (🧾 Zoho Books) so the invoice has somewhere to go.`)
   if (!lines.length) warnings.push('No lines yet — add the work (calibrations on the card, or items below).')
@@ -276,7 +318,8 @@ async function buildSinglePreview(req, job, shop, br) {
   if (!tpl.invoice) warnings.push('No invoice PDF template in Books — the button will not send until it exists.')
   return {
     ok: true, mode: 'single', job_id: job.id, shop_name: customerName, estimate_id: null, estimate_number: ro || '', customer_id: customerId,
-    customer_type: customerType, customer_types: big3.CUSTOMER_TYPES, pay_mode: payMode, discount_pct: pct ?? 0, has_discount: pct != null, cash_job: cashRule, has_type: !!br.customer_type, retail_person: retailJob, emails,
+    customer_type: customerType, customer_types: big3.CUSTOMER_TYPES, pay_mode: payMode, discount_pct: pct ?? 0, has_discount: pct != null, cash_job: cashRule, has_type: !!br.customer_type,
+    pct_source: dflt.source, pct_label: dflt.label, pct_default: pct ?? 0, shop_pct: Number.isFinite(Number(br.discount_value)) ? Number(br.discount_value) : null, retail_person: retailJob, emails,
     cash_quoted: String(job.cash_quoted || ''), tires_set: String(job.tires_set || ''), agreed_price: job.agreed_price || null,
     lines: discounted, insurance_total: listTotal, list_total: listTotal, cost_total: costTotal, tax, grand_total: grand, saved: r2(listTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
@@ -395,7 +438,7 @@ router.post('/:id/bill', async (req, res) => {
     if (p.already_converted) return res.status(409).json({ error: `Already billed — Books shows estimate ${p.estimate_number} converted to an invoice.`, preview: pub(p) })
     if (!p.templates.estimate || !p.templates.invoice) return res.status(400).json({ error: 'PDF template missing in Books — see the warning above. Nothing sent.', preview: pub(p) })
     const by = req.user?.name || req.user?.email || 'staff'
-    const pct = p.cash_job ? CASH_DISCOUNT_PCT : (Number(req.body?.discount_pct ?? p.discount_pct) || 0)
+    const pct = clampPct(req.body?.discount_pct ?? p.discount_pct)
     const token = await getAccessToken()
 
     // 1. Make the Books estimate match what Kat approved on the left side:
@@ -430,7 +473,8 @@ router.post('/:id/bill', async (req, res) => {
     // when Kat flips a switch and leaves "remember" on.
     // Remember the discount too (Mark 2026-09-11: "if I set their discount to
     // 25% I want it to remember this") — whenever it differs from the file.
-    const learnPct = !dry && !p.cash_job && (!p.has_discount || Number(p.discount_pct) !== pct)
+    // A cash or State Farm/Allstate % belongs to the car — never learned onto the shop.
+    const learnPct = !dry && !p.cash_job && p.pct_source !== 'insurer' && (!p.has_discount || Number(p.discount_pct) !== pct)
     const learnType = !dry && !p.cash_job && p.saved_type !== 'body_shop'   // picked the Collision pill → remembered
     const saveRules = (!p.big3?.insurer_rule || req.body?.big3_edited === true) && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
     if (!dry && (saveRules || learnPct || learnType)) {
@@ -440,6 +484,15 @@ router.post('/:id/bill', async (req, res) => {
         const r = await b3.saveBig3(req, p.shop_name, want, by, (learnPct || learnType) ? { discount_pct: pct, customer_type: 'body_shop' } : {})
         if (r?.changed) console.log(`[bill-it] learned for ${p.shop_name}: ${b3.describeRules(want)}${learnPct ? ` · ${pct}%` : ''}`)
       } catch (e) { console.log('[bill-it] rule/discount save failed (non-fatal):', e.message) }
+    }
+    // 💵 Cash switched on the modal → the estimate's Insurer field follows, so the insurance invoice doesn't say "Cash" on a standard bill (or the reverse).
+    if (!dry && p.cash_switch) {
+      const cf = (p._est.custom_fields || []).find(c => c.label === 'Insurer')
+      const want = p.cash_job ? 'Cash' : (p.real_insurer || '')
+      if (cf?.customfield_id && String(cf.value || '') !== want && (p.cash_job ? !isCashCustomer({ insurer: cf.value }) : isCashCustomer({ insurer: cf.value }))) {
+        const u = await axios.put(`${API}/estimates/${p.estimate_id}`, { custom_fields: [{ customfield_id: cf.customfield_id, value: want }] }, { headers: H(token), params: org(), timeout: 20000, validateStatus: s => s < 500 }).catch(e => ({ data: { message: e.message } }))
+        if (u.data?.code !== 0) console.warn(`[bill-it] insurer field → "${want}" failed: ${u.data?.message || u.status}`)
+      }
     }
     // Pin the insurance-invoice look before anything is emailed (strict, like shop quotes).
     if (!dry) await applyEstimateTemplate(token, p.estimate_id, p.templates.estimate)
@@ -467,13 +520,13 @@ router.post('/:id/bill', async (req, res) => {
       // Stamp the card
       // Mark 2026-09-11: "after I send both invoices… I want it gone" → Completed column.
       await updateJobPublic(req, job.id, { ...job, status: 'complete', invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`,
-        notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: insurance invoice (estimate ${p.estimate_number}) + cost invoice ${inv.invoice_number} at ${pct}% → ${emails.join(', ')}` })
+        notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: insurance invoice (estimate ${p.estimate_number}) + cost invoice ${inv.invoice_number} at ${pct}%${pctNote(p, pct)} → ${emails.join(', ')}` })
       try { const { spotPayBilled } = await import('../services/spotPay.js'); await Promise.race([spotPayBilled(req, job, { number: inv.invoice_number, total: p.cost_total }), new Promise(r => setTimeout(r, 5000))]) } catch (e) { console.warn('[spot-pay] billed', e.message) }
     }
     const summary = [
       `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}*`,
       `Insurance invoice (estimate ${p.estimate_number}) $${p.insurance_total.toFixed(2)} → ${emails.join(', ')}`,
-      `Cost invoice ${inv?.invoice_number || p.estimate_number} at ${pct}% → $${p.cost_total.toFixed(2)} (saves the shop $${p.saved.toFixed(2)})${p.extras_count ? ` · ${p.extras_count} extra item${p.extras_count === 1 ? '' : 's'} added` : ''}`,
+      `Cost invoice ${inv?.invoice_number || p.estimate_number} at ${pct}%${pctNote(p, pct)} → $${p.cost_total.toFixed(2)} (saves the shop $${p.saved.toFixed(2)})${p.extras_count ? ` · ${p.extras_count} extra item${p.extras_count === 1 ? '' : 's'} added` : ''}`,
       changedLines ? `Estimate ${p.estimate_number} updated in Books to match the review` : '',
       `Templates: ${p.templates.estimate.name} / ${p.templates.invoice.name}`,
       p.attached?.length ? `📎 Attached to both: ${p.attached.join(', ')}` : (dry ? '' : '📎 No calibration report PDF found in the job folder — nothing attached'),
@@ -503,7 +556,7 @@ async function billSingle(req, res, job, p, dry) {
   const big3 = await import('../services/big3.js')
   // The type can be picked right on the modal the first time; remembered on the shop.
   const ctype = big3.CUSTOMER_TYPES[req.body?.customer_type] ? req.body.customer_type : p.customer_type
-  const pct = p.cash_job ? CASH_DISCOUNT_PCT : (Number(req.body?.discount_pct ?? p.discount_pct) || 0)
+  const pct = clampPct(req.body?.discount_pct ?? p.discount_pct)
   const pay = big3.PAY_MODES[req.body?.pay_mode] ? req.body.pay_mode : p.pay_mode
   const edited = Array.isArray(req.body?.lines) ? linesFromEdit(p, req.body.lines) : null
   if (edited) { if (!edited.length) return res.status(400).json({ error: 'Nothing to bill.' }); p.lines = edited }
@@ -513,8 +566,8 @@ async function billSingle(req, res, job, p, dry) {
   if (p.tax) p.tax.amount = r2(p.cost_total * p.tax.pct / 100)
   p.grand_total = r2(p.cost_total + (p.tax?.amount || 0))
   // Learn: type / % / pay for the shop (never for a cash job — that's the card, not the shop).
-  if (!dry && ctype !== 'cash' && !p.cash_job && ctype && !p.retail_person && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== (p.saved_type || p.customer_type))) {
-    try { const rules = big3.withDefaults(p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
+  if (!dry && ctype !== 'cash' && !p.cash_job && ctype && !p.retail_person && (p.pct_source !== 'insurer' || ctype !== (p.saved_type || p.customer_type)) && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== (p.saved_type || p.customer_type))) {
+    try { const rules = big3.withDefaults(p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: p.pct_source === 'insurer' ? (p.shop_pct ?? pct) : pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
   }
   let inv = null
   if (!dry) {
@@ -527,11 +580,11 @@ async function billSingle(req, res, job, p, dry) {
     // On-site payers stay on the board until Collect flips them Paid (Phase B); net-terms cards are done.
     const onSite = pay === 'on_site' || pay === 'either'
     await updateJobPublic(req, job.id, { ...job, status: onSite ? 'ready_invoice' : 'complete', invoiced: true, invoice_number: inv.invoice_number, invoice_status: inv.status || 'sent', zoho_invoice_id: inv.invoice_id, billed_via_app: `${by} ${new Date().toISOString().slice(0, 16)}`, billing_mode: 'single', pay_mode: pay,
-      notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: invoice ${inv.invoice_number} ($${p.grand_total.toFixed(2)}${pct ? `, ${pct}% off` : ''}${isRetail ? `, tax ${p.tax?.pct}%` : ''}) → ${emails.join(', ')}${onSite ? ' · collect on site' : ''}` })
+      notes: `${job.notes ? job.notes + '\n' : ''}💸 Billed via app by ${by}: invoice ${inv.invoice_number} ($${p.grand_total.toFixed(2)}${pct ? `, ${pct}% off` : ''}${pctNote(p, pct)}${isRetail ? `, tax ${p.tax?.pct}%` : ''}) → ${emails.join(', ')}${onSite ? ' · collect on site' : ''}` })
   }
   const summary = [
     `💸 *${dry ? 'DRY RUN — would bill' : 'Billed'} · ${p.shop_name}* (${big3.CUSTOMER_TYPES[ctype]?.label || ctype || 'shop'})`,
-    `Invoice ${inv?.invoice_number || '(dry)'} $${p.grand_total.toFixed(2)}${pct ? ` · ${pct}% shown (list $${p.list_total.toFixed(2)})` : ''}${isRetail && p.tax ? ` · tax $${p.tax.amount.toFixed(2)}` : ''} → ${emails.join(', ')}`,
+    `Invoice ${inv?.invoice_number || '(dry)'} $${p.grand_total.toFixed(2)}${pct ? ` · ${pct}% shown (list $${p.list_total.toFixed(2)})` : ''}${pctNote(p, pct)}${isRetail && p.tax ? ` · tax $${p.tax.amount.toFixed(2)}` : ''} → ${emails.join(', ')}`,
     pay === 'net_terms' ? 'Net terms — emailed.' : '🚐 Collect on site — check, cash, or the card QR on the job card.',
     p.attached?.length ? `📎 Attached: ${p.attached.join(', ')}` : '',
     p.attach_errors?.length ? `⚠️ attach: ${p.attach_errors.join(' | ')}` : '',

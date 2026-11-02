@@ -51,6 +51,18 @@ function applyBig3(lines, rules, items) {
   return [...others.slice(0, at), ...fresh, ...others.slice(at)]
 }
 
+// "Cash job · default 15%" / "State Farm · default 15%" next to the % box, with a one-tap reset.
+function PctDefault({ p, pct, setPct }) {
+  if (p?.pct_source !== 'cash' && p?.pct_source !== 'insurer') return null
+  const off = Number(pct) !== Number(p.pct_default)
+  return (
+    <span className="text-xs font-bold rounded-full px-2 py-0.5 ml-1 inline-flex items-center gap-1" style={{ backgroundColor: off ? '#fef3c7' : '#dcfce7', color: off ? '#92400e' : '#14532d' }}>
+      {p.pct_source === 'cash' ? '💵 ' : '🛡️ '}{p.pct_label} · default {p.pct_default}%
+      {off && <button type="button" onClick={() => setPct(p.pct_default)} className="underline" title="Back to the default">reset</button>}
+    </span>
+  )
+}
+
 export default function BillItModal({ job, user, onClose, onBilled }) {
   const [p, setP] = useState(null)
   const [lines, setLines] = useState([])
@@ -70,15 +82,18 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   const isOwner = isOwnerUser(user)
 
   const [switching, setSwitching] = useState(false)
+  // 💵 Cash switch (Mark 2026-11-02) — null = whatever the card says; saved on the card by the server.
+  const [cashSel, setCashSel] = useState(null)
+  const [repriced, setRepriced] = useState(false)
   // Load (or re-load after a pill pick) — the server prices the job in that mode.
-  function loadPreview(pickType, isDead = () => false) {
+  function loadPreview(pickType, isDead = () => false, cash = cashSel) {
     setErr('')
-    return apiFetch(`${API_BASE}/api/jobs/${job.id}/bill/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(pickType ? { customer_type: pickType } : {}) }).then(async r => {
+    return apiFetch(`${API_BASE}/api/jobs/${job.id}/bill/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(pickType ? { customer_type: pickType } : {}), ...(typeof cash === 'boolean' ? { cash } : {}) }) }).then(async r => {
       const d = await r.json().catch(() => ({}))
       if (isDead()) return
       if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
       const ls = (d.lines || []).map(l => ({ ...l, big3_key: l.big3_key || big3KeyFor(l.name) }))
-      setP(d); setLines(ls); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct); setCtype(d.customer_type || ''); setPayMode(d.pay_mode || 'on_site')
+      setP(d); setLines(ls); setRepriced(false); setEmails((d.emails || []).join(', ')); setPct(d.discount_pct); setCtype(d.customer_type || ''); setPayMode(d.pay_mode || 'on_site')
       // Picker starts from what is actually ON the estimate (a paid line = Charge,
       // a $0 line = Included, missing = Off), falling back to the shop rule —
       // so a click changes only the slot Kat clicked.
@@ -104,6 +119,12 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!p || busy || switching || k === ctype) return
     setSwitching(true); setCtype(k)
     try { await loadPreview(k) } finally { setSwitching(false) }
+  }
+
+  async function toggleCash(on) {
+    if (!p || busy || switching) return
+    setSwitching(true); setCashSel(on)
+    try { await loadPreview(single && ctype && ctype !== p.saved_type ? ctype : '', () => false, on) } finally { setSwitching(false) }
   }
 
   function changeRules(next) { setRules(next); setRulesTouched(true); setLines(ls => applyBig3(ls, next, p?.big3?.items)) }
@@ -149,7 +170,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     setBusy(true); setErr('')
     try {
       const learnNew = !!(rules && p.big3 && !p.big3.has_rule && !p.big3.insurer_rule)   // first invoice for this shop → remember what we did (never from an insurer-forced invoice)
-      const body = { emails: list, discount_pct: pct, customer_type: ctype || undefined, ...(single ? { pay_mode: payMode } : {}), big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, big3_edited: !!rulesTouched, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
+      const body = { emails: list, discount_pct: pct, ...(typeof cashSel === 'boolean' ? { cash: cashSel } : {}), customer_type: ctype || undefined, ...(single ? { pay_mode: payMode } : {}), big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, big3_edited: !!rulesTouched, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -211,12 +232,34 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={{ backgroundColor: '#dcfce7', border: '2px solid #15803d' }}>
                 <div>
                   <div className="font-extrabold text-base" style={{ color: '#14532d' }}>💵 CUSTOMER PAY — the customer was told ${p.cash_quoted}</div>
-                  <div className="text-sm" style={{ color: '#166534' }}>Insurance column is {fmt(insTotal)}. Bill as cash: {insTotal > Number(p.cash_quoted) ? `add the cap line so both documents total $${p.cash_quoted}` : 'already at or under the quoted number'}. Cost invoice is {pct}% off — the cash-job rule.</div>
+                  <div className="text-sm" style={{ color: '#166534' }}>Insurance column is {fmt(insTotal)}. Bill as cash: {insTotal > Number(p.cash_quoted) ? `add the cap line so both documents total $${p.cash_quoted}` : 'already at or under the quoted number'}. Cost invoice is {pct}% off{Number(pct) === Number(p.pct_default) ? ' (cash default)' : ''}.</div>
                 </div>
                 {insTotal > Number(p.cash_quoted) && !lines.some(l => /cash cap/i.test(l.name)) && (
                   <button type="button" onClick={() => { setLines(ls => [...ls, { name: `Cash cap — $${p.cash_quoted} max`, description: 'Customer pay — priced at the number the customer was told', rate: -r2(insTotal - Number(p.cash_quoted)), quantity: 1, product_type: 'service', is_part: false, never_discount: true, _added: true, _edited: true }]) }}
                     className="rounded-xl px-4 font-extrabold text-white" style={{ minHeight: 44, backgroundColor: GREEN }}>Match ${p.cash_quoted}</button>
                 )}
+              </div>
+            )}
+            {p.can_switch_cash && p.mode !== 'estimator' && (
+              <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={p.cash_job ? { backgroundColor: '#dcfce7', border: '2px solid #15803d' } : { backgroundColor: '#f8fafc', border: '1.5px solid #e2e8f0' }}>
+                <div>
+                  <div className="font-extrabold text-base" style={{ color: p.cash_job ? '#14532d' : '#334155' }}>{p.cash_job ? '💵 CASH JOB · cash prices · $700 max · starts at 15%' : '💵 Cash is OFF · normal pricing'}</div>
+                  <div className="text-sm" style={{ color: p.cash_job ? '#166534' : '#64748b' }}>{p.cash_switch ? `Switched ${p.cash_switch.on ? 'on' : 'off'} by ${p.cash_switch.by}. ` : ''}{p.cash_job ? 'Not paying cash? Switch it off and the shop’s normal prices and % come back.' : 'Customer paying cash? Switch it on: cash prices, $700 cap, 15% to start.'}</div>
+                </div>
+                <button type="button" onClick={() => toggleCash(!p.cash_job)} disabled={busy || switching}
+                  className="rounded-xl px-4 font-extrabold" style={{ minHeight: 44, backgroundColor: p.cash_job ? 'white' : GREEN, color: p.cash_job ? '#14532d' : 'white', border: p.cash_job ? '2px solid #15803d' : 'none', opacity: switching ? 0.6 : 1 }}>
+                  {switching ? 'Switching…' : p.cash_job ? 'Switch cash OFF' : 'Switch cash ON'}
+                </button>
+              </div>
+            )}
+            {p.reprice && !repriced && (
+              <div className="rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap" style={{ backgroundColor: '#fff7ed', border: '2px solid #fb923c' }}>
+                <div>
+                  <div className="font-extrabold text-base" style={{ color: '#9a3412' }}>💲 These lines are on the {p.cash_job ? 'regular' : 'cash'} price list</div>
+                  <div className="text-sm" style={{ color: '#9a3412' }}>Reprice to the {p.reprice.to}: {fmt(p.reprice.from_total)} → <b>{fmt(p.reprice.to_total)}</b>.{p.reprice.missing?.length ? ` No match on that list for ${p.reprice.missing.join(', ')}, so those keep their price.` : ''}{edited ? ' Your line edits get replaced.' : ''}</div>
+                </div>
+                <button type="button" onClick={() => { setLines(p.reprice.lines); setRepriced(true) }} disabled={busy || switching}
+                  className="rounded-xl px-4 font-extrabold text-white" style={{ minHeight: 44, backgroundColor: '#ea580c' }}>Reprice now</button>
               </div>
             )}
             {p.estimate_created && (
@@ -301,7 +344,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 <div className="px-4 py-3 text-base font-bold flex items-center justify-between gap-2" style={{ backgroundColor: single ? '#f0fdf4' : '#f5f3f0', color: single ? GREEN : '#0A0A0A' }}>
                   <span>{single ? `💸 Invoice${p.estimate_number ? ` · RO ${p.estimate_number}` : ''}` : `🏦 Insurance invoice · estimate ${p.estimate_number}`}</span>
                   {single
-                    ? <span className="flex items-center gap-1 text-sm">discount {p.cash_job ? <span className="text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #15803d', backgroundColor: '#dcfce7', color: '#14532d' }} title="Hard rule: every cash job is 15% off">💵 Cash job · {pct}</span> : <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-16 text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #86efac' }} />}%</span>
+                    ? <span className="flex items-center gap-1 text-sm">discount <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-16 text-base font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #86efac' }} />%<PctDefault p={p} pct={pct} setPct={setPct} /></span>
                     : <span className="text-xs font-semibold text-right" style={{ color: edited ? ORANGE : '#1F8B8B' }}>{edited ? '✏️ edited — Books estimate will be updated' : 'tap a price or qty to edit'}</span>}
                 </div>
                 {rows.map((l, i) => (
@@ -343,9 +386,9 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               {/* RIGHT — cost invoice, mirrors the left (dual mode only) */}
               {!single && <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #bbf7d0' }}>
                 <div className="px-4 py-3 text-base font-bold flex items-center justify-between" style={{ backgroundColor: '#f0fdf4', color: GREEN }}>
-                  <span>💸 Cost invoice · {p.cash_job ? 'cash job — 15% rule' : `${p.customer_type ? p.customer_type.replace(/_/g, ' ') : 'shop'} discount`}</span>
-                  <span className="flex items-center gap-1">
-                    {p.cash_job ? <span className="text-lg font-bold rounded-md px-2 py-0.5 text-right" style={{ border: '2px solid #15803d', backgroundColor: '#dcfce7', color: '#14532d' }} title="Hard rule: every cash job is 15% off">💵 Cash job · {pct}</span> : <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-20 text-lg font-bold rounded-md px-2 py-1 text-right" style={{ border: '2px solid #86efac' }} />}%
+                  <span>💸 Cost invoice · {p.pct_source === 'cash' ? 'cash job' : p.pct_source === 'insurer' ? p.pct_label : `${p.customer_type ? p.customer_type.replace(/_/g, ' ') : 'shop'} discount`}</span>
+                  <span className="flex items-center gap-1 flex-wrap justify-end">
+                    <input type="number" min="0" max="50" value={pct ?? 0} onChange={e => setPct(Number(e.target.value))} className="w-20 text-lg font-bold rounded-md px-2 py-1 text-right" style={{ border: '2px solid #86efac' }} />%<PctDefault p={p} pct={pct} setPct={setPct} />
                   </span>
                 </div>
                 {rows.map((l, i) => (
@@ -361,7 +404,10 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
               <label className="block text-[11px] font-semibold uppercase tracking-wider mb-1" style={{ color: '#888' }}>{single ? 'Send the invoice to' : 'Send both to'}</label>
               <input value={emails} onChange={e => setEmails(e.target.value)} placeholder="shop@email.com, second@email.com" className="w-full rounded-lg px-3 py-2.5 text-base" style={{ border: '1px solid #e0dbd6', outline: 'none' }} />
               <div className="text-sm mt-1" style={{ color: '#888' }}>From the Books contact.{single ? (payMode === 'net_terms' ? ' Net terms — they pay the link.' : ' Collect on site after — check, cash, or the card QR on the job card.') : ` Saves the shop ${fmt(insTotal - costTotal)}. Rule on file: ${p.rule}.`}</div>
-              {!p.cash_job && (!p.has_discount || Number(p.discount_pct) !== Number(pct)) && Number(pct) >= 0 && (
+              {(p.pct_source === 'cash' || p.pct_source === 'insurer') && Number(pct) !== Number(p.pct_default) && (
+                <div className="text-sm mt-1 font-semibold" style={{ color: '#92400e' }}>✏️ {pct}% on this car only. The {p.pct_label.toLowerCase()} default stays {p.pct_default}%, and {p.shop_name}'s own % isn't changed.</div>
+              )}
+              {!p.cash_job && p.pct_source !== 'insurer' && (!p.has_discount || Number(p.discount_pct) !== Number(pct)) && Number(pct) >= 0 && (
                 <div className="text-sm mt-1 font-semibold" style={{ color: '#92400e' }}>🧠 {p.has_discount ? `${p.shop_name} is on file at ${p.discount_pct}% — sending at ${pct}% updates the shop to ${pct}%.` : `No discount on file for ${p.shop_name} — ${pct}% will be remembered for next time.`}</div>
               )}
               {p.templates && (
