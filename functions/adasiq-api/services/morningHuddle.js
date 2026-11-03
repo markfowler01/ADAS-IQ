@@ -117,7 +117,10 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const weekFriday = addDays(thisWeekStart, 4), weekDaysLeft = dateStr <= weekFriday ? businessDays(dateStr, weekFriday) : 0
   const ytd = sumRange(byDay, `${year}-01-01`, dateStr)
   const lastYtd = sumRange(lastYearByDay, `${year - 1}-01-01`, `${year - 1}${dateStr.slice(4)}`)
-  const growthPct = lastYtd > 0 ? Math.round(((ytd - lastYtd) / lastYtd) * 100) : null
+  // 📉 Books only holds sales from ~Nov 2025, so last year's YTD is near $0 and the % read
+  // "+167,269%" (Mark 2026-11-03). No % until last year has a real number to compare against.
+  const GROWTH_FLOOR = 25000
+  const growthPct = lastYtd >= GROWTH_FLOOR ? Math.round(((ytd - lastYtd) / lastYtd) * 100) : null
   const bizDone = businessDays(monthStart, yesterday), bizTotal = businessDays(monthStart, monthEnd), bizLeft = Math.max(0, bizTotal - bizDone)
   const pace = Math.round(goal * curveAt(curve, bizDone / Math.max(1, bizTotal)))   // 📈 our real month shape, not an even split
   const perDayNeeded = bizLeft > 0 ? Math.max(0, goal - mtd) / bizLeft : 0
@@ -128,7 +131,9 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   const roster = (await rosterFromDirectory(req)).filter(r => r.type === 'tech')
   const goals = await readTechGoals(req)
   let invoices = []
-  const fetchFrom = lastStart < monthStart ? lastStart : monthStart
+  // Reach back far enough for every window on the graphic (Mark 2026-11-03: early in a month the
+  // fetch began on the 1st, so last week's Remote Expert fees never came off "Last week").
+  const fetchFrom = [lastStart, monthStart, lastWeekStart, addDays(dateStr, -30)].sort()[0]
   try { invoices = await listInvoicesForDateRange(fetchFrom, dateStr) } catch (e) { console.warn('[huddle] invoices:', e.message) }
   // Remote Expert is paid to the vendor and is not our sales. Take the matched
   // charge off the invoice it belongs to. Pre-scans and post-scans stay in.
@@ -192,7 +197,7 @@ export async function buildHuddleData(req, { dateStr = todayPT() } = {}) {
   let calls = { label: '', shops: [] }
   try { const R = await import('./shopRhythm.js'); calls = R.usuallyCallOn(await R.readRhythm(req), todayStr, 4) } catch (e) { console.warn('[huddle] rhythm:', e.message) }
   const mtdNet = Math.round(mtd - reMtd), ytdNet = Math.round(ytd - reYtd)
-  const growthNet = lastYtd > 0 ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
+  const growthNet = lastYtd >= GROWTH_FLOOR ? Math.round(((ytdNet - lastYtd) / lastYtd) * 100) : null
   const perDayNet = bizLeft > 0 ? Math.max(0, goal - mtdNet) / bizLeft : 0
   const out = { review, salesDate: dateStr, curve: { months: curve.months, weight: curve.weight, points: curve.points }, lastLabel, lastStart, lastEnd, lastDayJobs, dateStr: todayStr, weekday, dateLabel, monthLabel, goal, mtd: mtdNet, last7: Math.round(last7 - re7), last30: Math.round(last30 - re30), thisWeek: Math.round(thisWeek - reWk), lastWeek: Math.round(lastWeek - reLastWk), weekGoal, weekDaysLeft, weekPct: Math.min(100, Math.round(((thisWeek - reWk) / Math.max(1, weekGoal)) * 100)), weekPerDay: weekDaysLeft ? Math.round(Math.max(0, weekGoal - (thisWeek - reWk)) / weekDaysLeft) : 0, jobsMonth, avgPerJob: jobsMonth ? Math.round(mtdNet / jobsMonth) : 0, jobsPerDay: jobsMonth ? Math.round((jobsMonth / Math.max(1, bizDone)) * 10) / 10 : 0, days, pct: Math.min(100, Math.round((mtdNet / Math.max(1, goal)) * 100)), pace, pacePct: Math.min(100, Math.round((pace / Math.max(1, goal)) * 100)), ahead: mtdNet - pace, yesterdaySales: Math.round(yesterdaySales - reYest), bizDone, bizTotal, bizLeft, perDayNeeded: Math.round(perDayNet), ytd: ytdNet, lastYtd, growthPct: growthNet, techs, schedule, jobsToday: jobs.length, calls, line: growthLine(dateStr) }
   if (review) {
