@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { useDispatchBoard } from '../lib/techColumns.js'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
+import { ArrivePicker } from '../lib/arrive.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -50,6 +51,7 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
   // no date puts it in the Unscheduled lane for Kat to place. The
   // Schedule page pre-fills this when adding straight onto a day.
   const [schedDate,   setSchedDate]   = useState(defaultDate || '')
+  const [when,        setWhen]        = useState({ arrive: '', time: '' })   // ⏰ Mark 2026-11-03
 
   // Photo scanner state
   const [imagePreview, setImagePreview] = useState(null)
@@ -193,7 +195,8 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
         technician: technician,
         insurer:    String(insurer || '').trim(),
         notes:      String(notes || '').trim(),
-        scheduled_date: schedDate || '',
+        scheduled_date: schedDate ? (when.time ? `${schedDate}T${when.time}` : schedDate) : '',
+        arrive:     when.arrive || '',
         status:     'job_requested',
         request_type: isQuote ? 'quote' : 'job',
       })
@@ -559,6 +562,12 @@ export default function JobRequestModal({ onClose, onSubmit, defaultDate, mode =
             <p className="text-[11px] mt-1" style={{ color: '#aaa' }}>
               Leave blank and it goes to the Unscheduled list on the Schedule calendar.
             </p>
+            {schedDate && (
+              <div className="mt-2">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">When should the tech be there?</div>
+                <ArrivePicker arrive={when.arrive} time={when.time} onChange={setWhen} />
+              </div>
+            )}
           </div>
 
           {/* What's needed */}

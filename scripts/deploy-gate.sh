@@ -24,7 +24,7 @@ fi
 
 # 🗑 Job safety net (2026-10-29: the invoice re-check deleted live cards). These
 # tests hold the removal rules + exact invoice matching; a failure blocks the deploy.
-if ! node --test --test-force-exit functions/adasiq-api/test/jobTrash.test.js functions/adasiq-api/test/monthCurve.test.js functions/adasiq-api/test/billDefaults.test.js >/tmp/jobtrash-test.log 2>&1; then
+if ! node --test --test-force-exit functions/adasiq-api/test/jobTrash.test.js functions/adasiq-api/test/monthCurve.test.js functions/adasiq-api/test/billDefaults.test.js functions/adasiq-api/test/techDay.test.js >/tmp/jobtrash-test.log 2>&1; then
   echo "❌ JOB SAFETY TESTS FAILED (functions/adasiq-api/test/jobTrash.test.js)"
   grep -E "not ok|✖|Error" /tmp/jobtrash-test.log | head -10
   FAIL=1

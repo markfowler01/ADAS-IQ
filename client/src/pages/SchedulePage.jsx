@@ -16,8 +16,10 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { displayTechName, useDispatchBoard } from '../lib/techColumns.js'
 import Navbar from '../components/Navbar.jsx'
 import JobRequestModal from '../components/JobRequestModal.jsx'
+import { ArrivePicker, ArrivePill, arriveOf } from '../lib/arrive.jsx'
 
 const ORANGE = '#CD4419'
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_PUBLIC_TOKEN
@@ -70,12 +72,15 @@ function calsOf(j) {
   } else if (Array.isArray(j.calibrations)) arr = j.calibrations
   return arr.map(c => (typeof c === 'string' ? c : (c?.name || c?.type || ''))).filter(Boolean)
 }
-function techShort(t) {
-  const s = String(t || '')
-  if (/jay/i.test(s)) return 'Jaden'
-  if (/mark/i.test(s)) return 'Mark'
-  if (/kat/i.test(s)) return 'Kat'
-  return s
+function techShort(t, techs) {
+  const shown = displayTechName(t)
+  if (!shown) return ''
+  const first = shown.split(/\s+/)[0].toLowerCase()
+  const hit = (techs || []).find(x => x.name.toLowerCase() === first || shown.toLowerCase().startsWith(x.name.toLowerCase()))
+  if (hit) return hit.name
+  if (/^kat/i.test(first)) return 'Kat'
+  if (/^mark/i.test(first)) return 'Mark'
+  return shown.split(/\s+/)[0]
 }
 function normShop(s) { return String(s || '').trim().toLowerCase() }
 
@@ -102,6 +107,7 @@ function paidHolidayName(dateISO) {
 }
 
 export default function SchedulePage({ user, onLogout, currentScreen, onNavigate }) {
+  const { techs: dispatchTechs } = useDispatchBoard()
   const [board, setBoard] = useState({ jobs: [], meta: {}, shops: {}, time_off: {}, time_off_pending: {} })
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -178,12 +184,14 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
   async function scheduleRequest(id, date) {
     const req = requests.find(r => r.id === id)
     if (!confirmOffOverride(date, req?.technician || '')) return
-    setBoard(prev => ({ ...prev, jobs: prev.jobs.map(j => j.id === id ? { ...j, scheduled_date: date } : j) }))
+    const keepTime = String(req?.scheduled_date || '').match(/T\d{1,2}:\d{2}/)?.[0] || ''   // an exact time rides along to the new day
+    const newDate = date + keepTime
+    setBoard(prev => ({ ...prev, jobs: prev.jobs.map(j => j.id === id ? { ...j, scheduled_date: newDate } : j) }))
     try {
       const r = await apiFetch(`${API_BASE}/api/jobs/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scheduled_date: date }),
+        body: JSON.stringify({ scheduled_date: newDate }),
       })
       if (!r.ok) { const j = await r.json().catch(() => ({})); throw new Error(j.error || `HTTP ${r.status}`) }
       showToast(`📅 ${req?.shop_name || 'Request'} → ${dowShort(date)} ${fmtShort(date)}`)
@@ -191,6 +199,22 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
       showToast(`Save failed: ${e.message}`)
       loadBoard()
     }
+  }
+
+  // ⏰ When the tech needs to be there (Mark 2026-11-03) — shows big on his Live card.
+  async function saveWhen(j, { arrive, time }) {
+    const d = dateOf(j)
+    const scheduled_date = d && time ? `${d}T${time}` : d
+    setBoard(prev => ({ ...prev, jobs: prev.jobs.map(x => x.id === j.id ? { ...x, arrive, scheduled_date, arrive_info: null } : x) }))
+    try {
+      const r = await apiFetch(`${API_BASE}/api/jobs/${j.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ arrive, scheduled_date }),
+      })
+      if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error || `HTTP ${r.status}`) }
+      const a = arriveOf({ arrive, scheduled_date })
+      showToast(a ? `${a.emoji} ${j.shop_name || 'Job'} · ${a.label}` : `${j.shop_name || 'Job'} · no time set`)
+    } catch (e) { showToast(`Save failed: ${e.message}`); loadBoard() }
   }
 
   async function toggleConfirmed(j) {
@@ -223,6 +247,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
       notes,
       quote_number: formData.ro_number || '',
       scheduled_date: formData.scheduled_date || '',
+      arrive:       formData.arrive || '',
       status:       'job_requested',
       calibrations: '[]',
       via_request:  true,
@@ -331,12 +356,10 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
     const empty = dayReqs.length === 0 && dayJobs.length === 0
     const perTech = {}
     for (const j of [...dayReqs, ...dayJobs]) {
-      const t = techShort(j.technician)
+      const t = techShort(j.technician, dispatchTechs)
       if (t) perTech[t] = (perTech[t] || 0) + 1
     }
-    const techBits = Object.entries(perTech).map(([t, n]) => `${t[0]} ${n}`).join(' / ')
-    const maxLoad = Math.max(0, ...Object.values(perTech))
-    const loadClass = maxLoad >= FULL_PER_TECH ? 'full' : (maxLoad >= FULL_PER_TECH - 1 ? 'amber' : '')
+    const unassignedN = [...dayReqs, ...dayJobs].filter(j => !techShort(j.technician, dispatchTechs)).length
 
     return (
       <div key={date}
@@ -352,7 +375,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
         </div>
         {paidHolidayName(date) && (
           <div className="text-[10px] font-bold rounded-md px-1.5 py-0.5"
-            style={{ backgroundColor: '#ede9fe', color: '#6d28d9', border: '1px dashed #c4b5fd' }}>
+            style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A', border: '1px dashed #c4b5fd' }}>
             🎉 {paidHolidayName(date)} · paid holiday
           </div>
         )}
@@ -378,13 +401,14 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
               className={`sched-chip ${overdueP ? 'overdue' : (unconf ? 'unconf' : '')}`}
             >
               {j.shop_name || 'Unknown shop'}{!overdueP && unconf ? ' ⏳' : ''}
+              <ArrivePill job={j} />
               <span className="sched-pill req">REQUEST</span>
               {(j.quote_number || j.ro_number) && <span className="sched-pill id quiet">{j.quote_number || j.ro_number}</span>}
               <span className="veh">{vehicleOf(j) || 'Vehicle TBD'}{calsOf(j).length ? ` · ${calsOf(j).slice(0, 2).join(', ')}` : ''}</span>
               <span className="loc">
                 {cityOf(j) ? `📍 ${cityOf(j)}` : ''}
-                {techShort(j.technician) ? `${cityOf(j) ? ' · ' : ''}${techShort(j.technician)}` : ''}
-                {overdueP ? `${cityOf(j) || techShort(j.technician) ? ' · ' : ''}OVERDUE` : (unconf ? ' · unconfirmed' : '')}
+                {techShort(j.technician, dispatchTechs) ? `${cityOf(j) ? ' · ' : ''}${techShort(j.technician, dispatchTechs)}` : ''}
+                {overdueP ? `${cityOf(j) || techShort(j.technician, dispatchTechs) ? ' · ' : ''}OVERDUE` : (unconf ? ' · unconfirmed' : '')}
               </span>
             </div>
           )
@@ -392,20 +416,29 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
         {dayJobs.map(j => (
           <div key={j.id} className="sched-chip booked">
             {j.shop_name || 'Unknown shop'}
+            <ArrivePill job={j} />
             {(j.invoice_number || j.quote_number || j.ro_number) && <span className="sched-pill id">{j.invoice_number || j.quote_number || j.ro_number}</span>}
             <span className="veh">{vehicleOf(j) || 'Vehicle TBD'}{calsOf(j).length ? ` · ${calsOf(j).slice(0, 2).join(', ')}` : ''}</span>
             <span className="loc">
               {cityOf(j) ? `📍 ${cityOf(j)}` : ''}
-              {techShort(j.technician) ? `${cityOf(j) ? ' · ' : ''}${techShort(j.technician)}` : ''}
+              {techShort(j.technician, dispatchTechs) ? `${cityOf(j) ? ' · ' : ''}${techShort(j.technician, dispatchTechs)}` : ''}
             </span>
           </div>
         ))}
-        {dayJobs.length > 0 && (
+        {(dayJobs.length > 0 || dayReqs.length > 0) && (
+          // One meter per tech (Mark 2026-11-03): the old single meter showed the busiest
+          // tech's count for the whole day and hid on request-only days.
           <div className="sched-jobsline">
-            {dayJobs.length} job{dayJobs.length === 1 ? '' : 's'}{techBits ? ` · ${techBits}` : ''}
-            <span className={`sched-load ${loadClass}`}>
-              {Array.from({ length: FULL_PER_TECH }, (_, i) => <i key={i} className={i < maxLoad ? 'f' : ''} />)}
-            </span>
+            {dayJobs.length} job{dayJobs.length === 1 ? '' : 's'}{dayReqs.length ? ` · ${dayReqs.length} req` : ''}
+            {Object.entries(perTech).map(([t, n]) => (
+              <span key={t} className="whitespace-nowrap" title={`${t}: ${n} of ${FULL_PER_TECH}`}>
+                {' '}{t[0]}
+                <span className={`sched-load ${n >= FULL_PER_TECH ? 'full' : (n >= FULL_PER_TECH - 1 ? 'amber' : '')}`}>
+                  {Array.from({ length: FULL_PER_TECH }, (_, i) => <i key={i} className={i < n ? 'f' : ''} />)}
+                </span>
+              </span>
+            ))}
+            {unassignedN > 0 && <span className="whitespace-nowrap" style={{ color: '#b91c1c' }}> · {unassignedN} no tech</span>}
           </div>
         )}
       </div>
@@ -487,7 +520,7 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
             >+ New</button>
             <button onClick={() => setMapOpen(v => !v)}
               className="text-xs font-semibold rounded-lg px-3 py-2"
-              style={{ color: mapOpen ? 'white' : '#666', backgroundColor: mapOpen ? '#0e7490' : 'white', border: '1px solid #e0dbd6' }}
+              style={{ color: mapOpen ? 'white' : '#666', backgroundColor: mapOpen ? '#1F8B8B' : 'white', border: '1px solid #e0dbd6' }}
             >🗺 Map</button>
             <button onClick={() => setWeekOffset(o => o - 1)} className="w-9 h-9 rounded-lg bg-white" style={{ border: '1px solid #ebebeb' }}>‹</button>
             <div className="text-sm font-semibold text-center" style={{ minWidth: 130, color: '#444' }}>{fmtRange(week1[0], week2[6])}</div>
@@ -613,11 +646,12 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
                     <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5 text-white" style={{ backgroundColor: ORANGE }}>REQUEST</span>
                     {missing.length === 0 && <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ backgroundColor: '#dcfce7', color: '#166534' }}>✓ READY</span>}
                     {!conf && <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ backgroundColor: '#fde68a', color: '#92400e' }}>⏳ UNCONFIRMED</span>}
-                    {cityOf(j) && <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ backgroundColor: '#e0f2fe', color: '#075985' }}>📍 {cityOf(j)}</span>}
+                    {cityOf(j) && <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ backgroundColor: '#e6f4f4', color: '#075985' }}>📍 {cityOf(j)}</span>}
                   </div>
                   <div className="text-xs mt-1" style={{ color: '#666' }}>
-                    {vehicleOf(j) || 'Vehicle TBD'}{calsOf(j).length ? ` · ${calsOf(j).join(', ')}` : ''}{techShort(j.technician) ? ` · ${techShort(j.technician)}` : ''}
+                    {vehicleOf(j) || 'Vehicle TBD'}{calsOf(j).length ? ` · ${calsOf(j).join(', ')}` : ''}{techShort(j.technician, dispatchTechs) ? ` · ${techShort(j.technician, dispatchTechs)}` : ''}
                   </div>
+                  <ArrivePicker arrive={j.arrive} time={String(j.scheduled_date || '').match(/T(\d{1,2}:\d{2})/)?.[1] || ''} onChange={w => saveWhen(j, w)} />
                   {missing.length > 0 && (
                     <div className="text-[11.5px] mt-1.5" style={{ color: '#555' }}>
                       Needs before it can become a job: <span className="font-bold" style={{ color: '#dc2626' }}>{missing.join(' · ')}</span>
@@ -641,11 +675,12 @@ export default function SchedulePage({ user, onLogout, currentScreen, onNavigate
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-[13px] font-bold">{j.shop_name || 'Unknown shop'}</span>
                   <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ backgroundColor: '#e5e7eb', color: '#666' }}>JOB</span>
-                  {cityOf(j) && <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ backgroundColor: '#e0f2fe', color: '#075985' }}>📍 {cityOf(j)}</span>}
+                  {cityOf(j) && <span className="text-[10px] font-extrabold rounded-full px-2 py-0.5" style={{ backgroundColor: '#e6f4f4', color: '#075985' }}>📍 {cityOf(j)}</span>}
                 </div>
                 <div className="text-xs mt-0.5">
-                  {vehicleOf(j) || 'Vehicle TBD'}{techShort(j.technician) ? ` · ${techShort(j.technician)}` : ''}{j.quote_number ? ` · RO# ${j.quote_number}` : ''} · {String(j.status || '').replace(/_/g, ' ')}
+                  {vehicleOf(j) || 'Vehicle TBD'}{techShort(j.technician, dispatchTechs) ? ` · ${techShort(j.technician, dispatchTechs)}` : ''}{j.quote_number ? ` · RO# ${j.quote_number}` : ''} · {String(j.status || '').replace(/_/g, ' ')}
                 </div>
+                <ArrivePicker arrive={j.arrive} time={String(j.scheduled_date || '').match(/T(\d{1,2}:\d{2})/)?.[1] || ''} onChange={w => saveWhen(j, w)} />
               </div>
             ))}
           </div>

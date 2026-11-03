@@ -22,6 +22,7 @@ import LoadingSplash from './LoadingSplash.jsx'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
 import { BRAND } from '../lib/brandTokens.js'
 import { displayTechName, useDispatchBoard } from '../lib/techColumns.js'
+import { ArrivePicker } from '../lib/arrive.jsx'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -107,6 +108,7 @@ const EMPTY_JOB = {
   technician: '',
   region: '',
   scheduled_date: '',
+  arrive: '',
   calibrations: [],
   notes: '',
   report_url: '',
@@ -149,6 +151,7 @@ function jobToForm(job) {
     technician: job.technician || '',
     region: job.region || '',
     scheduled_date: job.scheduled_date || '',
+    arrive: job.arrive || '',
     calibrations: calArr,
     notes: job.notes || '',
     report_url: job.report_url || '',
@@ -170,6 +173,7 @@ function formToJobData(form) {
     technician: form.technician,
     region: form.region || '',
     scheduled_date: form.scheduled_date,
+    arrive: form.arrive || '',
     calibrations: JSON.stringify(form.calibrations),
     notes: form.notes,
     report_url: form.report_url,
@@ -481,7 +485,7 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs, shopWifi }) {
               filled, which silently dropped date-only picks (Kirkland
               job vanished off next Tuesday, 2026-09-03). */}
           <div>
-            <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Scheduled Date & Time</label>
+            <label className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Scheduled Date & When</label>
             <div className="flex gap-2">
               <input
                 type="date"
@@ -494,18 +498,17 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs, shopWifi }) {
                   setField('scheduled_date', d ? (t ? `${d}T${t}` : d) : '')
                 }}
               />
-              <input
-                type="time"
-                className="border rounded-lg px-3 py-2 text-sm focus:outline-none"
-                style={{ borderColor: '#ddd' }}
-                value={String(form.scheduled_date || '').includes('T') ? form.scheduled_date.split('T')[1] : ''}
-                onChange={e => {
-                  const d = String(form.scheduled_date || '').slice(0, 10)
-                  if (!d) return
-                  setField('scheduled_date', e.target.value ? `${d}T${e.target.value}` : d)
-                }}
-              />
             </div>
+            {/* ⏰ When the tech needs to be there (Mark 2026-11-03) — shows big on his Live card. */}
+            <ArrivePicker
+              arrive={form.arrive}
+              time={String(form.scheduled_date || '').includes('T') ? form.scheduled_date.split('T')[1].slice(0, 5) : ''}
+              onChange={({ arrive, time }) => {
+                const d = String(form.scheduled_date || '').slice(0, 10)
+                setField('arrive', arrive)
+                setField('scheduled_date', d && time ? `${d}T${time}` : d)
+              }}
+            />
             {!String(form.scheduled_date || '').slice(0, 10) && form.technician && (
               <div className="text-xs mt-1" style={{ color: '#b45309' }}>No date — will be booked for today</div>
             )}
@@ -2020,6 +2023,7 @@ export default function KanbanBoard({ user, onBack, onLogout, currentScreen, onN
       notes,
       quote_number: data.ro_number   || '',
       scheduled_date: data.scheduled_date || '',
+      arrive: data.arrive || '',
       status:       'job_requested',
       calibrations: '[]',
       via_request:  true,

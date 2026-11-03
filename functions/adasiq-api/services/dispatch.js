@@ -14,6 +14,8 @@
 import catalyst from 'zcatalyst-sdk-node'
 import { readGeocache, readTechConfig, normalizeKey } from './geocoding.js'
 import { durable } from './durableKV.js'
+import { arriveOf, arriveSort } from './arrive.js'
+export { arriveSort }
 
 export const JOB_STATE_KEY = 'absolute_adas_job_state'
 
@@ -57,6 +59,8 @@ export function mergeJobState(job, stateMap) {
     completed_at:       s.completed_at      ?? null,
     time_window_start:  s.time_window_start ?? null,
     time_window_end:    s.time_window_end   ?? null,
+    arrive:             s.arrive            || '',
+    arrive_info:        arriveOf(job, s),   // ⏰ when the tech needs to be there
   }
 }
 
@@ -196,16 +200,41 @@ function fmtHHMM(date) {
 }
 
 // ── Capacity ────────────────────────────────────────────────────────────────
-export async function getTechCapacity(req, techName, dateISO, allJobs, techConfig) {
+// Mark 2026-11-03: "the thing that counts the four jobs doesn't seem to be working".
+// It only counted jobs whose scheduled_date was exactly today, but most jobs are
+// dispatched with no date (or ride over from yesterday) and still sit on the lane,
+// and a job dropped off the count once Kat marked it Complete. For TODAY the count
+// is now what the tech actually has on their day: done today (completed_at in PT,
+// any status) + still open on their lane — the same rule the Live view shows.
+// Any other date (booking ahead) counts the jobs + requests scheduled that day.
+const ptDay = iso => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)) } catch { return '' } }
+const dayOf = v => String(v || '').slice(0, 10)
+
+/** On the tech's Live lane for dateISO (same rule as GET /api/dispatch/live). */
+export function onLaneFor(job, dateISO) {
+  const st = job.status || '', d = dayOf(job.scheduled_date)
+  if (/^dispatched_/.test(st)) return !d || d <= dateISO
+  if (st === 'job_requested') return !!d && d <= dateISO
+  return false
+}
+
+export async function getTechCapacity(req, techName, dateISO, allJobs, techConfig, stateMap = null) {
   const homeKey = Object.keys(techConfig || {}).find(k => isAssignedTo({ technician: techName }, k))
   const cap = techConfig?.[homeKey]?.daily_cap ?? 4
-  const used = (allJobs || []).filter(j =>
-    isAssignedTo(j, techName)
-    && (j.scheduled_date || '') === dateISO
-    && j.status !== 'complete'
-  ).length
+  const mine = (allJobs || []).filter(j => isAssignedTo(j, techName))
+  let used, done = 0, open = 0
+  if (dateISO === todayPT()) {
+    const state = stateMap || await readJobState(req)
+    const doneIds = new Set(mine.filter(j => { const c = state[String(j.id)]?.completed_at; return c && ptDay(c) === dateISO }).map(j => String(j.id)))
+    done = doneIds.size
+    open = mine.filter(j => !doneIds.has(String(j.id)) && onLaneFor(j, dateISO) && !state[String(j.id)]?.completed_at).length
+    used = done + open
+  } else {
+    used = mine.filter(j => dayOf(j.scheduled_date) === dateISO && j.status !== 'complete' && (/^dispatched_|^need_dispatch$|^pending_parts$|^job_requested$|^ready_invoice$/.test(j.status || ''))).length
+    open = used
+  }
   const status = used > cap ? 'over' : (used >= cap ? 'full' : 'room')
-  return { cap, used, available: Math.max(0, cap - used), atCap: used >= cap, overCap: used > cap, status }
+  return { cap, used, done, open, available: Math.max(0, cap - used), atCap: used >= cap, overCap: used > cap, status }
 }
 
 // ── Live snapshot per tech ──────────────────────────────────────────────────

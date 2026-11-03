@@ -92,11 +92,12 @@ router.get('/', async (req, res) => {
       }
     }
 
-    // Sort: by drive_order asc, nulls at end.
+    // Sort: when he has to be there first (⏰ Mark 2026-11-03), then drive_order asc, nulls at end.
+    const { arriveSort } = await import('../services/arrive.js')
     techJobs.sort((a, b) => {
       const ao = a.drive_order ?? Number.POSITIVE_INFINITY
       const bo = b.drive_order ?? Number.POSITIVE_INFINITY
-      return ao - bo
+      return (arriveSort(a.arrive_info) - arriveSort(b.arrive_info)) || (ao - bo)
     })
 
     const home = await getTechHomeBase(req, techName)

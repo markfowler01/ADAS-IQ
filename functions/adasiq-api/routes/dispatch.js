@@ -9,13 +9,16 @@ import express from 'express'
 import { readJobsPublic } from './jobs.js'
 import {
   readJobState, mergeJobState, isAssignedTo, todayPT,
-  getTechCapacity, deriveLiveStatusForTech, haversineMiles,
+  getTechCapacity, deriveLiveStatusForTech, haversineMiles, arriveSort,
 } from '../services/dispatch.js'
 import { readGeocache, readTechConfig, normalizeKey } from '../services/geocoding.js'
+import { readDispatchTechs } from '../services/techRoster.js'
 
 const router = express.Router()
 
-const TECHS = ['Mark', 'Jayden']
+async function techNames(req) {
+  return (await readDispatchTechs(req)).map(t => t.name)
+}
 
 // PATCH /api/dispatch/reorder, manually renumber a tech's day.
 // Body: { tech, date, order: [jobId, jobId, ...] }
@@ -45,6 +48,7 @@ router.get('/live', async (req, res) => {
       readTechConfig(req),
     ])
 
+    const TECHS = await techNames(req)
     const todays = allJobs.filter(j => (j.scheduled_date || '') === dateISO)
     const decorate = (j) => {
       const merged = mergeJobState(j, stateMap)
@@ -83,9 +87,20 @@ router.get('/live', async (req, res) => {
           return false
         })
         .map(decorate)
-        .sort((a, b) => (a.drive_order ?? 999) - (b.drive_order ?? 999))
+        // ⏰ When he has to be there comes first (Mark 2026-11-03); drive order breaks ties.
+        .sort((a, b) => arriveSort(a.arrive_info) - arriveSort(b.arrive_info) || (a.drive_order ?? 999) - (b.drive_order ?? 999))
 
-      const capacity = await getTechCapacity(req, techName, dateISO, allJobs, techConfig)
+      // 📅 Coming up (Mark 2026-11-03: "often Jayden doesn't know when jobs are scheduled") —
+      // future-dated jobs + requests are parked off the lane until their morning, and techs
+      // can't open the Schedule screen. Next 7 days, read-only.
+      const horizon = (() => { const d = new Date(`${dateISO}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 7); return d.toISOString().slice(0, 10) })()
+      const upcoming = allJobs
+        .filter(j => isAssignedTo(j, techName) && /^dispatched_|^need_dispatch$|^job_requested$|^pending_parts$/.test(j.status || ''))
+        .filter(j => { const d = String(j.scheduled_date || '').slice(0, 10); return d > dateISO && d <= horizon })
+        .map(j => { const m = mergeJobState(j, stateMap); return { id: m.id, shop_name: m.shop_name, vehicle: m.vehicle || [m.year, m.make, m.model].filter(Boolean).join(' '), scheduled_date: m.scheduled_date, status: m.status, arrive: m.arrive, arrive_info: m.arrive_info } })
+        .sort((a, b) => String(a.scheduled_date).slice(0, 10).localeCompare(String(b.scheduled_date).slice(0, 10)) || arriveSort(a.arrive_info) - arriveSort(b.arrive_info))
+
+      const capacity = await getTechCapacity(req, techName, dateISO, allJobs, techConfig, stateMap)
       const liveStatus = deriveLiveStatusForTech(techJobs)
 
       const lastWithWindow = [...techJobs].reverse().find(j => j.time_window_end)
@@ -107,6 +122,7 @@ router.get('/live', async (req, res) => {
         position,
         home: home && home.home_lat != null ? { lat: home.home_lat, lng: home.home_lng, address: home.home_address } : null,
         jobs: techJobs,
+        upcoming,
       })
     }
 
@@ -166,10 +182,11 @@ router.post('/suggest-slot', async (req, res) => {
     ])
     const targetCoords = geocache[normalizeKey(shopName)] || null
 
+    const TECHS = await techNames(req)
     const suggestions = []
     let bothAtCap = true
     for (const techName of TECHS) {
-      const cap = await getTechCapacity(req, techName, dateISO, allJobs, techConfig)
+      const cap = await getTechCapacity(req, techName, dateISO, allJobs, techConfig, stateMap)
       const techJobs = allJobs
         .filter(j => isAssignedTo(j, techName))
         .filter(j => (j.scheduled_date || '') === dateISO)
@@ -251,9 +268,10 @@ router.get('/map-data', async (req, res) => {
       readTechConfig(req),
     ])
 
+    const TECHS = await techNames(req)
     const capacities = {}
     for (const t of TECHS) {
-      capacities[t] = await getTechCapacity(req, t, dateISO, allJobs, techConfig)
+      capacities[t] = await getTechCapacity(req, t, dateISO, allJobs, techConfig, stateMap)
     }
 
     const MAP_STATUSES = new Set(['dispatched_jaden', 'dispatched_mark', 'pending_parts'])

@@ -161,7 +161,7 @@ export default function CallerDrawer({ phone, user, onClose, onNavigate, context
                 shop_name: formData.shop_name || '', year: formData.year || '', make: formData.make || '', model: formData.model || '',
                 vehicle: [formData.year, formData.make, formData.model].filter(Boolean).join(' '), vin: formData.vin || formData.last_four_vin || '',
                 technician: formData.technician || '', insurer: formData.insurer || '', notes, quote_number: formData.ro_number || '',
-                scheduled_date: formData.scheduled_date || '', status: 'job_requested', calibrations: '[]', via_request: true, request_type: 'job',
+                scheduled_date: formData.scheduled_date || '', arrive: formData.arrive || '', status: 'job_requested', calibrations: '[]', via_request: true, request_type: 'job',
               }
               const r = await apiFetch(`${API_BASE}/api/jobs`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
               if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || 'Could not create the job') }

@@ -16,6 +16,8 @@
 // All buttons are full-width with min-height 48px for tap targets.
 
 import { useEffect, useState } from 'react'
+import { WifiCopy } from './MobileJobCard.jsx'
+import { ArriveBar } from '../lib/arrive.jsx'
 
 const ORANGE = '#CD4419'
 const GRAY_BG = '#f5f3f0'
@@ -64,7 +66,7 @@ function fmtElapsed(startedAt) {
   return `${h}h ${m - h * 60}m`
 }
 
-export default function TodayJobCard({ job, onAction, isExpanded, onToggleExpand }) {
+export default function TodayJobCard({ job, onAction, isExpanded, onToggleExpand, shopWifi }) {
   const state = deriveState(job)
   const style = STATE_STYLE[state]
   const cals = parseCalibrations(job.calibrations)
@@ -100,6 +102,7 @@ export default function TodayJobCard({ job, onAction, isExpanded, onToggleExpand
         className="w-full text-left px-4 py-4"
         style={{ minHeight: 72 }}
       >
+        <ArriveBar job={job} today={new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles' }).format(new Date())} />
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
@@ -145,6 +148,7 @@ export default function TodayJobCard({ job, onAction, isExpanded, onToggleExpand
           </div>
         )}
       </button>
+      {shopWifi ? <div className="px-4 pb-2"><WifiCopy wifi={shopWifi} /></div> : null}
 
       {/* Expanded body */}
       {expanded && (
@@ -262,7 +266,7 @@ export default function TodayJobCard({ job, onAction, isExpanded, onToggleExpand
               type="button"
               onClick={() => onAction('complete')}
               className="w-full rounded-xl font-bold text-white"
-              style={{ backgroundColor: '#7e22ce', minHeight: 52 }}
+              style={{ backgroundColor: '#0A0A0A', minHeight: 52 }}
             >✓ Complete Job</button>
           )}
 

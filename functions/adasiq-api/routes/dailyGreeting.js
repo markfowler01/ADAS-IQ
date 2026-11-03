@@ -134,26 +134,29 @@ function invoiceBelongsToTech(inv, tech) {
   return salespersonMatches(inv.salesperson_name, tech)   // typo-tolerant (services/salesBasis.js)
 }
 
-async function countTodaysJobsForTech(req, techName, dateStr) {
+// 📋 The tech's day, same rule as his Live lane (Mark 2026-11-03: Jayden didn't know which
+// jobs were his or when to be there). Was: only jobs dated exactly today, and getAllRows
+// stops at 200 rows — so undated dispatched jobs never showed and the text said "no jobs".
+// Returns { count, lines } — lines like "• 🌅 First thing · Gerber Stanwood — 2022 BMW M2".
+async function techDayForText(req, techName, dateStr) {
   try {
-    const app = catalyst.initialize(req, { type: 'advancedio' })
-    const table = app.datastore().table(JOBS_TABLE)
-    const rows = await table.getAllRows()
-    const t = String(techName || '').toLowerCase()
-    const ACTIVE = new Set(['dispatched_mark', 'dispatched_jaden', 'pending_parts', 'ready_invoice'])
-    return rows.filter(r => {
-      if (!ACTIVE.has(r.status) && !String(r.status || '').startsWith('dispatched_')) return false
-      if ((r.scheduled_date || '').slice(0, 10) !== dateStr) return false
-      const rowTech = String(r.technician || '').toLowerCase()
-      if (rowTech.includes(t) || t.includes(rowTech)) return true
-      if (t.includes('mark')   && r.status === 'dispatched_mark')  return true
-      if (t.includes('jayden') && r.status === 'dispatched_jaden') return true
-      if (r.status === `dispatched_${t.replace(/[^a-z]/g, '')}` || (t.startsWith('jay') && r.status === 'dispatched_jaden')) return true
-      return false
-    }).length
+    const { readJobsPublic } = await import('./jobs.js')
+    const { readJobState, isAssignedTo, onLaneFor } = await import('../services/dispatch.js')
+    const { arriveOf, arriveSort } = await import('../services/arrive.js')
+    const [jobs, state] = await Promise.all([readJobsPublic(req), readJobState(req)])
+    const mine = jobs
+      .filter(j => isAssignedTo(j, techName) && onLaneFor(j, dateStr) && !state[String(j.id)]?.completed_at)
+      .map(j => ({ j, a: arriveOf(j, state[String(j.id)]), o: state[String(j.id)]?.drive_order ?? 999 }))
+      .sort((x, y) => arriveSort(x.a) - arriveSort(y.a) || x.o - y.o)
+    const lines = mine.slice(0, 6).map(({ j, a }) => {
+      const vehicle = j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ')
+      return `• ${a ? `${a.emoji} ${a.label} · ` : ''}${j.shop_name || 'Shop'}${vehicle ? ` — ${vehicle}` : ''}`
+    })
+    if (mine.length > 6) lines.push(`• …and ${mine.length - 6} more on your Live view`)
+    return { count: mine.length, lines }
   } catch (e) {
-    console.warn('[daily-greeting] countTodaysJobsForTech failed:', e.message)
-    return 0
+    console.warn('[daily-greeting] techDayForText failed:', e.message)
+    return { count: 0, lines: [] }
   }
 }
 
@@ -183,7 +186,7 @@ function buildGreetingMessage({ name, weekday }) {
 // and the Remote Expert charge taken out. The bonus starts at $40,000.
 // On Mondays the reference day is FRIDAY (yesterday = Sunday = automatic
 // goose egg, Mark 2026-07-13) and a last-week sales total rides along.
-function buildBonusDigestMessage({ techName, opener, refLabel, refSales, weekTotal, billedMtd, mtd, bonus, jobsToday }) {
+function buildBonusDigestMessage({ techName, opener, refLabel, refSales, weekTotal, billedMtd, mtd, bonus, jobsToday, dayLines }) {
   const gap = Math.max(0, 40000 - mtd)
   const bonusLine = mtd <= 40000
     ? `💰 Bonus so far: *$0* — ${fmtUSD(gap)} to $40,000`
@@ -191,7 +194,7 @@ function buildBonusDigestMessage({ techName, opener, refLabel, refSales, weekTot
       ? `💰 Bonus so far: *${fmtUSD(bonus)}* — 5% of everything above $40,000`
       : `💰 Bonus so far: *${fmtUSD(bonus)}* — 8% of everything above $40,000`
   const jobsLine = jobsToday > 0
-    ? `📋 ${jobsToday} ${jobsToday === 1 ? 'job' : 'jobs'} on your board today.`
+    ? [`📋 ${jobsToday} ${jobsToday === 1 ? 'job' : 'jobs'} on your board today:`, ...(dayLines || [])].join('\n')
     : `📋 No dispatched jobs on the board yet — check back at 8am.`
   return [
     `${opener} Morning ${techName}.`,
@@ -207,7 +210,7 @@ function buildBonusDigestMessage({ techName, opener, refLabel, refSales, weekTot
   ].join('\n')
 }
 
-function buildTechDigestMessage({ techName, opener, refLabel, refSales, weekTotal, mtd, goal, jobsToday }) {
+function buildTechDigestMessage({ techName, opener, refLabel, refSales, weekTotal, mtd, goal, jobsToday, dayLines }) {
   const pct = Math.min(100, Math.round((mtd / Math.max(1, goal)) * 100))
   const goalGap = Math.max(0, goal - mtd)
   const cheer =
@@ -217,7 +220,7 @@ function buildTechDigestMessage({ techName, opener, refLabel, refSales, weekTota
     : pct >= 25 ? `Solid start — ${fmtUSD(goalGap)} to close out the month.`
     : `Fresh page. ${fmtUSD(goalGap)} to the ${fmtUSD(goal)} goal.`
   const jobsLine = jobsToday > 0
-    ? `📋 ${jobsToday} ${jobsToday === 1 ? 'job' : 'jobs'} on your board today.`
+    ? [`📋 ${jobsToday} ${jobsToday === 1 ? 'job' : 'jobs'} on your board today:`, ...(dayLines || [])].join('\n')
     : `📋 No dispatched jobs on the board yet — check back at 8am.`
   return [
     `${opener} Morning ${techName}.`,
@@ -322,7 +325,7 @@ export async function sendMorningKickoff(req, { force = false } = {}) {
   const roster = await rosterFromDirectory(req)
   for (const r of roster) {
     let msg
-    let mtd = 0, refSales = 0, weekTotal = 0, jobsToday = 0
+    let mtd = 0, refSales = 0, weekTotal = 0, jobsToday = 0, dayLines = []
     if (r.type === 'tech' && /jayden|jaden/i.test(r.name)) {
       const end = daysAgoPT(dateStr, -1)
       let bonus = 0
@@ -345,11 +348,11 @@ export async function sendMorningKickoff(req, { force = false } = {}) {
         }
         bonus = calculateBonus(mtd).bonus
       } catch (e) { console.warn('[daily-greeting] bonus sales', e.message) }
-      jobsToday = await countTodaysJobsForTech(req, r.name, dateStr)
+      ;({ count: jobsToday, lines: dayLines } = await techDayForText(req, r.name, dateStr))
       msg = buildBonusDigestMessage({
         techName: r.name, opener, refLabel, refSales,
         weekTotal: isMonday ? weekTotal : null,
-        billedMtd, mtd, bonus, jobsToday,
+        billedMtd, mtd, bonus, jobsToday, dayLines,
       })
     } else if (r.type === 'tech') {
       for (const inv of invoices) {
@@ -360,12 +363,12 @@ export async function sendMorningKickoff(req, { force = false } = {}) {
         if (d === refDay) refSales += t
         if (isMonday && d >= lastMonday && d <= yesterday) weekTotal += t
       }
-      jobsToday = await countTodaysJobsForTech(req, r.name, dateStr)
+      ;({ count: jobsToday, lines: dayLines } = await techDayForText(req, r.name, dateStr))
       msg = buildTechDigestMessage({
         techName: r.name, opener,
         refLabel, refSales,
         weekTotal: isMonday ? weekTotal : null,
-        mtd, goal: DEFAULT_MONTHLY_GOAL, jobsToday,
+        mtd, goal: DEFAULT_MONTHLY_GOAL, jobsToday, dayLines,
       })
     } else {
       msg = buildGreetingMessage({ name: r.name, weekday })
@@ -498,6 +501,17 @@ export async function maybeFireMorningKickoff(req) {
 router.get('/roster', requireCronSecret, async (req, res) => {
   const roster = await rosterFromDirectory(req)
   res.json({ date: todayPT(), roster: roster.map(r => ({ name: r.name, type: r.type, to: r.markChannel ? 'mark-channel' : String(r.to), member_id: r.member_id || null })), skipped: roster.skipped || [], source: roster === RECIPIENTS ? 'fallback' : 'directory' })
+})
+
+// 🔍 Read-only: what the morning text + Live counter say for a tech today (?tech=Jayden). Sends nothing.
+router.get('/tech-day', requireCronSecret, async (req, res) => {
+  try {
+    const tech = String(req.query.tech || 'Jayden'), date = todayPT()
+    const { readJobsPublic } = await import('./jobs.js')
+    const { readJobState, getTechCapacity } = await import('../services/dispatch.js')
+    const [jobs, state] = await Promise.all([readJobsPublic(req), readJobState(req)])
+    res.json({ tech, date, text: await techDayForText(req, tech, date), counter: await getTechCapacity(req, tech, date, jobs, {}, state) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
 router.post('/', requireCronSecret, async (req, res) => {

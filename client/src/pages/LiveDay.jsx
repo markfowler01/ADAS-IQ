@@ -18,6 +18,7 @@ import { displayTechName, statusIdForTech } from '../lib/techColumns.js'
 import JobRequestModal from '../components/JobRequestModal.jsx'
 import PhotoScrub from '../components/PhotoScrub.jsx'
 import { SpotHeadsUpButton, SpotBadge, ChecksToPickUp, useSpotOpen } from '../components/SpotPay.jsx'
+import { ArriveBar, ArrivePill } from '../lib/arrive.jsx'
 
 const ORANGE = '#CD4419'
 const TECH_COLOR = { Mark: '#CD4419', Jayden: '#1F8B8B' }
@@ -99,11 +100,13 @@ function TechScoreboard({ tech, viewerRole }) {
   const [statsErr, setStatsErr] = useState(false)
   const canEdit = viewerRole !== 'technician'
   const jobsToday = tech.used || 0
-  const hitTarget = jobsToday >= GOAL_TARGET
-  const bonus = Math.max(0, jobsToday - GOAL_TARGET)
+  // 🎯 GET SOME!!! counts jobs DONE today; the day's total (done + still open) shows beside it (Mark 2026-11-03).
+  const doneToday = tech.done ?? jobsToday
+  const hitTarget = doneToday >= GOAL_TARGET
+  const bonus = Math.max(0, doneToday - GOAL_TARGET)
   const targetLabel = hitTarget
     ? (bonus > 0 ? `🎯 GET SOME!!! +${bonus} BONUS` : '🎯 GET SOME!!!')
-    : `${GOAL_TARGET - jobsToday} TO GET SOME!!!`
+    : `${GOAL_TARGET - doneToday} TO GET SOME!!!`
 
   const load = useCallback(async () => {
     try {
@@ -196,13 +199,15 @@ function CapacityBar({ tech }) {
   // Progress toward the GET SOME!!! target, not a hard cap. 4 base slots
   // fill with the tech's color; extra jobs get green bonus slots.
   const color = TECH_COLOR[tech.name] || '#999'
+  // Solid = done today, faded = still on the lane today, grey = room (Mark 2026-11-03).
   const used = tech.used || 0
+  const done = tech.done ?? used
   const slots = []
   for (let i = 0; i < GOAL_TARGET; i++) {
-    const filled = i < used
+    const filled = i < done, booked = !filled && i < used
     slots.push(
       <div key={i} className="flex-1 h-2 rounded-full"
-        style={{ backgroundColor: filled ? color : '#e8e4e0' }} />
+        style={{ backgroundColor: filled ? color : (booked ? color : '#e8e4e0'), opacity: booked ? 0.35 : 1 }} />
     )
   }
   for (let i = GOAL_TARGET; i < used; i++) {
@@ -343,11 +348,13 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
   // Every tech on the board except this card's owner — reassign targets.
   const otherTechs = (techList || []).filter(n => n && n !== tech.name)
   const jobsToday = tech.used || 0
-  const hitTarget = jobsToday >= GOAL_TARGET
-  const bonus = Math.max(0, jobsToday - GOAL_TARGET)
+  // 🎯 GET SOME!!! counts jobs DONE today; the day's total (done + still open) shows beside it (Mark 2026-11-03).
+  const doneToday = tech.done ?? jobsToday
+  const hitTarget = doneToday >= GOAL_TARGET
+  const bonus = Math.max(0, doneToday - GOAL_TARGET)
   const capLabel = hitTarget
     ? (bonus > 0 ? `🎯 GET SOME!!! +${bonus} BONUS` : '🎯 GET SOME!!!')
-    : `${GOAL_TARGET - jobsToday} TO GET SOME!!!`
+    : `${GOAL_TARGET - doneToday} TO GET SOME!!!`
   const capColor = hitTarget ? '#15803d' : color
   const current = tech.current_job
 
@@ -360,7 +367,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
           <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
           <span className="font-bold text-base" style={{ color: '#1a1a1a' }}>{tech.name}</span>
           <span className="text-xs" style={{ color: '#888' }}>
-            {jobsToday} {jobsToday === 1 ? 'job' : 'jobs'} today
+            {jobsToday} {jobsToday === 1 ? 'job' : 'jobs'} today{tech.done != null ? ` · ${tech.done} done` : ''}
           </span>
         </div>
         <StatusPill tech={tech} />
@@ -397,6 +404,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
             style={{ color, fontFamily: 'IBM Plex Mono, monospace' }}>
             Current
           </div>
+          <ArriveBar job={current} today={ptYmd(0)} />
           <div className="flex items-center justify-between gap-2">
             <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>
               {current.shop_name || 'Unknown'}
@@ -468,6 +476,7 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
                 : i === 0 ? `Next${j.time_window_start ? ` · ETA ${j.time_window_start}` : ''}`
                 : j.status === 'pending_parts' ? '⏳ Waiting on Parts' : 'On the board'}
             </div>
+            <ArriveBar job={j} today={ptYmd(0)} />
             <MobileJobCard job={j}
               onMoveToReadyInvoice={onReadyToInvoice}
               onMoveToPendingParts={onPendingParts}
@@ -487,6 +496,32 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
             ))}
           </div>
         ))}
+
+      <ComingUp list={tech.upcoming} />
+    </div>
+  )
+}
+
+// 📅 The next 7 days for this tech (Mark 2026-11-03) — future-dated work stays off the lane
+// until its morning, and techs can't open the Schedule screen, so it shows here read-only.
+function ComingUp({ list }) {
+  if (!list?.length) return null
+  const day = iso => new Date(`${String(iso).slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })
+  return (
+    <div className="mt-3 rounded-xl p-3" style={{ backgroundColor: '#fafaf9', border: '1px dashed #d6d3d1' }}>
+      <div className="text-[12px] uppercase tracking-wider font-semibold mb-1.5"
+        style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>📅 Coming up · next 7 days</div>
+      {list.map(j => (
+        <div key={j.id} className="text-xs py-1 flex items-baseline gap-2" style={{ borderTop: '1px solid #f0ede9' }}>
+          <span className="font-bold whitespace-nowrap" style={{ color: '#1a1a1a', minWidth: 62 }}>{day(j.scheduled_date)}</span>
+          <span className="flex-1 min-w-0" style={{ color: '#444' }}>
+            <span className="font-semibold">{j.shop_name || 'Shop'}</span>
+            {j.vehicle ? ` · ${j.vehicle}` : ''}
+            <ArrivePill job={j} />
+            {j.status === 'job_requested' ? <span style={{ color: '#CD4419' }}> · request</span> : ''}
+          </span>
+        </div>
+      ))}
     </div>
   )
 }
@@ -1014,6 +1049,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       notes,
       quote_number: formData.ro_number    || '',
       scheduled_date: formData.scheduled_date || '',
+      arrive: formData.arrive || '',
       status:       'job_requested',
       calibrations: '[]',
       via_request:  true,
@@ -1054,6 +1090,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
       notes,
       quote_number: formData.ro_number    || '',
       scheduled_date: formData.scheduled_date || '',
+      arrive: formData.arrive || '',
       status:       'job_requested',
       calibrations: '[]',
       via_request:  true,

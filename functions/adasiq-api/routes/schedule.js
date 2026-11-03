@@ -113,11 +113,14 @@ router.get('/board', async (req, res) => {
     const { readGeocache, normalizeKey, geocodeAddress, readGeocacheRaw, writeGeocache } = await import('../services/geocoding.js')
     const app = catalyst.initialize(req, { type: 'advancedio' })
 
-    let [jobs, meta, geocache, timeOff] = await Promise.all([
+    const { readJobState } = await import('../services/dispatch.js')
+    const { arriveOf } = await import('../services/arrive.js')
+    let [jobs, meta, geocache, timeOff, jobState] = await Promise.all([
       readJobsPublic(req),
       scanScheduleMeta(req),
       readGeocache(req).catch(() => ({})),
       readTimeOffMap(req).catch(() => ({})),
+      readJobState(req).catch(() => ({})),
     ])
 
     // Shop → city from CRMShops addresses ("123 Main St, Everett, WA 98201"
@@ -185,6 +188,7 @@ router.get('/board', async (req, res) => {
         technician: j.technician, status: j.status,
         scheduled_date: j.scheduled_date, calibrations: j.calibrations,
         quote_number: j.quote_number, vin: j.vin,
+        arrive: jobState[String(j.id)]?.arrive || '', arrive_info: arriveOf(j, jobState[String(j.id)]),
       })),
       meta,
       shops,
@@ -346,8 +350,36 @@ export async function buildScheduleDigest(req) {
     }
   }
 
+  // 👀 Hand-off check (Mark 2026-11-03: Jayden's jobs sat on Mark's lane — "I got busy and
+  // they just never got transferred to him"). Every morning: what's on Mark's lane today, and
+  // anything on the lane of someone who's off. A reminder only — nothing moves by itself.
+  const handoff = []
+  try {
+    const { onLaneFor, isAssignedTo, readJobState } = await import('../services/dispatch.js')
+    const state = await readJobState(req)
+    const timeOff = await readTimeOffMap(req).catch(() => ({}))
+    const offToday = (timeOff[today] || []).map(n => n.toLowerCase())
+    const laneOf = name => jobs.filter(j => isAssignedTo(j, name) && onLaneFor(j, today) && !state[String(j.id)]?.completed_at)
+    const fmtJob = j => `${j.shop_name || 'Shop'} — ${j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'}`
+    const link = `${(process.env.CLIENT_URL || 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html').split('?')[0]}`
+    const markLane = laneOf('Mark')
+    if (markLane.length) {
+      handoff.push(`👀 *On Mark's lane today (${markLane.length}).* Mark in the field? If not, move them to Jayden on the Live view (🔁 Reassign) so he sees them: ${link}`)
+      for (const j of markLane.slice(0, 6)) handoff.push(`• ${fmtJob(j)}`)
+    }
+    const techs = [...new Set(jobs.map(j => String(j.technician || '').trim().split(/\s+/)[0]).filter(Boolean))]
+    for (const t of techs) {
+      if (/^mark$/i.test(t) || !offToday.includes(t.toLowerCase())) continue
+      const lane = laneOf(t)
+      if (!lane.length) continue
+      handoff.push(`🏖 *${t} is off today* but has ${lane.length} on their lane:`)
+      for (const j of lane.slice(0, 6)) handoff.push(`• ${fmtJob(j)}`)
+    }
+  } catch (e) { console.warn('[sched-digest] hand-off check:', e.message) }
+  if (handoff.length) { lines.push(''); lines.push(...handoff) }
+
   const nothingToSay = !unconfirmed.length && !overdue.length && !unscheduled.length &&
-    horizonRequests.length === 0 && count(requests, today) === 0
+    horizonRequests.length === 0 && count(requests, today) === 0 && !handoff.length
 
   // Tech-facing post — "what's on the board today" so nothing gets
   // missed (Mark 2026-08-11). Grouped by tech, requests flagged so the

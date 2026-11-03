@@ -8,6 +8,7 @@ import { postToCliqChannel, AA_JOBS_CHANNEL, DISPATCH_CHANNEL } from '../service
 import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShareLink, createJobFolder, listChildren } from '../services/workdrive.js'
 import { appendHistory } from '../services/history.js'
 import { statusIdForRoster } from '../services/techRoster.js'
+import { takeArrive } from '../services/arrive.js'
 
 const router = express.Router()
 
@@ -543,6 +544,12 @@ router.get('/completions', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const jobs = await getAllJobs(req)
+    // ⏰ Arrival window rides on the job state; the board's edit form shows it.
+    try {
+      const { readJobState } = await import('../services/dispatch.js')
+      const st = await readJobState(req)
+      for (const j of jobs) { const w = st[String(j.id)]?.arrive; if (w) j.arrive = w }
+    } catch (e) { console.warn('[jobs GET] arrive:', e.message) }
     // ⏱ The board is the app's heartbeat — it carries the 15-minute email
     // intake, because GitHub drops most of its scheduled runs (2026-09-24).
     try {
@@ -585,6 +592,7 @@ router.post('/', async (req, res) => {
     // Needs Dispatch step. Tech-requested cards (via_request) keep
     // their job_requested status for the Waiting-for-Kat flow.
     const body = { ...req.body }
+    const arrive = takeArrive(body)
     if (body.shop_name && body.customer_kind !== 'retail') {
       try {
         const { resolveShop } = await import('../services/shopResolve.js')
@@ -653,6 +661,7 @@ router.post('/', async (req, res) => {
       } catch (e) { console.warn('[jobs POST] request match failed (creating fresh):', e.message) }
     }
     if (!newJob) newJob = await insertJob(req, body)
+    if (newJob?.id) await saveArrive(req, newJob.id, arrive)
 
     // Request from the Live Day "Request a Job" or "Request a Quote" form
     // → post to #aajobs. request_type: 'quote' | 'job' distinguishes them
@@ -714,6 +723,7 @@ function extractErr(err) {
 // PUT /api/jobs/:id
 router.put('/:id', async (req, res) => {
   try {
+    const arrive = takeArrive(req.body)   // ⏰ job-state field, not a Jobs column
     // Read current status before update so we can detect completion transition
     let prevStatus = null
     try {
@@ -755,11 +765,13 @@ router.put('/:id', async (req, res) => {
     // body is merged over the stored row, and the links that tie a card to
     // Books / WorkDrive are never blanked by a save.
     const updated = await updateJob(req, req.params.id, req.body)
+    await saveArrive(req, updated.id, arrive)
     const working = s => /^(need_dispatch|dispatched_|pending_parts|ready_invoice)/.test(s || '')
     if (working(updated.status) && !working(prevStatus)) {
       try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, updated.id, 'job') } catch (e) { console.warn('[jobs] scrub → job:', e.message) }
     }
     if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') await writePcsiStory(req, updated)
+    if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') await stampDone(req, updated.id)   // 🎯 counts toward today's 4 even when dragged on the board
     if (req.body.status === 'ready_invoice' && prevStatus !== 'ready_invoice') { try { const { spotPayReady } = await import('../services/spotPay.js'); await Promise.race([spotPayReady(req, updated), new Promise(r => setTimeout(r, 6000))]) } catch (e) { console.warn('[spot-pay] ready', e.message) } }
     if (req.body.cash_quoted && String(cur?.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
@@ -841,6 +853,7 @@ router.put('/:id', async (req, res) => {
 // PATCH /api/jobs/:id — partial update (only fields provided)
 router.patch('/:id', async (req, res) => {
   try {
+    const arrive = takeArrive(req.body)
     const table = getTable(req)
     const currentRow = await table.getRow(req.params.id)
     if (!currentRow) return res.status(404).json({ error: 'Job not found — it may have been invoiced or deleted. Refresh the board.' })
@@ -878,6 +891,7 @@ router.patch('/:id', async (req, res) => {
     }
 
     const updated = await updateJob(req, req.params.id, merged)
+    await saveArrive(req, updated.id, arrive)
     // 🟠 Scrub list "active job": when the card leaves Requested / Quoted for a
     // working column, the linked scrub gets the orange outline (Mark 2026-10-09).
     const working = s => /^(need_dispatch|dispatched_|pending_parts|ready_invoice)/.test(s || '')
@@ -885,6 +899,7 @@ router.patch('/:id', async (req, res) => {
       try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, updated.id, 'job') } catch (e) { console.warn('[jobs] scrub → job:', e.message) }
     }
     if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') await writePcsiStory(req, updated)
+    if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') await stampDone(req, updated.id)   // 🎯 counts toward today's 4 even when dragged on the board
     if (req.body.status === 'ready_invoice' && currentJob.status !== 'ready_invoice') { try { const { spotPayReady } = await import('../services/spotPay.js'); await Promise.race([spotPayReady(req, updated), new Promise(r => setTimeout(r, 6000))]) } catch (e) { console.warn('[spot-pay] ready', e.message) } }
     if (req.body.cash_quoted && String(currentJob.cash_quoted || '') !== String(req.body.cash_quoted)) await applyCashQuoted(req, updated)
 
@@ -1055,6 +1070,23 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+
+// 🎯 A card dragged to Ready to Invoice on the board never went through the tech's
+// Complete button, so it had no completed_at and the Live view's GET SOME!!! count
+// missed it (Mark 2026-11-03). Stamp it once; the tech's own Complete wins.
+// ⏰ Save the arrival window on the job state ('' clears it; undefined = not sent).
+async function saveArrive(req, jobId, arrive) {
+  if (arrive === undefined || !jobId) return
+  try { const { updateJobStateFields } = await import('../services/dispatch.js'); await updateJobStateFields(req, jobId, { arrive }) }
+  catch (e) { console.warn('[jobs] arrive:', e.message) }
+}
+
+async function stampDone(req, jobId) {
+  try {
+    const { readJobState, updateJobStateFields } = await import('../services/dispatch.js')
+    if (!(await readJobState(req))[String(jobId)]?.completed_at) await updateJobStateFields(req, jobId, { completed_at: new Date().toISOString() })
+  } catch (e) { console.warn('[jobs] stamp done:', e.message) }
+}
 
 // ─── Field-state routes (dispatch map / tech today) ─────────────────────────
 //
