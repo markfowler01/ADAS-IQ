@@ -216,7 +216,6 @@ router.put('/billing', auth, async (req, res) => {
   const a = cfg.accounts.find(x => x.id === account.id)
   a.email = email
   a.address = { street: String(b.street || '').slice(0, 120), city: String(b.city || '').slice(0, 60), state: String(b.state || '').slice(0, 2).toUpperCase(), zip }
-  a.books_contact_id = a.books_contact_id || ''
   await writeConfig(req, cfg)
   res.json({ ok: true, email: a.email, address: a.address })
 })

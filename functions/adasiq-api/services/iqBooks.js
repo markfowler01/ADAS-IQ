@@ -1,36 +1,42 @@
-// 📒 ADAS IQ's own Zoho Books (Mark 2026-11-04: Books org 945498731, separate
-// from Absolute ADAS's org in ZOHO_ORGANIZATION_ID). Mark picked Zoho as the
+// 📒 The Zoho Books the scrub invoices go into (Mark 2026-11-04). Two choices:
+//   'absolute' → Absolute ADAS's Books (ZOHO_ORGANIZATION_ID). Mark: "for now
+//                run this through absolute adas" — no ADAS IQ LLC/customers yet.
+//   'iq'       → ADAS IQ's own Books, org 945498731, once the LLC + its own
+//                Zoho Payments exist. Flip on the Scrub Billing screen.
+// Item + customer ids are kept PER org, so flipping never mixes the two. Mark picked Zoho as the
 // whole system, so the monthly scrub invoices land here: the app builds them
 // (routes/scrubInvoices.js), this file creates the customer + invoice in Books,
 // marks it sent (no email: the customer templates wait for Mark's OK), and
 // records payments / voids. Same Zoho login and token as the main app.
 //
-// Never touches the Absolute ADAS Books org: every call passes IQ_ORG.
+// Every call passes the chosen org explicitly.
 import axios from 'axios'
 
 const BOOKS = 'https://www.zohoapis.com/books/v3'
 export const IQ_ORG = process.env.IQ_BOOKS_ORG_ID || '945498731'
+export const ORGS = { absolute: () => process.env.ZOHO_ORGANIZATION_ID, iq: () => IQ_ORG }
+export const orgId = which => (ORGS[which] || ORGS.absolute)()
 const ITEM_NAME = 'ADAS IQ scrub (per VIN)'
 
-async function H() {
+async function H(which) {
   const { getAccessToken } = await import('./zoho.js')
-  return { headers: { Authorization: `Zoho-oauthtoken ${await getAccessToken()}` }, params: { organization_id: IQ_ORG }, timeout: 20000 }
+  return { headers: { Authorization: `Zoho-oauthtoken ${await getAccessToken()}` }, params: { organization_id: orgId(which) }, timeout: 20000 }
 }
 const why = e => e?.response?.data?.message || e.message
 
 /** Can the app's token reach ADAS IQ's Books? → { ok, name } */
-export async function ping() {
+export async function ping(which) {
   try {
-    const h = await H()
-    const r = await axios.get(`${BOOKS}/organizations/${IQ_ORG}`, h)
-    return { ok: true, name: r.data?.organization?.name, currency: r.data?.organization?.currency_code }
+    const h = await H(which)
+    const r = await axios.get(`${BOOKS}/organizations/${orgId(which)}`, h)
+    return { ok: true, name: r.data?.organization?.name, currency: r.data?.organization?.currency_code, org_id: orgId(which) }
   } catch (e) { return { ok: false, error: why(e) } }
 }
 
 /** The one service item every line uses (made once, id cached by the caller). */
-export async function ensureItem(cachedId) {
+export async function ensureItem(which, cachedId) {
   if (cachedId) return cachedId
-  const h = await H()
+  const h = await H(which)
   const found = await axios.get(`${BOOKS}/items`, { ...h, params: { ...h.params, name: ITEM_NAME } })
   const hit = (found.data?.items || []).find(i => i.name === ITEM_NAME)
   if (hit) return hit.item_id
@@ -39,9 +45,10 @@ export async function ensureItem(cachedId) {
 }
 
 /** The shop as a Books customer. Returns contact_id (caller stores it on the account). */
-export async function ensureContact(account) {
-  if (account.books_contact_id) return account.books_contact_id
-  const h = await H()
+export async function ensureContact(which, account) {
+  const have = account.books_contacts?.[which]
+  if (have) return have
+  const h = await H(which)
   if (account.email) {
     const s = await axios.get(`${BOOKS}/contacts`, { ...h, params: { ...h.params, email: account.email } })
     const hit = (s.data?.contacts || []).find(c => c.contact_type === 'customer')
@@ -62,8 +69,8 @@ export async function ensureContact(account) {
  * both sides match, and marks it sent without emailing anyone.
  * → { invoice_id, invoice_url }
  */
-export async function pushInvoice(inv, { contactId, itemId }) {
-  const h = await H()
+export async function pushInvoice(which, inv, { contactId, itemId }) {
+  const h = await H(which)
   // Already there? (a retry after a timeout must not make a second one)
   const s = await axios.get(`${BOOKS}/invoices`, { ...h, params: { ...h.params, invoice_number: inv.number } })
   const have = (s.data?.invoices || []).find(i => i.invoice_number === inv.number)
@@ -82,7 +89,7 @@ export async function pushInvoice(inv, { contactId, itemId }) {
 
 /** "Paid other way" (check / ACH) → a payment in Books against the invoice. */
 export async function recordPayment(inv, { contactId, mode = 'check', reference = '' }) {
-  const h = await H()
+  const h = await H(inv.books_org)
   await axios.post(`${BOOKS}/customerpayments`, {
     customer_id: contactId, payment_mode: mode, amount: inv.total, date: new Date().toISOString().slice(0, 10), reference_number: reference || inv.number,
     invoices: [{ invoice_id: inv.books_invoice_id, amount_applied: inv.total }],
@@ -91,14 +98,14 @@ export async function recordPayment(inv, { contactId, mode = 'check', reference 
 
 export async function voidInBooks(inv) {
   if (!inv.books_invoice_id) return
-  const h = await H()
+  const h = await H(inv.books_org)
   await axios.post(`${BOOKS}/invoices/${inv.books_invoice_id}/status/void`, {}, h)
 }
 
 /** Is it paid in Books (e.g. the shop paid through the Books payment link)? */
 export async function booksStatus(inv) {
   if (!inv.books_invoice_id) return null
-  const h = await H()
+  const h = await H(inv.books_org)
   const r = await axios.get(`${BOOKS}/invoices/${inv.books_invoice_id}`, h)
   return r.data?.invoice?.status || null   // draft | sent | overdue | paid | partially_paid | void
 }

@@ -99,7 +99,10 @@ scrubBillingRouter.use((req, res, next) => isOwner(req) ? next() : res.status(40
 scrubBillingRouter.get('/config', async (req, res) => {
   const { listUsers } = await import('./scrubPortal.js')
   const { ping } = await import('../services/iqBooks.js')
-  const [cfg, books, users] = await Promise.all([readConfig(req), ping(), listUsers(req)])
+  const pre = await readConfig(req)
+  const which = pre.iq_books?.org === 'iq' ? 'iq' : 'absolute'
+  const [cfg, books, users] = await Promise.all([Promise.resolve(pre), ping(which), listUsers(req)])
+  books.which = which
   for (const a of cfg.accounts) if (a.type !== 'house') a.signup = signupSteps(a, { users, links: cfg.links, contracts: cfg.contracts || [] })
   res.json({ ...cfg, users, statuses: ACCOUNT_STATUS, books, defaults: { price: DEFAULT_PRICE, trial: DEFAULT_TRIAL }, types: ACCOUNT_TYPES })
 })
@@ -227,7 +230,7 @@ scrubBillingRouter.get('/invoices', async (req, res) => {
   const { readDoc } = await inv(); const { reminderText } = await import('../services/scrubInvoice.js')
   const d = await readDoc(req, month)
   const cfg = await readConfig(req)
-  res.json({ ...d, invoices: d.invoices.map(i => ({ ...i, reminder: i.status === 'failed' ? reminderText(i) : '' })), auto_charge: !!cfg.billing?.auto_charge })
+  res.json({ ...d, invoices: d.invoices.map(i => ({ ...i, reminder: i.past_due_at || i.status === 'failed' ? reminderText(i) : '' })), absolute_org: process.env.ZOHO_ORGANIZATION_ID || '' })
 })
 scrubBillingRouter.post('/invoices/close', async (req, res) => {
   const month = req.body?.month
@@ -307,4 +310,13 @@ scrubBillingRouter.post('/applicants/:id', async (req, res) => {
   const inv = await makeInvite(req, a, b.name, b.email)
   const hi = String(b.name || '').split(' ')[0] || 'there'
   res.json({ ok: true, account: a, link: inv.link, message: `Hi ${hi},\n\nThanks for asking about ADAS IQ. You're in. Set up your login here (the link works for 7 days):\n${inv.link}\n\nYou'll accept the terms, add your billing details (first ${a.trial} scrubs free, then $${a.price.toFixed(2)} per VIN, invoiced monthly), and list the body shops you work with.\n\nADAS IQ` })
+})
+
+// 📒 Which Zoho Books the scrub invoices go into: 'absolute' (now) or 'iq' (ADAS IQ LLC, later).
+scrubBillingRouter.post('/books-org', async (req, res) => {
+  const which = req.body?.org === 'iq' ? 'iq' : 'absolute'
+  const c = await readConfig(req)
+  c.iq_books = { ...(c.iq_books || {}), org: which, org_by: req.user?.email, org_at: new Date().toISOString() }
+  await writeConfig(req, c)
+  res.json({ ok: true, org: which })
 })

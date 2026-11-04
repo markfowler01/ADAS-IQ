@@ -73,16 +73,18 @@ export async function pushAll(req, month) {
   if (!todo.length) return out
   const cfg = await readConfig(req)
   cfg.iq_books = cfg.iq_books || {}
+  const which = cfg.iq_books.org === 'iq' ? 'iq' : 'absolute'   // Mark 2026-11-04: Absolute ADAS's Books for now
+  cfg.iq_books.items = cfg.iq_books.items || {}
   let cfgDirty = false
-  try { const id = await B.ensureItem(cfg.iq_books.item_id); if (id !== cfg.iq_books.item_id) { cfg.iq_books.item_id = id; cfgDirty = true } } catch (e) { console.warn('[iq books] item', B.booksError(e)); return { ...out, failed: todo.length } }
+  try { const id = await B.ensureItem(which, cfg.iq_books.items[which]); if (id !== cfg.iq_books.items[which]) { cfg.iq_books.items[which] = id; cfgDirty = true } } catch (e) { console.warn('[iq books] item', B.booksError(e)); return { ...out, failed: todo.length } }
   for (const inv of todo) {
     try {
       const a = cfg.accounts.find(x => x.id === inv.account_id)
       if (!a) throw new Error('account is gone')
-      const contactId = await B.ensureContact(a)
-      if (a.books_contact_id !== contactId) { a.books_contact_id = contactId; cfgDirty = true }
-      const r = await B.pushInvoice(inv, { contactId, itemId: cfg.iq_books.item_id })
-      Object.assign(inv, { books_invoice_id: r.invoice_id, books_url: r.invoice_url, books_error: '', status: inv.status === 'draft' ? 'sent' : inv.status, sent_at: inv.sent_at || new Date().toISOString() })
+      const contactId = await B.ensureContact(which, a)
+      if (a.books_contacts?.[which] !== contactId) { a.books_contacts = { ...(a.books_contacts || {}), [which]: contactId }; cfgDirty = true }
+      const r = await B.pushInvoice(which, inv, { contactId, itemId: cfg.iq_books.items[which] })
+      Object.assign(inv, { books_org: which, books_invoice_id: r.invoice_id, books_url: r.invoice_url, books_error: '', status: inv.status === 'draft' ? 'sent' : inv.status, sent_at: inv.sent_at || new Date().toISOString() })
       out.pushed++
     } catch (e) {
       inv.books_error = B.booksError(e).slice(0, 200); out.failed++
@@ -128,7 +130,7 @@ export async function markPaid(req, number, by, { mode = 'check', reference = ''
     try {
       const B = await import('../services/iqBooks.js')
       const cfg = await readConfig(req); const a = cfg.accounts.find(x => x.id === inv.account_id)
-      await B.recordPayment(inv, { contactId: a?.books_contact_id, mode, reference })
+      await B.recordPayment(inv, { contactId: a?.books_contacts?.[inv.books_org || 'absolute'], mode, reference })
     } catch (e) { const B = await import('../services/iqBooks.js'); return { error: `Books didn't take the payment: ${B.booksError(e)}` } }
   }
   Object.assign(inv, { status: 'paid_manual', paid_at: new Date().toISOString(), charged_by: by })

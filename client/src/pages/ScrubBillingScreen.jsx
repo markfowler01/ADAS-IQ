@@ -180,8 +180,12 @@ function PortalPanel({ cfg, onChange }) {
         </button>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        {cfg.books?.ok ? <Pill bg={GREEN}>📒 ADAS IQ BOOKS CONNECTED · {cfg.books.name}</Pill> : <Pill bg="#b91c1c">📒 CAN’T REACH ADAS IQ BOOKS{cfg.books?.error ? ` · ${cfg.books.error}` : ''}</Pill>}
-        <span className="text-[11px]" style={{ color: '#888' }}>Invoices go into ADAS IQ’s Zoho Books on the 1st. Card auto-charge turns on with Zoho Payments.</span>
+        {cfg.books?.ok ? <Pill bg={GREEN}>📒 INVOICES GO TO {String(cfg.books.name || '').toUpperCase()} BOOKS</Pill> : <Pill bg="#b91c1c">📒 CAN’T REACH {cfg.books?.which === 'iq' ? 'ADAS IQ' : 'ABSOLUTE ADAS'} BOOKS{cfg.books?.error ? ` · ${cfg.books.error}` : ''}</Pill>}
+        <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} disabled={busy === 'org'}
+          onClick={() => { const to = cfg.books?.which === 'iq' ? 'absolute' : 'iq'; run('org', async () => { if (!window.confirm(to === 'iq' ? 'Send new scrub invoices to ADAS IQ’s own Books (org 945498731)? Only once the ADAS IQ LLC and its Zoho Payments are set up.' : 'Send new scrub invoices to Absolute ADAS’s Books?')) return; await call('/books-org', 'POST', { org: to }); onChange() }) }}>
+          Switch to {cfg.books?.which === 'iq' ? 'Absolute ADAS' : 'ADAS IQ'} Books
+        </button>
+        <span className="text-[11px]" style={{ color: '#888' }}>Invoices go in on the 1st. Shops pay from the invoice with Zoho Payments.</span>
       </div>
       {reqs.length > 0 && (
         <div className="grid gap-1.5">
@@ -276,7 +280,7 @@ function InvoicesPanel({ month, onChange }) {
                 </button>
                 <div className="flex items-center gap-1.5">
                   <span className="text-lg font-extrabold" style={{ color: i.status.startsWith('paid') ? GREEN : INK }}>{money(i.total)}</span>
-                  {i.books_invoice_id && <a className="text-[11px] font-extrabold rounded-full px-2.5 py-1" style={{ backgroundColor: '#2563eb', color: 'white' }} href={`https://books.zoho.com/app/945498731#/invoices/${i.books_invoice_id}`} target="_blank" rel="noreferrer">📒 Books</a>}
+                  {i.books_invoice_id && <a className="text-[11px] font-extrabold rounded-full px-2.5 py-1" style={{ backgroundColor: '#2563eb', color: 'white' }} href={`https://books.zoho.com/app/${i.books_org === 'iq' ? '945498731' : (d?.absolute_org || '')}#/invoices/${i.books_invoice_id}`} target="_blank" rel="noreferrer">📒 Books</a>}
                   {['draft', 'sent', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/mark-paid`, 'POST'), `Record ${i.number} as paid by check / ACH? It goes into Books as a payment.`)}>Paid by check</button>}
                   {['draft', 'sent', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/void`, 'POST'), `Void ${i.number}? It’s voided in Books too and the shop won’t owe it.`)}>Void</button>}
                 </div>
