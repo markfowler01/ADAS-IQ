@@ -37,4 +37,21 @@ router.get('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }) }
 })
 
+// 🧾 Billed work for one shop (Mark 2026-11-04: Jobs tab said "No jobs" on a shop
+// with $1.3k lifetime — invoiced jobs leave the board). From the in-app Books
+// mirror (AdasInvoices). Techs get the list without dollars.
+router.get('/history', async (req, res) => {
+  try {
+    const name = String(req.query.name || '').trim()
+    if (!name) return res.json({ invoices: [] })
+    const { readAll } = await import('../services/zohoMirror.js')
+    const key = shopKey(name)
+    const all = (await readAll(req, 'inv')).filter(i => shopKey(i.customer_name) === key && i.status !== 'void')
+    const tech = req.user?.role === 'technician'
+    const invoices = all.sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, 200)
+      .map(i => ({ number: i.invoice_number, date: i.date, ref: i.reference_number, status: i.status, ...(tech ? {} : { total: i.total, balance: i.balance }) }))
+    res.json({ invoices, count: all.length, ...(tech ? {} : { total: Math.round(all.reduce((t, i) => t + (Number(i.total) || 0), 0) * 100) / 100 }) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 export default router

@@ -608,9 +608,15 @@ function ActivityTab({ activities, onChange }) {
     setNoteText('')
   }
 
-  function removeActivity(id) { onChange(activities.filter(a => a.id !== id)) }
+  // By the entry itself, not its id: entries written by the server (sales stops,
+  // van sign-ups) can have no id, and filtering by an undefined id removed all of them.
+  function removeActivity(act) { onChange(activities.filter(a => a !== act)) }
 
-  const sorted = [...activities].sort((a, b) => new Date(b.date) - new Date(a.date))
+  // The app writes activities two ways: this tab (date + note) and the server
+  // (at + text/summary + by: phone auto-log, sales stops, deals, guide drops).
+  // Mark 2026-11-04: auto-logged calls showed as a bare "Call —".
+  const whenOf = a => a.date || a.at || ''
+  const sorted = [...activities].sort((a, b) => new Date(whenOf(b)) - new Date(whenOf(a)))
 
   return (
     <div>
@@ -664,21 +670,22 @@ function ActivityTab({ activities, onChange }) {
         </div>
       ) : (
         <div className="space-y-2">
-          {sorted.map(act => {
+          {sorted.map((act, i) => {
             const t = ACTIVITY_TYPES.find(t => t.id === act.type) || ACTIVITY_TYPES[4]
             return (
-              <div key={act.id} className="flex gap-3 p-3 rounded-xl group"
+              <div key={act.id || `${whenOf(act)}-${i}`} className="flex gap-3 p-3 rounded-xl group"
                 style={{ backgroundColor: 'white', border: '1px solid #f0eeec' }}>
                 <div className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 text-sm"
                   style={{ backgroundColor: t.bg }}>{t.icon}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-semibold" style={{ color: t.color }}>{t.label}</span>
-                    <span className="text-xs" style={{ color: '#bbb' }}>{formatDate(act.date)}</span>
+                    <span className="text-xs" style={{ color: '#bbb' }}>{formatDate(whenOf(act))}</span>
                   </div>
-                  {act.note && <p className="text-xs mt-0.5" style={{ color: '#555' }}>{act.note}</p>}
+                  {(act.note || act.text || act.summary) && <p className="text-xs mt-0.5" style={{ color: '#555', whiteSpace: 'pre-wrap' }}>{act.note || act.text || act.summary}</p>}
+                  {act.by && <p className="text-[11px] mt-0.5" style={{ color: '#aaa' }}>{act.by}</p>}
                 </div>
-                <button onClick={() => removeActivity(act.id)}
+                <button onClick={() => removeActivity(act)}
                   className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 transition-all text-xs flex-shrink-0">
                   ✕
                 </button>
@@ -695,6 +702,12 @@ function ActivityTab({ activities, onChange }) {
 function JobsTab({ shopName }) {
   const [jobs,    setJobs]    = useState([])
   const [loading, setLoading] = useState(true)
+  const [billed,  setBilled]  = useState(null)   // 🧾 invoiced work (jobs leave the board once billed)
+
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/shop-rhythm/history?name=${encodeURIComponent(shopName || '')}`)
+      .then(r => r.ok ? r.json() : null).then(d => setBilled(d)).catch(() => setBilled(null))
+  }, [shopName])
 
   useEffect(() => {
     apiFetch(`${API_BASE}/api/jobs`)
@@ -719,7 +732,34 @@ function JobsTab({ shopName }) {
     </div>
   )
 
-  if (jobs.length === 0) return (
+  const billedList = billed?.invoices || []
+  const Billed = () => billedList.length === 0 ? null : (
+    <div className="mt-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-bold uppercase tracking-wide" style={{ color: '#999' }}>🧾 Billed ({billed.count})</p>
+        {billed.total != null && <p className="text-xs font-bold" style={{ color: '#15803d' }}>${Math.round(billed.total).toLocaleString()} total</p>}
+      </div>
+      <div className="space-y-1.5">
+        {billedList.map(i => {
+          const paid = i.status === 'paid' || (i.balance != null && Number(i.balance) === 0)
+          return (
+            <div key={i.number} className="p-2.5 rounded-xl flex items-center justify-between gap-2" style={{ border: '1px solid #ebebeb', backgroundColor: 'white' }}>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate" style={{ color: '#1a1a1a' }}>{i.ref || i.number}</p>
+                <p className="text-xs" style={{ color: '#999' }}>{i.number} · {i.date}</p>
+              </div>
+              <div className="text-right flex-shrink-0">
+                {i.total != null && <p className="text-sm font-bold" style={{ color: '#1a1a1a' }}>${Number(i.total).toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>}
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full" style={paid ? { backgroundColor: '#dcfce7', color: '#15803d' } : { backgroundColor: '#fef3c7', color: '#92400e' }}>{paid ? '✓ Paid' : (i.status || 'open').replace(/_/g, ' ')}</span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  if (jobs.length === 0) return billedList.length ? <div><p className="text-xs mb-2" style={{ color: '#999' }}>Nothing on the board right now.</p><Billed /></div> : (
     <div className="text-center py-10 rounded-2xl" style={{ backgroundColor: '#fafafa', border: '1px dashed #e8e8e8' }}>
       <p className="text-2xl mb-1">🔧</p>
       <p className="text-sm font-medium text-gray-400">No jobs for this shop yet</p>
@@ -763,6 +803,7 @@ function JobsTab({ shopName }) {
           )
         })}
       </div>
+      <Billed />
     </div>
   )
 }
