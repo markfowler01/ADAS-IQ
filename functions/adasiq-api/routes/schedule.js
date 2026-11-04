@@ -77,7 +77,7 @@ async function readKV(req, key) {
 // booked those days for the person that's off" — soft block, always
 // overridable in the UI). Reads the same pto_requests store the Time
 // Off page writes. First name only, matching job.technician values.
-async function readTimeOffMap(req) {
+export async function readTimeOffMap(req) {
   let requests = []
   try {
     const { getRequestsDurable } = await import('./pto.js')

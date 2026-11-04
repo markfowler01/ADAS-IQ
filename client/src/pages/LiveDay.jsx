@@ -18,7 +18,7 @@ import { displayTechName, statusIdForTech } from '../lib/techColumns.js'
 import JobRequestModal from '../components/JobRequestModal.jsx'
 import PhotoScrub from '../components/PhotoScrub.jsx'
 import { SpotHeadsUpButton, SpotBadge, ChecksToPickUp, useSpotOpen } from '../components/SpotPay.jsx'
-import { ArriveBar, ArrivePill } from '../lib/arrive.jsx'
+import { ArriveBar, ArrivePill, arriveOf } from '../lib/arrive.jsx'
 
 const ORANGE = '#CD4419'
 const TECH_COLOR = { Mark: '#CD4419', Jayden: '#1F8B8B' }
@@ -504,6 +504,56 @@ function TechCard({ tech, viewerRole, onReadyToInvoice, onReassign, onPendingPar
 
 // 📅 The next 7 days for this tech (Mark 2026-11-03) — future-dated work stays off the lane
 // until its morning, and techs can't open the Schedule screen, so it shows here read-only.
+// 👀 Everyone's day (Mark 2026-11-03: "sometimes my jobs are transferred to Jayden and we
+// forget, i want to make all jobs visible to all techs without clogging up the screen").
+// A tech sees every OTHER lane folded to one line, plus the no-tech pile. Orange when a car
+// sits unstarted on Mark's lane, a lane whose tech is off, or with no tech. 🙋 Take it pulls
+// a job onto his own lane (server checks it isn't started) and posts in #dispatch.
+const notStarted = j => !j.en_route_at && !j.started_at && !j.completed_at
+function EveryoneStrip({ techs, unassigned, meIsMine, onTake, takingId }) {
+  const [open, setOpen] = useState(null)
+  const lanes = [
+    ...(techs || []).filter(t => !meIsMine(t.name)).map(t => ({ key: t.name, label: t.name, off: !!t.off_today, jobs: (t.jobs || []).filter(j => !j.completed_at), watch: /^mark$/i.test(String(t.name).split(' ')[0]) || !!t.off_today })),
+    { key: '__none', label: 'No tech', off: false, jobs: unassigned || [], watch: true },
+  ].filter(l => l.jobs.length)
+  if (!lanes.length) return null
+  return (
+    <div className="rounded-xl overflow-hidden" style={{ border: '1px solid #e8e4e0', backgroundColor: 'white' }}>
+      <div className="px-3 py-2 text-[12px] uppercase tracking-wider font-semibold" style={{ color: '#888', fontFamily: 'IBM Plex Mono, monospace', backgroundColor: '#fafaf9' }}>👀 Everyone's day · tap to see · 🙋 take what's yours</div>
+      {lanes.map(l => {
+        const flagged = l.watch && l.jobs.some(notStarted)
+        const next = l.jobs.find(notStarted) || l.jobs[0]
+        const a = next ? arriveOf(next) : null
+        const isOpen = open === l.key
+        return (
+          <div key={l.key} style={{ borderTop: '1px solid #f0ede9', backgroundColor: flagged ? '#fff7ed' : 'white' }}>
+            <button type="button" onClick={() => setOpen(isOpen ? null : l.key)} className="w-full text-left px-3 py-2.5 flex items-center gap-2">
+              <span className="text-sm font-extrabold whitespace-nowrap" style={{ color: flagged ? '#c2410c' : '#1a1a1a' }}>{flagged ? '🟠' : '👀'} {l.label}{l.off ? ' 🏖 off' : ''} · {l.jobs.length} job{l.jobs.length === 1 ? '' : 's'}</span>
+              <span className="flex-1 min-w-0 truncate text-xs" style={{ color: '#666' }}>{next ? `next ${a ? `${a.emoji || ''} ${a.label || ''} · ` : ''}${next.shop_name || 'Shop'}` : ''}</span>
+              <span className="text-xs" style={{ color: '#aaa' }}>{isOpen ? '▲' : '▼'}</span>
+            </button>
+            {flagged && !isOpen && <div className="px-3 pb-2 -mt-1 text-[11px] font-semibold" style={{ color: '#c2410c' }}>{l.key === '__none' ? 'Nobody has these. Yours?' : l.off ? `${l.label} is off today. Yours?` : `Still on ${l.label}'s lane, not started. Yours?`}</div>}
+            {isOpen && l.jobs.map(j => (
+              <div key={j.id} className="px-3 py-2 flex items-center gap-2" style={{ borderTop: '1px dashed #f0ede9' }}>
+                <div className="flex-1 min-w-0 text-xs" style={{ color: '#444' }}>
+                  <div className="font-semibold truncate" style={{ color: '#1a1a1a' }}>{j.shop_name || 'Shop'}</div>
+                  <div className="truncate">{j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'} <ArrivePill job={j} />{j.started_at ? ' · 🔧 working' : j.en_route_at ? ' · 🚐 en route' : ''}</div>
+                </div>
+                {notStarted(j) && (
+                  <button type="button" disabled={!!takingId} onClick={() => onTake(j, l.label)}
+                    className="text-xs font-extrabold rounded-lg px-3 py-2 whitespace-nowrap text-white" style={{ backgroundColor: '#CD4419', opacity: takingId && takingId !== j.id ? 0.5 : 1 }}>
+                    {takingId === j.id ? 'Taking…' : '🙋 Take it'}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function ComingUp({ list }) {
   if (!list?.length) return null
   const day = iso => new Date(`${String(iso).slice(0, 10)}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' })
@@ -925,6 +975,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const isTechView = user?.role === 'technician'
   const meName = String(user?.techName || user?.name || '').trim().toLowerCase()
   const isMine = name => !meName || String(name || '').trim().toLowerCase().split(' ')[0] === meName.split(' ')[0]
+  const [takingId, setTakingId] = useState(null)
   const [photosOwed,       setPhotosOwed]       = useState([])    // 📸 shots still owed on invoiced jobs
   const [owedJob,          setOwedJob]          = useState(null)  // the owed card open in the sheet
   const [requestPhotoJob,  setRequestPhotoJob]  = useState(null)  // 📷 on a Waiting-for-Kat request
@@ -1161,6 +1212,19 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   // a job over that I was going to do"). Keeps the Kanban column in
   // sync — a dispatched_* job moves to the new tech's column. Backend
   // fires the tech-change Cliq DM + pushes salesperson to Zoho.
+  // 🙋 Take it — pull a job onto my own lane (Mark 2026-11-03). The server refuses if it's started.
+  async function handleTake(job, fromLabel) {
+    if (!job?.id || takingId) return
+    if (!confirm(`Take ${job.shop_name || 'this job'}${job.vehicle ? ` (${job.vehicle})` : ''} from ${fromLabel === 'No tech' ? 'the no-tech pile' : `${fromLabel}'s lane`}? It moves to your lane and #dispatch is told.`)) return
+    setTakingId(job.id)
+    try {
+      const res = await apiFetch(`${API_BASE}/api/dispatch/take/${job.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(d.error || `HTTP ${res.status}`)
+      await load()
+    } catch (e) { alert(`Couldn't take it: ${e.message}`) } finally { setTakingId(null) }
+  }
+
   async function handleReassign(job, newTech) {
     if (!job?.id || !newTech) return
     if (!confirm(`Reassign ${job.shop_name || 'this job'} to ${newTech}?`)) return
@@ -1482,6 +1546,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
             />
           ))}
         </div>
+        {isTechView && <div className="mt-3"><EveryoneStrip techs={data?.techs} unassigned={data?.unassigned_today} meIsMine={isMine} onTake={handleTake} takingId={takingId} /></div>}
       </div>
 
       {insertJob && (

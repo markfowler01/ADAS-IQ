@@ -6,13 +6,14 @@
 // /reorder        manual renumber of a tech's day (drag-to-reorder)
 
 import express from 'express'
-import { readJobsPublic } from './jobs.js'
+import { readJobsPublic, updateJobPublic } from './jobs.js'
 import {
   readJobState, mergeJobState, isAssignedTo, todayPT,
   getTechCapacity, deriveLiveStatusForTech, haversineMiles, arriveSort,
 } from '../services/dispatch.js'
 import { readGeocache, readTechConfig, normalizeKey } from '../services/geocoding.js'
-import { readDispatchTechs } from '../services/techRoster.js'
+import { readDispatchTechs, statusIdForTech } from '../services/techRoster.js'
+import { postToCliqChannel, DISPATCH_CHANNEL } from '../services/cliq.js'
 
 const router = express.Router()
 
@@ -49,6 +50,9 @@ router.get('/live', async (req, res) => {
     ])
 
     const TECHS = await techNames(req)
+    // 🏖 Who's off today — the "Everyone's day" strip flags their lane (Mark 2026-11-03).
+    let offToday = []
+    try { const { readTimeOffMap } = await import('./schedule.js'); offToday = ((await readTimeOffMap(req))[dateISO] || []).map(n => String(n).toLowerCase()) } catch { offToday = [] }
     const todays = allJobs.filter(j => (j.scheduled_date || '') === dateISO)
     const decorate = (j) => {
       const merged = mergeJobState(j, stateMap)
@@ -123,6 +127,7 @@ router.get('/live', async (req, res) => {
         home: home && home.home_lat != null ? { lat: home.home_lat, lng: home.home_lng, address: home.home_address } : null,
         jobs: techJobs,
         upcoming,
+        off_today: offToday.includes(String(techName).split(/\s+/)[0].toLowerCase()),
       })
     }
 
@@ -168,6 +173,33 @@ router.get('/live', async (req, res) => {
 
 // POST /api/dispatch/suggest-slot, capacity-aware insertion suggestion.
 // Body: { shop_name, date? }
+// 🙋 Take it (Mark 2026-11-03: "sometimes my jobs are transferred to Jayden and we forget …
+// can the tech transfer the job to himself?"). A tech pulls a job onto HIS OWN lane from
+// another lane or the no-tech pile — never between other people, never once that lane's
+// tech is en route or working it. Every take posts in #dispatch.
+router.post('/take/:id', async (req, res) => {
+  try {
+    const me = String(req.user?.techName || req.user?.name || '').trim().split(/\s+/)[0]
+    if (!me) return res.status(400).json({ error: 'Who are you? Sign in again.' })
+    const [allJobs, stateMap] = await Promise.all([readJobsPublic(req), readJobState(req)])
+    const job = allJobs.find(j => String(j.id) === String(req.params.id))
+    if (!job) return res.status(404).json({ error: 'That job is gone. Pull down to refresh.' })
+    if (isAssignedTo(job, me)) return res.json({ ok: true, already: true })
+    const st = String(job.status || '')
+    if (!/^(dispatched_|need_dispatch$|job_requested$)/.test(st)) return res.status(409).json({ error: 'That job is not open any more.' })
+    const s = stateMap[String(job.id)] || {}
+    if (s.en_route_at || s.started_at) return res.status(409).json({ error: `${job.technician || 'Someone'} already started this one.` })
+    const from = String(job.technician || '').trim() || 'no tech'
+    const patch = { technician: me }
+    if (/^dispatched_|^need_dispatch$/.test(st)) patch.status = statusIdForTech(me) || st
+    await updateJobPublic(req, job.id, patch)
+    const veh = job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ') || 'the car'
+    postToCliqChannel(DISPATCH_CHANNEL, `🙋 *${me} took* ${veh} at ${job.shop_name || 'the shop'} from ${from === 'no tech' ? 'the no-tech pile' : `${from}'s lane`}.`).catch(() => {})
+    console.log(`[dispatch take] ${me} took job ${job.id} from ${from}`)
+    res.json({ ok: true, from, to: me })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+
 router.post('/suggest-slot', async (req, res) => {
   try {
     const dateISO = (req.body?.date || todayPT()).toString()
