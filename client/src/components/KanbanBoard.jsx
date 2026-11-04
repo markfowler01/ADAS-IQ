@@ -23,6 +23,7 @@ import { VinDecodeButton } from './ui/VinDecode.jsx'
 import { BRAND } from '../lib/brandTokens.js'
 import { displayTechName, useDispatchBoard } from '../lib/techColumns.js'
 import { ArrivePicker } from '../lib/arrive.jsx'
+import { DiagPill, jobIsDiagOnly } from '../lib/diagOnly.jsx'
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
@@ -109,6 +110,7 @@ const EMPTY_JOB = {
   region: '',
   scheduled_date: '',
   arrive: '',
+  diag_only: null, diag_only0: null,
   calibrations: [],
   notes: '',
   report_url: '',
@@ -152,6 +154,9 @@ function jobToForm(job) {
     region: job.region || '',
     scheduled_date: job.scheduled_date || '',
     arrive: job.arrive || '',
+    // 🔌 per-car switch (job state): true/false = Kat's flip, null = auto from the calibrations
+    diag_only: typeof job.diag_only?.on === 'boolean' ? job.diag_only.on : null,
+    diag_only0: typeof job.diag_only?.on === 'boolean' ? job.diag_only.on : null,
     calibrations: calArr,
     notes: job.notes || '',
     report_url: job.report_url || '',
@@ -174,6 +179,7 @@ function formToJobData(form) {
     region: form.region || '',
     scheduled_date: form.scheduled_date,
     arrive: form.arrive || '',
+    ...(form.diag_only !== form.diag_only0 ? { diag_only: form.diag_only } : {}),
     calibrations: JSON.stringify(form.calibrations),
     notes: form.notes,
     report_url: form.report_url,
@@ -513,6 +519,21 @@ function JobModal({ job, onClose, onSave, onDelete, allJobs, shopWifi }) {
               <div className="text-xs mt-1" style={{ color: '#b45309' }}>No date — will be booked for today</div>
             )}
           </div>
+
+          {/* 🔌 Diag only (Mark 2026-11-03) — this car only; the shop's Big 4 on the CRM never changes. */}
+          {(() => {
+            const auto = jobIsDiagOnly({ calibrations: form.calibrations.map(c => ({ calibration_name: c.name || c.calibration_name, enabled: c.enabled })) })
+            const on = form.diag_only ?? auto
+            return (
+              <div className="rounded-lg px-3 py-2 flex items-center justify-between gap-2" style={on ? { backgroundColor: '#f5f3ff', border: '1.5px solid #7c3aed' } : { backgroundColor: '#fafaf9', border: '1px solid #e8e4e0' }}>
+                <div className="text-xs" style={{ color: on ? '#5b21b6' : '#555' }}>
+                  <b>{on ? '🔌 Diag only' : '🔌 Diag only: off'}</b>{on ? ' · no Cal ID / PCSI / Post-Scan on this car' : ' · electrical car that only needs diag?'}{form.diag_only === null && auto ? ' (auto)' : ''}
+                </div>
+                <button type="button" onClick={() => setField('diag_only', !on)} className="text-xs font-bold rounded-lg px-3 py-1.5 whitespace-nowrap"
+                  style={on ? { backgroundColor: 'white', color: '#5b21b6', border: '1px solid #7c3aed' } : { backgroundColor: '#7c3aed', color: 'white' }}>{on ? 'Switch off' : 'Diag only'}</button>
+              </div>
+            )
+          })()}
 
           {/* Status */}
           <div>
@@ -874,7 +895,10 @@ function KanbanCard({ job, onEdit, onDragStart, onComplete, onToggleInvoiced, on
             title="Cash customer — max $700 out of pocket, PCSI / Post Scan / Calibration ID cost zeroed"
           >{job.cash_quoted ? `💵 CUSTOMER PAY · told $${job.cash_quoted}` : '💵 CASH · max $700'}</span>
           {job.cash_quoted && <span className="ml-1 text-[11px] font-extrabold" style={{ color: '#14532d' }}>{job.cash_quoted === '700' ? '$700 · dark green' : '$350 · light green'}</span>}
+          {jobIsDiagOnly(job) && <span className="ml-1"><DiagPill small /></span>}
         </p>
+      ) : jobIsDiagOnly(job) ? (
+        <p className="mb-1"><DiagPill />{job.insurer && <span className="ml-1 text-[11px]" style={{ color: '#888' }}>🏢 {job.insurer}</span>}</p>
       ) : job.insurer && (
         <p className="text-xs font-medium mb-1 truncate" style={{ color: '#0A0A0A' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Insurer: </span>{job.insurer}
@@ -2966,6 +2990,7 @@ function MobileJobCard({ job, onEdit, onMoveToReadyInvoice, onMoveToPendingParts
             title="Cash customer — max $700"
           >{job.cash_quoted ? `💵 TOLD $${job.cash_quoted}` : '💵 CASH'}</span>
         ) : (job.insurer && <span>🏢 {job.insurer}</span>)}
+        {jobIsDiagOnly(job) && <DiagPill small />}
       </div>
 
       {/* Calibrations */}

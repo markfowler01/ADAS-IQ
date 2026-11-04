@@ -9,6 +9,7 @@ import { uploadFileToFolder, findFolderByRO, findFolderByShopVehicle, createShar
 import { appendHistory } from '../services/history.js'
 import { statusIdForRoster } from '../services/techRoster.js'
 import { takeArrive } from '../services/arrive.js'
+import { takeDiag } from '../services/diagOnly.js'
 
 const router = express.Router()
 
@@ -548,7 +549,7 @@ router.get('/', async (req, res) => {
     try {
       const { readJobState } = await import('../services/dispatch.js')
       const st = await readJobState(req)
-      for (const j of jobs) { const w = st[String(j.id)]?.arrive; if (w) j.arrive = w }
+      for (const j of jobs) { const s0 = st[String(j.id)]; if (s0?.arrive) j.arrive = s0.arrive; if (s0?.diag_only) j.diag_only = s0.diag_only }   // + 🔌 diag only (per car)
     } catch (e) { console.warn('[jobs GET] arrive:', e.message) }
     // ⏱ The board is the app's heartbeat — it carries the 15-minute email
     // intake, because GitHub drops most of its scheduled runs (2026-09-24).
@@ -593,6 +594,7 @@ router.post('/', async (req, res) => {
     // their job_requested status for the Waiting-for-Kat flow.
     const body = { ...req.body }
     const arrive = takeArrive(body)
+    const diag = takeDiag(body)
     if (body.shop_name && body.customer_kind !== 'retail') {
       try {
         const { resolveShop } = await import('../services/shopResolve.js')
@@ -661,7 +663,7 @@ router.post('/', async (req, res) => {
       } catch (e) { console.warn('[jobs POST] request match failed (creating fresh):', e.message) }
     }
     if (!newJob) newJob = await insertJob(req, body)
-    if (newJob?.id) await saveArrive(req, newJob.id, arrive)
+    if (newJob?.id) { await saveArrive(req, newJob.id, arrive); await saveDiag(req, newJob.id, diag) }
 
     // Request from the Live Day "Request a Job" or "Request a Quote" form
     // → post to #aajobs. request_type: 'quote' | 'job' distinguishes them
@@ -724,6 +726,7 @@ function extractErr(err) {
 router.put('/:id', async (req, res) => {
   try {
     const arrive = takeArrive(req.body)   // ⏰ job-state field, not a Jobs column
+    const diag = takeDiag(req.body)       // 🔌 same
     // Read current status before update so we can detect completion transition
     let prevStatus = null
     try {
@@ -766,6 +769,7 @@ router.put('/:id', async (req, res) => {
     // Books / WorkDrive are never blanked by a save.
     const updated = await updateJob(req, req.params.id, req.body)
     await saveArrive(req, updated.id, arrive)
+    await saveDiag(req, updated.id, diag)
     const working = s => /^(need_dispatch|dispatched_|pending_parts|ready_invoice)/.test(s || '')
     if (working(updated.status) && !working(prevStatus)) {
       try { const { setScrubStage } = await import('../services/scrubStore.js'); await setScrubStage(req, updated.id, 'job') } catch (e) { console.warn('[jobs] scrub → job:', e.message) }
@@ -854,6 +858,7 @@ router.put('/:id', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const arrive = takeArrive(req.body)
+    const diag = takeDiag(req.body)
     const table = getTable(req)
     const currentRow = await table.getRow(req.params.id)
     if (!currentRow) return res.status(404).json({ error: 'Job not found — it may have been invoiced or deleted. Refresh the board.' })
@@ -892,6 +897,7 @@ router.patch('/:id', async (req, res) => {
 
     const updated = await updateJob(req, req.params.id, merged)
     await saveArrive(req, updated.id, arrive)
+    await saveDiag(req, updated.id, diag)
     // 🟠 Scrub list "active job": when the card leaves Requested / Quoted for a
     // working column, the linked scrub gets the orange outline (Mark 2026-10-09).
     const working = s => /^(need_dispatch|dispatched_|pending_parts|ready_invoice)/.test(s || '')
@@ -1079,6 +1085,14 @@ async function saveArrive(req, jobId, arrive) {
   if (arrive === undefined || !jobId) return
   try { const { updateJobStateFields } = await import('../services/dispatch.js'); await updateJobStateFields(req, jobId, { arrive }) }
   catch (e) { console.warn('[jobs] arrive:', e.message) }
+}
+
+// 🔌 Diag only rides on the job state too — a per-car switch, never the shop's CRM rule.
+async function saveDiag(req, jobId, on) {
+  if (on === undefined || !jobId) return
+  const rec = on === null ? null : { on, by: req.user?.name || req.user?.email || 'staff', at: new Date().toISOString() }
+  try { const { updateJobStateFields } = await import('../services/dispatch.js'); await updateJobStateFields(req, jobId, { diag_only: rec }) }
+  catch (e) { console.warn('[jobs] diag_only:', e.message) }
 }
 
 async function stampDone(req, jobId) {

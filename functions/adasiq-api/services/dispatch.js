@@ -61,6 +61,7 @@ export function mergeJobState(job, stateMap) {
     time_window_end:    s.time_window_end   ?? null,
     arrive:             s.arrive            || '',
     arrive_info:        arriveOf(job, s),   // ⏰ when the tech needs to be there
+    diag_only:          s.diag_only         || null,   // 🔌 per-car switch
   }
 }
 

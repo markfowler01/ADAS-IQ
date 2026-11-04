@@ -12,6 +12,7 @@ import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Big3Picker, describeRules, BillingPill, useBig3Map, shopKeyOf } from '../books/Big3Rules.jsx'
 import { VinCheck } from '../ui/VinDecode.jsx'
 import { Notice, fmt, ORANGE, GREEN } from '../ui/ReviewKit.jsx'
+import { DiagSwitch, Big3Scope } from '../../lib/diagOnly.jsx'
 
 const RED = '#b91c1c'
 const POOL_NAMES = { STD: 'Retail · standard pricing', CP: '💵 Cash · CP schedule · $700 max', SF: 'State Farm pricing', AS: 'Allstate pricing', AMFAM: 'AmFam pricing', GEICO: 'GEICO pricing' }
@@ -20,7 +21,7 @@ const inp = { border: '1.5px solid #e0dbd6', outline: 'none', backgroundColor: '
 // Bill it-style panel. Module level on purpose: defined inside the component it
 // would be a new type every render and remount the customer picker mid-typing.
 const Panel = ({ title, right, tone = 'neutral', clip = true, children }) => {
-  const t = tone === 'blue' ? { br: '#bfdbfe', bg: '#eff6ff', fg: '#1d4ed8' } : tone === 'green' ? { br: '#bbf7d0', bg: '#f0fdf4', fg: GREEN } : tone === 'amber' ? { br: '#fde68a', bg: '#fffbeb', fg: '#92400e' } : { br: '#e8e4e0', bg: '#fafaf9', fg: '#1a1a1a' }
+  const t = tone === 'blue' ? { br: '#e8e4e0', bg: '#f5f3f0', fg: '#0A0A0A' } : tone === 'green' ? { br: '#bbf7d0', bg: '#f0fdf4', fg: GREEN } : tone === 'amber' ? { br: '#fde68a', bg: '#fffbeb', fg: '#92400e' } : { br: '#e8e4e0', bg: '#fafaf9', fg: '#1a1a1a' }
   return (
     // clip={false} for panels holding a dropdown (the customer list opens below
     // its box — overflow-hidden cut it off, 2026-09-30).
@@ -52,7 +53,7 @@ export default function ReviewCompact(props) {
     selectedCustomer, setSelectedCustomer, setSelectedSalesperson, jobDate, setJobDate, todayPT,
     liveTotal, selected, onCreate, creating, previewBusy, invoiceError, kanbanWarning, resultCard, busy,
     dispatch = 'mark', setDispatch = () => {}, poolOverride = null, onPool = () => {},
-    big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '', quoteFirst = false, onCreateJob = null,
+    big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, diagOn = false, diagAuto = false, onDiag = null, big3Msg = '', quoteFirst = false, onCreateJob = null,
     listTotal = null, cashCap = 700, setCashCap = () => {}, onOldLook, onPanelLook,
   } = props
   const [showNotRequired, setShowNotRequired] = useState(false)
@@ -110,7 +111,7 @@ export default function ReviewCompact(props) {
             <div className="text-sm font-semibold leading-snug truncate" style={{ color: '#1a1a1a' }}>{cal.calibration_name}{cal._added ? <span className="text-[10px] font-bold ml-1" style={{ color: GREEN }}>added</span> : null}</div>
             <div className="text-[11px] truncate" style={{ color: '#888' }}>{[cal.cal_type, cal.line_references ? `lines ${cal.line_references}` : '', cal.trigger].filter(Boolean).join(' · ')}</div>
           </button>
-          {p && <span className="flex flex-col items-end flex-shrink-0"><span className="text-xs font-bold px-2 py-0.5 rounded tabular-nums" style={p.needs_price ? { backgroundColor: '#fef2f2', color: RED } : { backgroundColor: cal.enabled ? '#dcfce7' : '#f5f3f0', color: cal.enabled ? GREEN : '#999' }}>{p.needs_price ? 'no price' : `$${Number(p.rate).toFixed(0)}`}</span>{p.tier_rule && <span className="text-[10px] font-bold" style={{ color: '#0e7490' }}>{PRICE_NAMES[p.tier_rule.pool] || p.tier_rule.pool} {p.tier_rule.kind === 'dynamic' ? 'L2' : { a: '3A', b: '3B', c: '3C' }[p.tier_rule.band] || ''}{p.tier_rule.additional ? ' add\'l' : ''}</span>}{p.step2 && <span className="text-[10px] font-bold" style={{ color: '#7e22ce' }}>+ ${Number(p.step2.rate).toFixed(0)} step 2</span>}{p.pool_fallback && !p.needs_price && <span className="text-[10px] font-bold" style={{ color: '#b45309' }}>⚠ no {PRICE_NAMES[p.pool_fallback] || p.pool_fallback} price</span>}</span>}
+          {p && <span className="flex flex-col items-end flex-shrink-0"><span className="text-xs font-bold px-2 py-0.5 rounded tabular-nums" style={p.needs_price ? { backgroundColor: '#fef2f2', color: RED } : { backgroundColor: cal.enabled ? '#dcfce7' : '#f5f3f0', color: cal.enabled ? GREEN : '#999' }}>{p.needs_price ? 'no price' : `$${Number(p.rate).toFixed(0)}`}</span>{p.tier_rule && <span className="text-[10px] font-bold" style={{ color: '#1F8B8B' }}>{PRICE_NAMES[p.tier_rule.pool] || p.tier_rule.pool} {p.tier_rule.kind === 'dynamic' ? 'L2' : { a: '3A', b: '3B', c: '3C' }[p.tier_rule.band] || ''}{p.tier_rule.additional ? ' add\'l' : ''}</span>}{p.step2 && <span className="text-[10px] font-bold" style={{ color: '#0A0A0A' }}>+ ${Number(p.step2.rate).toFixed(0)} step 2</span>}{p.pool_fallback && !p.needs_price && <span className="text-[10px] font-bold" style={{ color: '#b45309' }}>⚠ no {PRICE_NAMES[p.pool_fallback] || p.pool_fallback} price</span>}</span>}
           {cal.enabled && <button type="button" onClick={() => setEditing(open ? null : cal._id)} className="text-xs font-bold rounded-full px-2 py-1 flex-shrink-0" style={{ backgroundColor: open ? '#1a1a1a' : '#f5f3f0', color: open ? 'white' : '#555' }} title="Why this calibration — the justification on the invoice">✏️</button>}
         </div>
         {open && <div className="px-1 pb-1"><CalibrationLine cal={cal} onToggle={() => toggleCal(cal._id)} price={null} onField={(f, v) => updateCalField(cal._id, f, v)} vehicle={veh} /></div>}
@@ -154,14 +155,15 @@ export default function ReviewCompact(props) {
             ? <div className="text-[11px] rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#f5f3f0', color: '#555' }}>🔧 Auto repair shop — no Big 4 fees on this job.</div>
             : <div className="rounded-xl px-2.5 py-2" style={{ backgroundColor: '#fafaf9', border: '1px solid #ece8e4' }}>
                 <div className="flex items-center justify-between mb-1.5"><span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: '#555' }}>🧾 Big 4{feeTotal ? ` · ${fmt(feeTotal)}` : ''}</span><span className="text-[10px]" style={{ color: '#888' }}>{big3Info?.source === 'shop' ? 'shop rule' : big3Info?.source === 'insurer' ? 'insurer rule' : big3Info?.source === 'modal' ? 'edited here' : 'default'}</span></div>
+                {onDiag && <div className="mb-2"><DiagSwitch on={diagOn} auto={diagAuto} onChange={onDiag} /></div>}
                 <Big3Picker rules={rules} onChange={onBig3} compact />
-                <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}><input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'}</label>{big3Msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: big3Msg.startsWith('✗') ? '#b91c1c' : big3Msg.startsWith('✓') ? '#166534' : '#888' }}>{big3Msg}</div>}
+                {!diagOn && <Big3Scope save={big3Save} onChange={setBig3Save} shopName={shopName || 'this shop'} />}{big3Msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: big3Msg.startsWith('✗') ? '#b91c1c' : big3Msg.startsWith('✓') ? '#166534' : '#888' }}>{big3Msg}</div>}
               </div>)}
         </div>
       </Panel>
 
       {/* 3 · Every priced line; the usually-untouched parts fold */}
-      <Panel title={`🎯 What the ${fromScrub ? 'scrub' : 'report'} found`} tone="blue" right={<span className="text-xs" style={{ color: '#1d4ed8' }}>{required.length} on</span>}>
+      <Panel title={`🎯 What the ${fromScrub ? 'scrub' : 'report'} found`} tone="blue" right={<span className="text-xs" style={{ color: '#0A0A0A' }}>{required.length} on</span>}>
         {required.length === 0 && <div className="px-4 py-2.5 text-sm" style={{ color: '#888' }}>Nothing on — switch one on or add a line.</div>}
         {required.map(cal => <Row key={cal._id} cal={cal} />)}
         {notRequired.length > 0 && <button type="button" onClick={() => setShowNotRequired(o => !o)} className="w-full text-left px-3 py-1.5 text-[11px] font-semibold" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#fafaf9', color: '#666' }}>{showNotRequired ? '▾' : '▸'} {notRequired.length} not required · {showNotRequired ? 'hide' : 'show'}</button>}
@@ -202,7 +204,7 @@ export default function ReviewCompact(props) {
       {!resultCard && (
         <div className="sticky bottom-0 rounded-2xl p-3 bg-white flex items-center gap-3" style={{ border: '1.5px solid #e8e4e0', boxShadow: '0 -6px 20px rgba(0,0,0,.06)' }}>
           <div className="min-w-0"><div className="text-xl font-extrabold tabular-nums" style={{ color: '#1a1a1a' }}>{liveTotal != null ? fmt(liveTotal) : '—'}</div><div className="text-[11px] truncate" style={{ color: '#888' }}>{!selectedCustomer ? 'Pick the Zoho customer' : selected.length === 0 ? 'Turn on at least one line' : `${selected.length} line${selected.length === 1 ? '' : 's'} · ${pool.label}${listTotal != null && cashMode && cashCap > 0 && listTotal > cashCap ? ` · list ${fmt(listTotal)} capped` : ''}`}</div></div>
-          <button type="button" onClick={onCreate} disabled={!canCreate} className="flex-1 rounded-xl py-3 text-base font-bold text-white" style={{ backgroundColor: quoteFirst ? '#1d4ed8' : ORANGE, opacity: canCreate ? 1 : .45 }}>{quoteFirst ? (creating ? 'Building the quote…' : previewBusy ? 'Pricing…' : '📝 Build quote') : creating ? 'Creating job…' : previewBusy ? 'Pricing…' : `Create job → ${dispatch === 'need_dispatch' ? 'Dispatch' : dispatch === 'jaden' ? 'Jayden' : 'Mark'}`}</button>
+          <button type="button" onClick={onCreate} disabled={!canCreate} className="flex-1 rounded-xl py-3 text-base font-bold text-white" style={{ backgroundColor: quoteFirst ? '#0A0A0A' : ORANGE, opacity: canCreate ? 1 : .45 }}>{quoteFirst ? (creating ? 'Building the quote…' : previewBusy ? 'Pricing…' : '📝 Build quote') : creating ? 'Creating job…' : previewBusy ? 'Pricing…' : `Create job → ${dispatch === 'need_dispatch' ? 'Dispatch' : dispatch === 'jaden' ? 'Jayden' : 'Mark'}`}</button>
           {quoteFirst && onCreateJob && <button type="button" onClick={onCreateJob} disabled={!canCreate} className="flex-1 rounded-xl px-4 py-3 text-base font-bold text-white whitespace-nowrap" style={{ backgroundColor: ORANGE, opacity: canCreate ? 1 : .45 }}>🧾 Create job</button>}
         </div>
       )}

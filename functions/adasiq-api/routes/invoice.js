@@ -132,14 +132,20 @@ router.post('/preview', async (req, res) => {
     const { customerTypeFor } = await import('../services/big3.js')
     const ctype = shopName ? await customerTypeFor(req, shopName) : ''
     const collision = !['repair_shop', 'dealer', 'retail'].includes(ctype) && req.body?.cash !== true
+    const { alignmentInvoiceOn } = await import('../services/alignmentInvoice.js')
+    const { findShopByName } = await import('../services/big3.js')
+    let alignmentOn = false
+    if (shopName) { try { alignmentOn = alignmentInvoiceOn((await findShopByName(req, shopName))?.billing_rules) } catch { alignmentOn = false } }
     const out = await previewInvoiceLines({
       collision,
       insurer: req.body?.insurer || '',
       make: req.body?.make || '',
+      vehicle: req.body?.vehicle || '',
       calibrations: Array.isArray(req.body?.calibrations) ? req.body.calibrations : [],
       poolOverride,
       big3Rules,
       cashCapLimit: req.body?.cash_cap == null ? null : Number(req.body.cash_cap),
+      alignmentOn,
       req,
     })
     const { withDefaults } = await import('../services/big3.js')
@@ -239,8 +245,8 @@ router.post('/', async (req, res) => {
     } catch (e) { console.warn('[invoice] audit not saved:', e.message) }
 
     // Learn the Big 3 rule for this shop (Mark 2026-09-10) — unless the
-    // modal unticked "remember".
-    if (big3Rules && req.body.big3_save !== false && (customerName || shop) && (!insurerB3.insurer_rule || req.body.big3_edited === true)) {   // Mark 2026-10-02: an edit Mark/Kat made on screen is saved even on an insurer-rule job   // never learn a shop rule from an insurer-forced invoice
+    // modal unticked "remember", or it's a 🔌 diag-only car (per car, never the shop).
+    if (big3Rules && req.body.big3_save !== false && req.body.diag_only !== true && (customerName || shop) && (!insurerB3.insurer_rule || req.body.big3_edited === true)) {   // Mark 2026-10-02: an edit Mark/Kat made on screen is saved even on an insurer-rule job   // never learn a shop rule from an insurer-forced invoice
       try { await b3.saveBig3(req, customerName || shop, big3Rules, req.user?.name || req.user?.email || '') }
       catch (e) { console.warn('[invoice] big3 save failed (non-fatal):', e.message) }
     }

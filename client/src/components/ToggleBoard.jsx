@@ -11,6 +11,7 @@ import LoadingSplash from './LoadingSplash.jsx'
 import { Big3Picker, describeRules as describeBig3 } from './books/Big3Rules.jsx'
 import ReviewLayout from './upload/ReviewLayout.jsx'
 import ReviewCompact from './upload/ReviewCompact.jsx'
+import { DIAG_RULES, calsLookDiagOnly, Big3Scope } from '../lib/diagOnly.jsx'
 import { familyFor as insurerFamilyFor } from '../lib/insurerFamilies.js'
 
 function todayPT() {
@@ -106,7 +107,12 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [big3Info, setBig3Info] = useState(null)
   // 💵 Cash cap on the main screen (Mark 2026-09-14): 700 (default) | 350 | 0 = no cap
   const [cashCap, setCashCap] = useState(700)   // { rules, source, set_by } from the pricer — shown on the main screen
-  const [big3Save, setBig3Save] = useState(true)
+  const [big3Save, setBig3SaveRaw] = useState(true)
+  // 🔌 Mark 2026-11-03: once a shop has a rule, a flip here is "just this car" until Kat picks "every job".
+  const big3SaveTouched = useRef(false)
+  const setBig3Save = v => { big3SaveTouched.current = true; setBig3SaveRaw(v) }
+  // 🔌 Diag only — null = auto (every picked line is a Diagnostic); never saved to the shop.
+  const [diagSel, setDiagSel] = useState(null)
   // Cash OFF has to stick (Mark 2026-09-30: toggled it off, the review still
   // priced on CP with the $700 cap). A blank / "Cash" insurer or the shop's
   // remembered CP schedule would each flip it back, so off = standard
@@ -176,6 +182,14 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
   const [sharedFolder, setSharedFolder] = useState(() => (requestFolderId ? { id: requestFolderId, url: requestFolderUrl } : null))
 
   const selected = calibrations.filter((c) => c.enabled)
+  const diagOn = diagSel ?? calsLookDiagOnly(selected)
+  // Diag on → all Big 4 off for this car (no save); off again → back to the shop's rule.
+  const diagWas = useRef(false)
+  useEffect(() => {
+    if (diagOn && !diagWas.current) setBig3Rules({ ...DIAG_RULES })
+    if (!diagOn && diagWas.current) setBig3Rules(null)
+    diagWas.current = diagOn
+  }, [diagOn])
   const removed = calibrations.filter((c) => !c.enabled)
 
   async function handleDownloadPDF() {
@@ -244,6 +258,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           body: JSON.stringify({
             insurer: insurerOut,
             make: jobData.make || '',
+            vehicle: jobData.vehicle || [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '),
             customer_id: selectedCustomer?.id || null,
             shop_name: selectedCustomer?.name || jobData.shop || '',
             pool_override: poolOverride || null,
@@ -278,7 +293,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         for (const [k, v] of Object.entries(stepTwo)) if (priceMap[k]) priceMap[k].step2 = v
         priceMap._fixed_total = fixedTotal
         setRowPrices(priceMap)
-        if (d.big3) setBig3Info(d.big3)
+        if (d.big3) { setBig3Info(d.big3); if (!big3SaveTouched.current && d.big3.source !== 'modal') setBig3SaveRaw(d.big3.source === 'unset') }   // no rule yet → the first pick is learned
         setLiveCollision(d.collision !== false)
         if (d.shop_default_pool) setPoolOverride(prev => prev ?? notCashDefault(d.shop_default_pool))
       } catch { /* prices are a bonus, never a blocker */ }
@@ -302,7 +317,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
     if (invoiceResult) { setBig3Msg('🔒 The quote is already built — change the Big 4 in 📤 Send Quote below.'); return }
     setBig3Rules(rules)
     const name = selectedCustomer?.name || jobData?.shop || ''
-    if (!big3Save || !name) { setBig3Msg(''); return }
+    if (!big3Save || diagOn || !name) { setBig3Msg(''); return }
     setBig3Msg('Saving…')
     clearTimeout(big3SaveRef.current)
     big3SaveRef.current = setTimeout(async () => {
@@ -328,6 +343,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
         body: JSON.stringify({
           insurer: insurerOut,
           make: jobData.make || '',
+          vehicle: jobData.vehicle || [jobData.year, jobData.make, jobData.model].filter(Boolean).join(' '),
           customer_id: selectedCustomer?.id || null,
           shop_name: selectedCustomer?.name || jobData.shop || '',
           pool_override: pool || null,
@@ -419,7 +435,8 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
             cash_cap: cashCap,
           cash: cashMode,
         big3_rules: pricePreview?.big3?.rules || big3Rules || null,   // exactly what the review screen showed (2026-10-02)
-        big3_save: big3Save,
+        big3_save: big3Save && !diagOn,
+        diag_only: diagOn,
         big3_edited: !!big3Rules,   // an on-screen edit saves even on an insurer-rule job (Mark 2026-10-02)
       }
       const res = await apiFetch(`${API_BASE}/api/create-invoice`, {
@@ -686,7 +703,7 @@ export default function ToggleBoard({ jobData, pdfFile, onReset, user, onLogout,
           invoiceError={invoiceError} kanbanWarning={kanbanWarning} resultCard={resultCard}
           dispatch={dispatch} setDispatch={setDispatch}
           poolOverride={poolOverride} onPool={pickPoolOnScreen}
-          big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={onBig3Change} big3Msg={big3Msg} quoteFirst={liveCollision && !cashMode && String(insurerOut || '').toLowerCase() !== 'cash'} big3Save={big3Save} setBig3Save={setBig3Save}
+          big3Rules={big3Rules || big3Info?.rules || null} big3Info={big3Info} onBig3={onBig3Change} big3Msg={big3Msg} quoteFirst={liveCollision && !cashMode && String(insurerOut || '').toLowerCase() !== 'cash'} big3Save={big3Save} setBig3Save={setBig3Save} diagOn={diagOn} diagAuto={diagSel === null && diagOn} onDiag={setDiagSel}
           onOldLook={() => { try { localStorage.setItem('adas_upload_look', 'old') } catch {} setOldLook(true) }}
           onPanelLook={panelLook ? () => { try { localStorage.removeItem('adas_upload_look') } catch {} setPanelLook(false) } : () => { try { localStorage.setItem('adas_upload_look', 'panel') } catch {} setPanelLook(true) }}
         />) })()}
@@ -1146,10 +1163,7 @@ function PriceReviewModal({ preview, insurer, poolOverride, onPool, big3, onBig3
               </div>
             </div>
             <Big3Picker rules={big3.rules} onChange={onBig3} disabled={busy} compact />
-            {big3.source !== 'insurer' && <label className="flex items-center gap-2 mt-2 text-[11px]" style={{ color: '#555' }}>
-              <input type="checkbox" checked={!!big3Save} onChange={e => onBig3Save(e.target.checked)} />
-              Remember for {shopName || big3.shop_name || 'this shop'} (every invoice from now on)
-            </label>}
+            {big3.source !== 'insurer' && <Big3Scope save={!!big3Save} onChange={onBig3Save} shopName={shopName || big3.shop_name || 'this shop'} />}
           </div>
         )}
         <div className="rounded-xl overflow-hidden flex flex-col" style={{ border: '1.5px solid #e8e4e0' }}>
@@ -1338,7 +1352,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
   // ✏️ Edits before sending (Mark 2026-10-02): per-line price / remove, Big 4 switches.
   const [lineEdits, setLineEdits] = useState({})
   const [big4Draft, setBig4Draft] = useState({})
-  const [remember, setRemember] = useState(true)
+  const [remember, setRemember] = useState(false)   // 🔌 just this quote unless Kat picks every job (Mark 2026-11-03)
   const [editBusy, setEditBusy] = useState(false)
   const [editMsg, setEditMsg] = useState('')
   if (!result.quoteId) return null
@@ -1446,7 +1460,7 @@ export function SendQuoteButton({ result, job, lineCount, selectedCustomer, onNa
                   <div className="px-4 py-3" style={{ borderTop: '1px solid #f1f5f9', backgroundColor: '#fafaf9' }}>
                     <div className="text-[11px] font-bold uppercase tracking-wider mb-1.5" style={{ color: '#555' }}>🧾 Big 4 on this quote{Object.keys(big4Diff).length ? ' · changes not saved yet' : ''}</div>
                     <Big3Picker rules={{ ...big4Now, ...big4Draft }} onChange={r => setBig4Draft(Object.fromEntries(Object.entries(r).filter(([k, v]) => v !== big4Now[k])))} disabled={editBusy || phase === 'sending'} compact />
-                    <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} /> Remember for {selectedCustomer?.name || job?.shop || 'this shop'} (every quote and invoice from now on)</label>
+                    <Big3Scope save={remember} onChange={setRemember} shopName={selectedCustomer?.name || job?.shop || 'this shop'} />
                   </div>
                 )}
                 {preview.line_items.map((li, i) => {

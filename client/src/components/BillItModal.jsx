@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { Big3Picker, describeRules, normalizeMode } from './books/Big3Rules.jsx'
+import { DiagSwitch, Big3Scope } from '../lib/diagOnly.jsx'
 
 const ORANGE = '#CD4419'
 const GREEN = '#15803d'
@@ -76,7 +77,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   const [q, setQ] = useState('')
   const [rules, setRules] = useState(null)
   const [rulesTouched, setRulesTouched] = useState(false)
-  const [remember, setRemember] = useState(true)
+  // 🔌 Mark 2026-11-03: a Big 4 flip is "just this car" unless Kat picks "every job at the shop".
+  const [remember, setRemember] = useState(false)
   const [ctype, setCtype] = useState('')      // single mode: pick the type once, remembered on the shop
   const [payMode, setPayMode] = useState('')
   const isOwner = isOwnerUser(user)
@@ -85,10 +87,12 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
   // 💵 Cash switch (Mark 2026-11-02) — null = whatever the card says; saved on the card by the server.
   const [cashSel, setCashSel] = useState(null)
   const [repriced, setRepriced] = useState(false)
+  // 🔌 Diag only (Mark 2026-11-03) — null = auto (only diag lines); saved per car by the server.
+  const [diagSel, setDiagSel] = useState(null)
   // Load (or re-load after a pill pick) — the server prices the job in that mode.
-  function loadPreview(pickType, isDead = () => false, cash = cashSel) {
+  function loadPreview(pickType, isDead = () => false, cash = cashSel, diag = diagSel) {
     setErr('')
-    return apiFetch(`${API_BASE}/api/jobs/${job.id}/bill/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(pickType ? { customer_type: pickType } : {}), ...(typeof cash === 'boolean' ? { cash } : {}) }) }).then(async r => {
+    return apiFetch(`${API_BASE}/api/jobs/${job.id}/bill/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(pickType ? { customer_type: pickType } : {}), ...(typeof cash === 'boolean' ? { cash } : {}), ...(typeof diag === 'boolean' ? { diag_only: diag } : {}) }) }).then(async r => {
       const d = await r.json().catch(() => ({}))
       if (isDead()) return
       if (!r.ok) { setErr(d.error || `HTTP ${r.status}`); return }
@@ -105,7 +109,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
           else if (key === 'post_scan' || key === 'pre_scan' || key === 'snapshot' || key === 'cal_id') eff[key] = 'off'
         }
         if (eff.snapshot === 'charge') eff.post_scan = d.big3.rules.post_scan
-        setRules(eff); setRulesTouched(false)
+        setRules(eff); setRulesTouched(false); setRemember(false)
       }
     }).catch(e => !isDead() && setErr(e.message))
   }
@@ -125,6 +129,12 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!p || busy || switching) return
     setSwitching(true); setCashSel(on)
     try { await loadPreview(single && ctype && ctype !== p.saved_type ? ctype : '', () => false, on) } finally { setSwitching(false) }
+  }
+
+  async function toggleDiag(on) {
+    if (!p || busy || switching) return
+    setSwitching(true); setDiagSel(on)
+    try { await loadPreview(single && ctype && ctype !== p.saved_type ? ctype : '', () => false, cashSel, on) } finally { setSwitching(false) }
   }
 
   function changeRules(next) { setRules(next); setRulesTouched(true); setLines(ls => applyBig3(ls, next, p?.big3?.items)) }
@@ -169,8 +179,8 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
     if (!dry && !single && !window.confirm(`Send BOTH to ${list.join(', ')}?\n\nInsurance invoice ${p.estimate_number}: ${fmt(insTotal)}\nCost invoice at ${pct}%: ${fmt(costTotal)}${edited ? '\n\nThe Books estimate will be updated to match your edits first.' : ''}`)) return
     setBusy(true); setErr('')
     try {
-      const learnNew = !!(rules && p.big3 && !p.big3.has_rule && !p.big3.insurer_rule)   // first invoice for this shop → remember what we did (never from an insurer-forced invoice)
-      const body = { emails: list, discount_pct: pct, ...(typeof cashSel === 'boolean' ? { cash: cashSel } : {}), customer_type: ctype || undefined, ...(single ? { pay_mode: payMode } : {}), big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: (rulesTouched && remember) || learnNew, big3_edited: !!rulesTouched, lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
+      const learnNew = !!(rules && p.big3 && !p.big3.has_rule && !p.big3.insurer_rule && !p.diag_only?.on)   // first invoice for this shop → remember what we did (never from an insurer-forced invoice)
+      const body = { emails: list, discount_pct: pct, ...(typeof cashSel === 'boolean' ? { cash: cashSel } : {}), customer_type: ctype || undefined, ...(single ? { pay_mode: payMode } : {}), big3_rules: (rulesTouched || learnNew) ? rules : undefined, big3_save: !p.diag_only?.on && ((rulesTouched && remember) || learnNew), big3_edited: !!rulesTouched, ...(p.diag_only ? { diag_only: !!p.diag_only.on } : {}), lines: rows.map(l => ({ line_item_id: l.line_item_id || null, item_id: l.item_id || null, name: l.name, description: l.description || '', rate: r2(l.rate), quantity: Number(l.quantity) || 1, product_type: l.product_type, _extra: !!l._extra })) }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}/bill${dry ? '?dry=1' : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
@@ -273,6 +283,7 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 {p.warnings.map((w, i) => <div key={i}>⚠️ {w}</div>)}
               </div>
             )}
+            {p.diag_only && p.mode !== 'estimator' && <DiagSwitch on={!!p.diag_only.on} auto={!!p.diag_only.auto} by={p.diag_only.by} onChange={toggleDiag} disabled={busy || switching} />}
             {rules && p.big3 && (
               <div className="rounded-xl p-3" style={{ backgroundColor: p.big3.has_rule ? '#f0fdf4' : '#fffbeb', border: `1.5px solid ${p.big3.has_rule ? '#bbf7d0' : '#fde68a'}` }}>
                 <div className="flex items-center justify-between mb-2 gap-2">
@@ -282,23 +293,24 @@ export default function BillItModal({ job, user, onClose, onBilled }) {
                 <Big3Picker rules={rules} onChange={changeRules} />
                 {(() => {
                   // Nudge (Mark 2026-09-11): "if we normally do not charge for post scans and all of a sudden we do, I want to be notified".
+                  if (p.big3?.diag) return <div className="text-xs mt-2 font-semibold" style={{ color: '#5b21b6' }}>🔌 Diag only: all Big 4 off on this car. {p.shop_name}'s rule on the CRM is not touched.</div>
                   if (p.big3?.insurer_rule) return <div className="text-xs mt-2" style={{ color: '#92400e' }}>🏦 Insurer rule applied ({p.big3.insurer_rule}). Not saved as {p.shop_name}'s rule.</div>
                   if (!p.big3?.has_rule) return <div className="text-xs mt-2" style={{ color: '#92400e' }}>🧠 First invoice for {p.shop_name} — whatever you send will be remembered as this shop's rule.</div>
-                  const saved = p.big3.rules || {}
+                  const saved = p.big3.shop_rules || p.big3.rules || {}
                   const labels = { cal_id: 'Cal ID report', pcsi: 'PCSI', pre_scan: 'Pre-Scan', post_scan: 'Post-Scan', snapshot: 'Calibration Snapshot' }
                   const word = m => normalizeMode(m) === 'charge' ? 'charge for' : normalizeMode(m) === 'included' ? 'include (no charge)' : 'leave off'
                   const diffs = Object.keys(labels).filter(k => normalizeMode(rules[k]) !== normalizeMode(saved[k]))
                   if (!diffs.length) return null
                   return (
                     <div className="rounded-lg px-3 py-2 mt-2 text-xs space-y-0.5" style={{ backgroundColor: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b' }}>
-                      {diffs.map(k => <div key={k}>⚠️ You normally <b>{word(saved[k])}</b> {labels[k]} at {p.shop_name}, this invoice will <b>{word(rules[k])}</b> it.{rulesTouched && remember ? ' Saving as the new rule.' : ''}</div>)}
+                      {diffs.map(k => <div key={k}>⚠️ You normally <b>{word(saved[k])}</b> {labels[k]} at {p.shop_name}, this invoice will <b>{word(rules[k])}</b> it.{rulesTouched && remember ? ' Saving as the new rule.' : ' This car only.'}</div>)}
                     </div>
                   )
                 })()}
                 <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
-                  <label className="flex items-center gap-2 text-xs" style={{ color: rulesTouched ? '#555' : '#aaa' }}>
-                    <input type="checkbox" checked={remember} disabled={!rulesTouched} onChange={e => setRemember(e.target.checked)} /> {rulesTouched ? `Remember for ${p.shop_name} (every invoice from now on)` : 'Change a switch to update this shop\'s rule'}
-                  </label>
+                  {p.big3?.diag ? <span /> : !p.big3?.has_rule ? <span /> : rulesTouched
+                    ? <Big3Scope save={remember} onChange={setRemember} shopName={p.shop_name} />
+                    : <span className="text-xs" style={{ color: '#aaa' }}>Flip a switch: it changes this car only unless you pick every {p.shop_name} job.</span>}
                   <span className="text-xs" style={{ color: '#888' }}>{describeRules(rules)}</span>
                 </div>
               </div>

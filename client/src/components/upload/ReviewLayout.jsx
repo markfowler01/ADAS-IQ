@@ -12,6 +12,7 @@ import SalespersonPicker from '../SalespersonPicker'
 import AddCalibration from './AddCalibration.jsx'
 import { Big3Badge, DrpBadge, Big3Picker, describeRules } from '../books/Big3Rules.jsx'
 import { VinCheck } from '../ui/VinDecode.jsx'
+import { DiagSwitch, Big3Scope } from '../../lib/diagOnly.jsx'
 
 // Which price list the insurer name will land on (informational — the
 // server decides for real in resolvePricingPool).
@@ -52,7 +53,7 @@ export function PoolPill({ pool, poolOverride, onPool, disabled }) {
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
   }, [open])
   const tone = pool.tone === 'green' ? { bg: '#f0fdf4', fg: '#166534', br: '#86efac' }
-    : pool.tone === 'blue' ? { bg: '#eff6ff', fg: '#1d4ed8', br: '#bfdbfe' }
+    : pool.tone === 'blue' ? { bg: '#f5f3f0', fg: '#0A0A0A', br: '#e8e4e0' }
     : { bg: '#f5f3f0', fg: '#555', br: '#e0dbd6' }
   return (
     <div className="relative" ref={box}>
@@ -101,7 +102,7 @@ export default function ReviewLayout({
   onCreate, creating, previewBusy, onCreateLegacy, creatingLegacy,
   invoiceError, kanbanWarning, resultCard, busy,
   dispatch = 'mark', setDispatch = () => {},
-  poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, big3Msg = '', quoteFirst = false, onCreateJob = null,
+  poolOverride = null, onPool = () => {}, big3Rules = null, big3Info = null, onBig3 = () => {}, big3Save = true, setBig3Save = () => {}, diagOn = false, diagAuto = false, onDiag = null, big3Msg = '', quoteFirst = false, onCreateJob = null,
   listTotal = null, cashCap = 700, setCashCap = () => {},
   onOldLook,
 }) {
@@ -153,6 +154,11 @@ export default function ReviewLayout({
 
         {jobData._demo && (
           <Notice>🧪 <b>Demo mode</b> — {jobData._demoReason === 'billing' ? 'Anthropic API credits not found on this key.' : 'Sample data. Add Anthropic API credits to process real Kinetic reports.'}</Notice>
+        )}
+        {jobData._elapsed_ms > 0 && (
+          <div className="text-[11px] font-semibold" style={{ color: jobData._elapsed_ms <= 10000 ? '#166534' : '#888' }}>
+            Scrubbed in {(jobData._elapsed_ms / 1000).toFixed(1)}s{jobData._fast ? ' · fast path' : ''}
+          </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-start">
@@ -243,12 +249,11 @@ export default function ReviewLayout({
                   <Eyebrow>🧾 Big 4 for {shopName || 'this shop'}</Eyebrow>
                   <span className="text-[11px]" style={{ color: '#166534' }}>{big3Rules ? describeRules(big3Rules) : ''}</span>
                 </div>
+                {onDiag && <div className="mt-1.5"><DiagSwitch on={diagOn} auto={diagAuto} onChange={onDiag} /></div>}
                 <div className="mt-1">
                   <Big3Picker rules={big3Rules || { cal_id: 'charge', pcsi: 'included', pre_scan: 'off', post_scan: 'included', snapshot: 'off' }} onChange={onBig3} compact />
                 </div>
-                <label className="flex items-center gap-2 text-[11px] mt-1.5" style={{ color: '#555' }}>
-                  <input type="checkbox" checked={big3Save} onChange={e => setBig3Save(e.target.checked)} /> Remember for {shopName || 'this shop'} (every invoice from now on)
-                </label>{big3Msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: big3Msg.startsWith('✗') ? '#b91c1c' : big3Msg.startsWith('✓') ? '#166534' : '#888' }}>{big3Msg}</div>}
+                {!diagOn && <Big3Scope save={big3Save} onChange={setBig3Save} shopName={shopName || 'this shop'} />}{big3Msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: big3Msg.startsWith('✗') ? '#b91c1c' : big3Msg.startsWith('✓') ? '#166534' : '#888' }}>{big3Msg}</div>}
               </div>
             </Panel>
 
@@ -282,7 +287,7 @@ export default function ReviewLayout({
             {!resultCard && (
               <Panel tone="blue" title="🧪 Absolute ADAS Books" right="internal · no Zoho" bodyClass="p-3 flex items-center justify-between gap-2 flex-wrap">
                 <div className="text-xs" style={{ color: '#555' }}>Creates the job in Absolute ADAS Books only.</div>
-                <button type="button" onClick={onCreateLegacy} disabled={selected.length === 0 || busy} className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: '#eff6ff', color: '#2563eb', border: '1.5px solid #bfdbfe', opacity: selected.length === 0 || busy ? .5 : 1 }}>
+                <button type="button" onClick={onCreateLegacy} disabled={selected.length === 0 || busy} className="rounded-lg px-3 py-1.5 text-xs font-bold" style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A', border: '1.5px solid #e8e4e0', opacity: selected.length === 0 || busy ? .5 : 1 }}>
                   {creatingLegacy ? 'Creating…' : 'Create a Job (Absolute ADAS Books)'}
                 </button>
               </Panel>

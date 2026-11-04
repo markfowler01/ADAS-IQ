@@ -27,6 +27,7 @@ import { isCashJob, isCashCustomer } from '../services/cashPricing.js'
 import { defaultPct, repriceLines, clampPct } from '../services/billDefaults.js'
 import { kvGet, kvSet } from '../services/durableKV.js'
 import { presentScanLine } from '../services/big3.js'
+import { DIAG_RULES, DIAG_PILL, looksDiagOnly, diagState, stripBig4 } from '../services/diagOnly.js'
 const router = express.Router()
 const API = 'https://www.zohoapis.com/books/v3'
 const H = t => ({ Authorization: `Zoho-oauthtoken ${t}` })
@@ -57,6 +58,24 @@ async function cashSwitchFor(req, job) {
   }
   return saved
 }
+// 🔌 Diag only (Mark 2026-11-03): a per-car switch on the job state, never the
+// shop's CRM rule. Kat's flip in the window is saved like the cash switch.
+async function diagSwitchFor(req, job) {
+  const { readJobState, updateJobStateFields } = await import('../services/dispatch.js')
+  const saved = (await readJobState(req).catch(() => ({})))[String(job.id)]?.diag_only || null
+  const asked = req.body?.diag_only
+  if (typeof asked !== 'boolean' || saved?.on === asked) return saved
+  const rec = { on: asked, by: req.user?.name || req.user?.email || 'staff', at: new Date().toISOString() }
+  try { await updateJobStateFields(req, job.id, { diag_only: rec }) } catch (e) { console.warn('[bill-it] diag switch save', e.message) }
+  return rec
+}
+// Diag on → every Big 4 line comes off this invoice; the shop's own rule rides along untouched.
+function applyDiag(lines, big3Block, saved) {
+  const diag = diagState(saved, looksDiagOnly(lines))
+  if (!diag.on) return { lines, big3Block, diag: { ...diag, pill: '' } }
+  return { lines: stripBig4(lines), big3Block: { ...big3Block, shop_rules: big3Block.rules, rules: { ...DIAG_RULES }, diag: true }, diag: { ...diag, pill: DIAG_PILL } }
+}
+
 async function invoiceByNumber(token, number) {
   const r = await axios.get(`${API}/invoices`, { headers: H(token), params: { ...org(), invoice_number: number }, timeout: 15000, validateStatus: s => s < 500 })
   return (r.data?.invoices || []).find(i => i.invoice_number === number) || null
@@ -73,6 +92,7 @@ async function contactEmails(token, customerId) {
 // Everything the modal shows. Pure read except for nothing — no writes.
 async function buildPreview(req, job, pickType = '') {
   const sw = await cashSwitchFor(req, job)
+  const diagSaved = await diagSwitchFor(req, job)
   const cashOverride = sw ? sw.on : null
   // Single-invoice mode (Mark 2026-09-22): the shop's customer type
   // decides. Repair shops, dealers and retail get ONE invoice straight
@@ -104,8 +124,8 @@ async function buildPreview(req, job, pickType = '') {
     if (made?.id) { job = { ...job, zoho_estimate_id: made.id, quote_number: made.number }; extra.can_dual = true; extra.estimate_created = made.number }
     else extra.estimate_missing = made?.error || 'No calibrations on the card yet. Add the work on the card, then Bill it makes both invoices.'
   }
-  if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return { ...(await buildSinglePreview(req, job, shopRow, brEarly, cashOverride)), ...extra }
-  const dual = await buildDualPreview(req, job, brEarly, cashOverride)
+  if (!job.zoho_estimate_id || big3mod.billingModeFor(ctypeEarly) === 'single') return { ...(await buildSinglePreview(req, job, shopRow, brEarly, cashOverride, diagSaved)), ...extra }
+  const dual = await buildDualPreview(req, job, brEarly, cashOverride, diagSaved)
   return { ...dual, ...extra }
 }
 // Create the Books estimate for a collision card that has none, from the card's
@@ -146,7 +166,7 @@ async function ensureCollisionEstimate(req, job, shopRow) {
   return { id, number }
 }
 
-async function buildDualPreview(req, job, brPicked, cashOverride = null) {
+async function buildDualPreview(req, job, brPicked, cashOverride = null, diagSaved = null) {
   const token = await getAccessToken()
   const [est, catalog, big3] = await Promise.all([
     getEstimate(token, job.zoho_estimate_id),
@@ -179,13 +199,14 @@ async function buildDualPreview(req, job, brPicked, cashOverride = null) {
     return { item_id: it?.item_id || null, name: it?.name || x.name || 'Extra', description: x.note || '', rate, quantity: qty, product_type: it?.product_type || 'service', _extra: true }
   })
 
-  const lines = [
+  let lines = [
     ...(est.line_items || []).map(li => { const shown = presentScanLine(li.name, li.description); return { line_item_id: li.line_item_id, item_id: li.item_id || null, name: shown.name, description: shown.description, rate: Number(li.rate) || 0, quantity: Number(li.quantity) || 1, product_type: byId.get(String(li.item_id))?.product_type || 'service', _extra: false } }),
     ...extraLines,
   ]
   const insurerCf = (est.custom_fields || []).find(c => c.label === 'Insurer')?.value || job.insurer || ''
   const effB3 = big3.effectiveBig3(rule.rules, insurerCf)
-  const big3Block = { rules: effB3.rules, insurer_rule: effB3.insurer_rule, set_by: rule.set_by || '', set_at: rule.set_at || '', has_rule: !!rule.rules || !!effB3.insurer_rule, items: big3Items(big3, catalog, byName, insurerCf) }
+  let big3Block = { rules: effB3.rules, insurer_rule: effB3.insurer_rule, set_by: rule.set_by || '', set_at: rule.set_at || '', has_rule: !!rule.rules || !!effB3.insurer_rule, items: big3Items(big3, catalog, byName, insurerCf) }
+  const dg = applyDiag(lines, big3Block, diagSaved); lines = dg.lines; big3Block = dg.big3Block
   const discounted = lines.map(li => {
     const amount = r2(li.rate * li.quantity)
     const part = isPart(li)
@@ -226,7 +247,7 @@ async function buildDualPreview(req, job, brPicked, cashOverride = null) {
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
     can_bill: !existing && !alreadyConverted && !job.billed_via_app && !!emails.length && !!tpl.estimate && !!tpl.invoice, already_converted: alreadyConverted,
     templates: { estimate: tpl.estimate, invoice: tpl.invoice, estimate_current: est.template_name || '' },
-    big3: big3Block,
+    big3: big3Block, diag_only: dg.diag,
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default',
     _byId: byId, _byName: byName,
     _est: { custom_fields: est.custom_fields || [], terms: est.terms || '', notes: est.notes || '', reference_number: est.reference_number || '', salesperson_name: est.salesperson_name || '' },
@@ -234,7 +255,7 @@ async function buildDualPreview(req, job, brPicked, cashOverride = null) {
 }
 // ONE invoice, priced from the job itself — the same engine the
 // calibration review uses (pools, tiers, Big 3) plus the tech's extras.
-async function buildSinglePreview(req, job, shop, br, cashOverride = null) {
+async function buildSinglePreview(req, job, shop, br, cashOverride = null, diagSaved = null) {
   const token = await getAccessToken()
   const big3 = await import('../services/big3.js')
   const retailJob = job.customer?.kind === 'retail'
@@ -269,10 +290,11 @@ async function buildSinglePreview(req, job, shop, br, cashOverride = null) {
     if (it && customerType === 'body_shop' && x.rate == null) { const { collisionTwin } = zohoMod; it = collisionTwin(it, catalog.allItems) || it }
     return { item_id: it?.item_id || null, name: it?.name || x.name || 'Extra', description: x.note || '', rate: x.rate != null ? Number(x.rate) : Number(it?.rate) || 0, quantity: Number(x.quantity) || 1, product_type: it?.product_type || 'service', _extra: true }
   })
-  const lines = [
+  let lines = [
     ...(priced.lines || []).filter(l => !l.needs_price || Number(l.rate) > 0).map(l => { const it = byName.get(String(l.name || '').toLowerCase().trim()); return { item_id: it?.item_id || null, name: l.name, description: '', rate: Number(l.rate) || 0, quantity: Number(l.quantity) || 1, product_type: it?.product_type || 'service', needs_price: !!l.needs_price, _extra: false } }),
     ...extraLines,
   ]
+  const dg = applyDiag(lines, { rules: effB3.rules, insurer_rule: effB3.insurer_rule, has_rule: !!rule.rules, items: {} }, diagSaved); lines = dg.lines
   const discounted = lines.map(li => {
     const amount = r2(li.rate * li.quantity); const part = isPart(li)
     const eligible = pct != null && pct > 0 && discountEligible({ ...li, amount })
@@ -324,7 +346,7 @@ async function buildSinglePreview(req, job, shop, br, cashOverride = null) {
     lines: discounted, insurance_total: listTotal, list_total: listTotal, cost_total: costTotal, tax, grand_total: grand, saved: r2(listTotal - costTotal),
     extras_count: extraLines.length, existing_invoice: existing ? { number: existing.invoice_number, status: existing.status, total: existing.total } : null,
     can_bill: !existing && !job.billed_via_app && !!customerId && !!emails.length && !!tpl.invoice && lines.length > 0 && !lines.some(l => l.needs_price),
-    templates: { estimate: null, invoice: tpl.invoice }, big3: { rules: effB3.rules, insurer_rule: effB3.insurer_rule, has_rule: !!rule.rules, items: {} },
+    templates: { estimate: null, invoice: tpl.invoice }, big3: dg.big3Block, diag_only: dg.diag,
     warnings, rule: rule.rules ? big3.describeRules(rule.rules) : 'default', _byId: byId, _byName: byName, _shop: shop || null,
   }
 }
@@ -476,11 +498,11 @@ router.post('/:id/bill', async (req, res) => {
     // A cash or insurer-list % belongs to the car — never learned onto the shop.
     const learnPct = !dry && !p.cash_job && p.pct_source !== 'insurer' && (!p.has_discount || Number(p.discount_pct) !== pct)
     const learnType = !dry && !p.cash_job && p.saved_type !== 'body_shop'   // picked the Collision pill → remembered
-    const saveRules = (!p.big3?.insurer_rule || req.body?.big3_edited === true) && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
+    const saveRules = !p.diag_only?.on && (!p.big3?.insurer_rule || req.body?.big3_edited === true) && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))
     if (!dry && (saveRules || learnPct || learnType)) {
       try {
         const b3 = await import('../services/big3.js')
-        const want = saveRules ? b3.withDefaults(req.body.big3_rules) : b3.withDefaults(p.big3?.rules)
+        const want = saveRules ? b3.withDefaults(req.body.big3_rules) : b3.withDefaults(p.big3?.shop_rules || p.big3?.rules)
         const r = await b3.saveBig3(req, p.shop_name, want, by, (learnPct || learnType) ? { discount_pct: pct, customer_type: 'body_shop' } : {})
         if (r?.changed) console.log(`[bill-it] learned for ${p.shop_name}: ${b3.describeRules(want)}${learnPct ? ` · ${pct}%` : ''}`)
       } catch (e) { console.log('[bill-it] rule/discount save failed (non-fatal):', e.message) }
@@ -567,7 +589,7 @@ async function billSingle(req, res, job, p, dry) {
   p.grand_total = r2(p.cost_total + (p.tax?.amount || 0))
   // Learn: type / % / pay for the shop (never for a cash job — that's the card, not the shop).
   if (!dry && ctype !== 'cash' && !p.cash_job && ctype && !p.retail_person && (p.pct_source !== 'insurer' || ctype !== (p.saved_type || p.customer_type)) && (!p.has_type || Number(p.discount_pct) !== pct || p.pay_mode !== pay || ctype !== (p.saved_type || p.customer_type))) {
-    try { const rules = big3.withDefaults(p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: p.pct_source === 'insurer' ? (p.shop_pct ?? pct) : pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
+    try { const rules = big3.withDefaults(p.big3?.shop_rules || p.big3?.rules); await big3.saveBig3(req, p.shop_name, rules, by, { shop: p._shop || undefined, customer_type: ctype, discount_pct: p.pct_source === 'insurer' ? (p.shop_pct ?? pct) : pct, pay_mode: pay, silent: true }); console.log(`[bill-it single] learned ${p.shop_name}: ${ctype} · ${pct}% · ${pay}`) } catch (e) { console.log('[bill-it single] learn failed (non-fatal):', e.message) }
   }
   let inv = null
   if (!dry) {
