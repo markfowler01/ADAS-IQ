@@ -165,3 +165,23 @@ export function describeFilters(f = {}) {
   if (f.skip_supplements) out.push('no supplements')
   return out
 }
+
+// ── ✅ Getting a shop fully signed up (Mark 2026-11-04: "approve people and
+// deny people, get them fully signed up"). Every account walks the same five
+// steps; the owner screen and the shop portal show the same list.
+export const ACCOUNT_STATUS = {
+  pending_review: '🕓 Waiting for your OK', pending_card: '💳 Approved · needs a card', active: '✅ Active',
+  past_due: '⛔ Past due', paused: '⏸ Paused', denied: '🚫 Denied',
+}
+export function signupSteps(account, { users = [], links = [], contracts = [] } = {}) {
+  const id = account?.id
+  const steps = [
+    ['login', 'Login set up', users.some(u => u.account_id === id && !u.invited)],
+    ['terms', 'Terms accepted', contracts.some(c => c.account_id === id)],
+    ['approved', 'Approved by ADAS IQ', !['pending_review', 'denied'].includes(account?.status)],
+    ['card', 'Card on file', !!account?.card || !!account?.free],
+    ['shops', account?.type === 'cal_shop' ? 'Body shops linked' : 'Shop linked', links.some(l => l.account_id === id)],
+    ['ccc', 'First CCC estimate received', !!account?.first_scrub_at],
+  ].map(([key, label, done]) => ({ key, label, done }))
+  return { steps, done: steps.filter(s => s.done).length, total: steps.length, complete: steps.every(s => s.done) }
+}

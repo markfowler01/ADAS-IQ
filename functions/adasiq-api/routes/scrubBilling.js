@@ -9,7 +9,7 @@
 import catalyst from 'zcatalyst-sdk-node'
 import express from 'express'
 import { kvGet, kvSet } from '../services/durableKV.js'
-import { resolveAccount, chargeFor, rollup, houseAccount, HOUSE_ID, DEFAULT_PRICE, DEFAULT_TRIAL, ACCOUNT_TYPES, cleanFilters, mergeFilters, passesFilters, describeFilters } from '../services/scrubBilling.js'
+import { resolveAccount, chargeFor, rollup, houseAccount, HOUSE_ID, DEFAULT_PRICE, DEFAULT_TRIAL, ACCOUNT_TYPES, ACCOUNT_STATUS, signupSteps, cleanFilters, mergeFilters, passesFilters, describeFilters } from '../services/scrubBilling.js'
 
 const CFG = 'scrub_billing_config'
 const TABLE = 'ScrubUsage'
@@ -61,6 +61,9 @@ export async function recordCccUsage(req, est, { scrubId = '', ref = '', filtere
       const trial = await zcql.executeZCQLQuery(`SELECT su_key, su_account_id, su_reason FROM ${TABLE} WHERE su_account_id = '${esc(who.account.id)}' AND su_reason = 'free trial' LIMIT 200`)
       history = [...(rows || []), ...(trial || [])].map(x => fromRow(x[TABLE]))
     }
+    if (who.account.id !== HOUSE_ID && !who.account.first_scrub_at) {
+      try { const cf = await readConfig(req); const a = cf.accounts.find(x => x.id === who.account.id); if (a && !a.first_scrub_at) { a.first_scrub_at = new Date().toISOString(); await writeConfig(req, cf) } } catch { /* fine */ }
+    }
     const c = filtered ? { price: 0, billable: false, reason: `filtered: ${filtered}` } : chargeFor(est, who, history)
     const at = new Date().toISOString()
     await catalyst.initialize(req, { type: 'advancedio' }).datastore().table(TABLE).insertRow({
@@ -96,7 +99,8 @@ scrubBillingRouter.use((req, res, next) => isOwner(req) ? next() : res.status(40
 scrubBillingRouter.get('/config', async (req, res) => {
   const { stripeFor, listUsers } = await import('./scrubPortal.js')
   const [cfg, stripe, users] = await Promise.all([readConfig(req), stripeFor(req), listUsers(req)])
-  res.json({ ...cfg, users, stripe_ready: !!stripe, defaults: { price: DEFAULT_PRICE, trial: DEFAULT_TRIAL }, types: ACCOUNT_TYPES })
+  for (const a of cfg.accounts) if (a.type !== 'house') a.signup = signupSteps(a, { users, links: cfg.links, contracts: cfg.contracts || [] })
+  res.json({ ...cfg, users, statuses: ACCOUNT_STATUS, stripe_ready: !!stripe, defaults: { price: DEFAULT_PRICE, trial: DEFAULT_TRIAL }, types: ACCOUNT_TYPES })
 })
 
 // Add or change an account. Body: { id?, name, type, price?, trial?, free?, status?, email? }
@@ -106,7 +110,7 @@ scrubBillingRouter.put('/account', async (req, res) => {
   const c = await readConfig(req)
   const id = b.id && b.id !== HOUSE_ID ? String(b.id) : `acct_${Date.now().toString(36)}`
   const cur = c.accounts.find(a => a.id === id) || { id, created_at: new Date().toISOString() }
-  Object.assign(cur, { name: String(b.name).trim(), type: b.type, price: b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: !!b.free, status: b.status === 'paused' ? 'paused' : cur.status === 'pending_card' && !cur.card ? 'pending_card' : 'active', email: String(b.email || cur.email || ''), updated_by: req.user?.email || '', updated_at: new Date().toISOString() })
+  Object.assign(cur, { name: String(b.name).trim(), type: b.type, price: b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: !!b.free, status: b.status === 'paused' ? 'paused' : ['pending_review', 'denied', 'past_due'].includes(cur.status) ? cur.status : cur.status === 'pending_card' && !cur.card ? 'pending_card' : 'active', email: String(b.email || cur.email || ''), updated_by: req.user?.email || '', updated_at: new Date().toISOString() })
   if (!c.accounts.includes(cur)) c.accounts.push(cur)
   await writeConfig(req, c)
   res.json({ ok: true, account: cur })
@@ -251,4 +255,65 @@ scrubBillingRouter.post('/billing-settings', async (req, res) => {
   c.billing = { ...(c.billing || {}), auto_charge: req.body?.auto_charge === true, auto_charge_by: req.user?.email, auto_charge_at: new Date().toISOString() }
   await writeConfig(req, c)
   res.json({ ok: true, billing: c.billing })
+})
+
+// ── ✅ Approve / deny a shop (Mark 2026-11-04) ───────────────────────────────
+// Body: { action: 'approve'|'deny', price?, trial?, approve_shops?: true }
+// Approve → 'pending_card' (or 'active' with a card), its body-shop requests
+// approved too unless another account already has that shop. Deny → logins
+// off, requests denied. Either way a message DRAFT comes back for Mark to send.
+scrubBillingRouter.post('/account/:id/review', async (req, res) => {
+  const c = await readConfig(req)
+  const a = c.accounts.find(x => x.id === req.params.id && x.type !== 'house')
+  if (!a) return res.status(404).json({ error: 'No such account' })
+  const now = new Date().toISOString(), by = req.user?.email || ''
+  const { listUsers } = await import('./scrubPortal.js')
+  const first = (await listUsers(req)).find(u => u.account_id === a.id)
+  const hi = (first?.name || '').split(' ')[0] || 'there'
+  const portal = `${process.env.IQ_PORTAL_URL || 'https://adas-iq-904191467.development.catalystserverless.com/app/?iq=portal'}`
+  if (req.body?.action === 'deny') {
+    Object.assign(a, { status: 'denied', reviewed_by: by, reviewed_at: now })
+    for (const r of (c.link_requests || []).filter(r => r.account_id === a.id && r.status === 'pending')) Object.assign(r, { status: 'denied', decided_by: by, decided_at: now })
+    await writeConfig(req, c)
+    return res.json({ ok: true, account: a, message: `Hi ${hi},\n\nThanks for your interest in ADAS IQ. We're not able to open an account for ${a.name} right now. If something changes on our side we'll reach out.\n\nADAS IQ` })
+  }
+  if (req.body?.price != null && req.body.price !== '') a.price = Number(req.body.price)
+  if (req.body?.trial != null && req.body.trial !== '') a.trial = Number(req.body.trial)
+  Object.assign(a, { status: a.card ? 'active' : 'pending_card', reviewed_by: by, reviewed_at: now })
+  const linked = [], conflicts = []
+  if (req.body?.approve_shops !== false) {
+    for (const r of (c.link_requests || []).filter(r => r.account_id === a.id && r.status === 'pending')) {
+      const cur = c.links.find(l => (r.ccc_shop_id && l.ccc_shop_id === r.ccc_shop_id) || l.shop_name.toLowerCase() === r.shop_name.toLowerCase())
+      if (cur && cur.account_id !== a.id) { conflicts.push(r.shop_name); continue }
+      if (!cur) c.links.push({ shop_name: r.shop_name, ccc_shop_id: r.ccc_shop_id || '', account_id: a.id, price: null, free: false, updated_by: by, updated_at: now })
+      Object.assign(r, { status: 'approved', decided_by: by, decided_at: now }); linked.push(r.shop_name)
+    }
+  }
+  await writeConfig(req, c)
+  const message = `Hi ${hi},\n\nYou're approved for ADAS IQ. Welcome aboard.\n\nTo finish setting up:\n1. Sign in: ${portal}\n2. Add a card (your first ${a.trial ?? DEFAULT_TRIAL} scrubs are free; after that it's $${Number(a.price ?? DEFAULT_PRICE).toFixed(2)} per VIN).\n3. Have each body shop turn on the ADAS IQ app in CCC Secure Share.${linked.length ? `\n\nBody shops on your account: ${linked.join(', ')}.` : ''}\n\nReports show up in your portal as estimates come in.\n\nADAS IQ`
+  res.json({ ok: true, account: a, linked, conflicts, message })
+})
+
+// Early-access requests from adas-iq.com → invite (approve) or dismiss (deny).
+scrubBillingRouter.get('/applicants', async (req, res) => {
+  const c = await readConfig(req)
+  let rows = []
+  try { rows = (await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery('SELECT ROWID, name, company, email, pain, submitted_at FROM AdasEarlyAccess ORDER BY CREATEDTIME DESC LIMIT 200')).map(r => r.AdasEarlyAccess) } catch (e) { console.warn('[applicants]', e.message) }
+  const d = c.lead_decisions || {}
+  res.json({ applicants: rows.map(r => ({ id: String(r.ROWID), name: r.name, company: r.company, email: r.email, pain: r.pain, at: r.submitted_at, decision: d[String(r.ROWID)] || null })) })
+})
+scrubBillingRouter.post('/applicants/:id', async (req, res) => {
+  const c = await readConfig(req)
+  const b = req.body || {}, now = new Date().toISOString(), by = req.user?.email || ''
+  c.lead_decisions = c.lead_decisions || {}
+  if (b.action === 'dismiss') { c.lead_decisions[req.params.id] = { action: 'dismissed', by, at: now }; await writeConfig(req, c); return res.json({ ok: true }) }
+  if (!b.company || !b.email || !['cal_shop', 'body_shop'].includes(b.type)) return res.status(400).json({ error: 'company, email and type needed' })
+  const a = { id: `acct_${Date.now().toString(36)}`, name: String(b.company).trim().slice(0, 120), type: b.type, price: b.price === '' || b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial === '' || b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: false, status: 'pending_card', email: String(b.email).trim().toLowerCase(), created_at: now, source: 'early-access', reviewed_by: by, reviewed_at: now }
+  c.accounts.push(a)
+  c.lead_decisions[req.params.id] = { action: 'invited', account_id: a.id, by, at: now }
+  await writeConfig(req, c)
+  const { makeInvite } = await import('./scrubPortal.js')
+  const inv = await makeInvite(req, a, b.name, b.email)
+  const hi = String(b.name || '').split(' ')[0] || 'there'
+  res.json({ ok: true, account: a, link: inv.link, message: `Hi ${hi},\n\nThanks for asking about ADAS IQ. You're in. Set up your login here (the link works for 7 days):\n${inv.link}\n\nYou'll accept the terms, add a card (first ${a.trial} scrubs free, then $${a.price.toFixed(2)} per VIN), and list the body shops you work with.\n\nADAS IQ` })
 })

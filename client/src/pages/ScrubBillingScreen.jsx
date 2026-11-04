@@ -25,6 +25,8 @@ function Pill({ bg, children }) {
 function ChargePill({ a, link }) {
   if (a?.type === 'house') return <Pill bg={GREEN}>🆓 NEVER CHARGED · Absolute ADAS</Pill>
   if (a?.free || link?.free) return <Pill bg={GREEN}>🆓 CHARGES OFF</Pill>
+  if (a?.status === 'pending_review') return <Pill bg="#b45309">🕓 WAITING FOR YOUR OK</Pill>
+  if (a?.status === 'denied') return <Pill bg="#6b7280">🚫 DENIED</Pill>
   if (a?.status === 'past_due') return <Pill bg="#7f1d1d">⛔ PAST DUE · estimates held</Pill>
   if (a?.status === 'paused') return <Pill bg="#b45309">⏸ PAUSED · not charged</Pill>
   const p = link?.price ?? a?.price ?? 3
@@ -303,6 +305,114 @@ function InvoicesPanel({ month, onChange }) {
   )
 }
 
+
+// ✅ Approve / deny (Mark 2026-11-04): new signups wait here, and adas-iq.com
+// early-access requests can be invited or dismissed. Every decision hands back
+// a message DRAFT for Mark to edit and send himself.
+function MessageDraft({ title, text, onClose }) {
+  const [t, setT] = useState(text)
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,.45)' }} onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl p-5 grid gap-3" style={{ backgroundColor: '#fff' }} onClick={e => e.stopPropagation()}>
+        <div className="text-lg font-extrabold" style={{ color: INK }}>{title}</div>
+        <div className="text-sm" style={{ color: '#555' }}>Done in the app. Here’s a message to send them. Edit it, then copy it into your email. The app doesn’t send it.</div>
+        <textarea className={input} style={{ borderColor: '#e0dbd6', minHeight: 220, fontSize: 13 }} value={t} onChange={e => setT(e.target.value)} />
+        <div className="flex gap-2 justify-end"><button className="text-sm font-extrabold rounded-xl px-4 py-2" style={{ backgroundColor: INK, color: 'white' }} onClick={() => { try { navigator.clipboard?.writeText(t) } catch {} onClose() }}>📋 Copy and close</button></div>
+      </div>
+    </div>
+  )
+}
+
+function ReviewPanel({ cfg, onChange }) {
+  const [apps, setApps] = useState([]), [busy, setBusy] = useState(''), [err, setErr] = useState(''), [draft, setDraft] = useState(null)
+  const [terms, setTerms] = useState({})   // per account / applicant: { price, trial, type }
+  const loadApps = () => call('/applicants').then(d => setApps(d.applicants || [])).catch(() => setApps([]))
+  useEffect(() => { loadApps() }, [])
+  const waiting = cfg.accounts.filter(a => a.status === 'pending_review')
+  const open = apps.filter(a => !a.decision)
+  const t = id => terms[id] || {}
+  const setT = (id, k, v) => setTerms(x => ({ ...x, [id]: { ...x[id], [k]: v } }))
+  const user = id => (cfg.users || []).find(u => u.account_id === id)
+  const reqs = id => (cfg.link_requests || []).filter(r => r.account_id === id && r.status === 'pending')
+  const review = (a, action) => run(a.id, async () => {
+    if (action === 'deny' && !window.confirm(`Deny ${a.name}? Their login stops working.`)) return
+    const d = await call(`/account/${a.id}/review`, 'POST', { action, price: t(a.id).price, trial: t(a.id).trial })
+    setDraft({ title: action === 'deny' ? `🚫 ${a.name} denied` : `✅ ${a.name} approved${d.conflicts?.length ? ` · ⚠️ already on another account: ${d.conflicts.join(', ')}` : ''}`, text: d.message })
+    onChange()
+  })
+  const lead = (l, action) => run(l.id, async () => {
+    if (action === 'dismiss') { await call(`/applicants/${l.id}`, 'POST', { action }); return loadApps() }
+    const d = await call(`/applicants/${l.id}`, 'POST', { action: 'invite', name: l.name, company: l.company, email: l.email, type: t(l.id).type || 'cal_shop', price: t(l.id).price, trial: t(l.id).trial })
+    setDraft({ title: `✉️ ${l.company} invited`, text: d.message }); loadApps(); onChange()
+  })
+  const run = async (tag, fn) => { setBusy(tag); setErr(''); try { await fn() } catch (e) { setErr(e.message) } finally { setBusy('') } }
+  const priceInputs = id => (
+    <div className="flex gap-1.5 items-center text-[11px]" style={{ color: '#666' }}>
+      $<input type="number" step="0.25" className="rounded border px-1.5 py-1 w-16" style={{ borderColor: '#e0dbd6' }} placeholder={String(cfg.defaults?.price ?? 3)} value={t(id).price ?? ''} onChange={e => setT(id, 'price', e.target.value)} />/VIN ·
+      <input type="number" className="rounded border px-1.5 py-1 w-14" style={{ borderColor: '#e0dbd6' }} placeholder={String(cfg.defaults?.trial ?? 25)} value={t(id).trial ?? ''} onChange={e => setT(id, 'trial', e.target.value)} /> free
+    </div>
+  )
+  if (!waiting.length && !open.length) return draft ? <MessageDraft {...draft} onClose={() => setDraft(null)} /> : null
+  return (
+    <div style={{ ...box, borderColor: '#fdba74', backgroundColor: '#fffbf5' }} className="grid gap-3">
+      {waiting.length > 0 && <div className="grid gap-2">
+        <div className="font-extrabold" style={{ color: INK }}>🕓 Waiting for your OK ({waiting.length})</div>
+        {waiting.map(a => (
+          <div key={a.id} className="rounded-xl p-3 grid gap-2" style={{ backgroundColor: '#fff', border: '1px solid #f0ece8' }}>
+            <div className="flex justify-between gap-2 flex-wrap">
+              <div className="min-w-0">
+                <div className="font-extrabold">{a.type === 'cal_shop' ? '🔧' : '🚗'} {a.name}</div>
+                <div className="text-xs" style={{ color: '#666' }}>{user(a.id)?.name || ''} · {a.email}{a.phone ? ` · ${a.phone}` : ''} · signed up {String(a.created_at || '').slice(0, 10)}{(cfg.contracts || []).some(c => c.account_id === a.id) ? ' · ✅ terms accepted' : ''}</div>
+                {reqs(a.id).length > 0 && <div className="text-xs mt-1" style={{ color: '#555' }}>Body shops: {reqs(a.id).map(r => r.shop_name).join(', ')}</div>}
+              </div>
+              {priceInputs(a.id)}
+            </div>
+            <div className="flex gap-2">
+              <button className="text-xs font-extrabold rounded-xl px-3 py-1.5" style={{ backgroundColor: GREEN, color: 'white' }} disabled={busy === a.id} onClick={() => review(a, 'approve')}>✓ Approve{reqs(a.id).length ? ` + ${reqs(a.id).length} body shop${reqs(a.id).length === 1 ? '' : 's'}` : ''}</button>
+              <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6', color: '#b91c1c' }} disabled={busy === a.id} onClick={() => review(a, 'deny')}>✕ Deny</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+      {open.length > 0 && <div className="grid gap-2">
+        <div className="font-extrabold" style={{ color: INK }}>🎯 Early-access requests from adas-iq.com ({open.length})</div>
+        {open.map(l => (
+          <div key={l.id} className="rounded-xl p-3 grid gap-2" style={{ backgroundColor: '#fff', border: '1px solid #f0ece8' }}>
+            <div className="flex justify-between gap-2 flex-wrap">
+              <div className="min-w-0">
+                <div className="font-extrabold">{l.company}</div>
+                <div className="text-xs" style={{ color: '#666' }}>{l.name} · {l.email} · {String(l.at || '').slice(0, 10)}</div>
+                {l.pain && <div className="text-xs mt-1 italic" style={{ color: '#555' }}>“{l.pain}”</div>}
+              </div>
+              <div className="grid gap-1 justify-items-end">
+                <div className="flex gap-1">{[['cal_shop', '🔧 Cal shop'], ['body_shop', '🚗 Body shop']].map(([k, lb]) => <button key={k} className="text-[11px] font-bold rounded-full px-2 py-0.5" onClick={() => setT(l.id, 'type', k)} style={(t(l.id).type || 'cal_shop') === k ? { backgroundColor: INK, color: 'white' } : { border: '1px solid #e0dbd6', color: '#555' }}>{lb}</button>)}</div>
+                {priceInputs(l.id)}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button className="text-xs font-extrabold rounded-xl px-3 py-1.5" style={{ backgroundColor: GREEN, color: 'white' }} disabled={busy === l.id} onClick={() => lead(l, 'invite')}>✓ Approve + make invite</button>
+              <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6', color: '#b91c1c' }} disabled={busy === l.id} onClick={() => lead(l, 'dismiss')}>✕ Dismiss</button>
+            </div>
+          </div>
+        ))}
+      </div>}
+      {err && <div className="text-sm" style={{ color: '#b91c1c' }}>{err}</div>}
+      {draft && <MessageDraft {...draft} onClose={() => setDraft(null)} />}
+    </div>
+  )
+}
+
+// "4 of 6 signed up" + the steps, on every paying account's card.
+function SignupSteps({ s, status, statuses }) {
+  if (!s) return null
+  return (
+    <div className="mt-2 rounded-lg px-2 py-1.5" style={{ backgroundColor: s.complete ? '#f0fdf4' : '#fffbeb' }}>
+      <div className="text-[11px] font-extrabold" style={{ color: s.complete ? GREEN : '#92400e' }}>{s.complete ? '✅ Fully signed up' : `${s.done} of ${s.total} signed up`} · {statuses?.[status] || status}</div>
+      {!s.complete && <div className="flex gap-x-2 gap-y-0.5 flex-wrap mt-0.5">{s.steps.map(x => <span key={x.key} className="text-[11px]" style={{ color: x.done ? GREEN : '#9ca3af' }}>{x.done ? '✓' : '○'} {x.label}</span>)}</div>}
+    </div>
+  )
+}
+
 export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [month, setMonth] = useState(thisMonth())
   const [cfg, setCfg] = useState(null)
@@ -344,6 +454,8 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
           </div>
         )}
 
+        {cfg && <ReviewPanel cfg={cfg} onChange={load} />}
+
         {cfg && <InvoicesPanel month={month} onChange={load} />}
 
         {cfg && <PortalPanel cfg={cfg} onChange={load} />}
@@ -365,6 +477,7 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
                       <div className="text-[11px]" style={{ color: '#888' }}>{u?.scrubs || 0} scrubs · {u?.billable || 0} billable{u?.filtered ? ` · ${u.filtered} filtered` : ''}</div>
                     </div>
                   </div>
+                  {a.type !== 'house' && <SignupSteps s={a.signup} status={a.status} statuses={cfg.statuses} />}
                   {a.type !== 'house' && <div className="text-[11px] mt-1 font-semibold" style={{ color: a.card ? GREEN : '#b45309' }}>{a.card ? `💳 ${a.card.brand} …${a.card.last4}` : a.status === 'pending_card' ? '💳 no card yet (signed up, on free scrubs)' : '💳 no card on file'}</div>}
                   {a.type !== 'house' && a.trial ? <div className="text-[11px] mt-1" style={{ color: '#888' }}>First {a.trial} scrubs free{a.email ? ` · bills to ${a.email}` : ''}</div> : null}
                   <div className="mt-3 grid gap-1">

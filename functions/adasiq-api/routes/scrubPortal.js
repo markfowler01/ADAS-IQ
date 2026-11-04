@@ -22,7 +22,7 @@ import crypto from 'node:crypto'
 import catalyst from 'zcatalyst-sdk-node'
 import { kvGet, kvSet } from '../services/durableKV.js'
 import { readConfig, writeConfig, monthSummary } from './scrubBilling.js'
-import { cleanFilters, describeFilters, DEFAULT_PRICE, DEFAULT_TRIAL } from '../services/scrubBilling.js'
+import { cleanFilters, describeFilters, signupSteps, DEFAULT_PRICE, DEFAULT_TRIAL } from '../services/scrubBilling.js'
 import { TERMS, TERMS_VERSION, TERMS_DRAFT } from '../services/scrubTerms.js'
 
 const USERS = 'scrub_portal_users'
@@ -119,6 +119,7 @@ async function auth(req, res, next) {
   const user = users.find(u => u.id === t.uid && u.active !== false)
   const account = user && cfg.accounts.find(a => a.id === user.account_id)
   if (!user || !account) return res.status(401).json({ error: 'This login is turned off' })
+  if (account.status === 'denied') return res.status(403).json({ error: 'This account wasn’t approved. Questions? Reply to our email.' })
   req.iq = { user, account, cfg }
   next()
 }
@@ -142,7 +143,7 @@ router.post('/signup', async (req, res) => {
   if (users.find(u => u.email === email)) return res.status(409).json({ error: 'That email already has a login. Sign in instead.' })
 
   const now = new Date().toISOString()
-  const account = { id: `acct_${Date.now().toString(36)}`, name: String(b.company).trim().slice(0, 120), type: b.type, price: DEFAULT_PRICE, trial: DEFAULT_TRIAL, free: false, status: 'pending_card', email, phone: String(b.phone || '').slice(0, 30), created_at: now, source: 'signup' }
+  const account = { id: `acct_${Date.now().toString(36)}`, name: String(b.company).trim().slice(0, 120), type: b.type, price: DEFAULT_PRICE, trial: DEFAULT_TRIAL, free: false, status: 'pending_review', email, phone: String(b.phone || '').slice(0, 30), created_at: now, source: 'signup' }
   const user = { id: `u_${crypto.randomBytes(6).toString('hex')}`, account_id: account.id, name: String(b.name).trim().slice(0, 80), email, role: 'admin', pass: hashPass(b.password), created_at: now }
   const shops = (b.type === 'body_shop' ? [account.name] : (Array.isArray(b.body_shops) ? b.body_shops : String(b.body_shops || '').split('\n')))
     .map(s => String(s).trim()).filter(Boolean).slice(0, 200)
@@ -151,7 +152,7 @@ router.post('/signup', async (req, res) => {
   cfg.link_requests = [...(cfg.link_requests || []), ...shops.map(s => ({ id: `lr_${crypto.randomBytes(5).toString('hex')}`, account_id: account.id, shop_name: s.slice(0, 120), status: 'pending', at: now }))]
   await writeConfig(req, cfg)
   users.push(user); await writeUsers(req, users)
-  await alertMark(`🆕 *ADAS IQ signup* · ${account.name} (${account.type === 'cal_shop' ? 'calibration shop' : 'body shop'})\n${user.name} · ${email}\n${shops.length} body shop${shops.length === 1 ? '' : 's'} to approve → More → Admin → 💳 Scrub Billing`)
+  await alertMark(`🆕 *ADAS IQ signup* · ${account.name} (${account.type === 'cal_shop' ? 'calibration shop' : 'body shop'})\n${user.name} · ${email}\n${shops.length} body shop${shops.length === 1 ? '' : 's'} listed\n👉 Approve or deny: More → Admin → 💳 Scrub Billing`)
   res.json({ ok: true, token: signToken({ type: 'iq', uid: user.id }), user: publicUser(user) })
 })
 
@@ -160,6 +161,8 @@ router.post('/login', async (req, res) => {
   const users = await readUsers(req)
   const u = users.find(x => x.email === email && x.active !== false)
   if (!u || !passOk(req.body?.password, u.pass)) return res.status(401).json({ error: 'That email and password don’t match' })
+  const acct = (await readConfig(req)).accounts.find(a => a.id === u.account_id)
+  if (acct?.status === 'denied') return res.status(403).json({ error: 'This account wasn’t approved. Questions? Reply to our email.' })
   res.json({ ok: true, token: signToken({ type: 'iq', uid: u.id }), user: publicUser(u) })
 })
 
@@ -179,6 +182,7 @@ router.get('/me', auth, async (req, res) => {
     links, requests, contract: contract && { version: contract.version, at: contract.at, name: contract.name },
     month, usage: sum.accounts[0] || { scrubs: 0, billable: 0, filtered: 0, total: 0, shops: [] }, recent: sum.recent,
     card_ready: !!(await stripeFor(req)),
+    signup: signupSteps(account, { users: (await readUsers(req)).map(u => ({ account_id: u.account_id, invited: !u.pass })), links: cfg.links, contracts: cfg.contracts || [] }),
   })
 })
 

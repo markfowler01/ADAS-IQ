@@ -167,6 +167,13 @@ function Dashboard({ me, reload, onOut }) {
         <div style={{ fontSize: 26, fontWeight: 900 }}>{a.name}</div>
         <div style={{ color: C.muted, fontSize: 14 }}>{a.type === 'cal_shop' ? 'Calibration shop' : 'Body shop'} · {a.free ? 'no charge' : `${money(a.price)} per VIN`}{me.contract ? ` · terms accepted ${me.contract.at.slice(0, 10)}` : ''}</div>
       </div>
+      {a.status === 'pending_review' && <div style={{ backgroundColor: '#2a2006', color: '#fcd34d', borderRadius: 12, padding: 12, fontSize: 14, fontWeight: 700 }}>🕓 Thanks for signing up. We’re checking your account and body shops, usually the same business day. You can add your card and filters now.</div>}
+      {me.signup && !me.signup.complete && a.status !== 'pending_review' && (
+        <div style={{ ...card, display: 'grid', gap: 6 }}>
+          <div style={{ fontWeight: 800 }}>Getting set up · {me.signup.done} of {me.signup.total}</div>
+          {me.signup.steps.map(x => <div key={x.key} style={{ fontSize: 13, color: x.done ? C.green : C.muted }}>{x.done ? '✓' : '○'} {x.label}{!x.done && x.key === 'ccc' ? ': have each body shop turn on the ADAS IQ app in CCC Secure Share' : ''}{!x.done && x.key === 'card' ? ': add it above' : ''}</div>)}
+        </div>
+      )}
       {a.status === 'past_due' && <div style={{ backgroundColor: '#3b0d0d', color: '#fca5a5', borderRadius: 12, padding: 12, fontSize: 14, fontWeight: 700 }}>⛔ Scrubbing is paused: an invoice is past due. Update your card and pay below. Your estimates are kept.</div>}
       <Err m={err} />
       {msg && <div style={{ backgroundColor: '#052e16', color: '#86efac', borderRadius: 10, padding: '8px 12px', fontSize: 13 }}>{msg}</div>}
