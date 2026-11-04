@@ -182,6 +182,31 @@ router.get('/me', auth, async (req, res) => {
   })
 })
 
+// 🧾 This account's invoices, last 12 months.
+router.get('/invoices', auth, async (req, res) => {
+  const { readDoc } = await import('./scrubInvoices.js')
+  const out = []
+  const d = new Date()
+  for (let k = 0; k < 12; k++) {
+    const m = new Date(d.getFullYear(), d.getMonth() - k, 1)
+    const doc = await readDoc(req, `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`)
+    for (const i of doc.invoices.filter(x => x.account_id === req.iq.account.id && x.status !== 'void')) out.push({ number: i.number, month: i.month, total: i.total, vins: i.vins, lines: i.lines, status: i.status === 'paid_manual' ? 'paid' : i.status === 'charging' ? 'processing' : i.status, paid_at: i.paid_at || null, fail_reason: i.status === 'failed' ? i.fail_reason : '' })
+  }
+  res.json({ invoices: out })
+})
+
+// Card failed? After updating it, the shop can pay the open invoices now.
+router.post('/invoices/pay-open', auth, async (req, res) => {
+  const { readDoc, chargeInvoice } = await import('./scrubInvoices.js')
+  const d = new Date(); const results = []
+  for (let k = 0; k < 4; k++) {
+    const m = new Date(d.getFullYear(), d.getMonth() - k, 1)
+    const doc = await readDoc(req, `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`)
+    for (const i of doc.invoices.filter(x => x.account_id === req.iq.account.id && x.status === 'failed')) { const r = await chargeInvoice(req, i.number, { by: `portal:${req.iq.user.email}` }); results.push({ number: i.number, ok: !!r.ok, why: r.inv?.fail_reason || r.error || '' }) }
+  }
+  res.json({ results })
+})
+
 router.put('/filters', auth, async (req, res) => {
   const { user, account, cfg } = req.iq
   if (user.role !== 'admin') return res.status(403).json({ error: 'Only the account admin can change filters' })

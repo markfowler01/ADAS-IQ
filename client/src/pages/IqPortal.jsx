@@ -123,6 +123,36 @@ function Filters({ title, note, filters, onSave }) {
 }
 const Reads = ({ r }) => r?.length ? <span style={{ fontSize: 12, color: C.purple, fontWeight: 700 }}>🎚 {r.join(' · ')}</span> : <span style={{ fontSize: 12, color: '#555' }}>🎚 no filters: every estimate is scrubbed</span>
 
+
+function Invoices({ onPaid }) {
+  const [list, setList] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState('')
+  const load = () => api('/invoices').then(d => setList(d.invoices)).catch(() => setList([]))
+  useEffect(() => { load() }, [])
+  const failed = (list || []).filter(i => i.status === 'failed')
+  const payNow = async () => { setBusy(true); setMsg(''); try { const d = await api('/invoices/pay-open', 'POST'); const bad = d.results.filter(r => !r.ok); setMsg(bad.length ? `Still didn’t go through: ${bad.map(b => b.why).join(', ')}` : 'Paid. Thanks! Scrubbing is on.'); load(); onPaid() } catch (e) { setMsg(e.message) } finally { setBusy(false) } }
+  const pill = s => ({ paid: [C.green, '✅ Paid'], failed: ['#ef4444', '❌ Card failed'], processing: ['#3b82f6', '⏳ Processing'], draft: ['#6b7280', '🧾 Card charged soon'] })[s] || ['#6b7280', s]
+  return (
+    <div style={{ ...card, display: 'grid', gap: 6 }}>
+      <div style={{ fontWeight: 800 }}>🧾 Invoices</div>
+      {failed.length > 0 && <div style={{ backgroundColor: '#3b0d0d', borderRadius: 10, padding: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ fontSize: 13, color: '#fca5a5' }}>A card payment didn’t go through. Update the card above, then pay here.</div>
+        <button style={btn()} disabled={busy} onClick={payNow}>{busy ? 'Paying…' : `Pay ${money(failed.reduce((t, i) => t + i.total, 0))} now`}</button>
+      </div>}
+      {msg && <div style={{ fontSize: 13, color: C.muted }}>{msg}</div>}
+      {list && !list.length && <div style={{ color: C.muted, fontSize: 13 }}>No invoices yet. You’re billed on the 1st for the month before.</div>}
+      {(list || []).map(i => { const [c, l] = pill(i.status); return (
+        <details key={i.number} style={{ borderTop: `1px solid ${C.line}`, padding: '8px 0' }}>
+          <summary style={{ cursor: 'pointer', display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 14 }}>
+            <span><b>{i.month}</b> <span style={{ color: C.muted, fontSize: 12 }}>· {i.number} · {i.vins} VINs</span> <span style={{ color: c, fontSize: 12, fontWeight: 800 }}>{l}</span></span>
+            <b>{money(i.total)}</b>
+          </summary>
+          <div style={{ display: 'grid', gap: 3, marginTop: 6, fontSize: 12, color: '#ccc' }}>{i.lines.map(x => <div key={x.text} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{x.text}</span><b>{money(x.amount)}</b></div>)}</div>
+        </details>
+      ) })}
+    </div>
+  )
+}
+
 function Dashboard({ me, reload, onOut }) {
   const [shop, setShop] = useState(''), [msg, setMsg] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState('')
   const a = me.account, u = me.usage
@@ -137,6 +167,7 @@ function Dashboard({ me, reload, onOut }) {
         <div style={{ fontSize: 26, fontWeight: 900 }}>{a.name}</div>
         <div style={{ color: C.muted, fontSize: 14 }}>{a.type === 'cal_shop' ? 'Calibration shop' : 'Body shop'} · {a.free ? 'no charge' : `${money(a.price)} per VIN`}{me.contract ? ` · terms accepted ${me.contract.at.slice(0, 10)}` : ''}</div>
       </div>
+      {a.status === 'past_due' && <div style={{ backgroundColor: '#3b0d0d', color: '#fca5a5', borderRadius: 12, padding: 12, fontSize: 14, fontWeight: 700 }}>⛔ Scrubbing is paused: an invoice is past due. Update your card and pay below. Your estimates are kept.</div>}
       <Err m={err} />
       {msg && <div style={{ backgroundColor: '#052e16', color: '#86efac', borderRadius: 10, padding: '8px 12px', fontSize: 13 }}>{msg}</div>}
 
@@ -183,6 +214,8 @@ function Dashboard({ me, reload, onOut }) {
           {isAdmin && <div style={{ display: 'flex', gap: 8 }}><input style={inp} placeholder="Add a body shop (name as on the estimate)" value={shop} onChange={e => setShop(e.target.value)} /><button style={btn()} disabled={!shop.trim()} onClick={addShop}>Add</button></div>}
         </div>
       )}
+
+      <Invoices onPaid={reload} />
 
       {/* Latest */}
       <div style={{ ...card, display: 'grid', gap: 4 }}>

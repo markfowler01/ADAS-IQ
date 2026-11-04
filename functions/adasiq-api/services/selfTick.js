@@ -47,6 +47,8 @@ const TICKS = {
   desk_sync: { minutes: 2, path: '/api/crm-sync-cron/desk-sync', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   scrub_dispatch: { minutes: 2, path: '/api/crm-sync-cron/scrub-dispatch', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   // 🛟 Never lose one: CCC Inbox ↔ queue check + stuck/needs-a-human alarms.
+  // 🧾 ADAS IQ billing: closes last month on the 1st (PT, after 2 AM) and works failed cards. Hourly is plenty.
+  scrub_billing: { minutes: 60, path: '/api/scrub-billing-cron/tick', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   scrub_safety: { minutes: 15, path: '/api/crm-sync-cron/scrub-safety', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },
   // 🔄 Scrub Library stages from Books — quotes sent (blue) + invoiced (green $), daily.
   scrub_stages: { minutes: 24 * 60, path: '/api/crm-sync-cron/scrubs/mark-quoted', secret: () => process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026' },

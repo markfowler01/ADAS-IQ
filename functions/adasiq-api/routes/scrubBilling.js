@@ -40,6 +40,8 @@ export async function checkCccFilters(req, est) {
   try {
     const cfg = await readConfig(req)
     const who = resolveAccount(est, cfg)
+    // ⛔ Past due (card failed, day 7): hold new estimates (not scrubbed, not charged) until paid.
+    if (who.account.status === 'past_due') return { ok: false, why: 'account past due, held until paid', account: who.account.name, filters: [] }
     const f = mergeFilters(who.account.filters, who.link?.filters)
     return { ...passesFilters(est, f), account: who.account.name, filters: describeFilters(f) }
   } catch (e) { console.warn('[scrub filters] skipped:', e.message); return { ok: true, why: '' } }
@@ -75,7 +77,7 @@ export async function recordCccUsage(req, est, { scrubId = '', ref = '', filtere
   }
 }
 
-async function monthRows(req, month, accountId = '') {
+export async function monthRows(req, month, accountId = '') {
   const zcql = catalyst.initialize(req, { type: 'advancedio' }).zcql()
   const out = []
   const and = accountId ? ` AND su_account_id = '${esc(accountId)}'` : ''
@@ -221,4 +223,32 @@ scrubBillingRouter.post('/invite', async (req, res) => {
   if (!a) return res.status(404).json({ error: 'Pick a paying account' })
   const { makeInvite } = await import('./scrubPortal.js')
   try { res.json({ ok: true, ...(await makeInvite(req, a, req.body?.name, req.body?.email)) }) } catch (e) { res.status(400).json({ error: e.message }) }
+})
+
+// ── 🧾 Phase 3: invoices ─────────────────────────────────────────────────────
+const inv = () => import('./scrubInvoices.js')
+scrubBillingRouter.get('/invoices', async (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : new Date().toISOString().slice(0, 7)
+  const { readDoc } = await inv(); const { reminderText } = await import('../services/scrubInvoice.js')
+  const d = await readDoc(req, month)
+  const cfg = await readConfig(req)
+  res.json({ ...d, invoices: d.invoices.map(i => ({ ...i, reminder: i.status === 'failed' ? reminderText(i) : '' })), auto_charge: !!cfg.billing?.auto_charge })
+})
+scrubBillingRouter.post('/invoices/close', async (req, res) => {
+  const month = req.body?.month
+  if (!/^\d{4}-\d{2}$/.test(month || '')) return res.status(400).json({ error: 'month YYYY-MM' })
+  if (month >= new Date().toISOString().slice(0, 7)) return res.status(400).json({ error: 'Only a month that’s over can be invoiced' })
+  const { closeMonth } = await inv()
+  const r = await closeMonth(req, month, { by: req.user?.email || 'mark' })
+  res.json({ made: r.made || 0, skipped: r.skipped || '', charged: r.charged || null })
+})
+scrubBillingRouter.post('/invoices/charge-all', async (req, res) => { const { chargeAll } = await inv(); res.json(await chargeAll(req, req.body?.month, { by: req.user?.email })) })
+scrubBillingRouter.post('/invoices/:number/charge', async (req, res) => { const { chargeInvoice } = await inv(); const r = await chargeInvoice(req, req.params.number, { by: req.user?.email }); r.error ? res.status(400).json(r) : res.json(r) })
+scrubBillingRouter.post('/invoices/:number/mark-paid', async (req, res) => { const { markPaid } = await inv(); const r = await markPaid(req, req.params.number, req.user?.email); r.error ? res.status(400).json(r) : res.json(r) })
+scrubBillingRouter.post('/invoices/:number/void', async (req, res) => { const { voidInvoice } = await inv(); const r = await voidInvoice(req, req.params.number, req.user?.email); r.error ? res.status(400).json(r) : res.json(r) })
+scrubBillingRouter.post('/billing-settings', async (req, res) => {
+  const c = await readConfig(req)
+  c.billing = { ...(c.billing || {}), auto_charge: req.body?.auto_charge === true, auto_charge_by: req.user?.email, auto_charge_at: new Date().toISOString() }
+  await writeConfig(req, c)
+  res.json({ ok: true, billing: c.billing })
 })

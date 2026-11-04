@@ -25,6 +25,7 @@ function Pill({ bg, children }) {
 function ChargePill({ a, link }) {
   if (a?.type === 'house') return <Pill bg={GREEN}>🆓 NEVER CHARGED · Absolute ADAS</Pill>
   if (a?.free || link?.free) return <Pill bg={GREEN}>🆓 CHARGES OFF</Pill>
+  if (a?.status === 'past_due') return <Pill bg="#7f1d1d">⛔ PAST DUE · estimates held</Pill>
   if (a?.status === 'paused') return <Pill bg="#b45309">⏸ PAUSED · not charged</Pill>
   const p = link?.price ?? a?.price ?? 3
   return <Pill bg={ORANGE}>💵 {money(p)} / VIN</Pill>
@@ -225,6 +226,83 @@ function InviteEditor({ acct, onClose }) {
   )
 }
 
+
+// 🧾 Phase 3: invoices for the month on the picker. Built on the 1st by the app
+// (or the Build button); charged when Mark presses Charge, or by itself once
+// auto-charge is on. Stripe emails the receipt from ADAS IQ's account.
+const INV_PILL = { draft: ['#6b7280', '📝 DRAFT · not charged'], charging: ['#2563eb', '⏳ CHARGING'], paid: [GREEN, '✅ PAID'], paid_manual: [GREEN, '✅ PAID (outside Stripe)'], failed: ['#b91c1c', '❌ CARD FAILED'], void: ['#9ca3af', '🚫 VOID'] }
+function InvoicesPanel({ month, onChange }) {
+  const [d, setD] = useState(null), [busy, setBusy] = useState(''), [err, setErr] = useState(''), [open, setOpen] = useState('')
+  const load = () => call(`/invoices?month=${month}`).then(setD).catch(e => setErr(e.message))
+  useEffect(() => { load() }, [month])
+  const run = async (tag, fn, confirmMsg) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return
+    setBusy(tag); setErr('')
+    try { await fn(); await load(); onChange?.() } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  const over = month < thisMonth()
+  const drafts = (d?.invoices || []).filter(i => i.status === 'draft')
+  const draftTotal = drafts.reduce((t, i) => t + i.total, 0)
+  return (
+    <div style={box} className="grid gap-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <div className="font-extrabold" style={{ color: INK }}>🧾 Invoices for {month}</div>
+          <div className="text-xs" style={{ color: '#888' }}>The app builds these on the 1st (after 2 AM PT) from the scrubs above. Failed cards retry on day 3 and day 7, then new estimates are held.</div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {d && (d.auto_charge ? <Pill bg={GREEN}>⚡ AUTO-CHARGE ON</Pill> : <Pill bg="#6b7280">✋ AUTO-CHARGE OFF · you press Charge</Pill>)}
+          {d && <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} disabled={busy === 'auto'}
+            onClick={() => run('auto', () => call('/billing-settings', 'POST', { auto_charge: !d.auto_charge }), d.auto_charge ? null : 'Turn on auto-charge? From now on the app charges every shop’s card on the 1st and retries failed cards by itself.')}>{d.auto_charge ? 'Turn off' : 'Turn on'}</button>}
+        </div>
+      </div>
+      {!d?.invoices?.length && (
+        <div className="flex items-center gap-2 flex-wrap text-sm" style={{ color: '#888' }}>
+          {over ? 'No invoices for this month yet.' : 'This month isn’t over yet. Invoices get built on the 1st.'}
+          {over && <button className="text-xs font-extrabold rounded-xl px-3 py-1.5" style={{ backgroundColor: INK, color: 'white' }} disabled={busy === 'close'} onClick={() => run('close', () => call('/invoices/close', 'POST', { month }))}>{busy === 'close' ? 'Building…' : `Build ${month} invoices`}</button>}
+        </div>
+      )}
+      {drafts.length > 0 && (
+        <button className="text-sm font-extrabold rounded-xl px-4 py-2 justify-self-start" style={{ backgroundColor: ORANGE, color: 'white' }} disabled={busy === 'all'}
+          onClick={() => run('all', () => call('/invoices/charge-all', 'POST', { month }), `Charge ${drafts.length} card${drafts.length === 1 ? '' : 's'} a total of ${money(draftTotal)} now?`)}>
+          {busy === 'all' ? 'Charging…' : `💳 Charge all ${drafts.length} drafts · ${money(draftTotal)}`}
+        </button>
+      )}
+      <div className="grid gap-1.5">
+        {(d?.invoices || []).map(i => {
+          const [bg, label] = INV_PILL[i.status] || ['#6b7280', i.status]
+          return (
+            <div key={i.number} className="rounded-lg px-3 py-2" style={{ backgroundColor: '#fafaf9', border: '1px solid #f0ece8' }}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <button className="text-left min-w-0" onClick={() => setOpen(open === i.number ? '' : i.number)}>
+                  <div className="text-sm font-extrabold">{i.account_name} <span className="font-normal text-xs" style={{ color: '#888' }}>· {i.number} · {i.vins} VINs{i.filtered_count ? ` · ${i.filtered_count} filtered free` : ''}</span></div>
+                  <div className="mt-0.5"><Pill bg={bg}>{label}</Pill>{i.fail_reason && i.status === 'failed' ? <span className="text-[11px] ml-2" style={{ color: '#b91c1c' }}>{i.fail_reason} · try {i.tries}</span> : null}{i.past_due_at ? <span className="ml-2"><Pill bg="#7f1d1d">⛔ PAST DUE · estimates held</Pill></span> : null}</div>
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-lg font-extrabold" style={{ color: i.status.startsWith('paid') ? GREEN : INK }}>{money(i.total)}</span>
+                  {['draft', 'failed'].includes(i.status) && <button className="text-[11px] font-extrabold rounded-full px-2.5 py-1" style={{ backgroundColor: ORANGE, color: 'white' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/charge`, 'POST'), `Charge ${i.account_name} ${money(i.total)} now?`)}>{busy === i.number ? '…' : '💳 Charge'}</button>}
+                  {['draft', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/mark-paid`, 'POST'), `Mark ${i.number} paid outside Stripe (check / ACH)?`)}>Paid other way</button>}
+                  {['draft', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/void`, 'POST'), `Void ${i.number}? The shop won’t be charged for it.`)}>Void</button>}
+                </div>
+              </div>
+              {open === i.number && (
+                <div className="mt-2 grid gap-1 text-xs" style={{ color: '#555' }}>
+                  {i.lines.map(l => <div key={l.text} className="flex justify-between gap-2"><span>{l.text}</span><b>{money(l.amount)}</b></div>)}
+                  {i.reminder && <>
+                    <div className="font-bold mt-2" style={{ color: INK }}>Reminder to send them (edit it first, it’s not sent by the app):</div>
+                    <textarea readOnly className={input} style={{ borderColor: '#e0dbd6', minHeight: 120, fontSize: 12 }} value={i.reminder} onFocus={e => e.target.select()} />
+                  </>}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {err && <div className="text-sm" style={{ color: '#b91c1c' }}>{err}</div>}
+    </div>
+  )
+}
+
 export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [month, setMonth] = useState(thisMonth())
   const [cfg, setCfg] = useState(null)
@@ -265,6 +343,8 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
             ))}
           </div>
         )}
+
+        {cfg && <InvoicesPanel month={month} onChange={load} />}
 
         {cfg && <PortalPanel cfg={cfg} onChange={load} />}
 

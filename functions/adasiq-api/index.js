@@ -417,6 +417,10 @@ app.use('/api/jobs', requireAuth, requireStaff, billItRouter)   // 💸 Bill it 
 app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/push', requireAuth, pushRouter)
 app.use('/api/item-map', requireAuth, requireStaff, itemMapRouter)
+app.post('/api/scrub-billing-cron/tick', async (req, res) => {   // 🧾 hourly via selfTick: month close on the 1st + failed-card steps
+  if (req.headers['x-cron-secret'] !== (process.env.CRM_SYNC_CRON_SECRET || 'crm-sync-2026')) return res.status(401).json({ error: 'cron secret' })
+  try { const { billingTick } = await import('./routes/scrubInvoices.js'); res.json(await billingTick(req)) } catch (e) { console.error('[iq billing tick]', e.message); res.status(500).json({ error: e.message }) }
+})
 app.use('/api/scrub-portal', async (req, res, next) => { const { default: r } = await import('./routes/scrubPortal.js'); return r(req, res, next) })   // ADAS IQ shop login — own auth
 app.use('/api/scrub-billing', requireAuth, async (req, res, next) => { const { scrubBillingRouter } = await import('./routes/scrubBilling.js'); return scrubBillingRouter(req, res, next) })
 app.use('/api/ccc-admin', requireAuth, async (req, res, next) => { const { cccAdminRouter } = await import('./routes/ccc.js'); return cccAdminRouter(req, res, next) })
