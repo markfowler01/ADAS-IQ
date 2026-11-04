@@ -97,10 +97,11 @@ scrubBillingRouter.use(express.json())
 scrubBillingRouter.use((req, res, next) => isOwner(req) ? next() : res.status(403).json({ error: 'Mark only' }))
 
 scrubBillingRouter.get('/config', async (req, res) => {
-  const { stripeFor, listUsers } = await import('./scrubPortal.js')
-  const [cfg, stripe, users] = await Promise.all([readConfig(req), stripeFor(req), listUsers(req)])
+  const { listUsers } = await import('./scrubPortal.js')
+  const { ping } = await import('../services/iqBooks.js')
+  const [cfg, books, users] = await Promise.all([readConfig(req), ping(), listUsers(req)])
   for (const a of cfg.accounts) if (a.type !== 'house') a.signup = signupSteps(a, { users, links: cfg.links, contracts: cfg.contracts || [] })
-  res.json({ ...cfg, users, statuses: ACCOUNT_STATUS, stripe_ready: !!stripe, defaults: { price: DEFAULT_PRICE, trial: DEFAULT_TRIAL }, types: ACCOUNT_TYPES })
+  res.json({ ...cfg, users, statuses: ACCOUNT_STATUS, books, defaults: { price: DEFAULT_PRICE, trial: DEFAULT_TRIAL }, types: ACCOUNT_TYPES })
 })
 
 // Add or change an account. Body: { id?, name, type, price?, trial?, free?, status?, email? }
@@ -110,7 +111,7 @@ scrubBillingRouter.put('/account', async (req, res) => {
   const c = await readConfig(req)
   const id = b.id && b.id !== HOUSE_ID ? String(b.id) : `acct_${Date.now().toString(36)}`
   const cur = c.accounts.find(a => a.id === id) || { id, created_at: new Date().toISOString() }
-  Object.assign(cur, { name: String(b.name).trim(), type: b.type, price: b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: !!b.free, status: b.status === 'paused' ? 'paused' : ['pending_review', 'denied', 'past_due'].includes(cur.status) ? cur.status : cur.status === 'pending_card' && !cur.card ? 'pending_card' : 'active', email: String(b.email || cur.email || ''), updated_by: req.user?.email || '', updated_at: new Date().toISOString() })
+  Object.assign(cur, { name: String(b.name).trim(), type: b.type, price: b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: !!b.free, status: b.status === 'paused' ? 'paused' : ['pending_review', 'denied', 'past_due'].includes(cur.status) ? cur.status : 'active', email: String(b.email || cur.email || ''), updated_by: req.user?.email || '', updated_at: new Date().toISOString() })
   if (!c.accounts.includes(cur)) c.accounts.push(cur)
   await writeConfig(req, c)
   res.json({ ok: true, account: cur })
@@ -188,16 +189,6 @@ scrubBillingRouter.post('/signup-open', async (req, res) => {
   res.json({ ok: true, signup_open: c.signup_open })
 })
 
-// ADAS IQ's OWN Stripe secret key (never the Absolute ADAS one). Mark types it; never shown again.
-scrubBillingRouter.post('/stripe-key', async (req, res) => {
-  const key = String(req.body?.key || '').trim()
-  if (!/^(sk|rk)_(live|test)_[A-Za-z0-9]{20,}$/.test(key)) return res.status(400).json({ error: 'That doesn’t look like a Stripe secret key (sk_live_… or sk_test_…)' })
-  const { saveStripeKey } = await import('./scrubPortal.js')
-  await saveStripeKey(req, key)
-  console.log(`[scrub billing] Stripe key set by ${req.user?.email} (${key.slice(0, 8)}…)`)   // never log the key
-  res.json({ ok: true, mode: key.includes('_live_') ? 'live' : 'test' })
-})
-
 // Approve / deny a body-shop link request from the portal.
 // Body: { action: 'approve'|'deny', ccc_shop_id?, move?: true }
 scrubBillingRouter.post('/link-request/:id', async (req, res) => {
@@ -246,9 +237,9 @@ scrubBillingRouter.post('/invoices/close', async (req, res) => {
   const r = await closeMonth(req, month, { by: req.user?.email || 'mark' })
   res.json({ made: r.made || 0, skipped: r.skipped || '', charged: r.charged || null })
 })
-scrubBillingRouter.post('/invoices/charge-all', async (req, res) => { const { chargeAll } = await inv(); res.json(await chargeAll(req, req.body?.month, { by: req.user?.email })) })
+scrubBillingRouter.post('/invoices/push', async (req, res) => { const { pushAll } = await inv(); res.json(await pushAll(req, req.body?.month)) })   // put any missing ones in Books
 scrubBillingRouter.post('/invoices/:number/charge', async (req, res) => { const { chargeInvoice } = await inv(); const r = await chargeInvoice(req, req.params.number, { by: req.user?.email }); r.error ? res.status(400).json(r) : res.json(r) })
-scrubBillingRouter.post('/invoices/:number/mark-paid', async (req, res) => { const { markPaid } = await inv(); const r = await markPaid(req, req.params.number, req.user?.email); r.error ? res.status(400).json(r) : res.json(r) })
+scrubBillingRouter.post('/invoices/:number/mark-paid', async (req, res) => { const { markPaid } = await inv(); const r = await markPaid(req, req.params.number, req.user?.email, { mode: req.body?.mode, reference: req.body?.reference }); r.error ? res.status(400).json(r) : res.json(r) })
 scrubBillingRouter.post('/invoices/:number/void', async (req, res) => { const { voidInvoice } = await inv(); const r = await voidInvoice(req, req.params.number, req.user?.email); r.error ? res.status(400).json(r) : res.json(r) })
 scrubBillingRouter.post('/billing-settings', async (req, res) => {
   const c = await readConfig(req)
@@ -259,7 +250,7 @@ scrubBillingRouter.post('/billing-settings', async (req, res) => {
 
 // ── ✅ Approve / deny a shop (Mark 2026-11-04) ───────────────────────────────
 // Body: { action: 'approve'|'deny', price?, trial?, approve_shops?: true }
-// Approve → 'pending_card' (or 'active' with a card), its body-shop requests
+// Approve → 'active' (shops pay from the Books invoice), its body-shop requests
 // approved too unless another account already has that shop. Deny → logins
 // off, requests denied. Either way a message DRAFT comes back for Mark to send.
 scrubBillingRouter.post('/account/:id/review', async (req, res) => {
@@ -279,7 +270,7 @@ scrubBillingRouter.post('/account/:id/review', async (req, res) => {
   }
   if (req.body?.price != null && req.body.price !== '') a.price = Number(req.body.price)
   if (req.body?.trial != null && req.body.trial !== '') a.trial = Number(req.body.trial)
-  Object.assign(a, { status: a.card ? 'active' : 'pending_card', reviewed_by: by, reviewed_at: now })
+  Object.assign(a, { status: 'active', reviewed_by: by, reviewed_at: now })
   const linked = [], conflicts = []
   if (req.body?.approve_shops !== false) {
     for (const r of (c.link_requests || []).filter(r => r.account_id === a.id && r.status === 'pending')) {
@@ -290,7 +281,7 @@ scrubBillingRouter.post('/account/:id/review', async (req, res) => {
     }
   }
   await writeConfig(req, c)
-  const message = `Hi ${hi},\n\nYou're approved for ADAS IQ. Welcome aboard.\n\nTo finish setting up:\n1. Sign in: ${portal}\n2. Add a card (your first ${a.trial ?? DEFAULT_TRIAL} scrubs are free; after that it's $${Number(a.price ?? DEFAULT_PRICE).toFixed(2)} per VIN).\n3. Have each body shop turn on the ADAS IQ app in CCC Secure Share.${linked.length ? `\n\nBody shops on your account: ${linked.join(', ')}.` : ''}\n\nReports show up in your portal as estimates come in.\n\nADAS IQ`
+  const message = `Hi ${hi},\n\nYou're approved for ADAS IQ. Welcome aboard.\n\nTo finish setting up:\n1. Sign in: ${portal}\n2. Add your billing email and address (your first ${a.trial ?? DEFAULT_TRIAL} scrubs are free; after that it's $${Number(a.price ?? DEFAULT_PRICE).toFixed(2)} per VIN, invoiced monthly).\n3. Have each body shop turn on the ADAS IQ app in CCC Secure Share.${linked.length ? `\n\nBody shops on your account: ${linked.join(', ')}.` : ''}\n\nReports show up in your portal as estimates come in.\n\nADAS IQ`
   res.json({ ok: true, account: a, linked, conflicts, message })
 })
 
@@ -308,12 +299,12 @@ scrubBillingRouter.post('/applicants/:id', async (req, res) => {
   c.lead_decisions = c.lead_decisions || {}
   if (b.action === 'dismiss') { c.lead_decisions[req.params.id] = { action: 'dismissed', by, at: now }; await writeConfig(req, c); return res.json({ ok: true }) }
   if (!b.company || !b.email || !['cal_shop', 'body_shop'].includes(b.type)) return res.status(400).json({ error: 'company, email and type needed' })
-  const a = { id: `acct_${Date.now().toString(36)}`, name: String(b.company).trim().slice(0, 120), type: b.type, price: b.price === '' || b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial === '' || b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: false, status: 'pending_card', email: String(b.email).trim().toLowerCase(), created_at: now, source: 'early-access', reviewed_by: by, reviewed_at: now }
+  const a = { id: `acct_${Date.now().toString(36)}`, name: String(b.company).trim().slice(0, 120), type: b.type, price: b.price === '' || b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial === '' || b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: false, status: 'active', email: String(b.email).trim().toLowerCase(), created_at: now, source: 'early-access', reviewed_by: by, reviewed_at: now }
   c.accounts.push(a)
   c.lead_decisions[req.params.id] = { action: 'invited', account_id: a.id, by, at: now }
   await writeConfig(req, c)
   const { makeInvite } = await import('./scrubPortal.js')
   const inv = await makeInvite(req, a, b.name, b.email)
   const hi = String(b.name || '').split(' ')[0] || 'there'
-  res.json({ ok: true, account: a, link: inv.link, message: `Hi ${hi},\n\nThanks for asking about ADAS IQ. You're in. Set up your login here (the link works for 7 days):\n${inv.link}\n\nYou'll accept the terms, add a card (first ${a.trial} scrubs free, then $${a.price.toFixed(2)} per VIN), and list the body shops you work with.\n\nADAS IQ` })
+  res.json({ ok: true, account: a, link: inv.link, message: `Hi ${hi},\n\nThanks for asking about ADAS IQ. You're in. Set up your login here (the link works for 7 days):\n${inv.link}\n\nYou'll accept the terms, add your billing details (first ${a.trial} scrubs free, then $${a.price.toFixed(2)} per VIN, invoiced monthly), and list the body shops you work with.\n\nADAS IQ` })
 })

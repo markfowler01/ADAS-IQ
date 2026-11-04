@@ -4,16 +4,15 @@
 // and the Absolute ADAS customer portal, and ADAS IQ-branded.
 //
 //   POST /signup   company + login + accept the terms (version stored) → account
-//                  'pending_card'; listed body shops become LINK REQUESTS that
+//                  'pending_review'; listed body shops become LINK REQUESTS that
 //                  Mark approves (so nobody can claim someone else's shop and
 //                  see its estimates). Closed until Mark opens signup.
 //   POST /login    email + password → token (X-IQ-Token)
 //   GET  /me       account, body shops, filters, this month's usage, card
 //   PUT  /filters  🎚 the account's filters, or one of its body shops'
 //   POST /link-request          ask to add a body shop
-//   POST /card  + GET /card/confirm   card on file via Stripe Checkout (setup
-//                  mode — the card never touches our servers). Uses ADAS IQ's
-//                  OWN Stripe key (owner screen), never the Absolute ADAS one.
+//   PUT  /billing  billing email + address (invoices come from ADAS IQ's Zoho
+//                  Books; shops pay there with Zoho Payments)
 //
 // Users live in DurableKV `scrub_portal_users` (password hashes never leave
 // this file); accounts, links, contracts and requests in `scrub_billing_config`.
@@ -26,7 +25,6 @@ import { cleanFilters, describeFilters, signupSteps, DEFAULT_PRICE, DEFAULT_TRIA
 import { TERMS, TERMS_VERSION, TERMS_DRAFT } from '../services/scrubTerms.js'
 
 const USERS = 'scrub_portal_users'
-const STRIPE_KEY = 'scrub_stripe_key'
 const PORTAL_URL = process.env.IQ_PORTAL_URL || 'https://adas-iq-904191467.development.catalystserverless.com/app/?iq=portal'
 
 // ── tokens + passwords ───────────────────────────────────────────────────────
@@ -56,23 +54,6 @@ const cleanEmail = e => String(e || '').trim().toLowerCase()
 
 async function alertMark(text) {
   try { const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js'); await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, text) } catch (e) { console.warn('[iq portal] alert', e.message) }
-}
-
-// ── Stripe (ADAS IQ's own account) ───────────────────────────────────────────
-export async function stripeFor(req) {
-  try {
-    const v = await kvGet(catalyst.initialize(req), STRIPE_KEY)
-    if (!v) return null
-    const { openSecret } = await import('./ccc.js')
-    const key = openSecret(v)
-    if (!key) return null
-    const Stripe = (await import('stripe')).default
-    return new Stripe(key, { apiVersion: '2024-12-18.acacia' })
-  } catch (e) { console.warn('[iq portal] stripe', e.message); return null }
-}
-export async function saveStripeKey(req, key) {
-  const { sealSecret } = await import('./ccc.js')
-  await kvSet(catalyst.initialize(req), STRIPE_KEY, sealSecret(key))
 }
 
 export async function listUsers(req) { return (await readUsers(req)).map(u => ({ ...publicUser(u), account_id: u.account_id, active: u.active !== false, invited: !u.pass })) }
@@ -178,10 +159,9 @@ router.get('/me', auth, async (req, res) => {
   try { const r = await catalyst.initialize(req, { type: 'advancedio' }).zcql().executeZCQLQuery(`SELECT su_key FROM ScrubUsage WHERE su_account_id = '${String(account.id).replace(/'/g, "''")}' AND su_reason = 'free trial' LIMIT 300`); trialUsed = (r || []).length } catch { /* fine */ }
   res.json({
     user: publicUser(user),
-    account: { id: account.id, name: account.name, type: account.type, price: account.price, trial: account.trial, status: account.status, free: !!account.free, filters: account.filters || {}, reads: describeFilters(account.filters || {}), card: account.card ? { brand: account.card.brand, last4: account.card.last4, exp: account.card.exp } : null, free_left: Math.max(0, (account.trial || 0) - trialUsed) },
+    account: { id: account.id, name: account.name, type: account.type, price: account.price, trial: account.trial, status: account.status, free: !!account.free, filters: account.filters || {}, reads: describeFilters(account.filters || {}), email: account.email || '', address: account.address || null, free_left: Math.max(0, (account.trial || 0) - trialUsed) },
     links, requests, contract: contract && { version: contract.version, at: contract.at, name: contract.name },
     month, usage: sum.accounts[0] || { scrubs: 0, billable: 0, filtered: 0, total: 0, shops: [] }, recent: sum.recent,
-    card_ready: !!(await stripeFor(req)),
     signup: signupSteps(account, { users: (await readUsers(req)).map(u => ({ account_id: u.account_id, invited: !u.pass })), links: cfg.links, contracts: cfg.contracts || [] }),
   })
 })
@@ -194,21 +174,9 @@ router.get('/invoices', auth, async (req, res) => {
   for (let k = 0; k < 12; k++) {
     const m = new Date(d.getFullYear(), d.getMonth() - k, 1)
     const doc = await readDoc(req, `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`)
-    for (const i of doc.invoices.filter(x => x.account_id === req.iq.account.id && x.status !== 'void')) out.push({ number: i.number, month: i.month, total: i.total, vins: i.vins, lines: i.lines, status: i.status === 'paid_manual' ? 'paid' : i.status === 'charging' ? 'processing' : i.status, paid_at: i.paid_at || null, fail_reason: i.status === 'failed' ? i.fail_reason : '' })
+    for (const i of doc.invoices.filter(x => x.account_id === req.iq.account.id && x.status !== 'void')) out.push({ number: i.number, month: i.month, total: i.total, vins: i.vins, lines: i.lines, status: i.status === 'paid_manual' ? 'paid' : i.status === 'sent' ? 'open' : i.status, paid_at: i.paid_at || null, pay_url: ['sent', 'failed'].includes(i.status) ? (i.books_url || '') : '', past_due: !!i.past_due_at })
   }
   res.json({ invoices: out })
-})
-
-// Card failed? After updating it, the shop can pay the open invoices now.
-router.post('/invoices/pay-open', auth, async (req, res) => {
-  const { readDoc, chargeInvoice } = await import('./scrubInvoices.js')
-  const d = new Date(); const results = []
-  for (let k = 0; k < 4; k++) {
-    const m = new Date(d.getFullYear(), d.getMonth() - k, 1)
-    const doc = await readDoc(req, `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`)
-    for (const i of doc.invoices.filter(x => x.account_id === req.iq.account.id && x.status === 'failed')) { const r = await chargeInvoice(req, i.number, { by: `portal:${req.iq.user.email}` }); results.push({ number: i.number, ok: !!r.ok, why: r.inv?.fail_reason || r.error || '' }) }
-  }
-  res.json({ results })
 })
 
 router.put('/filters', auth, async (req, res) => {
@@ -236,37 +204,21 @@ router.post('/link-request', auth, async (req, res) => {
   res.json({ ok: true, request: r })
 })
 
-router.post('/card', auth, async (req, res) => {
-  const { account, cfg } = req.iq
-  const stripe = await stripeFor(req)
-  if (!stripe) return res.status(503).json({ error: 'Card setup isn’t switched on yet. We’ll email you when it is.' })
+// Billing email + address (invoices go to this email; the address sets sales tax).
+router.put('/billing', auth, async (req, res) => {
+  const { user, account, cfg } = req.iq
+  if (user.role !== 'admin') return res.status(403).json({ error: 'Only the account admin can change billing' })
+  const b = req.body || {}
+  const email = cleanEmail(b.email || account.email)
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'A good billing email is needed' })
+  const zip = String(b.zip || '').trim()
+  if (!/^\d{5}(-\d{4})?$/.test(zip)) return res.status(400).json({ error: 'ZIP code needed (it sets the sales tax)' })
   const a = cfg.accounts.find(x => x.id === account.id)
-  if (!a.stripe_customer) {
-    const c = await stripe.customers.create({ name: a.name, email: a.email, metadata: { iq_account: a.id } })
-    a.stripe_customer = c.id; await writeConfig(req, cfg)
-  }
-  const s = await stripe.checkout.sessions.create({
-    mode: 'setup', customer: a.stripe_customer, payment_method_types: ['card'],
-    success_url: `${PORTAL_URL}&card=done&sid={CHECKOUT_SESSION_ID}`, cancel_url: `${PORTAL_URL}&card=cancel`,
-    metadata: { iq_account: a.id },
-  })
-  res.json({ ok: true, url: s.url })
-})
-
-router.get('/card/confirm', auth, async (req, res) => {
-  const { account, cfg } = req.iq
-  const stripe = await stripeFor(req)
-  if (!stripe) return res.status(503).json({ error: 'Card setup isn’t switched on yet' })
-  const s = await stripe.checkout.sessions.retrieve(String(req.query.sid || ''), { expand: ['setup_intent.payment_method'] })
-  if (s.metadata?.iq_account !== account.id || s.status !== 'complete') return res.status(400).json({ error: 'That card setup didn’t finish' })
-  const pm = s.setup_intent?.payment_method
-  const a = cfg.accounts.find(x => x.id === account.id)
-  a.card = { brand: pm?.card?.brand || 'card', last4: pm?.card?.last4 || '', exp: pm?.card ? `${pm.card.exp_month}/${String(pm.card.exp_year).slice(-2)}` : '', pm: pm?.id || '', at: new Date().toISOString() }
-  if (a.status === 'pending_card') a.status = 'active'
-  await stripe.customers.update(a.stripe_customer, { invoice_settings: { default_payment_method: pm?.id } }).catch(() => {})
+  a.email = email
+  a.address = { street: String(b.street || '').slice(0, 120), city: String(b.city || '').slice(0, 60), state: String(b.state || '').slice(0, 2).toUpperCase(), zip }
+  a.books_contact_id = a.books_contact_id || ''
   await writeConfig(req, cfg)
-  await alertMark(`💳 *ADAS IQ card on file* · ${a.name} · ${a.card.brand} …${a.card.last4}`)
-  res.json({ ok: true, card: { brand: a.card.brand, last4: a.card.last4, exp: a.card.exp } })
+  res.json({ ok: true, email: a.email, address: a.address })
 })
 
 export default router

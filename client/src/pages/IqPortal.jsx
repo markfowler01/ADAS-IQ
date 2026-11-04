@@ -1,6 +1,6 @@
 // 🧑‍🔧 ADAS IQ shop portal (Mark 2026-11-04, phase 2). /app/?iq=portal
 // Calibration shops and body shops that pay for CCC scrubs: sign up (or accept
-// an invite), accept the terms, put a card on file, see this month's scrubs,
+// an invite), accept the terms, add billing details, see this month's scrubs,
 // list their body shops and set 🎚 scrub filters. ADAS IQ brand only: no
 // Absolute ADAS name, people, region or phone on this screen.
 import { useEffect, useState } from 'react'
@@ -124,20 +124,16 @@ function Filters({ title, note, filters, onSave }) {
 const Reads = ({ r }) => r?.length ? <span style={{ fontSize: 12, color: C.purple, fontWeight: 700 }}>🎚 {r.join(' · ')}</span> : <span style={{ fontSize: 12, color: '#555' }}>🎚 no filters: every estimate is scrubbed</span>
 
 
-function Invoices({ onPaid }) {
-  const [list, setList] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState('')
+function Invoices() {
+  const [list, setList] = useState(null), [msg] = useState('')
   const load = () => api('/invoices').then(d => setList(d.invoices)).catch(() => setList([]))
   useEffect(() => { load() }, [])
-  const failed = (list || []).filter(i => i.status === 'failed')
-  const payNow = async () => { setBusy(true); setMsg(''); try { const d = await api('/invoices/pay-open', 'POST'); const bad = d.results.filter(r => !r.ok); setMsg(bad.length ? `Still didn’t go through: ${bad.map(b => b.why).join(', ')}` : 'Paid. Thanks! Scrubbing is on.'); load(); onPaid() } catch (e) { setMsg(e.message) } finally { setBusy(false) } }
-  const pill = s => ({ paid: [C.green, '✅ Paid'], failed: ['#ef4444', '❌ Card failed'], processing: ['#3b82f6', '⏳ Processing'], draft: ['#6b7280', '🧾 Card charged soon'] })[s] || ['#6b7280', s]
+  const open = (list || []).filter(i => i.pay_url)
+  const pill = s => ({ paid: [C.green, '✅ Paid'], open: ['#f59e0b', '🧾 Open'], failed: ['#ef4444', '❌ Card failed'] })[s] || ['#6b7280', s]
   return (
     <div style={{ ...card, display: 'grid', gap: 6 }}>
       <div style={{ fontWeight: 800 }}>🧾 Invoices</div>
-      {failed.length > 0 && <div style={{ backgroundColor: '#3b0d0d', borderRadius: 10, padding: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 13, color: '#fca5a5' }}>A card payment didn’t go through. Update the card above, then pay here.</div>
-        <button style={btn()} disabled={busy} onClick={payNow}>{busy ? 'Paying…' : `Pay ${money(failed.reduce((t, i) => t + i.total, 0))} now`}</button>
-      </div>}
+      {open.length > 0 && <div style={{ backgroundColor: '#2a2006', borderRadius: 10, padding: 10, fontSize: 13, color: '#fcd34d' }}>🧾 {open.length} open invoice{open.length === 1 ? '' : 's'} · {money(open.reduce((t, i) => t + i.total, 0))}. Tap one below to pay by card or bank.</div>}
       {msg && <div style={{ fontSize: 13, color: C.muted }}>{msg}</div>}
       {list && !list.length && <div style={{ color: C.muted, fontSize: 13 }}>No invoices yet. You’re billed on the 1st for the month before.</div>}
       {(list || []).map(i => { const [c, l] = pill(i.status); return (
@@ -147,8 +143,39 @@ function Invoices({ onPaid }) {
             <b>{money(i.total)}</b>
           </summary>
           <div style={{ display: 'grid', gap: 3, marginTop: 6, fontSize: 12, color: '#ccc' }}>{i.lines.map(x => <div key={x.text} style={{ display: 'flex', justifyContent: 'space-between' }}><span>{x.text}</span><b>{money(x.amount)}</b></div>)}</div>
+          {i.pay_url && <a href={i.pay_url} target="_blank" rel="noreferrer" style={{ ...btn(), display: 'inline-block', marginTop: 8, textDecoration: 'none' }}>Pay {money(i.total)}</a>}
         </details>
       ) })}
+    </div>
+  )
+}
+
+
+function Billing({ a, isAdmin, onSaved }) {
+  const ad = a.address || {}
+  const [f, setF] = useState({ email: a.email || '', street: ad.street || '', city: ad.city || '', state: ad.state || 'WA', zip: ad.zip || '' })
+  const [open, setOpen] = useState(!ad.zip), [busy, setBusy] = useState(false), [err, setErr] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const save = async () => { setBusy(true); setErr(''); try { await api('/billing', 'PUT', f); setOpen(false); onSaved() } catch (e) { setErr(e.message) } finally { setBusy(false) } }
+  if (!open) return (
+    <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <div style={{ fontSize: 14 }}>🧾 Invoices go to <b>{a.email}</b> on the 1st · {[ad.city, ad.state, ad.zip].filter(Boolean).join(' ')}<div style={{ color: C.muted, fontSize: 12 }}>Pay by card or bank from the invoice.</div></div>
+      {isAdmin && <button style={ghost} onClick={() => setOpen(true)}>Edit</button>}
+    </div>
+  )
+  return (
+    <div style={{ ...card, borderColor: C.orange, display: 'grid', gap: 8 }}>
+      <div style={{ fontWeight: 800 }}>🧾 Billing details</div>
+      <div style={{ color: C.muted, fontSize: 13 }}>We invoice monthly for the month before. Your address sets the sales tax.</div>
+      <input style={inp} placeholder="Billing email" value={f.email} onChange={e => set('email', e.target.value)} disabled={!isAdmin} />
+      <input style={inp} placeholder="Street" value={f.street} onChange={e => set('street', e.target.value)} disabled={!isAdmin} />
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 8 }}>
+        <input style={inp} placeholder="City" value={f.city} onChange={e => set('city', e.target.value)} disabled={!isAdmin} />
+        <input style={inp} placeholder="State" value={f.state} onChange={e => set('state', e.target.value)} disabled={!isAdmin} />
+        <input style={inp} placeholder="ZIP" value={f.zip} onChange={e => set('zip', e.target.value)} disabled={!isAdmin} />
+      </div>
+      <Err m={err} />
+      {isAdmin && <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>{ad.zip && <button style={ghost} onClick={() => setOpen(false)}>Cancel</button>}<button style={btn()} disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></div>}
     </div>
   )
 }
@@ -159,7 +186,7 @@ function Dashboard({ me, reload, onOut }) {
   const isAdmin = me.user.role === 'admin'
   const saveFilters = (shop_name, filters) => api('/filters', 'PUT', { shop_name, filters }).then(reload)
   const addShop = async () => { setErr(''); try { await api('/link-request', 'POST', { shop_name: shop }); setShop(''); setMsg('Sent. We check it and switch it on, usually the same day.'); reload() } catch (e) { setErr(e.message) } }
-  const card_ = async () => { setBusy('card'); setErr(''); try { const d = await api('/card', 'POST'); window.location.href = d.url } catch (e) { setErr(e.message); setBusy('') } }
+
   const freeLeft = a.free_left || 0
   return (
     <Shell right={<div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13, color: C.muted }}>{me.user.name || me.user.email}<button style={ghost} onClick={onOut}>Sign out</button></div>}>
@@ -178,13 +205,8 @@ function Dashboard({ me, reload, onOut }) {
       <Err m={err} />
       {msg && <div style={{ backgroundColor: '#052e16', color: '#86efac', borderRadius: 10, padding: '8px 12px', fontSize: 13 }}>{msg}</div>}
 
-      {/* Card on file */}
-      {!a.free && (a.card
-        ? <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}><div>💳 <b style={{ textTransform: 'capitalize' }}>{a.card.brand}</b> ending {a.card.last4} · exp {a.card.exp}</div>{isAdmin && <button style={ghost} disabled={busy === 'card'} onClick={card_}>Change card</button>}</div>
-        : <div style={{ ...card, borderColor: C.orange, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div><div style={{ fontWeight: 800 }}>💳 Add a card to keep scrubbing past your free ones</div><div style={{ color: C.muted, fontSize: 13 }}>Billed monthly for the month before. The card is stored by Stripe, never by us.</div></div>
-            {isAdmin && (me.card_ready ? <button style={btn()} disabled={busy === 'card'} onClick={card_}>{busy === 'card' ? 'Opening…' : 'Add card'}</button> : <span style={{ color: C.muted, fontSize: 13 }}>Card setup opens soon. We’ll email you.</span>)}
-          </div>)}
+      {/* Billing details: invoices come from ADAS IQ's Zoho Books to this email */}
+      {!a.free && <Billing a={a} isAdmin={isAdmin} onSaved={reload} />}
 
       {/* This month */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
@@ -222,7 +244,7 @@ function Dashboard({ me, reload, onOut }) {
         </div>
       )}
 
-      <Invoices onPaid={reload} />
+      <Invoices />
 
       {/* Latest */}
       <div style={{ ...card, display: 'grid', gap: 4 }}>
@@ -250,10 +272,7 @@ export default function IqPortal() {
   useEffect(() => {
     document.title = 'ADAS IQ'
     api('/terms').then(setTerms).catch(() => {})
-    const sid = qs().get('sid')
-    const done = () => { window.history.replaceState({}, '', `${window.location.pathname}?iq=portal`); load() }
-    if (qs().get('card') === 'done' && sid && getTok()) api(`/card/confirm?sid=${encodeURIComponent(sid)}`).catch(() => {}).finally(done)
-    else load()
+    load()
   }, [])
   if (state === 'loading') return <Shell><div style={{ color: C.muted }}>Loading…</div></Shell>
   if (state === 'out' || !me) return <SignIn terms={terms} onIn={load} />

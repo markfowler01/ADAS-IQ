@@ -68,6 +68,7 @@ export function dunningStep(inv, now = Date.now()) {
 
 /** Plain reminder text for Mark to send (he proofreads every outbound message). */
 export function reminderText(inv) {
+  if (inv.status !== 'failed') return `Hi ${inv.account_name} team,\n\nADAS IQ invoice ${inv.number} ($${inv.total.toFixed(2)}, ${inv.vins} VINs scrubbed in ${inv.month}) is still open. You can pay it from the invoice email or your ADAS IQ portal.\n\nScrubbing is paused until it's paid; your estimates are kept.\n\nThanks,\nADAS IQ`
   const days = inv.first_failed_at ? Math.floor((Date.now() - new Date(inv.first_failed_at).getTime()) / DAY) : 0
   return `Hi ${inv.account_name} team,\n\nThe card on file didn't go through for ADAS IQ invoice ${inv.number} ($${inv.total.toFixed(2)}, ${inv.vins} VINs scrubbed in ${inv.month}).${inv.fail_reason ? ` The bank said: ${inv.fail_reason}.` : ''}\n\nYou can update the card in your ADAS IQ portal and we'll run it again.${days < PAST_DUE_DAY ? ` Scrubbing pauses on day ${PAST_DUE_DAY} if it's still open.` : ' Scrubbing is paused until it\'s paid; your estimates are kept.'}\n\nThanks,\nADAS IQ`
 }

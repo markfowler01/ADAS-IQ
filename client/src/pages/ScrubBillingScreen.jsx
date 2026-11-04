@@ -151,11 +151,11 @@ function LinkEditor({ init, accounts, onClose, onSaved }) {
 }
 
 
-// 🧑‍🔧 Phase 2: the ADAS IQ shop portal — signup switch, ADAS IQ's own Stripe key,
+// 🧑‍🔧 Phase 2: the ADAS IQ shop portal — signup switch, ADAS IQ Books status,
 // body-shop requests to approve, and the portal link.
 const PORTAL_LINK = `${window.location.origin}${window.location.pathname}?iq=portal`
 function PortalPanel({ cfg, onChange }) {
-  const [key, setKey] = useState(''), [busy, setBusy] = useState(''), [msg, setMsg] = useState(''), [err, setErr] = useState('')
+  const [busy, setBusy] = useState(''), [msg, setMsg] = useState(''), [err, setErr] = useState('')
   const reqs = (cfg.link_requests || []).filter(r => r.status === 'pending')
   const acctName = id => cfg.accounts.find(a => a.id === id)?.name || id
   const run = async (tag, fn) => { setBusy(tag); setErr(''); setMsg(''); try { await fn() } catch (e) { setErr(e.message) } finally { setBusy('') } }
@@ -180,9 +180,8 @@ function PortalPanel({ cfg, onChange }) {
         </button>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        {cfg.stripe_ready ? <Pill bg={GREEN}>💳 CARDS ON · ADAS IQ Stripe key set</Pill> : <Pill bg={ORANGE}>💳 CARDS OFF · needs ADAS IQ’s own Stripe key</Pill>}
-        <input type="password" autoComplete="off" name="iq-stripe" className="rounded-lg px-3 py-1.5 text-sm border flex-1 min-w-[200px]" style={{ borderColor: '#e0dbd6' }} placeholder={cfg.stripe_ready ? 'Replace key (sk_live_… / sk_test_…)' : 'Paste ADAS IQ Stripe secret key'} value={key} onChange={e => setKey(e.target.value)} />
-        <button className="text-xs font-extrabold rounded-xl px-3 py-1.5" style={{ backgroundColor: INK, color: 'white' }} disabled={!key || busy === 'key'} onClick={() => run('key', async () => { const d = await call('/stripe-key', 'POST', { key }); setKey(''); setMsg(`✓ Stripe key saved (${d.mode} mode). It won’t be shown again.`); onChange() })}>Save key</button>
+        {cfg.books?.ok ? <Pill bg={GREEN}>📒 ADAS IQ BOOKS CONNECTED · {cfg.books.name}</Pill> : <Pill bg="#b91c1c">📒 CAN’T REACH ADAS IQ BOOKS{cfg.books?.error ? ` · ${cfg.books.error}` : ''}</Pill>}
+        <span className="text-[11px]" style={{ color: '#888' }}>Invoices go into ADAS IQ’s Zoho Books on the 1st. Card auto-charge turns on with Zoho Payments.</span>
       </div>
       {reqs.length > 0 && (
         <div className="grid gap-1.5">
@@ -231,8 +230,8 @@ function InviteEditor({ acct, onClose }) {
 
 // 🧾 Phase 3: invoices for the month on the picker. Built on the 1st by the app
 // (or the Build button); charged when Mark presses Charge, or by itself once
-// auto-charge is on. Stripe emails the receipt from ADAS IQ's account.
-const INV_PILL = { draft: ['#6b7280', '📝 DRAFT · not charged'], charging: ['#2563eb', '⏳ CHARGING'], paid: [GREEN, '✅ PAID'], paid_manual: [GREEN, '✅ PAID (outside Stripe)'], failed: ['#b91c1c', '❌ CARD FAILED'], void: ['#9ca3af', '🚫 VOID'] }
+// they go into ADAS IQ's Zoho Books (org 945498731); paid there = paid here.
+const INV_PILL = { draft: ['#6b7280', '📝 BUILT · not in Books yet'], sent: ['#2563eb', '📒 IN BOOKS · waiting for payment'], paid: [GREEN, '✅ PAID'], paid_manual: [GREEN, '✅ PAID (outside Stripe)'], failed: ['#b91c1c', '❌ CARD FAILED'], void: ['#9ca3af', '🚫 VOID'] }
 function InvoicesPanel({ month, onChange }) {
   const [d, setD] = useState(null), [busy, setBusy] = useState(''), [err, setErr] = useState(''), [open, setOpen] = useState('')
   const load = () => call(`/invoices?month=${month}`).then(setD).catch(e => setErr(e.message))
@@ -250,12 +249,7 @@ function InvoicesPanel({ month, onChange }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <div className="font-extrabold" style={{ color: INK }}>🧾 Invoices for {month}</div>
-          <div className="text-xs" style={{ color: '#888' }}>The app builds these on the 1st (after 2 AM PT) from the scrubs above. Failed cards retry on day 3 and day 7, then new estimates are held.</div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {d && (d.auto_charge ? <Pill bg={GREEN}>⚡ AUTO-CHARGE ON</Pill> : <Pill bg="#6b7280">✋ AUTO-CHARGE OFF · you press Charge</Pill>)}
-          {d && <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} disabled={busy === 'auto'}
-            onClick={() => run('auto', () => call('/billing-settings', 'POST', { auto_charge: !d.auto_charge }), d.auto_charge ? null : 'Turn on auto-charge? From now on the app charges every shop’s card on the 1st and retries failed cards by itself.')}>{d.auto_charge ? 'Turn off' : 'Turn on'}</button>}
+          <div className="text-xs" style={{ color: '#888' }}>The app builds these on the 1st (after 2 AM PT) and puts them in ADAS IQ’s Zoho Books. Paid in Books = paid here, by itself. Unpaid 30 days → new estimates are held.</div>
         </div>
       </div>
       {!d?.invoices?.length && (
@@ -266,8 +260,8 @@ function InvoicesPanel({ month, onChange }) {
       )}
       {drafts.length > 0 && (
         <button className="text-sm font-extrabold rounded-xl px-4 py-2 justify-self-start" style={{ backgroundColor: ORANGE, color: 'white' }} disabled={busy === 'all'}
-          onClick={() => run('all', () => call('/invoices/charge-all', 'POST', { month }), `Charge ${drafts.length} card${drafts.length === 1 ? '' : 's'} a total of ${money(draftTotal)} now?`)}>
-          {busy === 'all' ? 'Charging…' : `💳 Charge all ${drafts.length} drafts · ${money(draftTotal)}`}
+          onClick={() => run('all', () => call('/invoices/push', 'POST', { month }))}>
+          {busy === 'all' ? 'Sending to Books…' : `📒 Put ${drafts.length} in Books · ${money(draftTotal)}`}
         </button>
       )}
       <div className="grid gap-1.5">
@@ -278,13 +272,13 @@ function InvoicesPanel({ month, onChange }) {
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <button className="text-left min-w-0" onClick={() => setOpen(open === i.number ? '' : i.number)}>
                   <div className="text-sm font-extrabold">{i.account_name} <span className="font-normal text-xs" style={{ color: '#888' }}>· {i.number} · {i.vins} VINs{i.filtered_count ? ` · ${i.filtered_count} filtered free` : ''}</span></div>
-                  <div className="mt-0.5"><Pill bg={bg}>{label}</Pill>{i.fail_reason && i.status === 'failed' ? <span className="text-[11px] ml-2" style={{ color: '#b91c1c' }}>{i.fail_reason} · try {i.tries}</span> : null}{i.past_due_at ? <span className="ml-2"><Pill bg="#7f1d1d">⛔ PAST DUE · estimates held</Pill></span> : null}</div>
+                  <div className="mt-0.5"><Pill bg={bg}>{label}</Pill>{i.books_error ? <span className="text-[11px] ml-2" style={{ color: '#b91c1c' }}>⚠️ Books: {i.books_error}</span> : null}{i.past_due_at ? <span className="ml-2"><Pill bg="#7f1d1d">⛔ PAST DUE · estimates held</Pill></span> : null}</div>
                 </button>
                 <div className="flex items-center gap-1.5">
                   <span className="text-lg font-extrabold" style={{ color: i.status.startsWith('paid') ? GREEN : INK }}>{money(i.total)}</span>
-                  {['draft', 'failed'].includes(i.status) && <button className="text-[11px] font-extrabold rounded-full px-2.5 py-1" style={{ backgroundColor: ORANGE, color: 'white' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/charge`, 'POST'), `Charge ${i.account_name} ${money(i.total)} now?`)}>{busy === i.number ? '…' : '💳 Charge'}</button>}
-                  {['draft', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/mark-paid`, 'POST'), `Mark ${i.number} paid outside Stripe (check / ACH)?`)}>Paid other way</button>}
-                  {['draft', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/void`, 'POST'), `Void ${i.number}? The shop won’t be charged for it.`)}>Void</button>}
+                  {i.books_invoice_id && <a className="text-[11px] font-extrabold rounded-full px-2.5 py-1" style={{ backgroundColor: '#2563eb', color: 'white' }} href={`https://books.zoho.com/app/945498731#/invoices/${i.books_invoice_id}`} target="_blank" rel="noreferrer">📒 Books</a>}
+                  {['draft', 'sent', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/mark-paid`, 'POST'), `Record ${i.number} as paid by check / ACH? It goes into Books as a payment.`)}>Paid by check</button>}
+                  {['draft', 'sent', 'failed'].includes(i.status) && <button className="text-[11px] font-bold rounded-full px-2 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === i.number} onClick={() => run(i.number, () => call(`/invoices/${i.number}/void`, 'POST'), `Void ${i.number}? It’s voided in Books too and the shop won’t owe it.`)}>Void</button>}
                 </div>
               </div>
               {open === i.number && (
@@ -478,7 +472,7 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
                     </div>
                   </div>
                   {a.type !== 'house' && <SignupSteps s={a.signup} status={a.status} statuses={cfg.statuses} />}
-                  {a.type !== 'house' && <div className="text-[11px] mt-1 font-semibold" style={{ color: a.card ? GREEN : '#b45309' }}>{a.card ? `💳 ${a.card.brand} …${a.card.last4}` : a.status === 'pending_card' ? '💳 no card yet (signed up, on free scrubs)' : '💳 no card on file'}</div>}
+                  {a.type !== 'house' && <div className="text-[11px] mt-1 font-semibold" style={{ color: a.address?.zip ? GREEN : '#b45309' }}>{a.address?.zip ? `📒 bills to ${a.email} · ${a.address.city || ''} ${a.address.state || ''} ${a.address.zip}` : '📒 no billing address yet'}</div>}
                   {a.type !== 'house' && a.trial ? <div className="text-[11px] mt-1" style={{ color: '#888' }}>First {a.trial} scrubs free{a.email ? ` · bills to ${a.email}` : ''}</div> : null}
                   <div className="mt-3 grid gap-1">
                     <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#999' }}>Body shops{a.type === 'house' ? ' (plus every shop not linked anywhere)' : ''}</div>

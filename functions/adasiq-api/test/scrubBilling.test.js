@@ -100,7 +100,7 @@ test('✅ signup steps: a new signup waits for approval; fully signed up = all s
   const a = { id: 'a1', type: 'cal_shop', status: 'pending_review' }
   const s = signupSteps(a, { users: [{ account_id: 'a1' }], contracts: [{ account_id: 'a1' }] })
   assert.deepEqual(s.steps.filter(x => x.done).map(x => x.key), ['login', 'terms'])
-  const full = signupSteps({ ...a, status: 'active', card: { last4: '4242' }, first_scrub_at: 'x' }, { users: [{ account_id: 'a1' }], contracts: [{ account_id: 'a1' }], links: [{ account_id: 'a1' }] })
+  const full = signupSteps({ ...a, status: 'active', email: 'a@b.co', address: { zip: '98101' }, first_scrub_at: 'x' }, { users: [{ account_id: 'a1' }], contracts: [{ account_id: 'a1' }], links: [{ account_id: 'a1' }] })
   assert.equal(full.complete, true)
   assert.equal(signupSteps({ ...a, status: 'active' }, { users: [{ account_id: 'a1', invited: true }] }).steps[0].done, false)   // invite not accepted yet
 })

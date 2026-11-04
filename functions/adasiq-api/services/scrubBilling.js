@@ -170,7 +170,7 @@ export function describeFilters(f = {}) {
 // deny people, get them fully signed up"). Every account walks the same five
 // steps; the owner screen and the shop portal show the same list.
 export const ACCOUNT_STATUS = {
-  pending_review: '🕓 Waiting for your OK', pending_card: '💳 Approved · needs a card', active: '✅ Active',
+  pending_review: '🕓 Waiting for your OK', pending_card: '✅ Approved', active: '✅ Active',
   past_due: '⛔ Past due', paused: '⏸ Paused', denied: '🚫 Denied',
 }
 export function signupSteps(account, { users = [], links = [], contracts = [] } = {}) {
@@ -179,7 +179,7 @@ export function signupSteps(account, { users = [], links = [], contracts = [] } 
     ['login', 'Login set up', users.some(u => u.account_id === id && !u.invited)],
     ['terms', 'Terms accepted', contracts.some(c => c.account_id === id)],
     ['approved', 'Approved by ADAS IQ', !['pending_review', 'denied'].includes(account?.status)],
-    ['card', 'Card on file', !!account?.card || !!account?.free],
+    ['billing', 'Billing email + address', !!account?.free || (!!account?.email && !!account?.address?.zip)],
     ['shops', account?.type === 'cal_shop' ? 'Body shops linked' : 'Shop linked', links.some(l => l.account_id === id)],
     ['ccc', 'First CCC estimate received', !!account?.first_scrub_at],
   ].map(([key, label, done]) => ({ key, label, done }))
