@@ -9,7 +9,7 @@
 import catalyst from 'zcatalyst-sdk-node'
 import express from 'express'
 import { kvGet, kvSet } from '../services/durableKV.js'
-import { resolveAccount, chargeFor, rollup, houseAccount, HOUSE_ID, DEFAULT_PRICE, DEFAULT_TRIAL, ACCOUNT_TYPES } from '../services/scrubBilling.js'
+import { resolveAccount, chargeFor, rollup, houseAccount, HOUSE_ID, DEFAULT_PRICE, DEFAULT_TRIAL, ACCOUNT_TYPES, cleanFilters, mergeFilters, passesFilters, describeFilters } from '../services/scrubBilling.js'
 
 const CFG = 'scrub_billing_config'
 const TABLE = 'ScrubUsage'
@@ -32,7 +32,20 @@ const fromRow = r => ({ key: r.su_key, month: r.su_month, account_id: r.su_accou
  * billing hiccup must not stop a car from being scrubbed.
  * est = parseBms() output; ref = `${documentId}#${verCode}${version}`.
  */
-export async function recordCccUsage(req, est, { scrubId = '', ref = '' } = {}) {
+/**
+ * 🎚 Before any AI spend: does this estimate pass its account's + body shop's
+ * filters? Never throws; a config hiccup means "scrub it" (a car is never lost).
+ */
+export async function checkCccFilters(req, est) {
+  try {
+    const cfg = await readConfig(req)
+    const who = resolveAccount(est, cfg)
+    const f = mergeFilters(who.account.filters, who.link?.filters)
+    return { ...passesFilters(est, f), account: who.account.name, filters: describeFilters(f) }
+  } catch (e) { console.warn('[scrub filters] skipped:', e.message); return { ok: true, why: '' } }
+}
+
+export async function recordCccUsage(req, est, { scrubId = '', ref = '', filtered = '' } = {}) {
   try {
     const key = `ccc:${ref || `${est.vin}|${est.ro}|${est.version}`}`.slice(0, 200)
     const zcql = catalyst.initialize(req, { type: 'advancedio' }).zcql()
@@ -46,7 +59,7 @@ export async function recordCccUsage(req, est, { scrubId = '', ref = '' } = {}) 
       const trial = await zcql.executeZCQLQuery(`SELECT su_key, su_account_id, su_reason FROM ${TABLE} WHERE su_account_id = '${esc(who.account.id)}' AND su_reason = 'free trial' LIMIT 200`)
       history = [...(rows || []), ...(trial || [])].map(x => fromRow(x[TABLE]))
     }
-    const c = chargeFor(est, who, history)
+    const c = filtered ? { price: 0, billable: false, reason: `filtered: ${filtered}` } : chargeFor(est, who, history)
     const at = new Date().toISOString()
     await catalyst.initialize(req, { type: 'advancedio' }).datastore().table(TABLE).insertRow({
       su_key: key, su_month: at.slice(0, 7), su_account_id: who.account.id, su_account_name: String(who.account.name || '').slice(0, 200),
@@ -129,3 +142,25 @@ scrubBillingRouter.get('/summary', async (req, res) => {
     .filter(s => !cfg.links.find(l => l.shop_name.toLowerCase() === s.toLowerCase()))
   res.json({ month, scrubs: rows.length, billable: rows.filter(r => r.billable).length, total: Math.round(rows.reduce((t, r) => t + (r.billable ? r.price : 0), 0) * 100) / 100, accounts, unlinked })
 })
+
+// 🎚 Set filters on an account (all its body shops) or on one body shop.
+// Body: { account_id } or { shop_name }, plus filters: { min_year, max_year,
+// makes_only, makes_skip, insurers_only, insurers_skip, locked_only, skip_supplements }.
+// An empty filters object clears them. Phase 2's shop portal calls the same
+// rules for a shop's own login.
+scrubBillingRouter.put('/filters', async (req, res) => {
+  const b = req.body || {}
+  const c = await readConfig(req)
+  const target = b.account_id ? c.accounts.find(a => a.id === b.account_id)
+    : b.shop_name ? c.links.find(l => l.shop_name.toLowerCase() === String(b.shop_name).trim().toLowerCase()) : null
+  if (!target) return res.status(404).json({ error: 'no such account or linked body shop' })
+  const f = cleanFilters(b.filters || {})
+  target.filters = f
+  target.filters_by = req.user?.email || ''; target.filters_at = new Date().toISOString()
+  await writeConfig(req, c)
+  res.json({ ok: true, filters: f, reads: describeFilters(f) })
+})
+
+// Try an estimate against the filters without scrubbing anything.
+// Body: { shop, shopId, year, make, insurer, status, verCode }
+scrubBillingRouter.post('/filters/test', async (req, res) => res.json(await checkCccFilters(req, req.body || {})))

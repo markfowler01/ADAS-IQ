@@ -65,6 +65,14 @@ export async function scrubCccItem(req, item) {
   const xml = Buffer.from(buffer).toString('utf8')
   const e = parseBms(xml)
   if (!e.lines.length) throw new Error('no damage lines in the BMS message')
+  // 🎚 The shop's own filters (e.g. nothing older than 2013): skipped cars cost no AI and aren't charged.
+  const { checkCccFilters, recordCccUsage } = await import('../routes/scrubBilling.js')
+  const gate = await checkCccFilters(req, e)
+  if (!gate.ok) {
+    await recordCccUsage(req, e, { ref: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, filtered: gate.why })
+    console.log(`[ccc scrub] 🎚 filtered · ${e.shop} · ${[e.year, e.make, e.model].join(' ')} · RO ${e.ro} · ${gate.why}`)
+    return { ok: true, filtered: true, why: gate.why, shop: e.shop, ro: e.ro }
+  }
   const text = bmsToText(e)
   const t0 = Date.now()
   const meta = { shop: e.shop, ro_number: e.ro, claim: e.claim, insurer: e.insurer, vin: e.vin, year: e.year, make: e.make, model: e.model }
@@ -107,7 +115,7 @@ export async function scrubCccItem(req, item) {
   const { saveScrub } = await import('./scrubStore.js')
   const saved = await saveScrub(req, { data, source: 'ccc', by: 'CCC Secure Share', sourceSystem: 'CCC', sourceRef: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, file: { id: item.file, name: item.name }, status: how === 'full' ? 'ok' : how.split(':')[0] })
   // 💳 Count it for billing (Absolute ADAS shops are never charged). Never blocks the scrub.
-  try { const { recordCccUsage } = await import('../routes/scrubBilling.js'); await recordCccUsage(req, e, { scrubId: saved?.id || '', ref: `${e.documentId}#${e.verCode || 'EM'}${e.version}` }) } catch { /* fine */ }
+  try { await recordCccUsage(req, e, { scrubId: saved?.id || '', ref: `${e.documentId}#${e.verCode || 'EM'}${e.version}` }) } catch { /* fine */ }
   if (sigKey && saved?.id) { try { await cfgWrite(req, sigKey, prev?.row, { sig, scrubId: saved.id, ver: `${e.verCode || 'EM'}${e.version}`, at: new Date().toISOString() }) } catch { /* fine */ } }
   try { const { flush } = await import('./spend.js'); await flush(req) } catch { /* fine */ }
   const req_ = (data.calibrations || []).filter(c => c.enabled === true).map(c => c.calibration_name)

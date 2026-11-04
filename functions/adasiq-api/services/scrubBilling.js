@@ -89,3 +89,78 @@ export function rollup(rows, accounts = []) {
     .map(b => ({ ...b, total: Math.round(b.total * 100) / 100, shops: [...b.shops.values()].map(s => ({ ...s, total: Math.round(s.total * 100) / 100 })).sort((x, y) => y.scrubs - x.scrubs) }))
     .sort((x, y) => y.total - x.total || y.scrubs - x.scrubs)
 }
+
+// ── 🎚 Scrub filters (Mark 2026-11-04: "nothing older than 2013 model year",
+// and every collision shop and ADAS cal shop sets up its own). An estimate
+// that doesn't pass is NOT scrubbed (no AI spend) and NOT charged; it's still
+// written to the ledger as "filtered" so nobody wonders where a car went.
+//
+// Filters live on the account (a cal shop's rules for all its body shops) and
+// on each body-shop link (that one shop's own rules). Both apply — the
+// stricter one wins.
+export const FILTER_KEYS = ['min_year', 'max_year', 'makes_only', 'makes_skip', 'insurers_only', 'insurers_skip', 'locked_only', 'skip_supplements']
+
+const list = v => (Array.isArray(v) ? v : String(v || '').split(','))
+  .map(s => String(s).trim()).filter(Boolean)
+const yr = v => { const n = parseInt(v, 10); return n >= 1980 && n <= 2100 ? n : null }
+
+/** Clean whatever a screen sent into a filter object (unknown keys dropped). */
+export function cleanFilters(f = {}) {
+  const out = {}
+  if (yr(f.min_year)) out.min_year = yr(f.min_year)
+  if (yr(f.max_year)) out.max_year = yr(f.max_year)
+  for (const k of ['makes_only', 'makes_skip', 'insurers_only', 'insurers_skip']) { const l = list(f[k]); if (l.length) out[k] = l }
+  if (f.locked_only === true || f.locked_only === 'true') out.locked_only = true
+  if (f.skip_supplements === true || f.skip_supplements === 'true') out.skip_supplements = true
+  return out
+}
+
+/** Account rules + body-shop rules → one set. Stricter wins. */
+export function mergeFilters(a = {}, b = {}) {
+  a = cleanFilters(a); b = cleanFilters(b)
+  const out = {}
+  const nums = (k, pick) => { const v = [a[k], b[k]].filter(x => x != null); if (v.length) out[k] = pick(...v) }
+  nums('min_year', Math.max); nums('max_year', Math.min)
+  for (const k of ['makes_skip', 'insurers_skip']) { const u = [...new Set([...(a[k] || []), ...(b[k] || [])])]; if (u.length) out[k] = u }
+  for (const k of ['makes_only', 'insurers_only']) {
+    if (a[k] && b[k]) out[k] = a[k].filter(x => b[k].some(y => y.toLowerCase() === x.toLowerCase()))
+    else if (a[k] || b[k]) out[k] = a[k] || b[k]
+  }
+  if (a.locked_only || b.locked_only) out.locked_only = true
+  if (a.skip_supplements || b.skip_supplements) out.skip_supplements = true
+  return out
+}
+
+const has = (l, v) => {
+  const s = String(v || '').toLowerCase()
+  return !!s && l.some(x => { const t = x.toLowerCase(); return s === t || s.includes(t) || t.includes(s) })
+}
+
+/** Does this estimate get scrubbed? → { ok, why } */
+export function passesFilters(est, f = {}) {
+  const y = yr(est?.year)
+  if (f.min_year && y && y < f.min_year) return { ok: false, why: `${y} is older than ${f.min_year}` }
+  if (f.max_year && y && y > f.max_year) return { ok: false, why: `${y} is newer than ${f.max_year}` }
+  if (f.makes_only?.length && !has(f.makes_only, est?.make)) return { ok: false, why: `${est?.make || 'unknown make'} isn't on the makes list` }
+  if (f.makes_skip?.length && has(f.makes_skip, est?.make)) return { ok: false, why: `${est?.make} is a skipped make` }
+  if (f.insurers_only?.length && !has(f.insurers_only, est?.insurer)) return { ok: false, why: `${est?.insurer || 'no insurer'} isn't on the insurer list` }
+  if (f.insurers_skip?.length && has(f.insurers_skip, est?.insurer)) return { ok: false, why: `${est?.insurer} is a skipped insurer` }
+  if (f.locked_only && est?.status !== 'C') return { ok: false, why: 'not locked yet (locked estimates only)' }
+  if (f.skip_supplements && est?.verCode === 'SV') return { ok: false, why: 'supplements are skipped' }
+  return { ok: true, why: '' }
+}
+
+/** Plain-English list for the screen: ["2013 and newer", "skip Tesla"]. */
+export function describeFilters(f = {}) {
+  const out = []
+  if (f.min_year && f.max_year) out.push(`${f.min_year}–${f.max_year} only`)
+  else if (f.min_year) out.push(`${f.min_year} and newer`)
+  else if (f.max_year) out.push(`${f.max_year} and older`)
+  if (f.makes_only?.length) out.push(`only ${f.makes_only.join(', ')}`)
+  if (f.makes_skip?.length) out.push(`skip ${f.makes_skip.join(', ')}`)
+  if (f.insurers_only?.length) out.push(`only ${f.insurers_only.join(', ')} claims`)
+  if (f.insurers_skip?.length) out.push(`skip ${f.insurers_skip.join(', ')} claims`)
+  if (f.locked_only) out.push('locked estimates only')
+  if (f.skip_supplements) out.push('no supplements')
+  return out
+}

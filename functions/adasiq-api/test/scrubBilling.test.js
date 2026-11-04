@@ -65,3 +65,32 @@ test('roll-up per account with body shops under it', () => {
   assert.equal(a.total, 5); assert.equal(a.billable, 2); assert.equal(a.scrubs, 3); assert.equal(a.shops[0].shop, 'Joe')
   assert.equal(h.total, 0)
 })
+
+import { cleanFilters, mergeFilters, passesFilters, describeFilters } from '../services/scrubBilling.js'
+
+test('🎚 nothing older than 2013', () => {
+  const f = cleanFilters({ min_year: '2013' })
+  assert.equal(passesFilters({ year: '2012' }, f).ok, false)
+  assert.equal(passesFilters({ year: '2013' }, f).ok, true)
+  assert.equal(passesFilters({ year: '' }, f).ok, true)          // no year → still scrubbed, never silently dropped
+  assert.deepEqual(describeFilters(f), ['2013 and newer'])
+})
+
+test('🎚 cal shop + body shop rules: stricter wins', () => {
+  const m = mergeFilters({ min_year: 2013, makes_skip: 'Tesla' }, { min_year: 2016, makes_skip: ['Rivian'], locked_only: true })
+  assert.equal(m.min_year, 2016)
+  assert.deepEqual(m.makes_skip, ['Tesla', 'Rivian'])
+  assert.equal(passesFilters({ year: 2020, make: 'TESLA', status: 'C' }, m).ok, false)
+  assert.equal(passesFilters({ year: 2020, make: 'Ford', status: 'E' }, m).why, 'not locked yet (locked estimates only)')
+  assert.equal(passesFilters({ year: 2020, make: 'Ford', status: 'C' }, m).ok, true)
+})
+
+test('🎚 makes / insurers only, supplements, junk dropped', () => {
+  const f = cleanFilters({ makes_only: 'Honda, Toyota', insurers_skip: 'GEICO', skip_supplements: true, color: 'red', min_year: 'abc' })
+  assert.deepEqual(Object.keys(f).sort(), ['insurers_skip', 'makes_only', 'skip_supplements'])
+  assert.equal(passesFilters({ make: 'Toyota', insurer: 'State Farm' }, f).ok, true)
+  assert.equal(passesFilters({ make: 'Ford' }, f).ok, false)
+  assert.equal(passesFilters({ make: 'Honda', insurer: 'GEICO General' }, f).ok, false)
+  assert.equal(passesFilters({ make: 'Honda', verCode: 'SV' }, f).ok, false)
+  assert.equal(passesFilters({ make: 'Honda' }, {}).ok, true)
+})
