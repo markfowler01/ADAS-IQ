@@ -106,6 +106,8 @@ export async function scrubCccItem(req, item) {
   data.vehicle = [data.year, data.make, data.model].filter(Boolean).join(' ')
   const { saveScrub } = await import('./scrubStore.js')
   const saved = await saveScrub(req, { data, source: 'ccc', by: 'CCC Secure Share', sourceSystem: 'CCC', sourceRef: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, file: { id: item.file, name: item.name }, status: how === 'full' ? 'ok' : how.split(':')[0] })
+  // 💳 Count it for billing (Absolute ADAS shops are never charged). Never blocks the scrub.
+  try { const { recordCccUsage } = await import('../routes/scrubBilling.js'); await recordCccUsage(req, e, { scrubId: saved?.id || '', ref: `${e.documentId}#${e.verCode || 'EM'}${e.version}` }) } catch { /* fine */ }
   if (sigKey && saved?.id) { try { await cfgWrite(req, sigKey, prev?.row, { sig, scrubId: saved.id, ver: `${e.verCode || 'EM'}${e.version}`, at: new Date().toISOString() }) } catch { /* fine */ } }
   try { const { flush } = await import('./spend.js'); await flush(req) } catch { /* fine */ }
   const req_ = (data.calibrations || []).filter(c => c.enabled === true).map(c => c.calibration_name)

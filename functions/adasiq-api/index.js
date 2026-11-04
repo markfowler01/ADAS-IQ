@@ -417,6 +417,7 @@ app.use('/api/jobs', requireAuth, requireStaff, billItRouter)   // 💸 Bill it 
 app.use('/api/tech-todos', requireAuth, techTodosRouter)
 app.use('/api/push', requireAuth, pushRouter)
 app.use('/api/item-map', requireAuth, requireStaff, itemMapRouter)
+app.use('/api/scrub-billing', requireAuth, async (req, res, next) => { const { scrubBillingRouter } = await import('./routes/scrubBilling.js'); return scrubBillingRouter(req, res, next) })
 app.use('/api/ccc-admin', requireAuth, async (req, res, next) => { const { cccAdminRouter } = await import('./routes/ccc.js'); return cccAdminRouter(req, res, next) })
 app.use('/api/shop-quotes', requireAuth, shopQuotesRouter)
 
