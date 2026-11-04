@@ -100,7 +100,7 @@ scrubBillingRouter.get('/config', async (req, res) => {
   const { listUsers } = await import('./scrubPortal.js')
   const { ping } = await import('../services/iqBooks.js')
   const pre = await readConfig(req)
-  const which = pre.iq_books?.org === 'iq' ? 'iq' : 'absolute'
+  const which = pre.iq_books?.org === 'absolute' ? 'absolute' : 'iq'
   const [cfg, books, users] = await Promise.all([Promise.resolve(pre), ping(which), listUsers(req)])
   books.which = which
   for (const a of cfg.accounts) if (a.type !== 'house') a.signup = signupSteps(a, { users, links: cfg.links, contracts: cfg.contracts || [] })

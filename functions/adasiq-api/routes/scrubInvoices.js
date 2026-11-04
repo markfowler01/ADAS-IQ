@@ -73,7 +73,7 @@ export async function pushAll(req, month) {
   if (!todo.length) return out
   const cfg = await readConfig(req)
   cfg.iq_books = cfg.iq_books || {}
-  const which = cfg.iq_books.org === 'iq' ? 'iq' : 'absolute'   // Mark 2026-11-04: Absolute ADAS's Books for now
+  const which = cfg.iq_books.org === 'absolute' ? 'absolute' : 'iq'   // Mark 2026-11-04: ADAS IQ's Books, paid through Absolute ADAS's Zoho Payments for now
   cfg.iq_books.items = cfg.iq_books.items || {}
   let cfgDirty = false
   try { const id = await B.ensureItem(which, cfg.iq_books.items[which]); if (id !== cfg.iq_books.items[which]) { cfg.iq_books.items[which] = id; cfgDirty = true } } catch (e) { console.warn('[iq books] item', B.booksError(e)); return { ...out, failed: todo.length } }

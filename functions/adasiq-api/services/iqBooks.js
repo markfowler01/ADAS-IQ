@@ -1,8 +1,9 @@
 // 📒 The Zoho Books the scrub invoices go into (Mark 2026-11-04). Two choices:
-//   'absolute' → Absolute ADAS's Books (ZOHO_ORGANIZATION_ID). Mark: "for now
-//                run this through absolute adas" — no ADAS IQ LLC/customers yet.
-//   'iq'       → ADAS IQ's own Books, org 945498731, once the LLC + its own
-//                Zoho Payments exist. Flip on the Scrub Billing screen.
+//   'iq'       → ADAS IQ's own Books, org 945498731 (DEFAULT). Mark: use the
+//                ADAS IQ Books, but connect Absolute ADAS's existing Zoho
+//                Payments account to it for now (no ADAS IQ LLC/bank yet).
+//   'absolute' → Absolute ADAS's Books (ZOHO_ORGANIZATION_ID), a fallback.
+// Flip on the Scrub Billing screen.
 // Item + customer ids are kept PER org, so flipping never mixes the two. Mark picked Zoho as the
 // whole system, so the monthly scrub invoices land here: the app builds them
 // (routes/scrubInvoices.js), this file creates the customer + invoice in Books,
