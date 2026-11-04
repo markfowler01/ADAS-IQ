@@ -72,12 +72,15 @@ export default function CustomersView({ modeToggle, onOpenShop, onMarkCustomer, 
     <main className="flex-1 flex flex-col" style={{ padding: '1.25rem', minHeight: 0 }}>
       <div className="flex items-center gap-3 flex-wrap mb-4">
         <h1 className="text-xl font-bold" style={{ color: INK }}>Customers</h1>{modeToggle}
+        {/* 🔎 Search up top (Mark 2026-11-04: it sat below the totals and both panels, out of sight). */}
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔎 Search customers…" className="rounded-lg px-3 py-2 text-sm flex-1" style={{ border: `1.5px solid ${LINE}`, outline: 'none', minWidth: 220, maxWidth: 420, backgroundColor: 'white' }} />
+        {q && <button onClick={() => setQ('')} className="text-xs font-semibold px-2.5 py-1.5 rounded-full" style={{ backgroundColor: 'white', color: '#555', border: `1px solid ${LINE}` }}>✕ Clear</button>}
       </div>
       {err && <p className="text-sm mb-3" style={{ color: RED }}>{err}</p>}
       {!d && !err && <p className="text-sm" style={{ color: MUTED }}>Reading every customer's invoices…</p>}
       {d && (<>
-        {/* Four numbers, all ink — only overdue money gets a color */}
-        <div className="flex flex-wrap gap-x-10 gap-y-3 mb-5 pb-5" style={{ borderBottom: `1px solid ${LINE}` }}>
+        {/* Four numbers, all ink — only overdue money gets a color. Hidden while searching. */}
+        {!q && <div className="flex flex-wrap gap-x-10 gap-y-3 mb-5 pb-5" style={{ borderBottom: `1px solid ${LINE}` }}>
           {[['Customers', all.length, INK], ['Billed this month', fmt(totals.month), INK], ['Open AR', fmt(totals.open), INK], ['Overdue', fmt(totals.overdue), totals.overdue ? RED : MUTED]].map(([l, v, c]) => (
             <div key={l}><div className="text-2xl font-extrabold tabular-nums leading-none" style={{ color: c }}>{v}</div><div className="text-[11px] uppercase tracking-wider mt-1.5" style={{ color: MUTED }}>{l}</div></div>
           ))}
@@ -89,8 +92,8 @@ export default function CustomersView({ modeToggle, onOpenShop, onMarkCustomer, 
               <div className="text-[11px] uppercase tracking-wider mt-1.5" style={{ color: MUTED }}>📅 Busiest call days · share of sales · {rhythm.company.top.map(t => `${t.day} ${fmt(t.dollars)}`).join(' · ')}</div>
             </div>
           )}
-        </div>
-        {rhythm && ((rhythm.quiet || []).length > 0 || rhythm.company?.cash) && (
+        </div>}
+        {!q && rhythm && ((rhythm.quiet || []).length > 0 || rhythm.company?.cash) && (
           <div className="grid gap-3 mb-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
             {(rhythm.quiet || []).length > 0 && (
               <div className="rounded-xl p-3" style={{ backgroundColor: '#fff7ed', border: '1px solid #fed7aa' }}>
@@ -118,7 +121,6 @@ export default function CustomersView({ modeToggle, onOpenShop, onMarkCustomer, 
           </div>
         )}
         <div className="flex items-center gap-2 flex-wrap mb-5">
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search customers…" className="rounded-lg px-3 py-2 text-sm" style={{ border: `1.5px solid ${LINE}`, outline: 'none', minWidth: 220, backgroundColor: 'white' }} />
           {[['', 'All', all.length], ['Not marked as a customer', 'Not marked', countOf('Not marked as a customer') + countOf('Not in the CRM')], ['Needs attention', 'Needs attention', countOf('Needs attention')], ['Owes us', 'Owes us', countOf('Owes us')], ['Healthy', 'Healthy', countOf('Healthy')]].map(([k, l, n]) => (
             <button key={k} onClick={() => setOnly(k)} className="text-xs font-semibold px-3 py-1.5 rounded-full" style={only === k ? { backgroundColor: INK, color: 'white' } : { backgroundColor: 'white', color: '#555', border: `1px solid ${LINE}` }}>{l} <span style={{ opacity: .6 }}>{n}</span></button>
           ))}
