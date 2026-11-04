@@ -36,6 +36,7 @@ import SmsLog from './pages/SmsLog'
 import TipsScreen from './pages/TipsScreen'
 import ScrubLibraryScreen from './pages/ScrubLibraryScreen'
 import CccSettingsScreen from './pages/CccSettingsScreen'
+import ScrubBillingScreen from './pages/ScrubBillingScreen'
 import RecruitingScreen from './pages/RecruitingScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
@@ -449,6 +450,7 @@ function MainApp() {
         <TipsScreen {...navProps} />
       )}
       {screen === 'ccc' && <CccSettingsScreen {...navProps} />}
+      {screen === 'scrub-billing' && <ScrubBillingScreen {...navProps} />}
       {screen === 'scrubs' && (
         <ScrubLibraryScreen {...navProps} onExtracted={handleExtracted} />
       )}

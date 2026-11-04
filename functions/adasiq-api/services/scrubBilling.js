@@ -76,9 +76,10 @@ export function rollup(rows, accounts = []) {
   const out = new Map()
   for (const r of rows) {
     const a = accounts.find(x => x.id === r.account_id) || { id: r.account_id, name: r.account_name || r.account_id, type: 'unknown' }
-    if (!out.has(a.id)) out.set(a.id, { account_id: a.id, name: a.name, type: a.type, scrubs: 0, billable: 0, total: 0, shops: new Map() })
+    if (!out.has(a.id)) out.set(a.id, { account_id: a.id, name: a.name, type: a.type, scrubs: 0, billable: 0, filtered: 0, total: 0, shops: new Map() })
     const b = out.get(a.id)
     b.scrubs++
+    if (String(r.reason || '').startsWith('filtered')) b.filtered++
     if (r.billable) { b.billable++; b.total += Number(r.price) || 0 }
     const s = r.shop || 'Unknown shop'
     if (!b.shops.has(s)) b.shops.set(s, { shop: s, scrubs: 0, billable: 0, total: 0 })

@@ -140,7 +140,8 @@ scrubBillingRouter.get('/summary', async (req, res) => {
   // Body shops that fell to Absolute ADAS with no link — the list to link when a cal shop signs up.
   const unlinked = [...new Set(rows.filter(r => r.account_id === HOUSE_ID).map(r => r.shop).filter(Boolean))]
     .filter(s => !cfg.links.find(l => l.shop_name.toLowerCase() === s.toLowerCase()))
-  res.json({ month, scrubs: rows.length, billable: rows.filter(r => r.billable).length, total: Math.round(rows.reduce((t, r) => t + (r.billable ? r.price : 0), 0) * 100) / 100, accounts, unlinked })
+  const recent = rows.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 25)
+  res.json({ recent, month, scrubs: rows.length, billable: rows.filter(r => r.billable).length, filtered: rows.filter(r => String(r.reason || '').startsWith('filtered')).length, total: Math.round(rows.reduce((t, r) => t + (r.billable ? r.price : 0), 0) * 100) / 100, accounts, unlinked })
 })
 
 // 🎚 Set filters on an account (all its body shops) or on one body shop.
