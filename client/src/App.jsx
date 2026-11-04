@@ -37,6 +37,7 @@ import TipsScreen from './pages/TipsScreen'
 import ScrubLibraryScreen from './pages/ScrubLibraryScreen'
 import CccSettingsScreen from './pages/CccSettingsScreen'
 import ScrubBillingScreen from './pages/ScrubBillingScreen'
+import IqPortal from './pages/IqPortal'
 import RecruitingScreen from './pages/RecruitingScreen'
 import SchedulePage from './pages/SchedulePage'
 import ItemMapScreen from './pages/ItemMapScreen'
@@ -87,6 +88,7 @@ function getTopLevelRoute() {
   if (/\/estimate\/?$/.test(path) || /[?&]estimate=/.test(window.location.search || '')) return 'estimate'
   if (/[?&]esign=/.test(window.location.search || '')) return 'esign'
   if (/[?&]onboard=/.test(window.location.search || '')) return 'onboard'
+  if (/[?&]iq=portal/.test(window.location.search || '')) return 'iq'   // ADAS IQ shop portal (scrub billing phase 2)
   if (path.endsWith('/nps') || path.includes('/app/nps')) return 'nps'
   return 'app'
 }
@@ -100,6 +102,7 @@ export default function App() {
   if (topRoute === 'esign') return <EsignScreen />
   if (topRoute === 'onboard') return <OnboardingScreen />
   if (topRoute === 'nps') return <NPSScreen />
+  if (topRoute === 'iq') return <IqPortal />
   return <MainApp />
 }
 

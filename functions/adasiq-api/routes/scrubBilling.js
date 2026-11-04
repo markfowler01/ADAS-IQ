@@ -23,7 +23,7 @@ export async function readConfig(req) {
   if (!c.accounts.find(a => a.id === HOUSE_ID)) c.accounts.unshift(houseAccount())
   return c
 }
-const writeConfig = (req, c) => kvSet(catalyst.initialize(req), CFG, JSON.stringify(c))
+export const writeConfig = (req, c) => kvSet(catalyst.initialize(req), CFG, JSON.stringify(c))
 
 const fromRow = r => ({ key: r.su_key, month: r.su_month, account_id: r.su_account_id, account_name: r.su_account_name, shop: r.su_shop, shop_id: r.su_shop_id, vin: r.su_vin, ro: r.su_ro, version: r.su_version, scrub_id: r.su_scrub_id, price: Number(r.su_price) || 0, billable: r.su_billable === true || r.su_billable === 'true', reason: r.su_reason, at: r.su_at, invoice_id: r.su_invoice_id || '' })
 
@@ -75,11 +75,12 @@ export async function recordCccUsage(req, est, { scrubId = '', ref = '', filtere
   }
 }
 
-async function monthRows(req, month) {
+async function monthRows(req, month, accountId = '') {
   const zcql = catalyst.initialize(req, { type: 'advancedio' }).zcql()
   const out = []
+  const and = accountId ? ` AND su_account_id = '${esc(accountId)}'` : ''
   for (let off = 0; off < 20000; off += 300) {   // ZCQL pages of 300
-    const r = await zcql.executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE su_month = '${esc(month)}' LIMIT ${off}, 300`)
+    const r = await zcql.executeZCQLQuery(`SELECT * FROM ${TABLE} WHERE su_month = '${esc(month)}'${and} LIMIT ${off}, 300`)
     out.push(...(r || []).map(x => fromRow(x[TABLE])))
     if (!r || r.length < 300) break
   }
@@ -91,7 +92,9 @@ scrubBillingRouter.use(express.json())
 scrubBillingRouter.use((req, res, next) => isOwner(req) ? next() : res.status(403).json({ error: 'Mark only' }))
 
 scrubBillingRouter.get('/config', async (req, res) => {
-  res.json({ ...(await readConfig(req)), defaults: { price: DEFAULT_PRICE, trial: DEFAULT_TRIAL }, types: ACCOUNT_TYPES })
+  const { stripeFor, listUsers } = await import('./scrubPortal.js')
+  const [cfg, stripe, users] = await Promise.all([readConfig(req), stripeFor(req), listUsers(req)])
+  res.json({ ...cfg, users, stripe_ready: !!stripe, defaults: { price: DEFAULT_PRICE, trial: DEFAULT_TRIAL }, types: ACCOUNT_TYPES })
 })
 
 // Add or change an account. Body: { id?, name, type, price?, trial?, free?, status?, email? }
@@ -101,7 +104,7 @@ scrubBillingRouter.put('/account', async (req, res) => {
   const c = await readConfig(req)
   const id = b.id && b.id !== HOUSE_ID ? String(b.id) : `acct_${Date.now().toString(36)}`
   const cur = c.accounts.find(a => a.id === id) || { id, created_at: new Date().toISOString() }
-  Object.assign(cur, { name: String(b.name).trim(), type: b.type, price: b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: !!b.free, status: b.status === 'paused' ? 'paused' : 'active', email: String(b.email || cur.email || ''), updated_by: req.user?.email || '', updated_at: new Date().toISOString() })
+  Object.assign(cur, { name: String(b.name).trim(), type: b.type, price: b.price == null ? DEFAULT_PRICE : Number(b.price), trial: b.trial == null ? DEFAULT_TRIAL : Number(b.trial), free: !!b.free, status: b.status === 'paused' ? 'paused' : cur.status === 'pending_card' && !cur.card ? 'pending_card' : 'active', email: String(b.email || cur.email || ''), updated_by: req.user?.email || '', updated_at: new Date().toISOString() })
   if (!c.accounts.includes(cur)) c.accounts.push(cur)
   await writeConfig(req, c)
   res.json({ ok: true, account: cur })
@@ -133,15 +136,19 @@ scrubBillingRouter.delete('/link', async (req, res) => {
 })
 
 // The month at a glance: every account, its body shops, scrubs and dollars.
-scrubBillingRouter.get('/summary', async (req, res) => {
-  const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : new Date().toISOString().slice(0, 7)
-  const [cfg, rows] = await Promise.all([readConfig(req), monthRows(req, month)])
+/** One month: totals, per-account roll-up, latest rows. accountId = just that account (the shop portal). */
+export async function monthSummary(req, month, { accountId = '' } = {}) {
+  const [cfg, rows] = await Promise.all([readConfig(req), monthRows(req, month, accountId)])
   const accounts = rollup(rows, cfg.accounts)
   // Body shops that fell to Absolute ADAS with no link — the list to link when a cal shop signs up.
   const unlinked = [...new Set(rows.filter(r => r.account_id === HOUSE_ID).map(r => r.shop).filter(Boolean))]
     .filter(s => !cfg.links.find(l => l.shop_name.toLowerCase() === s.toLowerCase()))
   const recent = rows.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 25)
-  res.json({ recent, month, scrubs: rows.length, billable: rows.filter(r => r.billable).length, filtered: rows.filter(r => String(r.reason || '').startsWith('filtered')).length, total: Math.round(rows.reduce((t, r) => t + (r.billable ? r.price : 0), 0) * 100) / 100, accounts, unlinked })
+  return { recent, month, scrubs: rows.length, billable: rows.filter(r => r.billable).length, filtered: rows.filter(r => String(r.reason || '').startsWith('filtered')).length, total: Math.round(rows.reduce((t, r) => t + (r.billable ? r.price : 0), 0) * 100) / 100, accounts, unlinked }
+}
+scrubBillingRouter.get('/summary', async (req, res) => {
+  const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : new Date().toISOString().slice(0, 7)
+  res.json(await monthSummary(req, month))
 })
 
 // 🎚 Set filters on an account (all its body shops) or on one body shop.
@@ -165,3 +172,53 @@ scrubBillingRouter.put('/filters', async (req, res) => {
 // Try an estimate against the filters without scrubbing anything.
 // Body: { shop, shopId, year, make, insurer, status, verCode }
 scrubBillingRouter.post('/filters/test', async (req, res) => res.json(await checkCccFilters(req, req.body || {})))
+
+// ── Phase 2 owner controls ───────────────────────────────────────────────────
+// Open / close public signup (closed until the terms are reviewed).
+scrubBillingRouter.post('/signup-open', async (req, res) => {
+  const c = await readConfig(req)
+  c.signup_open = req.body?.open === true
+  await writeConfig(req, c)
+  res.json({ ok: true, signup_open: c.signup_open })
+})
+
+// ADAS IQ's OWN Stripe secret key (never the Absolute ADAS one). Mark types it; never shown again.
+scrubBillingRouter.post('/stripe-key', async (req, res) => {
+  const key = String(req.body?.key || '').trim()
+  if (!/^(sk|rk)_(live|test)_[A-Za-z0-9]{20,}$/.test(key)) return res.status(400).json({ error: 'That doesn’t look like a Stripe secret key (sk_live_… or sk_test_…)' })
+  const { saveStripeKey } = await import('./scrubPortal.js')
+  await saveStripeKey(req, key)
+  console.log(`[scrub billing] Stripe key set by ${req.user?.email} (${key.slice(0, 8)}…)`)   // never log the key
+  res.json({ ok: true, mode: key.includes('_live_') ? 'live' : 'test' })
+})
+
+// Approve / deny a body-shop link request from the portal.
+// Body: { action: 'approve'|'deny', ccc_shop_id?, move?: true }
+scrubBillingRouter.post('/link-request/:id', async (req, res) => {
+  const c = await readConfig(req)
+  const r = (c.link_requests || []).find(x => x.id === req.params.id)
+  if (!r) return res.status(404).json({ error: 'No such request' })
+  if (req.body?.action === 'deny') { r.status = 'denied'; r.decided_by = req.user?.email || ''; await writeConfig(req, c); return res.json({ ok: true, request: r }) }
+  const sid = String(req.body?.ccc_shop_id || r.ccc_shop_id || '').trim()
+  const cur = c.links.find(l => (sid && l.ccc_shop_id === sid) || l.shop_name.toLowerCase() === r.shop_name.toLowerCase())
+  if (cur && cur.account_id !== r.account_id && req.body?.move !== true) {
+    const owner = c.accounts.find(a => a.id === cur.account_id)
+    return res.status(409).json({ error: `${cur.shop_name} already bills to ${owner?.name || cur.account_id}. Approve again with “move” to switch it.`, current: owner?.name })
+  }
+  const link = cur || {}
+  Object.assign(link, { shop_name: r.shop_name, ccc_shop_id: sid || link.ccc_shop_id || '', account_id: r.account_id, price: link.price ?? null, free: cur?.account_id === r.account_id ? !!link.free : false, updated_by: req.user?.email || '', updated_at: new Date().toISOString() })
+  if (!cur) c.links.push(link)
+  Object.assign(r, { status: 'approved', decided_by: req.user?.email || '', decided_at: new Date().toISOString() })
+  await writeConfig(req, c)
+  res.json({ ok: true, link })
+})
+
+// Invite someone to an account's portal login. Returns a set-password link for
+// Mark to send himself (he proofreads every outbound message).
+scrubBillingRouter.post('/invite', async (req, res) => {
+  const c = await readConfig(req)
+  const a = c.accounts.find(x => x.id === req.body?.account_id && x.type !== 'house')
+  if (!a) return res.status(404).json({ error: 'Pick a paying account' })
+  const { makeInvite } = await import('./scrubPortal.js')
+  try { res.json({ ok: true, ...(await makeInvite(req, a, req.body?.name, req.body?.email)) }) } catch (e) { res.status(400).json({ error: e.message }) }
+})

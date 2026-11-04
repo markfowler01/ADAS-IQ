@@ -147,6 +147,84 @@ function LinkEditor({ init, accounts, onClose, onSaved }) {
   )
 }
 
+
+// 🧑‍🔧 Phase 2: the ADAS IQ shop portal — signup switch, ADAS IQ's own Stripe key,
+// body-shop requests to approve, and the portal link.
+const PORTAL_LINK = `${window.location.origin}${window.location.pathname}?iq=portal`
+function PortalPanel({ cfg, onChange }) {
+  const [key, setKey] = useState(''), [busy, setBusy] = useState(''), [msg, setMsg] = useState(''), [err, setErr] = useState('')
+  const reqs = (cfg.link_requests || []).filter(r => r.status === 'pending')
+  const acctName = id => cfg.accounts.find(a => a.id === id)?.name || id
+  const run = async (tag, fn) => { setBusy(tag); setErr(''); setMsg(''); try { await fn() } catch (e) { setErr(e.message) } finally { setBusy('') } }
+  const decide = (r, action, move = false) => run(r.id, async () => {
+    try { await call(`/link-request/${r.id}`, 'POST', { action, move }); onChange() }
+    catch (e) { if (/already bills to/.test(e.message) && window.confirm(`${e.message}\n\nMove it to ${acctName(r.account_id)}?`)) { await call(`/link-request/${r.id}`, 'POST', { action, move: true }); onChange() } else throw e }
+  })
+  return (
+    <div style={box} className="grid gap-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <div className="font-extrabold" style={{ color: INK }}>🧑‍🔧 ADAS IQ shop portal</div>
+          <div className="text-xs" style={{ color: '#888' }}>Where paying shops sign in, add a card, list body shops and set 🎚 filters. ADAS IQ brand only.</div>
+        </div>
+        <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} onClick={() => { try { navigator.clipboard?.writeText(PORTAL_LINK) } catch {} setMsg('Portal link copied.') }}>📋 Copy portal link</button>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        {cfg.signup_open ? <Pill bg={GREEN}>🟢 SIGNUP OPEN · anyone with the link can join</Pill> : <Pill bg="#6b7280">🔒 SIGNUP CLOSED · invite only</Pill>}
+        <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} disabled={busy === 'open'}
+          onClick={() => run('open', async () => { if (!cfg.signup_open && !window.confirm('The terms are still a DRAFT. Open public signup anyway?')) return; await call('/signup-open', 'POST', { open: !cfg.signup_open }); onChange() })}>
+          {cfg.signup_open ? 'Close signup' : 'Open signup'}
+        </button>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        {cfg.stripe_ready ? <Pill bg={GREEN}>💳 CARDS ON · ADAS IQ Stripe key set</Pill> : <Pill bg={ORANGE}>💳 CARDS OFF · needs ADAS IQ’s own Stripe key</Pill>}
+        <input type="password" autoComplete="off" name="iq-stripe" className="rounded-lg px-3 py-1.5 text-sm border flex-1 min-w-[200px]" style={{ borderColor: '#e0dbd6' }} placeholder={cfg.stripe_ready ? 'Replace key (sk_live_… / sk_test_…)' : 'Paste ADAS IQ Stripe secret key'} value={key} onChange={e => setKey(e.target.value)} />
+        <button className="text-xs font-extrabold rounded-xl px-3 py-1.5" style={{ backgroundColor: INK, color: 'white' }} disabled={!key || busy === 'key'} onClick={() => run('key', async () => { const d = await call('/stripe-key', 'POST', { key }); setKey(''); setMsg(`✓ Stripe key saved (${d.mode} mode). It won’t be shown again.`); onChange() })}>Save key</button>
+      </div>
+      {reqs.length > 0 && (
+        <div className="grid gap-1.5">
+          <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#999' }}>🔗 Body shops waiting for your OK ({reqs.length})</div>
+          {reqs.map(r => (
+            <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5" style={{ backgroundColor: '#fff7ed' }}>
+              <div className="text-sm min-w-0"><b>{r.shop_name}</b> <span style={{ color: '#888' }}>→ {acctName(r.account_id)}</span></div>
+              <div className="flex gap-1.5">
+                <button className="text-[11px] font-extrabold rounded-full px-2.5 py-1" style={{ backgroundColor: GREEN, color: 'white' }} disabled={busy === r.id} onClick={() => decide(r, 'approve')}>✓ Approve</button>
+                <button className="text-[11px] font-bold rounded-full px-2.5 py-1" style={{ border: '1px solid #e0dbd6' }} disabled={busy === r.id} onClick={() => decide(r, 'deny')}>✕</button>
+              </div>
+            </div>
+          ))}
+          <div className="text-[11px]" style={{ color: '#888' }}>Approving puts that body shop’s estimates on the account’s bill and in its portal. Only approve shops that really send to them.</div>
+        </div>
+      )}
+      {msg && <div className="text-sm" style={{ color: GREEN }}>{msg}</div>}
+      {err && <div className="text-sm" style={{ color: '#b91c1c' }}>{err}</div>}
+    </div>
+  )
+}
+
+// ✉️ Invite a login for an account → a set-password link Mark sends himself.
+function InviteEditor({ acct, onClose }) {
+  const [f, setF] = useState({ name: '', email: acct?.email || '' }), [link, setLink] = useState(''), [busy, setBusy] = useState(false), [err, setErr] = useState('')
+  const go = async () => { setBusy(true); setErr(''); try { const d = await call('/invite', 'POST', { account_id: acct.id, ...f }); setLink(d.link) } catch (e) { setErr(e.message) } finally { setBusy(false) } }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: 'rgba(0,0,0,.45)' }} onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl p-5 grid gap-3" style={{ backgroundColor: '#fff' }} onClick={e => e.stopPropagation()}>
+        <div className="text-lg font-extrabold" style={{ color: INK }}>✉️ Portal login for {acct.name}</div>
+        {!link ? <>
+          <input className={input} style={{ borderColor: '#e0dbd6' }} placeholder="Their name" value={f.name} onChange={e => setF(x => ({ ...x, name: e.target.value }))} />
+          <input className={input} style={{ borderColor: '#e0dbd6' }} placeholder="Their email" value={f.email} onChange={e => setF(x => ({ ...x, email: e.target.value }))} />
+          {err && <div className="text-sm" style={{ color: '#b91c1c' }}>{err}</div>}
+          <div className="flex gap-2 justify-end"><button className="text-sm font-bold rounded-xl px-3 py-2" style={{ border: '1px solid #e0dbd6' }} onClick={onClose}>Cancel</button><button className="text-sm font-extrabold rounded-xl px-4 py-2" style={{ backgroundColor: ORANGE, color: 'white' }} disabled={busy || !f.email} onClick={go}>{busy ? 'Making…' : 'Make invite link'}</button></div>
+        </> : <>
+          <div className="text-sm" style={{ color: '#555' }}>Send this to {f.name || f.email} yourself. It works for 7 days. They pick a password and accept the terms.</div>
+          <textarea readOnly className={input} style={{ borderColor: '#e0dbd6', minHeight: 90, fontSize: 12 }} value={link} onFocus={e => e.target.select()} />
+          <div className="flex gap-2 justify-end"><button className="text-sm font-extrabold rounded-xl px-4 py-2" style={{ backgroundColor: INK, color: 'white' }} onClick={() => { try { navigator.clipboard?.writeText(link) } catch {} onClose() }}>📋 Copy and close</button></div>
+        </>}
+      </div>
+    </div>
+  )
+}
+
 export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [month, setMonth] = useState(thisMonth())
   const [cfg, setCfg] = useState(null)
@@ -188,6 +266,8 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
           </div>
         )}
 
+        {cfg && <PortalPanel cfg={cfg} onChange={load} />}
+
         {cfg && (
           <div className="grid gap-3 md:grid-cols-2">
             {accounts.map(a => {
@@ -205,6 +285,7 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
                       <div className="text-[11px]" style={{ color: '#888' }}>{u?.scrubs || 0} scrubs · {u?.billable || 0} billable{u?.filtered ? ` · ${u.filtered} filtered` : ''}</div>
                     </div>
                   </div>
+                  {a.type !== 'house' && <div className="text-[11px] mt-1 font-semibold" style={{ color: a.card ? GREEN : '#b45309' }}>{a.card ? `💳 ${a.card.brand} …${a.card.last4}` : a.status === 'pending_card' ? '💳 no card yet (signed up, on free scrubs)' : '💳 no card on file'}</div>}
                   {a.type !== 'house' && a.trial ? <div className="text-[11px] mt-1" style={{ color: '#888' }}>First {a.trial} scrubs free{a.email ? ` · bills to ${a.email}` : ''}</div> : null}
                   <div className="mt-3 grid gap-1">
                     <div className="text-[11px] font-bold uppercase tracking-wide" style={{ color: '#999' }}>Body shops{a.type === 'house' ? ' (plus every shop not linked anywhere)' : ''}</div>
@@ -230,6 +311,7 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
                     <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ backgroundColor: PURPLE, color: 'white' }} onClick={() => setEdit({ kind: 'filters', target: { kind: 'account', id: a.id, filters: a.filters, label: a.name } })}>🎚 Filters</button>
                     {a.type !== 'house' && <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} onClick={() => setEdit({ kind: 'account', acct: a })}>✏️ Edit</button>}
                     <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} onClick={() => setEdit({ kind: 'link', init: { account_id: a.id } })}>🔗 Add body shop</button>
+                    {a.type !== 'house' && <button className="text-xs font-bold rounded-xl px-3 py-1.5" style={{ border: '1px solid #e0dbd6' }} onClick={() => setEdit({ kind: 'invite', acct: a })}>✉️ Login{(cfg.users || []).some(x => x.account_id === a.id) ? ` (${(cfg.users || []).filter(x => x.account_id === a.id).length})` : ''}</button>}
                   </div>
                 </div>
               )
@@ -267,6 +349,7 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
       </div>
       {edit?.kind === 'filters' && <FilterEditor target={edit.target} onClose={() => setEdit(null)} onSaved={saved} />}
       {edit?.kind === 'account' && <AccountEditor acct={edit.acct} onClose={() => setEdit(null)} onSaved={saved} />}
+      {edit?.kind === 'invite' && <InviteEditor acct={edit.acct} onClose={() => { setEdit(null); load() }} />}
       {edit?.kind === 'link' && <LinkEditor init={edit.init} accounts={accounts} onClose={() => setEdit(null)} onSaved={saved} />}
     </div>
   )
