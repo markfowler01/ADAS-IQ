@@ -58,21 +58,13 @@ export function bmsToText(e) {
   return `${head}\n\nLINES:\n${body}`
 }
 
-/** Scrub one queued CCC item (item.file = the saved XML in WorkDrive). Throws on failure (the queue retries). */
-export async function scrubCccItem(req, item) {
-  const { getAccessToken } = await import('./zoho.js'); const { downloadFile } = await import('./workdrive.js')
-  const { buffer } = await downloadFile(item.file, await getAccessToken())
-  const xml = Buffer.from(buffer).toString('utf8')
-  const e = parseBms(xml)
-  if (!e.lines.length) throw new Error('no damage lines in the BMS message')
-  // 🎚 The shop's own filters (e.g. nothing older than 2013): skipped cars cost no AI and aren't charged.
-  const { checkCccFilters, recordCccUsage } = await import('../routes/scrubBilling.js')
-  const gate = await checkCccFilters(req, e)
-  if (!gate.ok) {
-    await recordCccUsage(req, e, { ref: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, filtered: gate.why })
-    console.log(`[ccc scrub] 🎚 filtered · ${e.shop} · ${[e.year, e.make, e.model].join(' ')} · RO ${e.ro} · ${gate.why}`)
-    return { ok: true, filtered: true, why: gate.why, shop: e.shop, ro: e.ro }
-  }
+/**
+ * The scrub itself, nothing filed: BMS estimate → calibration result. Used by
+ * scrubCccItem (below) and by ADAS IQ (routes/iqEngine.js), so both give the
+ * exact same answer. reuse=false skips the "same ADAS lines as last version"
+ * shortcut, which reads this app's own Scrub Library.
+ */
+export async function scrubBmsCore(req, e, { reuse = true } = {}) {
   const text = bmsToText(e)
   const t0 = Date.now()
   const meta = { shop: e.shop, ro_number: e.ro, claim: e.claim, insurer: e.insurer, vin: e.vin, year: e.year, make: e.make, model: e.model }
@@ -86,7 +78,7 @@ export async function scrubCccItem(req, item) {
   if (fast.skip) {
     // ⚡ No line touches anything ADAS lives on — no AI read needed.
     data = noAdasResult(meta); how = 'fast: no ADAS lines'
-  } else if (prev?.value?.sig === sig && prev?.value?.scrubId) {
+  } else if (reuse && prev?.value?.sig === sig && prev?.value?.scrubId) {
     // ⚡ Supplement/re-save with the same ADAS lines as the last version — reuse it.
     try {
       const { getScrub } = await import('./scrubStore.js')
@@ -112,6 +104,25 @@ export async function scrubCccItem(req, item) {
     try { await guardScrub(data, '', { hitsPromise, text }) } catch (err) { console.warn('[ccc scrub] guard skipped:', err.message) }
   }
   data.vehicle = [data.year, data.make, data.model].filter(Boolean).join(' ')
+  return { data, how, sig, sigKey, prev, t0 }
+}
+
+/** Scrub one queued CCC item (item.file = the saved XML in WorkDrive). Throws on failure (the queue retries). */
+export async function scrubCccItem(req, item) {
+  const { getAccessToken } = await import('./zoho.js'); const { downloadFile } = await import('./workdrive.js')
+  const { buffer } = await downloadFile(item.file, await getAccessToken())
+  const xml = Buffer.from(buffer).toString('utf8')
+  const e = parseBms(xml)
+  if (!e.lines.length) throw new Error('no damage lines in the BMS message')
+  // 🎚 The shop's own filters (e.g. nothing older than 2013): skipped cars cost no AI and aren't charged.
+  const { checkCccFilters, recordCccUsage } = await import('../routes/scrubBilling.js')
+  const gate = await checkCccFilters(req, e)
+  if (!gate.ok) {
+    await recordCccUsage(req, e, { ref: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, filtered: gate.why })
+    console.log(`[ccc scrub] 🎚 filtered · ${e.shop} · ${[e.year, e.make, e.model].join(' ')} · RO ${e.ro} · ${gate.why}`)
+    return { ok: true, filtered: true, why: gate.why, shop: e.shop, ro: e.ro }
+  }
+  const { data, how, sig, sigKey, prev, t0 } = await scrubBmsCore(req, e)
   const { saveScrub } = await import('./scrubStore.js')
   const saved = await saveScrub(req, { data, source: 'ccc', by: 'CCC Secure Share', sourceSystem: 'CCC', sourceRef: `${e.documentId}#${e.verCode || 'EM'}${e.version}`, file: { id: item.file, name: item.name }, status: how === 'full' ? 'ok' : how.split(':')[0] })
   // 💳 Count it for billing (Absolute ADAS shops are never charged). Never blocks the scrub.

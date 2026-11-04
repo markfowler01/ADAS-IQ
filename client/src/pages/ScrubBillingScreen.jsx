@@ -411,6 +411,26 @@ function SignupSteps({ s, status, statuses }) {
   )
 }
 
+
+// 🔌 ADAS IQ engine connection: ADAS IQ (its own project) sends estimates to
+// this app's scrubber so its results are exactly the same. Key made in the
+// ADAS IQ owner console → Settings, pasted here once.
+function IqEnginePanel() {
+  const [st, setSt] = useState(null), [key, setKey] = useState(''), [busy, setBusy] = useState(false), [msg, setMsg] = useState('')
+  const load = () => call('/iq-engine').then(setSt).catch(() => setSt({ connected: false }))
+  useEffect(() => { load() }, [])
+  const save = async () => { setBusy(true); setMsg(''); try { await call('/iq-engine', 'POST', { key }); setKey(''); setMsg('✓ Connected.'); load() } catch (e) { setMsg(e.message) } finally { setBusy(false) } }
+  return (
+    <div style={box} className="flex items-center gap-2 flex-wrap">
+      <div className="font-extrabold" style={{ color: INK }}>🔌 ADAS IQ engine</div>
+      {st?.connected ? <Pill bg={GREEN}>✅ CONNECTED · ADAS IQ scrubs run on this scrubber</Pill> : <Pill bg="#6b7280">NOT CONNECTED</Pill>}
+      <input type="password" autoComplete="off" className="rounded-lg px-3 py-1.5 text-sm border flex-1 min-w-[200px]" style={{ borderColor: '#e0dbd6' }} placeholder="Paste the key from ADAS IQ → Settings (iqk_…)" value={key} onChange={e => setKey(e.target.value)} />
+      <button className="text-xs font-extrabold rounded-xl px-3 py-1.5" style={{ backgroundColor: INK, color: 'white' }} disabled={!key || busy} onClick={save}>{busy ? 'Saving…' : 'Connect'}</button>
+      {msg && <span className="text-sm" style={{ color: msg.startsWith('✓') ? GREEN : '#b91c1c' }}>{msg}</span>}
+    </div>
+  )
+}
+
 export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [month, setMonth] = useState(thisMonth())
   const [cfg, setCfg] = useState(null)
@@ -451,6 +471,8 @@ export default function ScrubBillingScreen({ user, onLogout, currentScreen, onNa
             ))}
           </div>
         )}
+
+        <IqEnginePanel />
 
         {cfg && <ReviewPanel cfg={cfg} onChange={load} />}
 

@@ -320,3 +320,13 @@ scrubBillingRouter.post('/books-org', async (req, res) => {
   await writeConfig(req, c)
   res.json({ ok: true, org: which })
 })
+
+// 🔌 ADAS IQ engine key (made in the ADAS IQ owner console, pasted here by Mark).
+scrubBillingRouter.get('/iq-engine', async (req, res) => { const { engineKeySet } = await import('./iqEngine.js'); res.json({ connected: await engineKeySet(req) }) })
+scrubBillingRouter.post('/iq-engine', async (req, res) => {
+  const k = String(req.body?.key || '').trim()
+  if (!/^iqk_[a-f0-9]{48}$/.test(k)) return res.status(400).json({ error: 'Paste the key from the ADAS IQ owner console (starts with iqk_)' })
+  const { saveEngineKey } = await import('./iqEngine.js'); await saveEngineKey(req, k)
+  console.log(`[iq engine] key set by ${req.user?.email}`)   // never the value
+  res.json({ ok: true, connected: true })
+})

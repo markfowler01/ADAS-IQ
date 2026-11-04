@@ -149,6 +149,8 @@ app.all('/api/ccc/estimate', express.text({ type: () => true, limit: '25mb' }), 
 })
 app.all('/api/ccc', (req, res) => res.status(200).json({ ok: true, app: 'Absolute ADAS', webhook: 'POST /estimate' }))
 
+// 🔌 ADAS IQ's scrub engine (signed by ADAS IQ, no login). Before express.json: it reads the raw body for the signature.
+app.use('/api/iq-engine', async (req, res, next) => { const { iqEngineRouter } = await import('./routes/iqEngine.js'); return iqEngineRouter(req, res, next) })
 app.use(express.json({ limit: '25mb' }))
 // Accept text/plain bodies too — public forms on absoluteadas.com send JSON as
 // text/plain to dodge the CORS preflight that Catalyst's gateway swallows.
