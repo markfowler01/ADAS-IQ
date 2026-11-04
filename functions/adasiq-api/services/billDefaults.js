@@ -3,9 +3,12 @@
 // "I want that 15% in there as a default, but I want it to be editable, and
 // also I want to be able to switch the cash off from that menu."
 // "Also State Farm cars default on State Farm or Allstate is 15%."
+// "yes to the 15% overrides the 25% for the state farm and allstate and all
+//  other special insurance pricing." (Mark 2026-11-03)
 //
 //   cash job            → starts at 15%, editable on the job
-//   State Farm/Allstate → starts at 15%, editable on the job
+//   any insurer price list (SF/Allstate/AmFam/GEICO) → starts at 15%, editable,
+//                         even over the shop's own % (a 25% shop still starts at 15)
 //   everything else     → the shop's own % from the CRM (learned as before)
 //
 // The 15% belongs to the car, never the shop: changing it on one of these
@@ -13,8 +16,8 @@
 import { CASH_DISCOUNT_PCT, CASH_MAX_OUT_OF_POCKET, cashCapFor, cashCapLine } from './cashPricing.js'
 
 export const INSURER_DEFAULT_PCT = 15
-// Pricing pools that start at the insurer default (Liberty Mutual etc. ride the AS pool).
-export const INSURER_DEFAULT_POOLS = { SF: 'State Farm', AS: 'Allstate' }
+// Every special insurer price list starts at the insurer default (Liberty Mutual etc. ride the AS pool).
+export const INSURER_DEFAULT_POOLS = { SF: 'State Farm', AS: 'Allstate', AMFAM: 'American Family', GEICO: 'GEICO' }
 
 export const clampPct = v => Math.max(0, Math.min(50, Math.round((Number(v) || 0) * 100) / 100))
 

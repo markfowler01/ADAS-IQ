@@ -473,7 +473,7 @@ router.post('/:id/bill', async (req, res) => {
     // when Kat flips a switch and leaves "remember" on.
     // Remember the discount too (Mark 2026-09-11: "if I set their discount to
     // 25% I want it to remember this") — whenever it differs from the file.
-    // A cash or State Farm/Allstate % belongs to the car — never learned onto the shop.
+    // A cash or insurer-list % belongs to the car — never learned onto the shop.
     const learnPct = !dry && !p.cash_job && p.pct_source !== 'insurer' && (!p.has_discount || Number(p.discount_pct) !== pct)
     const learnType = !dry && !p.cash_job && p.saved_type !== 'body_shop'   // picked the Collision pill → remembered
     const saveRules = (!p.big3?.insurer_rule || req.body?.big3_edited === true) && req.body?.big3_rules && (req.body?.big3_save === true || (!p.big3?.has_rule && req.body?.big3_save !== false))

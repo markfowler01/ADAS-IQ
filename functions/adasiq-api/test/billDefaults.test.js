@@ -14,11 +14,12 @@ const items = [
   { item_id: '7', name: 'SFP - Front Radar', rate: 500 },
 ]
 
-test('cash and SF/Allstate start at 15; others use the shop %', () => {
+test('cash and every insurer price list start at 15 (over the shop %); others use the shop %', () => {
   assert.deepEqual(defaultPct({ cash: true, pool: 'SF', shopPct: 25 }).pct, 15)
   assert.equal(defaultPct({ cash: false, pool: 'SF', shopPct: 25 }).pct, 15)
   assert.equal(defaultPct({ cash: false, pool: 'AS', shopPct: 25 }).source, 'insurer')
-  assert.equal(defaultPct({ cash: false, pool: 'GEICO', shopPct: 25 }).pct, 25)
+  assert.equal(defaultPct({ cash: false, pool: 'GEICO', shopPct: 25 }).pct, 15)
+  assert.equal(defaultPct({ cash: false, pool: 'AMFAM', shopPct: 25 }).source, 'insurer')
   assert.equal(defaultPct({ cash: false, pool: null, shopPct: 20 }).source, 'shop')
   assert.equal(defaultPct({ cash: false, pool: null, shopPct: null }).pct, null)
 })
