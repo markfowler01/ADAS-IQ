@@ -66,7 +66,7 @@ iqEngineRouter.post('/scrub', express.text({ type: '*/*', limit: '30mb' }), asyn
       const buf = Buffer.from(String(b.pdf_b64 || ''), 'base64')
       if (buf.subarray(0, 4).toString() !== '%PDF') throw new Error('not a PDF')
       const { scrubPdfBuffer } = await import('./extract.js')
-      data = await scrubPdfBuffer(req, buf, { learn: false, keep: false, force: true, source: 'adas-iq', by: 'ADAS IQ' })
+      data = await scrubPdfBuffer(req, buf, { learn: false, keep: false, force: true, strictKind: true, source: 'adas-iq', by: 'ADAS IQ' })
     } else {
       const { parseBms, scrubBmsCore } = await import('../services/cccScrub.js')
       const e = parseBms(String(b.xml || ''))
