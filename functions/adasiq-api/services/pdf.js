@@ -26,18 +26,25 @@ const PAGE_H    = 792
 const MARGIN    = 48
 const CONTENT_W = PAGE_W - MARGIN * 2
 
+// 🏷 Brand on the report. Absolute ADAS by default; ADAS IQ asks for its own
+// (routes/iqEngine.js /report-pdf) so its shops get this exact report under the
+// ADAS IQ name, without Absolute's Full Service rules or online-report link.
+const ABSOLUTE_BRAND = { name: 'Absolute ADAS', mark: 'AA', logo: true, title: 'ADAS Calibration & Diagnostic Report', footer1: 'Absolute ADAS   |   Mobile ADAS Calibration & Diagnostics   |   Lake Stevens, WA', footer2: 'Based on OEM position statements and ALLDATA ADAS procedures.  ·  absoluteadas.com' }
+export const ADAS_IQ_BRAND = { name: 'ADAS IQ', mark: 'IQ', logo: false, title: 'Calibration Identification Report', footer1: 'ADAS IQ   |   Calibration identification from the repair estimate', footer2: 'Based on OEM position statements and ALLDATA ADAS procedures.  ·  adas-iq.com' }
+let BRAND = ABSOLUTE_BRAND
+
 function footer(doc) {
   const fy = PAGE_H - 42
   doc.moveTo(MARGIN, fy).lineTo(PAGE_W - MARGIN, fy)
     .strokeColor(GRAY_BORDER).lineWidth(0.5).stroke()
   doc.font('Helvetica-Bold').fontSize(7.5).fillColor(GRAY_DARK)
     .text(
-      'Absolute ADAS   |   Mobile ADAS Calibration & Diagnostics   |   Lake Stevens, WA',
+      BRAND.footer1,
       MARGIN, fy + 8, { width: CONTENT_W, align: 'center' }
     )
   doc.font('Helvetica').fontSize(6.5).fillColor(GRAY_MID)
     .text(
-      'Based on OEM position statements and ALLDATA ADAS procedures.  ·  absoluteadas.com',
+      BRAND.footer2,
       MARGIN, fy + 19, { width: CONTENT_W, align: 'center' }
     )
 }
@@ -45,12 +52,12 @@ function footer(doc) {
 function contHeader(doc) {
   doc.rect(0, 0, PAGE_W, 36).fill(ORANGE)
   doc.roundedRect(MARGIN, 8, 22, 22, 4).fill(WHITE)
-  if (LOGO_BUF) {
+  if (LOGO_BUF && BRAND.logo) {
     doc.image(LOGO_BUF, MARGIN + 3, 11, { fit: [16, 16] })
   } else {
-    doc.font('Helvetica-Bold').fontSize(8).fillColor(ORANGE).text('AA', MARGIN, 14, { width: 22, align: 'center' })
+    doc.font('Helvetica-Bold').fontSize(8).fillColor(ORANGE).text(BRAND.mark, MARGIN, 14, { width: 22, align: 'center' })
   }
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(WHITE).text('Absolute ADAS', MARGIN + 30, 13)
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(WHITE).text(BRAND.name, MARGIN + 30, 13)
   doc.font('Helvetica').fontSize(7.5).fillColor('rgba(255,255,255,0.75)')
     .text('ADAS Calibration & Diagnostic Report — continued', MARGIN + 105, 14)
 }
@@ -82,6 +89,7 @@ const ALLDATA_HOME = 'https://my.alldata.com/'
 // Mark 2026-09-30: paused, then back on ("back to alldata"). false = no block on reports.
 const ALLDATA_ON_REPORTS = true
 export async function generateADASIQPdf(jobData = {}) {
+  if (jobData._brand) return generateBrandedPdf(jobData)
   if (!ALLDATA_ON_REPORTS && !jobData.alldata_url) return buildPdf({ ...jobData, _alldata: null })
   let alldata = jobData.alldata_url ? { url: jobData.alldata_url, exact: true } : null
   if (!alldata) {
@@ -135,11 +143,22 @@ export async function generateADASIQPdf(jobData = {}) {
   try { return await (await import('./oemAttach.js')).appendCitedDocs(globalThis.__catalystReq, report, cited) } catch { return report }
 }
 
+/** ADAS IQ's copy of this report: same builder, its brand, no Absolute-only parts. */
+async function generateBrandedPdf(jobData) {
+  const batteryNote = batteryOperationsNote(jobData.calibrations)
+  let cited = []
+  try { const req = globalThis.__catalystReq; if (req) { const A = await import('./oemAttach.js'); cited = await A.fetchCited(req, await A.citedDocs(req, jobData.calibrations, jobData.make || ''), jobData.calibrations) } } catch (e) { console.warn('[pdf] cited docs:', e.message); cited = [] }
+  const report = await buildPdf({ ...jobData, _cited: cited, _batteryNote: batteryNote, _alldata: ALLDATA_ON_REPORTS ? { url: ALLDATA_HOME, exact: false } : null })
+  if (!cited.length) return report
+  try { return await (await import('./oemAttach.js')).appendCitedDocs(globalThis.__catalystReq, report, cited) } catch { return report }
+}
+
 function buildPdf(jobData) {
+  BRAND = jobData._brand || ABSOLUTE_BRAND   // drawing below is synchronous, so this can't leak into another report
   return new Promise((resolve, reject) => {
     const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links,
       technician, folder_share_url, qr_png, _alldata, _cited = [], vin_equipment, _reportLink = '', _reportQr = null } = jobData
-    const performedBy = technician || 'Absolute ADAS'
+    const performedBy = technician || BRAND.name
 
     const required = (calibrations || []).filter(c => c.enabled && !c._fs)
     const fullSvc  = (calibrations || []).filter(c => c.enabled && c._fs)   // 🧰 Full Service (headlamp aim, TPMS, programming, resets)
@@ -154,13 +173,13 @@ function buildPdf(jobData) {
     // ── PAGE 1 HEADER ─────────────────────────────────────────────────────
     doc.rect(0, 0, PAGE_W, 100).fill(ORANGE)
     doc.roundedRect(MARGIN, 22, 56, 56, 10).fill(WHITE)
-    if (LOGO_BUF) {
+    if (LOGO_BUF && BRAND.logo) {
       doc.image(LOGO_BUF, MARGIN + 8, 30, { fit: [40, 40] })
     } else {
-      doc.font('Helvetica-Bold').fontSize(20).fillColor(ORANGE).text('AA', MARGIN, 40, { width: 56, align: 'center' })
+      doc.font('Helvetica-Bold').fontSize(20).fillColor(ORANGE).text(BRAND.mark, MARGIN, 40, { width: 56, align: 'center' })
     }
-    doc.font('Helvetica-Bold').fontSize(24).fillColor(WHITE).text('Absolute ADAS', MARGIN + 70, 28)
-    doc.font('Helvetica').fontSize(11).fillColor('rgba(255,255,255,0.82)').text('ADAS Calibration & Diagnostic Report', MARGIN + 70, 56)
+    doc.font('Helvetica-Bold').fontSize(24).fillColor(WHITE).text(BRAND.name, MARGIN + 70, 28)
+    doc.font('Helvetica').fontSize(11).fillColor('rgba(255,255,255,0.82)').text(BRAND.title, MARGIN + 70, 56)
 
     const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
     doc.font('Helvetica').fontSize(8).fillColor('rgba(255,255,255,0.65)')
@@ -366,8 +385,8 @@ function buildPdf(jobData) {
       fullSvc.forEach(cal => {
         const m = cal._fs?.mode
         if (m === 'shop') drawCal(cal, true, { pill: 'REQUIRED · SHOP', pillBg: '#78716c', who: 'Performed by the repair facility', whoBg: '#f5f5f4', whoFg: '#57534e' })
-        else if (m === 'we') drawCal(cal, true, { who: 'Performed by Absolute ADAS' })
-        else drawCal(cal, true, { who: 'Available from Absolute ADAS: ask your technician', whoBg: '#dcfce7', whoFg: '#166534' })
+        else if (m === 'we') drawCal(cal, true, { who: `Performed by ${BRAND.name}` })
+        else drawCal(cal, true, { who: `Available from ${BRAND.name}: ask your technician`, whoBg: '#dcfce7', whoFg: '#166534' })
       })
     }
 
@@ -501,7 +520,7 @@ function buildPdf(jobData) {
 
     // Completion line — who did the work, dated.
     doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID)
-      .text(`Work completed by ${performedBy}${performedBy === 'Absolute ADAS' ? '' : ' · Absolute ADAS'} · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+      .text(`${BRAND === ABSOLUTE_BRAND ? 'Work completed by' : 'Prepared by'} ${performedBy}${performedBy === BRAND.name ? '' : ` · ${BRAND.name}`} · ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`,
         MARGIN, y + 4, { width: CONTENT_W })
 
     footer(doc)

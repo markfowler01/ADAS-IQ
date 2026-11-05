@@ -87,3 +87,24 @@ iqEngineRouter.post('/scrub', express.text({ type: '*/*', limit: '30mb' }), asyn
   } catch (e) { console.warn('[iq engine] callback failed (ADAS IQ will resend):', e?.response?.status || e.message) }
   res.json({ ok: out.ok })
 })
+
+// 📄 The report PDF for an ADAS IQ scrub: THIS app's report builder (services/pdf.js),
+// ADAS IQ brand, no Absolute-only parts (Full Service rules, online-report link).
+// Signed like /scrub; answers with the PDF bytes (it builds in a few seconds).
+iqEngineRouter.post('/report-pdf', express.text({ type: '*/*', limit: '5mb' }), async (req, res) => {
+  const raw = typeof req.body === 'string' ? req.body : ''
+  const key = await engineKey(req)
+  if (!verify(key, req, raw)) return res.status(401).json({ error: key ? 'bad signature' : 'ADAS IQ is not connected yet' })
+  let r
+  try { r = JSON.parse(raw) } catch { return res.status(400).json({ error: 'bad json' }) }
+  try {
+    const { generateADASIQPdf, ADAS_IQ_BRAND } = await import('../services/pdf.js')
+    const pdf = await generateADASIQPdf({
+      shop: r.shop, ro_number: r.ro_number, insurer: r.insurer, vin: r.vin, vehicle: r.vehicle, year: r.year, make: r.make, model: r.model,
+      calibrations: r.calibrations || [], document_links: r.document_links || [], vin_equipment: r.vin_equipment,
+      technician: r.prepared_by || '', _brand: ADAS_IQ_BRAND,
+    })
+    res.set('Content-Type', 'application/pdf')
+    res.send(pdf)
+  } catch (e) { console.error('[iq engine] report-pdf', e.message); res.status(500).json({ error: e.message }) }
+})
