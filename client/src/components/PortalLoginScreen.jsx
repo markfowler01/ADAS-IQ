@@ -1,20 +1,40 @@
 import { useState } from 'react'
 import { API_BASE } from '../utils/portal'
-
-const ORANGE = '#CD4419'
+import { BRAND, BrandBar, PublicFooter } from '../lib/brand.jsx'
 
 export default function PortalLoginScreen({ onLoggedIn }) {
+  const [mode, setMode] = useState('password')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [email, setEmail] = useState('')
-  const [status, setStatus] = useState('idle')  // idle, sending, sent, error
+  const [status, setStatus] = useState('idle')
   const [message, setMessage] = useState('')
   const [devLink, setDevLink] = useState('')
+
+  async function login(e) {
+    e.preventDefault()
+    if (!username.trim() || !password) return
+    setStatus('sending'); setMessage('')
+    try {
+      const r = await fetch(`${API_BASE}/api/portal/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
+      })
+      let data = {}
+      try { data = await r.json() } catch { throw new Error('Could not reach the portal. Try again.') }
+      if (!r.ok) throw new Error(data.error || 'Login failed')
+      onLoggedIn(data.token, { ...data.shop, user: data.user })
+    } catch (err) {
+      setStatus('error')
+      setMessage(err.message)
+    }
+  }
 
   async function requestLink(e) {
     e.preventDefault()
     if (!email.trim()) return
-    setStatus('sending')
-    setMessage('')
-    setDevLink('')
+    setStatus('sending'); setMessage(''); setDevLink('')
     try {
       const r = await fetch(`${API_BASE}/api/portal/request-access`, {
         method: 'POST',
@@ -33,81 +53,81 @@ export default function PortalLoginScreen({ onLoggedIn }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4"
-      style={{
-        background: `linear-gradient(135deg, #fff7f5 0%, #fafafa 50%, #ffffff 100%)`,
-      }}>
-      <div className="w-full max-w-md">
-        <div className="rounded-2xl bg-white p-8"
-          style={{
-            border: '1px solid #f0ece8',
-            boxShadow: '0 10px 40px -10px rgba(205, 68, 25, 0.15), 0 4px 20px -8px rgba(0,0,0,0.1)',
-          }}>
-          <div className="text-center mb-6">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl mb-4"
-              style={{ backgroundColor: ORANGE }}>
-              <span className="w-5 h-5 rounded bg-white flex items-center justify-center">
-                <img src={import.meta.env.BASE_URL + 'logo.png'} alt="" className="w-3.5 h-3.5 object-contain" />
-              </span>
-              <span className="text-white font-bold text-sm tracking-wide">ABSOLUTE ADAS</span>
+    <div className="min-h-screen flex flex-col" style={{ backgroundColor: BRAND.cream }}>
+      <BrandBar />
+      <div className="flex-1 flex items-center justify-center px-4 py-10">
+        <div className="w-full max-w-md">
+          <div className="rounded-2xl bg-white p-8" style={{ border: `1px solid ${BRAND.line}` }}>
+            <div className="text-center mb-6">
+              <h1 className="text-2xl font-bold tracking-tight" style={{ color: BRAND.ink }}>Shop portal</h1>
+              <p className="text-sm text-gray-500 mt-1.5">Your shop’s calibrations, quotes, and invoices</p>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Customer Portal</h1>
-            <p className="text-sm text-gray-500 mt-1.5">View invoices, make payments, download PDFs</p>
-          </div>
 
-          {status === 'sent' ? (
-            <div className="text-center">
-              <div className="text-5xl mb-3">📧</div>
-              <p className="text-sm font-semibold mb-2" style={{ color: '#16a34a' }}>
-                {message}
-              </p>
-              <p className="text-xs text-gray-500 mb-4">
-                The link expires in 15 minutes. Check your spam folder if you don't see it.
-              </p>
-              {devLink && (
-                <div className="rounded-lg p-3 mb-4" style={{ backgroundColor: '#fff7f5', border: `1px solid #fcd5c5` }}>
-                  <p className="text-xs font-semibold mb-1" style={{ color: ORANGE }}>
-                    Dev mode — click to log in:
-                  </p>
-                  <a href={devLink}
-                    className="text-xs break-all underline" style={{ color: ORANGE }}>
-                    {devLink}
-                  </a>
+            {mode === 'password' ? (
+              <form onSubmit={login} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Username</label>
+                  <input value={username} onChange={e => setUsername(e.target.value)} autoFocus required
+                    autoComplete="username" placeholder="maria.express"
+                    className="w-full border rounded-lg px-4 py-3 text-sm" style={{ borderColor: BRAND.line }} />
                 </div>
-              )}
-              <button onClick={() => { setStatus('idle'); setEmail('') }}
-                className="text-sm font-medium" style={{ color: ORANGE }}>
-                Use a different email
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={requestLink} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-gray-600 mb-1">Your Email</label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                  autoFocus required placeholder="you@yourshop.com"
-                  className="w-full border rounded-lg px-4 py-3 text-sm"
-                  style={{ borderColor: '#e5e7eb' }} />
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
+                    autoComplete="current-password"
+                    className="w-full border rounded-lg px-4 py-3 text-sm" style={{ borderColor: BRAND.line }} />
+                </div>
+                {status === 'error' && message && (
+                  <p className="text-sm text-center" style={{ color: BRAND.red }}>{message}</p>
+                )}
+                <button type="submit" disabled={status === 'sending' || !username.trim() || !password}
+                  className="w-full py-3 rounded-lg text-sm font-semibold text-white"
+                  style={{ backgroundColor: BRAND.orange, opacity: (status === 'sending' || !username.trim() || !password) ? 0.6 : 1 }}>
+                  {status === 'sending' ? 'Signing in…' : 'Sign in'}
+                </button>
+                <button type="button" onClick={() => { setMode('link'); setStatus('idle'); setMessage('') }}
+                  className="w-full text-xs font-semibold" style={{ color: '#888' }}>
+                  Forgot? Email a one-time link
+                </button>
+              </form>
+            ) : status === 'sent' ? (
+              <div className="text-center">
+                <p className="text-sm font-semibold mb-2" style={{ color: BRAND.green }}>{message}</p>
+                <p className="text-xs text-gray-500 mb-4">The link expires in 15 minutes.</p>
+                {devLink && (
+                  <div className="rounded-lg p-3 mb-4" style={{ backgroundColor: BRAND.orangeSoft, border: '1px solid #fcd5c5' }}>
+                    <a href={devLink} className="text-xs break-all underline" style={{ color: BRAND.orange }}>{devLink}</a>
+                  </div>
+                )}
+                <button onClick={() => { setMode('password'); setStatus('idle') }} className="text-sm font-medium" style={{ color: BRAND.orange }}>Back to sign in</button>
               </div>
-              {status === 'error' && message && (
-                <p className="text-sm text-center" style={{ color: '#dc2626' }}>{message}</p>
-              )}
-              <button type="submit" disabled={status === 'sending' || !email.trim()}
-                className="w-full py-3 rounded-lg text-sm font-semibold text-white"
-                style={{ backgroundColor: ORANGE, opacity: (status === 'sending' || !email.trim()) ? 0.6 : 1 }}>
-                {status === 'sending' ? 'Sending…' : 'Send Login Link'}
-              </button>
-              <p className="text-xs text-gray-400 text-center">
-                We'll email you a secure login link. No password required.
-              </p>
-            </form>
-          )}
+            ) : (
+              <form onSubmit={requestLink} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Email on file</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
+                    className="w-full border rounded-lg px-4 py-3 text-sm" style={{ borderColor: BRAND.line }} />
+                </div>
+                {status === 'error' && message && (
+                  <p className="text-sm text-center" style={{ color: BRAND.red }}>{message}</p>
+                )}
+                <button type="submit" disabled={status === 'sending' || !email.trim()}
+                  className="w-full py-3 rounded-lg text-sm font-semibold text-white"
+                  style={{ backgroundColor: BRAND.orange, opacity: (status === 'sending' || !email.trim()) ? 0.6 : 1 }}>
+                  {status === 'sending' ? 'Sending…' : 'Send login link'}
+                </button>
+                <button type="button" onClick={() => { setMode('password'); setStatus('idle'); setMessage('') }}
+                  className="w-full text-xs font-semibold" style={{ color: '#888' }}>Back to username and password</button>
+              </form>
+            )}
+          </div>
+          <p className="text-center text-xs text-gray-400 mt-6">
+            Absolute ADAS staff?{' '}
+            <a href="/app/" className="font-medium" style={{ color: BRAND.orange }}>Staff login</a>
+          </p>
         </div>
-        <p className="text-center text-xs text-gray-400 mt-6">
-          Are you a team member?{' '}
-          <a href="/app/" className="font-medium" style={{ color: ORANGE }}>Staff login →</a>
-        </p>
       </div>
+      <PublicFooter />
     </div>
   )
 }

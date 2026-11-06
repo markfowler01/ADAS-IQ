@@ -66,7 +66,7 @@ const USER_ROLES = {
   'mf@absoluteadas.com':        { role: 'owner' },   // Mark's mailbox — what Zoho login actually sends (2026-09-16)
   'mfowler4456@gmail.com':      { role: 'owner' },   // Mark's personal Zoho identity, just in case
   'k.belmonte@absoluteadas.com': { role: 'owner' },
-  'jayden@absoluteadas.com':    { role: 'technician', techName: 'Jaden' },
+  'jayden@absoluteadas.com':    { role: 'technician', techName: 'Jayden' },
 }
 function applyRole(email) {
   return USER_ROLES[(email || '').toLowerCase()] || { role: 'dispatcher' }

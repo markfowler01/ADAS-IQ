@@ -1,42 +1,162 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, portalFetch, getPortalToken } from '../utils/portal'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
+import { BRAND, BrandBar, PublicFooter } from '../lib/brand.jsx'
 
-const ORANGE = '#CD4419'
+const ORANGE = BRAND.orange
 
 function fmt(n) { return `$${Number(n || 0).toFixed(2)}` }
 
+function fmtBig(n) {
+  return `$${Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function useCountUp(value, ms = 1100) {
+  const [n, setN] = useState(0)
+  useEffect(() => {
+    const target = Number(value) || 0
+    const t0 = performance.now()
+    let raf
+    const tick = now => {
+      const p = Math.min(1, (now - t0) / ms)
+      setN(target * (1 - Math.pow(1 - p, 3)))
+      if (p < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [value, ms])
+  return n
+}
+
+function DiscountRing({ pct }) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0))
+  const r = 38
+  const c = 2 * Math.PI * r
+  return (
+    <div className="relative w-[118px] h-[118px] flex-shrink-0">
+      <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
+        <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="7" />
+        <circle cx="50" cy="50" r={r} fill="none" stroke="#CD4419" strokeWidth="7"
+          strokeLinecap="round" strokeDasharray={`${(p / 100) * c} ${c}`}
+          style={{ filter: 'drop-shadow(0 0 10px rgba(205,68,25,0.85))' }} />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className="text-2xl font-extrabold text-white leading-none tracking-tight">{p}%</span>
+        <span className="text-[9px] font-extrabold tracking-[0.18em] uppercase mt-1" style={{ color: '#F2A07A' }}>off list</span>
+      </div>
+    </div>
+  )
+}
+
+function SavingsHero({ savings, shopName }) {
+  const saved = useCountUp(savings?.saved || 0)
+  const list = Number(savings?.list || 0)
+  const cost = Number(savings?.cost || 0)
+  const jobs = savings?.jobs || 0
+  const pct = Number(savings?.discount_pct || 0)
+  return (
+    <div className="mb-5 overflow-hidden rounded-2xl relative"
+      style={{
+        background: 'linear-gradient(155deg, #1c1410 0%, #0A0A0A 48%, #16110e 100%)',
+        border: '1px solid rgba(205,68,25,0.38)',
+        boxShadow: '0 22px 50px rgba(10,10,10,0.28)',
+        animation: 'portal-savings-rise 0.55s ease-out',
+      }}>
+      <div className="absolute -top-16 -right-10 w-64 h-64 rounded-full pointer-events-none"
+        style={{
+          background: 'radial-gradient(circle, rgba(205,68,25,0.45) 0%, transparent 70%)',
+          animation: 'portal-savings-glow 4.5s ease-in-out infinite',
+        }} />
+      <div className="absolute -bottom-20 -left-10 w-56 h-56 rounded-full pointer-events-none"
+        style={{ background: 'radial-gradient(circle, rgba(242,160,122,0.14) 0%, transparent 70%)' }} />
+
+      <div className="relative px-5 sm:px-7 pt-5 pb-4 flex flex-col sm:flex-row sm:items-center gap-5">
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-extrabold tracking-[0.18em] uppercase">
+            <span className="text-white">The Absolute </span>
+            <span style={{ color: BRAND.orange }}>Advantage</span>
+          </p>
+          <p className="text-xs mt-1 truncate" style={{ color: 'rgba(255,255,255,0.55)' }}>
+            {shopName ? `${shopName} · ` : ''}your discount off our list price
+          </p>
+          <p className="font-extrabold tracking-tight mt-2 leading-none text-white"
+            style={{ fontSize: 'clamp(2.4rem, 8vw, 3.6rem)', fontVariantNumeric: 'tabular-nums' }}>
+            {fmtBig(saved)}
+          </p>
+          <p className="text-sm font-semibold mt-2" style={{ color: '#F2A07A' }}>
+            What you keep because you partner with us
+          </p>
+        </div>
+        <DiscountRing pct={pct} />
+      </div>
+
+      <div className="relative grid grid-cols-3 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+        {[
+          { label: 'List price', value: fmtBig(list) },
+          { label: 'You pay', value: fmtBig(cost) },
+          { label: 'Jobs', value: String(jobs) },
+        ].map((cell, i) => (
+          <div key={cell.label} className="px-4 py-3 text-center"
+            style={{ borderLeft: i ? '1px solid rgba(255,255,255,0.08)' : 'none' }}>
+            <p className="text-[10px] font-bold tracking-widest uppercase" style={{ color: 'rgba(255,255,255,0.4)' }}>{cell.label}</p>
+            <p className="text-sm sm:text-base font-extrabold text-white mt-0.5 tabular-nums">{cell.value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 const STATUS_BADGES = {
-  draft:    { bg: '#e5e7eb', color: '#374151', label: 'Draft' },
-  sent:     { bg: '#dbeafe', color: '#1d4ed8', label: 'Awaiting Payment' },
+  draft:    { bg: '#e8e4e0', color: '#0A0A0A', label: 'Draft' },
+  sent:     { bg: '#f5e8e3', color: '#CD4419', label: 'Awaiting Payment' },
   paid:     { bg: '#dcfce7', color: '#15803d', label: 'Paid ✓' },
   overdue:  { bg: '#fee2e2', color: '#b91c1c', label: 'Overdue' },
-  void:     { bg: '#e5e7eb', color: '#6b7280', label: 'Void' },
+  void:     { bg: '#e8e4e0', color: '#888888', label: 'Void' },
 }
 
 const TYPE_BADGES = {
-  insurance: { bg: '#dbeafe', color: '#1d4ed8', label: '📋 Insurance' },
-  shop:      { bg: '#ede9fe', color: '#7c3aed', label: '🏪 Shop' },
+  insurance: { bg: '#f5f3f0', color: '#0A0A0A', label: '📋 Insurance' },
+  shop:      { bg: '#f5e8e3', color: '#CD4419', label: '🏪 Shop' },
   standard:  { bg: '#f5f3f0', color: '#555555', label: '📄 Invoice' },
 }
 
+const STAGE = {
+  scrubbed: { bg: '#f5f3f0', color: '#555', label: 'Scrubbed' },
+  quote_requested: { bg: BRAND.quoteSoft, color: BRAND.quote, label: 'Quote requested' },
+  quoted: { bg: BRAND.quoteSoft, color: BRAND.quote, label: 'Quote sent' },
+  requested: { bg: '#fff7f5', color: BRAND.orange, label: 'Job requested' },
+  job: { bg: '#dcfce7', color: '#15803d', label: 'On the board' },
+  invoiced: { bg: '#dcfce7', color: '#15803d', label: 'Invoiced' },
+}
+
 export default function PortalScreen({ shop, onLogout }) {
-  const [tab, setTab] = useState('all')
+  const [tab, setTab] = useState('jobs')
   const [invoices, setInvoices] = useState([])
   const [myJobs, setMyJobs] = useState([])
+  const [scrubs, setScrubs] = useState([])
+  const [estimates, setEstimates] = useState([])
+  const [openCar, setOpenCar] = useState(null)
   const [loading, setLoading] = useState(true)
   const [payModal, setPayModal] = useState(null)
   const [submitJobOpen, setSubmitJobOpen] = useState(false)
+  const [savings, setSavings] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [inv, jobs] = await Promise.all([
+      const [inv, jobs, cars, est, sav] = await Promise.all([
         portalFetch(`${API_BASE}/api/portal/invoices`).then(r => r.json()),
         portalFetch(`${API_BASE}/api/portal/my-jobs`).then(r => r.json()).catch(() => []),
+        portalFetch(`${API_BASE}/api/portal/scrubs`).then(r => r.json()).catch(() => ({ scrubs: [] })),
+        portalFetch(`${API_BASE}/api/portal/estimates`).then(r => r.json()).catch(() => ({ estimates: [] })),
+        portalFetch(`${API_BASE}/api/portal/savings`).then(r => r.json()).catch(() => null),
       ])
       setInvoices(Array.isArray(inv) ? inv : [])
       setMyJobs(Array.isArray(jobs) ? jobs : [])
+      setScrubs(Array.isArray(cars.scrubs) ? cars.scrubs : [])
+      setEstimates(Array.isArray(est.estimates) ? est.estimates : [])
+      setSavings(sav && sav.saved != null ? sav : null)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }, [])
@@ -56,80 +176,64 @@ export default function PortalScreen({ shop, onLogout }) {
 
   const shown = tab === 'unpaid' ? unpaid
     : tab === 'paid' ? paid
-    : tab === 'insurance' ? insurance
     : tab === 'shop' ? shopInv
-    : invoices
+    : tab === 'all' ? invoices
+    : []
 
   const totalOutstanding = unpaid.reduce((s, i) => s + Number(i.balance_due || i.total || 0), 0)
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#fafafa' }}>
-      {/* Header */}
-      <header className="bg-white border-b" style={{ borderColor: '#f0ece8' }}>
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="flex-shrink-0 px-3 py-1.5 rounded-lg" style={{ backgroundColor: ORANGE }}>
-              <span className="text-white font-bold text-sm">ABSOLUTE ADAS</span>
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold truncate" style={{ color: '#1a1a1a' }}>
-                {shop.shop_name}
-              </p>
-              <p className="text-xs text-gray-500 truncate">{shop.email || ''}</p>
-            </div>
+    <div className="min-h-screen" style={{ backgroundColor: BRAND.cream }}>
+      <BrandBar />
+      <header style={{ backgroundColor: BRAND.white, borderBottom: `1px solid ${BRAND.line}` }}>
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold truncate" style={{ color: BRAND.ink }}>{shop.shop_name}</p>
+            <p className="text-xs text-gray-500 truncate">
+              {shop.user?.name || shop.user?.username || shop.email || ''}
+              {shop.user?.username && shop.user?.name ? ` · ${shop.user.username}` : ''}
+            </p>
           </div>
           <button onClick={onLogout}
             className="text-xs px-3 py-1.5 rounded-lg font-semibold flex-shrink-0"
-            style={{ backgroundColor: '#f5f3f0', color: '#555' }}>
+            style={{ backgroundColor: BRAND.cream, color: '#555' }}>
             Log Out
           </button>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
-        {/* Outstanding summary */}
-        <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="rounded-xl p-5 shadow-sm" style={{ backgroundColor: unpaid.length > 0 ? '#fff7f5' : '#f0fdf4' }}>
-            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: unpaid.length > 0 ? ORANGE : '#16a34a' }}>
-              Outstanding Balance
-            </p>
-            <p className="text-3xl font-bold mt-1" style={{ color: unpaid.length > 0 ? ORANGE : '#16a34a' }}>
-              {fmt(totalOutstanding)}
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              {unpaid.length} unpaid invoice{unpaid.length !== 1 ? 's' : ''}
-            </p>
+        <SavingsHero savings={savings} shopName={shop.shop_name} />
+
+        <div className="mb-5 grid grid-cols-2 gap-3">
+          <div className="rounded-xl px-4 py-3 bg-white" style={{ border: `1px solid ${unpaid.length ? '#fcd5c5' : BRAND.line}` }}>
+            <p className="text-[10px] font-extrabold tracking-widest uppercase" style={{ color: unpaid.length ? ORANGE : BRAND.muted }}>Outstanding</p>
+            <p className="text-lg font-extrabold mt-0.5 tabular-nums" style={{ color: unpaid.length ? ORANGE : BRAND.ink }}>{fmtBig(totalOutstanding)}</p>
+            <p className="text-[11px] text-gray-500">{unpaid.length} unpaid</p>
           </div>
-          <div className="rounded-xl p-5 shadow-sm bg-white" style={{ border: '1px solid #f0ece8' }}>
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Paid Invoices</p>
-            <p className="text-3xl font-bold mt-1" style={{ color: '#1a1a1a' }}>{paid.length}</p>
-            <p className="text-xs text-gray-500 mt-1">
-              {fmt(paid.reduce((s, i) => s + Number(i.total || 0), 0))} lifetime
-            </p>
-          </div>
-          <div className="rounded-xl p-5 shadow-sm bg-white" style={{ border: '1px solid #f0ece8' }}>
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total Invoices</p>
-            <p className="text-3xl font-bold mt-1" style={{ color: '#1a1a1a' }}>{invoices.length}</p>
-            <p className="text-xs text-gray-500 mt-1">
-              {insurance.length} insurance · {shopInv.length} shop
-            </p>
+          <div className="rounded-xl px-4 py-3 bg-white" style={{ border: `1px solid ${BRAND.line}` }}>
+            <p className="text-[10px] font-extrabold tracking-widest uppercase" style={{ color: BRAND.muted }}>Paid with us</p>
+            <p className="text-lg font-extrabold mt-0.5 tabular-nums" style={{ color: BRAND.ink }}>{paid.length}</p>
+            <p className="text-[11px] text-gray-500">{fmtBig(paid.reduce((s, i) => s + Number(i.total || 0), 0))} lifetime</p>
           </div>
         </div>
 
-        {/* Submit new job CTA */}
+        <div className="mb-6">
+          <p className="text-[10px] font-extrabold tracking-[0.18em] uppercase mb-2" style={{ color: BRAND.muted }}>Job status</p>
+          <MyJobsList jobs={myJobs} compact />
+        </div>
+
         <div className="rounded-xl p-4 mb-6 flex items-center justify-between gap-3 flex-wrap"
-          style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+          style={{ backgroundColor: BRAND.orangeSoft, border: `1px solid #fcd5c5` }}>
           <div>
-            <p className="text-sm font-semibold" style={{ color: '#15803d' }}>
-              🚗 Need a calibration?
-            </p>
+            <p className="text-sm font-semibold" style={{ color: ORANGE }}>Need a calibration?</p>
             <p className="text-xs text-gray-600 mt-0.5">
-              Submit a job request directly — we'll dispatch and confirm the schedule.
+              Open a car for Instant quote or Request job — or add one we do not have yet.
             </p>
           </div>
           <button onClick={() => setSubmitJobOpen(true)}
             className="text-xs px-4 py-2 rounded-lg font-semibold text-white flex-shrink-0"
-            style={{ backgroundColor: '#16a34a' }}>
+            style={{ backgroundColor: ORANGE }}>
             + Request Job
           </button>
         </div>
@@ -152,12 +256,12 @@ export default function PortalScreen({ shop, onLogout }) {
         {/* Tabs */}
         <div className="flex gap-1.5 flex-wrap mb-4">
           {[
-            { id: 'all', label: `All (${invoices.length})` },
+            { id: 'jobs', label: `Jobs (${myJobs.length})` },
+            { id: 'cars', label: `Cars (${scrubs.length})` },
+            { id: 'estimates', label: `Estimates (${estimates.length})` },
             { id: 'unpaid', label: `Unpaid (${unpaid.length})` },
             { id: 'paid', label: `Paid (${paid.length})` },
-            { id: 'insurance', label: `Insurance (${insurance.length})` },
-            { id: 'shop', label: `Shop (${shopInv.length})` },
-            { id: 'jobs', label: `My Jobs (${myJobs.length})` },
+            { id: 'shop', label: `Shop invoices (${shopInv.length})` },
           ].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
               className="text-xs px-3 py-1.5 rounded-full font-semibold"
@@ -170,13 +274,20 @@ export default function PortalScreen({ shop, onLogout }) {
           ))}
         </div>
 
-        {/* Jobs tab */}
+        {loading && (tab === 'cars' || tab === 'estimates' || tab === 'jobs') && (
+          <div className="py-16 text-center text-gray-400 text-sm">Loading…</div>
+        )}
+        {tab === 'cars' && !loading && (
+          <CarsList scrubs={scrubs} jobs={myJobs} onOpen={setOpenCar} />
+        )}
+        {tab === 'estimates' && !loading && (
+          <EstimatesList estimates={estimates} jobs={myJobs} />
+        )}
         {tab === 'jobs' && !loading && (
           <MyJobsList jobs={myJobs} />
         )}
 
-        {/* Invoice list */}
-        {tab !== 'jobs' && (loading ? (
+        {tab !== 'jobs' && tab !== 'cars' && tab !== 'estimates' && (loading ? (
           <div className="py-16 text-center text-gray-400 text-sm">Loading…</div>
         ) : shown.length === 0 ? (
           <div className="py-16 text-center">
@@ -189,7 +300,7 @@ export default function PortalScreen({ shop, onLogout }) {
               const status = STATUS_BADGES[inv.status] || STATUS_BADGES.draft
               const type = TYPE_BADGES[inv.invoice_type] || TYPE_BADGES.standard
               const balance = Number(inv.balance_due ?? inv.total) || 0
-              const canPay = ['sent', 'overdue', 'draft'].includes(inv.status) && balance > 0
+                  const canPay = ['sent', 'overdue', 'draft'].includes(inv.status) && balance > 0 && inv.invoice_type !== 'insurance'
               return (
                 <div key={inv.id} className="rounded-xl bg-white border shadow-sm p-4"
                   style={{ borderColor: inv.status === 'overdue' ? '#fecaca' : '#f0ece8' }}>
@@ -262,6 +373,198 @@ export default function PortalScreen({ shop, onLogout }) {
           onClose={() => setSubmitJobOpen(false)}
           onSubmitted={() => { setSubmitJobOpen(false); load() }} />
       )}
+      {openCar && (
+        <CarDetail id={openCar} onClose={() => setOpenCar(null)} onDone={() => { setOpenCar(null); load() }} />
+      )}
+      <PublicFooter />
+    </div>
+  )
+}
+
+function matchJob(jobs, { ro, vin, quote }) {
+  const roK = String(ro || '').replace(/\s/g, '').toLowerCase()
+  const vinK = String(vin || '').replace(/\s/g, '').slice(-8).toLowerCase()
+  const qK = String(quote || '').toLowerCase()
+  return (jobs || []).find(j => {
+    if (qK && String(j.quote_number || '').toLowerCase() === qK) return true
+    if (roK && String(j.ro_number || '').replace(/\s/g, '').toLowerCase() === roK) return true
+    if (vinK && String(j.vehicle?.vin || '').replace(/\s/g, '').slice(-8).toLowerCase() === vinK) return true
+    return false
+  }) || null
+}
+
+function CarsList({ scrubs, jobs, onOpen }) {
+  if (!scrubs.length) {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-5xl mb-2">🚗</p>
+        <p className="text-gray-400 text-sm">No cars on file yet. CCC estimates for this shop land here.</p>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-2">
+      {scrubs.map(s => {
+        const job = matchJob(jobs, { ro: s.ro, vin: s.vin, quote: s.quoteNumber })
+        const st = job ? (STAGE_STYLE[job.stage] || STAGE_STYLE.scheduling) : (STAGE[s.stage] || STAGE.scrubbed)
+        const label = job?.label || st.label
+        return (
+          <button key={s.id} type="button" onClick={() => onOpen(s.id)}
+            className="w-full text-left rounded-xl bg-white border shadow-sm p-4"
+            style={{ borderColor: job?.live ? ORANGE : (s.stage === 'quoted' ? BRAND.quoteLine : '#f0ece8') }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold truncate" style={{ color: BRAND.ink }}>{s.vehicle || 'Vehicle'}</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {s.ro ? `RO ${s.ro}` : ''}{s.ro && s.insurer ? ' · ' : ''}{s.insurer || ''}
+                  {s.vin ? ` · ${s.vin.slice(-6)}` : ''}
+                </p>
+                {job?.message && <p className="text-xs font-semibold mt-1" style={{ color: job.live ? ORANGE : '#555' }}>{job.message}</p>}
+                {!job && (
+                  <p className="text-xs mt-1" style={{ color: '#555' }}>
+                    {s.requiredCount ? `${s.requiredCount} required` : 'Nothing required'}
+                    {s.required?.length ? ` — ${s.required.slice(0, 3).join(', ')}${s.required.length > 3 ? '…' : ''}` : ''}
+                  </p>
+                )}
+                {job && <JobPipe stage={job.stage} />}
+              </div>
+              <span className="text-[11px] font-bold px-2 py-1 rounded-full flex-shrink-0"
+                style={{ backgroundColor: st.bg, color: st.fg || st.color }}>{job?.live ? '● ' : ''}{label}</span>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function EstimatesList({ estimates, jobs }) {
+  if (!estimates.length) {
+    return (
+      <div className="py-16 text-center">
+        <p className="text-gray-400 text-sm">No estimates yet. Instant quote on a car puts one here.</p>
+      </div>
+    )
+  }
+  return (
+    <div className="space-y-2">
+      {estimates.map(e => {
+        const job = matchJob(jobs, { ro: e.ro, vin: e.vin, quote: e.number })
+        const st = job ? (STAGE_STYLE[job.stage] || STAGE_STYLE.scheduling) : null
+        return (
+          <div key={e.id} className="rounded-xl bg-white border shadow-sm p-4"
+            style={{ borderColor: job?.live ? ORANGE : '#f0ece8' }}>
+            <div className="flex justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-bold" style={{ color: BRAND.quote }}>{e.number || 'Estimate'}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{e.vehicle || '—'}{e.ro ? ` · RO ${e.ro}` : ''}</p>
+                {job?.message && <p className="text-xs font-semibold mt-1" style={{ color: job.live ? ORANGE : '#555' }}>{job.message}</p>}
+              </div>
+              <div className="text-right flex-shrink-0">
+                <p className="text-sm font-extrabold tabular-nums" style={{ color: BRAND.ink }}>{e.total ? fmt(e.total) : ''}</p>
+                {e.saved > 0 && (
+                  <p className="inline-block text-[11px] font-extrabold px-2 py-0.5 rounded-full mt-1"
+                    style={{ backgroundColor: '#dcfce7', color: '#15803d' }}>
+                    Advantage {fmt(e.saved)}
+                  </p>
+                )}
+                <p className="text-[11px] font-extrabold px-2 py-0.5 rounded-full mt-1"
+                  style={{ backgroundColor: st?.bg || '#f5f3f0', color: st?.fg || '#888' }}>
+                  {job ? `${job.live ? '● ' : ''}${job.label}` : (e.status || '')}
+                </p>
+              </div>
+            </div>
+            {job && <JobPipe stage={job.stage} />}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function CarDetail({ id, onClose, onDone }) {
+  const [car, setCar] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    portalFetch(`${API_BASE}/api/portal/scrubs/${id}`)
+      .then(r => r.json())
+      .then(d => { if (d.error) setErr(d.error); else setCar(d) })
+      .catch(e => setErr(e.message))
+  }, [id])
+
+  async function act(kind) {
+    setBusy(kind); setErr(''); setMsg('')
+    try {
+      const path = kind === 'quote' ? 'instant-quote' : 'request-job'
+      const r = await portalFetch(`${API_BASE}/api/portal/scrubs/${id}/${path}`, { method: 'POST' })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || 'Failed')
+      setMsg(d.message || 'Done')
+      if (d.scrub) setCar(d.scrub)
+      setTimeout(onDone, 900)
+    } catch (e) { setErr(e.message) }
+    finally { setBusy('') }
+  }
+
+  const st = STAGE[car?.stage] || STAGE.scrubbed
+  const quoted = car?.stage === 'quoted' || !!car?.quoteNumber
+  const onBoard = ['requested', 'job', 'invoiced'].includes(car?.stage || '')
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-xl shadow-xl max-w-lg w-full max-h-[92vh] overflow-y-auto">
+        <div className="px-5 py-4 border-b sticky top-0 bg-white flex justify-between items-center" style={{ borderColor: '#f0ece8' }}>
+          <div>
+            <h2 className="text-lg font-bold">{car?.vehicle || 'Car'}</h2>
+            <p className="text-xs text-gray-500">{car?.ro ? `RO ${car.ro}` : ''}{car?.insurer ? ` · ${car.insurer}` : ''}</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-gray-400 text-xl px-2">×</button>
+        </div>
+        <div className="p-5 space-y-4">
+          {!car && !err && <p className="text-sm text-gray-400">Loading…</p>}
+          {car && (
+            <>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-bold px-2 py-1 rounded-full" style={{ backgroundColor: st.bg, color: st.color }}>{st.label}</span>
+                {car.quoteNumber && <span className="text-xs font-semibold" style={{ color: BRAND.quote }}>Quote {car.quoteNumber}</span>}
+                {car.vin && <span className="text-xs font-mono text-gray-400">{car.vin}</span>}
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">Required</p>
+                {car.required?.length
+                  ? <ul className="text-sm space-y-1">{car.required.map(n => <li key={n}>• {n}</li>)}</ul>
+                  : <p className="text-sm text-gray-400">Nothing required on this estimate.</p>}
+              </div>
+              {car.notRequired?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">Not required</p>
+                  <p className="text-xs text-gray-500">{car.notRequired.join(', ')}</p>
+                </div>
+              )}
+              {msg && <p className="text-sm font-semibold" style={{ color: BRAND.green }}>{msg}</p>}
+              {err && <p className="text-sm" style={{ color: BRAND.red }}>{err}</p>}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button type="button" disabled={!!busy || quoted}
+                  onClick={() => act('quote')}
+                  className="py-3 rounded-xl text-sm font-bold text-white"
+                  style={{ backgroundColor: BRAND.quote, opacity: busy || quoted ? 0.45 : 1 }}>
+                  {busy === 'quote' ? '…' : quoted ? 'Quote sent' : 'Instant quote'}
+                </button>
+                <button type="button" disabled={!!busy || onBoard}
+                  onClick={() => act('job')}
+                  className="py-3 rounded-xl text-sm font-bold text-white"
+                  style={{ backgroundColor: BRAND.orange, opacity: busy || onBoard ? 0.45 : 1 }}>
+                  {busy === 'job' ? '…' : onBoard ? 'On the board' : 'Request job'}
+                </button>
+              </div>
+            </>
+          )}
+          {err && !car && <p className="text-sm" style={{ color: BRAND.red }}>{err}</p>}
+        </div>
+      </div>
     </div>
   )
 }
@@ -345,13 +648,13 @@ function PayInvoiceModal({ invoice, onClose, onPaid }) {
             </p>
             <button onClick={() => startStripe('ach')} disabled={saving}
               className="w-full py-2.5 rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2"
-              style={{ backgroundColor: '#16a34a' }}>
+              style={{ backgroundColor: ORANGE }}>
               🏦 Pay by Bank (ACH) · {fmt(balance)}
               <span className="text-xs font-normal opacity-75">· Save ~2%</span>
             </button>
             <button onClick={() => startStripe('card')} disabled={saving}
               className="w-full py-2.5 rounded-lg text-sm font-semibold text-white"
-              style={{ backgroundColor: '#2563eb' }}>
+              style={{ backgroundColor: BRAND.ink }}>
               💳 Pay by Credit Card · {fmt(balance)}
             </button>
             <p className="text-xs text-gray-500 text-center">
@@ -424,61 +727,115 @@ function PayInvoiceModal({ invoice, onClose, onPaid }) {
   )
 }
 
-function MyJobsList({ jobs }) {
-  if (jobs.length === 0) {
+const STAGE_STYLE = {
+  requested:      { bg: '#fff7f5', fg: '#CD4419' },
+  quoted:         { bg: '#eff6ff', fg: '#1d4ed8' },
+  scheduling:     { bg: '#fef3c7', fg: '#b45309' },
+  booked:         { bg: '#f5e8e3', fg: '#CD4419' },
+  waiting_parts:  { bg: '#fff7ed', fg: '#b45309' },
+  on_the_way:     { bg: '#fef3c7', fg: '#b45309' },
+  at_shop:        { bg: '#e6f4f4', fg: '#1F8B8B' },
+  done:           { bg: '#dcfce7', fg: '#15803d' },
+  complete:       { bg: '#dcfce7', fg: '#15803d' },
+  cancelled:      { bg: '#fee2e2', fg: '#b91c1c' },
+}
+
+const PIPE = [
+  { id: 'requested', label: 'Requested' },
+  { id: 'booked', label: 'Booked' },
+  { id: 'on_the_way', label: 'On the way' },
+  { id: 'at_shop', label: 'At your shop' },
+  { id: 'done', label: 'Done' },
+]
+
+function pipeIndex(stage) {
+  if (stage === 'quoted' || stage === 'scheduling' || stage === 'requested') return 0
+  if (stage === 'booked' || stage === 'waiting_parts') return 1
+  if (stage === 'on_the_way') return 2
+  if (stage === 'at_shop') return 3
+  if (stage === 'done' || stage === 'complete') return 4
+  return 0
+}
+
+function vehicleLabel(j) {
+  return j.vehicle?.label || [j.vehicle?.year, j.vehicle?.make, j.vehicle?.model].filter(Boolean).join(' ') || 'Vehicle'
+}
+
+function calNames(cals) {
+  let list = cals
+  if (typeof list === 'string') {
+    try { list = JSON.parse(list) } catch { return '' }
+  }
+  if (!Array.isArray(list) || !list.length) return ''
+  return list.map(c => typeof c === 'string' ? c : (c.name || c.calibration_name || '')).filter(Boolean).slice(0, 4).join(', ')
+}
+
+function JobPipe({ stage }) {
+  if (stage === 'cancelled') return null
+  const at = pipeIndex(stage)
+  return (
+    <div className="flex items-center gap-1 mt-3">
+      {PIPE.map((s, i) => (
+        <div key={s.id} className="flex-1 min-w-0">
+          <div className="h-1 rounded-full" style={{ backgroundColor: i <= at ? ORANGE : '#e8e4e0' }} />
+          <p className="text-[9px] font-bold mt-1 truncate"
+            style={{ color: i === at ? ORANGE : i < at ? '#888' : '#c4bfba' }}>
+            {s.label}
+          </p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function JobStatusCard({ j }) {
+  const st = STAGE_STYLE[j.stage] || STAGE_STYLE.scheduling
+  return (
+    <div className="rounded-xl bg-white border shadow-sm p-4"
+      style={{ borderColor: j.live ? ORANGE : '#f0ece8', boxShadow: j.live ? '0 0 0 1px #CD4419' : undefined }}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-extrabold truncate" style={{ color: BRAND.ink }}>{vehicleLabel(j)}</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {j.ro_number ? `RO ${j.ro_number}` : ''}
+            {j.ro_number && j.scheduled_label ? ' · ' : ''}
+            {j.scheduled_label || ''}
+          </p>
+        </div>
+        <span className="text-[11px] font-extrabold px-2 py-1 rounded-full flex-shrink-0"
+          style={{ backgroundColor: st.bg, color: st.fg }}>
+          {j.live ? '● ' : ''}{j.label}
+        </span>
+      </div>
+      <p className="text-sm font-semibold mt-2" style={{ color: j.live ? ORANGE : '#333' }}>{j.message}</p>
+      {calNames(j.calibrations) && (
+        <p className="text-xs text-gray-500 mt-1">{calNames(j.calibrations)}</p>
+      )}
+      <JobPipe stage={j.stage} />
+    </div>
+  )
+}
+
+function MyJobsList({ jobs, compact }) {
+  if (!jobs.length) {
     return (
-      <div className="py-16 text-center">
-        <p className="text-5xl mb-2">🚗</p>
-        <p className="text-gray-400 text-sm">No job requests yet. Click "Request Job" to submit one.</p>
+      <div className={compact ? 'rounded-xl bg-white border px-4 py-5 text-center' : 'py-16 text-center'}
+        style={compact ? { borderColor: '#f0ece8' } : undefined}>
+        <p className="text-gray-400 text-sm">No jobs yet. Request a job or instant-quote a car.</p>
       </div>
     )
   }
-  const statusMap = {
-    needs_dispatch: { bg: '#fef3c7', color: '#b45309', label: 'Pending Dispatch' },
-    dispatched: { bg: '#dbeafe', color: '#1d4ed8', label: 'Dispatched' },
-    in_progress: { bg: '#e0f2fe', color: '#0369a1', label: 'In Progress' },
-    on_hold: { bg: '#f5f3f0', color: '#6b7280', label: 'On Hold' },
-    complete: { bg: '#dcfce7', color: '#15803d', label: 'Complete ✓' },
-    cancelled: { bg: '#fee2e2', color: '#b91c1c', label: 'Cancelled' },
-  }
+  const rank = j => (j.live ? 0 : j.open ? 1 : 2)
+  const ordered = [...jobs].sort((a, b) => rank(a) - rank(b) || String(b.scheduled_date || b.created_at || '').localeCompare(String(a.scheduled_date || a.created_at || '')))
+  const active = ordered.filter(j => j.open || j.live)
+  const done = ordered.filter(j => !j.open && !j.live)
   return (
-    <div className="space-y-2">
-      {jobs.map(j => {
-        const st = statusMap[j.status] || statusMap.needs_dispatch
-        return (
-          <div key={j.id} className="rounded-xl bg-white border shadow-sm p-4"
-            style={{ borderColor: '#f0ece8' }}>
-            <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-bold" style={{ color: ORANGE }}>
-                  {j.ro_number ? `RO# ${j.ro_number}` : j.id.slice(-8)}
-                </span>
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full"
-                  style={{ backgroundColor: st.bg, color: st.color }}>
-                  {st.label}
-                </span>
-                {j.submitted_via_portal && (
-                  <span className="text-xs text-gray-400">📱 self-submitted</span>
-                )}
-              </div>
-              <span className="text-xs text-gray-400">
-                {new Date(j.created_at).toLocaleDateString()}
-              </span>
-            </div>
-            <p className="text-sm text-gray-700">
-              {[j.vehicle?.year, j.vehicle?.make, j.vehicle?.model].filter(Boolean).join(' ') || '—'}
-            </p>
-            {Array.isArray(j.calibrations) && j.calibrations.length > 0 && (
-              <p className="text-xs text-gray-500 mt-1">
-                {j.calibrations.map(c => typeof c === 'string' ? c : c.name).join(', ')}
-              </p>
-            )}
-            {j.technician && (
-              <p className="text-xs text-gray-500 mt-1">Tech: {j.technician}</p>
-            )}
-          </div>
-        )
-      })}
+    <div className="space-y-3">
+      {active.map(j => <JobStatusCard key={j.id} j={j} />)}
+      {done.length > 0 && (
+        <p className="text-[10px] font-extrabold tracking-widest uppercase pt-2" style={{ color: '#aaa' }}>Finished</p>
+      )}
+      {done.map(j => <JobStatusCard key={j.id} j={j} />)}
     </div>
   )
 }
@@ -626,7 +983,7 @@ function SubmitJobModal({ shop, onClose, onSubmitted }) {
             </button>
             <button type="submit" disabled={saving}
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white"
-              style={{ backgroundColor: '#16a34a', opacity: saving ? 0.6 : 1 }}>
+              style={{ backgroundColor: ORANGE, opacity: saving ? 0.6 : 1 }}>
               {saving ? 'Submitting…' : 'Submit Request'}
             </button>
           </div>
