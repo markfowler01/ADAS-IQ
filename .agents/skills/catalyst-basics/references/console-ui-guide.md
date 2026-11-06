@@ -2,7 +2,7 @@
 
 Step-by-step navigation for the most common console tasks.
 
-> **Coverage note:** This guide documents the most commonly needed console flows. The following areas are **not yet documented here** and require consulting the [official Catalyst docs](https://docs.catalyst.zoho.com):
+> **Coverage note:** This guide documents the most commonly needed console flows. The following areas are **not yet documented here** and require consulting the [official Catalyst docs](https://docs.catalyst.zoho.com/en/llms.txt) (append `index.md` to any page URL to fetch it as markdown):
 > - Hosted Authentication (OAuth providers, custom login pages)
 > - Billing activation and plan upgrades
 > - Cache segment creation (Cloud Scale → Cache → New Segment)
@@ -77,7 +77,7 @@ This controls which frontend origins are allowed to call your Catalyst functions
 2. Click **Authorized Domains**
 3. Click **Add Domain**
 4. Enter the full origin with protocol: `https://myapp-12345.catalystapps.com`
-   - Include `https://` — bare domains are rejected
+   - Include `https://` — bare domains are rejected **in the Console UI**. (The opposite is true for the MCP tool: `CatalystbyZoho_Create_CORS_Domain` rejects the protocol and wants the bare domain — see `catalyst-appsail/references/appsail-crossorigin.md`.)
    - For local dev, add `http://localhost:3000` separately
 5. Toggle **CORS** to **ON** for the domain
 6. Click **Save**

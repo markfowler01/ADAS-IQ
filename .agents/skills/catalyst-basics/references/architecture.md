@@ -52,8 +52,8 @@ Use this file when a user asks "which Catalyst service should I use for X?" or i
 
 | If you need… | Use | DC restriction |
 |---|---|---|
-| OCR, face detection, text analytics, object detection, barcode scanning, content moderation | **Zia Services** | US DC only for AutoML; see Never Use table |
-| Train a custom ML model on your own data | **QuickML (AutoML)** | Not available in EU, AU, IN, JP, SA, CA |
+| OCR, face detection, text analytics, object detection, barcode scanning, content moderation | **Zia Services** | No DC restriction (Identity Scanner excepted; see DC table) |
+| Train a custom ML model on your own data | **QuickML (ML pipelines / AutoML)** | Prediction models: all DCs. Generative AI (LLM/RAG/Knowledge Base): not in AU, SA, CA |
 | Browser automation, web scraping, PDF generation | **SmartBrowz / Browser Logic** | No DC restriction |
 
 ---
@@ -64,7 +64,7 @@ Use this file when a user asks "which Catalyst service should I use for X?" or i
 |---|---|---|
 | Trigger logic when data changes in Catalyst services | **Signals** | ~~Event Listeners~~ (deprecated) |
 | Run a function on a schedule (cron-style) | **Job Scheduling** | ~~Cron~~ (deprecated) |
-| Zoho service integration (Cliq, etc.) | **Integration Functions** | *Check DC restriction first* |
+| Zoho service integration (Cliq, ConvoKraft bot logic) | **Integration Functions** | US DC only. On restricted DCs, build ConvoKraft bot logic with the Deluge function option instead |
 
 ---
 
@@ -120,30 +120,34 @@ Functions (API layer)
   + Data Store (results/metadata)
   + Cache (cache frequent predictions)
 ```
-**Cost signal:** Zia APIs are $0.001/request. 100 calls/month free. QuickML inference starts at $0.0025/call after 500 free.
+**Cost signal:** Zia APIs are $0.001/request. 100 calls/month free. For QuickML rates load the `catalyst-quickml` skill's pricing section (India-region INR; other regions differ — verify at catalyst.zoho.com/pricing.html).
 
 ---
 
 ## DC Availability Quick Reference
 
-Before recommending Circuits, Integration Functions, AutoML, Push Notifications, or Mobile Device Management — confirm the user's DC:
+Before recommending Circuits, Integration Functions, QuickML Generative AI, Identity Scanner, or Mobile Device Management — confirm the user's DC. (Zia AutoML is retired — "AutoML" now means QuickML AutoML, which is available in all DCs.)
 
 | Service | US | EU | IN | AU | JP | SA | CA |
 |---------|----|----|----|----|----|----|-----|
-| Circuits | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Integration Functions | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| AutoML (QuickML) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Push Notifications | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
-| Identity Scanner (Zia) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| All other services | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Circuits | Yes | No | No | No | No | No | No |
+| Integration Functions | Yes | No | No | No | No | No | No |
+| QuickML — prediction/ML models | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| QuickML — Generative AI (LLM Serving, RAG, Knowledge Base) | Yes | Yes | Yes | No | Yes | No | No |
+| Push Notifications | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Identity Scanner — Document Processing | No | No | Yes | No | No | No | No |
+| Identity Scanner — Facial Comparison API/SDK | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| All other services | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 
-Source: https://docs.catalyst.zoho.com/en/
+Note: **Identity Scanner's "Facial Comparison" feature works from any DC via API/SDK** — only *testing it in the Catalyst console* is restricted to IN DC. The "Document Processing" feature (Aadhaar, PAN, etc.) is IN DC only end-to-end, API included.
+
+Source: https://docs.catalyst.zoho.com/en/llms.txt
 
 ## Common Errors
 
 | Error | Cause | Fix |
 |-------|-------|-----|
 | Circuits not visible in console | User is on EU/AU/IN/JP/SA/CA DC | Use function chaining or Job Scheduling instead |
-| Integration Functions grayed out | User is on EU/AU/IN/JP/SA/CA DC | Use a Basic I/O function with the Zoho API directly via Connections |
-| AutoML not available | User is on EU/AU/IN/JP/SA/CA DC | Use Zia's pre-built ML services (OCR, Text Analytics) which have no DC restriction |
+| Integration Functions grayed out | User is on a restricted DC (EU/AU/IN/JP/SA/CA) | For ConvoKraft bot logic, use the Deluge function option; otherwise use a Basic I/O function with the Zoho API directly via Connections |
+| QuickML Generative AI (LLM/RAG/Knowledge Base) not available | User is on AU/SA/CA DC | Prediction/AutoML models still work in all DCs; for pre-built AI use Zia Services which have no DC restriction |
 | "File Store not found" error | Deprecated service accessed by pre-Aug 2025 account trying new feature | Migrate to Stratus |

@@ -230,20 +230,37 @@ const item = new NoSQLItem()
 // insertItems takes an object { item }, NOT an array
 await table.insertItems({ item });
 
-// fetchItem (singular) — keys is a NoSQLItem identifying the record
+// fetchItem (singular) — keys is a NoSQLItem, or an array of them for batch fetch
 const fetched = await table.fetchItem({
   keys: [new NoSQLItem().addString('userId', 'user_001')]
 });
 
+// queryTable takes key_condition — there is NO { partitionKey, sortKey, ascending } shape
+const { NoSQLEnum, NoSQLMarshall } = require('zcatalyst-sdk-node/lib/no-sql');
+const { NoSQLOperator, NoSQLUpdateOperationType } = NoSQLEnum;
 const queryResult = await table.queryTable({
-  partitionKey: { name: 'userId', value: 'user_001' },
-  sortKey: { name: 'loginTime', operator: 'GREATERTHAN', value: 1700000000000 },
-  limit: 50, ascending: true
+  key_condition: {
+    attribute: ['userId'],                       // attribute path (array)
+    operator: NoSQLOperator.EQUALS,
+    value: NoSQLMarshall.makeString('user_001')
+  }
 });
 // Operators: EQUALS, BETWEEN, GREATERTHAN, LESSERTHAN, GREATERTHANOREQUALTO, LESSERTHANOREQUALTO
 
-await table.updateItems([item]);
-await table.deleteItems([{ partitionKey: 'user_001', sortKey: 1700000000001 }]);
+// updateItems takes { keys, update_attributes } — NOT an array of items
+await table.updateItems({
+  keys: new NoSQLItem().addString('userId', 'user_001'),
+  update_attributes: [{
+    operation_type: NoSQLUpdateOperationType.PUT,
+    attribute_path: ['loginTime'],
+    update_value: NoSQLMarshall.make(1700000000001)
+  }]
+});
+
+// deleteItems takes { keys: NoSQLItem } — NOT [{ partitionKey, sortKey }]
+await table.deleteItems({
+  keys: new NoSQLItem().addString('userId', 'user_001')
+});
 ```
 
 ---
@@ -256,24 +273,27 @@ const cron = jobScheduling.cron();
 
 // job_meta defines WHAT to execute — jobpool_name (or jobpool_id) lives here, not at cron level
 const jobMeta = {
-  job_name: 'process_orders',          // alphanumeric + underscores only; hyphens rejected
-  target_type: 'Function',
+  job_name: 'process_orders',          // alphanumeric + underscores only, MAX 20 CHARS; hyphens rejected
+  target_type: 'Function',             // must be a JOB-type function — cron/basicio/aio targets are rejected
   target_name: 'ProcessOrderFunction', // or use target_id
   jobpool_name: 'OrderPool',           // or jobpool_id
-  params: { batchSize: 50 },           // optional
-  job_config: { number_of_retries: 2, retry_interval: 15 * 60 * 1000 } // number, NOT String()
+  params: { batchSize: '50' },         // optional; values are delivered to the handler as strings
+  job_config: { number_of_retries: 2, retry_interval: 60 } // retry_interval in SECONDS, 60–86400 (runtime-confirmed; ms values are rejected)
 };
 
-// OneTime: fires once — time_of_execution is UNIX timestamp in ms, passed as a string
+// OneTime: fires once — time_of_execution is UNIX SECONDS as a string (runtime-confirmed).
+// ⚠️ A milliseconds value is stored without error and schedules the cron for year ~58000 — it NEVER fires.
+// ⚠️ A past timestamp fires immediately (~35s). OneTime crons auto-disable after firing.
 await cron.createCron({
   cron_name: 'one_time_report', cron_status: true,
   cron_type: 'OneTime',
-  cron_detail: { time_of_execution: Date.now() + (60 * 60 * 1000) + '' }, // 1h from now
+  cron_detail: { time_of_execution: String(Math.floor(Date.now() / 1000) + 3600), timezone: 'Asia/Kolkata' }, // 1h from now
   job_meta: jobMeta
 });
 
 // Periodic: repeats every N h/m/s — use cron_detail with repetition_type: 'every'
 // ⚠️ NOT schedule: { every, unit } — that shape is wrong and will fail
+// ⚠️ Fires IMMEDIATELY on create (and on every update), then every interval (runtime-confirmed)
 await cron.createCron({
   cron_name: 'health_check', cron_status: true,
   cron_type: 'Periodic',
@@ -282,7 +302,8 @@ await cron.createCron({
 });
 
 // Calendar daily: fixed time each day — use cron_detail with repetition_type: 'daily'
-// ⚠️ NOT schedule: { time, timezone, days_of_week } — that shape is wrong and will fail
+// ⚠️ Spelling: 'Calendar'. The SDK enum CRON_TYPE.CALENDER ("Calender") is misspelled and the
+//    server rejects it with "Mandatory parameter cron_type is missing" (runtime-confirmed).
 await cron.createCron({
   cron_name: 'daily_digest', cron_status: true,
   cron_type: 'Calendar',
@@ -290,32 +311,36 @@ await cron.createCron({
   job_meta: jobMeta
 });
 
-// CronExpression
+// CronExpression — cron_expression sits at the TOP LEVEL, not inside cron_detail
 await cron.createCron({
   cron_name: 'custom', cron_status: true,
   cron_type: 'CronExpression',
-  cron_detail: { cron_expression: '0 */6 * * *' },
+  cron_expression: '0 */6 * * *',
+  cron_detail: { timezone: 'Asia/Kolkata' },
   job_meta: jobMeta
 });
 
-// Cron management
+// Cron management (id or name accepted) — all runtime-confirmed from deployed function code
 await cron.pauseCron(cronId);
 await cron.resumeCron(cronId);
-await cron.runCron(cronId);     // manual trigger
+await cron.runCron(cronId);     // manual trigger; returns the submitted job's details. Works on disabled crons too.
 await cron.deleteCron(cronId);
+// ⚠️ SDK-created crons are cron_execution_type "dynamic" and DO NOT appear in the REST/console
+//    cron LIST (pre-defined only) — persist the returned cron.id if you'll manage it later.
 
 // Submit an immediate job
 // ⚠️ Use job().submitJob({...}) — pass jobpool_name inside the payload
-// retry_interval is a number (ms), NOT String()
 const job = jobScheduling.job();
-await job.submitJob({
-  job_name: 'process_orders',          // alphanumeric + underscores only
+const submitted = await job.submitJob({
+  job_name: 'process_orders',          // alphanumeric + underscores only, ≤ 20 chars
   jobpool_name: 'OrderPool',           // or jobpool_id
   target_type: 'Function',
   target_name: 'ProcessOrderFunction', // or use target_id
-  params: { batchSize: 50 },
-  job_config: { number_of_retries: 2, retry_interval: 15 * 60 * 1000 } // number, NOT String()
+  params: { batchSize: '50' },
+  job_config: { number_of_retries: 2, retry_interval: 60 } // SECONDS (60–86400)
 });
+// submitted.job_status: 'PENDING' → 'RUNNING' → 'SUCCESS' | 'FAILURE' (uppercase at runtime).
+// Each retry is a NEW job record linked via parent_job_id — the original job's record stays FAILURE.
 ```
 
 ---

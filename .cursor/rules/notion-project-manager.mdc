@@ -1,0 +1,37 @@
+---
+description: Keep Mark's Notion project manager current after real work
+alwaysApply: true
+---
+
+# Notion project manager
+
+After we build, fix, change, decide, or finish something, update Notion before the reply ends. Skip this when Mark only asked a question.
+
+## Find the project
+
+- Business: "🗂 Projects" — collection://3ff8f107-01a5-4292-b4f7-e4731437932a
+- Personal: "🌱 Personal Projects" — collection://60b0c57d-dfda-4de9-b0f3-22a5c7b14ca6
+- Search by project name. No match: create a row with Project, Status, Area, Owner, Summary, Where it lives.
+
+## Update that row only
+
+- Status: ✅ Live, 🔨 Building, 🧪 Testing, ⏳ Waiting on Mark, ⛔ Blocked, 💡 Idea, or 🗄 Done
+- Next step: one line
+- Waiting on Mark: what he personally has to do, or blank
+- Last update: today's date
+- Page body, under `## History` (create it if missing), add one line at the bottom: `- YYYY-MM-DD — what changed` in plain English
+- Personal projects: also refresh Open items
+
+## Log tasks
+
+"✅ Tasks" — collection://f79e78c4-a789-4ba0-9cf2-15ebef6957c2
+
+- One row per finished piece of work. Check for a matching task first. Do not duplicate.
+- Task = short name. Project = the row above. Status = Done. Owner = Mark, Kat, Jayden, or Claude.
+- Work left for Mark: a separate task, Status "Waiting on Mark", Waiting on Mark checkbox ticked.
+
+Never delete or overwrite rows in bulk.
+
+End the reply with one line: `📒 Logged to Notion: [project] → History + N tasks Done.`
+
+If Notion is unreachable, say so and give Mark the update text to paste.

@@ -101,7 +101,7 @@ table.deleteRow("12345", object : ZCatalystCallback<Void> { ... })
 ### Setup (CocoaPods)
 
 ```ruby
-pod 'ZCatalyst', :git => 'https://github.com/nicetomeetyou/ZCatalyst.git', :tag => '2.2.2'
+pod 'ZCatalyst', :git => 'https://github.com/zoho/Catalyst-iOS-SDK.git', :tag => '2.2.2'
 ```
 
 **Info.plist:**

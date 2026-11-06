@@ -4,6 +4,7 @@
 2. `python3 bench_kinetic.py` → `kinetic.json` (the answer key, by VIN).
 3. `curl -H "x-cron-secret: $CRM_SYNC_CRON_SECRET" .../api/crm-sync-cron/scrubs-export > scrubs.json`
 4. `python3 bench_score.py` → baseline against the original scrubs.
+   `python3 check.py` → same pairs, labeled defensible vs real (the accuracy agent).
 5. After a prompt change: `bash bench_rerun.sh` re-scrubs the paired cars under
    `benchmark-v2` and scores them; `BENCH_SOURCE=benchmark-v2 python3 bench_score.py` re-scores.
 
