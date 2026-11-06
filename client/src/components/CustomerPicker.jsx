@@ -1,13 +1,14 @@
 import { API_BASE, apiFetch } from '../utils/api.js'
 import NewCustomerModal from './NewCustomerModal.jsx'
 import { useState, useEffect, useRef } from 'react'
+import { shopCoreKey, shopKey } from '../lib/shopResolve.js'
 
 const ORANGE = '#CD4419'
 
-// Strip punctuation, legal suffixes, and normalize whitespace for fuzzy matching
+// Strip punctuation, legal suffixes, and industry filler for fuzzy matching
 function normalizeName(str) {
   if (!str) return ''
-  const SKIP = new Set(['inc', 'llc', 'corp', 'ltd', 'co', 'the', 'llp', 'dba'])
+  const SKIP = new Set(['inc', 'llc', 'corp', 'ltd', 'co', 'the', 'llp', 'dba', 'auto', 'body', 'collision', 'repair', 'paint', 'shop'])
   return str
     .toLowerCase()
     .replace(/[,\.]/g, '')
@@ -27,6 +28,13 @@ function fuzzyMatch(shopName, customers) {
   if (!shopName || customers.length === 0) return null
   if (INSURER_RE.test(shopName)) return null
   const needle = normalizeName(shopName)
+  const needleCore = shopCoreKey(shopName)
+  if (needleCore.length >= 4) {
+    const cores = customers.filter((c) => shopCoreKey(c.contact_name) === needleCore)
+    if (cores.length === 1) return cores[0]
+  }
+  const exactKey = customers.find((c) => shopKey(c.contact_name) === shopKey(shopName))
+  if (exactKey) return exactKey
 
   // 1. Exact normalized match
   const exact = customers.find((c) => normalizeName(c.contact_name) === needle)

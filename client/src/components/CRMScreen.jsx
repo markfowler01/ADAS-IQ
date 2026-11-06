@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { EstimateFirstPill } from './books/Big3Rules.jsx'
 import { isOwnerUser, isMarkUser } from '../utils/identity.js'
 import CustomersView from './crm/CustomersView.jsx'
-import { typeBadge, shopTypeOf } from './crm/shopType.js'
+import { typeBadge, shopTypeOf, SHOP_TYPES } from './crm/shopType.js'
 import DealsBoard from './crm/DealsBoard.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import { STAGES, REGIONS, ZONES, IN_PLAY_STAGES, IN_PLAY_CAP, TEAM_MEMBERS, zoneLabel, MARKETS, marketOf, zonesIn, FOUNDING_GOAL, isFounding, foundingIn } from './crmConstants.js'
@@ -15,6 +15,7 @@ import CRMBroadcastModal from './CRMBroadcastModal'
 import ShopDetailPanel from './ShopDetailPanel'
 import VanContactModal from './VanContactModal'
 import NewCustomerModal from './NewCustomerModal.jsx'
+import { WifiCopy, normShopName } from './MobileJobCard.jsx'
 
 const ORANGE = '#CD4419'
 
@@ -164,7 +165,7 @@ function QuickAddModal({ defaultStage, onClose, onSave }) {
 }
 
 // ─── Shop Card ────────────────────────────────────────────────────────────────
-function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
+function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount, wifi }) {
   // Mark 2026-09-15: "clearly read the shop's name, a call button and a directions
   // button right here, and any other info we have on them right in the card."
   const stage    = STAGES.find(s => s.id === shop.pipeline_stage) || STAGES[0]
@@ -209,10 +210,10 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
   return (
     <div draggable onDragStart={e => onDragStart(e, shop)} onClick={() => onOpen(shop)}
       className="bg-white rounded-xl shadow-sm cursor-pointer select-none transition-shadow hover:shadow-md active:opacity-75"
-      style={{ border: `1px solid ${overdue ? '#fca5a5' : '#ebebeb'}`, borderLeft: `5px solid ${typeBadge(shopTypeOf(shop)).color}` }}>
+      style={{ border: `1px solid ${typeBadge(shopTypeOf(shop)).color}` }}>
 
       {/* Header: the whole name, then the chips on their own line */}
-      <div className="px-3 py-2 rounded-t-xl" style={{ backgroundColor: ORANGE }}>
+      <div className="px-3 py-2 rounded-t-xl" style={{ backgroundColor: typeBadge(shopTypeOf(shop)).color }}>
         <p className="text-sm font-bold text-white leading-snug" style={{ wordBreak: 'break-word' }}>{shop.shop_name} <EstimateFirstPill shopName={shop.shop_name} /></p>
         <div className="flex items-center gap-1 flex-wrap mt-1">
           {(() => { const tb = typeBadge(shopTypeOf(shop)); return <span className="text-[10px] font-bold px-1.5 rounded-full" style={{ backgroundColor: 'white', color: tb.color }} title="Billing customer type">{tb.label}</span> })()}
@@ -227,6 +228,7 @@ function ShopCard({ shop, onOpen, onStageChange, onDragStart, calCount }) {
 
       <div className="p-3">
         {shop.address && <p className="text-xs mb-2 leading-snug" style={{ color: '#666' }}>{shop.address.replace(/, USA$/, '')}</p>}
+        <WifiCopy wifi={wifi} />
 
         {/* Action row: call · text · directions · website */}
         <div className="flex gap-1.5 mb-2 flex-wrap">
@@ -498,9 +500,13 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const countShops = crmMode === 'retail' || crmMode === 'customers' || crmMode === 'deals' ? allShops : allShops.filter(sh => typeOfShop(sh) === crmMode)
   const modeToggle = (
     <div className="inline-flex rounded-full p-0.5" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e0dbd6' }}>
-      {[['deals', '💼 Deals'], ['customers', '⭐ Customers'], ['collision', '🏢 Collision shops'], ['repair_shop', '🔧 Auto repair shops'], ['dealer', '🚗 Dealers'], ['retail', '🙂 Retail customers']].map(([m, l]) => (
-        <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1 whitespace-nowrap" style={{ backgroundColor: crmMode === m ? ORANGE : 'transparent', color: crmMode === m ? 'white' : '#666' }}>{l}{m === 'customers' && allShops.length ? ` · ${allShops.filter(sh => CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : m !== 'retail' && m !== 'customers' && allShops.length ? ` · ${allShops.filter(sh => typeOfShop(sh) === m && !CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : ''}</button>
-      ))}
+      {[['deals', '💼 Deals'], ['customers', '⭐ Customers'], ['collision', '🏢 Collision shops'], ['repair_shop', '🔧 Auto repair shops'], ['dealer', '🚗 Dealers'], ['retail', '🙂 Retail customers']].map(([m, l]) => {
+        const on = crmMode === m
+        const color = m === 'collision' ? SHOP_TYPES.body_shop.color : SHOP_TYPES[m]?.color
+        return (
+          <button key={m} onClick={() => setCrmMode(m)} className="text-xs font-bold rounded-full px-3 py-1 whitespace-nowrap" style={{ backgroundColor: on ? (color || '#0A0A0A') : 'transparent', color: on ? 'white' : (color || '#666') }}>{l}{m === 'customers' && allShops.length ? ` · ${allShops.filter(sh => CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : m !== 'retail' && m !== 'customers' && allShops.length ? ` · ${allShops.filter(sh => typeOfShop(sh) === m && !CUSTOMER_STAGES.includes(sh.pipeline_stage)).length}` : ''}</button>
+        )
+      })}
     </div>
   )
   const [loading,       setLoading]       = useState(true)
@@ -540,6 +546,28 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const [showVanContact, setShowVanContact] = useState(false)
   const [showNewCustomer, setShowNewCustomer] = useState(false)
   const [newShopPhone, setNewShopPhone] = useState('')
+  const [shopWifi, setShopWifi] = useState({})
+  const loadWifi = useCallback(() => {
+    apiFetch(`${API_BASE}/api/shops/card-notes`).then(r => r.json()).then(j => setShopWifi(j.wifi || {})).catch(() => {})
+  }, [])
+  useEffect(() => { loadWifi() }, [loadWifi])
+  useEffect(() => {
+    const onWifi = e => {
+      const name = e.detail?.shop_name
+      const wifi = e.detail?.wifi
+      if (!name) return
+      setShopWifi(prev => {
+        const next = { ...prev }
+        const key = normShopName(name)
+        if (wifi?.name || wifi?.password) next[key] = { name: wifi.name || '', password: wifi.password || '' }
+        else delete next[key]
+        if (e.detail?.old_name) delete next[normShopName(e.detail.old_name)]
+        return next
+      })
+    }
+    window.addEventListener('adas:wifi-saved', onWifi)
+    return () => window.removeEventListener('adas:wifi-saved', onWifi)
+  }, [])
   // Hand-offs from the caller card (2026-10-05): open this shop / create one with this phone.
   useEffect(() => {
     try {
@@ -685,9 +713,9 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
   const kanbanStages = STAGES.filter(s => s.id !== 'lost' && !CUSTOMER_STAGES.includes(s.id))
 
   if (crmMode === 'customers') return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#f5f3f0' }}>
+    <div className="min-h-screen flex flex-col" style={{ backgroundColor: '#fff' }}>
       <Navbar user={user} onLogout={onLogout} currentScreen={currentScreen} onNavigate={onNavigate} />
-      <CustomersView modeToggle={modeToggle} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) setDetailShop(sh) }}
+      <CustomersView modeToggle={modeToggle} shopWifi={shopWifi} onOpenShop={id => { const sh = allShops.find(x => String(x.id) === String(id)); if (sh) setDetailShop(sh) }}
         onMarkCustomer={async id => { const r = await apiFetch(`${API_BASE}/api/shops/${id}/mark-customer`, { method: 'POST' }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setShops(prev => prev.map(s => String(s.id) === String(id) ? { ...s, pipeline_stage: 'active' } : s)) }} />
       {detailShop && <ShopDetailPanel shop={detailShop} user={user} onClose={() => setDetailShop(null)} onSave={handleSave} onDelete={handleDelete} />}
     </div>
@@ -980,7 +1008,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
                       {stageShops.map(shop => (
                         <ShopCard key={shop.id} shop={shop} onOpen={setDetailShop}
                           onStageChange={handleStageChange} onDragStart={onDragStart}
-                          calCount={calCounts[(shop.shop_name || '').toLowerCase()] || 0} />
+                          calCount={calCounts[(shop.shop_name || '').toLowerCase()] || 0}
+                          wifi={shopWifi[normShopName(shop.shop_name)]} />
                       ))}
                       {stageShops.length === 0 && (
                         <div className="flex items-center justify-center h-16">
@@ -1058,7 +1087,8 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
                         {stageShops.map(shop => (
                           <ShopCard key={shop.id} shop={shop} onOpen={setDetailShop}
                             onStageChange={handleStageChange} onDragStart={onDragStart}
-                            calCount={calCounts[(shop.shop_name || '').toLowerCase()] || 0} />
+                            calCount={calCounts[(shop.shop_name || '').toLowerCase()] || 0}
+                            wifi={shopWifi[normShopName(shop.shop_name)]} />
                         ))}
                       </div>
                     </div>
@@ -1121,7 +1151,7 @@ export default function CRMScreen({ user, onLogout, currentScreen, onNavigate })
         <NewCustomerModal
           initialPhone={newShopPhone}
           onClose={() => { setShowNewCustomer(false); setNewShopPhone('') }}
-          onCreated={() => fetchShops()}
+          onCreated={() => { fetchShops(); loadWifi() }}
         />
       )}
 

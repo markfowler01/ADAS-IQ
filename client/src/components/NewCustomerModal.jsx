@@ -14,8 +14,8 @@ const ROLES = ['Owner', 'General Manager', 'Estimator', 'Service Advisor', 'Part
 const DEFAULT_BIG3 = { cal_id: 'charge', pcsi: 'included', post_scan: 'included', snapshot: 'off' }
 const blankPerson = role => ({ id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, role, name: '', phone: '', email: '' })
 
-export default function NewCustomerModal({ onClose, onCreated, initialName = '' }) {
-  const [shop, setShop] = useState({ shop_name: initialName || '', address: '', phone: '', email: '', website: '', place: null })
+export default function NewCustomerModal({ onClose, onCreated, initialName = '', initialPhone = '' }) {
+  const [shop, setShop] = useState({ shop_name: initialName || '', address: '', phone: initialPhone || '', email: '', website: '', wifi_name: '', wifi_password: '', place: null })
   const [people, setPeople] = useState([blankPerson('Owner'), blankPerson('Estimator')])
   const [drps, setDrps] = useState([])
   const [big3, setBig3] = useState({ ...DEFAULT_BIG3 })
@@ -82,6 +82,9 @@ export default function NewCustomerModal({ onClose, onCreated, initialName = '' 
         books = await rb.json().catch(() => ({}))
         if (!rb.ok) books = { error: books.error || `HTTP ${rb.status}` }
       } catch (e) { books = { error: e.message } }
+      if (shop.wifi_name.trim() || shop.wifi_password.trim()) {
+        await apiFetch(`${API_BASE}/api/shops/wifi`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shop_name: name, name: shop.wifi_name.trim(), password: shop.wifi_password.trim() }) }).catch(() => {})
+      }
       onCreated && onCreated({ ...d, books })
       if (books?.error) { setError(`Shop saved in the CRM, but the Zoho Books customer failed: ${books.error}. Open the shop → Billing → "Create in Zoho Books" to retry.`); return }
       onClose()
@@ -109,10 +112,10 @@ export default function NewCustomerModal({ onClose, onCreated, initialName = '' 
           <Panel tone="blue" title="🏢 Shop" bodyClass="p-3">
             <input ref={nameRef} value={shop.shop_name} onChange={e => setShop(s => ({ ...s, shop_name: e.target.value, place: null }))} placeholder="Shop name — start typing, Google fills the rest" className={input} style={inputStyle} />
             {(places.length > 0 || placesBusy) && (
-              <div className="rounded-lg overflow-hidden mt-1" style={{ border: '1px solid #bfdbfe' }}>
+              <div className="rounded-lg overflow-hidden mt-1" style={{ border: '1px solid #e8e4e0' }}>
                 {placesBusy && places.length === 0 && <div className="px-3 py-2 text-xs" style={{ color: '#888' }}>Looking on Google…</div>}
                 {places.map((p, i) => (
-                  <button key={p.place_id || i} type="button" onClick={() => usePlace(p)} className="w-full text-left px-3 py-2" style={{ borderTop: i ? '1px solid #eff6ff' : 'none', backgroundColor: 'white' }}>
+                  <button key={p.place_id || i} type="button" onClick={() => usePlace(p)} className="w-full text-left px-3 py-2" style={{ borderTop: i ? '1px solid #f5f3f0' : 'none', backgroundColor: 'white' }}>
                     <div className="text-sm font-semibold" style={{ color: '#1a1a1a' }}>{p.name}</div>
                     <div className="text-[11px]" style={{ color: '#888' }}>{p.address}{p.phone ? ` · ${p.phone}` : ''}</div>
                   </button>
@@ -123,6 +126,8 @@ export default function NewCustomerModal({ onClose, onCreated, initialName = '' 
               <input value={shop.address} onChange={e => setShop(s => ({ ...s, address: e.target.value }))} placeholder="Address" className={`${input} col-span-2`} style={inputStyle} />
               <input value={shop.phone} onChange={e => setShop(s => ({ ...s, phone: e.target.value }))} placeholder="Shop phone" inputMode="tel" className={input} style={inputStyle} />
               <input value={shop.email} onChange={e => setShop(s => ({ ...s, email: e.target.value }))} placeholder="Billing email" inputMode="email" className={input} style={inputStyle} />
+              <input value={shop.wifi_name} onChange={e => setShop(s => ({ ...s, wifi_name: e.target.value }))} placeholder="WiFi name" autoComplete="off" className={input} style={inputStyle} />
+              <input value={shop.wifi_password} onChange={e => setShop(s => ({ ...s, wifi_password: e.target.value }))} placeholder="WiFi password" autoComplete="off" className={input} style={inputStyle} />
             </div>
           </Panel>
 

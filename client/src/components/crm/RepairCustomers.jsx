@@ -11,7 +11,7 @@ import { fmtCents } from '../../lib/estimatorCalc.js'
 import TextAsMarkModal from '../TextAsMarkModal.jsx'
 
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white', borderRadius: 8 }
-const ST = { draft: '#666', sent: BLUE, approved: GREEN, invoiced: '#7c3aed', declined: '#b91c1c' }
+const ST = { draft: '#666', sent: BLUE, approved: GREEN, invoiced: '#0A0A0A', declined: '#b91c1c' }
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
 const body = (method, b) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) })
 const ago = iso => { if (!iso) return 'never'; const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d < 30 ? `${d}d ago` : d < 365 ? `${Math.floor(d / 30)}mo ago` : `${Math.floor(d / 365)}y ago` }
@@ -57,7 +57,7 @@ export default function RepairCustomers({ user, onNavigate, modeToggle }) {
         <div className="flex items-center gap-2">
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, phone, VIN, plate, vehicle" className="px-3 py-2 text-sm w-64 max-w-full" style={inp} />
           {canEdit && <button onClick={() => setAdding(true)} className="rounded-xl px-4 py-2 text-sm font-bold text-white" style={{ backgroundColor: ORANGE }}>＋ New customer</button>}
-          {canEdit && <button onClick={async () => { const name = prompt('Zoho Books customer name to bring over (with all invoices):'); if (!name) return; setErr(''); try { let r = await j('/api/estimator/retail-customers/import-books', body('POST', { name })); let n = r.imported.length; while (r.remaining > 0) { r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: r.books.contact_id })); n += r.imported.length } await load(); setSelId(r.customer.id); alert(`${r.books.name}: ${n} invoice${n === 1 ? '' : 's'} imported as service history`) } catch (e) { setErr(e.message + (e.candidates ? '' : '')) } }} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: '1.5px solid #bfdbfe' }}>⬇ From Zoho Books</button>}
+          {canEdit && <button onClick={async () => { const name = prompt('Zoho Books customer name to bring over (with all invoices):'); if (!name) return; setErr(''); try { let r = await j('/api/estimator/retail-customers/import-books', body('POST', { name })); let n = r.imported.length; while (r.remaining > 0) { r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: r.books.contact_id })); n += r.imported.length } await load(); setSelId(r.customer.id); alert(`${r.books.name}: ${n} invoice${n === 1 ? '' : 's'} imported as service history`) } catch (e) { setErr(e.message + (e.candidates ? '' : '')) } }} className="rounded-xl px-3 py-2 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: '1.5px solid #e8e4e0' }}>⬇ From Zoho Books</button>}
         </div>
       </div>
       {err && <Notice tone="red" className="mb-3">{err} <button className="underline ml-2" onClick={() => setErr('')}>dismiss</button></Notice>}
@@ -67,7 +67,9 @@ export default function RepairCustomers({ user, onNavigate, modeToggle }) {
       ) : (
         <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(270px, 1fr))' }}>
           {shown.map(c => (
-            <button key={c.id} onClick={() => setSelId(c.id)} className="text-left rounded-xl p-3" style={{ backgroundColor: 'white', border: `1.5px solid ${selId === c.id ? ORANGE : '#e8e4e0'}`, boxShadow: '0 1px 2px rgba(0,0,0,.04)' }}>
+            <button key={c.id} onClick={() => setSelId(c.id)} className="text-left rounded-xl overflow-hidden" style={{ backgroundColor: 'white', border: '1px solid #e8e4e0', boxShadow: selId === c.id ? '0 0 0 2px #15803D' : '0 1px 2px rgba(0,0,0,.04)' }}>
+              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-white" style={{ backgroundColor: '#15803D' }}>Retail</div>
+              <div className="p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="font-bold text-sm truncate" style={{ color: '#1a1a1a' }}>🙂 {c.name}</div>
@@ -83,6 +85,7 @@ export default function RepairCustomers({ user, onNavigate, modeToggle }) {
               <div className="flex items-center justify-between mt-2 text-[11px]" style={{ color: '#888' }}>
                 <span>{c.estimates_count ? `${c.estimates_count} estimate${c.estimates_count === 1 ? '' : 's'} · last ${ago(c.last_estimate_at)}` : 'no estimates yet'}</span>
                 <span className="font-bold tabular-nums" style={{ color: c.won_cents ? GREEN : '#bbb' }}>{fmtCents(c.won_cents)}</span>
+              </div>
               </div>
             </button>
           ))}
@@ -170,8 +173,8 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
             {canEdit && (
               <div className="flex gap-2 flex-wrap">
                 <button onClick={() => newEstimate()} disabled={busy === 'est'} className="flex-1 rounded-xl py-2.5 text-sm font-bold text-white" style={{ backgroundColor: ORANGE }}>{busy === 'est' ? 'Creating…' : '📝 New estimate'}</button>
-                {c.zoho_contact_id && <button onClick={async () => { setBusy('imp'); setErr(''); try { let r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); let n = r.imported.length; while (r.remaining > 0) { r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); n += r.imported.length } await load(); alert(n ? `${n} new invoice${n === 1 ? '' : 's'} imported` : 'Already up to date with Books') } catch (e) { setErr(e.message) } finally { setBusy('') } }} disabled={busy === 'imp'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #bfdbfe` }}>{busy === 'imp' ? '…' : '⬇ Pull Books history'}</button>}
-                {!c.zoho_contact_id && <button onClick={books} disabled={busy === 'books'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #bfdbfe` }}>{busy === 'books' ? '…' : '🧾 Create in Books'}</button>}
+                {c.zoho_contact_id && <button onClick={async () => { setBusy('imp'); setErr(''); try { let r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); let n = r.imported.length; while (r.remaining > 0) { r = await j('/api/estimator/retail-customers/import-books', body('POST', { contact_id: c.zoho_contact_id })); n += r.imported.length } await load(); alert(n ? `${n} new invoice${n === 1 ? '' : 's'} imported` : 'Already up to date with Books') } catch (e) { setErr(e.message) } finally { setBusy('') } }} disabled={busy === 'imp'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #e8e4e0` }}>{busy === 'imp' ? '…' : '⬇ Pull Books history'}</button>}
+                {!c.zoho_contact_id && <button onClick={books} disabled={busy === 'books'} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: BLUE, border: `1.5px solid #e8e4e0` }}>{busy === 'books' ? '…' : '🧾 Create in Books'}</button>}
                 {isMark && c.phone && <button onClick={() => setTextTo({ phone: c.phone, name: c.name })} className="rounded-xl px-3 py-2.5 text-sm font-bold" style={{ backgroundColor: 'white', color: '#555', border: '1.5px solid #e0dbd6' }}>💬 as Mark</button>}
               </div>
             )}
@@ -213,7 +216,7 @@ function CustomerPanel({ id, user, canEdit, onClose, onOpenEstimate, onDeleted }
                   {openVeh[v.key] && v.entries.map(en => (
                     <div key={en.estimate_id} className="px-3 pb-2">
                       <button onClick={() => onOpenEstimate(en.estimate_id)} className="w-full text-left rounded-lg p-2" style={{ backgroundColor: '#fffdfb', border: '1px solid #f1ede9' }}>
-                        <div className="flex items-center justify-between gap-2 text-xs"><span><b>{en.date || '—'}</b> · <span style={{ fontFamily: 'IBM Plex Mono, monospace' }}>{en.number}</span>{en.invoice_number ? ` · inv ${en.invoice_number}` : ''} · <span style={{ color: en.status === 'invoiced' ? '#7c3aed' : en.status === 'approved' ? GREEN : '#888' }}>{en.status}</span>{en.mileage != null ? ` · ${en.mileage.toLocaleString()} mi` : ' · no odometer'}</span><span className="font-bold tabular-nums">{fmtCents(en.total_cents)}</span></div>
+                        <div className="flex items-center justify-between gap-2 text-xs"><span><b>{en.date || '—'}</b> · <span style={{ fontFamily: 'IBM Plex Mono, monospace' }}>{en.number}</span>{en.invoice_number ? ` · inv ${en.invoice_number}` : ''} · <span style={{ color: en.status === 'invoiced' ? '#0A0A0A' : en.status === 'approved' ? GREEN : '#888' }}>{en.status}</span>{en.mileage != null ? ` · ${en.mileage.toLocaleString()} mi` : ' · no odometer'}</span><span className="font-bold tabular-nums">{fmtCents(en.total_cents)}</span></div>
                         {en.jobs.map(jb => (
                           <div key={jb.id} className="mt-1 text-xs" style={{ color: jb.status === 'approved' ? '#1a1a1a' : '#999' }}>
                             <div className="flex items-center justify-between gap-2"><span>{jb.status === 'approved' ? '✓' : '·'} {jb.invoice_description || jb.name}{jb.lines.some(l => l.parts.length) ? <span style={{ color: '#888' }}> · parts: {jb.lines.flatMap(l => l.parts).map(p => `${p.pn ? p.pn + ' ' : ''}${p.desc}`).join(', ')}</span> : null}</span><span className="tabular-nums">{fmtCents(jb.total_cents)}</span></div>

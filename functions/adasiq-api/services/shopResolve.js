@@ -7,7 +7,7 @@
 import { getAllShops, updateShop } from '../routes/shops.js'
 
 const STOP = new Set([
-  'the', 'a', 'an', 'and', 'of', 'at', 'for',
+  'the', 'a', 'an', 'and', 'of', 'at', 'for', 'in',
   'auto', 'automotive', 'body', 'bodyshop', 'shop',
   'collision', 'repair', 'repairs', 'paint', 'rebuild', 'rebuilders', 'rebuilding',
   'center', 'centre', 'works',
@@ -19,8 +19,22 @@ export function shopKey(name) {
   return String(name || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '')
 }
 
+// CCC prints a store number (" - M2517"). The CRM keeps a short code ("(MAW)").
+// Neither is the shop. A parenthetical counts as a code when it has a digit
+// or is 2–4 capital letters. A trailing dash token counts only when it has a digit,
+// so "Maaco - Bellingham" keeps the city.
+export function stripStoreCodes(name) {
+  return String(name || '')
+    .replace(/\(([^)]*)\)/g, (full, inner) => {
+      const t = String(inner || '').trim()
+      if (/^[A-Za-z0-9]{2,6}$/.test(t) && (/\d/.test(t) || /^[A-Z]{2,4}$/.test(t))) return ' '
+      return full
+    })
+    .replace(/\s*[-–—]\s*[A-Za-z]*\d[A-Za-z0-9]{0,8}\s*$/, ' ')
+}
+
 export function shopTokens(name) {
-  return String(name || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ')
+  return stripStoreCodes(name).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ')
     .split(/\s+/).filter(w => w && !STOP.has(w))
 }
 
