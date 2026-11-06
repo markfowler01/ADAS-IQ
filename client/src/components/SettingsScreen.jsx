@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import Navbar from './Navbar'
+import { DEFAULT_CONTACTS, clearDispatchTechCache } from '../lib/techColumns.js'
 
 const ORANGE = '#CD4419'
 const API_BASE = '/server/adasiq-api'
@@ -23,11 +24,13 @@ export default function SettingsScreen({ user, onLogout, currentScreen, onNaviga
           // Ensure dispatch_contacts exists with defaults
           const s = data.settings || {}
           if (!s.dispatch_contacts || s.dispatch_contacts.length === 0) {
-            s.dispatch_contacts = [
-              { name: 'Mark', email: 'mf@absoluteadas.com', phone: '' },
-              { name: 'Jaden', email: 'jaden@absoluteadas.com', phone: '' },
-              { name: 'Kath', email: 'k.belmonte@absoluteadas.com', phone: '', role: 'Invoicing' },
-            ]
+            s.dispatch_contacts = DEFAULT_CONTACTS.map(c => ({ ...c }))
+          } else {
+            s.dispatch_contacts = s.dispatch_contacts.map(c => ({
+              ...c,
+              name: String(c.name || '').trim().toLowerCase() === 'jaden' ? 'Jayden' : c.name,
+              email: String(c.email || '').trim().toLowerCase() === 'jaden@absoluteadas.com' ? 'jayden@absoluteadas.com' : c.email,
+            }))
           }
           setSettings(s)
         }
@@ -44,7 +47,11 @@ export default function SettingsScreen({ user, onLogout, currentScreen, onNaviga
         body: JSON.stringify(settings),
       })
       const data = await res.json()
-      if (data.ok) setSaved(true)
+      if (data.ok) {
+        setSaved(true)
+        clearDispatchTechCache()
+        window.dispatchEvent(new CustomEvent('adas:techs-changed'))
+      }
     } catch {}
     setSaving(false)
     setTimeout(() => setSaved(false), 3000)
@@ -104,7 +111,7 @@ export default function SettingsScreen({ user, onLogout, currentScreen, onNaviga
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
             <div>
               <div style={{ fontSize: 15, fontWeight: 600, color: '#1a1a1a' }}>Dispatch Contacts</div>
-              <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Map technician names to their email addresses. When a job is assigned on the board, the tech receives an email notification.</div>
+              <div style={{ fontSize: 12, color: '#888', marginTop: 2 }}>Each name gets a Dispatched column on the job board and an email when a job is assigned. Add the next technician here. Mark and Jayden stay. A new person still needs a one-time Cliq and Zoho salesperson setup before those messages use their account.</div>
             </div>
           </div>
 
@@ -116,7 +123,7 @@ export default function SettingsScreen({ user, onLogout, currentScreen, onNaviga
                     <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', marginBottom: 4 }}>Name</div>
                     <input
                       value={c.name} onChange={e => updateContact(i, 'name', e.target.value)}
-                      placeholder="Jaden"
+                      placeholder="Jayden"
                       style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #e0ddd8', fontSize: 13, boxSizing: 'border-box' }}
                     />
                   </div>
@@ -124,7 +131,7 @@ export default function SettingsScreen({ user, onLogout, currentScreen, onNaviga
                     <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#888', marginBottom: 4 }}>Email</div>
                     <input
                       type="email" value={c.email} onChange={e => updateContact(i, 'email', e.target.value)}
-                      placeholder="jaden@absoluteadas.com"
+                      placeholder="jayden@absoluteadas.com"
                       style={{ width: '100%', padding: '7px 10px', borderRadius: 7, border: '1px solid #e0ddd8', fontSize: 13, boxSizing: 'border-box' }}
                     />
                   </div>

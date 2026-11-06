@@ -11,7 +11,7 @@ import { postToCliqChannel, DISPATCH_CHANNEL } from './cliq.js'
 
 const QUEUE_KEY = 'assign_sms_queue'
 const first = s => String(s || '').trim().split(/\s+/)[0].toLowerCase()
-// The board writes "Jaden" on some cards and "Jayden" on others, and the
+// The board writes "Jayden". Older cards may still say "Jaden", and the
 // Directory says "Jayden Goshorn" — all one person (Mark 2026-09-24: "jobs
 // dispatched to Jayden need to go to him").
 const ALIAS = { jaden: 'jayden', jayden: 'jayden', jaiden: 'jayden', jay: 'jayden', marc: 'mark', mark: 'mark', kath: 'kat', kat: 'kat', katherine: 'kat' }

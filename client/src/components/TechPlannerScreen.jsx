@@ -196,7 +196,7 @@ export default function TechPlannerScreen({ user, onLogout, currentScreen, onNav
                           {j.shop_address && (
                             <button onClick={() => openMaps(j.shop_address)}
                               className="text-xs px-3 py-1 rounded-md font-medium"
-                              style={{ backgroundColor: '#eff6ff', color: '#2563eb' }}>
+                              style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>
                               📍 Maps
                             </button>
                           )}
@@ -240,7 +240,7 @@ export default function TechPlannerScreen({ user, onLogout, currentScreen, onNav
                         {s.address && (
                           <button onClick={() => openMaps(s.address)}
                             className="text-xs px-2 py-1 rounded-md font-medium"
-                            style={{ backgroundColor: '#eff6ff', color: '#2563eb' }}>
+                            style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>
                             📍
                           </button>
                         )}
@@ -304,6 +304,9 @@ export default function TechPlannerScreen({ user, onLogout, currentScreen, onNav
                 <div>
                   <p className="text-xs text-gray-500">Revenue</p>
                   <p className="text-lg font-bold" style={{ color: '#16a34a' }}>{fmt(bonusData?.total_revenue || 0)}</p>
+                  {bonusData?.fees_excluded > 0 && (
+                    <p className="text-[10px] text-gray-400 mt-0.5">After pass-through fees</p>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Bonus</p>
@@ -311,7 +314,7 @@ export default function TechPlannerScreen({ user, onLogout, currentScreen, onNav
                 </div>
                 <div>
                   <p className="text-xs text-gray-500">Miles</p>
-                  <p className="text-lg font-bold" style={{ color: '#2563eb' }}>
+                  <p className="text-lg font-bold" style={{ color: '#0A0A0A' }}>
                     {mileageData?.business_miles ? mileageData.business_miles.toFixed(0) : '0'}
                   </p>
                 </div>

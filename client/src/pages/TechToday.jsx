@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 import TodayJobCard from '../components/TodayJobCard.jsx'
+import { normShopName } from '../components/MobileJobCard.jsx'
 import CalibrationReviewModal from '../components/CalibrationReviewModal.jsx'
 import Navbar from '../components/Navbar.jsx'
 
@@ -44,6 +45,10 @@ export default function TechToday({ user, onLogout, currentScreen, onNavigate })
   const [expandedId, setExpandedId] = useState(null)
   const [reviewJob, setReviewJob] = useState(null)
   const [toast, setToast] = useState('')
+  const [shopWifi, setShopWifi] = useState({})
+  useEffect(() => {
+    apiFetch(`${API_BASE}/api/shops/card-notes`).then(r => r.json()).then(j => setShopWifi(j.wifi || {})).catch(() => {})
+  }, [])
 
   const load = useCallback(async () => {
     try {
@@ -212,6 +217,7 @@ export default function TechToday({ user, onLogout, currentScreen, onNavigate })
             isExpanded={expandedId === job.id}
             onToggleExpand={() => setExpandedId(prev => prev === job.id ? null : job.id)}
             onAction={(name) => handleAction(job, name)}
+            shopWifi={shopWifi[normShopName(job.shop_name)]}
           />
         ))}
       </div>

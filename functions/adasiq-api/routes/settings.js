@@ -14,7 +14,7 @@ function isNotFound(e) {
   return e?.statusCode === 404 || e?.errorInfo?.statusCode === 404
 }
 
-async function getSettings(req) {
+export async function getSettings(req) {
   try {
     const seg = getSegment(req)
     const item = await seg.get(CACHE_KEY)
@@ -65,7 +65,16 @@ export async function getTechEmail(req, techName) {
   if (!techName) return null
   const settings = await getSettings(req)
   const contacts = settings.dispatch_contacts || []
-  const match = contacts.find(c => c.name?.toLowerCase().trim() === techName.toLowerCase().trim())
+  const want = String(techName || '').trim().toLowerCase()
+  const first = want.split(/\s+/)[0]
+  const same = (n) => {
+    const name = String(n || '').trim().toLowerCase()
+    const f = name.split(/\s+/)[0]
+    if (name === want || f === want || f === first) return true
+    const jay = (s) => s === 'jaden' || s === 'jayden'
+    return jay(f) && jay(first)
+  }
+  const match = contacts.find(c => same(c.name))
   return match?.email || null
 }
 

@@ -13,6 +13,8 @@ import CollectPanel from './CollectPanel.jsx'
 import EstimatePill from './EstimatePill.jsx'
 import { Big3Badge, DrpBadge, BillingPill, EstimateFirstPill } from './books/Big3Rules.jsx'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { BRAND } from '../lib/brandTokens.js'
+import { displayTechName } from '../lib/techColumns.js'
 
 // Estimate totals for card price tags (Mark 2026-08-30: totals on all
 // kanban + live view cards). Module-cached: one fetch per session no
@@ -35,16 +37,6 @@ export function useEstimateTotals() {
 }
 
 const ORANGE = '#CD4419'
-
-const COLUMNS = [
-  { id: 'job_requested',    label: 'Job Requested' },
-  { id: 'need_dispatch',    label: 'Need to Dispatch' },
-  { id: 'dispatched_jaden', label: 'Dispatched to Jaden' },
-  { id: 'dispatched_mark',  label: 'Dispatched to Mark' },
-  { id: 'pending_parts',    label: 'Pending / Waiting on Parts' },
-  { id: 'ready_invoice',    label: 'Ready to Invoice' },
-  { id: 'complete',         label: 'Completed' },
-]
 
 // Cash detection — mirrors services/cashPricing.js. Blank insurer is
 // NOT cash (fixed 2026-07-08 per Mark: "if there's an insurance company
@@ -95,6 +87,52 @@ export function normShopName(name) {
 // Customer notes are stored per shop as a JSON array of items (Mark
 // 2026-07-14: "each shop has four or five specific things we need to
 // note"). Older notes are plain text — treat newlines as items.
+
+// One tap copies the shop Wi-Fi name and password together.
+export function WifiCopy({ wifi, bg = '#f5f3f0' }) {
+  const [copied, setCopied] = useState(false)
+  if (!wifi || (!wifi.name && !wifi.password)) return null
+  const text = `WiFi: ${wifi.name || ''}\nPassword: ${wifi.password || ''}`
+  async function copy(e) {
+    e.stopPropagation()
+    e.preventDefault()
+    let ok = false
+    try {
+      if (navigator.clipboard?.writeText) {
+        await Promise.race([
+          navigator.clipboard.writeText(text),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('clipboard timeout')), 500)),
+        ])
+        ok = true
+      }
+    } catch { ok = false }
+    if (!ok) {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'fixed'
+      ta.style.left = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      try { document.execCommand('copy') } catch { /* the label still confirms the tap */ }
+      ta.remove()
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1400)
+  }
+  return (
+    <button type="button" onClick={copy} className="w-full text-left rounded-lg px-2.5 py-1.5 mb-1.5" style={{ backgroundColor: bg, border: '1px solid #e8e4e0' }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] leading-tight truncate" style={{ color: '#1a1a1a' }}><span className="font-bold">WiFi</span> {wifi.name || '—'}</div>
+          <div className="text-[11px] leading-tight truncate font-mono" style={{ color: '#1a1a1a' }}><span className="font-sans font-bold">Password</span> {wifi.password || '—'}</div>
+        </div>
+        <span className="text-[11px] font-bold flex-shrink-0" style={{ color: copied ? '#15803d' : ORANGE }}>{copied ? 'Copied' : 'Copy'}</span>
+      </div>
+    </button>
+  )
+}
+
 export function parseNoteItems(raw) {
   const s = String(raw || '').trim()
   if (!s) return []
@@ -175,7 +213,7 @@ function UploadButton({ job }) {
   )
 }
 
-export default function MobileJobCard({
+export default function MobileJobCard({ shopWifi,
   job,
   onEdit,
   onMoveToReadyInvoice,
@@ -292,6 +330,7 @@ export default function MobileJobCard({
           {job.shop_name}
         </p>
       )}
+      <WifiCopy wifi={shopWifi?.[normShopName(job.shop_name)]} />
 
       {vehicle && (
         <p className="text-sm font-semibold leading-snug mb-0.5" style={{ color: '#1f2937' }}>{vehicle}</p>
@@ -350,7 +389,7 @@ export default function MobileJobCard({
           >{job.cash_quoted ? `💵 CUSTOMER PAY · told $${job.cash_quoted}` : '💵 CASH · max $700'}</span>
         </p>
       ) : job.insurer && (
-        <p className="text-xs font-medium mb-1 truncate" style={{ color: '#2563eb' }}>
+        <p className="text-xs font-medium mb-1 truncate" style={{ color: '#0A0A0A' }}>
           <span style={{ color: '#999', fontWeight: 400 }}>Insurer: </span>{job.insurer}
         </p>
       )}
@@ -361,7 +400,7 @@ export default function MobileJobCard({
             <circle cx="12" cy="8" r="4" stroke="#999" strokeWidth="2"/>
             <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#999" strokeWidth="2" strokeLinecap="round"/>
           </svg>
-          <p className="text-xs font-medium" style={{ color: '#6b7280' }}>{job.technician}</p>
+          <p className="text-xs font-medium" style={{ color: '#6b7280' }}>{displayTechName(job.technician)}</p>
         </div>
       )}
 
@@ -388,8 +427,8 @@ export default function MobileJobCard({
             </span>
           )
         })}
-        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>PCSI</span>
-        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#dbeafe', color: '#1e40af' }}>POST</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>PCSI</span>
+        <span className="text-xs px-1.5 py-0.5 rounded-md font-medium" style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>POST</span>
       </div>
 
       {/* Extra services flag — tech typed extras in the Live Day
@@ -491,10 +530,10 @@ export default function MobileJobCard({
           <button
             onClick={e => { e.stopPropagation(); onMoveToReadyInvoice(job) }}
             className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
-            style={{ backgroundColor: '#fdf4ff', border: '1.5px solid #e9d5ff', padding: '10px 0', minHeight: '44px' }}
+            style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e8e4e0', padding: '10px 0', minHeight: '44px' }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#7e22ce" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>Ready to Invoice</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="#0A0A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="14 2 14 8 20 8" stroke="#0A0A0A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <span className="text-sm font-semibold" style={{ color: '#0A0A0A' }}>Ready to Invoice</span>
           </button>
         ) : null
       )}
@@ -510,7 +549,7 @@ export default function MobileJobCard({
           className="w-full flex items-center justify-center gap-2 rounded-xl mt-2 transition-all active:opacity-60"
           style={{ backgroundColor: '#eff6ff', border: '1.5px solid #bfdbfe', padding: '10px 0', minHeight: '44px' }}
         >
-          <span className="text-sm font-semibold" style={{ color: '#1d4ed8' }}>🧾 Bill from Quote (${Number(billableQuote.total).toFixed(0)})</span>
+          <span className="text-sm font-semibold" style={{ color: BRAND.quote }}>Bill from Quote (${Number(billableQuote.total).toFixed(0)})</span>
         </button>
       )}
     </div>
