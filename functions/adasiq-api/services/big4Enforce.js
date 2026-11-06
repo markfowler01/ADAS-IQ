@@ -54,7 +54,8 @@ export async function enforceBig4(token, estimateId, want = {}, lineEdits = {}) 
     const k = big4KeyOf(li.name)
     if (e.remove) continue
     if (k && fix.includes(k)) continue                        // replaced below (or dropped for 'off')
-    lines.push({ line_item_id: li.line_item_id, ...(li.item_id ? { item_id: li.item_id } : { name: li.name }), description: li.description || '',
+    const keptCopy = k && /\(included\)|\(l-m\)/i.test(li.name || '') ? b3.scanLineCopy(k) : null
+    lines.push({ line_item_id: li.line_item_id, ...(li.item_id ? { item_id: li.item_id } : {}), name: keptCopy?.name || li.name, description: keptCopy?.description || li.description || '',
       rate: e.rate != null && e.rate !== '' ? Number(e.rate) : li.rate, quantity: e.quantity != null && e.quantity !== '' ? Number(e.quantity) : li.quantity })
   }
   const missing = [], added = []
@@ -66,7 +67,8 @@ export async function enforceBig4(token, estimateId, want = {}, lineEdits = {}) 
     let it = await itemNamed(token, name)
     if (!it && want[k] === 'charge' && b.paidFallback) it = await itemNamed(token, b.paidFallback)
     if (!it) { missing.push(name); continue }
-    added.push({ item_id: it.item_id, description: it.description || '', rate: want[k] === 'included' ? 0 : (Number(it.rate) || 0), quantity: 1 })
+    const copy = want[k] === 'included' ? b3.scanLineCopy(k) : null
+    added.push({ item_id: it.item_id, name: copy?.name || it.name, description: copy?.description || it.description || '', rate: want[k] === 'included' ? 0 : (Number(it.rate) || 0), quantity: 1 })
   }
   if (missing.length) throw new Error(`Not in the Books catalog: ${missing.join(', ')}`)
   // Big 4 lines lead the quote, the way they're built.

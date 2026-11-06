@@ -580,3 +580,46 @@ export function FullServiceRules({ shop }) {
     </div>
   )
 }
+
+// Invoice the Nissan 4-Way Alignment (Mark 2026-10-20). The report always
+// lists it. This switch only controls the invoice line. Default off.
+export function AlignmentInvoiceToggle({ shop }) {
+  const [on, setOn] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [who, setWho] = useState('')
+  useEffect(() => {
+    if (!shop?.id) return
+    let dead = false
+    apiFetch(`${API_BASE}/api/shops/${shop.id}/alignment-invoice`).then(r => r.json()).then(x => {
+      if (dead || !x.ok) return
+      setOn(x.on === true)
+      setWho(x.set_by || '')
+    }).catch(() => {})
+    return () => { dead = true }
+  }, [shop?.id])
+  if (!shop?.id) return null
+  const flip = async () => {
+    if (busy) return
+    setBusy(true); setMsg('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/shops/${shop.id}/alignment-invoice`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !on }) })
+      const x = await r.json(); if (!r.ok || !x.ok) throw new Error(x.error || 'Could not save')
+      setOn(x.on === true); setWho(x.set_by || ''); setMsg('Saved.')
+    } catch (e) { setMsg(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ border: '2px solid #CD4419', backgroundColor: '#fff7ed' }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-extrabold" style={{ color: '#CD4419' }}>Invoice 4-way alignment</div>
+        <button onClick={flip} disabled={busy} className="rounded-full px-3 py-1.5 text-xs font-extrabold"
+          style={on ? { backgroundColor: '#CD4419', color: '#fff' } : { backgroundColor: '#e5e7eb', color: '#4b5563' }}>{busy ? '…' : on ? '● ON' : '○ OFF'}</button>
+      </div>
+      <div className="text-[11px]" style={{ color: '#555' }}>{on
+        ? 'On: a 4-way alignment invoice line is allowed when Books already has a price for it. No price is invented.'
+        : 'Off until we have an alignment machine. The calibration report still lists 4-Way Alignment. Off means no invoice line, no price, and no labor hour.'}</div>
+      <div className="text-[10px] mt-1" style={{ color: '#888' }}>{who ? `Last set by ${who}.` : 'Default off for every shop.'}</div>
+      {msg && <div className="text-[11px] mt-1 font-semibold" style={{ color: msg === 'Saved.' ? '#166534' : '#b91c1c' }}>{msg}</div>}
+    </div>
+  )
+}

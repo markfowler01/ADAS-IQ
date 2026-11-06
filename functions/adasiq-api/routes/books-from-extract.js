@@ -203,8 +203,23 @@ router.post('/from-extract', async (req, res) => {
       payload.calibrations = [...payload.calibrations.filter(c => !isBsm(c)), one]
     }
 
-    // Build line items from calibrations — match to catalog where possible
-    const lineItems = payload.calibrations.map((cal, idx) => {
+    // Build line items from calibrations — match to catalog where possible.
+    // 4-Way Alignment invoices only when the shop switch is on and a price
+    // already exists. Battery Reset invoices only when a price already exists.
+    const alignMod = await import('../services/alignmentInvoice.js')
+    const alignOn = alignMod.alignmentInvoiceOn(rules)
+    const catalogItems = (services || []).map(s => ({ item_id: s.zoho_item_id || s.item_id, name: s.name, rate: Number(s.unit_price || s.rate) || 0 }))
+    const lineItems = payload.calibrations.flatMap((cal, idx) => {
+      const names = alignMod.isFourWayAlignmentRow(cal) ? alignMod.ALIGN_INVOICE_NAMES : alignMod.isBatteryResetRow(cal) ? alignMod.BATTERY_INVOICE_NAMES : null
+      if (names) {
+        const line = alignMod.invoiceLineForReportRow(cal, { alignmentOn: alignOn, mappedItem: alignMod.pricedMappedItem(itemMap, catalogItems, names) || alignMod.pricedCatalogService(services, names) })
+        if (!line) return []
+        return [{
+          id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          description: line.name, qty: 1, rate: line.rate, amount: line.rate, retail_amount: line.rate,
+          matched_service_id: line.id || null, cal_type: cal.cal_type || cal.mode || '',
+        }]
+      }
       const calName = cal.calibration_name || cal.name || cal.description || cal.item_name || cal.trigger || `Calibration ${idx + 1}`
       const matched = matchService(calName, services, itemMap)
       let rate = 0
@@ -218,14 +233,14 @@ router.post('/from-extract', async (req, res) => {
       }
       const qty = Number(cal.qty || 1)
       const amount = qty * rate
-      return {
+      return [{
         id: `li_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         description: calName,
         qty, rate, amount,
         retail_amount: amount,
         matched_service_id: matched?.id || null,
         cal_type: cal.cal_type || cal.mode || '',
-      }
+      }]
     })
 
     const subtotal = lineItems.reduce((s, li) => s + (Number(li.amount) || 0), 0)

@@ -67,6 +67,12 @@ export default function BonusCalculator({ user, isAdmin }) {
           <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#16a34a' }}>Revenue Generated</p>
           <p className="text-3xl font-bold mt-1" style={{ color: '#15803d' }}>{fmt(data.total_revenue)}</p>
           <p className="text-xs text-gray-500 mt-1">{data.invoice_count} invoice{data.invoice_count !== 1 ? 's' : ''}</p>
+          {data.fees_excluded > 0 && (
+            <p className="text-xs text-gray-500 mt-1">Calibration ID and pass-through fees taken out: {fmt(data.fees_excluded)}</p>
+          )}
+          {data.fees_pending > 0 && (
+            <p className="text-xs mt-1" style={{ color: '#CD4419' }}>Still reading line items on {data.fees_pending} invoice{data.fees_pending !== 1 ? 's' : ''}. Open this again in a minute.</p>
+          )}
         </div>
         <div className="rounded-xl p-5 shadow-sm" style={{ backgroundColor: '#fff7f5' }}>
           <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: ORANGE }}>Bonus Earned</p>
@@ -74,14 +80,14 @@ export default function BonusCalculator({ user, isAdmin }) {
           <p className="text-xs text-gray-500 mt-1">At current tier rates</p>
         </div>
         {next && (
-          <div className="rounded-xl p-5 shadow-sm col-span-2 lg:col-span-1" style={{ backgroundColor: '#eff6ff' }}>
-            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#2563eb' }}>Next Tier</p>
-            <p className="text-lg font-bold mt-1" style={{ color: '#1d4ed8' }}>
+          <div className="rounded-xl p-5 shadow-sm col-span-2 lg:col-span-1" style={{ backgroundColor: '#f5f3f0' }}>
+            <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#0A0A0A' }}>Next Tier</p>
+            <p className="text-lg font-bold mt-1" style={{ color: '#0A0A0A' }}>
               {fmt(next.revenue_to_next)} to go
             </p>
             <p className="text-xs text-gray-500 mt-1">Unlock {(next.rate * 100).toFixed(1)}% rate at {fmt(next.threshold)}</p>
             <div className="h-1.5 rounded-full bg-white mt-3">
-              <div className="h-1.5 rounded-full" style={{ width: `${pctToNext}%`, backgroundColor: '#2563eb' }} />
+              <div className="h-1.5 rounded-full" style={{ width: `${pctToNext}%`, backgroundColor: '#0A0A0A' }} />
             </div>
           </div>
         )}

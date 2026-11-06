@@ -100,7 +100,12 @@ export function tagRows(cals, rules, { collision = true } = {}) {
   for (const c of Array.isArray(cals) ? cals : []) {
     const key = fsKeyFor(c.calibration_name || c.name)
     const f = key ? FULL_SERVICE.find(x => x.key === key) : null
-    if (f && collision && rules?.[key] === 'off') continue          // Full Service switched off for this shop
+    // Full Service switched off for this shop. A required Nissan battery-reset
+    // row stays on the report and in the required count. Other makes still drop.
+    if (f && collision && rules?.[key] === 'off') {
+      if (c._reportRequired && key === 'resets') { delete c._fs; keep.push(c); continue }
+      continue
+    }
     if (f) { if (seenFs.has(key)) continue; seenFs.add(key) }        // one row per item (two "Battery-Disconnect Resets" on CH11819)
     // Optional items (not OEM-required) exist only for Full Service shops that do or offer them.
     if (f?.optional && (!collision || (rules?.[key] || FS_DEFAULT) === 'shop' || !rules)) continue

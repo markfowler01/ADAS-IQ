@@ -1,7 +1,9 @@
 // 💵 Cash revenue (Mark 2026-10-17: "I need to operate on a cash basis and all
-// these numbers need to be after discount"). Every revenue stat (GET SOME
-// meeting, Ada's strip, tech bars, tech digest, Live Day, the brief) counts
-// money actually received, on the day it landed, net of discounts. That is
+// these numbers need to be after discount"). The brief, Ada's strip, and the
+// bonus count money actually received, on the day it landed. The GET SOME
+// meeting and Live Day count the cost invoice (what was billed, after the
+// shop discount). Jayden's text shows that same sales number, and uses this
+// cash only for the bonus lines. Cash here is
 // Books customer payments, which is what the cash-basis P&L reports.
 //
 // Checked 2026-10-17: invoices YTD $308.7k (accrual, incl. unpaid) vs

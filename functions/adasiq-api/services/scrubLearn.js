@@ -63,6 +63,21 @@ export async function listLessons(req) {
   return lessons
 }
 
+/**
+ * Apply a Missed click to one stored row. Mutates the row when it takes.
+ * A guard demotion (`_guard === 'demoted'`) stays off and must not be learned,
+ * or the next car would grow the row back.
+ */
+export function applyMiss(row) {
+  if (row && row._guard === 'demoted') return { keptOff: true }
+  if (!row) return { keptOff: false }
+  row.enabled = true
+  row._edited = true
+  row._learned = 'flipped'
+  if (/^(CONDITIONAL:|REVIEW NEEDED|NOT REQUIRED)/.test(String(row.classification || ''))) delete row.classification
+  return { keptOff: false }
+}
+
 /** Record one correction. Same make+sensor+action stacks (n++). */
 export async function recordLesson(req, raw) {
   const sensor = canonSensor(raw.sensor)
@@ -144,6 +159,10 @@ export async function applyLessons(req, data) {
     if (!trigHit(l.trigger, repair) && l.trigger) continue
     const re = new RegExp(l.sensor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '.+'), 'i')
     const row = data.calibrations.find(c => re.test(String(c.calibration_name || c.sensor || '')))
+    if (l.action === 'require' && /tesla/i.test(make) && /blind ?spot|rear.*radar/i.test(String(l.sensor || ''))) continue
+    // A guard demotion is an OEM rule (Nissan park sensors on a cover drop). A
+    // "we missed it" lesson must not turn that row back on.
+    if (l.action === 'require' && row && row._guard === 'demoted') continue
     if (l.action === 'require') {
       if (row) {
         if (row.enabled === true) continue
