@@ -39,10 +39,22 @@ async function readCache(segment, key) {
   }
 }
 
+// getAllRows silently stops at 200 rows; walk the table with the paged API.
+async function readAllRows(table) {
+  const out = []
+  let nextToken
+  for (let page = 0; page < 200; page++) {
+    const resp = await table.getPagedRows({ maxRows: 250, nextToken })
+    out.push(...(Array.isArray(resp?.data) ? resp.data : []))
+    nextToken = resp?.next_token
+    if (!nextToken) break
+  }
+  return out
+}
+
 async function readDatastore(app, tableName) {
   try {
-    const rows = await app.datastore().table(tableName).getAllRows()
-    return Array.isArray(rows) ? rows : []
+    return await readAllRows(app.datastore().table(tableName))
   } catch (e) {
     console.warn(`[backup] datastore read failed for ${tableName}:`, e.message)
     return []
@@ -102,7 +114,7 @@ router.get('/run', async (req, res) => {
     async function readShopsForBackup() {
       try {
         const shopsTable = app.datastore().table('CRMShops')
-        const rows = await shopsTable.getAllRows()
+        const rows = await readAllRows(shopsTable)
         return (rows || []).map(r => {
           const s = r.CRMShops || r
           function parse(v) { try { return JSON.parse(v) } catch { return v } }
