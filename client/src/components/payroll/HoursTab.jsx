@@ -59,6 +59,9 @@ export default function HoursTab({ user }) {
     if (p.late) out.push({ t: `late adj. ${h(p.late)}`, tone: 'amber' })
     const rv = data?.reviews?.[p.user_id]
     if (rv) out.push({ t: `✅ approved by ${p.name.split(' ')[0]} ${new Date(rv.at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}`, tone: 'green' })
+    // Approved early (2 days before the end): hours worked after that show here.
+    const after = rv ? Math.round(((Number(p.worked) || 0) - (Number(rv.total_minutes) || 0) / 60) * 100) / 100 : 0
+    if (rv && after > 0.05) out.push({ t: `+${h(after)} worked after approving`, tone: 'amber' })
     else if (p.user_id !== 'joyce@absoluteadas.com' && (data?.today || '') >= (period?.end || '')) out.push({ t: '⏳ not reviewed yet', tone: 'amber' })
     return out
   }

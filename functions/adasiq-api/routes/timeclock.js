@@ -1101,11 +1101,11 @@ router.post('/entries/manual', async (req, res) => {
 const attestKey = (uid, start) => `tc_attest:${emailKey(uid)}:${start}`
 function ptToday() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }
 async function reviewPeriodFor(today) {
-  const { semiMonthlyPeriod, addDaysISO } = await import('../services/hr.js')
-  // The period that is closing today (last day) or just closed (≤ 4 days ago)
+  const { semiMonthlyPeriod, reviewDue, reviewOpensISO } = await import('../services/hr.js')
+  // The period closing in the next 2 days, or just closed (≤ 4 days ago). Weekdays only.
   for (const shift of [0, -1]) {
     const p = semiMonthlyPeriod(today, shift)
-    if (today >= p.end && today <= addDaysISO(p.end, 4)) return { ...p, due: true }
+    if (reviewDue(today, p.end)) return { ...p, due: true, early: today < p.end, opens: reviewOpensISO(p.end) }
   }
   return { ...semiMonthlyPeriod(today, 0), due: false }
 }
@@ -1153,13 +1153,13 @@ router.post('/period-review/attest', async (req, res) => {
     const start = String(req.body?.start || ''), end = String(req.body?.end || '')
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return res.status(400).json({ error: 'period start/end required' })
     const total = Number(req.body?.total_minutes) || 0
-    const rec = { user_id: userId, user_name: userName, start, end, at: new Date().toISOString(), total_minutes: total, note: String(req.body?.note || '').slice(0, 300), ok: true }
+    const rec = { user_id: userId, user_name: userName, start, end, at: new Date().toISOString(), through: ptToday(), total_minutes: total, note: String(req.body?.note || '').slice(0, 300), ok: true }
     await tcWrite(req, attestKey(userId, start), JSON.stringify(rec))
     console.log(`[timeclock] ${userName} approved their time card ${start}→${end}: ${(total / 60).toFixed(2)}h`)
     if (!/demo/i.test(String(req.user?.email || ''))) {
       try {
         const { postToCliqChannelById, MARK_ALERT_CHANNEL_ID } = await import('../services/cliq.js')
-        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ *${userName} reviewed + approved their time card* · ${start} → ${end} · ${(total / 60).toFixed(2)}h${rec.note ? `\nNote: ${rec.note}` : ''}`)
+        await postToCliqChannelById(MARK_ALERT_CHANNEL_ID, `✅ *${userName} reviewed + approved their time card* · ${start} → ${end} · ${(total / 60).toFixed(2)}h${rec.through < end ? ` (early, hours through ${rec.through})` : ''}${rec.note ? `\nNote: ${rec.note}` : ''}`)
       } catch (e) { console.warn('[timeclock] attest ping failed:', e.message) }
     }
     res.json({ ok: true, attested: rec })

@@ -36,9 +36,9 @@ export default function TimeClockReview({ user }) {
 
   useEffect(() => {
     const day = todayPT()
-    // Only bother the server on days a review could be due: the 15th, the 28th+, or the 1st–4th / 16th–19th.
-    const d = Number(day.slice(8, 10))
-    const maybeDue = d === 15 || d >= 28 || d <= 4 || (d >= 16 && d <= 19)
+    // Mark 2026-11-06: opens 2 days before the period ends, Mon–Fri only (the server decides: reviewDue in hr.js).
+    const d = Number(day.slice(8, 10)), wd = new Date(day + 'T12:00:00Z').getUTCDay()
+    const maybeDue = wd >= 1 && wd <= 5 && ((d >= 11 && d <= 19) || d >= 24 || d <= 4)
     if (!maybeDue) return
     apiFetch(`${API_BASE}/api/timeclock/period-review`).then(r => r.json()).then(j => {
       if (!j?.ok || !j.due || j.attested) return

@@ -954,6 +954,42 @@ function CurrentTotal({ job }) {
   return <span className="text-sm font-extrabold flex-shrink-0" style={{ color: '#1a1a1a' }}>${Number(t).toFixed(2)}</span>
 }
 
+// 💼 Sales day (Mark 2026-11-06: "an easy way to mark myself not in the field,
+// some days I do sales"). One tap for today or tomorrow. The board, the morning
+// hand-off check and booking all treat it like a day off; #dispatch is told.
+function SalesDayBar({ user, techs, onChanged }) {
+  const me = String(user?.name || '').trim().split(/\s+/)[0]
+  const [days, setDays] = useState(null), [busy, setBusy] = useState(''), [err, setErr] = useState('')
+  const load = () => apiFetch(`${API_BASE}/api/schedule/field-off`).then(r => r.json()).then(d => { if (d.ok) setDays(d) }).catch(() => {})
+  useEffect(() => { load() }, [])
+  if (!days || !me || !(techs || []).some(t => String(t.name).split(' ')[0].toLowerCase() === me.toLowerCase())) return null
+  const tomorrow = new Date(days.today + 'T12:00:00Z'); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
+  const tmr = tomorrow.toISOString().slice(0, 10)
+  const isOn = d => (days.days[d] || []).some(n => n.toLowerCase() === me.toLowerCase())
+  const set = async (date, off) => {
+    setBusy(date); setErr('')
+    try {
+      const r = await apiFetch(`${API_BASE}/api/schedule/field-off`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, off }) })
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
+      setDays(x => ({ ...x, days: j.days })); onChanged?.()
+    } catch (e) { setErr(e.message) } finally { setBusy('') }
+  }
+  const others = Object.entries(days.days).filter(([d]) => d === days.today).flatMap(([, n]) => n).filter(n => n.toLowerCase() !== me.toLowerCase())
+  const Btn = ({ date, label }) => { const on = isOn(date); return (
+    <button onClick={() => set(date, !on)} disabled={!!busy} className="text-xs font-bold rounded-full px-3 py-1.5"
+      style={on ? { backgroundColor: '#1F8B8B', color: 'white' } : { backgroundColor: 'white', color: '#1F8B8B', border: '1px solid #1F8B8B' }}>
+      {busy === date ? '…' : on ? `💼 Sales ${label} ✓` : `💼 Sales ${label}`}</button>) }
+  return (
+    <div className="rounded-xl px-3 py-2 mb-3 flex flex-wrap items-center gap-2" style={{ backgroundColor: isOn(days.today) ? '#e6f4f4' : '#f7f5f2', border: '1px solid #e3ded8' }}>
+      <span className="text-xs font-bold" style={{ color: '#333' }}>{isOn(days.today) ? `💼 You're doing sales today, not in the field.` : 'Not in the field?'}</span>
+      <Btn date={days.today} label="today" />
+      <Btn date={tmr} label="tomorrow" />
+      {others.length > 0 && <span className="text-xs" style={{ color: '#555' }}>· 💼 {others.join(', ')} on sales today</span>}
+      {err && <span className="text-xs font-bold" style={{ color: '#b91c1c' }}>{err}</span>}
+    </div>
+  )
+}
+
 export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -1528,6 +1564,7 @@ export default function LiveDay({ user, onLogout, currentScreen, onNavigate }) {
           </div>
         )}
 
+        <SalesDayBar user={user} techs={data?.techs} />
         {/* Tech cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {(data?.techs || []).filter(t => !isTechView || isMine(t.name)).map(t => (

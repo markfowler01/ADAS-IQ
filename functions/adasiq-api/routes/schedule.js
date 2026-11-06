@@ -103,8 +103,60 @@ export async function readTimeOffMap(req) {
     }
   }
   out._pending = pending
+  // 💼 Sales days (Mark 2026-11-06: "an easy way to mark myself not in the
+  // field, some days I do sales"). Same as a day off for the board and the
+  // morning hand-off; never touches PTO or payroll.
+  const sales = await readFieldOff(req).catch(() => ({}))
+  out._sales = {}
+  for (const [d, names] of Object.entries(sales)) {
+    if (d < today || !Array.isArray(names)) continue
+    out._sales[d] = names
+    for (const n of names) (out[d] = out[d] || []).includes(n) || out[d].push(n)
+  }
   return out
 }
+
+const FIELD_OFF_KEY = 'field_off_days'
+export async function readFieldOff(req) {
+  const raw = await readKV(req, FIELD_OFF_KEY)
+  try { return raw ? JSON.parse(raw) : {} } catch { return {} }
+}
+const firstOf = n => String(n || '').trim().split(/\s+/)[0]
+router.get('/field-off', async (req, res) => {
+  try {
+    const today = todayPT()
+    const all = await readFieldOff(req)
+    res.json({ ok: true, today, days: Object.fromEntries(Object.entries(all).filter(([d]) => d >= today)), me: firstOf(req.user?.name) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
+router.post('/field-off', async (req, res) => {
+  try {
+    const date = String(req.body?.date || '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < todayPT()) return res.status(400).json({ error: 'Pick today or a later day' })
+    const me = firstOf(req.user?.name)
+    const who = firstOf(req.body?.name) || me
+    const boss = ['owner', 'admin'].includes(String(req.user?.role || ''))
+    if (!who) return res.status(400).json({ error: 'Who is it for?' })
+    if (who.toLowerCase() !== me.toLowerCase() && !boss) return res.status(403).json({ error: 'You can only set your own sales days' })
+    const off = req.body?.off !== false
+    const all = await readFieldOff(req)
+    const today = todayPT()
+    for (const d of Object.keys(all)) if (d < today) delete all[d]   // keep the row small
+    const list = (all[date] || []).filter(n => n.toLowerCase() !== who.toLowerCase())
+    if (off) list.push(who)
+    if (list.length) all[date] = list; else delete all[date]
+    await upsertKV(req, FIELD_OFF_KEY, JSON.stringify(all))
+    // Tell dispatch so the lane gets covered (only for today/tomorrow; further out shows on the board).
+    if (date <= addDaysISO(today, 1)) {
+      try {
+        const day = date === today ? 'today' : 'tomorrow'
+        await postToCliqChannel(DISPATCH_CHANNEL, off ? `💼 *${who} is doing sales ${day}*, not in the field. Anything on ${who}'s lane ${day} needs another tech.` : `🔧 *${who} is back in the field ${day}.*`)
+      } catch (e) { console.warn('[field-off] cliq:', e.message) }
+    }
+    console.log(`[field-off] ${who} ${off ? 'sales' : 'field'} on ${date} by ${req.user?.name || '?'}`)
+    res.json({ ok: true, days: Object.fromEntries(Object.entries(all).filter(([d]) => d >= today)) })
+  } catch (e) { res.status(500).json({ error: e.message }) }
+})
 
 // One-call payload for the Schedule screen: every job (requests included),
 // confirmed flags, and per-shop city + coords for the cards and the map.
@@ -363,7 +415,11 @@ export async function buildScheduleDigest(req) {
     const fmtJob = j => `${j.shop_name || 'Shop'} — ${j.vehicle || [j.year, j.make, j.model].filter(Boolean).join(' ') || 'Vehicle TBD'}`
     const link = `${(process.env.CLIENT_URL || 'https://adas-iq-904191467.development.catalystserverless.com/app/index.html').split('?')[0]}`
     const markLane = laneOf('Mark')
-    if (markLane.length) {
+    const markSales = (timeOff._sales?.[today] || []).some(n => /^mark$/i.test(n))
+    if (markLane.length && markSales) {
+      handoff.push(`💼 *Mark is doing sales today* and has ${markLane.length} on his lane. Move them to Jayden on the Live view (🔁 Reassign): ${link}`)
+      for (const j of markLane.slice(0, 6)) handoff.push(`• ${fmtJob(j)}`)
+    } else if (markLane.length) {
       handoff.push(`👀 *On Mark's lane today (${markLane.length}).* Mark in the field? If not, move them to Jayden on the Live view (🔁 Reassign) so he sees them: ${link}`)
       for (const j of markLane.slice(0, 6)) handoff.push(`• ${fmtJob(j)}`)
     }

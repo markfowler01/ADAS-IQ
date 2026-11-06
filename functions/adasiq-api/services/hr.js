@@ -245,6 +245,20 @@ export function addDaysISO(dateISO, n) {
   return d.toISOString().slice(0, 10)
 }
 const r2 = n => Math.round(n * 100) / 100
+// Time card review window (Mark 2026-11-06: "get Jayden's hours completed the
+// day before or 2 days before the end of a pay period … Mon–Fri first thing in
+// the AM"). Opens 2 days before the period's last day (a weekend rolls back to
+// Friday), stays up through 4 days after as a catch-up, and only ever asks on a
+// weekday. Hours worked after an early approval show on Payroll → Hours.
+export const isWeekdayISO = dateISO => { const w = new Date(dateISO + 'T12:00:00Z').getUTCDay(); return w >= 1 && w <= 5 }
+export function reviewOpensISO(endISO) {
+  let d = addDaysISO(endISO, -2)
+  while (!isWeekdayISO(d)) d = addDaysISO(d, -1)
+  return d
+}
+export function reviewDue(todayISO, endISO) {
+  return isWeekdayISO(todayISO) && todayISO >= reviewOpensISO(endISO) && todayISO <= addDaysISO(endISO, 4)
+}
 
 // WA overtime: minutes past 40h in a Mon-Sun workweek are OT, attributed
 // to the DAY they were worked. Weeks straddling a pay-period boundary use
