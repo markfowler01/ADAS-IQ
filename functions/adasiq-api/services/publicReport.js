@@ -38,24 +38,47 @@ export async function reportData(req, scrubId, { withDocs = true } = {}) {
   if (!s) return null
   let cals = (s.payload?.calibrations || []).map(c => ({ ...c }))
   try {
+    const { demoteNissanParkRows, noteNissanRadarAlignment, noteNissanBatteryProcedure } = await import('./scrubGuard.js')
+    const data = { ...(s.payload || {}), make: s.payload?.make || s.make || '', vehicle: s.payload?.vehicle || s.vehicle || '', calibrations: cals }
+    const park = demoteNissanParkRows(data)
+    const align = noteNissanRadarAlignment(data)
+    const battery = noteNissanBatteryProcedure(data)
+    if (park || align || battery) {
+      const { replaceScrubCalibrations } = await import('./scrubStore.js')
+      await replaceScrubCalibrations(req, scrubId, data.calibrations)
+      cals = data.calibrations.map(c => ({ ...c }))
+    }
+  } catch (e) { console.warn('[public report] nissan refresh:', e.message) }
+  let batteryNote = batteryOperationsNote(cals)
+  try {
     const fs = await import('./fullService.js')
     const r = s.shop ? await fs.readFullServiceForScrub(req, s) : null   // honours the per-report override
     cals = fs.tagRows(cals, r?.rules, { collision: r ? r.collision : true })
   } catch { /* plain rows */ }
+  if (cals.some(c => c.classification === 'REVIEW NEEDED' || (c.enabled && !c._fs && /battery.?disconnect reset/i.test(c.calibration_name || '') && /Operations Required after Disconnecting Battery/i.test(`${c.operation_title || ''} ${c.justification || ''}`)))) batteryNote = ''
   // 🧾 PCSI + pre/post scans sit in the Operations table like any calibration
   // (Mark 2026-10-02), each citing the make's own document when we have one.
   cals = [...cals.filter(c => c.enabled && !c._fs), ...await alwaysRows(req, s), ...cals.filter(c => !(c.enabled && !c._fs))]
   let cited = []
   if (withDocs) {
     try {
-      const A = await import('./oemAttach.js'); const docs = await A.citedDocs(req, cals)
+      const A = await import('./oemAttach.js'); const docs = await A.citedDocs(req, cals, s.make || '')
       // Remember what each row cites before fetching, so the popup still names the
       // document even when its file can't be pulled.
       for (const c of cals) if (c._attach) c._citeTitles = c._attach.map(n => docs.find(d => d.n === n)).filter(Boolean).map(d => `${d.row.doc_oem ? d.row.doc_oem + ': ' : ''}${d.row.doc_title}`)
       cited = await A.fetchCited(req, docs, cals)
     } catch (e) { console.warn('[public report] docs:', e.message) }
   }
-  return { s, cals, cited }
+  return { s, cals, cited, batteryNote }
+}
+
+function batteryOperationsNote(cals) {
+  for (const c of cals || []) {
+    if (!/battery.?disconnect reset/i.test(`${c?.calibration_name || ''} ${c?.name || ''}`)) continue
+    const m = String(c.justification || '').match(/12V battery disconnect[\s\S]*?Position Statement Power Window Servicing Post-Repair\./)
+    if (m) return m[0]
+  }
+  return ''
 }
 
 const FAMILY = [['general motors', /chevrolet|chevy|gmc|buick|cadillac|\bgm\b/], ['stellantis', /dodge|chrysler|jeep|\bram\b|fiat|alfa/], ['honda', /honda|acura/], ['toyota', /toyota|lexus/], ['nissan', /nissan|infiniti/], ['hyundai', /hyundai|genesis/], ['kia', /\bkia\b/], ['ford', /ford|lincoln/], ['mercedes', /mercedes/], ['volkswagen', /volkswagen|\bvw\b|audi/]]
@@ -79,9 +102,10 @@ async function alwaysRows(req, s) {
 
 const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-export function renderReport({ s, cals, cited }, token) {
-  const req = cals.filter(c => c.enabled && !c._fs), reqCals = req.filter(c => !c._always), fsv = cals.filter(c => c.enabled && c._fs), notReq = cals.filter(c => !c.enabled && !c._fs)
-  const rows = [...req, ...fsv, ...notReq]
+export function renderReport({ s, cals, cited, batteryNote = '' }, token) {
+  const held = c => /^(CONDITIONAL:|REVIEW NEEDED)/.test(c.classification || '')
+  const req = cals.filter(c => c.enabled && !c._fs && !held(c)), reqCals = req.filter(c => !c._always), fsv = cals.filter(c => c.enabled && c._fs && !held(c)), review = cals.filter(c => held(c) && (!c._fs || c._reportRequired || c._onReport)), notReq = cals.filter(c => !c.enabled && !c._fs && !held(c))
+  const rows = [...req, ...fsv, ...review, ...notReq]
   const vehicle = [s.year, s.make, s.model].filter(Boolean).join(' ') || s.vehicle || 'Vehicle'
   const docLink = (n, page) => `${esc(token)}/doc/${n}${page ? `#page=${page}` : ''}`
   const why = c => {
@@ -90,14 +114,18 @@ export function renderReport({ s, cals, cited }, token) {
     const refs = (c._refs || []).map(r => `<div class="ref"><b>OEM Reference:</b> Attachment ${r.n} — ${esc(r.title)}${r.pages.length ? `, see page${r.pages.length > 1 ? 's' : ''} ${r.pages.join(', ')}` : ''}<br><a class="btn" target="_blank" href="${docLink(r.n, r.pages[0])}">Open the OEM document${r.pages[0] ? ` at page ${r.pages[0]}` : ''} ↗</a></div>`).join('')
     const fetched = new Set((c._refs || []).map(r => r.title))
     const named = (c._citeTitles || []).filter(t => !fetched.has(t)).map(t => `<div class="ref"><b>OEM Reference:</b> ${esc(t)}</div>`).join('')
+    if (c.classification) {
+      const a = [c.justification, c.required_before && `Required before: ${c.required_before}`, c.repair_relationship && `Repair relationship: ${c.repair_relationship}`, c.oem_reference && `OEM reference: ${c.oem_reference}`].filter(Boolean).join(' ')
+      return { q: `${c.operation_title || name} — ${c.classification}`, a, refs: refs + named }
+    }
     return { q, a: c.justification || (c.enabled ? 'Required by the vehicle manufacturer for this repair.' : 'No operation on this estimate disturbs this sensor.'), refs: refs + named }
   }
   const rowHtml = rows.map((c, i) => {
-    const w = why(c), on = !!c.enabled
-    const type = on ? (c._fs ? 'Full Service' : (c.cal_type || 'Required')) : 'Not required'
-    return `<tr class="${on ? 'on' : 'off'}">
-      <td><span class="dot ${on ? 'r' : ''}"></span><b>${esc(String(c.calibration_name || '').replace(/\s*calibration$/i, ''))}</b></td>
-      <td>${on ? esc(c.trigger || '') : '—'} <button class="why" data-i="${i}" title="Why?">✨</button></td>
+    const w = why(c), on = !!c.enabled && !/^(CONDITIONAL:|REVIEW NEEDED|NOT REQUIRED)/.test(c.classification || ''), show = on || (!!c.enabled && (c._reportRequired || c._onReport))
+    const type = c.classification || (on ? (c._fs ? 'Full Service' : (c.procedure || c.cal_type || 'Required')) : 'Not required')
+    return `<tr class="${show ? 'on' : 'off'}">
+      <td><span class="dot ${on ? 'r' : ''}"></span><b>${esc(String(c.operation_title || c.calibration_name || '').replace(/\s*calibration$/i, ''))}</b></td>
+      <td>${show ? esc(c.trigger || '') : '—'} <button class="why" data-i="${i}" title="Why?">✨</button></td>
       <td class="ln">${on ? esc(c.line_references || '—') : '—'}</td>
       <td><span class="type ${on ? (c._fs ? 'fs' : 'req') : 'nr'}">${esc(type)}</span></td>
       <td><button class="fb" data-i="${i}" title="Feedback">💬</button></td>
@@ -132,9 +160,12 @@ textarea,select{width:100%;border:1.5px solid #ddd;border-radius:8px;padding:8px
 <div class="card"><div style="font-size:20px;font-weight:800">${esc(vehicle)}</div>${s.vin ? `<div class="muted">VIN ${esc(s.vin)}</div>` : ''}
 <div class="grid" style="margin-top:10px">${[['Shop', s.shop], ['RO', s.ro], ['Insurer', s.insurer], ['Claim', s.claim]].filter(([, v]) => v).map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join('')}</div></div>
 <div class="tiles" style="margin-bottom:14px"><div class="tile"><b>${reqCals.length}</b><div>Calibrations required</div></div>${fsv.length ? `<div class="tile" style="background:#f4f2f0;border-color:#1a1a1a"><b style="color:#1a1a1a">${fsv.length}</b><div>Full Service</div></div>` : ''}<div class="tile gray"><b>${notReq.length}</b><div>Checked, not required</div></div></div>
+${reqCals.some(c => /^(wheel alignment|4-way alignment|four-wheel alignment)$/i.test(c.calibration_name || '') || /^(wheel alignment|4-way alignment|four-wheel alignment)$/i.test(c.operation_title || '')) ? '' : reqCals.some(c => /front radar|acc radar|distance sensor/i.test(c.calibration_name || '') && !/side|corner|park/i.test(c.calibration_name || '') && /4-wheel vehicle alignment must be performed/i.test(c.justification || '')) ? '<div class="box" style="margin-bottom:14px"><b>Prerequisite: wheel alignment required.</b> A 4-wheel vehicle alignment must be performed before proceeding with radar alignment procedure.</div>' : ''}
+${batteryNote ? `<div class="box" style="margin-bottom:14px"><b>Battery Operations.</b> ${esc(batteryNote)}</div>` : ''}
+${(cals || []).some(c => c.classification === 'REQUIRED: OEM PREREQUISITE') ? '<div class="box" style="margin-bottom:14px"><b>Dependency chain.</b> Front radar is a direct trigger. 4-Way Alignment is the OEM prerequisite. Steering angle stays conditional until an alignment adjustment is on the estimate. Radar aiming is last.</div>' : ''}
 <div class="card" style="padding:0;overflow:hidden"><div style="padding:14px 16px;font-weight:800;font-size:17px">Operations <span class="muted" style="font-weight:400">— tap ✨ for why, 💬 to send us feedback</span></div>
-<table><thead><tr><th>Sensor</th><th>Repair triggers</th><th>Lines</th><th>Type</th><th></th></tr></thead><tbody>${rowHtml}</tbody></table></div>
-${docs ? `<div class="card"><div style="font-weight:800;margin-bottom:6px">Supporting OEM documents</div><ul style="margin:0;padding-left:18px">${docs}</ul></div>` : ''}
+<table><thead><tr><th>Operation</th><th>Repair Trigger</th><th>Lines</th><th>Classification</th><th></th></tr></thead><tbody>${rowHtml}</tbody></table></div>
+${docs ? `<div class="card"><div style="font-weight:800;margin-bottom:6px">Attachment index</div><ul style="margin:0;padding-left:18px">${docs}</ul></div>` : ''}
 <p class="muted" style="text-align:center">Absolute ADAS · Mobile ADAS Calibration &amp; Diagnostics · Lake Stevens, WA · absoluteadas.com</p>
 </div>
 <div class="modal" id="m"><div class="sheet"><button class="close" onclick="m.classList.remove('show')">✕</button><div id="mc"></div></div></div>

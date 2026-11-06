@@ -88,9 +88,19 @@ function chip(doc, x, y, text, bgColor, textColor) {
 const ALLDATA_HOME = 'https://my.alldata.com/'
 // Mark 2026-09-30: paused, then back on ("back to alldata"). false = no block on reports.
 const ALLDATA_ON_REPORTS = true
+function batteryOperationsNote(cals) {
+  for (const c of cals || []) {
+    if (!/battery.?disconnect reset/i.test(`${c?.calibration_name || ''} ${c?.name || ''}`)) continue
+    const m = String(c.justification || '').match(/12V battery disconnect[\s\S]*?Position Statement Power Window Servicing Post-Repair\./)
+    if (m) return m[0]
+  }
+  return ''
+}
+
 export async function generateADASIQPdf(jobData = {}) {
   if (jobData._brand) return generateBrandedPdf(jobData)
-  if (!ALLDATA_ON_REPORTS && !jobData.alldata_url) return buildPdf({ ...jobData, _alldata: null })
+  const batteryNote = batteryOperationsNote(jobData.calibrations)
+  if (!ALLDATA_ON_REPORTS && !jobData.alldata_url) return buildPdf({ ...jobData, _alldata: null, _batteryNote: batteryNote })
   let alldata = jobData.alldata_url ? { url: jobData.alldata_url, exact: true } : null
   if (!alldata) {
     try {
@@ -125,7 +135,7 @@ export async function generateADASIQPdf(jobData = {}) {
   let cited = []
   try {
     const req = globalThis.__catalystReq
-    if (req) { const A = await import('./oemAttach.js'); cited = await A.fetchCited(req, await A.citedDocs(req, cals), cals) }
+    if (req) { const A = await import('./oemAttach.js'); cited = await A.fetchCited(req, await A.citedDocs(req, cals, jobData.make || ''), cals) }
   } catch (e) { console.warn('[pdf] cited docs:', e.message); cited = [] }
   // 🌐 Link + QR to the online report with the "Why?" popups (Mark 2026-10-02).
   let reportLink = '', reportQr = null
@@ -138,7 +148,7 @@ export async function generateADASIQPdf(jobData = {}) {
       reportQr = await (await import('qrcode')).default.toBuffer(reportLink, { width: 256, margin: 1, color: { dark: '#9a3412', light: '#ffffff' } })
     }
   } catch (e) { console.warn('[pdf] report link:', e.message) }
-  const report = await buildPdf({ ...jobData, calibrations: cals, _cited: cited, _reportLink: reportLink, _reportQr: reportQr, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
+  const report = await buildPdf({ ...jobData, calibrations: cals, _cited: cited, _reportLink: reportLink, _reportQr: reportQr, _batteryNote: batteryNote, _alldata: alldata || { url: ALLDATA_HOME, exact: false } })
   if (!cited.length) return report
   try { return await (await import('./oemAttach.js')).appendCitedDocs(globalThis.__catalystReq, report, cited) } catch { return report }
 }
@@ -157,12 +167,14 @@ function buildPdf(jobData) {
   BRAND = jobData._brand || ABSOLUTE_BRAND   // drawing below is synchronous, so this can't leak into another report
   return new Promise((resolve, reject) => {
     const { shop, ro_number, insurer, vin, vehicle, year, make, model, claim, calibrations, document_links,
-      technician, folder_share_url, qr_png, _alldata, _cited = [], vin_equipment, _reportLink = '', _reportQr = null } = jobData
+      technician, folder_share_url, qr_png, _alldata, _cited = [], vin_equipment, _reportLink = '', _reportQr = null, _batteryNote = '' } = jobData
     const performedBy = technician || BRAND.name
 
-    const required = (calibrations || []).filter(c => c.enabled && !c._fs)
-    const fullSvc  = (calibrations || []).filter(c => c.enabled && c._fs)   // 🧰 Full Service (headlamp aim, TPMS, programming, resets)
-    const notReq   = (calibrations || []).filter(c => !c.enabled && !c._fs)
+    const held = c => /^(CONDITIONAL:|REVIEW NEEDED)/.test(c?.classification || '') || c?._reportRequired === true
+    const required = (calibrations || []).filter(c => c.enabled && !c._fs && !held(c))
+    const reviewRows = (calibrations || []).filter(c => held(c) && (!c._fs || c._reportRequired || c._onReport))
+    const fullSvc  = (calibrations || []).filter(c => c.enabled && c._fs && !held(c))   // 🧰 Full Service (headlamp aim, TPMS, programming, resets)
+    const notReq   = (calibrations || []).filter(c => !c.enabled && !c._fs && !held(c))
 
     const doc = new PDFDocument({ margin: 0, size: 'LETTER', autoFirstPage: true })
     const chunks = []
@@ -239,40 +251,119 @@ function buildPdf(jobData) {
     doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID).text('Not Required', sx2 + 18 + 36, y + 29)
     y += 74
 
+    const alignName = c => /^(wheel alignment|4-way alignment|four-wheel alignment)$/i.test(String(c?.calibration_name || '').trim()) || /^(wheel alignment|4-way alignment|four-wheel alignment)$/i.test(String(c?.operation_title || '').trim())
+    const wheelOnReport = (calibrations || []).some(c => alignName(c) && c.classification === 'REQUIRED: OEM PREREQUISITE')
+    const batteryOnReport = (calibrations || []).some(c => c.classification === 'REVIEW NEEDED' || (/battery.?disconnect reset/i.test(c.calibration_name || '') && /Operations Required after Disconnecting Battery/i.test(`${c.operation_title || ''} ${c.justification || ''}`)))
+    const radarFirst = !wheelOnReport && required.some(c => /front radar|acc radar|distance sensor/i.test(c.calibration_name || '') && !/side|corner|park/i.test(c.calibration_name || '') && /4-wheel vehicle alignment must be performed/i.test(c.justification || ''))
+    if (radarFirst) {
+      const note = 'Prerequisite: wheel alignment required. A 4-wheel vehicle alignment must be performed before proceeding with radar alignment procedure.'
+      const noteH = doc.font('Helvetica').fontSize(8).heightOfString(note, { width: CONTENT_W - 28 }) + 16
+      doc.roundedRect(MARGIN, y, CONTENT_W, noteH, 6).fill('#fff7ed')
+      doc.roundedRect(MARGIN, y, CONTENT_W, noteH, 6).stroke(ORANGE).lineWidth(1)
+      doc.font('Helvetica').fontSize(8).fillColor(DARK).text(note, MARGIN + 14, y + 8, { width: CONTENT_W - 28 })
+      y += noteH + 12
+    }
+
+    if (_batteryNote && !batteryOnReport) {
+      const title = 'Battery Operations'
+      const body = _batteryNote
+      const noteH = doc.font('Helvetica-Bold').fontSize(8).heightOfString(title, { width: CONTENT_W - 28 })
+        + doc.font('Helvetica').fontSize(8).heightOfString(body, { width: CONTENT_W - 28 }) + 20
+      if (y + noteH > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      doc.roundedRect(MARGIN, y, CONTENT_W, noteH, 6).fill('#fff7ed')
+      doc.roundedRect(MARGIN, y, CONTENT_W, noteH, 6).stroke(ORANGE).lineWidth(1)
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(DARK).text(title, MARGIN + 14, y + 8, { width: CONTENT_W - 28 })
+      doc.font('Helvetica').fontSize(8).fillColor(DARK).text(body, MARGIN + 14, y + 20, { width: CONTENT_W - 28 })
+      y += noteH + 12
+    }
+
     // ── OPERATIONS SUMMARY (Mark 2026-10-02: "the Kinetic report has all of the
     // calibrations all up top"): every sensor in one table — required first — before
     // the detailed Q&A cards. ───────────────────────────────────────────────────
     {
-      const all = [...required, ...fullSvc, ...notReq]
-      const COL = { name: MARGIN + 18, trig: MARGIN + 170, lines: MARGIN + 392, type: MARGIN + 440 }
-      const W = { name: 148, trig: 216, lines: 44, type: 76 }
+      const classed = (calibrations || []).some(c => c.classification)
+      const rank = {
+        'REQUIRED: DIRECT TRIGGER': 1,
+        'REQUIRED: OEM PREREQUISITE': 2,
+        'REQUIRED: SECONDARY OPERATION': 3,
+        'CONDITIONAL: VERIFICATION NEEDED': 4,
+        'REVIEW NEEDED': 5,
+        'NOT REQUIRED: VERIFIED': 6,
+      }
+      const labelOf = c => c.classification || (c.enabled ? 'REQUIRED: DIRECT TRIGGER' : '')
+      const summary = classed
+        ? [...required, ...reviewRows, ...notReq.filter(c => c.classification)].sort((a, b) => (rank[labelOf(a)] || 9) - (rank[labelOf(b)] || 9))
+        : [...required, ...fullSvc, ...notReq]
+      const COL = classed
+        ? { name: MARGIN + 8, trig: MARGIN + 128, lines: MARGIN + 292, type: MARGIN + 442 }
+        : { name: MARGIN + 18, trig: MARGIN + 140, lines: MARGIN + 312, type: MARGIN + 416 }
+      const W = classed
+        ? { name: 116, trig: 158, lines: 146, type: 78 }
+        : { name: 118, trig: 168, lines: 100, type: 92 }
+      doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID).text(`Prepared by ${performedBy}  ·  Status: Requirements identified`, MARGIN, y)
+      y += 14
       doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK).text('Operations', MARGIN, y)
-      { const lx = MARGIN + CONTENT_W - 118
+      if (!classed) {
+        const lx = MARGIN + CONTENT_W - 118
         doc.circle(lx, y + 5.5, 3).fill(ORANGE); doc.font('Helvetica').fontSize(7).fillColor(GRAY_MID).text('Required', lx + 6, y + 2, { lineBreak: false })
-        doc.circle(lx + 52, y + 5.5, 3).lineWidth(1).fillAndStroke(WHITE, '#bdb7b1'); doc.fillColor(GRAY_MID).text('Not required', lx + 58, y + 2, { lineBreak: false }) }
+        doc.circle(lx + 52, y + 5.5, 3).lineWidth(1).fillAndStroke(WHITE, '#bdb7b1'); doc.fillColor(GRAY_MID).text('Not required', lx + 58, y + 2, { lineBreak: false })
+      }
       y += 16
       doc.rect(MARGIN, y, CONTENT_W, 16).fill(ORANGE)
       doc.font('Helvetica-Bold').fontSize(7.5).fillColor(WHITE)
-      doc.text('Sensor', COL.name, y + 5, { width: W.name }); doc.text('Repair triggers', COL.trig, y + 5, { width: W.trig })
-      doc.text('Lines', COL.lines, y + 5, { width: W.lines }); doc.text('Type', COL.type, y + 5, { width: W.type })
+      doc.text(classed ? 'Operation' : 'Sensor', COL.name, y + 5, { width: W.name })
+      doc.text(classed ? 'Repair Trigger' : 'Repair triggers', COL.trig, y + 5, { width: W.trig })
+      doc.text(classed ? 'Classification' : 'Lines', COL.lines, y + 5, { width: W.lines })
+      doc.text(classed ? 'Procedure' : 'Type', COL.type, y + 5, { width: W.type, lineBreak: false })
       y += 16
-      all.forEach((c, i) => {
-        const req = !!c.enabled
-        const trig = req ? String(c.trigger || '').replace(/\s+/g, ' ').slice(0, 90) : '—'
-        const name = String(c.calibration_name || '').replace(/\s*calibration$/i, '')
-        const rowH = Math.max(15, doc.font('Helvetica').fontSize(7).heightOfString(trig, { width: W.trig }) + 7, doc.font('Helvetica-Bold').fontSize(7.5).heightOfString(name, { width: W.name }) + 7)
+      summary.forEach((c, i) => {
+        const req = !!c.enabled && !/^(CONDITIONAL:|REVIEW NEEDED|NOT REQUIRED)/.test(c.classification || '')
+        const faded = !c.enabled && !held(c)
+        const name = String(c.operation_title || c.calibration_name || '').replace(/\s*calibration$/i, '')
+        const trig = String(c.trigger || '—').replace(/\s+/g, ' ')
+        const mid = classed ? (c.classification || (req ? 'REQUIRED: DIRECT TRIGGER' : '—')) : (req ? String(c.line_references || '—') : '—')
+        const proc = classed ? String(c.procedure || c.cal_type || '—') : (req ? (c._fs ? 'Full Service' : String(c.cal_type || 'Required')) : 'Not required')
+        const rowH = Math.max(16, doc.font('Helvetica').fontSize(6.5).heightOfString(trig, { width: W.trig }) + 8, doc.font('Helvetica-Bold').fontSize(7).heightOfString(name, { width: W.name }) + 8, doc.font('Helvetica').fontSize(6.5).heightOfString(mid, { width: W.lines }) + 8)
         if (y + rowH > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
         if (i % 2) doc.rect(MARGIN, y, CONTENT_W, rowH).fill('#faf8f6')
-        doc.circle(MARGIN + 9, y + 7.5, 3).lineWidth(1).fillAndStroke(req ? ORANGE : WHITE, req ? ORANGE : '#bdb7b1')
-        doc.font('Helvetica-Bold').fontSize(7.5).fillColor(req ? DARK : '#9a948e').text(name, COL.name, y + 4, { width: W.name })
-        doc.font('Helvetica').fontSize(7).fillColor(req ? GRAY_DARK : '#b5afa9').text(trig, COL.trig, y + 4, { width: W.trig })
-        doc.font('Helvetica').fontSize(7).fillColor(req ? GRAY_DARK : '#b5afa9').text(req ? String(c.line_references || '—').slice(0, 18) : '—', COL.lines, y + 4, { width: W.lines })
-        const typ = req ? (c._fs ? `Full Service` : String(c.cal_type || 'Required')) : 'Not required'
-        doc.font('Helvetica-Bold').fontSize(6.5).fillColor(req ? (c._fs ? '#0369a1' : ORANGE) : '#b5afa9').text(typ.toUpperCase(), COL.type, y + 4.5, { width: W.type })
+        if (!classed) doc.circle(MARGIN + 9, y + 7.5, 3).lineWidth(1).fillAndStroke(req ? ORANGE : WHITE, req ? ORANGE : '#bdb7b1')
+        doc.font('Helvetica-Bold').fontSize(7).fillColor(faded ? '#9a948e' : DARK).text(name, COL.name, y + 4, { width: W.name })
+        doc.font('Helvetica').fontSize(6.5).fillColor(faded ? '#b5afa9' : GRAY_DARK).text(trig, COL.trig, y + 4, { width: W.trig })
+        doc.font('Helvetica').fontSize(6).fillColor(DARK).text(mid, COL.lines, y + 4, { width: W.lines })
+        doc.font('Helvetica').fontSize(6.5).fillColor(GRAY_DARK).text(proc, COL.type, y + 4, { width: W.type })
         y += rowH
       })
       doc.moveTo(MARGIN, y).lineTo(MARGIN + CONTENT_W, y).strokeColor(GRAY_BORDER).lineWidth(0.5).stroke()
       y += 16
+    }
+
+    if ((calibrations || []).some(c => c.classification === 'REQUIRED: OEM PREREQUISITE')) {
+      footer(doc); doc.addPage(); contHeader(doc); y = 52
+      const byName = re => (calibrations || []).find(c => re.test(`${c.operation_title || ''} ${c.calibration_name || ''}`))
+      const radar = byName(/front radar/i)
+      const wheel = byName(/4-way alignment|wheel alignment|four-wheel alignment/i)
+      const sas = byName(/steering angle/i)
+      const steps = [
+        ['1. Front radar calibration', radar?.classification || 'REQUIRED: DIRECT TRIGGER', radar?.trigger || 'Qualifying front repair', radar?.oem_reference || 'Nissan distance sensor alignment procedure', 'Direct trigger from the qualifying front repair. The front bumper removal is why this radar is required. Aiming stays the final operation.'],
+        ['2. 4-Way Alignment', wheel?.classification || 'REQUIRED: OEM PREREQUISITE', 'Required before the ACC / front radar aim', wheel?.oem_reference || 'Nissan distance sensor alignment procedure', wheel?.justification || 'This 4-way alignment is required before that ACC radar aim, because Nissan\'s distance-sensor procedure says a 4-wheel alignment must be performed before the radar alignment. The front bumper removal is why the radar is required, not why this alignment is required.'],
+        ['3. Steering angle sensor neutral-position adjustment', sas?.classification || 'CONDITIONAL: VERIFICATION NEEDED', sas?.trigger || '', sas?.oem_reference || 'Nissan steering angle sensor neutral position procedure', sas?.repair_relationship || 'Required only when an alignment adjustment was performed. An inspection is not an adjustment.'],
+        ['4. Front radar aiming', 'Final operation', 'After the prerequisites', radar?.oem_reference || 'Nissan distance sensor alignment procedure', 'The aiming procedure is last, after the alignment prerequisite and any steering-angle reset that applies.'],
+      ]
+      doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text('Dependency chain', MARGIN, y)
+      y += 18
+      doc.font('Helvetica').fontSize(8).fillColor(GRAY_DARK).text('Front radar → 4-Way Alignment → steering angle (only if the alignment was adjusted) → radar aim.', MARGIN, y, { width: CONTENT_W })
+      y += 22
+      for (const [title, klass, trigger, ref, why] of steps) {
+        const body = `${klass}\nRepair trigger: ${trigger}\n${why}\nOEM reference: ${ref}`
+        const h = doc.font('Helvetica').fontSize(8).heightOfString(body, { width: CONTENT_W - 28 }) + 28
+        if (y + h > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+        doc.roundedRect(MARGIN, y, CONTENT_W, h, 6).fill('#fff7ed')
+        doc.roundedRect(MARGIN, y, CONTENT_W, h, 6).stroke(ORANGE).lineWidth(0.75)
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(DARK).text(title, MARGIN + 12, y + 8, { width: CONTENT_W - 24 })
+        doc.font('Helvetica').fontSize(8).fillColor(GRAY_DARK).text(body, MARGIN + 12, y + 22, { width: CONTENT_W - 24 })
+        y += h + 8
+      }
+      footer(doc); doc.addPage(); contHeader(doc); y = 52
     }
 
     // ── CALIBRATION CARD RENDERER ──────────────────────────────────────────
@@ -364,13 +455,41 @@ function buildPdf(jobData) {
       y += rowH + 8
     }
 
+    function drawClassified(cal) {
+      const name = cal.operation_title || cal.calibration_name || '—'
+      const why = String(cal.justification || '').replace(/Failure to calibrate presents a safety liability[^.]*\./gi, '').replace(/\s+/g, ' ').trim()
+      const rows = [
+        ['Classification', cal.classification || '—'],
+        ['Why', why || '—'],
+        ['Required before', cal.required_before || '—'],
+        ['Repair relationship', cal.repair_relationship || '—'],
+        ['OEM reference', cal.oem_reference || '—'],
+      ]
+      const body = rows.map(([k, v]) => `${k}: ${v}`).join('\n')
+      const rowH = doc.font('Helvetica').fontSize(8).heightOfString(body, { width: CONTENT_W - 28 }) + 36
+      if (y + rowH > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      doc.roundedRect(MARGIN, y, CONTENT_W, rowH, 6).fill(ORANGE_LIGHT)
+      doc.roundedRect(MARGIN, y, CONTENT_W, rowH, 6).stroke(ORANGE_BORDER).lineWidth(0.5)
+      doc.roundedRect(MARGIN, y, 4, rowH, 2).fill(ORANGE)
+      doc.font('Helvetica-Bold').fontSize(10).fillColor(DARK).text(name, MARGIN + 14, y + 8, { width: CONTENT_W - 28 })
+      doc.font('Helvetica').fontSize(8).fillColor(GRAY_DARK).text(body, MARGIN + 14, y + 24, { width: CONTENT_W - 28 })
+      y += rowH + 8
+    }
+
     // ── REQUIRED SECTION ──────────────────────────────────────────────────
     if (required.length > 0) {
       doc.font('Helvetica-Bold').fontSize(8.5).fillColor(ORANGE).text('REQUIRED CALIBRATIONS', MARGIN, y)
       doc.font('Helvetica').fontSize(8).fillColor(GRAY_MID)
         .text(`${required.length} calibration${required.length !== 1 ? 's' : ''} identified as required for this vehicle`, MARGIN + 175, y + 0.5)
       y += 18
-      required.forEach(cal => drawCal(cal, true))
+      required.forEach(cal => cal.classification ? drawClassified(cal) : drawCal(cal, true))
+    }
+
+    if (reviewRows.length) {
+      if (y + 40 > PAGE_H - 48) { footer(doc); doc.addPage(); contHeader(doc); y = 52 }
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(ORANGE).text('CONDITIONAL AND REVIEW', MARGIN, y)
+      y += 16
+      reviewRows.forEach(cal => drawClassified(cal))
     }
 
     // ── 🧰 FULL SERVICE (Mark 2026-10-01) ────────────────────────────────
@@ -454,7 +573,7 @@ function buildPdf(jobData) {
         if (notReq.length % 2 === 1) y += 32
         y += 4
       } else {
-        notReq.forEach(cal => drawCal(cal, false))
+        notReq.forEach(cal => cal.classification ? drawClassified(cal) : drawCal(cal, false))
       }
     }
 
@@ -530,9 +649,14 @@ function buildPdf(jobData) {
       doc.addPage(); contHeader(doc); y = 52
       doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK).text('Supporting OEM Documents', MARGIN, y)
       y += 20
+      const index = _cited.map(d => `${d.n}. ${d.row?.doc_title || 'OEM document'}`).join('  ·  ')
       doc.font('Helvetica').fontSize(9).fillColor(GRAY_DARK)
         .text('The calibrations above are required by the vehicle manufacturer. Each document cited in a justification is attached behind this page, in order.', MARGIN, y, { width: CONTENT_W })
-      y += 30
+      y += 28
+      doc.font('Helvetica-Bold').fontSize(8).fillColor(DARK).text('Attachment index', MARGIN, y)
+      y += 12
+      doc.font('Helvetica').fontSize(8).fillColor(GRAY_DARK).text(index, MARGIN, y, { width: CONTENT_W })
+      y += doc.heightOfString(index, { width: CONTENT_W }) + 10
       for (const d of _cited) {
         const r = d.row || {}
         const h = 52

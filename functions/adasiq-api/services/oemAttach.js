@@ -42,28 +42,72 @@ function keys(title) {
   return [...new Set(out)].filter(k => k.length >= 18)
 }
 
+const FAMILY = [['general motors', /chevrolet|chevy|gmc|buick|cadillac|\bgm\b/], ['stellantis', /dodge|chrysler|jeep|\bram\b|fiat|alfa/], ['honda', /honda|acura/], ['toyota', /toyota|lexus/], ['nissan', /nissan|infiniti/], ['hyundai', /hyundai|genesis/], ['kia', /\bkia\b/], ['ford', /ford|lincoln/]]
+const sameMaker = (docOem, make) => { const o = String(docOem || '').toLowerCase(), m = String(make || '').toLowerCase(); if (!o || !m) return false; if (o.includes(m) || m.includes(o)) return true; return FAMILY.some(([f, re]) => o.includes(f) && re.test(m)) }
+const CITE = /position statement|job aid|job reference|service information|service procedure/i
+const labelOf = row => `${row.doc_oem ? row.doc_oem + ': ' : ''}${row.doc_title}${row.doc_published_date ? ` (${row.doc_published_date})` : ''}`
+
+// A justification that says "per the GM position statement" or "GM job reference"
+// without the document's name still gets that document, newest matching one.
+function fallbackDoc(lib, make, text) {
+  if (!CITE.test(text)) return null
+  const mine = (lib || []).filter(d => sameMaker(d.doc_oem, make))
+  if (!mine.length) return null
+  const titled = (re) => mine.filter(d => re.test(d.doc_title || ''))
+  const specific = [
+    /job reference/i.test(text) ? titled(/job reference/i) : [],
+    /job aid/i.test(text) ? titled(/job aid/i) : [],
+    /position statement/i.test(text) ? titled(/position statement/i) : [],
+  ].find(p => p.length)
+  const pool = specific || titled(/adas|calibrat|collision/i)
+  return [...(pool.length ? pool : mine)].sort((a, b) => String(b.doc_published_date || '').localeCompare(String(a.doc_published_date || '')))[0]
+}
+
+/**
+ * Match library documents to enabled calibrations and write the document name
+ * into any justification that cites one without naming it.
+ * Mutates each cited calibration with _attach: [n, …].
+ * Returns [{ n, row, cals: [names] }].
+ */
+export function applyCitationSources(cals, lib, make) {
+  const found = new Map()
+  const add = (c, row) => {
+    const id = String(row.ROWID || row.doc_title)
+    if (!found.has(id)) { if (found.size >= MAX_DOCS) return; found.set(id, { n: found.size + 1, row, cals: [] }) }
+    const d = found.get(id)
+    if (!d.cals.includes(c.calibration_name)) d.cals.push(c.calibration_name)
+    c._attach = [...new Set([...(c._attach || []), d.n])]
+    c._sourceTitles = [...new Set([...(c._sourceTitles || []), labelOf(row)])]
+  }
+  for (const c of cals || []) {
+    if (!c || c.enabled === false) continue
+    const raw = `${c.justification || ''} ${c.note || ''} ${c.trigger || ''}`
+    const text = norm(raw)
+    if (!text) continue
+    let hit = false
+    for (const row of lib || []) {
+      if (!keys(row.doc_title).some(k => text.includes(k))) continue
+      add(c, row); hit = true
+    }
+    if (!hit) { const row = fallbackDoc(lib, make, raw); if (row) add(c, row) }
+    const named = norm(c.justification || '')
+    const missing = [...found.values()].filter(d => (c._attach || []).includes(d.n) && !(norm(d.row.doc_title).length >= 12 && named.includes(norm(d.row.doc_title)))).map(d => labelOf(d.row))
+    if (missing.length) {
+      const base = String(c.justification || '').trim()
+      c.justification = `${base}${base && !/[.!?]$/.test(base) ? '.' : ''} Cited from ${missing.join('; ')}.`.trim()
+    }
+  }
+  return [...found.values()]
+}
+
 /**
  * Which library documents the enabled calibrations cite. Mutates each cited
  * calibration with _attach: [n, …]. Returns [{ n, row, cals: [names] }].
  */
-export async function citedDocs(req, cals) {
+export async function citedDocs(req, cals, make = '') {
   const lib = await library(req).catch(() => [])
   if (!lib.length) return []
-  const found = new Map()
-  for (const c of cals || []) {
-    if (!c || c.enabled === false) continue
-    const text = norm(`${c.justification || ''} ${c.note || ''} ${c.trigger || ''}`)
-    if (!text) continue
-    for (const row of lib) {
-      if (!keys(row.doc_title).some(k => text.includes(k))) continue
-      const id = String(row.ROWID)
-      if (!found.has(id)) { if (found.size >= MAX_DOCS) continue; found.set(id, { n: found.size + 1, row, cals: [] }) }
-      const d = found.get(id)
-      d.cals.push(c.calibration_name)
-      c._attach = [...new Set([...(c._attach || []), d.n])]
-    }
-  }
-  return [...found.values()]
+  return applyCitationSources(cals, lib, make)
 }
 
 // WorkDrive file id per library row, found once by name and remembered.
