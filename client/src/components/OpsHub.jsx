@@ -966,7 +966,7 @@ function AssetsTab({ assets, setAssets, locations, q = '', onTransfer = null }) 
                 {a.sn && meta('S/N', a.sn)}
                 {a.sub_exp && meta('Subscription', `${a.sub_exp}${days(a.sub_exp) !== null ? (days(a.sub_exp) < 0 ? ` · ${Math.abs(days(a.sub_exp))}d ago` : ` · in ${days(a.sub_exp)}d`) : ''}`)}
                 {a.notes && <div style={{ fontSize: 11, color: '#888' }}>{a.notes}</div>}
-                {(a.transfers || []).length > 0 && (() => { const t = a.transfers[a.transfers.length - 1]; const nm = id => locations.find(l => l.id === id)?.name || 'Spare'; return <div style={{ fontSize: 11, color: '#7c3aed' }}>↔ {nm(t.from)} → {nm(t.to)} · {t.by || 'someone'} · {String(t.at).slice(0, 10)}{t.note ? ` · "${t.note}"` : ''}</div> })()}
+                {(a.transfers || []).length > 0 && (() => { const t = a.transfers[a.transfers.length - 1]; const nm = id => locations.find(l => l.id === id)?.name || 'Spare'; return <div style={{ fontSize: 11, color: '#0A0A0A' }}>↔ {nm(t.from)} → {nm(t.to)} · {t.by || 'someone'} · {String(t.at).slice(0, 10)}{t.note ? ` · "${t.note}"` : ''}</div> })()}
                 <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
                   <select value={a.location || ''} onChange={e => move(a.id, e.target.value)} title="Move" style={{ fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1px solid #e0ddd8', background: 'white', color: '#444', flex: 1 }}>
                     <option value="">Spare / shop</option>{locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}

@@ -210,7 +210,7 @@ export default function DepositsTab({ deposits, invoices, onRefresh }) {
                 <div className="sm:col-span-2 text-xs text-gray-400">{d.date}</div>
                 <div className="sm:col-span-2">
                   <span className="text-xs font-medium px-2 py-0.5 rounded-full"
-                    style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }}>{d.method}</span>
+                    style={{ backgroundColor: '#e6f4f4', color: '#1F8B8B' }}>{d.method}</span>
                 </div>
                 <div className="sm:col-span-3 text-sm text-gray-700 truncate">{d.from || '—'}</div>
                 <div className="sm:col-span-2 text-sm text-gray-500 truncate">{d.memo || '—'}</div>

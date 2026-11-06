@@ -149,7 +149,7 @@ export default function JobCard({ job, settings, catalog = [], canEdit, onPatch,
             <div className="flex flex-wrap gap-1.5 items-center pt-1">
               <button type="button" onClick={() => addLine()} className="text-xs font-bold rounded-lg px-2.5 py-1.5 text-white" style={{ backgroundColor: ORANGE }}>＋ Labor line</button>
               <button type="button" onClick={() => setAddingCat(a => !a)} className="text-xs font-bold rounded-lg px-2.5 py-1.5" style={{ backgroundColor: '#fff5f0', color: ORANGE, border: `1px solid #f5c9b8` }}>🎯 Calibration from Books</button>
-              <button type="button" onClick={onThreeC} className="text-xs font-bold rounded-lg px-2.5 py-1.5 text-white" style={{ backgroundColor: '#7c3aed' }}>{job.three_c_id ? '🤖 3 C\'s ✓' : '🤖 3 C\'s'}</button>
+              <button type="button" onClick={onThreeC} className="text-xs font-bold rounded-lg px-2.5 py-1.5 text-white" style={{ backgroundColor: '#0A0A0A' }}>{job.three_c_id ? '🤖 3 C\'s ✓' : '🤖 3 C\'s'}</button>
               <span className="flex-1" />
               <button type="button" onClick={onSaveTemplate} className="text-[11px] font-semibold px-2 py-1 rounded-lg" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Save as template</button>
               <button type="button" onClick={onDuplicate} className="text-[11px] font-semibold px-2 py-1 rounded-lg" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>Duplicate</button>
@@ -169,13 +169,13 @@ export default function JobCard({ job, settings, catalog = [], canEdit, onPatch,
             </div>
           )}
           <div>
-            <div className="flex items-center justify-between"><Eyebrow>Invoice line (what the customer reads)</Eyebrow>{canEdit && <button type="button" disabled={rick?.busy || !lines.some(l => l.desc)} onClick={async () => { setRick({ busy: true }); try { const r = await apiFetch(`${API_BASE}/api/estimator/rick/describe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: job.name, lines, vehicle }) }); const d = await r.json(); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setRick({ text: d.description }) } catch (e) { setRick({ err: e.message }) } }} className="text-[11px] font-bold px-2 py-0.5 rounded-lg text-white" style={{ backgroundColor: '#7c3aed', opacity: rick?.busy || !lines.some(l => l.desc) ? .5 : 1 }}>{rick?.busy ? '🤖 Rick is writing…' : '🤖 Ask Rick'}</button>}</div>
+            <div className="flex items-center justify-between"><Eyebrow>Invoice line (what the customer reads)</Eyebrow>{canEdit && <button type="button" disabled={rick?.busy || !lines.some(l => l.desc)} onClick={async () => { setRick({ busy: true }); try { const r = await apiFetch(`${API_BASE}/api/estimator/rick/describe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: job.name, lines, vehicle }) }); const d = await r.json(); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); setRick({ text: d.description }) } catch (e) { setRick({ err: e.message }) } }} className="text-[11px] font-bold px-2 py-0.5 rounded-lg text-white" style={{ backgroundColor: '#0A0A0A', opacity: rick?.busy || !lines.some(l => l.desc) ? .5 : 1 }}>{rick?.busy ? '🤖 Rick is writing…' : '🤖 Ask Rick'}</button>}</div>
             <Txt value={job.invoice_description} onChange={v => onPatch({ invoice_description: v })} disabled={!canEdit} placeholder={job.name || 'One customer-facing sentence'} className="w-full" />
             {rick?.err && <div className="text-[11px] mt-1" style={{ color: '#b91c1c' }}>{rick.err}</div>}
             {rick?.text && (
-              <div className="mt-1 rounded-lg px-2.5 py-1.5 text-sm flex items-center gap-2 flex-wrap" style={{ backgroundColor: '#f5f3ff', border: '1px solid #ddd6fe' }}>
-                <span className="text-[10px] font-bold" style={{ color: '#7c3aed' }}>RICK</span><span className="flex-1" style={{ color: '#1a1a1a' }}>{rick.text}</span>
-                <button type="button" onClick={() => { onPatch({ invoice_description: rick.text }); setRick(null) }} className="text-[11px] font-bold px-2 py-0.5 rounded-lg text-white" style={{ backgroundColor: '#7c3aed' }}>Use it</button>
+              <div className="mt-1 rounded-lg px-2.5 py-1.5 text-sm flex items-center gap-2 flex-wrap" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e8e4e0' }}>
+                <span className="text-[10px] font-bold" style={{ color: '#0A0A0A' }}>RICK</span><span className="flex-1" style={{ color: '#1a1a1a' }}>{rick.text}</span>
+                <button type="button" onClick={() => { onPatch({ invoice_description: rick.text }); setRick(null) }} className="text-[11px] font-bold px-2 py-0.5 rounded-lg text-white" style={{ backgroundColor: '#0A0A0A' }}>Use it</button>
                 <button type="button" onClick={() => setRick(null)} className="text-[11px]" style={{ color: '#888' }}>✕</button>
               </div>
             )}

@@ -19,9 +19,9 @@ function getLocation() {
   return new Promise(resolve => {
     if (!navigator.geolocation) return resolve(null)
     navigator.geolocation.getCurrentPosition(
-      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, address: '' }),
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, address: '' }),
       () => resolve(null),
-      { timeout: 5000, enableHighAccuracy: false }
+      { timeout: 8000, enableHighAccuracy: true, maximumAge: 30000 }
     )
   })
 }
@@ -78,6 +78,7 @@ export default function TimeClockScreen({ user, onLogout, currentScreen, onNavig
     setBusy(true)
     try {
       const location = await getLocation()
+      if (user?.role === 'technician' && !location) { alert('📍 Location is required to punch in. Turn on Location for the Absolute ADAS app, then try again.'); return }
       const r = await apiFetch(`${API_BASE}/api/timeclock/clock-in`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

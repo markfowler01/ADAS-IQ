@@ -2,14 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 import Navbar from './Navbar'
 import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
 import { VinDecodeButton } from './ui/VinDecode.jsx'
+import { BRAND } from '../lib/brandTokens.js'
 
 const STATUS = {
   draft:     { bg: '#e5e7eb', color: '#374151', label: 'Draft' },
-  sent:      { bg: '#dbeafe', color: '#1d4ed8', label: 'Sent' },
+  sent:      { bg: BRAND.quoteSoft, color: BRAND.quote, label: 'Sent' },
   approved:  { bg: '#dcfce7', color: '#15803d', label: 'Approved ✓' },
   declined:  { bg: '#fee2e2', color: '#b91c1c', label: 'Declined' },
   expired:   { bg: '#f5f3f0', color: '#6b7280', label: 'Expired' },
-  converted: { bg: '#ede9fe', color: '#7c3aed', label: 'Invoiced' },
+  converted: { bg: '#e8e4e0', color: '#0A0A0A', label: 'Invoiced' },
 }
 
 export default function QuotesScreen({ user, onLogout, currentScreen, onNavigate }) {
@@ -161,7 +162,7 @@ export default function QuotesScreen({ user, onLogout, currentScreen, onNavigate
                       {['sent', 'approved', 'declined'].includes(q.status) && (
                         <button onClick={() => copyLink(q)}
                           className="text-xs px-2 py-1 rounded-md font-medium"
-                          style={{ backgroundColor: '#eff6ff', color: '#2563eb' }}>
+                          style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>
                           🔗 Link
                         </button>
                       )}

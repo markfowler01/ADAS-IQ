@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch } from '../../utils/api.js'
 import { Eyebrow, Pill, Chip, PrimaryButton, SecondaryButton, Notice, ORANGE, GREEN, BLUE } from '../ui/ReviewKit.jsx'
 
-const PURPLE = '#7c3aed'
+const PURPLE = '#0A0A0A'
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white', borderRadius: 8 }
 const FIELDS = [['concern', 'Concern'], ['cause', 'Cause'], ['correction', 'Correction'], ['verification', 'Verification']]
 const PH = /\[[A-Z][A-Z0-9 _\/\-]{1,40}\]/
@@ -61,7 +61,7 @@ export default function ThreeCModal({ estimateId, job, onClose, onApproved }) {
 
   return (
     <Overlay onClose={onClose}>
-      <div className="px-5 py-3 flex items-start justify-between gap-2" style={{ backgroundColor: '#f5f3ff', borderBottom: '1px solid #ddd6fe' }}>
+      <div className="px-5 py-3 flex items-start justify-between gap-2" style={{ backgroundColor: '#f5f3f0', borderBottom: '1px solid #e8e4e0' }}>
         <div><Eyebrow>🤖 Rick · 3 C's + Verification</Eyebrow><div className="font-bold" style={{ color: '#1a1a1a' }}>{job.name}</div><div className="text-xs" style={{ color: '#666' }}>{inputs.vehicle}{inputs.vin ? ` · ${inputs.vin}` : ''}{inputs.ro_number ? ` · RO ${inputs.ro_number}` : ''}{approvedAt ? ` · approved ${approvedAt.slice(0, 10)}` : ''}</div></div>
         <button onClick={onClose} className="text-2xl leading-none" style={{ color: '#888' }}>×</button>
       </div>
@@ -96,7 +96,7 @@ export default function ThreeCModal({ estimateId, job, onClose, onApproved }) {
           {meta && <span className="text-[11px]" style={{ color: '#888' }}>{meta}</span>}
         </div>
         {lib && (
-          <div className="rounded-lg p-2 text-xs space-y-1" style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe' }}>
+          <div className="rounded-lg p-2 text-xs space-y-1" style={{ backgroundColor: '#f5f3f0', border: '1px solid #e8e4e0' }}>
             {Object.keys(lib).length === 0 && <div style={{ color: '#666' }}>No approved sets yet — approve this one and it becomes the first template.</div>}
             {Object.entries(lib).map(([trig, sets]) => <div key={trig}><b>{trig}</b> {sets.slice(0, 5).map(s => <button key={s.id} onClick={() => { setText(s.approved); setLib(null) }} className="ml-1 underline" style={{ color: BLUE }}>{s.vehicle || s.outcome || 'use'} ({s.approved_at.slice(0, 10)})</button>)}</div>)}
           </div>

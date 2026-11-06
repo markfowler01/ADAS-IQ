@@ -3,11 +3,12 @@
 // (recorded as the RCW authorization), or approves everything at once.
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../../utils/portal'
+import { BRAND, BrandBar, PublicFooter } from '../../lib/brand.jsx'
 
-const ORANGE = '#CD4419', GREEN = '#15803d', BLUE = '#1d4ed8', RED = '#b91c1c'
+const ORANGE = BRAND.orange, GREEN = BRAND.green, RED = BRAND.red
 const fmt = c => `$${(Number(c || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const SRC = { oem: 'OEM', aftermarket: 'Aftermarket', recycled: 'Used', reconditioned: 'Reconditioned', sublet: 'Sublet' }
-const ST = { approved: { l: 'Approved', c: GREEN, bg: '#dcfce7' }, declined: { l: 'Declined', c: RED, bg: '#fee2e2' }, recommended: { l: 'Needs your OK', c: BLUE, bg: '#eff6ff' }, deferred: { l: 'Deferred', c: '#666', bg: '#f5f3f0' } }
+const ST = { approved: { l: 'Approved', c: GREEN, bg: '#dcfce7' }, declined: { l: 'Declined', c: RED, bg: '#fee2e2' }, recommended: { l: 'Needs your OK', c: ORANGE, bg: BRAND.orangeSoft }, deferred: { l: 'Deferred', c: '#666', bg: '#f5f3f0' } }
 
 export default function EstimateApprovalScreen() {
   const params = new URLSearchParams(window.location.search)
@@ -28,7 +29,7 @@ export default function EstimateApprovalScreen() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function act(path, body, key) {
-    if (!name.trim()) { setErr('Please enter your name first — it goes on the authorization.'); window.scrollTo({ top: 0, behavior: 'smooth' }); return }
+    if (!name.trim()) { setErr('Please enter your name first. It goes on the authorization.'); window.scrollTo({ top: 0, behavior: 'smooth' }); return }
     try { localStorage.setItem('adas_est_name', name.trim()) } catch {}
     setBusy(key); setErr('')
     try {
@@ -48,7 +49,7 @@ export default function EstimateApprovalScreen() {
   return (
     <Shell>
       <div className="rounded-2xl overflow-hidden" style={{ backgroundColor: 'white', border: '1.5px solid #e8e4e0' }}>
-        <div className="px-5 py-4" style={{ backgroundColor: ORANGE, color: 'white' }}>
+        <div className="px-5 py-4" style={{ backgroundColor: BRAND.ink, color: 'white' }}>
           <div className="text-[11px] font-bold uppercase tracking-wider" style={{ opacity: .85, fontFamily: 'IBM Plex Mono, monospace' }}>{co.name || 'Absolute ADAS'} · Estimate {est.number}</div>
           <div className="text-xl font-extrabold mt-0.5">{est.vehicle || 'Your vehicle'}</div>
           <div className="text-sm" style={{ opacity: .9 }}>{est.customer_name}{est.ro_number ? ` · RO ${est.ro_number}` : ''}{est.vin ? ` · VIN ${est.vin}` : ''}</div>
@@ -64,11 +65,11 @@ export default function EstimateApprovalScreen() {
                 <input value={name} onChange={e => setName(e.target.value)} placeholder="Your name (required)" className="px-3 py-2 text-sm rounded-lg" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white' }} />
                 <input value={contact} onChange={e => setContact(e.target.value)} placeholder="Phone or email (optional)" className="px-3 py-2 text-sm rounded-lg" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white' }} />
               </div>
-              {pending.length > 1 && <button disabled={!!busy} onClick={() => act('/approve-all', {}, 'all')} className="mt-2 w-full rounded-xl py-3 text-base font-bold text-white" style={{ backgroundColor: GREEN, opacity: busy ? .6 : 1 }}>{busy === 'all' ? 'Saving…' : `✅ Approve everything · ${fmt(tt.grand_total + tt.recommended_total + tt.deferred_total)}`}</button>}
+              {pending.length > 1 && <button disabled={!!busy} onClick={() => act('/approve-all', {}, 'all')} className="mt-2 w-full rounded-xl py-3 text-base font-bold text-white" style={{ backgroundColor: ORANGE, opacity: busy ? .6 : 1 }}>{busy === 'all' ? 'Saving…' : `Approve everything · ${fmt(tt.grand_total + tt.recommended_total + tt.deferred_total)}`}</button>}
             </div>
           )}
-          {done && <div className="rounded-xl p-3 text-sm font-semibold" style={{ backgroundColor: '#f3e8ff', color: '#6d28d9' }}>This estimate has been invoiced. Thank you!</div>}
-          {!done && pending.length === 0 && <div className="rounded-xl p-3 text-sm font-semibold" style={{ backgroundColor: '#f0fdf4', color: GREEN }}>✅ All set — every item has your answer. We'll be in touch to schedule.</div>}
+          {done && <div className="rounded-xl p-3 text-sm font-semibold" style={{ backgroundColor: BRAND.orangeSoft, color: ORANGE }}>This estimate has been invoiced. Thank you!</div>}
+          {!done && pending.length === 0 && <div className="rounded-xl p-3 text-sm font-semibold" style={{ backgroundColor: '#f0fdf4', color: GREEN }}>All set. Every item has your answer. We'll be in touch to schedule.</div>}
 
           {est.jobs.map(j => {
             const s = ST[j.status] || ST.recommended; const isOpen = !!open[j.id]
@@ -93,7 +94,7 @@ export default function EstimateApprovalScreen() {
                 )}
                 {!done && (j.status === 'recommended' || j.status === 'deferred') && (
                   <div className="px-3 py-2 flex gap-2" style={{ borderTop: '1px solid #f1ede9' }}>
-                    <button disabled={!!busy} onClick={() => act(`/jobs/${j.id}/approve`, {}, j.id)} className="flex-[2] rounded-lg py-2 text-sm font-bold text-white" style={{ backgroundColor: GREEN, opacity: busy ? .6 : 1 }}>{busy === j.id ? '…' : `✅ Approve · ${fmt(j.total_cents)}`}</button>
+                    <button disabled={!!busy} onClick={() => act(`/jobs/${j.id}/approve`, {}, j.id)} className="flex-[2] rounded-lg py-2 text-sm font-bold text-white" style={{ backgroundColor: ORANGE, opacity: busy ? .6 : 1 }}>{busy === j.id ? '…' : `Approve · ${fmt(j.total_cents)}`}</button>
                     <button disabled={!!busy} onClick={() => setDeclining(declining === j.id ? null : j.id)} className="flex-1 rounded-lg py-2 text-sm font-bold" style={{ backgroundColor: 'white', color: RED, border: `1.5px solid #fecaca` }}>Decline</button>
                   </div>
                 )}
@@ -116,7 +117,7 @@ export default function EstimateApprovalScreen() {
             </div>
           </div>
           {est.warranty && (est.warranty.months || est.warranty.miles) && <div className="rounded-xl px-3 py-2 text-sm font-semibold text-center" style={{ backgroundColor: '#f0fdf4', color: GREEN, border: '1.5px solid #bbf7d0' }}>🛡 Our work is guaranteed for {[est.warranty.months && `${est.warranty.months} months`, est.warranty.miles && `${Number(est.warranty.miles).toLocaleString()} miles`].filter(Boolean).join(' or ')}{est.mileage ? ` from ${est.mileage} mi` : ''}.</div>}
-          <a href={`${base}/pdf?t=${encodeURIComponent(t)}`} target="_blank" rel="noreferrer" className="block text-center text-sm font-bold" style={{ color: BLUE }}>📄 Download the itemized estimate (PDF)</a>
+          <a href={`${base}/pdf?t=${encodeURIComponent(t)}`} target="_blank" rel="noreferrer" className="block text-center text-sm font-bold" style={{ color: ORANGE }}>Download the itemized estimate (PDF)</a>
           <div className="text-[11px] text-center" style={{ color: '#888' }}>{co.name || 'Absolute ADAS'} · {co.address || 'Lake Stevens, WA'}{co.phone ? ` · ${co.phone}` : ''} · {co.web || 'absoluteadas.com'}<br />Written estimate under RCW 46.71. Charges will not exceed 110% of the authorized amount, exclusive of sales tax, without additional authorization.</div>
         </div>
       </div>
@@ -124,4 +125,12 @@ export default function EstimateApprovalScreen() {
   )
 }
 const Row = ({ l, v }) => <div className="flex justify-between" style={{ color: '#444' }}><span>{l}</span><span className="tabular-nums">{v}</span></div>
-function Shell({ children }) { return <div className="min-h-screen px-3 py-4 sm:py-8" style={{ backgroundColor: '#f5f3f0' }}><div className="max-w-xl mx-auto">{children}</div></div> }
+function Shell({ children }) {
+  return (
+    <div className="min-h-screen" style={{ backgroundColor: BRAND.cream }}>
+      <BrandBar />
+      <div className="max-w-xl mx-auto px-3 py-4 sm:py-8">{children}</div>
+      <PublicFooter />
+    </div>
+  )
+}

@@ -127,7 +127,7 @@ export default function InvoicesTab({ invoices, services, onRefresh, loading }) 
                         } catch (e) { alert('Failed: ' + e.message) }
                       }}
                       className="text-xs px-2 py-1 rounded-md font-medium transition-colors"
-                      style={{ color: '#2563eb', backgroundColor: '#eff6ff' }}>
+                      style={{ color: '#0A0A0A', backgroundColor: '#f5f3f0' }}>
                       🔗 Pay
                     </button>
                   )}

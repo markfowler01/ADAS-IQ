@@ -66,8 +66,8 @@ export default function CRMTemplatesModal({ shop, onClose }) {
                       <p className="text-xs mt-0.5" style={{ color: '#888' }}>{tmpl.scenario}</p>
                     </div>
                     <span className="text-xs px-2 py-0.5 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: tmpl.channel === 'sms' ? '#dcfce7' : '#ede9fe',
-                        color: tmpl.channel === 'sms' ? '#15803d' : '#7c3aed' }}>
+                      style={{ backgroundColor: tmpl.channel === 'sms' ? '#dcfce7' : '#e8e4e0',
+                        color: tmpl.channel === 'sms' ? '#15803d' : '#0A0A0A' }}>
                       {tmpl.channel === 'sms' ? '💬 Text' : '✉️ Email'}
                     </span>
                   </div>
@@ -124,7 +124,7 @@ export default function CRMTemplatesModal({ shop, onClose }) {
                 {(contactEmail || t.channel === 'email') && (
                   <button onClick={() => handleSend('email')}
                     className="flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold"
-                    style={{ backgroundColor: '#ede9fe', color: '#7c3aed' }}>
+                    style={{ backgroundColor: '#e8e4e0', color: '#0A0A0A' }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                       <polyline points="22,6 12,13 2,6"/>

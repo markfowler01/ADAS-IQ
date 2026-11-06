@@ -4,20 +4,20 @@ import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
 
 const PRIORITY_COLORS = {
   low:    { bg: '#f5f3f0', color: '#6b7280', label: 'Low' },
-  medium: { bg: '#eff6ff', color: '#2563eb', label: 'Medium' },
+  medium: { bg: '#f5f3f0', color: '#0A0A0A', label: 'Medium' },
   high:   { bg: '#fff7f5', color: '#CD4419', label: 'High' },
   urgent: { bg: '#fef2f2', color: '#dc2626', label: 'Urgent' },
 }
 
 const STATUS_COLORS = {
   todo:        { bg: '#f5f3f0', color: '#6b7280', label: 'To Do' },
-  in_progress: { bg: '#eff6ff', color: '#2563eb', label: 'In Progress' },
+  in_progress: { bg: '#f5f3f0', color: '#0A0A0A', label: 'In Progress' },
   blocked:     { bg: '#fef2f2', color: '#b91c1c', label: 'Blocked' },
   done:        { bg: '#f0fdf4', color: '#15803d', label: 'Done' },
 }
 
 const PROJECT_ICONS = ['📋', '🎯', '🚀', '💼', '🏗️', '⚡', '🎨', '📊', '🔧', '🎪']
-const PROJECT_COLORS = ['#CD4419', '#2563eb', '#16a34a', '#7c3aed', '#b45309', '#0e7490', '#db2777', '#1a1a1a']
+const PROJECT_COLORS = ['#CD4419', '#0A0A0A', '#16a34a', '#0A0A0A', '#b45309', '#1F8B8B', '#B33A15', '#1a1a1a']
 
 export default function ProjectsScreen({ user, onLogout, currentScreen, onNavigate }) {
   const [projects, setProjects] = useState([])

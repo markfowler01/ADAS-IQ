@@ -13,7 +13,7 @@ const DENIAL_CODES = [
 const STATUS_STYLE = {
   disputed:    { bg: '#fef3c7', color: '#b45309', label: 'Disputed' },
   denied:      { bg: '#fee2e2', color: '#b91c1c', label: 'Denied' },
-  sent:        { bg: '#dbeafe', color: '#1d4ed8', label: 'Resubmitted' },
+  sent:        { bg: '#e8e4e0', color: '#0A0A0A', label: 'Resubmitted' },
   paid:        { bg: '#dcfce7', color: '#15803d', label: 'Recovered ✓' },
   written_off: { bg: '#f5f3f0', color: '#6b7280', label: 'Written Off' },
 }
@@ -246,7 +246,7 @@ function DisputeModal({ invoice, onClose, onChanged }) {
             <div className="flex gap-2 mt-3">
               <button onClick={downloadLetter}
                 className="flex-1 py-2 rounded-lg text-sm font-semibold"
-                style={{ backgroundColor: '#eff6ff', color: '#2563eb' }}>
+                style={{ backgroundColor: '#f5f3f0', color: '#0A0A0A' }}>
                 📄 Download Dispute Letter
               </button>
               <button onClick={submitAction} disabled={saving}

@@ -155,7 +155,7 @@ export default function DailyReviewScreen({ user, onLogout, currentScreen, onNav
                       <span className="text-xs text-gray-400 font-mono w-5">{i + 1}.</span>
                       <span className="text-sm text-gray-700 truncate">{c.name}</span>
                     </div>
-                    <span className="text-sm font-semibold" style={{ color: '#2563eb' }}>
+                    <span className="text-sm font-semibold" style={{ color: '#0A0A0A' }}>
                       {c.job_count} job{c.job_count !== 1 ? 's' : ''}
                     </span>
                   </div>

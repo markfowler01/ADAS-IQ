@@ -76,7 +76,9 @@ export function gateApplies() { return true }
 export function photosRelevant(job) {
   // Requests included (Mark 2026-09-09): techs shoot at the car before
   // Kat creates the job; the card converts in place and keeps them.
-  return ['job_requested', 'dispatched_mark', 'dispatched_jaden', 'pending_parts', 'need_dispatch', 'ready_invoice'].includes(job?.status)
+  const status = job?.status || ''
+  return ['job_requested', 'dispatched_mark', 'dispatched_jaden', 'pending_parts', 'need_dispatch', 'ready_invoice'].includes(status)
+    || String(status).startsWith('dispatched_')
 }
 
 // ── Badge: "📸 5/8" red until complete, green when done ────────────────

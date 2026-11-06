@@ -5,10 +5,10 @@ const ORANGE = '#CD4419'
 // Deterministic color-per-user palette
 const USER_COLORS = [
   { bg: '#fdeee8', color: '#CD4419', border: '#f5c4b0' }, // orange
-  { bg: '#dbeafe', color: '#1e40af', border: '#bfdbfe' }, // blue
+  { bg: '#e8e4e0', color: '#0A0A0A', border: '#e8e4e0' }, // blue
   { bg: '#dcfce7', color: '#15803d', border: '#bbf7d0' }, // green
   { bg: '#fef3c7', color: '#92400e', border: '#fde68a' }, // amber
-  { bg: '#f3e8ff', color: '#7e22ce', border: '#e9d5ff' }, // purple
+  { bg: '#e8e4e0', color: '#0A0A0A', border: '#e8e4e0' }, // purple
   { bg: '#fce7f3', color: '#be185d', border: '#fbcfe8' }, // pink
   { bg: '#ccfbf1', color: '#0f766e', border: '#99f6e4' }, // teal
 ]

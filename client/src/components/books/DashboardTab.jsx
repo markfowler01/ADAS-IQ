@@ -32,7 +32,7 @@ export default function DashboardTab({ invoices, expenses, onNewInvoice }) {
   const cards = [
     { label: 'Revenue MTD',   value: fmt(revMTD),              color: '#16a34a', bg: '#f0fdf4' },
     { label: 'Expenses MTD',  value: fmt(mtdExpenses),          color: '#dc2626', bg: '#fef2f2' },
-    { label: 'Net Income MTD',value: fmt(netMTD),               color: netMTD >= 0 ? '#2563eb' : '#dc2626', bg: '#eff6ff' },
+    { label: 'Net Income MTD',value: fmt(netMTD),               color: netMTD >= 0 ? '#0A0A0A' : '#dc2626', bg: '#f5f3f0' },
     { label: 'Outstanding',   value: fmt(stats?.outstanding),   color: ORANGE, bg: '#fff7f5' },
   ]
 

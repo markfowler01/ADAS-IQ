@@ -6,9 +6,9 @@ import { API_BASE, apiFetch, ORANGE, fmt, StatusBadge } from './shared'
 const BILLING_COLUMNS = [
   { id: 'job_complete',     label: 'Job Complete',      emoji: '\u2705', color: '#16a34a', bg: '#f0fdf4' },
   { id: 'invoice_needed',   label: 'Invoice Needed',    emoji: '\ud83d\udccb', color: '#b45309', bg: '#fef3c7' },
-  { id: 'invoice_created',  label: 'Invoice Created',   emoji: '\ud83d\udcc4', color: '#7c3aed', bg: '#ede9fe' },
-  { id: 'sent',             label: 'Sent to Customer',  emoji: '\ud83d\udce7', color: '#2563eb', bg: '#dbeafe' },
-  { id: 'awaiting_payment', label: 'Awaiting Payment',  emoji: '\u23f3', color: '#0e7490', bg: '#cffafe' },
+  { id: 'invoice_created',  label: 'Invoice Created',   emoji: '\ud83d\udcc4', color: '#0A0A0A', bg: '#e8e4e0' },
+  { id: 'sent',             label: 'Sent to Customer',  emoji: '\ud83d\udce7', color: '#0A0A0A', bg: '#e8e4e0' },
+  { id: 'awaiting_payment', label: 'Awaiting Payment',  emoji: '\u23f3', color: '#1F8B8B', bg: '#e6f4f4' },
   { id: 'paid',             label: 'Paid',              emoji: '\ud83d\udcb0', color: '#15803d', bg: '#dcfce7' },
   { id: 'overdue',          label: 'Overdue',           emoji: '\ud83d\udea8', color: '#dc2626', bg: '#fee2e2' },
   { id: 'escalated',        label: 'Escalated',         emoji: '\u26a0\ufe0f', color: '#9f1239', bg: '#ffe4e6' },

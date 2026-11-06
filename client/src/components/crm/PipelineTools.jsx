@@ -39,7 +39,7 @@ export function CustomerCounter({ shops, onPick }) {
       <button onClick={() => onPick && onPick('active')} className="text-sm font-extrabold px-3 py-1.5 rounded-full" style={{ backgroundColor: '#dcfce7', color: '#15803d', border: '1.5px solid #86efac' }} title="Shops in Current customer — tap to show them">
         ✅ {c.customers} <span className="font-semibold" style={{ opacity: .8 }}>customers of {c.total} shops · {pct}%</span>
       </button>
-      {c.backup > 0 && <button onClick={() => onPick && onPick('active2')} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: '#e0f2fe', color: '#0369a1', border: '1px solid #bae6fd' }} title="Own ADAS guy · we are backup">🔄 {c.backup} backup</button>}
+      {c.backup > 0 && <button onClick={() => onPick && onPick('active2')} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: '#e6f4f4', color: '#1F8B8B', border: '1px solid #bae6fd' }} title="Own ADAS guy · we are backup">🔄 {c.backup} backup</button>}
     </div>
   )
 }
@@ -51,7 +51,7 @@ export function InPlayBar({ shops, isOwner, gridOpen, onToggleGrid, onMonday, on
       <span style={{ color: '#ddd' }}>|</span>
       {TEAM_MEMBERS.map(o => { const n = inPlayCount(shops, o); return <span key={o} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: n > IN_PLAY_CAP ? '#fee2e2' : '#f0fdf4', color: n > IN_PLAY_CAP ? '#b91c1c' : '#166534', border: `1px solid ${n > IN_PLAY_CAP ? '#fecaca' : '#bbf7d0'}` }}>{o} · {n}/{IN_PLAY_CAP} in play</span> })}
       <button onClick={onToggleGrid} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: gridOpen ? '#1a1a1a' : 'white', color: gridOpen ? 'white' : '#555', border: '1px solid #e0dbd6' }}>🗺 Territory grid</button>
-      {isOwner && <button onClick={onMonday} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: 'white', color: BLUE, border: '1px solid #bfdbfe' }}>📋 Monday list</button>}
+      {isOwner && <button onClick={onMonday} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: 'white', color: BLUE, border: '1px solid #e8e4e0' }}>📋 Monday list</button>}
       {isOwner && <button onClick={onDiscover} className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: 'white', color: ORANGE, border: '1px solid #f5c9b8' }}>🔎 Find every shop</button>}
     </div>
   )
@@ -85,7 +85,7 @@ export function SetupBanner({ shops, isOwner, onApplied }) {
   async function load() { setBusy(true); setErr(''); try { setPreview(await j('/api/pipeline/setup/preview')) } catch (e) { setErr(e.message) } finally { setBusy(false) } }
   async function apply() { if (!confirm(`Write zones and owners on ${preview.changes} shops? Only the zone and owner fields change.`)) return; setBusy(true); try { const r = await j('/api/pipeline/setup/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setPreview(null); onApplied(r.updated) } catch (e) { setErr(e.message) } finally { setBusy(false) } }
   return (
-    <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#eff6ff', border: '1.5px solid #bfdbfe' }}>
+    <div className="rounded-xl p-3 mb-4" style={{ backgroundColor: '#f5f3f0', border: '1.5px solid #e8e4e0' }}>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div><div className="text-sm font-bold" style={{ color: BLUE }}>🗺 {unzoned} shop{unzoned === 1 ? '' : 's'} without a zone</div><div className="text-xs" style={{ color: '#555' }}>Zones come from the address (Bellingham → Olympia, six zones along I-5); each zone has an owner and a route day.</div></div>
         {!preview && <button onClick={load} disabled={busy} className="text-xs font-bold rounded-lg px-3 py-1.5 text-white" style={{ backgroundColor: BLUE }}>{busy ? '…' : 'Preview setup'}</button>}

@@ -44,10 +44,10 @@ export default function ScrubButton({ job, done = false, onDone, compact = false
 
   const label = busy ? '🔬 Scrubbing…' : done ? '🔄 Re-scrub' : '🔬 Scrub estimate'
   const style = busy
-    ? { backgroundColor: '#dbeafe', color: '#1e40af', border: '1.5px solid #93c5fd' }
+    ? { backgroundColor: '#e8e4e0', color: '#0A0A0A', border: '1.5px solid #c4bfb8' }
     : done
       ? { backgroundColor: '#f5f3f0', color: '#555', border: '1.5px solid #ddd' }
-      : { backgroundColor: '#1d4ed8', color: '#fff', border: '1.5px solid #1d4ed8' }
+      : { backgroundColor: '#0A0A0A', color: '#fff', border: '1.5px solid #0A0A0A' }
 
   return (
     <button

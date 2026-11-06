@@ -93,7 +93,7 @@ export default function ReadyChecks({ job, value, onChange, compact = false }) {
         )}
       </div>
 
-      {!safety && <div className="rounded-xl px-3 py-2 text-xs font-semibold" style={{ backgroundColor: '#f0f9ff', border: '1.5px solid #bae6fd', color: '#0369a1' }}>🔧 {job?.customer?.kind === 'retail' ? 'Retail job' : 'Repair-shop job'} — no safety inspection or tire-pressure check needed.</div>}
+      {!safety && <div className="rounded-xl px-3 py-2 text-xs font-semibold" style={{ backgroundColor: '#e6f4f4', border: '1.5px solid #bae6fd', color: '#1F8B8B' }}>🔧 {job?.customer?.kind === 'retail' ? 'Retail job' : 'Repair-shop job'} — no safety inspection or tire-pressure check needed.</div>}
       {/* 🦺 PCSI: belts + airbags */}
       {safety && <div className="rounded-xl p-3 space-y-2" style={{ backgroundColor: v.belts && v.airbags ? '#f0fdf4' : '#fff7ed', border: `1.5px solid ${v.belts && v.airbags ? '#86efac' : '#fdba74'}` }}>
         <div className="text-sm font-bold" style={{ color: '#1a1a1a' }}>🦺 Post Collision Safety Inspection</div>

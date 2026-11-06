@@ -224,7 +224,7 @@ export default function TipsScreen({ user, onLogout, currentScreen, onNavigate }
           tsb={editTsb}
           onClose={() => { setShowNew(false); setEditTsb(null) }}
           onSaved={(msg, saved) => {
-            showToast(saved?._posted?.ok ? `${msg} · 📣 posted to the channel` : msg)
+            showToast(msg)
             load()
             // New TSB → reopen in edit mode so photos can be attached.
             if (showNew && saved) { setShowNew(false); setEditTsb(saved) }
@@ -267,7 +267,11 @@ function TsbModal({ tsb, onClose, onSaved }) {
       })
       const j = await r.json()
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`)
-      onSaved(isEdit ? '✅ TSB updated' : '✅ TSB saved — add photos below, then 📣 Post to channel to resend with photos', { ...j.tsb, _posted: j.posted })
+      const posted = j.posted
+      const createMsg = posted?.ok
+        ? `✅ TSB saved · 📣 PDF posted to #technicians${posted.via === 'link' ? ' (link)' : ''}`
+        : `✅ TSB saved — channel post ${posted?.error ? `failed (${posted.error})` : 'did not go through'}; use 📣 Post to channel`
+      onSaved(isEdit ? '✅ TSB updated' : createMsg, { ...j.tsb, _posted: posted })
     } catch (e) { setError(e.message) }
     finally { setSaving(false) }
   }
@@ -332,7 +336,7 @@ function TsbModal({ tsb, onClose, onSaved }) {
         <button onClick={save} disabled={saving}
           className="w-full py-3 rounded-xl font-bold text-white text-sm"
           style={{ backgroundColor: saving ? '#e5a58e' : ORANGE }}>
-          {saving ? (cleanup && !isEdit ? '✨ Cleaning up & saving…' : 'Saving…') : (isEdit ? 'Save Changes' : 'Save TSB')}
+          {saving ? (isEdit ? 'Saving…' : (cleanup ? '✨ Cleaning up, saving & posting PDF…' : 'Saving & posting PDF…')) : (isEdit ? 'Save Changes' : 'Save TSB')}
         </button>
       </div>
     </div>

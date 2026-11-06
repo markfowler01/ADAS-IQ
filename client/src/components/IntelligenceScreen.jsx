@@ -66,7 +66,7 @@ function ForecastView({ forecast }) {
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <MiniCard label="MTD Revenue" value={fmt(forecast.mtd_revenue)} bg="#f0fdf4" color="#15803d" />
-        <MiniCard label="Pace Projection" value={fmt(forecast.pace_projection)} bg="#eff6ff" color="#2563eb"
+        <MiniCard label="Pace Projection" value={fmt(forecast.pace_projection)} bg="#f5f3f0" color="#0A0A0A"
           note={`${pacePct}% of avg month`} />
         <MiniCard label="Composite Forecast" value={fmt(forecast.composite_forecast)} bg="#fff7f5" color={ORANGE}
           note="blended pace + pipeline" />

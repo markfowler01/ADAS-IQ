@@ -7,6 +7,7 @@
 // invoice at Ready to Invoice.
 import { useState, useEffect } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
+import { statusIdForTech, useDispatchBoard } from '../lib/techColumns.js'
 import { useBig3Map } from './books/Big3Rules.jsx'
 import LinePicker, { useBooksCatalog } from './upload/LinePicker.jsx'
 
@@ -16,6 +17,7 @@ const inp = { border: '1.5px solid #e0dbd6', outline: 'none', backgroundColor: '
 
 export default function BuildJobModal({ job, user, onClose, onBuilt }) {
   const [lines, setLines] = useState([])
+  const { techs } = useDispatchBoard()
   const [tech, setTech] = useState(job.technician || '')
   const [date, setDate] = useState(job.scheduled_date || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }))
   const [note, setNote] = useState('')
@@ -50,7 +52,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
     setBusy(true); setErr('')
     try {
       const calibrations = lines.map(l => ({ calibration_name: l.name, item_id: l.item_id, rate: l.rate, quantity: l.quantity, description: l.description || '', enabled: true, cal_type: '', trigger: 'Built by Kat — no report', justification: l.description || '' }))
-      const status = tech === 'Jayden' ? 'dispatched_jaden' : tech === 'Mark' ? 'dispatched_mark' : 'need_dispatch'
+      const status = techs.some(t => t.name === tech) ? (statusIdForTech(tech) || 'need_dispatch') : 'need_dispatch'
       const body = { status, technician: tech || '', scheduled_date: date || '', calibrations: JSON.stringify(calibrations), request_type: '', notes: `${job.notes ? job.notes + '\n' : ''}${note ? '🔧 ' + note : ''}`.trim() }
       const r = await apiFetch(`${API_BASE}/api/jobs/${job.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const d = await r.json().catch(() => ({}))
@@ -67,7 +69,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
         <div className="flex items-start justify-between gap-2 mb-3">
           <div>
             <div className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: ORANGE, fontFamily: 'IBM Plex Mono, monospace' }}>🔧 Build job — no report</div>
-            <div className="font-extrabold text-lg leading-tight" style={{ color: '#1a1a1a' }}>{job.shop_name || 'Job'}{custType ? <span className="text-xs font-bold ml-2 rounded-full px-2 py-0.5" style={{ backgroundColor: '#e0f2fe', color: '#0369a1' }}>{custType} · one invoice + tax</span> : null}</div>
+            <div className="font-extrabold text-lg leading-tight" style={{ color: '#1a1a1a' }}>{job.shop_name || 'Job'}{custType ? <span className="text-xs font-bold ml-2 rounded-full px-2 py-0.5" style={{ backgroundColor: '#e6f4f4', color: '#1F8B8B' }}>{custType} · one invoice + tax</span> : null}</div>
             <div className="text-xs" style={{ color: '#666' }}>{job.vehicle || [job.year, job.make, job.model].filter(Boolean).join(' ')}{job.quote_number ? ` · RO ${job.quote_number}` : ''}{job.customer?.zoho_contact_id ? ' · Books customer linked' : ''}</div>
           </div>
           <button onClick={onClose} className="text-2xl leading-none px-1" style={{ color: '#888' }}>×</button>
@@ -92,7 +94,7 @@ export default function BuildJobModal({ job, user, onClose, onBuilt }) {
           <div className="flex justify-between px-3 py-2 text-base font-extrabold" style={{ borderTop: '2px solid #dcfce7', color: GREEN }}><span>List total (before any discount / tax)</span><span className="tabular-nums">{fmt(total)}</span></div>
         </div>
         <div className="grid grid-cols-2 gap-2 mb-2">
-          <div><div className="text-[11px] font-bold mb-1" style={{ color: '#888' }}>Technician</div><div className="flex gap-1">{['Mark', 'Jayden'].map(n => <button key={n} onClick={() => setTech(tech === n ? '' : n)} className="flex-1 text-xs font-bold rounded-lg py-2" style={tech === n ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{n}</button>)}</div></div>
+          <div><div className="text-[11px] font-bold mb-1" style={{ color: '#888' }}>Technician</div><div className="flex gap-1">{techs.map(t => t.name).map(n => <button key={n} onClick={() => setTech(tech === n ? '' : n)} className="flex-1 text-xs font-bold rounded-lg py-2" style={tech === n ? { backgroundColor: ORANGE, color: 'white' } : { backgroundColor: 'white', color: '#555', border: '1px solid #e0dbd6' }}>{n}</button>)}</div></div>
           <div><div className="text-[11px] font-bold mb-1" style={{ color: '#888' }}>Date</div><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full text-sm rounded-lg px-2 py-1.5" style={inp} /></div>
         </div>
         <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note for the tech (optional)" className="w-full text-sm rounded-lg px-3 py-2 mb-3" style={inp} />

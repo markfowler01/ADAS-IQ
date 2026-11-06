@@ -16,7 +16,7 @@ const EST_STATUS = {
   draft:    { label: 'Draft', fg: '#666', bg: '#f5f3f0' },
   sent:     { label: 'Sent', fg: BLUE, bg: '#eff6ff' },
   approved: { label: 'Approved', fg: GREEN, bg: '#dcfce7' },
-  invoiced: { label: 'Invoiced', fg: '#7c3aed', bg: '#f3e8ff' },
+  invoiced: { label: 'Invoiced', fg: '#0A0A0A', bg: '#e8e4e0' },
   declined: { label: 'Declined', fg: '#b91c1c', bg: '#fee2e2' },
 }
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) { const e = new Error(d.error || `HTTP ${r.status}`); e.data = d; throw e } return d }
@@ -207,8 +207,8 @@ export default function EstimatorEditor({ id, user, onBack }) {
             {isTech && <Chip>read only</Chip>}
             <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{ backgroundColor: S.bg, color: S.fg }}>{S.label}</span>
             <a href={`${API_BASE}/api/estimator/${id}/pdf${est.status === 'invoiced' ? '?kind=invoice' : ''}`} onClick={async e => { e.preventDefault(); try { const r = await apiFetch(`${API_BASE}/api/estimator/${id}/pdf${est.status === 'invoiced' ? '?kind=invoice' : ''}`); const b = await r.blob(); const u = URL.createObjectURL(b); window.open(u, '_blank'); setTimeout(() => URL.revokeObjectURL(u), 60000) } catch (x) { setErr(x.message) } }} className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: BLUE, backgroundColor: '#eff6ff' }}>📄 PDF</a>
-            {est.zoho_invoice_id && <a href={`https://books.zoho.com/app#/invoices/${est.zoho_invoice_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#7c3aed', backgroundColor: '#f3e8ff' }}>🧾 {est.zoho_invoice_number || 'Invoice'} in Books ↗</a>}
-            {!est.zoho_invoice_id && est.zoho_estimate_id && <a href={`https://books.zoho.com/app#/estimates/${est.zoho_estimate_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#7c3aed', backgroundColor: '#f3e8ff' }}>🧾 {est.zoho_estimate_number || 'Estimate'} in Books ↗</a>}
+            {est.zoho_invoice_id && <a href={`https://books.zoho.com/app#/invoices/${est.zoho_invoice_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#0A0A0A', backgroundColor: '#e8e4e0' }}>🧾 {est.zoho_invoice_number || 'Invoice'} in Books ↗</a>}
+            {!est.zoho_invoice_id && est.zoho_estimate_id && <a href={`https://books.zoho.com/app#/estimates/${est.zoho_estimate_id}`} target="_blank" rel="noreferrer" className="text-xs font-bold px-2.5 py-1 rounded-lg" style={{ color: '#0A0A0A', backgroundColor: '#e8e4e0' }}>🧾 {est.zoho_estimate_number || 'Estimate'} in Books ↗</a>}
             {canEdit && est.status === 'draft' && <button onClick={async () => { if (!confirm(`Delete ${est.number}?`)) return; await j(`/api/estimator/${id}`, { method: 'DELETE' }); onBack() }} className="text-xs font-semibold px-2 py-1 rounded-lg" style={{ color: '#b91c1c', backgroundColor: '#fef2f2' }}>Delete</button>}
           </div>
           <div className="flex items-center gap-1.5 flex-wrap mt-1">
@@ -249,7 +249,7 @@ export default function EstimatorEditor({ id, user, onBack }) {
                   </div>
                 )}
                 {est.customer_name && est.customer_kind === 'retail' && (retail.find(c => c.id === est.customer_id)?.vehicles || []).length > 0 && (
-                  <div className="flex gap-1 flex-wrap items-center"><Eyebrow>Their cars ·</Eyebrow>{retail.find(c => c.id === est.customer_id).vehicles.map((v, i) => <button key={i} disabled={!canEdit} onClick={() => patchEst({ vin: v.vin || est.vin, year: v.year, make: v.make, model: v.model, trim: v.trim || '', plate: v.plate || est.plate })} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: est.vin && est.vin === v.vin ? BLUE : 'white', color: est.vin && est.vin === v.vin ? 'white' : BLUE, border: '1px solid #bfdbfe' }}>🚗 {[v.year, v.make, v.model].filter(Boolean).join(' ') || v.vin}</button>)}</div>
+                  <div className="flex gap-1 flex-wrap items-center"><Eyebrow>Their cars ·</Eyebrow>{retail.find(c => c.id === est.customer_id).vehicles.map((v, i) => <button key={i} disabled={!canEdit} onClick={() => patchEst({ vin: v.vin || est.vin, year: v.year, make: v.make, model: v.model, trim: v.trim || '', plate: v.plate || est.plate })} className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ backgroundColor: est.vin && est.vin === v.vin ? BLUE : 'white', color: est.vin && est.vin === v.vin ? 'white' : BLUE, border: '1px solid #e8e4e0' }}>🚗 {[v.year, v.make, v.model].filter(Boolean).join(' ') || v.vin}</button>)}</div>
                 )}
                 {est.customer_name ? null : (
                   <div>
@@ -262,7 +262,7 @@ export default function EstimatorEditor({ id, user, onBack }) {
                     )}
                     {canEdit && !newPerson && <button onClick={() => setNewPerson({ name: custQ, phone: '', email: '', address: '', city: '', zip: '' })} className="text-xs font-bold mt-2" style={{ color: BLUE }}>＋ New retail customer{custQ ? ` "${custQ}"` : ''}</button>}
                     {newPerson && (
-                      <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg p-2" style={{ backgroundColor: '#eff6ff' }}>
+                      <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg p-2" style={{ backgroundColor: '#f5f3f0' }}>
                         {[['name', 'Name', 2], ['phone', 'Phone', 1], ['email', 'Email', 1], ['address', 'Address', 2], ['city', 'City', 1], ['zip', 'Zip', 1]].map(([k, l, sp]) => (
                           <div key={k} style={{ gridColumn: `span ${sp}` }}><Eyebrow>{l}</Eyebrow><input value={newPerson[k]} onChange={e => setNewPerson(p => ({ ...p, [k]: e.target.value }))} className="w-full px-2 py-1.5 text-sm" style={inp} /></div>
                         ))}
@@ -453,7 +453,7 @@ function PushModal({ est, totals, onClose, onPushed }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,.55)' }} onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
       <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden">
-        <div className="px-5 py-3" style={{ backgroundColor: '#f3e8ff', borderBottom: '1px solid #ddd6fe' }}><Eyebrow>🧾 Push {est.number} to Zoho Books</Eyebrow><div className="font-bold" style={{ color: '#1a1a1a' }}>{est.customer_name} · {fmtCents(totals.grand_total)}</div><div className="text-xs" style={{ color: '#666' }}>Creates a draft in Books, not emailed. Books computes the tax from the tax id. Only approved jobs go.</div></div>
+        <div className="px-5 py-3" style={{ backgroundColor: '#e8e4e0', borderBottom: '1px solid #e8e4e0' }}><Eyebrow>🧾 Push {est.number} to Zoho Books</Eyebrow><div className="font-bold" style={{ color: '#1a1a1a' }}>{est.customer_name} · {fmtCents(totals.grand_total)}</div><div className="text-xs" style={{ color: '#666' }}>Creates a draft in Books, not emailed. Books computes the tax from the tax id. Only approved jobs go.</div></div>
         <div className="px-5 py-4 space-y-3">
           {err && <Notice tone="red">{err}</Notice>}
           {!est.zoho_contact_id && <Notice tone="amber">No Zoho Books customer linked. Open the customer in the CRM and tap "Create in Books" first.</Notice>}

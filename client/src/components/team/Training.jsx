@@ -4,10 +4,10 @@ import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch, ORANGE } from '../books/shared'
 
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
-const GREEN = '#15803d', BLUE = '#1d4ed8'
+const GREEN = '#15803d', BLUE = '#0A0A0A'
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
 const TRACKS = { core: 'Everyone', tech: 'Technician', apprentice: 'Apprentice', ops: 'Billing & dispatch' }
-const TRACK_COLOR = { core: '#555', tech: '#2563eb', apprentice: '#7c3aed', ops: '#0e7490' }
+const TRACK_COLOR = { core: '#555', tech: '#0A0A0A', apprentice: '#0A0A0A', ops: '#1F8B8B' }
 
 export default function TrainingTab() {
   const [d, setD] = useState(null); const [edit, setEdit] = useState(false); const [draft, setDraft] = useState(null); const [busy, setBusy] = useState(false); const [link, setLink] = useState('')
@@ -48,7 +48,7 @@ export default function TrainingTab() {
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <div className="text-sm" style={{ color: '#555' }}>{c.modules.length} modules · pass mark {c.pass_pct}%{d.my_id ? ` · you've passed ${passed}/${c.modules.length}` : ''}</div>
         {d.my_id && <button onClick={async () => { try { const r = await j('/api/people/onboarding/my-link'); setLink(r.link); window.open(r.link, '_blank') } catch (e) { alert(e.message) } }} className="text-xs font-bold rounded-full px-3 py-1.5 text-white" style={{ backgroundColor: GREEN }}>▶ Take the training</button>}
-        <a href="/app/technician-handbook-v1.pdf" target="_blank" rel="noreferrer" className="text-xs font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#dbeafe', color: BLUE }}>📕 Technician Handbook V1 (PDF)</a>
+        <a href="/app/technician-handbook-v1.pdf" target="_blank" rel="noreferrer" className="text-xs font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: '#e8e4e0', color: BLUE }}>📕 Technician Handbook V1 (PDF)</a>
         {d.editable && <button onClick={() => { setDraft(JSON.parse(JSON.stringify(c))); setEdit(true) }} className="ml-auto text-xs font-bold rounded-full px-3 py-1.5" style={{ backgroundColor: 'white', color: ORANGE, border: `1px solid ${ORANGE}` }}>✏️ Edit course</button>}
       </div>
       {c.modules.map((m, i) => (

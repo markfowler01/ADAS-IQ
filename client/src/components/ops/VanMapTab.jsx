@@ -99,7 +99,7 @@ function VanSvg({ van, kit, sel, onPick }) {
       <image href={import.meta.env.BASE_URL + 'van-map.png'} x="0" y="0" width="512" height="768" />
       <g onClick={() => onPick('tech')} style={{ cursor: 'pointer' }}>
         <rect x="162" y="132" width="188" height="62" rx="12" fill={sel === 'tech' ? '#3b2a8a' : '#1e3f8f'} stroke={sel === 'tech' ? '#CD4419' : '#4f8cf0'} strokeWidth="2" />
-        <circle cx="194" cy="163" r="18" fill="#1d4ed8" stroke="#8fb5ff" strokeWidth="2" />
+        <circle cx="194" cy="163" r="18" fill="#0A0A0A" stroke="#8fb5ff" strokeWidth="2" />
         <text x="194" y="168" textAnchor="middle" fontSize="13" fontWeight="700" fill="#ffffff">{kit.tech ? kit.tech.name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase() : '+'}</text>
         <text x="224" y="159" fontSize="15" fontWeight="700" fill="#ffffff">{kit.tech ? `${kit.tech.name.split(' ')[0]} tech` : 'No tech'}</text>
         <text x="224" y="177" fontSize="11" fill="#bcd3ff">CAB</text>
@@ -201,17 +201,17 @@ function GearPanel({ van, b, locations, onGo, onTransfer }) {
                 <div style={{ fontSize: 13, fontWeight: 600, color: INK }}>{a.nickname ? `${a.name} "${a.nickname}"` : a.name}</div>
                 <div style={{ fontSize: 11, color: sev(a.sub_exp) >= 2 ? RED : MUTED }}>{[a.bin, a.sn, a.sub_exp ? `sub ${when(a.sub_exp)}` : '', a.tag ? `🏷 ${a.tag}` : '', a.notes].filter(Boolean).join(' · ')}</div>
                 {b.missingIds?.has(a.id) && <div style={{ fontSize: 11, fontWeight: 700, color: RED }}>❗ Missing at the last check</div>}
-                {last && <div style={{ fontSize: 11, color: '#7c3aed' }}>↔ from {nm(last.from)} · {last.by || 'someone'} · {String(last.at).slice(0, 10)}</div>}
+                {last && <div style={{ fontSize: 11, color: '#0A0A0A' }}>↔ from {nm(last.from)} · {last.by || 'someone'} · {String(last.at).slice(0, 10)}</div>}
               </div>
-              {onTransfer && others.length > 0 && moving !== a.id && <button onClick={() => { setMoving(a.id); setTo(others[0].id); setNote('') }} style={{ fontSize: 11, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', border: 0, borderRadius: 6, padding: '5px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}>↔ Transfer</button>}
+              {onTransfer && others.length > 0 && moving !== a.id && <button onClick={() => { setMoving(a.id); setTo(others[0].id); setNote('') }} style={{ fontSize: 11, fontWeight: 700, color: '#0A0A0A', background: '#e8e4e0', border: 0, borderRadius: 6, padding: '5px 9px', cursor: 'pointer', whiteSpace: 'nowrap' }}>↔ Transfer</button>}
             </div>
             {moving === a.id && (
-              <div style={{ marginTop: 8, background: '#faf5ff', borderRadius: 8, padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              <div style={{ marginTop: 8, background: '#f5e8e3', borderRadius: 8, padding: 8, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
                 <select value={to} onChange={e => setTo(e.target.value)} style={inp}>{others.map(l => <option key={l.id} value={l.id}>{l.name}{l.tech ? '' : ''}</option>)}<option value="">Spare / shop</option></select>
                 <input value={note} onChange={e => setNote(e.target.value)} placeholder="Why (optional) — e.g. Rivian job Tue" style={inp} />
                 <div style={{ gridColumn: 'span 2', display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                   <button onClick={() => setMoving(null)} style={{ fontSize: 11, fontWeight: 700, padding: '6px 10px', borderRadius: 6, border: '1px solid #e0ddd8', background: 'white', cursor: 'pointer' }}>Cancel</button>
-                  <button onClick={() => { onTransfer(a.id, to, note); setMoving(null) }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 10px', borderRadius: 6, border: 0, background: '#7c3aed', color: 'white', cursor: 'pointer' }}>Move to {nm(to)}</button>
+                  <button onClick={() => { onTransfer(a.id, to, note); setMoving(null) }} style={{ fontSize: 11, fontWeight: 700, padding: '6px 10px', borderRadius: 6, border: 0, background: '#0A0A0A', color: 'white', cursor: 'pointer' }}>Move to {nm(to)}</button>
                 </div>
               </div>
             )}
@@ -435,7 +435,7 @@ function VanHeader({ van, kit, setLocations, onCheck, onHandover }) {
           <span style={{ fontSize: 12, fontWeight: 700, color: kit.issues ? '#b45309' : GREEN }}>{kit.issues ? `${kit.issues} thing${kit.issues === 1 ? '' : 's'} need attention` : 'All current'}</span>
           {kit.cost12 > 0 && <span style={{ fontSize: 11, color: MUTED }}>· ${kit.cost12.toLocaleString()} maintenance, 12 mo</span>}
           {setLocations && <button onClick={onCheck} style={{ fontSize: 12, fontWeight: 700, color: 'white', background: kit.lastCheck && (Date.now() - new Date(kit.lastCheck.at)) < 7 * 86400000 ? GREEN : BRAND, border: 0, borderRadius: 7, padding: '6px 10px', cursor: 'pointer' }}>✅ Van check{kit.lastCheck ? ` · ${Math.floor((Date.now() - new Date(kit.lastCheck.at)) / 86400000)}d ago` : ' · never'}</button>}
-          {setLocations && <button onClick={onHandover} style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', background: '#f3e8ff', border: 0, borderRadius: 7, padding: '6px 10px', cursor: 'pointer' }}>🤝 Hand over</button>}
+          {setLocations && <button onClick={onHandover} style={{ fontSize: 12, fontWeight: 700, color: '#0A0A0A', background: '#e8e4e0', border: 0, borderRadius: 7, padding: '6px 10px', cursor: 'pointer' }}>🤝 Hand over</button>}
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>

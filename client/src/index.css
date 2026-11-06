@@ -2,8 +2,13 @@
 
 @theme {
   --color-adas-orange: #CD4419;
+  --color-adas-orange-hover: #B33A15;
   --color-adas-orange-light: #f5e8e3;
+  --color-adas-ink: #0A0A0A;
   --color-adas-bg: #f5f3f0;
+  --color-adas-quote: #1d4ed8;
+  --color-adas-quote-hover: #1e40af;
+  --color-adas-quote-soft: #eff6ff;
   --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
@@ -22,4 +27,14 @@ body {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+@keyframes portal-savings-glow {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.06); }
+}
+
+@keyframes portal-savings-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
 }

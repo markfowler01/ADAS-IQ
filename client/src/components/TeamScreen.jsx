@@ -13,13 +13,13 @@ const ROLES = ['owner', 'admin', 'manager', 'technician', 'office', 'contractor'
 const ROLE_COLORS = {
   owner:      { bg: '#fef3c7', color: '#b45309', label: 'Owner' },
   admin:      { bg: '#fff7f5', color: '#CD4419', label: 'Admin' },
-  manager:    { bg: '#ede9fe', color: '#7c3aed', label: 'Manager' },
-  technician: { bg: '#eff6ff', color: '#2563eb', label: 'Technician' },
+  manager:    { bg: '#e8e4e0', color: '#0A0A0A', label: 'Manager' },
+  technician: { bg: '#e6f4f4', color: '#1F8B8B', label: 'Technician' },
   office:     { bg: '#f0fdf4', color: '#15803d', label: 'Office' },
   contractor: { bg: '#f5f3f0', color: '#6b7280', label: 'Contractor' },
 }
 
-const AVATAR_COLORS = ['#CD4419', '#2563eb', '#16a34a', '#7c3aed', '#b45309', '#0e7490', '#db2777', '#0891b2']
+const AVATAR_COLORS = ['#CD4419', '#0A0A0A', '#15803d', '#B33A15', '#b45309', '#1F8B8B', '#181818', '#888888']
 
 export default function TeamScreen({ user, onLogout, currentScreen, onNavigate }) {
   const launchParam = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('launch') : null
@@ -232,7 +232,7 @@ function AnnouncementsTab({ announcements, isAdmin, currentUserId, onEdit, onDel
       {announcements.map(a => {
         const priorityStyle = a.priority === 'urgent' ? { bg: '#fef2f2', color: '#b91c1c' }
           : a.priority === 'high' ? { bg: '#fff7f5', color: ORANGE }
-          : { bg: '#eff6ff', color: '#2563eb' }
+          : { bg: '#e8e4e0', color: '#0A0A0A' }
         const isRead = (a.reads || []).includes(currentUserId)
         return (
           <div key={a.id} className="rounded-xl border p-5 shadow-sm bg-white"

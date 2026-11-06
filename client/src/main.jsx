@@ -12,6 +12,13 @@ import { API_BASE, getToken } from './utils/api.js'
 // report uncaught errors, unhandled rejections and page unloads (with the
 // last thing that was clicked) to /api/client-error so the cause shows up
 // in the function log even when React's error boundary never sees it.
+// Android install (Kat 2026-10-05: "no screen to install"): Chrome only offers
+// "Install app" when a service worker is registered, so register the push-only
+// sw.js on load (same file enablePush registers — idempotent, no fetch handler).
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js').catch(() => {}) })
+}
+
 let __lastClick = ''
 document.addEventListener('click', (e) => {
   const el = e.target?.closest?.('button, a, [role=button]') || e.target

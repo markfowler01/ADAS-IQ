@@ -70,7 +70,7 @@ export default function AddCalibration({ existingNames = [], onAdd, onCancel, ve
           <button type="button" onClick={onCancel} className="text-xs font-semibold" style={{ color: '#888' }}>close</button>
         </div>
       )}
-      {writing && <div className="text-xs font-semibold mb-2" style={{ color: '#7c3aed' }}>🪄 Writing why {writing} is required…</div>}
+      {writing && <div className="text-xs font-semibold mb-2" style={{ color: '#0A0A0A' }}>🪄 Writing why {writing} is required…</div>}
       <input autoFocus value={q} onChange={e => setQ(e.target.value)} disabled={!!writing} placeholder="Search calibrations in Zoho Books… (e.g. blind spot, radar, camera)"
         className="w-full rounded-lg px-3 py-2 text-sm mb-2" style={{ border: '1px solid #e0dbd6', backgroundColor: 'white', outline: 'none' }}
         onKeyDown={e => { if (e.key === 'Enter' && needle) { const h = hits[0]; h ? add(h.name, { item_id: h.item_id }) : add(q.trim()) } }} />

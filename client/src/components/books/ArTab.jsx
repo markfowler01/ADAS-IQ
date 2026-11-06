@@ -92,7 +92,7 @@ export default function ArTab({ user }) {
             {!plan && <button disabled={!!busy} onClick={loadPlan} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ backgroundColor: BLUE }}>{busy === 'plan' ? '…' : 'Find the history'}</button>}
             {plan && <div className="text-xs">First invoice <b>{plan.first_invoice_date}</b> · <b>{plan.remaining.length}</b> months to import ({plan.remaining[0]} → {plan.remaining[plan.remaining.length - 1]})</div>}
             {plan && !preview && <button disabled={!!busy} onClick={doPreview} className="rounded-lg px-3 py-1.5 text-xs font-bold text-white" style={{ backgroundColor: BLUE }}>{busy === 'preview' ? 'Counting…' : 'Preview (no writes)'}</button>}
-            {preview && <div className="rounded-lg p-2 text-xs" style={{ backgroundColor: '#eff6ff' }}><b>{preview.inv}</b> invoices totaling <b>{$(Math.round(preview.it * 100))}</b> · <b>{preview.pay}</b> payments totaling <b>{$(Math.round(preview.pt * 100))}</b></div>}
+            {preview && <div className="rounded-lg p-2 text-xs" style={{ backgroundColor: '#f5f3f0' }}><b>{preview.inv}</b> invoices totaling <b>{$(Math.round(preview.it * 100))}</b> · <b>{preview.pay}</b> payments totaling <b>{$(Math.round(preview.pt * 100))}</b></div>}
             {preview && (isOwner ? <button disabled={!!busy} onClick={doImport} className="rounded-lg px-4 py-2 text-sm font-bold text-white" style={{ backgroundColor: GREEN }}>{busy === 'import' ? 'Importing…' : '✅ Confirm import'}</button> : <Notice tone="amber">Only Mark can confirm the first import.</Notice>)}
           </div>
         </Panel>

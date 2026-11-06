@@ -68,6 +68,8 @@ export default function MorningClockIn({ user }) {
       }
       const isTech = user?.role === 'technician'
       const location = isTech ? await getLocation() : null
+      // Techs cannot punch in without GPS (Mark 2026-10-05) — the server refuses too.
+      if (isTech && !location) { setDone('📍 Location is required to punch in. Turn on Location for the Absolute ADAS app, then try again.'); setTimeout(() => setShow(false), 6000); return }
       const r = await apiFetch(`${API_BASE}/api/timeclock/clock-in`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -78,8 +80,8 @@ export default function MorningClockIn({ user }) {
       else setDone('Clocked in — GET SOME!!! 🔧')
       setTimeout(() => setShow(false), 1600)
     } catch (e) {
-      setDone(`Failed: ${e.message} — use the Time Clock page`)
-      setTimeout(() => setShow(false), 3000)
+      setDone(/location|miles|ft from/i.test(e.message) ? `📍 ${e.message}` : `Failed: ${e.message} — use the Time Clock page`)
+      setTimeout(() => setShow(false), 6000)
     } finally { setBusy(false) }
   }
 

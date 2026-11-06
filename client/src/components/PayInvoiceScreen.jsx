@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { API_BASE } from '../utils/portal'
-// eslint-disable-next-line no-unused-vars
+import { BRAND, BrandBar, PublicFooter } from '../lib/brand.jsx'
 
-const ORANGE = '#CD4419'
+const ORANGE = BRAND.orange
 
 function fmt(n) { return `$${Number(n || 0).toFixed(2)}` }
 
@@ -189,15 +189,12 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
   }
 
   return (
-    <div className="min-h-screen px-4 py-6" style={{ backgroundColor: '#fafafa' }}>
+    <div className="min-h-screen px-4 py-6" style={{ backgroundColor: BRAND.cream }}>
+      <div className="-mx-4 -mt-6 mb-6"><BrandBar /></div>
       <div className="max-w-lg mx-auto">
         {/* Header */}
         <div className="text-center mb-5">
-          <div className="inline-block px-4 py-2 rounded-xl mb-3"
-            style={{ backgroundColor: ORANGE }}>
-            <span className="text-white font-bold text-lg">ABSOLUTE ADAS</span>
-          </div>
-          <h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>Pay Invoice</h1>
+          <h1 className="text-xl font-bold" style={{ color: BRAND.ink }}>Pay Invoice</h1>
         </div>
 
         {/* Invoice summary */}
@@ -249,13 +246,13 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
             </h2>
             <button onClick={() => startStripe('ach')} disabled={saving}
               className="w-full py-3 rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2"
-              style={{ backgroundColor: '#16a34a' }}>
+              style={{ backgroundColor: ORANGE }}>
               🏦 Pay by Bank (ACH) — {fmt(balance)}
               <span className="text-xs font-normal opacity-75">· Save ~2%</span>
             </button>
             <button onClick={() => startStripe('card')} disabled={saving}
               className="w-full py-3 rounded-lg text-sm font-semibold text-white"
-              style={{ backgroundColor: '#2563eb' }}>
+              style={{ backgroundColor: BRAND.ink }}>
               💳 Pay by Credit Card — {fmt(balance)}
             </button>
             <p className="text-xs text-gray-500 text-center">
@@ -345,8 +342,8 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
             </div>
           )}
           {method === 'Credit Card' && stripeOn && (
-            <div className="rounded-lg p-3" style={{ backgroundColor: '#eff6ff', border: `1px solid #bfdbfe` }}>
-              <p className="text-xs" style={{ color: '#2563eb' }}>
+            <div className="rounded-lg p-3" style={{ backgroundColor: BRAND.orangeSoft, border: `1px solid #fcd5c5` }}>
+              <p className="text-xs" style={{ color: ORANGE }}>
                 💡 For instant card payments, use the "Pay by Credit Card" button above. This form
                 only records card payments that happened offline (phone, in-person, etc.).
               </p>
@@ -367,6 +364,7 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
             Secured by Absolute ADAS · Payment will be recorded in our books immediately
           </p>
         </form>
+        <PublicFooter />
       </div>
     </div>
   )
@@ -374,7 +372,7 @@ function PayForm({ invoice, token, onPaid, setInvoice }) {
 
 function Center({ children }) {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: '#fafafa' }}>
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: BRAND.cream }}>
       <div className="max-w-md w-full text-center p-8 rounded-xl bg-white shadow-sm"
         style={{ border: '1px solid #f0ece8' }}>
         {children}

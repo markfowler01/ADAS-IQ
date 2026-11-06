@@ -348,8 +348,8 @@ export default function CreateInvoicesModal({ job, onClose, onCreated }) {
           </div>
 
           {/* Insurance Invoice section */}
-          <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: '#dbeafe', backgroundColor: '#f0f7ff' }}>
-            <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#1d4ed8' }}>
+          <div className="rounded-xl border p-4 space-y-3" style={{ borderColor: '#e8e4e0', backgroundColor: '#f0f7ff' }}>
+            <h3 className="text-xs font-semibold uppercase tracking-wide" style={{ color: '#0A0A0A' }}>
               Insurance Invoice
             </h3>
             <div className="grid grid-cols-2 gap-3">
@@ -359,7 +359,7 @@ export default function CreateInvoicesModal({ job, onClose, onCreated }) {
                 </label>
                 <input
                   className="w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none bg-white"
-                  style={{ borderColor: '#bfdbfe' }}
+                  style={{ borderColor: '#e8e4e0' }}
                   placeholder={ro || 'e.g. 12345'}
                   value={insInvoiceNum}
                   onChange={e => setInsInvoiceNum(e.target.value)}
@@ -369,7 +369,7 @@ export default function CreateInvoicesModal({ job, onClose, onCreated }) {
                 <label className="block text-xs font-medium text-gray-600 mb-1">Insurance Company</label>
                 <input
                   className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none bg-white"
-                  style={{ borderColor: '#bfdbfe' }}
+                  style={{ borderColor: '#e8e4e0' }}
                   placeholder="State Farm Insurance"
                   value={insuranceCompany}
                   onChange={e => setInsuranceCompany(e.target.value)}

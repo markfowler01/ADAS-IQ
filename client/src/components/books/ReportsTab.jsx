@@ -26,7 +26,7 @@ export default function ReportsTab() {
   const plCards = [
     { label: 'Revenue',    value: fmt(period === 'month' ? t.mtd_revenue  : period === 'all' ? t.all_time_revenue  : t.ytd_revenue),  bg: '#f0fdf4', color: '#16a34a' },
     { label: 'Expenses',   value: fmt(period === 'month' ? t.mtd_expenses : period === 'all' ? t.all_time_expenses : t.ytd_expenses), bg: '#fef2f2', color: '#dc2626' },
-    { label: 'Net Income', value: fmt(period === 'month' ? t.mtd_net      : period === 'all' ? t.all_time_net      : t.ytd_net),      bg: '#eff6ff', color: '#2563eb' },
+    { label: 'Net Income', value: fmt(period === 'month' ? t.mtd_net      : period === 'all' ? t.all_time_net      : t.ytd_net),      bg: '#f5f3f0', color: '#0A0A0A' },
     { label: 'Outstanding', value: fmt(t.outstanding), bg: '#fff7f5', color: ORANGE },
   ]
 
@@ -113,7 +113,7 @@ export default function ReportsTab() {
                 const totalRev = (report.by_type || []).reduce((s, x) => s + x.revenue, 0) || 1
                 const pct = Math.round((t.revenue / totalRev) * 100)
                 const typeLabels = { insurance: 'Insurance', shop: 'Shop (discounted)', standard: 'Standard B2B', personal: 'Personal' }
-                const typeColors = { insurance: '#2563eb', shop: '#7c3aed', standard: ORANGE, personal: '#16a34a' }
+                const typeColors = { insurance: '#0A0A0A', shop: '#0A0A0A', standard: ORANGE, personal: '#16a34a' }
                 return (
                   <div key={t.type}>
                     <div className="flex justify-between text-xs mb-1">

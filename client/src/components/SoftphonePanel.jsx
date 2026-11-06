@@ -332,9 +332,9 @@ export default function SoftphonePanel({ showControls = true }) {
               className="text-xs font-bold rounded-lg px-3 py-2"
               style={{ backgroundColor: muted ? '#f59e0b' : '#374151', color: 'white' }}>{muted ? '🔇 Muted' : '🎙 Mute'}</button>
             <button onClick={() => transfer('jayden')}
-              className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#0e7490', color: 'white' }}>→ Jayden</button>
+              className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1F8B8B', color: 'white' }}>→ Jayden</button>
             <button onClick={() => transfer('mark')}
-              className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#0e7490', color: 'white' }}>→ Mark</button>
+              className="text-xs font-bold rounded-lg px-3 py-2" style={{ backgroundColor: '#1F8B8B', color: 'white' }}>→ Mark</button>
             <button onClick={() => call.disconnect()}
               className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: RED }}>End</button>
           </div>

@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { API_BASE } from '../utils/portal'
+import { BRAND, BrandBar, PublicFooter } from '../lib/brand.jsx'
 
-const ORANGE = '#CD4419'
+const ORANGE = BRAND.orange
 function fmt(n) { return `$${Number(n || 0).toFixed(2)}` }
 
 export default function QuoteApprovalScreen() {
@@ -107,14 +108,11 @@ export default function QuoteApprovalScreen() {
   }
 
   return (
-    <div className="min-h-screen px-4 py-6" style={{ backgroundColor: '#fafafa' }}>
-      <div className="max-w-2xl mx-auto">
-        {/* Header */}
+    <div className="min-h-screen" style={{ backgroundColor: BRAND.cream }}>
+      <BrandBar />
+      <div className="max-w-2xl mx-auto px-4 py-6">
         <div className="text-center mb-5">
-          <div className="inline-block px-4 py-2 rounded-xl mb-3" style={{ backgroundColor: ORANGE }}>
-            <span className="text-white font-bold text-lg">ABSOLUTE ADAS</span>
-          </div>
-          <h1 className="text-xl font-bold" style={{ color: '#1a1a1a' }}>Quote for Your Review</h1>
+          <h1 className="text-xl font-bold" style={{ color: BRAND.ink }}>Quote for Your Review</h1>
         </div>
 
         {/* Quote summary */}
@@ -198,8 +196,8 @@ export default function QuoteApprovalScreen() {
               </button>
               <button onClick={() => setMode('approving')} disabled={status === 'processing'}
                 className="py-3 rounded-lg text-sm font-semibold text-white"
-                style={{ backgroundColor: '#16a34a' }}>
-                ✓ Approve Quote
+                style={{ backgroundColor: ORANGE }}>
+                Approve Quote
               </button>
             </div>
           </div>
@@ -225,7 +223,7 @@ export default function QuoteApprovalScreen() {
               </button>
               <button onClick={approve} disabled={status === 'processing'}
                 className="flex-1 py-2 rounded-lg text-sm font-semibold text-white"
-                style={{ backgroundColor: '#16a34a', opacity: status === 'processing' ? 0.6 : 1 }}>
+                style={{ backgroundColor: ORANGE, opacity: status === 'processing' ? 0.6 : 1 }}>
                 {status === 'processing' ? 'Approving…' : 'Confirm Approval'}
               </button>
             </div>
@@ -254,9 +252,7 @@ export default function QuoteApprovalScreen() {
           </div>
         )}
 
-        <p className="text-center text-xs text-gray-400 mt-6">
-          Absolute ADAS · Questions? Contact us
-        </p>
+        <PublicFooter />
       </div>
     </div>
   )
@@ -264,7 +260,7 @@ export default function QuoteApprovalScreen() {
 
 function Center({ children }) {
   return (
-    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: '#fafafa' }}>
+    <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: BRAND.cream }}>
       <div className="max-w-md w-full text-center p-8 rounded-xl bg-white shadow-sm"
         style={{ border: '1px solid #f0ece8' }}>
         {children}

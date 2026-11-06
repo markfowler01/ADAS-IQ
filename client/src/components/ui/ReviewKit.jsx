@@ -5,13 +5,14 @@
 // one look: mono eyebrow, bold title, bordered panels with a colored
 // header strip, one-line rows with tabular amounts, a big total row, an
 // always-visible footer, amber warnings, pill switches.
-export const ORANGE = '#CD4419'
-export const GREEN = '#15803d'
-export const BLUE = '#1d4ed8'
+import { BRAND } from '../../lib/brandTokens.js'
+export const ORANGE = BRAND.orange
+export const GREEN = BRAND.green
+export const BLUE = BRAND.quote   // quote / estimate blue — brand token
 export const fmt = n => `$${Number(n || 0).toFixed(2)}`
 
 const TONES = {
-  blue:  { border: '#bfdbfe', head: '#eff6ff', text: BLUE },
+  blue:  { border: BRAND.quoteLine, head: BRAND.quoteSoft, text: BLUE },
   green: { border: '#bbf7d0', head: '#f0fdf4', text: GREEN },
   amber: { border: '#fde68a', head: '#fffbeb', text: '#92400e' },
   orange:{ border: '#f5c9b8', head: '#fff5f0', text: ORANGE },

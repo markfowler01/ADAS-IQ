@@ -7,9 +7,9 @@ import { useEffect, useState } from 'react'
 import { API_BASE, apiFetch, ORANGE } from '../books/shared'
 import { Avatar } from './Directory.jsx'
 
-const GREEN = '#15803d', RED = '#b91c1c', BLUE = '#1d4ed8', PURPLE = '#7e22ce'
+const GREEN = '#15803d', RED = '#b91c1c', BLUE = '#0A0A0A', PURPLE = '#0A0A0A'
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
-const OWNER = { mark: ['Mark', '#b45309', '#fff7ed'], kat: ['Kat', PURPLE, '#faf5ff'], auto: ['auto', '#0e7490', '#f0fdfa'] }
+const OWNER = { mark: ['Mark', '#b45309', '#fff7ed'], kat: ['Kat', PURPLE, '#f5e8e3'], auto: ['auto', '#1F8B8B', '#f0fdfa'] }
 const fmt = d => d ? new Date(d + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''
 const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
 
@@ -145,7 +145,7 @@ export default function OnboardingLaunch({ memberId, onClose, onOpenProfile }) {
                 <div key={i}>
                   {(i === 0 || (d.van.equipment[i - 1].group || 'Other') !== (e.group || 'Other')) && <div className="text-[10px] uppercase tracking-wider font-bold mt-2" style={{ color: '#888' }}>{e.group || 'Other'}</div>}
                   <div className="flex items-center gap-2 py-1" style={{ borderTop: '1px solid #f8f6f4' }}>
-                    <span className="text-sm flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{e.name}{e.part ? <span className="text-[11px] font-mono" style={{ color: '#888' }}> {e.part}</span> : ''}{e.usage ? <span className="text-[11px]" style={{ color: '#999' }}> · {e.usage}</span> : ''}{e.serial ? <span className="text-xs" style={{ color: '#0e7490' }}> · S/N {e.serial}</span> : ''}{e.added_by && !['fleet sheet', 'handbook ch. 14'].includes(e.added_by) ? <span className="text-[10px]" style={{ color: '#aaa' }}> · added by {e.added_by}</span> : ''}</span>
+                    <span className="text-sm flex-1 min-w-0" style={{ color: '#1a1a1a' }}>{e.name}{e.part ? <span className="text-[11px] font-mono" style={{ color: '#888' }}> {e.part}</span> : ''}{e.usage ? <span className="text-[11px]" style={{ color: '#999' }}> · {e.usage}</span> : ''}{e.serial ? <span className="text-xs" style={{ color: '#1F8B8B' }}> · S/N {e.serial}</span> : ''}{e.added_by && !['fleet sheet', 'handbook ch. 14'].includes(e.added_by) ? <span className="text-[10px]" style={{ color: '#aaa' }}> · added by {e.added_by}</span> : ''}</span>
                     {m.van_handover?.tools?.some(t => t.name === e.name && !t.present) && <span className="text-[10px] font-bold" style={{ color: RED }}>missing at handover</span>}
                     <button onClick={() => { const serial = window.prompt(`Serial for ${e.name}`, e.serial || ''); if (serial !== null) vanEdit({ action: 'edit', index: i, serial }) }} className="text-[10px] font-bold px-1.5" style={{ color: '#888' }}>serial</button>
                     <button onClick={() => vanEdit({ action: 'remove', index: i })} className="text-[10px] font-bold px-1.5" style={{ color: RED }}>remove</button>

@@ -7,8 +7,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { API_BASE, apiFetch, ORANGE } from '../books/shared'
 import { isOwnerUser } from '../../utils/identity.js'
 
-const GREEN = '#15803d', BLUE = '#1d4ed8'
-const DEPT_COLORS = { Leadership: '#b45309', Operations: '#7c3aed', Field: '#2563eb', Finance: '#0e7490', Sales: '#c2410c' }
+const GREEN = '#15803d', BLUE = '#0A0A0A'
+const DEPT_COLORS = { Leadership: '#b45309', Operations: '#0A0A0A', Field: '#0A0A0A', Finance: '#1F8B8B', Sales: '#c2410c' }
 const EMPLOYMENT = { owner: 'Owner', w2: 'W-2 employee', contractor: 'Contractor' }
 const ACCESS_LABEL = { owner: 'Owner access', dispatcher: 'Dispatch access', technician: 'Technician access', none: 'No app login' }
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
@@ -34,7 +34,7 @@ function ContactButtons({ m, size = 'sm' }) {
   return (
     <div className="flex gap-1.5 flex-wrap">
       {m.phone && <a href={tel(m.phone)} onClick={e => e.stopPropagation()} className={`${cls} font-bold rounded-lg`} style={{ backgroundColor: '#dcfce7', color: GREEN }}>📞 Call</a>}
-      {m.phone && <a href={sms(m.phone)} onClick={e => e.stopPropagation()} className={`${cls} font-bold rounded-lg`} style={{ backgroundColor: '#dbeafe', color: BLUE }}>💬 Text</a>}
+      {m.phone && <a href={sms(m.phone)} onClick={e => e.stopPropagation()} className={`${cls} font-bold rounded-lg`} style={{ backgroundColor: '#e8e4e0', color: BLUE }}>💬 Text</a>}
       {m.email && <a href={`mailto:${m.email}`} onClick={e => e.stopPropagation()} className={`${cls} font-bold rounded-lg`} style={{ backgroundColor: '#f5f3f0', color: '#555' }}>✉️ Email</a>}
       {!m.phone && !m.email && <span className="text-xs" style={{ color: '#bbb' }}>no contact info yet</span>}
     </div>
@@ -42,7 +42,7 @@ function ContactButtons({ m, size = 'sm' }) {
 }
 
 // ── Directory ──────────────────────────────────────────────────────────
-const STATUS_CHIP = { in: { label: '🟢 On the clock', bg: '#dcfce7', color: '#15803d' }, off: { label: '🌴 Off today', bg: '#e0f2fe', color: '#0369a1' } }
+const STATUS_CHIP = { in: { label: '🟢 On the clock', bg: '#dcfce7', color: '#15803d' }, off: { label: '🌴 Off today', bg: '#e6f4f4', color: '#1F8B8B' } }
 export function DirectoryTab({ members, user, onOpen, onAdd, status = {} }) {
   const [q, setQ] = useState('')
   const [dept, setDept] = useState('')
@@ -237,7 +237,7 @@ export function ProfileDrawer({ m, members, user, onClose, onEdit }) {
 // ── Edit / add ─────────────────────────────────────────────────────────
 export function MemberEditModal({ member, members, user, onClose, onSaved }) {
   const owner = isOwnerUser(user)
-  const [f, setF] = useState(() => member ? { ...member, emergency_contact: member.emergency_contact || { name: '', phone: '', relationship: '' } } : { name: '', preferred_name: '', email: '', user_id: '', phone: '', personal_phone: '', title: '', department: 'Field', track: 'tech', access: 'technician', employment: 'w2', reports_to: 'mark@absoluteadas.com', hire_date: '', birthday: '', region: '', van: '', avatar_color: '#2563eb', emergency_contact: { name: '', phone: '', relationship: '' }, hourly_rate: 0, payroll_type: 'w2_zoho', salary_annual: 0, notes: '', active: true })
+  const [f, setF] = useState(() => member ? { ...member, emergency_contact: member.emergency_contact || { name: '', phone: '', relationship: '' } } : { name: '', preferred_name: '', email: '', user_id: '', phone: '', personal_phone: '', title: '', department: 'Field', track: 'tech', access: 'technician', employment: 'w2', reports_to: 'mark@absoluteadas.com', hire_date: '', birthday: '', region: '', van: '', avatar_color: '#0A0A0A', emergency_contact: { name: '', phone: '', relationship: '' }, hourly_rate: 0, payroll_type: 'w2_zoho', salary_annual: 0, notes: '', active: true })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setF(x => ({ ...x, [k]: v }))
   const inp = { border: '1px solid #e0dbd6', outline: 'none', backgroundColor: 'white' }
@@ -284,7 +284,7 @@ export function MemberEditModal({ member, members, user, onClose, onSaved }) {
           <label className="text-[11px] font-bold" style={{ color: '#888' }}>Phone<input value={f.emergency_contact?.phone || ''} onChange={e => set('emergency_contact', { ...f.emergency_contact, phone: e.target.value })} className="w-full text-sm rounded-lg px-2.5 py-2 mt-0.5 font-normal" style={inp} /></label>
           <label className="text-[11px] font-bold col-span-2" style={{ color: '#888' }}>Relationship<input value={f.emergency_contact?.relationship || ''} onChange={e => set('emergency_contact', { ...f.emergency_contact, relationship: e.target.value })} className="w-full text-sm rounded-lg px-2.5 py-2 mt-0.5 font-normal" style={inp} /></label>
           <div className="col-span-2 text-[11px] font-bold" style={{ color: '#888' }}>Card color</div>
-          <div className="col-span-2 flex gap-2 flex-wrap">{['#CD4419', '#2563eb', '#16a34a', '#7c3aed', '#b45309', '#0e7490', '#db2777', '#0891b2'].map(c => <button key={c} onClick={() => set('avatar_color', c)} className="w-8 h-8 rounded-full" style={{ backgroundColor: c, border: f.avatar_color === c ? '3px solid #1a1a1a' : 'none' }} />)}</div>
+          <div className="col-span-2 flex gap-2 flex-wrap">{['#CD4419', '#0A0A0A', '#16a34a', '#0A0A0A', '#b45309', '#1F8B8B', '#B33A15', '#1F8B8B'].map(c => <button key={c} onClick={() => set('avatar_color', c)} className="w-8 h-8 rounded-full" style={{ backgroundColor: c, border: f.avatar_color === c ? '3px solid #1a1a1a' : 'none' }} />)}</div>
           {owner && (
             <div className="col-span-2 rounded-xl p-3 grid grid-cols-2 gap-3" style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a' }}>
               <div className="col-span-2 text-[10px] uppercase tracking-wider font-semibold" style={{ color: '#92400e', fontFamily: 'IBM Plex Mono, monospace' }}>Owners only · pay</div>

@@ -113,7 +113,7 @@ export default function CalibrationRow({ cal, onToggle, price, onField, vehicle 
                   <div className="flex gap-1.5">
                     <button onClick={aiRewrite} disabled={aiBusy}
                       className="flex-1 text-[11px] font-bold py-1.5 rounded-lg text-white"
-                      style={{ backgroundColor: '#7c3aed', opacity: aiBusy ? 0.6 : 1 }}>
+                      style={{ backgroundColor: '#0A0A0A', opacity: aiBusy ? 0.6 : 1 }}>
                       {aiBusy ? '🪄 Writing…' : '🪄 AI rewrite justification'}
                     </button>
                     <button onClick={e => { e.stopPropagation(); setEditOpen(false) }}

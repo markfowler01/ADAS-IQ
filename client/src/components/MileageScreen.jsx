@@ -5,7 +5,7 @@ import { API_BASE, apiFetch, ORANGE, fmt } from './books/shared'
 const TYPE_COLORS = {
   business: { bg: '#f0fdf4', color: '#16a34a', label: 'Business' },
   personal: { bg: '#f5f3f0', color: '#6b7280', label: 'Personal' },
-  commute: { bg: '#eff6ff', color: '#2563eb', label: 'Commute' },
+  commute: { bg: '#f5f3f0', color: '#0A0A0A', label: 'Commute' },
   unclassified: { bg: '#fef3c7', color: '#b45309', label: 'Unclassified' },
 }
 

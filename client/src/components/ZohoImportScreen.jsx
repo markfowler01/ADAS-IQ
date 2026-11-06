@@ -81,7 +81,7 @@ export default function ZohoImportScreen({ user, onLogout, currentScreen, onNavi
           <div className="space-y-4">
             {/* Preview cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <PreviewCard label="Customers" count={preview.customers.count} emoji="🏢" bg="#eff6ff" color="#2563eb" />
+              <PreviewCard label="Customers" count={preview.customers.count} emoji="🏢" bg="#f5f3f0" color="#0A0A0A" />
               <PreviewCard label="Invoices" count={preview.invoices.count} emoji="🧾" bg="#f0fdf4" color="#16a34a" />
               <PreviewCard label="Items / Services" count={preview.items.count} emoji="🛠️" bg="#fff7f5" color={ORANGE} />
             </div>

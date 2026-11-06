@@ -46,13 +46,13 @@ export default function CalibrationLine({ cal, onToggle, price, onField, vehicle
           {price.needs_price ? 'no price' : `$${Number(price.rate).toFixed(0)}`}
         </span>
         {tierChip && (
-          <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#0e7490' }}
+          <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#1F8B8B' }}
             title={`${tierChip} — priced off the ${POOL_NAMES[tier.pool] || tier.pool} tier schedule for a ${tier.kind} calibration${tier.make ? ` on a ${tier.make}` : ''}.`}>
             {tierChip}
           </span>
         )}
         {price?.step2 && (
-          <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#7e22ce' }}
+          <span className="text-[10px] font-bold mt-0.5 whitespace-nowrap" style={{ color: '#0A0A0A' }}
             title={`Two-step calibration — ${price.step2.name} bills as the second step, at the additional rate.`}>
             + ${Number(price.step2.rate).toFixed(0)} step 2
           </span>
@@ -101,7 +101,7 @@ export default function CalibrationLine({ cal, onToggle, price, onField, vehicle
             <button type="button" onClick={() => setMetaOpen(o => !o)} className="text-[11px] font-bold px-2 py-0.5 rounded-lg" style={{ backgroundColor: '#f5f3f0', color: '#666' }}>
               {metaOpen ? '▾ lines / trigger' : '▸ lines / trigger'}
             </button>
-            <button type="button" onClick={aiRewrite} disabled={aiBusy} className="text-[11px] font-bold px-2.5 py-0.5 rounded-lg text-white" style={{ backgroundColor: '#7c3aed', opacity: aiBusy ? .6 : 1 }}>
+            <button type="button" onClick={aiRewrite} disabled={aiBusy} className="text-[11px] font-bold px-2.5 py-0.5 rounded-lg text-white" style={{ backgroundColor: '#0A0A0A', opacity: aiBusy ? .6 : 1 }}>
               {aiBusy ? '🪄 Writing…' : '🪄 AI rewrite'}
             </button>
           </div>

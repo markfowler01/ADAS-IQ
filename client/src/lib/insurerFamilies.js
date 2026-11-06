@@ -4,10 +4,10 @@
 import { API_BASE, apiFetch } from '../utils/api.js'
 export const DEFAULT_FAMILIES = [
   { id: 'state_farm', parent: 'State Farm', pool: 'SF', pill: 'STATE FARM PRICING', color: '#b91c1c', aliases: ['state farm'] },
-  { id: 'allstate', parent: 'Allstate', pool: 'AS', pill: 'ALLSTATE PRICING', color: '#1d4ed8', aliases: ['allstate', 'us general', 'u.s. general', 'integon', 'national general'] },
+  { id: 'allstate', parent: 'Allstate', pool: 'AS', pill: 'ALLSTATE PRICING', color: '#0A0A0A', aliases: ['allstate', 'us general', 'u.s. general', 'integon', 'national general'] },
   { id: 'liberty', parent: 'Liberty Mutual', pool: 'AS', pill: 'LIBERTY MUTUAL · ALLSTATE PRICING', color: '#f59e0b', aliases: ['liberty mutual', 'ohio security', 'safeco', 'ohio casualty', 'peerless', 'west american', 'liberty mutual fire', 'lm general', 'lm insurance'] },
-  { id: 'amfam', parent: 'American Family', pool: 'AMFAM', pill: 'AM FAM PRICING', color: '#0e7490', aliases: ['american family', 'amfam'] },
-  { id: 'geico', parent: 'GEICO', pool: 'GEICO', pill: 'GEICO PRICING', color: '#0369a1', aliases: ['geico', 'government employees insurance'] },
+  { id: 'amfam', parent: 'American Family', pool: 'AMFAM', pill: 'AM FAM PRICING', color: '#1F8B8B', aliases: ['american family', 'amfam'] },
+  { id: 'geico', parent: 'GEICO', pool: 'GEICO', pill: 'GEICO PRICING', color: '#1F8B8B', aliases: ['geico', 'government employees insurance'] },
 ]
 let _families = DEFAULT_FAMILIES, _loading = null
 export function loadInsurerFamilies(force = false) {

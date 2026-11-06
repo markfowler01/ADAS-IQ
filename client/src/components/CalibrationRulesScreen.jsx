@@ -20,9 +20,9 @@ const CATEGORY_LABELS = {
 }
 
 const SOURCE_COLORS = {
-  UNIVERSAL:    { bg: '#eff6ff', text: '#1d4ed8', label: 'Universal' },
+  UNIVERSAL:    { bg: '#f5f3f0', text: '#0A0A0A', label: 'Universal' },
   AI_CONFIRMED: { bg: '#f0fdf4', text: '#15803d', label: 'AI Confirmed' },
-  JOB_AID:      { bg: '#fdf4ff', text: '#7e22ce', label: 'Job Aid' },
+  JOB_AID:      { bg: '#f5f3f0', text: '#0A0A0A', label: 'Job Aid' },
   MANUAL:       { bg: '#fff7ed', text: '#c2410c', label: 'Manual' },
 }
 
@@ -341,7 +341,7 @@ export default function CalibrationRulesScreen({ onBack, ...navProps }) {
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
                         onClick={e => { e.stopPropagation(); setEditingRule({ ...rule }) }}
-                        className="w-7 h-7 rounded flex items-center justify-center text-gray-400 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                        className="w-7 h-7 rounded flex items-center justify-center text-gray-400 hover:text-orange-700 hover:bg-orange-50 transition-colors"
                         title="Edit"
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none">

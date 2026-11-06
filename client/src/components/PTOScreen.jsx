@@ -195,7 +195,7 @@ export default function PTOScreen({ user, onLogout, currentScreen, onNavigate })
             is none. */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           <BalanceCard title="Sick (earned 1h / 40h worked)"
-            value={mySick?.sick_balance_hours ?? 0} max={40} color="#1e40af"/>
+            value={mySick?.sick_balance_hours ?? 0} max={40} color="#0A0A0A"/>
           {Number(balance?.balance_vacation) > 0 && (
             <BalanceCard title="Vacation" value={balance.balance_vacation}
               max={balance.year_start_balance || 80} color={ORANGE}/>

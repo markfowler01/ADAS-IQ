@@ -24,7 +24,7 @@ const PHASES = [
 const STATUS_ORDER = ['todo', 'progress', 'waiting', 'done']
 const STATUS_INFO = {
   todo:     { label: '⚪ Not Started', bg: '#f5f3f0', color: '#57534e', border: '#e0dbd6' },
-  progress: { label: '🔵 In Progress', bg: '#dbeafe', color: '#1d4ed8', border: '#bfdbfe' },
+  progress: { label: '🔵 In Progress', bg: '#e8e4e0', color: '#0A0A0A', border: '#e8e4e0' },
   waiting:  { label: '🟡 Waiting',     bg: '#fef3c7', color: '#b45309', border: '#fde68a' },
   done:     { label: '🟢 Done',        bg: '#dcfce7', color: '#15803d', border: '#bbf7d0' },
 }
@@ -378,7 +378,7 @@ export default function ScalingScreen(props) {
                               </button>
                               {task.badge && (
                                 <span className="font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                                  style={{ background: '#1d4ed8', color: '#fff', fontSize: 10, letterSpacing: '0.06em' }}>
+                                  style={{ background: '#0A0A0A', color: '#fff', fontSize: 10, letterSpacing: '0.06em' }}>
                                   {task.badge}
                                 </span>
                               )}

@@ -11,9 +11,9 @@ import EstimatorSettings from './EstimatorSettings.jsx'
 
 const COLS = [
   { key: 'draft', label: 'Draft', fg: '#666', bg: '#f5f3f0', border: '#e0dbd6' },
-  { key: 'sent', label: 'Sent · awaiting approval', fg: BLUE, bg: '#eff6ff', border: '#bfdbfe' },
+  { key: 'sent', label: 'Sent · awaiting approval', fg: BLUE, bg: '#f5f3f0', border: '#e8e4e0' },
   { key: 'approved', label: 'Approved · ready to bill', fg: GREEN, bg: '#f0fdf4', border: '#bbf7d0' },
-  { key: 'invoiced', label: 'Invoiced', fg: '#7c3aed', bg: '#f5f3ff', border: '#ddd6fe' },
+  { key: 'invoiced', label: 'Invoiced', fg: '#0A0A0A', bg: '#f5f3f0', border: '#e8e4e0' },
   { key: 'declined', label: 'Declined', fg: '#b91c1c', bg: '#fef2f2', border: '#fecaca' },
 ]
 const age = iso => { if (!iso) return ''; const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return d <= 0 ? 'today' : d === 1 ? '1 day' : `${d} days` }

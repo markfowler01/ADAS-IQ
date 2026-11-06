@@ -3,10 +3,12 @@
 
 import { useState, useEffect } from 'react'
 import { API_BASE, apiFetch } from '../../utils/api.js'
+import { BRAND } from '../../lib/brandTokens.js'
 
 export { API_BASE, apiFetch }
 
-export const ORANGE = '#CD4419'
+export const ORANGE = BRAND.orange
+export const QUOTE = BRAND.quote
 
 // ── Branding hook ───────────────────────────────────────────────────────────
 
@@ -15,8 +17,8 @@ const BRANDING_DEFAULTS = {
   tagline: 'Mobile ADAS Calibration Services',
   logo_url: '',
   primary_color: ORANGE,
-  secondary_color: '#1a1a1a',
-  accent_color: '#2563eb',
+  secondary_color: '#0A0A0A',
+  accent_color: '#B33A15',
   phone: '',
   email: '',
   website: 'absoluteadas.com',
@@ -56,7 +58,7 @@ export function fmt(n) {
 
 const STATUS_MAP = {
   draft:   { bg: '#e5e7eb', color: '#374151', label: 'Draft' },
-  sent:    { bg: '#dbeafe', color: '#1d4ed8', label: 'Sent' },
+  sent:    { bg: BRAND.quoteSoft, color: BRAND.quote, label: 'Sent' },
   paid:    { bg: '#dcfce7', color: '#15803d', label: 'Paid' },
   overdue: { bg: '#fee2e2', color: '#b91c1c', label: 'Overdue' },
   void:    { bg: '#e5e7eb', color: '#6b7280', label: 'Void' },
@@ -104,8 +106,8 @@ export const COLORS = {
   warningSoft: '#fef3c7',
   danger: '#b91c1c',
   dangerSoft: '#fef2f2',
-  info: '#2563eb',
-  infoSoft: '#eff6ff',
+  info: '#1F8B8B',
+  infoSoft: '#e6f4f4',
 
   // Neutrals
   text: '#1a1a1a',

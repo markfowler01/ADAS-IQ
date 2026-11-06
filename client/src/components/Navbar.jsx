@@ -41,6 +41,7 @@ const MORE_GROUPS = [
   { label: 'Intelligence', links: [
     { id: 'daily-review', label: 'Daily Review', ownerOnly: true , icon: '📈' },
     { id: 'intel',        label: 'Business Intelligence', ownerOnly: true , icon: '🧠' },
+    { id: 'shop-talk',    label: 'Shop Talk', ownerOnly: true , icon: '🎙' },
     { id: 'cx',           label: 'Customer Experience', ownerOnly: true , icon: '⭐' },
     { id: 'history',      label: 'History' , icon: '📚' },
   ]},

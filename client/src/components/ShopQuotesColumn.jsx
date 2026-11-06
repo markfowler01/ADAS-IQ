@@ -6,8 +6,9 @@ import { API_BASE, apiFetch } from '../utils/api.js'
 import { useState, useEffect, useCallback } from 'react'
 import { insurerPricingBadge } from './MobileJobCard.jsx'
 
-const ORANGE = '#CD4419'
-const BLUE = '#1d4ed8'
+import { BRAND } from '../lib/brandTokens.js'
+const ORANGE = BRAND.orange
+const BLUE = BRAND.quote
 
 export function useShopQuotes() {
   const [quotes, setQuotes] = useState([])

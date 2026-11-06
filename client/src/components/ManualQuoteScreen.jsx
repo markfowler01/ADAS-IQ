@@ -448,11 +448,11 @@ export default function ManualQuoteScreen({ onBack, user, onLogout, currentScree
               disabled={cleaning}
               className="w-full flex items-center justify-center gap-2 rounded-xl mb-3 transition-all hover:opacity-80 active:opacity-60"
               style={{
-                backgroundColor: '#faf5ff', border: '1.5px solid #e9d5ff',
+                backgroundColor: '#f5e8e3', border: '1.5px solid #e8e4e0',
                 padding: '10px 0', minHeight: '44px', opacity: cleaning ? 0.6 : 1,
               }}
             >
-              <span className="text-sm font-semibold" style={{ color: '#7e22ce' }}>
+              <span className="text-sm font-semibold" style={{ color: '#0A0A0A' }}>
                 {cleaning ? '⏳ Writing justifications…' : '✨ AI Clean Up Descriptions'}
               </span>
             </button>

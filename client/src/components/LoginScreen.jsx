@@ -1,4 +1,5 @@
 import { API_BASE } from '../App.jsx'
+import { ScanLogo } from './LoadingSplash.jsx'
 
 export default function LoginScreen({ authError, authErrMsg }) {
   // Set by apiFetch when a request came back 401 on an expired sign-in.
@@ -12,26 +13,22 @@ export default function LoginScreen({ authError, authErrMsg }) {
     <div className="min-h-screen flex flex-col items-center justify-center px-4"
          style={{ backgroundColor: '#f5f3f0' }}>
 
-      {/* Logo */}
       <div className="mb-8 flex flex-col items-center gap-3">
-        <div className="w-20 h-20 rounded-3xl flex items-center justify-center shadow-lg bg-white">
-          <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-14 h-14 object-contain" />
-        </div>
+        <ScanLogo size={120} />
         <div className="text-center">
-          <h1 className="text-3xl font-bold" style={{ color: '#1a1a1a', fontFamily: 'IBM Plex Sans, sans-serif' }}>
+          <h1 className="text-3xl font-bold" style={{ color: '#0A0A0A', fontFamily: 'IBM Plex Sans, sans-serif' }}>
             Absolute <span style={{ color: '#CD4419' }}>ADAS</span>
           </h1>
           <p className="text-gray-500 text-sm mt-1" style={{ fontFamily: 'IBM Plex Mono, monospace' }}>
-            Powered by Claude AI
+            Mobile ADAS calibration · Western Washington
           </p>
         </div>
       </div>
 
-      {/* Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 w-full max-w-sm flex flex-col items-center gap-6">
+      <div className="bg-white rounded-2xl border p-8 w-full max-w-sm flex flex-col items-center gap-6" style={{ borderColor: '#e8e4e0' }}>
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-1">Welcome back</h2>
-          <p className="text-gray-500 text-sm">Sign in with your Zoho account to continue</p>
+          <h2 className="text-xl font-semibold text-gray-900 mb-1">Sign in</h2>
+          <p className="text-gray-500 text-sm">Use your Zoho account</p>
         </div>
 
         {note && !authError && !authErrMsg && (
@@ -39,16 +36,15 @@ export default function LoginScreen({ authError, authErrMsg }) {
         )}
         {(authError || authErrMsg) && (
           <div className="w-full bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm text-center">
-            {authErrMsg || 'Login failed — please try again'}
+            {authErrMsg || 'Login failed. Please try again.'}
           </div>
         )}
 
         <button
           onClick={handleLogin}
-          className="w-full flex items-center justify-center gap-3 py-3 px-6 rounded-xl font-semibold text-white transition-all hover:opacity-90 active:scale-95 shadow"
+          className="w-full flex items-center justify-center gap-3 py-3 px-6 rounded-xl font-semibold text-white transition-all hover:opacity-90 active:scale-95"
           style={{ backgroundColor: '#CD4419', fontFamily: 'IBM Plex Sans, sans-serif' }}
         >
-          {/* Zoho-style icon */}
           <svg width="22" height="22" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
             <rect width="40" height="40" rx="8" fill="white" fillOpacity="0.25"/>
             <text x="50%" y="56%" dominantBaseline="middle" textAnchor="middle" fontSize="18" fontWeight="bold" fill="white">Z</text>
@@ -61,7 +57,7 @@ export default function LoginScreen({ authError, authErrMsg }) {
         </p>
       </div>
 
-      <p className="mt-8 text-xs text-gray-400">© {new Date().getFullYear()} Absolute ADAS · adas-iq.com</p>
+      <p className="mt-8 text-xs text-gray-400">© {new Date().getFullYear()} Absolute ADAS · absoluteadas.com</p>
     </div>
   )
 }

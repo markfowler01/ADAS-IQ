@@ -6,7 +6,7 @@ import { API_BASE, apiFetch, ORANGE } from '../books/shared'
 import { isOwnerUser } from '../../utils/identity.js'
 
 const j = async (url, opts) => { const r = await apiFetch(`${API_BASE}${url}`, opts); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d }
-const TYPES = { holiday: ['🎉', 'Holidays', '#c2410c'], timeoff: ['🏖', 'Time off', '#0e7490'], birthday: ['🎂', 'Birthdays', '#db2777'], anniversary: ['🏅', 'Anniversaries', '#b45309'], payday: ['💵', 'Paydays', '#15803d'], review: ['⏱', 'Time card days', '#7c3aed'], expiry: ['📄', 'Expiries', '#b91c1c'], checkin: ['🗓', 'Check-ins', '#2563eb'] }
+const TYPES = { holiday: ['🎉', 'Holidays', '#c2410c'], timeoff: ['🏖', 'Time off', '#1F8B8B'], birthday: ['🎂', 'Birthdays', '#B33A15'], anniversary: ['🏅', 'Anniversaries', '#b45309'], payday: ['💵', 'Paydays', '#15803d'], review: ['⏱', 'Time card days', '#0A0A0A'], expiry: ['📄', 'Expiries', '#b91c1c'], checkin: ['🗓', 'Check-ins', '#0A0A0A'] }
 const iso = d => d.toISOString().slice(0, 10)
 const monthLabel = ym => new Date(ym + '-15T12:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 const dayLabel = d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
@@ -48,7 +48,7 @@ export default function CalendarTab({ user, onOpen }) {
             {Object.entries(days).sort().map(([d, evs]) => (
               <div key={d} className="flex gap-3 px-3 py-2" style={{ borderTop: '1px solid #f3f3f3', backgroundColor: d === today ? '#fff5f0' : 'white' }}>
                 <div className="w-24 flex-shrink-0 text-sm font-bold" style={{ color: d === today ? ORANGE : '#1a1a1a' }}>{dayLabel(d)}{d === today ? ' · today' : ''}</div>
-                <div className="flex-1 space-y-0.5">{evs.map((e, i) => <div key={i} className="text-sm flex items-center gap-2 flex-wrap" style={{ color: TYPES[e.type]?.[2] || '#333', fontWeight: e.mine ? 700 : 500 }}>{e.title}{owner && e.checkin && e.member_id && <button onClick={() => logIt(e)} className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ backgroundColor: 'white', color: '#2563eb', border: '1px solid #2563eb' }}>✓ Done — log it</button>}</div>)}</div>
+                <div className="flex-1 space-y-0.5">{evs.map((e, i) => <div key={i} className="text-sm flex items-center gap-2 flex-wrap" style={{ color: TYPES[e.type]?.[2] || '#333', fontWeight: e.mine ? 700 : 500 }}>{e.title}{owner && e.checkin && e.member_id && <button onClick={() => logIt(e)} className="text-[11px] font-bold rounded-full px-2.5 py-0.5" style={{ backgroundColor: 'white', color: '#0A0A0A', border: '1px solid #0A0A0A' }}>✓ Done — log it</button>}</div>)}</div>
               </div>
             ))}
           </div>

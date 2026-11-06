@@ -3,11 +3,7 @@ import Navbar from './Navbar'
 import { API_BASE, apiFetch, ORANGE } from './books/shared'
 
 const COLOR_PRESETS = [
-  { name: 'Absolute Orange', primary: '#CD4419', secondary: '#1a1a1a', accent: '#2563eb' },
-  { name: 'Ocean Blue',      primary: '#2563eb', secondary: '#1a1a1a', accent: '#0891b2' },
-  { name: 'Forest Green',    primary: '#16a34a', secondary: '#1a1a1a', accent: '#ca8a04' },
-  { name: 'Royal Purple',    primary: '#7c3aed', secondary: '#1a1a1a', accent: '#db2777' },
-  { name: 'Charcoal',        primary: '#1a1a1a', secondary: '#6b7280', accent: '#CD4419' },
+  { name: 'Absolute ADAS', primary: '#CD4419', secondary: '#0A0A0A', accent: '#B33A15' },
 ]
 
 const TERMS_OPTIONS = ['Due on Receipt', 'Net 7', 'Net 14', 'Net 30', 'Net 45', 'Net 60']
@@ -113,7 +109,7 @@ export default function BrandingScreen({ user, onLogout, currentScreen, onNaviga
             <Section title="Brand Colors" description="Used across UI, invoices, and emails">
               <div>
                 <label className="text-xs font-medium text-gray-600 block mb-2">Quick Presets</label>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
                   {COLOR_PRESETS.map(p => (
                     <button key={p.name} onClick={() => applyPreset(p)}
                       className="rounded-lg p-3 text-xs font-medium border transition-shadow hover:shadow-md"

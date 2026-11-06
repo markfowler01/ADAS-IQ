@@ -5,7 +5,7 @@ const ORANGE = '#CD4419'
 
 const TYPE_ICONS = {
   job_assigned: { icon: '📋', label: 'Job Assigned', bg: '#fff7ed', color: '#c2410c' },
-  job_updated:  { icon: '🔄', label: 'Job Updated',  bg: '#eff6ff', color: '#1d4ed8' },
+  job_updated:  { icon: '🔄', label: 'Job Updated',  bg: '#f5f3f0', color: '#0A0A0A' },
   job_status:   { icon: '✅', label: 'Status Change', bg: '#f0fdf4', color: '#16a34a' },
   default:      { icon: '🔔', label: 'Notification',  bg: '#f5f3f0', color: '#555' },
 }

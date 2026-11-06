@@ -89,10 +89,10 @@ export default function DemoLandingScreen({ onLogin }) {
 
           {/* Body Shop */}
           <div className="bg-white rounded-2xl p-8 flex flex-col" style={{ border: '1px solid #ebebeb', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5" style={{ backgroundColor: '#f0f9ff' }}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center mb-5" style={{ backgroundColor: '#e6f4f4' }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <path d="M19 17H5a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2z" stroke="#0369a1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M3 7h18M8 17v4m8-4v4M7 21h10" stroke="#0369a1" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M19 17H5a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2z" stroke="#1F8B8B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M3 7h18M8 17v4m8-4v4M7 21h10" stroke="#1F8B8B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </div>
             <h2 className="text-xl font-bold mb-2" style={{ color: '#1a1a1a' }}>Body Shop</h2>
@@ -108,7 +108,7 @@ export default function DemoLandingScreen({ onLogin }) {
                 'Request calibration service',
               ].map(f => (
                 <li key={f} className="flex items-center gap-2 text-sm text-gray-600">
-                  <span style={{ color: '#0369a1' }}>✓</span> {f}
+                  <span style={{ color: '#1F8B8B' }}>✓</span> {f}
                 </li>
               ))}
             </ul>
@@ -116,7 +116,7 @@ export default function DemoLandingScreen({ onLogin }) {
               onClick={() => handleEnterDemo('bodyshop')}
               disabled={!!loading}
               className="w-full py-3 rounded-xl font-semibold text-sm transition-all"
-              style={{ backgroundColor: '#0369a1', color: 'white', opacity: loading ? 0.7 : 1 }}
+              style={{ backgroundColor: '#1F8B8B', color: 'white', opacity: loading ? 0.7 : 1 }}
             >
               {loading === 'bodyshop' ? 'Entering demo…' : 'Enter Body Shop Demo →'}
             </button>

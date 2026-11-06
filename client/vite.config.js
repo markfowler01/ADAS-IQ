@@ -21,6 +21,7 @@ export default defineConfig({
           if (id.includes('/CRMScreen') || id.includes('/ShopDetailPanel')
               || id.includes('/CRMImportModal') || id.includes('/GooglePlacesModal')
               || id.includes('/CRMBroadcastModal') || id.includes('/CRMTemplatesModal')) return 'crm'
+          if (id.includes('/lib/brandTokens')) return 'brand'
           if (id.includes('/books/') || id.includes('/BooksScreen')) return 'books'
           if (id.includes('/CalibrationRulesScreen') || id.includes('/RepairEstimateScreen')) return 'tools'
         },

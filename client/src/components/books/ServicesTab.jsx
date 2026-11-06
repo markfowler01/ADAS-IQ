@@ -66,7 +66,7 @@ export default function ServicesTab({ services, onRefresh }) {
   }
 
   const categoryColors = {
-    Calibration: { bg: '#eff6ff', color: '#2563eb' },
+    Calibration: { bg: '#f5f3f0', color: '#0A0A0A' },
     Labor: { bg: '#f0fdf4', color: '#16a34a' },
     Other: { bg: '#f5f3f0', color: '#6b7280' },
   }

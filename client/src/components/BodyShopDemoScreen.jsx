@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { API_BASE, apiFetch } from '../utils/api.js'
 
 const ORANGE = '#CD4419'
-const BLUE = '#0369a1'
+const BLUE = '#1F8B8B'
 
 export default function BodyShopDemoScreen({ user, onLogout }) {
   const [stage, setStage] = useState('upload') // 'upload' | 'processing' | 'results' | 'requested'
@@ -50,7 +50,7 @@ export default function BodyShopDemoScreen({ user, onLogout }) {
           <div className="flex items-center gap-2.5">
             <img src={import.meta.env.BASE_URL + 'logo.png'} alt="Absolute ADAS" className="w-8 h-8 object-contain" />
             <span className="text-base font-bold tracking-tight" style={{ color: '#1a1a1a' }}>Absolute <span style={{ color: ORANGE }}>ADAS</span></span>
-            <span className="text-xs px-2 py-0.5 rounded-full font-semibold ml-1" style={{ backgroundColor: '#f0f9ff', color: BLUE }}>Body Shop</span>
+            <span className="text-xs px-2 py-0.5 rounded-full font-semibold ml-1" style={{ backgroundColor: '#e6f4f4', color: BLUE }}>Body Shop</span>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-500">{user?.name}</span>
@@ -83,7 +83,7 @@ export default function BodyShopDemoScreen({ user, onLogout }) {
                 className="rounded-2xl border-2 border-dashed p-16 text-center transition-all"
                 style={{
                   borderColor: dragOver ? BLUE : '#d1d5db',
-                  backgroundColor: dragOver ? '#f0f9ff' : 'white',
+                  backgroundColor: dragOver ? '#e6f4f4' : 'white',
                 }}
               >
                 <div className="text-5xl mb-4">📄</div>

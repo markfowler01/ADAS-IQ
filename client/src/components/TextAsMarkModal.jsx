@@ -66,7 +66,7 @@ export default function TextAsMarkModal({ to = '', toName = '', shopId = '', pur
                 <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider" style={{ backgroundColor: '#f5f3f0', color: '#888' }}>Recent with this number</div>
                 {mine.map(t => (
                   <div key={t.id} className="px-3 py-2 text-xs" style={{ borderTop: '1px solid #f1ede9' }}>
-                    <span className="font-bold" style={{ color: t.direction === 'in' ? '#1d4ed8' : t.status === 'sent' ? GREEN : t.status === 'failed' ? '#b91c1c' : '#92400e' }}>{t.direction === 'in' ? '⬅ reply' : t.status}</span> · {String(t.created_at).slice(0, 16).replace('T', ' ')}<div style={{ color: '#1a1a1a' }}>{t.body}</div>{t.error && <div style={{ color: '#b91c1c' }}>{t.error}</div>}
+                    <span className="font-bold" style={{ color: t.direction === 'in' ? '#0A0A0A' : t.status === 'sent' ? GREEN : t.status === 'failed' ? '#b91c1c' : '#92400e' }}>{t.direction === 'in' ? '⬅ reply' : t.status}</span> · {String(t.created_at).slice(0, 16).replace('T', ' ')}<div style={{ color: '#1a1a1a' }}>{t.body}</div>{t.error && <div style={{ color: '#b91c1c' }}>{t.error}</div>}
                   </div>
                 ))}
               </div>

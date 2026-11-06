@@ -44,7 +44,7 @@ export default function WorkDriveCleanup({ user, onLogout, currentScreen, onNavi
           return (
             <div key={g.key} className="rounded-2xl p-4 mb-3 bg-white" style={{ border: `1.5px solid ${r ? '#86efac' : '#e8e4e0'}` }}>
               <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-                <div className="text-xs font-bold uppercase tracking-wider" style={{ color: g.kind === 'ro' ? ORANGE : '#0e7490', fontFamily: 'IBM Plex Mono, monospace' }}>{g.kind === 'ro' ? `RO ${g.key.slice(3)}` : `same vehicle · ${g.key.slice(4)}`}</div>
+                <div className="text-xs font-bold uppercase tracking-wider" style={{ color: g.kind === 'ro' ? ORANGE : '#1F8B8B', fontFamily: 'IBM Plex Mono, monospace' }}>{g.kind === 'ro' ? `RO ${g.key.slice(3)}` : `same vehicle · ${g.key.slice(4)}`}</div>
                 {r ? <span className="text-xs font-bold" style={{ color: GREEN }}>✓ merged · {r.moved} file{r.moved === 1 ? '' : 's'} moved · {r.trashed.length} folder{r.trashed.length === 1 ? '' : 's'} trashed{r.repointed ? ` · ${r.repointed} card${r.repointed === 1 ? '' : 's'} repointed` : ''}{r.failed.length ? ` · ${r.failed.length} failed` : ''}</span>
                   : <button onClick={() => merge(g)} disabled={!!busy} className="text-xs font-bold rounded-lg px-3 py-2 text-white" style={{ backgroundColor: RED, opacity: busy ? .6 : 1 }}>{busy === g.key ? 'Merging…' : `Merge ${g.folders.length - 1} into kept`}</button>}
               </div>
