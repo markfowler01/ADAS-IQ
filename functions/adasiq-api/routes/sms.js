@@ -330,6 +330,10 @@ router.post('/', async (req, res) => {
     const to   = normalizePhoneUS(req.body.To)   || String(req.body.To   || '')
     const body = String(req.body.Body || '').trim()
     const sid  = String(req.body.MessageSid || '')
+    // Phone-health ping. Do not log it, text anyone, or open a thread.
+    if (String(from).replace(/\D/g, '').endsWith('5551234567') || /^SMhealth/i.test(sid)) {
+      return res.type('text/xml').send('<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+    }
     const numMedia = parseInt(req.body.NumMedia || '0', 10) || 0
 
     // 🅿 Mark texting his own shop line = park an idea (2026-10-04). Reply and stop:

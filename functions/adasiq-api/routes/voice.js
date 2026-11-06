@@ -379,6 +379,18 @@ function isAfterHoursPT(cfg) {
 // an initial "ringing" call-log entry so we have a record even if nobody
 // picks up and the voicemail lands separately.
 router.post('/', requireTwilioSignature, safeVoiceHandler(async (req, res) => {
+  // The 5-minute phone health ping uses 555-123-4567. It is not a customer.
+  // Logging it left a stack of "Ringing" bars that can never be transferred
+  // (Twilio: "That call already ended"). Answer with real TwiML, store nothing.
+  try {
+    const { isSyntheticCall, clearSynthetic } = await import('../services/liveCalls.js')
+    if (isSyntheticCall({ from: req.body.From, sid: req.body.CallSid })) {
+      const dropped = await clearSynthetic(req)
+      if (dropped.length) console.log(`[voice] cleared ${dropped.length} synthetic live call(s)`)
+      if (isAfterHoursPT(req.phoneCfg)) return res.type('text/xml').send(xml(fallbackVoicemailTwiML(req)))
+      return res.type('text/xml').send(xml(nextCascadeTwiML(req, 0)))
+    }
+  } catch (e) { console.warn('[voice synthetic]', e.message) }
   try {
     await upsertCall(req, {
       call_sid:    String(req.body.CallSid || ''),

@@ -368,6 +368,19 @@ export async function createNotification(req, { to, toEmail, type, title, body, 
   return notif
 }
 
+// A notice stored as "Jaden" still belongs to Jayden.
+function sameNotifyName(stored, query) {
+  const a = String(stored || '').trim().toLowerCase()
+  const b = String(query || '').trim().toLowerCase()
+  if (!a || !b) return false
+  if (a === b) return true
+  const canon = (s) => {
+    const first = s.split(/\s+/)[0]
+    return (first === 'jaden' || first === 'jayden') ? 'jayden' : first
+  }
+  return canon(a) === canon(b)
+}
+
 // GET /api/notifications?user=Jayden
 router.get('/', async (req, res) => {
   const user = req.query.user || ''
@@ -377,7 +390,7 @@ router.get('/', async (req, res) => {
     const isAdmin = req.query.role !== 'technician'
     const filtered = isAdmin
       ? all.slice(0, 50)
-      : all.filter(n => n.to?.toLowerCase() === user.toLowerCase()).slice(0, 50)
+      : all.filter(n => sameNotifyName(n.to, user)).slice(0, 50)
     const unread = filtered.filter(n => !n.read).length
     res.json({ ok: true, notifications: filtered, unread })
   } catch (err) {
@@ -394,7 +407,7 @@ router.patch('/read', async (req, res) => {
     let count = 0
     for (const n of all) {
       if (n.read) continue
-      const isForUser = !user || n.to?.toLowerCase() === user.toLowerCase()
+      const isForUser = !user || sameNotifyName(n.to, user)
       if (!isForUser) continue
       if (ids === 'all' || (Array.isArray(ids) && ids.includes(n.id))) {
         n.read = true
