@@ -508,7 +508,7 @@ router.post('/:id/status', async (req, res) => {
         if (job) {
           const patch = { ...job }
           if (dispatch === 'jayden') {
-            patch.status = 'dispatched_jaden'; patch.technician = job.technician || 'Jaden'
+            patch.status = 'dispatched_jaden'; patch.technician = job.technician || 'Jayden'
           } else if (dispatch === 'mark') {
             patch.status = 'dispatched_mark'; patch.technician = job.technician || 'Mark'
           } else {

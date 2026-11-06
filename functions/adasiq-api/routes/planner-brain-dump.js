@@ -8,7 +8,7 @@ const SYSTEM = `You are Mark Fowler's planner assistant. Mark owns Absolute ADAS
 Mark's planner has these slots:
 - intention: one short sentence — the day's overall theme or focus
 - big3: top 3 must-do priorities for the day. Concise action phrases (5-10 words). The most important things Mark must move on.
-- delegations: tasks Mark wants to hand to Kat or Jaden (Jayden). Each has a task description and an assignee ("Kat" or "Jayden"). Pull anything Mark mentioned should be done by someone else.
+- delegations: tasks Mark wants to hand to Kat or Jayden. Each has a task description and an assignee ("Kat" or "Jayden"). If Mark says Jaden, the assignee is Jayden. Pull anything Mark mentioned should be done by someone else.
 - notToDo: 1-3 things Mark explicitly wants to avoid today (distractions, energy drains, things that don't move the needle).
 - notes: anything else worth capturing that doesn't fit the above — context, ideas, follow-ups.
 

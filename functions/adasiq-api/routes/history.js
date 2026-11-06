@@ -12,7 +12,7 @@ const DEMO_ENTRY = {
   calibrations: [{ name: 'Front Radar', mode: 'Static' }, { name: 'Front Camera', mode: 'Static' }],
   estimateUrl: '',
   pdfUrl: '',
-  technician: 'Jaden',
+  technician: 'Jayden',
   createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hrs ago
 }
 

@@ -15,7 +15,7 @@ A COMMITMENT is any statement where a person says they will do something ("I'll 
 
 Rules:
 - Capture BOTH inbound (someone promising Mark or the team) and outbound (Mark promising someone).
-- person = the one who owns/made the commitment. Known people: Jaden (field tech), Kat (invoicing / AR), Joyce. Otherwise use the first name, or "External".
+- person = the one who owns/made the commitment. Known people: Jayden (field tech — if a message spells him Jaden, record Jayden), Kat (invoicing / AR), Joyce. Otherwise use the first name, or "External". Record the person as Jayden, never Jaden.
 - direction = "outbound" if Mark is the one promising, else "inbound".
 - Due date logic: use the explicit date if given. "this week" = the coming Friday. "ASAP" or "soon" = 2 days out. No date = null.
 - IGNORE small talk, already-completed items, questions, and anything that is not a real commitment.

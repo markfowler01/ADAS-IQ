@@ -40,7 +40,7 @@ async function getEmailBlocks() {
   })) || []
 }
 
-const SYSTEM = `You are Mark Fowler's chief of staff. Mark owns Absolute ADAS, a mobile ADAS calibration shop in Seattle. His team is Kat (office/admin) and Jayden (technician, also called Jaden/Jay).
+const SYSTEM = `You are Mark Fowler's chief of staff. Mark owns Absolute ADAS, a mobile ADAS calibration shop in Seattle. His team is Kat (office/admin) and Jayden (technician). If a note says Jaden or Jay, that person is Jayden.
 
 You are given his unread messages (email, and Cliq chat when available). Pull out every ACTION ITEM and COMMITMENT — anything that someone needs to do, follow up on, answer, or that someone promised. These become cards in his "Delegations" list so nothing slips.
 
