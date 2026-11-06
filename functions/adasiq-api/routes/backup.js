@@ -3,6 +3,9 @@ import axios from 'axios'
 import catalyst from 'zcatalyst-sdk-node'
 import { getAccessToken } from '../services/zoho.js'
 import { uploadFileToFolder } from '../services/workdrive.js'
+import { listMessages } from '../services/datastoreSms.js'
+import { listCalls } from '../services/datastoreCallLog.js'
+import { listVoicemails } from '../services/datastoreVoicemails.js'
 
 const router = express.Router()
 
@@ -42,6 +45,16 @@ async function readDatastore(app, tableName) {
     return Array.isArray(rows) ? rows : []
   } catch (e) {
     console.warn(`[backup] datastore read failed for ${tableName}:`, e.message)
+    return []
+  }
+}
+
+async function readPhoneTable(label, fn, req, limit) {
+  try {
+    const rows = await fn(req, { limit })
+    return Array.isArray(rows) ? rows : []
+  } catch (e) {
+    console.warn(`[backup] ${label} table read failed:`, e.message)
     return []
   }
 }
@@ -144,7 +157,8 @@ router.get('/run', async (req, res) => {
 
     // Read everything in parallel
     const [crmShops, jobHistory, jobs, calRules, booksInvoices, booksServices, booksExpenses, booksDeposits, pinnedShops,
-           phoneConfig, smsThreads, callsLog, voicemails, zbInvoices, zbPayments, tsbs] = await Promise.all([
+           phoneConfig, smsThreads, callsLog, voicemails, zbInvoices, zbPayments, tsbs,
+           smsTable, callLogTable, voicemailsTable] = await Promise.all([
       readShopsForBackup(),
       readCache(segment, 'job_history'),
       readDatastore(app, 'Jobs'),
@@ -166,6 +180,11 @@ router.get('/run', async (req, res) => {
       readDatastore(app, 'AdasInvoices'),
       readDatastore(app, 'AdasPayments'),
       readDatastore(app, 'AdasTsb'),
+      // Durable phone tables (source of truth since 2026-07-15). Limits are
+      // the service caps; the services page at 250 rows internally.
+      readPhoneTable('sms_threads', listMessages, req, 2000),
+      readPhoneTable('CallLog', listCalls, req, 1000),
+      readPhoneTable('voicemails', listVoicemails, req, 1000),
     ])
 
     // Read invoice counter (scalar, not array)
@@ -199,6 +218,9 @@ router.get('/run', async (req, res) => {
         sms_threads: Array.isArray(smsThreads) ? smsThreads : [],
         calls_log:   Array.isArray(callsLog)   ? callsLog   : [],
         voicemails:  Array.isArray(voicemails) ? voicemails : [],
+        sms_messages_table: smsTable,
+        call_log_table:     callLogTable,
+        voicemails_table:   voicemailsTable,
       },
       counts: {
         crm_shops:         Array.isArray(crmShops)       ? crmShops.length       : 0,
@@ -216,6 +238,9 @@ router.get('/run', async (req, res) => {
         zoho_invoices:     Array.isArray(zbInvoices) ? zbInvoices.length : 0,
         zoho_payments:     Array.isArray(zbPayments) ? zbPayments.length : 0,
         tsbs:              Array.isArray(tsbs)       ? tsbs.length       : 0,
+        sms_messages_table: smsTable.length,
+        call_log_table:     callLogTable.length,
+        voicemails_table:   voicemailsTable.length,
       },
     }
 
